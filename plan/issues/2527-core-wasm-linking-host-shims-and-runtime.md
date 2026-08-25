@@ -16,11 +16,14 @@ reconcile_note: "2026-06-24 (PO reconcile vs upstream/main): GENUINELY OPEN, act
 related: [2512, 2514, 2525, 2523]
 loc-budget-allow:
   - src/compiler.ts
+  - src/cli.ts
   - src/codegen/index.ts
   - src/emit/binary.ts
   - src/codegen/context/types.ts
   - src/codegen/registry/imports.ts
   - src/codegen/number-format-native.ts
+  - src/bundle-manifest.ts
+  - src/package-bundler.ts
   - src/package-linker.ts
   - src/runtime.ts
 func-budget-allow:
@@ -30,6 +33,7 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/index.ts::emitIteratorMethodExport
+  - src/package-bundler.ts::mergePackageProviders
   - src/package-linker.ts::compileLinkedProject
 oracle-ratchet-allow:
   - src/codegen/index.ts
@@ -281,6 +285,33 @@ lifecycles. Package cycles, ambiguous multiple entrypoint targets, TypeScript
 type-position identity, and unsupported namespace/re-export ambiguity remain
 explicit deterministic monolithic fallbacks; they are never routed through
 `externals`, which could silently erase a value boundary.
+
+## Static npm bundle slice (2026-08-25) — manifest-driven `wasm-merge`
+
+`compileProject({ packageLinking: "merge" })` now consumes the same cached,
+manifest-verified provider modules and statically combines them with the root
+application through Binaryen `wasm-merge`. `wasm-metadce` roots only the
+application's public exports, so provider link exports remain internal and can
+be eliminated after imports are connected. When optimization is requested, a
+final `wasm-opt` pass runs after merge so cross-package calls can be inlined and
+optimized as ordinary internal calls. The finalized module embeds an
+authoritative `js2wasm.bundle.v1` custom section containing provider identities,
+dependency order, source/cache fingerprints, boundary contracts, public root
+exports, and the consolidated single-instance host/string adapter metadata.
+
+This path deliberately continues to use complete core-Wasm modules rather than
+the repository's older LLVM-style relocatable-object emitter. The ordinary
+modules retain the provider ABI, are independently valid/cacheable artifacts,
+and are the native input format of `wasm-merge`; relocation records are not
+needed to connect already-typed core imports and exports.
+
+The first static slice accepts direct function boundaries whose providers need
+no provider-local host callback adapter. String-constant globals are safely
+consolidated into the bundle host manifest. Getter boundaries (values, objects,
+closures, classes, and namespace objects), deferred provider initialization,
+and provider-local host callbacks retain the existing separate-module runtime
+and report `PackageLinkPlan.mergeFallbackReason`. This is an explicit semantic
+fallback, not a silent source bundle or erased boundary.
 
 ## Measurement rule for whoever packages the runtime-eval provider (#2928 E7)
 

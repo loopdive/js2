@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { compileProject, instantiateLinkedProject } from "../src/index.js";
+import { compileProject, decodeBundleManifest, instantiateLinkedProject } from "../src/index.js";
 
 function project(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `js2-${prefix}-`));
@@ -132,6 +132,77 @@ describe("#2527 npm package module linking", () => {
     expect(result.linkedModules?.[1]?.dependencies).toContain(result.linkedModules?.[0]?.namespace);
     const linked = await instantiateLinkedProject(result);
     expect(linked.instance.exports.run?.()).toBe(7);
+  });
+
+  it("statically merges cached direct-function providers and embeds the bundle manifest", async () => {
+    const root = project("package-link-merge");
+    writePackage(root, "merge-base", "export function double(x: number): number { return x * 2; }\n");
+    writePackage(
+      root,
+      "merge-top",
+      'import { double } from "merge-base"; export function answer(x: number): number { return double(x) + 1; }\n',
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { answer } from "merge-top"; export function run(): number { return answer(3); }\n',
+    );
+    const cacheDir = join(root, ".cache");
+    const result = await compileProject(join(root, "main.ts"), {
+      emitWat: false,
+      optimize: 1,
+      packageCacheDir: cacheDir,
+      packageLinking: "merge",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.linkPlan?.mergeFallbackReason).toBeUndefined();
+    expect(result.linkPlan).toMatchObject({ mode: "merged", compiledProviders: 2, cachedProviders: 0 });
+    expect(result.linkedModules).toBeUndefined();
+    expect(result.wat).toBe("");
+    expect(result.bundleCacheKey).toMatch(/^[0-9a-f]{64}$/);
+    const manifest = decodeBundleManifest(result.binary);
+    expect(manifest.providers.map((provider) => provider.packageName)).toEqual(["merge-base", "merge-top"]);
+    expect(manifest.providers[1]?.dependencies).toEqual([manifest.providers[0]?.namespace]);
+    expect(result.bundleManifest).toEqual(manifest);
+    expect(result.stringPool).toEqual(manifest.hostMetadata.stringPool);
+    const imports = WebAssembly.Module.imports(new WebAssembly.Module(result.binary));
+    expect(imports.some((entry) => entry.module.startsWith("js2wasm:npm:"))).toBe(false);
+    const exports = WebAssembly.Module.exports(new WebAssembly.Module(result.binary)).map((entry) => entry.name);
+    expect(exports).toContain("run");
+    expect(exports).not.toContain("answer");
+    expect(exports).not.toContain("double");
+    const instantiated = await WebAssembly.instantiate(result.binary, result.importObject);
+    expect(instantiated.instance.exports.run?.()).toBe(7);
+
+    const cached = await compileProject(join(root, "main.ts"), {
+      emitWat: false,
+      optimize: 1,
+      packageCacheDir: cacheDir,
+      packageLinking: "merge",
+    });
+    expect(cached.linkPlan).toMatchObject({ mode: "merged", compiledProviders: 0, cachedProviders: 2 });
+    expect(cached.bundleCacheKey).toBe(result.bundleCacheKey);
+  });
+
+  it("reports an explicit separate-module fallback for merge-unsafe JavaScript values", async () => {
+    const root = project("package-link-merge-value-fallback");
+    writePackage(root, "merge-value", "export const answer = 42;\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { answer } from "merge-value"; export function run(): number { return answer; }\n',
+    );
+    const result = await compileProject(join(root, "main.ts"), {
+      emitWat: false,
+      packageCacheDir: join(root, ".cache"),
+      packageLinking: "merge",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkPlan?.mergeFallbackReason).toMatch(/getter JavaScript value boundary/);
+    expect(result.linkedModules).toHaveLength(1);
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(42);
   });
 
   it("links cross-package named/default/star re-exports in dependency order and cache", async () => {

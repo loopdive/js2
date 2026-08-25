@@ -205,8 +205,8 @@ export interface LinkedProviderMetadata {
 
 /** Project-level decision and diagnostics for npm package module linking. */
 export interface PackageLinkPlan {
-  /** `separate` means provider artifacts are linked; `bundled` is the explicit fallback. */
-  mode: "separate" | "bundled";
+  /** Selected package output: runtime-linked providers, one merged module, or source bundling. */
+  mode: "separate" | "merged" | "bundled";
   /** Stable planner version, bumped when the provider ABI changes. */
   version: 1;
   /** Human-readable reason when the planner deliberately bundled the graph. */
@@ -217,7 +217,17 @@ export interface PackageLinkPlan {
   compiledProviders: number;
   /** Number of providers served from the binary cache during this call. */
   cachedProviders: number;
+  /** Requested static linking fell back to separate modules for this explicit reason. */
+  mergeFallbackReason?: string;
 }
+
+export {
+  BUNDLE_MANIFEST_FORMAT_VERSION,
+  BUNDLE_MANIFEST_SECTION_NAME,
+  bundleArtifactHash,
+  decodeBundleManifest,
+} from "./bundle-manifest.js";
+export type { BundleManifestV1, BundleProviderManifest } from "./bundle-manifest.js";
 
 export type { ExportBoundaryKind, ExportSignature, TypedArrayKind } from "./ir/types.js";
 import type { ExternCImportSpec as LinearExternCImportSpec } from "./codegen-linear/c-abi.js";
@@ -362,6 +372,10 @@ export interface CompileResult {
   readonly importObject?: WebAssembly.Imports;
   /** Separate npm provider artifacts, when package linking was selected. */
   linkedModules?: LinkedModuleArtifact[];
+  /** Authoritative metadata embedded in a statically merged package bundle. */
+  bundleManifest?: import("./bundle-manifest.js").BundleManifestV1;
+  /** SHA-256 identity of the finalized merged bytes, including the bundle manifest. */
+  bundleCacheKey?: string;
   /** Explicit package-linking decision and cache telemetry. */
   linkPlan?: PackageLinkPlan;
   /**
@@ -903,12 +917,15 @@ export interface CompileOptions {
    */
   link?: string[];
   /**
-   * Compile bare npm package edges as separately linked core-Wasm providers
-   * when using {@link compileProject}. Unsupported package boundaries retain
-   * the deterministic bundled path and report that decision in
-   * {@link CompileResult.linkPlan}. Defaults to `true` for project compiles.
+   * Compile bare npm package edges as cached core-Wasm providers when using
+   * {@link compileProject}. `true` and `"separate"` instantiate provider
+   * modules independently; `"merge"` asks Binaryen to statically combine safe
+   * direct-function providers and embeds `js2wasm.bundle.v1`. `false` retains
+   * monolithic source compilation. Unsupported boundaries report their
+   * explicit fallback through {@link CompileResult.linkPlan}. Defaults to
+   * `true` for project compiles.
    */
-  packageLinking?: boolean;
+  packageLinking?: boolean | "separate" | "merge";
   /** Optional directory for content-addressed npm provider binaries. */
   packageCacheDir?: string;
   /** Internal package-link import map populated by compileProject's planner. */
@@ -1061,6 +1078,7 @@ import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import { compileLinkedProject } from "./package-linker.js";
+import { mergePackageProviders } from "./package-bundler.js";
 import { instantiateLinkedProviders, wireCompiledInstance } from "./linked-provider-runtime.js";
 
 /**
@@ -1316,6 +1334,24 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     options: withIrCompileRoute(effectiveOptions, "compileProject"),
   });
   if (linkedAttempt.kind === "separate") {
+    if (effectiveOptions?.packageLinking === "merge") {
+      const merged = mergePackageProviders(linkedAttempt.result, linkedAttempt.artifacts, {
+        optimize: effectiveOptions.optimize,
+      });
+      if (merged.kind === "merged") {
+        linkedAttempt.result.binary = merged.bundle.binary;
+        linkedAttempt.result.wat = merged.bundle.wat;
+        linkedAttempt.result.bundleManifest = merged.bundle.manifest;
+        linkedAttempt.result.bundleCacheKey = merged.bundle.cacheKey;
+        linkedAttempt.result.stringPool = merged.bundle.manifest.hostMetadata.stringPool;
+        linkedAttempt.result.runtimeRecGroupFingerprint = undefined;
+        linkedAttempt.result.linkPlan = { ...linkedAttempt.plan, mode: "merged" };
+        return withImportObject(linkedAttempt.result);
+      }
+      linkedAttempt.result.linkedModules = linkedAttempt.artifacts;
+      linkedAttempt.result.linkPlan = { ...linkedAttempt.plan, mergeFallbackReason: merged.reason };
+      return withImportObject(linkedAttempt.result);
+    }
     linkedAttempt.result.linkedModules = linkedAttempt.artifacts;
     linkedAttempt.result.linkPlan = linkedAttempt.plan;
     return withImportObject(linkedAttempt.result);
