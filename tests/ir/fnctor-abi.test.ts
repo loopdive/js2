@@ -30,6 +30,7 @@ function parserShape(): IrFnctorShape {
     fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
     captures: [],
     userParamTypes: [irVal({ kind: "externref" })],
+    hiddenIdentity: true,
     constructorIdentity: { unitId, paramIndex: 1 },
   };
 }
@@ -42,6 +43,7 @@ function parserResolution(shape: IrFnctorShape): IrFnctorResolution {
     captureParamTypes: [],
     userParamTypes: shape.userParamTypes,
     constructorIdentityParamIndex: shape.constructorIdentity.paramIndex,
+    hiddenIdentity: shape.hiddenIdentity,
     resultIsExternref: false,
   };
 }
@@ -102,6 +104,7 @@ describe("fnctor ABI contract", () => {
     const shape: IrFnctorShape = {
       ...parserShape(),
       userParamTypes: [],
+      hiddenIdentity: false,
       constructorIdentity: { unitId, paramIndex: 0 },
     };
     const builder = new IrFunctionBuilder({ unitId: "ir-unit:test:fnctor" as IrUnitId, name: "fnctorTest" }, [
@@ -127,6 +130,7 @@ describe("fnctor ABI contract", () => {
     const shape: IrFnctorShape = {
       ...parserShape(),
       userParamTypes: [],
+      hiddenIdentity: false,
       constructorIdentity: { unitId, paramIndex: 0 },
     };
     const builder = new IrFunctionBuilder(
@@ -142,6 +146,13 @@ describe("fnctor ABI contract", () => {
     const wrongName = { ...shape, constructorName: "Other" };
     expect(irTypeEquals(irFnctor(shape), irFnctor(wrongName))).toBe(true);
     expect(irTypeKey(irFnctor(shape))).toBe(irTypeKey(irFnctor(wrongName)));
+    const hiddenVariant = {
+      ...shape,
+      hiddenIdentity: true,
+      constructorIdentity: { unitId, paramIndex: 0 },
+    };
+    expect(irTypeEquals(irFnctor(shape), irFnctor(hiddenVariant))).toBe(false);
+    expect(irTypeKey(irFnctor(shape))).not.toBe(irTypeKey(irFnctor(hiddenVariant)));
     const recursive = { ...shape, fields: [] as IrFnctorShape["fields"] };
     const recursiveType = { kind: "fnctor" as const, shape: recursive };
     (recursive.fields as { name: string; type: typeof recursiveType; ordinal: number }[]).push({

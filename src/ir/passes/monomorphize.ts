@@ -70,6 +70,7 @@ import type { AllocSiteRegistry } from "../alloc-registry.js";
 import { createDerivedIrUnitId, type IrDerivedUnitProvenance, type IrUnitId } from "../identity.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
 import { forkAllocInInstr } from "./alloc-discipline.js";
+import { irFnctorShapeKey } from "../type-key.js";
 
 /** Maximum number of distinct type tuples we'll clone a single callee for. */
 const MAX_VARIANTS_PER_CALLEE = 4;
@@ -508,12 +509,7 @@ function irTypeKey(t: IrType): string {
   // Slice 10 (#1169i): extern is keyed solely on className.
   if (t.kind === "extern") return `ext:${t.className}`;
   if (t.kind === "fnctor") {
-    return `fnctor:${JSON.stringify({
-      sourceId: t.shape.sourceId,
-      constructorUnitId: t.shape.constructorUnitId,
-      constructorTarget: canonicalFnctorRef(t.shape.constructorTarget),
-      reservedLayout: canonicalFnctorRef(t.shape.reservedLayout),
-    })}`;
+    return irFnctorShapeKey(t.shape);
   }
   // #1926 — union members / boxed inner are IrTypes; recurse via irTypeKey.
   if (t.kind === "union") {
@@ -524,19 +520,6 @@ function irTypeKey(t: IrType): string {
   // refinements are distinct types under irTypeEquals; keys must match that).
   if (t.kind === "dynamic") return t.tag === undefined ? "dyn" : `dyn:${t.tag}`;
   return `b:${irTypeKey(t.inner)}`;
-}
-
-function canonicalFnctorRef(ref: { readonly kind: string; readonly binding: unknown }): string {
-  return `${ref.kind}:${canonicalFnctorJson(ref.binding)}`;
-}
-
-function canonicalFnctorJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalFnctorJson).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalFnctorJson(entry)}`)
-    .join(",")}}`;
 }
 
 function valTypeKey(v: ValType): string {

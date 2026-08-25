@@ -11,6 +11,8 @@ interface ArgumentsVecTailOptions {
   readonly paramOffset: number;
   readonly numArgs: number;
   readonly vecTypeIdx: number;
+  /** Concrete subtype used for the arguments object itself. */
+  readonly argumentsVecTypeIdx?: number;
   readonly arrTypeIdx: number;
   readonly argsLocalIdx: number;
   readonly arrTmpIdx: number;
@@ -38,6 +40,7 @@ export function emitArgumentsVecTail(
     paramOffset,
     numArgs,
     vecTypeIdx: vti,
+    argumentsVecTypeIdx = vti,
     arrTypeIdx: ati,
     argsLocalIdx: argsLocal,
     arrTmpIdx: arrTmp,
@@ -109,11 +112,13 @@ export function emitArgumentsVecTail(
     },
     { op: "local.get", index: totalLenLocal },
     { op: "local.get", index: arrTmp },
-    { op: "struct.new", typeIdx: vti },
+    ...(argumentsVecTypeIdx === vti ? [] : ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+    { op: "struct.new", typeIdx: argumentsVecTypeIdx },
     { op: "local.set", index: argsLocal },
   );
 
-  if (numArgs !== 0) {
+  // An ordinary extras vec cannot be reused as the branded arguments subtype.
+  if (numArgs !== 0 || argumentsVecTypeIdx !== vti) {
     fctx.body.push(...buildArgsBody);
     return;
   }

@@ -49,6 +49,8 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   asyncFrameMachinery: 16,
   vecFromExternMaterializer: 17,
   stdlibMathHelper: 18,
+  /** (#3521) Source/unit-qualified fnctor constructor support callable. */
+  fnctorConstructor: 19,
 } as const);
 
 /**
