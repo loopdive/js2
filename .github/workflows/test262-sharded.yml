@@ -2487,10 +2487,9 @@ jobs:
       contents: write
       pull-requests: write
       # #3448 — the HIT path downloads test262-group-<sha> via the artifacts
-      # REST API (a cross-run read), same permission the #1956 predecessor
-      # step uses. The top-level `contents: write` would otherwise leave
-      # actions at `none` for this job.
-      actions: read
+      # REST API (a cross-run read), and the successful promotion dispatches
+      # deploy-pages.yml. Write includes the required cross-run read access.
+      actions: write
 
     steps:
       - name: Checkout
@@ -2613,34 +2612,24 @@ jobs:
           mkdir -p benchmarks/results
           mkdir -p /tmp/js2wasm-before-refresh
           cp benchmarks/results/test262-current.json /tmp/js2wasm-before-refresh/test262-current.json 2>/dev/null || true
+          cp website/public/benchmarks/results/test262-report.json /tmp/js2wasm-before-refresh/test262-website-report.json 2>/dev/null || true
           cp public/benchmarks/results/test262-standalone-report.json /tmp/js2wasm-before-refresh/test262-standalone-report.json 2>/dev/null || true
+          cp website/public/benchmarks/results/test262-standalone-report.json /tmp/js2wasm-before-refresh/test262-website-standalone-report.json 2>/dev/null || true
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
             benchmarks/results/test262-results.jsonl
           cp shard-artifacts/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
           cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-current.json
-          cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-report.json
           cp shard-artifacts/test262-results-merged.jsonl benchmarks/results/test262-results.jsonl
           cp shard-artifacts/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-current.jsonl
           cp shard-artifacts/test262-standalone-report-merged.json benchmarks/results/test262-standalone-current.json
-          cp shard-artifacts/test262-standalone-report-merged.json benchmarks/results/test262-standalone-report.json
           cp shard-artifacts/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-results.jsonl
-          # Also update public/ so the landing page dev server picks up fresh data
+          # Keep the JSONL mirror used by local development; report JSON mirrors
+          # are synchronized centrally from the current snapshots below.
           mkdir -p public/benchmarks/results
-          cp shard-artifacts/test262-report-merged.json public/benchmarks/results/test262-report.json
           cp shard-artifacts/test262-results-merged.jsonl public/benchmarks/results/test262-results.jsonl
-          cp shard-artifacts/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
-          # …and the SERVED copy under website/public (the vite publicDir since
-          # #1656). Its host twin is refreshed here, but the standalone one only
-          # ever landed via deploy-pages, so the committed file sat at a
-          # 2026-06-07 snapshot (16,298 pass, no host_free_pass field). The
-          # landing page reads this path FIRST for its standalone donut, so if a
-          # deploy's baselines fetch ever fails it serves that June number —
-          # now the site's default headline, since standalone is the default lane.
-          mkdir -p website/public/benchmarks/results
-          cp shard-artifacts/test262-standalone-report-merged.json \
-            website/public/benchmarks/results/test262-standalone-report.json
+          node scripts/sync-test262-report-mirrors.mjs
 
       # #2097 — ratchet the absolute standalone high-water mark UP when this
       # push improved standalone conformance. Only ever raises (never lowers);
@@ -3125,10 +3114,11 @@ jobs:
             git add -f benchmarks/results/test262-current.json \
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
-              public/benchmarks/results/test262-standalone-report.json
-            # The SERVED standalone report (website/public, copied above) — the
-            # landing page's first source for its standalone donut.
-            git add -f website/public/benchmarks/results/test262-standalone-report.json 2>/dev/null || true
+              public/benchmarks/results/test262-standalone-report.json \
+              website/public/benchmarks/results/test262-report.json \
+              website/public/benchmarks/results/test262-standalone-report.json
+            # Both report files above are served by the Vite publicDir and must
+            # land atomically with the promoted baseline.
             # #1853 — hard-error stability baseline, refreshed just above.
             git add -f scripts/test262-hard-error-baseline.json 2>/dev/null || true
             # #2108 — coercion-site drift baseline, refreshed just above. Staged
@@ -3212,6 +3202,14 @@ jobs:
               --candidate benchmarks/results/test262-current.json; then
             HOST_REPORT_UNCHANGED=1
           fi
+          WEBSITE_HOST_REPORT_UNCHANGED=0
+          if [ -f /tmp/js2wasm-before-refresh/test262-website-report.json ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type report \
+              --baseline /tmp/js2wasm-before-refresh/test262-website-report.json \
+              --candidate benchmarks/results/test262-current.json; then
+            WEBSITE_HOST_REPORT_UNCHANGED=1
+          fi
           STANDALONE_REPORT_UNCHANGED=0
           if [ -f /tmp/js2wasm-before-refresh/test262-standalone-report.json ] && \
             node scripts/compare-test262-artifact.mjs \
@@ -3220,7 +3218,18 @@ jobs:
               --candidate public/benchmarks/results/test262-standalone-report.json; then
             STANDALONE_REPORT_UNCHANGED=1
           fi
-          if [ "$HOST_REPORT_UNCHANGED" = "1" ] && [ "$STANDALONE_REPORT_UNCHANGED" = "1" ]; then
+          WEBSITE_STANDALONE_REPORT_UNCHANGED=0
+          if [ -f /tmp/js2wasm-before-refresh/test262-website-standalone-report.json ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type report \
+              --baseline /tmp/js2wasm-before-refresh/test262-website-standalone-report.json \
+              --candidate public/benchmarks/results/test262-standalone-report.json; then
+            WEBSITE_STANDALONE_REPORT_UNCHANGED=1
+          fi
+          if [ "$HOST_REPORT_UNCHANGED" = "1" ] \
+            && [ "$WEBSITE_HOST_REPORT_UNCHANGED" = "1" ] \
+            && [ "$STANDALONE_REPORT_UNCHANGED" = "1" ] \
+            && [ "$WEBSITE_STANDALONE_REPORT_UNCHANGED" = "1" ]; then
             echo "Only volatile test262 report metadata changed — skipping main commit."
             exit 0
           fi
@@ -3424,7 +3433,10 @@ jobs:
       contents: read
       # Read the just-landed merge_group's `test262-group-<sha>` artifact via
       # the artifacts REST API (a cross-run read), same as the #1956 step.
-      actions: read
+      actions: write
+      # The write level above also covers the cross-run artifact read and lets
+      # this job dispatch Pages after the queue-only baseline promotion below.
+      # The baseline commit is [skip ci], so no push-triggered Pages run follows it.
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -3777,3 +3789,13 @@ jobs:
           if [ "$PUSHED" != "1" ]; then
             echo "::warning::#3468 failed to push the root baseline after 8 re-anchor attempts. The landing page + regression floor stay at the previous SHA until the next queue merge promotes (self-heals). Re-run this push (or workflow_dispatch promote-baseline) to force it."
           fi
+
+      - name: Trigger Pages deploy after queue baseline refresh
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Queue-only baseline commits land in js2wasm-baselines and carry
+          # [skip ci], so neither the main push trigger nor the baseline
+          # promote job's dispatch reaches Pages for this path.
+          gh workflow run deploy-pages.yml --ref main || true
