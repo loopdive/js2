@@ -3582,6 +3582,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `.prototype`-as-value read demands a native proto object under
    *  `--target standalone`. Undefined until then. */
   nativeProtoTypeIdx?: number;
+  /**
+   * (#4664) Builtin brand -> absolute module-global index for the lazily
+   * materialized `$NativeProto` singleton. Kept on the shared context (rather
+   * than a module-private cache) so late import-global insertion can shift the
+   * recorded indices together with every emitted `global.get`.
+   */
+  nativeProtoGlobals?: Map<number, number>;
   /** (#2175 S0) Builtin-brand id table — a reserved high-negative i32 band
    *  disjoint from `classTagMap`'s range, so a `$NativeProto.$brand` (or the
    *  `$ClassMeta.$parentTag` externref-backed-subclass slot from #2101) is a
@@ -3663,6 +3670,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  dispatch in expressions/calls.ts consults this set to decide. Populated by
    *  `ensureStandaloneNativeMethodClosure`. */
   nativeProtoReceiverClosureStructTypes?: Set<number>;
+  /** (#4664) Exact metadata struct-type indices of seeded `$NativeProto`
+   * GETTER closures.
+   * Accessor dispatch treats their hidden first parameter as `this` only in
+   * the zero-argument `__call_accessor_get` bridge. A legacy direct call such
+   * as `const g = RegExp.prototype.global; g(re)` must keep passing `re` as the
+   * first ordinary argument, so these cannot share the all-arities method set
+   * above. `.call(thisArg)` still consults both sets. */
+  nativeProtoAccessorGetterClosureStructTypes?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */
