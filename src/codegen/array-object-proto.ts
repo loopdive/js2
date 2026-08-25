@@ -2878,8 +2878,15 @@ export function emitIteratorPrototypeSingleton(
   kind: NativeIteratorPrototypeKind,
 ): ValType | null {
   ensureObjectRuntime(ctx);
+  // `%XIteratorPrototype%[@@toStringTag]` is an own data property in ES2015.
+  // Materialize it on the same `$Object` singleton returned by
+  // `Object.getPrototypeOf(arrayIterator)`, rather than relying on the
+  // generic `$Object` fallback (which has no symbol-keyed property).
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   if (newObjectIdx === undefined) return null;
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
 
   const globalName = `__native_${kind.toLowerCase()}_iterator_prototype`;
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
@@ -2894,10 +2901,27 @@ export function emitIteratorPrototypeSingleton(
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
 
+  const objLocal = allocLocal(fctx, `__${kind.toLowerCase()}_iter_proto_${fctx.locals.length}`, {
+    kind: "externref",
+  });
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
-    { op: "global.set", index: globalIdx },
+    { op: "local.set", index: objLocal },
   ];
+  if (boxSymbolIdx !== undefined && defineValueIdx !== undefined) {
+    const tag = `${kind} Iterator`;
+    addStringConstantGlobal(ctx, tag);
+    initBody.push(
+      { op: "local.get", index: objLocal },
+      { op: "i32.const", value: 4 }, // Symbol.toStringTag
+      { op: "call", funcIdx: boxSymbolIdx },
+      ...stringConstantExternrefInstrs(ctx, tag),
+      { op: "f64.const", value: 0x04 }, // writable:false, enumerable:false, configurable:true
+      { op: "call", funcIdx: defineValueIdx },
+      { op: "drop" },
+    );
+  }
+  initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
