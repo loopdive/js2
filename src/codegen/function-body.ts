@@ -661,8 +661,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       flushLateImportShifts(ctx, fctx);
     }
 
-    const elemType: ValType = { kind: "externref" };
-    const vecTypeIdx = getOrRegisterVecType(ctx, "externref", elemType);
+    const vecTypeIdx = getOrRegisterVecType(ctx, "arguments");
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     const vecRef: ValType = { kind: "ref", typeIdx: vecTypeIdx };
 

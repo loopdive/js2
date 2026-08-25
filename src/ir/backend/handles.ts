@@ -22,7 +22,7 @@
 
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
-import type { IrClassMemberKind, IrFuncRef } from "../nodes.js";
+import type { IrClassMemberKind, IrFuncRef, IrTypeRef } from "../nodes.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
@@ -145,6 +145,26 @@ export interface IrClosureLowering {
 export interface IrRefCellLowering {
   readonly typeIdx: number;
   readonly fieldIdx: number;
+}
+
+/**
+ * Exact post-preparation handle for a nominal function-style constructor.
+ * Name-keyed legacy maps are deliberately absent: the resolver must return
+ * this only after source/unit/layout and synthesized-constructor bindings have
+ * been joined against one finalized ABI plan.
+ */
+export interface IrFnctorLowering {
+  readonly carrierType: ValType;
+  readonly reservedLayout: IrTypeRef;
+  readonly constructorFunc: IrFuncRef;
+  readonly captureParamTypes: readonly ValType[];
+  readonly tdzFlagParamTypes: readonly ValType[];
+  readonly userParamTypes: readonly ValType[];
+  readonly hiddenIdentity: boolean;
+  readonly constructorIdentityParamIndex: number | null;
+  readonly resultIsExternref: boolean;
+  readonly structTypeIdx?: number;
+  fieldIdx(name: string): number;
 }
 
 /** Linear-memory analogue of the one-field mutable ref-cell struct. */

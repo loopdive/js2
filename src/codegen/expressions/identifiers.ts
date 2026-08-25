@@ -867,7 +867,14 @@ function compileIdentifierCore(
   if (cancelRanges && cancelRanges.length > 0) {
     const pos = id.getStart();
     const insideDeclaringBlock = cancelRanges.some((r) => pos >= r.start && pos < r.end);
-    if (!insideDeclaringBlock) return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+    // A cancelled block declaration named `arguments` does not erase the
+    // enclosing function's implicit arguments binding.  Keep that binding
+    // available outside the declaring block; calls inside the block are
+    // resolved separately by the Annex-B call-site path.
+    const preservesImplicitArguments = name === "arguments" && fctx.localMap.has(name);
+    if (!insideDeclaringBlock && !preservesImplicitArguments) {
+      return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+    }
   }
 
   // (#3980, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
@@ -882,10 +889,11 @@ function compileIdentifierCore(
   // short-circuiting on the (near-universally) empty site list, so non-Annex-B
   // modules are byte-identical.
   const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
-  if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+  const preservesImplicitArguments = name === "arguments" && fctx.localMap.has(name);
+  if (annexBSites.length > 0 && !preservesImplicitArguments && annexBReadIsUnbound(annexBSites, id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
-  if (annexBReadEscapesFunctionScope(id)) {
+  if (!preservesImplicitArguments && annexBReadEscapesFunctionScope(id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
@@ -909,11 +917,28 @@ function compileIdentifierCore(
       emitUndefined(ctx, fctx);
       const undefLocal = allocLocal(fctx, `__annexb_undef_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: undefLocal });
-      fctx.body.push({ op: "local.get", index: flagLocal });
+      const boxed = fctx.boxedTdzFlags?.get(name);
+      if (boxed) {
+        // Captured Annex-B outer bindings share their TDZ state through an
+        // i32 ref cell.  The `tdzFlagLocals` entry then names the box local,
+        // not an i32 local, so dereference it before using it as a condition.
+        fctx.body.push({ op: "local.get", index: boxed.localIdx });
+        fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+      } else {
+        fctx.body.push({ op: "local.get", index: flagLocal });
+      }
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: [{ op: "local.get", index: outerLocal }],
+        then: (() => {
+          const valueBox = fctx.boxedCaptures?.get(name);
+          return valueBox
+            ? [
+                { op: "local.get", index: outerLocal },
+                { op: "struct.get", typeIdx: valueBox.refCellTypeIdx, fieldIdx: 0 },
+              ]
+            : [{ op: "local.get", index: outerLocal }];
+        })(),
         else: [{ op: "local.get", index: undefLocal }],
       });
       return { kind: "externref" };

@@ -3,11 +3,14 @@ id: 2668
 title: "ES5: canonical vec-index Object/property MOP residual"
 status: ready
 created: 2026-06-25
-updated: 2026-08-16
+updated: 2026-08-25
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
+  - src/codegen/typeof-delete.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -122,6 +125,24 @@ No claim is made beyond this partition.
   observed by the reader (`15.2.3.14-5-a-4`, `15.2.3.4-4-b-6`).
 - Host `_vecDefineOwnProperty`'s first-definition workaround (host reports
   all-false after an empty redefine) — unchanged, host-side.
+
+## 2026-08-25 follow-up slice — indexed `typeof` must observe overlay state
+
+Standalone `typeof a[i]` comparisons were folded from the checker-visible
+element type even when the module's descriptor overlay was armed. A delete on
+an `Object.keys` result therefore produced a runtime tombstone that dynamic
+reads observed, while the static-looking `typeof array[0]` comparison stayed
+folded to the original element type. The comparison path now suppresses that
+fold only when the standalone overlay route is active; the existing routed
+element read and `__typeof_*` helper provide the actual result.
+
+**Measured, authentic harness, exact 86-row family, standalone.** Base
+`ef5b5d335` (52 pass / 34 fail); head with this slice (53 pass / 33 fail).
+Partition: 1 fail → pass, 0 pass → fail, 0 other status changes, 85
+unchanged; **NET +1**. The gained row is
+`test/built-ins/Object/keys/15.2.3.14-5-a-4.js`. The four-row controls in the
+focused standalone vector suites remained green; the existing dynamic-HOF
+control failure (`expected 4, got 3`) is unrelated and unchanged.
 
 ### Instrument note for the next lane
 

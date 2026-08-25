@@ -1306,6 +1306,25 @@ export function compileTailDispatch(
         if (cea !== undefined) return cea;
       }
 
+      // A JavaScript empty-array literal starts as an evolving `any[]` in
+      // TypeScript.  Its element call signature is therefore absent even when
+      // the program has populated it with closures (`let fns = [];
+      // fns.push(() => 1); fns[0]()`); the callable-element helper correctly
+      // declines a statically non-callable element type, but the old fallback
+      // then evaluated and dropped the call.  Preserve JS's dynamic call
+      // semantics for this narrow array/any-element shape.  Typed arrays and
+      // arrays with a concrete primitive element type keep their existing
+      // TypeError/fallback behavior.
+      {
+        const elementFact = ctx.oracle.typeFactOf(elemAccess);
+        const elementIsUnresolved =
+          elementFact.kind === "any" || elementFact.kind === "unknown" || elementFact.kind === "unresolvable";
+        if (ctx.standalone && elementIsUnresolved && resolveArrayInfo(ctx, receiverType)) {
+          const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+          if (dyn !== null) return dyn;
+        }
+      }
+
       // (#3166 S1) Computed-key call on a class-instance FIELD holding a
       // closure: `c[1+1]()` where `[1+1] = () => …` is a class field. TS does
       // NOT track a member named "2" for a computed-name field, so the callee
