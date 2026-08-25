@@ -83,9 +83,8 @@ function factNeedsPropertyKeyRuntime(fact: TypeFact): boolean {
  * covers the remaining dynamic values (notably `x[object]` from ES5 T9).
  */
 function isOrdinaryArrayReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
-  const type = ctx.checker.getTypeAtLocation(receiver);
-  const typeName = type.getSymbol()?.name ?? type.aliasSymbol?.name;
-  if (typeName === "Array" || typeName === "ReadonlyArray") return true;
+  const receiverFact = ctx.oracle.typeFactOf(receiver);
+  if (receiverFact.kind === "array" || receiverFact.kind === "tuple") return true;
   const inner = skipTransparentExpressions(receiver);
   if (ts.isArrayLiteralExpression(inner)) return true;
   if (ts.isNewExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "Array") return true;
