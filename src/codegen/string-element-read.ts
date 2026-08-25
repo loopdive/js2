@@ -73,7 +73,8 @@ export function emitGuardedNativeStringElementGet(
   // it must enforce RequireObjectCoercible on the captured receiver before
   // either string probing or the dynamic index read.
   const receiverExpr = skipTransparentExpressions(recvExpr);
-  const isUndefinedIdx = ts.isIdentifier(receiverExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+  const isUndefinedIdx =
+    (ctx.standalone || ctx.wasi) && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
   flushLateImportShifts(ctx, fctx);
   fctx.body.push({ op: "local.set", index: recvLocal });
   const receiverTypeError = (): Instr[] =>

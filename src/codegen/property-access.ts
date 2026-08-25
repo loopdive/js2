@@ -3253,7 +3253,8 @@ function tryOpenObjectDynamicGet(
   // the predicate AFTER compiling the receiver, because that compilation may
   // register imports which must be settled before the guard captures its idx.
   const baseExpr = skipTransparentExpressions(expr.expression);
-  const isUndefinedIdx = ts.isIdentifier(baseExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+  const isUndefinedIdx =
+    (ctx.standalone || ctx.wasi) && !ts.isIdentifier(baseExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
   flushLateImportShifts(ctx, fctx);
   // §13.3 member access on null/undefined throws TypeError (keep parity with
   // the default read path's null guard).
@@ -3336,7 +3337,7 @@ function tryKnownFnctorDynamicObjectCarrierGet(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
-  const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
+  const isUndefinedIdx = ctx.standalone || ctx.wasi ? ensureExternIsUndefinedImport(ctx) : undefined;
   flushLateImportShifts(ctx, fctx);
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
   emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv", isUndefinedIdx);
@@ -4778,7 +4779,8 @@ export function compileElementAccess(
   if (objType.kind === "externref") {
     if (!isProvablyNonNull(expr.expression, ctx.checker)) {
       const receiverExpr = skipTransparentExpressions(expr.expression);
-      const isUndefinedIdx = ts.isIdentifier(receiverExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+      const isUndefinedIdx =
+        (ctx.standalone || ctx.wasi) && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
       flushLateImportShifts(ctx, fctx);
       emitNullCheckThrow(ctx, fctx, objType, expr, undefined, isUndefinedIdx);
     }

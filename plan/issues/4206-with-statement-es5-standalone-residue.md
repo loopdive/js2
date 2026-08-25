@@ -980,6 +980,11 @@ the canonical published baseline had A5_T4 already passing and A5_T5 as the
 single semantic flip. The remaining 14 local failures are provider-unavailable
 QuickJS rows, not regressions from this change.
 
+The merge-queue host sweep exposed 11 regressions when the standalone
+undefined predicate was also installed in JS-host mode. The predicate is now
+strictly standalone/WASI-gated. All 11 reported host Test262 paths pass again,
+while the two intended dynamic-with receiver checks remain 2/2 green.
+
 ### `language/statements/function` — 25 rows re-verified, clustered, none taken
 
 All 25 reproduce on this head. Clustering (so the next lane does not re-derive
