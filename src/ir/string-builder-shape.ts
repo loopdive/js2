@@ -6,15 +6,11 @@
  *
  * Legacy codegen (`src/codegen/string-builder.ts`) rewrites that shape into
  * a growable (and, per #1761, often presized) WasmGC i16 buffer instead of
- * per-append `__str_concat` cons-node allocation. The IR path
- * (`src/ir/lower.ts` et al.) does not implement that rewrite yet, so an
- * IR-claimed function containing this shape silently regresses to the
- * naive O(N)-allocation concat path — measured ~20x slower (Node's WasmGC
- * engine, `website/public/benchmarks/competitive/programs/string-hash.js`)
- * than the same source compiled legacy (`experimentalIR: false`), because
- * `run`'s untyped `number` params/return satisfy the IR individual-claim
- * gate today. `whyNotIrClaimable` calls `containsStringBuilderLoopShape` to
- * defer such functions to legacy until IR grows its own builder lowering.
+ * per-append `__str_concat` cons-node allocation. Generic IR builder loops
+ * now use the owned-append path, while #3518's exact constant-count/literal
+ * subset carries a checker-proven plan into one Prepared `string.repeat`
+ * plus one concat. Callers that cannot supply that proof retain the historic
+ * conservative deferral; the rollback switch restores the direct artifact.
  *
  * Deliberately independent of `src/codegen/string-builder.ts`:
  *   - avoids adding a codegen->ir runtime import edge (string-builder.ts
@@ -29,7 +25,7 @@
  *     just leaves an existing regression unfixed for that shape.
  */
 import { forEachChild, ts } from "../ts-api.js";
-import { containsCountedStringAppendCandidate } from "./analysis/counted-string-append.js";
+import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 
 function isFunctionScopeBoundary(node: ts.Node): boolean {
   return (
@@ -103,15 +99,40 @@ function loopBodyOnlyAppends(loopBody: ts.Node, name: string): boolean {
  *
  * General builder loops are claimed by IR by default through its
  * `__str_concat_owned` fast path. `JS2WASM_IR_STRING_BUILDER=0` remains the
- * kill switch for that ownership. Constant-count, literal-fragment loops are
- * always deferred because legacy additionally folds all iterations into one
- * `repeat(N)` plus one concat (#1004), which IR does not yet implement.
+ * kill switch for that ownership. A bare caller still defers constant-count,
+ * literal-fragment loops; production may admit only the exact loops for which
+ * it supplies the shared checker proof and retains the resulting plan.
  */
-export function stringBuilderForcedLegacy(body: ts.Node): boolean {
-  return (
-    (process.env.JS2WASM_IR_STRING_BUILDER === "0" && containsStringBuilderLoopShape(body)) ||
-    containsCountedStringAppendCandidate(body)
-  );
+export function stringBuilderForcedLegacy(
+  body: ts.Node,
+  planCountedAppend?: (loop: ts.ForStatement) => IrCountedStringAppendPlan | null,
+): boolean {
+  const compatibilityCandidates = countedStringAppendCandidateLoops(body);
+  if (!planCountedAppend) {
+    return (
+      (process.env.JS2WASM_IR_STRING_BUILDER === "0" && containsStringBuilderLoopShape(body)) ||
+      compatibilityCandidates.length > 0
+    );
+  }
+
+  const exactPlans = new Map<ts.ForStatement, IrCountedStringAppendPlan>();
+  const visit = (node: ts.Node): void => {
+    if (node !== body && isFunctionScopeBoundary(node)) return;
+    if (ts.isForStatement(node)) {
+      const plan = planCountedAppend(node);
+      if (plan) exactPlans.set(node, plan);
+    }
+    forEachChild(node, visit);
+  };
+  visit(body);
+
+  if (process.env.JS2WASM_IR_STRING_BUILDER === "0") {
+    return containsStringBuilderLoopShape(body) || compatibilityCandidates.length > 0 || exactPlans.size > 0;
+  }
+
+  // An old compatibility shape is admitted only when the production checker
+  // proves that exact loop. Unknown or stale proof remains on the direct path.
+  return compatibilityCandidates.some((loop) => !exactPlans.has(loop));
 }
 
 export function containsStringBuilderLoopShape(root: ts.Node): boolean {

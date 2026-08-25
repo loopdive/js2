@@ -12,6 +12,7 @@ export function buildLinearOptions(
     exposeArenaReset: options.allocator === "arena-reset",
     allocationPolicy: options.allocator === "analysis-stack" ? "analysis-stack-arena-v1" : "arena-v1",
     irInventoryOptions,
+    oracleBackend: options.oracleBackend,
     // #4539 — link topology. Both are undefined for every existing caller, so
     // the emitted binary is unchanged unless a link is explicitly requested.
     externImports: options.linearExternImports,

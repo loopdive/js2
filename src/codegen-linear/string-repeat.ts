@@ -31,7 +31,22 @@ export interface LinearStringRepeatReservation {
   readonly provider: WasmFunction;
 }
 
+/**
+ * Exact authority for an IR preparation that required the repeat provider.
+ *
+ * The preparation object is deliberately opaque here: this runtime module
+ * authenticates object identity, while the IR adapter authenticates the
+ * preparation's source/owner/provider contents. Keeping both checks makes a
+ * stale plan or a reservation borrowed from another source fail closed.
+ */
+export interface LinearStringRepeatReservationReceipt {
+  readonly sourceFile: ts.SourceFile;
+  readonly preparation: object;
+  readonly reservation: LinearStringRepeatReservation;
+}
+
 const reservations = new WeakMap<WasmModule, LinearStringRepeatReservation>();
+const reservationReceipts = new WeakSet<LinearStringRepeatReservationReceipt>();
 
 const LINEAR_MEMORY_MAX_BYTES = 256 * 65_536;
 const STRING_RECORD_HEADER_BYTES = 12;
@@ -298,4 +313,38 @@ export function authenticateLinearStringRepeatProvider(
 
 export function linearStringRepeatReservation(mod: WasmModule): LinearStringRepeatReservation | undefined {
   return reservations.get(mod);
+}
+
+/** Bind one exact early IR preparation to the module's reserved provider. */
+export function issueLinearStringRepeatReservationReceipt(
+  mod: WasmModule,
+  reservation: LinearStringRepeatReservation,
+  sourceFile: ts.SourceFile,
+  preparation: object,
+): LinearStringRepeatReservationReceipt {
+  if (reservations.get(mod) !== reservation) {
+    throw new Error("linear string.repeat receipt does not name this module's exact reservation");
+  }
+  authenticateLinearStringRepeatProvider(mod, reservation);
+  const receipt = Object.freeze({ sourceFile, preparation, reservation });
+  reservationReceipts.add(receipt);
+  return receipt;
+}
+
+/** Re-authenticate the source, preparation, reservation, provider, and ABI. */
+export function authenticateLinearStringRepeatReservationReceipt(
+  mod: WasmModule,
+  receipt: LinearStringRepeatReservationReceipt,
+  sourceFile: ts.SourceFile,
+  preparation: object,
+): number {
+  if (
+    !reservationReceipts.has(receipt) ||
+    receipt.sourceFile !== sourceFile ||
+    receipt.preparation !== preparation ||
+    reservations.get(mod) !== receipt.reservation
+  ) {
+    throw new Error("linear string.repeat reservation receipt lost its exact source/preparation identity");
+  }
+  return authenticateLinearStringRepeatProvider(mod, receipt.reservation);
 }
