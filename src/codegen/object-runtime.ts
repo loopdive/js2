@@ -208,6 +208,7 @@ import {
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   buildOwnToPrimitiveOverridePresent,
@@ -9555,24 +9556,22 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // `keys` listed `0,1,2,3`. All three now consult `__extern_has_idx`, which
   // `fillF64HoleHasIdxArms` teaches about the absence marker.
   const gateKeysOnPresence = (overlayRouteActive(ctx) || f64HolesActive(ctx)) && externHasIdxIdx !== undefined;
+  // __vec_index_enumerable was originally reserved only for a for-in site,
+  // leaving Object.keys with no way to exclude a non-enumerable array-index
+  // descriptor. Own-key enumeration has the same overlay source, so reserve
+  // the helper here when the module's own-key demand gate is active.
+  reserveVecIndexEnumerable(ctx);
   /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
-  const pushKeyI = (outLocal: number, iLocal: number): Instr[] => {
-    const push: Instr[] = [
-      { op: "local.get", index: outLocal },
-      { op: "local.get", index: iLocal },
-      { op: "f64.convert_i32_s" },
-      { op: "call", funcIdx: numToStringIdx as number },
-      { op: "call", funcIdx: objVecPushIdx as number },
-    ];
-    if (!gateKeysOnPresence) return push;
-    return [
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: iLocal },
-      { op: "f64.convert_i32_s" },
-      { op: "call", funcIdx: externHasIdxIdx as number },
-      { op: "if", blockType: { kind: "empty" }, then: push },
-    ];
-  };
+  const pushKeyI = (outLocal: number, iLocal: number): Instr[] =>
+    buildVecIndexKeyPush(ctx, {
+      objLocal: 0,
+      outLocal,
+      indexLocal: iLocal,
+      numToStringIdx: numToStringIdx as number,
+      objVecPushIdx: objVecPushIdx as number,
+      externHasIdxIdx,
+      gatePresence: gateKeysOnPresence,
+    });
   for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
     if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
       continue;
