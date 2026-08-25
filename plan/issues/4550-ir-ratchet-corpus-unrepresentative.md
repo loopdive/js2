@@ -301,10 +301,28 @@ coverage predicate is default-off and browser-safe: it returns true only when
    separately requires the finalized census's canonical entry source ID/key
    and source rows to match the inventory derived from that logical input. It
    rejects a stale ordinal, wrong source join, malformed schema/counts,
-   duplicate/missing owner, or a census borrowed from the previous file. A
-   compile exception, unsuccessful `CompileResult`, or missing census is
-   retained as explicit per-file evidence; it is never an empty success and
-   never permits a previous report to contribute rows.
+   duplicate/missing owner, or a census borrowed from the previous file.
+
+   Keep the public module result distinct from the completed linear-generation
+   transaction. The historical playground corpus deliberately contains
+   unresolved imports and unsupported direct-backend surfaces: its linear
+   generator can publish a complete current report/census before later
+   codegen diagnostics make public `CompileResult.success` false. A returned
+   unsuccessful result is therefore not, by itself, an instrumentation
+   failure and may contribute to the unchanged ratchet only when that same
+   invocation published a fresh `status: "complete"` census, the matching
+   compatibility report, and exact source/owner/count joins. Retain
+   `success: false`, the exact error count, a bounded canonical error
+   projection, and its lowercase SHA-256 in the per-file evidence; never call
+   it a successful module compile.
+
+   A thrown compile, a return before generation, a missing report/census, a
+   `generation-failed` census, or any stale/malformed/mismatched lifecycle or
+   population evidence remains a hard instrumentation failure and contributes
+   no rows. None may inherit a previous report. This is a generation-census
+   ratchet, not emitted-module acceptance; changing the corpus, resolving its
+   dependency graphs, or extracting only successful functions would change
+   the measured denominator and is outside C1.
 
    Early compiler validation may return before either linear generator begins,
    so no compiler-global reset is implied for those paths. The authenticated
@@ -327,11 +345,14 @@ coverage predicate is default-off and browser-safe: it returns true only when
    Remove the current implicit seed-on-missing behavior. A missing, malformed,
    or schema-invalid committed baseline is a hard failure in every mode except
    an explicit `--update`. `--update` may write the baseline only after every
-   expected file has a
-   successful compile and a fresh, complete, validated census; it can never
-   waive an instrumentation failure. With `--json`, stdout is exactly one JSON
-   document and human progress/diagnostics go to stderr. The ordinary command
-   retains its current human summary.
+   expected file has a fresh, complete, validated same-invocation generation,
+   matching report, and exact population joins. It applies the same eligibility
+   rule as ordinary comparison: a retained post-generation
+   `CompileResult.success === false` is allowed and remains explicit evidence,
+   while a throw, missing/failed generation, or any instrumentation failure is
+   not. `--update` can never waive such a failure. With `--json`, stdout is
+   exactly one JSON document and human progress/diagnostics go to stderr. The
+   ordinary command retains its current human summary.
 
 7. **Non-vacuous census tests.** The focused suite must include:
 
@@ -356,6 +377,11 @@ coverage predicate is default-off and browser-safe: it returns true only when
      immediate capture, followed by reset → watermark → pre-generator failing
      compile → immediate capture, proving the second read cannot recover the
      first report or census;
+   - a returned `success: false` after a fresh complete generation, proving the
+     exact current report/census still contributes while the bounded canonical
+     error projection and digest remain visible; sibling throw,
+     pre-generation return, and `generation-failed` mutations must contribute
+     nothing;
    - a late generation failure that retains prior exact rows and marks every
      unresolved owner rather than truncating the denominator;
    - missing/duplicate/unknown owner evidence, wrong source/entry/kind/ordinal,
