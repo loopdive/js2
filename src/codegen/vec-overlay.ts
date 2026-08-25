@@ -1503,7 +1503,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 3 },
         { op: "call", funcIdx: dpValueIdx },
         { op: "drop" },
-        ...growHighArrayIndexLength(4, 20, 13, vecBaseIdx),
+        // Ordinary sparse assignment already uses the companion store/read
+        // lane. Growing its logical length to u32::MAX makes the legacy vec
+        // read guard swallow lower dynamic indices before that companion can
+        // answer. Descriptor defines still need §10.4.2.2 length growth; the
+        // all-true ordinary-set flags distinguish the existing assignment
+        // call sites from the descriptor API's partial descriptor here.
+        ...growHighArrayIndexLength(4, 20, 13, vecBaseIdx, 3, SEED_FLAGS),
         // Write-back for index-keyed DATA defines carrying a [[Value]].
         { op: "local.get", index: 3 },
         { op: "i32.trunc_f64_s" },
