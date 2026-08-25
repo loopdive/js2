@@ -2377,8 +2377,7 @@ export function compileLiftedClosureBody(
       flushLateImportShiftsShared(ctx, liftedFctx);
     }
 
-    const elemType: ValType = { kind: "externref" };
-    const vti = getOrRegisterVecType(ctx, "externref", elemType);
+    const vti = getOrRegisterVecType(ctx, "arguments");
     const ati = getArrTypeIdxFromVec(ctx, vti);
     const vecRef: ValType = { kind: "ref", typeIdx: vti };
     const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
