@@ -1963,7 +1963,18 @@ function compileArrayDestructuringAssignment(
   }
 
   // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  if (isStrictContext(target, ctx.inferModuleStrictArguments) && findUnresolvableInArrayPattern(ctx, fctx, target)) {
+  // Nested patterns must observe a nullish element before PutValue resolves
+  // their leaf targets. In `[[x]] = []`, the missing outer element therefore
+  // throws the required TypeError before strict-mode's unresolved `x` check
+  // (#4719). Leaf-only patterns retain the existing early ReferenceError path.
+  const hasNestedPattern = target.elements.some(
+    (element) => ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element),
+  );
+  if (
+    isStrictContext(target, ctx.inferModuleStrictArguments) &&
+    findUnresolvableInArrayPattern(ctx, fctx, target) &&
+    !hasNestedPattern
+  ) {
     emitStrictPutValueThrow(ctx, fctx);
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
