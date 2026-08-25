@@ -1337,9 +1337,16 @@ PR.
    The collector invokes shared `planCountedStringAppend` read-only for the
    exact structural loop and never rebuilds that proof. Define a
    frozen `MultiPreparedStringLeafCandidateEvidence` extending the existing
-   function-value evidence with the entry source/source ID/declaration, the
-   exact projected `IrCountedStringAppendLoweringPlan`, imported target
-   declaration/source ID, and exact caller declaration/UnitId. Export only
+   function-value evidence with `shape: MultiPreparedStringLeafShape` retained
+   by exact object identity, the entry source/source ID/declaration, the exact
+   projected `IrCountedStringAppendLoweringPlan`, imported target declaration/
+   source ID, and exact caller declaration/UnitId. Candidate currentness must
+   re-walk the body against the retained `candidate.shape`, compare every
+   structural node, symbol, and proof-owned const closure by exact identity,
+   and call
+   `countedStringAppendPlanIsCurrent(proofContext, candidate.shape.plan)`; it
+   must not allocate a fresh shape/plan and compare those wrapper identities.
+   Export only
    `collectMultiPreparedStringLeafShapes`,
    `resolveMultiPreparedStringLeafCandidate`,
    `requireCurrentMultiPreparedStringLeafCandidate`, and
@@ -1352,11 +1359,19 @@ PR.
    export redundant boolean/assertion aliases solely for tests. The resolver input carries the current
    `CodegenContext`, entry source, `MultiPreparedFunctionValuePlan`, safe
    selection, projected lowering plans, graph safety, checker/oracle proof
-   context, and a `hasForeignLateProvider(unitId)` query. All return values are
-   immutable and every ordinary mismatch returns `undefined`/`false` before
-   mutation; currentness drift after a frozen candidate exists throws the
-   shared invariant vocabulary only when the caller explicitly requests the
-   invariant form.
+   context, and a `hasForeignLateProvider(unitId)` query. It requires the exact
+   same `ctx.irPlanningIdentityContext`,
+   `plan.identityPlan.identityContext`, and
+   `projectedLoweringPlans.identityContext` object; their source/declaration/
+   UnitId forward and reverse maps must join the exact retained sources,
+   declarations, units, and terminals. The selector's counted-plan map for the
+   candidate UnitId must be an exact singleton containing `shape.plan`, and
+   the projected counted-plan map must have the exact singleton
+   `shape.loop -> candidate.loweringPlan` entry for that candidate. All return
+   values are immutable and every ordinary mismatch returns
+   `undefined`/`false` before mutation; currentness drift after a frozen
+   candidate exists throws the shared invariant vocabulary only when the caller
+   explicitly requests the invariant form.
 
 2. **Exact structural candidate.** Admit one exported, top-level, bodyful,
    non-async, non-generator, non-generic, zero-parameter entry-source function
@@ -1434,20 +1449,35 @@ PR.
    prove its own calls do not change module arrays, maps, registries,
    Program-ABI plans/locators, or selection cardinalities.
 
-6. **Two-phase support currentness.** Wrap rather than alias
-   `functionValueSupportIsCurrent`. Initial candidate eligibility, before any
-   support allocation, requires the target body and support namespaces to be
-   empty. Stable candidate currentness is a separate predicate and must not
-   rerun those initial namespace-emptiness checks after allocation. Immediately
-   after `prepareTopLevelFunctionValueTargetSupport`, `before-prepare` requires
-   the target body still empty and authenticates the exact newly allocated
-   frozen support receipt, target/handle, trampoline function/handle/ref/
-   binding/one-call body, cache global/handle/ref/binding/type/init/mutability,
-   Program-ABI plans/current locators, and unique live trampoline/cache names.
-   `after-direct` authenticates that same receipt and current candidate/
-   callback edge while permitting a bodyful target; it does not claim that an
-   arbitrary nonempty body is the prepared one. C2 owns target body-array and
-   instruction-identity authentication using its preparation snapshot.
+6. **Three-boundary support currentness.** Wrap rather than alias
+   `functionValueSupportIsCurrent` and distinguish three exact boundaries:
+
+   - the pre-support candidate check requires the empty target body and empty
+     trampoline/cache namespaces; a mismatch is an ordinary pre-mutation
+     decline;
+   - immediately after `prepareTopLevelFunctionValueTargetSupport`, the
+     post-support/pre-body `before-prepare` check requires the target body still
+     empty and authenticates the exact frozen support receipt with
+     `functionValueSupportIsCurrent(ctx, candidate, receipt, true)`. The
+     support namespaces are now occupied and must not be tested for emptiness.
+     At this boundary the source-callable registry observation is the Program-
+     ABI authority for the target; only the trampoline/cache have session
+     plans and current locators. Authenticate the exact target/handle,
+     trampoline function/handle/ref/binding/one-call body, cache global/handle/
+     ref/binding/type/init/mutability, unique live support names, recomputed
+     support role/binding references, and reverse singleton row
+     `ctx.funcClosureSingletonKeyByFuncIdx.get(targetHandle) === legacyName`.
+     Any mismatch is fatal because support allocation already began; and
+   - `after-direct` authenticates the same receipt and current candidate/
+     callback edge with
+     `functionValueSupportIsCurrent(ctx, candidate, receipt, false)` while
+     permitting a bodyful target. C2 must additionally authenticate the exact
+     live target body-array reference and instruction-identity snapshot; this
+     boundary never treats an arbitrary nonempty body as the prepared one.
+
+   Stable candidate currentness is separate from the pre-support eligibility
+   predicate and never reruns the initial namespace-emptiness checks after
+   allocation.
 
 7. **Non-vacuous pure test matrix.** Build the full in-memory
    `website/playground/examples/benchmarks/string.ts` plus `helpers.ts` graph:
@@ -1554,7 +1584,11 @@ linear executable route, or second planner is in scope.
    `legacyBodyEmitted: true` and `irBodyEmitted: true`. Builder-off is the exact
    proof-disabled direct control.
 
-2. **Reject overlaps before allocation.** Maintain persistent frozen claimed
+2. **Reject overlaps before allocation.** The current
+   `EarlyMultiPreparedScalarLeafState.route` and entry-source route map are
+   structurally singular, so this checkpoint deliberately admits at most one
+   successful early route for the one entry source. It does not widen that API
+   into a multi-route container. Maintain persistent frozen claimed
    source/terminal/target snapshots. Start empty; after each successful earlier
    scalar route, derive a new snapshot without mutating the old one. Extend the
    array planner's existing resolve-then-prepare call to accept that snapshot
@@ -1569,10 +1603,13 @@ linear executable route, or second planner is in scope.
    candidate before its first mutation. Candidate resolution order is scalar,
    array, string, then generic function-value/Fibonacci. A conflict discovered only while
    inserting the final route map is too late because both planners may already
-   have allocated support. Positive controls must prove disjoint routes still
-   compose and a one-fact overlap leaves state byte/cardinality-equal to the
-   earlier-route-only control, not necessarily to the empty pre-orchestration
-   module.
+   have allocated support. Once an earlier route succeeds, every later family
+   must see its exclusion and decline before mutation. Positive controls prove
+   scalar, array, string, and generic/Fibonacci routes independently retain
+   their existing behavior in otherwise disjoint fixtures; they do not claim
+   simultaneous composition within one entry source. A one-fact overlap leaves
+   state byte/cardinality-equal to the earlier-route-only control, not
+   necessarily to the empty pre-orchestration module.
 
 3. **Exact early route and captured projection.** Define a frozen
    `MultiPreparedStringLeafRoute extends MultiPreparedLeafRouteBase` with
@@ -1755,9 +1792,9 @@ Add `tests/issue-3518-bench-string-prepared-cutover.test.ts` and extend
 - counter-dependent/prepend/self-fragment, multi-statement, dynamic or unsafe
   bound, non-unit/decreasing update, alias/reassignment/capture/getter/call,
   extra candidate/caller, callback source/ABI drift, provider/allocator/plan
-  tamper, class/module-init/cross-file, fast, WASI, IR-disabled, and unsupported
-  backend mutations decline before skip or fail with typed pre-emission
-  evidence.
+  tamper, class/module-init, an unexpected candidate-owned cross-file call
+  component, fast, WASI, IR-disabled, and unsupported backend mutations decline
+  before skip or fail with typed pre-emission evidence.
 
 The optimization ledger row `IR-OPT-COUNTED-LITERAL-STRING-APPEND` becomes
 retirement-ready only after semantic, output-shape, and paired runtime evidence
