@@ -8,7 +8,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { allocLocal, getLocalType } from "../context/locals.js";
+import { allocLocal, ensureForInIdentifierLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
 import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
@@ -3513,8 +3513,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
           // post-loop read all resolve to the SAME slot. Allocating a fresh
           // local here shadowed the hoisted one (writes never reached the body's
           // view of `x`).
-          const existingLocal = fctx.localMap.get(varName);
-          keyLocal = existingLocal !== undefined ? existingLocal : allocLocal(fctx, varName, { kind: "externref" });
+          keyLocal = ensureForInIdentifierLocal(fctx, varName);
         } else {
           // let/const head: fresh block-scoped local (Slice B refines this into
           // a per-iteration ref cell + TDZ flag).

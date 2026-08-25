@@ -64,6 +64,7 @@ import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
+import { emitToNumber } from "./coercion-engine.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -460,6 +461,18 @@ export function compileElementIndexI32(ctx: CodegenContext, fctx: FunctionContex
   const highIdx = highArrayIndexLiteralI32(key);
   if (highIdx !== undefined) {
     fctx.body.push({ op: "i32.const", value: highIdx });
+    return { kind: "i32" };
+  }
+  // A `for...in` target is stored as an externref because the loop writes
+  // property-key strings, even when TypeScript inferred a numeric index. The
+  // concrete vec path still needs its numeric position; coerce that string
+  // key with the normal ToNumber helper instead of asking compileExpression
+  // for i32 directly (which produces the zero default for an externref).
+  if (ts.isIdentifier(key) && fctx.forInIdentifierVars?.has(key.text)) {
+    const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
+    if (keyType === null) return null;
+    emitToNumber(ctx, fctx, keyType);
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     return { kind: "i32" };
   }
   if (tryEmitStaticI32Expression(ctx, fctx, key)) return { kind: "i32" };

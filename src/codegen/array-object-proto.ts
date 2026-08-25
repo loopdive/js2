@@ -88,7 +88,11 @@ import {
   emitStringProtoToStringFlat,
 } from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
-import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
+import {
+  appendStandaloneGlobalNamespaceSeeds,
+  appendStandaloneGlobalObjectCarrierSeeds,
+  standaloneGlobalEvalSeedInstrs,
+} from "./standalone-global-object-carriers.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -2765,21 +2769,9 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   const savedBody = fctx.body;
   fctx.body = [];
   ctx.liveBodies.add(savedBody);
-  for (const name of ["Array", "Object", "JSON", "Math", "Proxy", "Reflect"] as const) {
-    fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, name);
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
-    if (emitBuiltinNamespaceObject(ctx, fctx, name) === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    const defineIdx = ctx.funcMap.get("__defineProperty_value");
-    if (defineIdx === undefined) {
-      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" });
-      continue;
-    }
-    // Global builtin bindings: writable, non-enumerable, configurable.
-    fctx.body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
-  }
+  const evalSeeds = standaloneGlobalEvalSeedInstrs(ctx, fctx, objLocal);
+  appendStandaloneGlobalNamespaceSeeds(ctx, fctx, objLocal);
+  appendStandaloneGlobalObjectCarrierSeeds(ctx, fctx, objLocal);
   const namespaceSeeds = fctx.body;
   fctx.body = savedBody;
   ctx.liveBodies.delete(savedBody);
@@ -2789,6 +2781,7 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   if (!functionSeeds || newObjectIdx === undefined || defineValueIdx === undefined || boxNumberIdx === undefined) {
+    ctx.liveBodies.delete(evalSeeds);
     ctx.liveBodies.delete(namespaceSeeds);
     return null;
   }
@@ -2819,12 +2812,14 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
+    ...evalSeeds,
     ...functionSeeds,
     ...valueSeeds,
     ...namespaceSeeds,
     { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
   ];
+  ctx.liveBodies.delete(evalSeeds);
   ctx.liveBodies.delete(namespaceSeeds);
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });

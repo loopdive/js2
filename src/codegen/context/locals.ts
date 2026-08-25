@@ -15,6 +15,14 @@ export function allocLocal(fctx: FunctionContext, name: string, type: ValType): 
   return index;
 }
 
+/** Reuse/allocate an inline `var` for-in target and retain its string carrier. */
+export function ensureForInIdentifierLocal(fctx: FunctionContext, name: string): number {
+  const existing = fctx.localMap.get(name);
+  const index = existing !== undefined ? existing : allocLocal(fctx, name, { kind: "externref" });
+  (fctx.forInIdentifierVars ??= new Set()).add(name);
+  return index;
+}
+
 /**
  * #1847 — snapshot of the local-allocation state, for tentative compilation
  * that may be rolled back. Captures the locals-vector length so callers can
