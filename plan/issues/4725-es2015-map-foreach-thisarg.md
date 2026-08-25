@@ -16,6 +16,11 @@ goal: spec-completeness
 sprint: 77
 oracle-ratchet-allow:
   - src/codegen/map-runtime.ts
+loc-budget-allow:
+  - src/codegen/map-runtime.ts
+  - src/codegen/closures.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsClosure
 ---
 # #4725 — ES2015 Map.prototype.forEach forwards thisArg in standalone
 
