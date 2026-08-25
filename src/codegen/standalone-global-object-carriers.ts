@@ -57,6 +57,12 @@ export function appendStandaloneGlobalConstructorSeeds(
   objectLocal: number,
 ): void {
   if (!ctx.standalone && !ctx.wasi) return;
+  // Runtime-eval modules already construct callable constructor carriers at
+  // the eval boundary. Re-entering the full constructor emitter while the
+  // native global object is itself being built recursively expands Function
+  // parity modules and can exhaust codegen's stack. The ES5 reflection row is
+  // eval-free, so its concrete constructor-name carriers still take this path.
+  if ((ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0) return;
   for (const name of STANDALONE_GLOBAL_CONSTRUCTOR_NAMES) {
     fctx.body.push({ op: "local.get", index: objectLocal });
     addStringConstantGlobal(ctx, name);
@@ -84,6 +90,14 @@ export function appendStandaloneGlobalEvalSeed(ctx: CodegenContext, fctx: Functi
   // The key must exist for ES5 reflection. A demand-gated runtime-eval wrapper
   // may replace this undefined value when a callable eval property is needed.
   if (!ctx.standalone && !ctx.wasi) return;
+  // A direct/indirect eval boundary already owns `%eval%`'s callable identity
+  // and live-environment plumbing. Installing an undefined reflective stub in
+  // those modules makes the runtime evaluator observe that stub as the global
+  // binding and breaks direct eval before any later realm-property overwrite
+  // can help. Eval-free reflection modules still need the key below; modules
+  // with an eval boundary either seed the callable global-property wrapper or
+  // keep the direct intrinsic path authoritative.
+  if ((ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0) return;
   fctx.body.push({ op: "local.get", index: objectLocal });
   addStringConstantGlobal(ctx, "eval");
   fctx.body.push(
