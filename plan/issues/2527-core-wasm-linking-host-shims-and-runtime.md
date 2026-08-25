@@ -4,7 +4,7 @@ title: "Core-wasm module linking (shared store + canonical rec-group) for host-A
 status: in-progress
 sprint: 67
 created: 2026-06-20
-updated: 2026-06-24
+updated: 2026-08-25
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -14,6 +14,20 @@ language_feature: module-linking
 goal: architecture
 reconcile_note: "2026-06-24 (PO reconcile vs upstream/main): GENUINELY OPEN, actively in-flight — open PR #1997 (feat: canonical runtime rec-group identity primitive for core-wasm linking, senior-dev). Phase 0 spike is GREEN; the linking implementation has NOT merged yet (no feat commit on main; only docs #2524/#2512/#2514). Senior-dev/architecture lane — NOT a routine dev pull. → in-progress (was ready; TaskList #56 'completed' was premature — impl not on main)."
 related: [2512, 2514, 2525, 2523]
+loc-budget-allow:
+  - src/compiler.ts
+  - src/codegen/index.ts
+  - src/emit/binary.ts
+  - src/codegen/context/types.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/number-format-native.ts
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/compiler.ts::runPipeline
+  - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/package-linker.ts::compileLinkedProject
 ---
 
 ## Phase 0 spike result (2026-06-20) — GREEN ✅
@@ -178,9 +192,9 @@ risk* (#2514 risk #2) is "Binaryen must preserve the canonical rec group
 verbatim" and whose precondition is a *verifiable* notion of "two modules
 declare the identical canonical rec group".
 
-**This slice delivers that identity primitive** (`src/emit/canonical-recgroup.ts`),
-which is the keystone every later Phase-2 step builds on. It is **pure analysis,
-behavior-neutral** (zero codegen change):
+The initial identity primitive (`src/emit/canonical-recgroup.ts`) was the
+keystone for the Phase-2 implementation. The current compiler extends it with
+an emitted canonical group and a raw-binary drift gate:
 
 - `RUNTIME_RECGROUP_TYPE_NAMES` — the closed, ordered, *name-stable* set of GC
   runtime types that cross a shared-store link boundary (string family +
@@ -201,33 +215,60 @@ Exported from the public API (`src/index.ts`). Proven by
 stable across *different* user programs sharing runtime types (the core ABI
 premise), (C1–C4) name/index-independent but order/structure/topology-sensitive.
 
-**Two empirical findings that shape Phase 2 (recorded here so the follow-on
+**Two empirical findings that shaped Phase 2 (recorded here so follow-on work
 doesn't re-discover them):**
 
-1. **Today the GC runtime types are NOT in a `(rec …)` group at all** — a probe
-   of a real string+array module shows `computeRecGroups` (in
-   `src/emit/binary.ts`) emits every one of them as a *singleton* (it only
-   groups types with *forward* references; the string/vec families reference
-   each other by *lower* index). So the next concrete Phase-2 step is to emit
-   the ABI members as **one contiguous frozen rec group in the canonical
-   order**, not to "preserve" an existing group.
+1. **Before P2a, the GC runtime types were NOT in a `(rec …)` group at all** —
+   a probe of a real string+array module showed `computeRecGroups` (in
+   `src/emit/binary.ts`) emitting every one as a *singleton*. P2a now emits the
+   ABI members as **one contiguous frozen rec group in canonical order** and
+   retains that range through DCE.
 2. **`wasm-opt` renames/renumbers all named types** (`$__str_data` → `$6`) and
    is free to merge/reorder them — confirming risk #2 is real. The fingerprint
    is name/index-independent precisely so it can detect a post-`wasm-opt`
-   *structural* perturbation; the mitigation (pin the type section / disable
-   GC type-merging for the ABI group) is the follow-on engineering, now
-   measurable against this hash.
+   *structural* perturbation. P2b now fails safe to the unoptimized bytes when
+   that happens; CI packaging can add stricter optimizer pinning once the
+   provider ABI grows beyond this slice.
 
-**Note on member naming:** the externref vec/arr variants are emitted with an
-index-suffixed name (`__arr_ref_6`, `__vec_ref_6`) that is NOT stable across
-modules, so they are intentionally excluded from the *name-keyed* ABI list;
-their structure is still verified transitively (as external `x` ref tokens)
-when a group member references them.
+**Note on member naming:** the eagerly reserved externref/f64 vec/arr members
+use stable names and are now included in ABI v2. Later element-specific
+variants can carry index-suffixed names, so they remain outside the closed
+ABI list and are not linkable runtime types.
 
-Follow-on (not in this slice): (P2a) emit the ABI members as one frozen
-contiguous rec group; (P2b) wasm-opt rec-group preservation / post-emit
-canonical-hash gate wired into CI; (P2c) `runtime.wasm` exporting GC helpers +
-user modules importing them.
+## Phase 2 implementation slice (2026-08-25) — frozen group, drift gate, runtime provider
+
+The compiler now implements P2a/P2b and the first P2c helper family:
+
+- Native-string codegen eagerly registers the complete ordered ABI-v2 member
+  set, records one contiguous canonical range, roots that range during DCE,
+  and emits it as one `(rec ...)` group. Any adjacent-group merge is rejected
+  rather than silently changing the link contract.
+- `CompileResult.runtimeRecGroupFingerprint` records the structural identity.
+  `verifyRuntimeRecGroupBinary` parses raw emitted type sections without names
+  or absolute indices. The compiler verifies codegen output and rejects
+  optimizer output that drifts, retaining the unoptimized bytes with a warning.
+- `runtimeProvider: true` publishes the native number-format exports under the
+  `js2wasm:runtime` ABI. `scripts/build-runtime-provider.mjs` builds a
+  content-addressed, zero-import provider and canary-verifies its exports and
+  ABI metadata. Consumers opt in with `link: ["js2wasm:runtime"]`.
+
+The prerequisite package-link slice is now implemented for the safe ABI subset:
+directly declared named functions with deterministic declaration signatures.
+`compileProject` emits real content-addressed provider binaries and a
+`PackageLinkPlan`, rewrites consumer imports into deterministic
+`js2wasm:npm:<package>:<hash>` namespaces, validates provider/consumer function
+types by engine instantiation, and instantiates package DAGs in dependency
+order. The in-process/disk cache reports `compiledProviders` versus
+`cachedProviders`; `result.importObject` preserves legacy direct-instantiation
+callers while `instantiateLinkedProject` provides fresh provider lifecycles.
+
+Runtime value/global/class/object exports, default/re-export/namespace imports,
+host-dependent providers, ambiguous entrypoints, and package cycles remain an
+explicit deterministic monolithic fallback. This is intentional: the current
+ABI cannot safely preserve those boundaries, and `externals` can silently drop
+them. A source-text cache is never treated as separate Wasm compilation. Host
+shims, immutable-global/object/closure ABI slices, and broader package export
+forms remain follow-on work.
 
 ## Measurement rule for whoever packages the runtime-eval provider (#2928 E7)
 

@@ -57,6 +57,13 @@ import {
   validateSafeMode,
 } from "./compiler/validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
+import {
+  extractRuntimeGroup,
+  fingerprintRuntimeGroup,
+  RUNTIME_RECGROUP_TYPE_NAMES,
+  verifyRuntimeRecGroupBinary,
+  type RuntimeGroupFingerprint,
+} from "./emit/canonical-recgroup.js";
 import { WasmEncoder } from "./emit/encoder.js";
 import { generateSourceMap } from "./emit/sourcemap.js";
 import { emitWat } from "./emit/wat.js";
@@ -663,6 +670,52 @@ function failResult(errors: CompileError[], telemetry: Partial<FailureTelemetry>
 }
 
 /**
+ * Capture the frozen runtime-type ABI after all codegen/DCE passes have run.
+ *
+ * The sidecar is deliberately produced only when the module carries the
+ * canonical range marker. A partial name scan is not a link contract: a
+ * provider and consumer must both retain the complete contiguous group.
+ */
+function getRuntimeRecGroupFingerprint(mod: WasmModule): RuntimeGroupFingerprint | undefined {
+  const range = mod.canonicalRuntimeRecGroup;
+  if (!range) return undefined;
+  const expectedCount = range.end - range.start + 1;
+  const members = extractRuntimeGroup(mod);
+  const fingerprint = fingerprintRuntimeGroup(mod);
+  const namesMatch =
+    fingerprint.count === RUNTIME_RECGROUP_TYPE_NAMES.length &&
+    fingerprint.members.every((name, index) => name === RUNTIME_RECGROUP_TYPE_NAMES[index]);
+  const rangeMatches =
+    members.length === expectedCount && members.every((member, index) => member.absIndex === range.start + index);
+  if (
+    range.start < 0 ||
+    range.end < range.start ||
+    fingerprint.count !== expectedCount ||
+    !namesMatch ||
+    !rangeMatches
+  ) {
+    throw new Error(
+      `canonical runtime rec-group metadata disagrees with the type table ` +
+        `(range ${range.start}..${range.end}, named members ${fingerprint.members.join(", ")})`,
+    );
+  }
+  if (fingerprint.abiVersion !== range.abiVersion) {
+    throw new Error(
+      `canonical runtime rec-group ABI mismatch (metadata v${range.abiVersion}, ` +
+        `fingerprint v${fingerprint.abiVersion})`,
+    );
+  }
+  return fingerprint;
+}
+
+/** Return a concise drift reason, or undefined when the binary is link-safe. */
+function runtimeRecGroupDrift(binary: Uint8Array, expected?: RuntimeGroupFingerprint): string | undefined {
+  if (!expected) return undefined;
+  const verification = verifyRuntimeRecGroupBinary(binary, expected);
+  return verification.valid ? undefined : (verification.detail ?? "the canonical runtime rec-group was not found");
+}
+
+/**
  * #1927 — apply the optional Binaryen wasm-opt pass in place over an already
  * produced {@link CompileResult}. This is the ONLY async step in the pipeline;
  * the synchronous core ({@link runPipeline}) never runs it. The two async entry
@@ -683,7 +736,21 @@ async function applyOptimize(
     preserveNames: options.preserveDebugNames,
   });
   if (optResult.optimized) {
-    result.binary = optResult.binary;
+    const drift = runtimeRecGroupDrift(optResult.binary, result.runtimeRecGroupFingerprint);
+    if (drift) {
+      // Binaryen is an optional accelerator. Never publish its output when it
+      // changes the GC type identity required by a separately linked module;
+      // retain the codegen bytes and make the fallback visible to callers.
+      pushSourceAnchoredDiagnostic(
+        result.errors,
+        anchor,
+        `wasm-opt output was rejected because it changed the canonical runtime rec-group — ${drift}; ` +
+          `using the unoptimized module`,
+        "warning",
+      );
+    } else {
+      result.binary = optResult.binary;
+    }
   }
   if (optResult.warning) {
     pushSourceAnchoredDiagnostic(result.errors, anchor, optResult.warning, "warning");
@@ -755,6 +822,7 @@ function buildCodegenOptions(
     // (deduped). `link: ["node:fs"]` is the only spelling; the old `linkNodeShims`
     // boolean was removed.
     link: [...new Set(options.link ?? [])],
+    linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
     directEval: options.directEval,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
@@ -801,6 +869,7 @@ function buildCodegenOptions(
     externNativeTypes: options.externNativeTypes === true,
     externImportModule: options.externImportModule,
     importMemory: options.importMemory,
+    runtimeProvider: options.runtimeProvider === true,
     jsxRuntime: prep?.jsxRuntime,
     dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };
@@ -1147,6 +1216,33 @@ function runPipeline(input: PipelineInput): CompileResult {
     return failResult(errors, telemetry);
   }
 
+  // #2527 — retain a link-time proof for the frozen GC type ABI. This check
+  // runs on the raw bytes produced by the compiler, before optional Binaryen
+  // optimization, so a bad emitter or an accidental DCE/layout change cannot
+  // be mistaken for a link-compatible artifact.
+  let runtimeRecGroupFingerprint: RuntimeGroupFingerprint | undefined;
+  try {
+    runtimeRecGroupFingerprint = getRuntimeRecGroupFingerprint(mod);
+    const drift = runtimeRecGroupDrift(binary, runtimeRecGroupFingerprint);
+    if (drift) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `emitted WebAssembly does not contain the canonical runtime rec-group — ${drift}`,
+        "error",
+      );
+      return failResult(errors, telemetry);
+    }
+  } catch (e) {
+    pushSourceAnchoredDiagnostic(
+      errors,
+      diagnosticAnchor,
+      `runtime rec-group ABI verification failed: ${e instanceof Error ? e.message : String(e)}`,
+      "error",
+    );
+    return failResult(errors, telemetry);
+  }
+
   // Step 3b: Optimize — applied by the async entry adapters via applyOptimize,
   // not here. This synchronous core ignores options.optimize.
 
@@ -1239,6 +1335,7 @@ function runPipeline(input: PipelineInput): CompileResult {
     stringPool: mod.stringPool,
     sourceMap: sourceMapJson,
     imports,
+    runtimeRecGroupFingerprint,
     targetProfile,
     hostImportInventory,
     hostImportSummary,
@@ -1291,7 +1388,19 @@ export async function compileSource(
       preserveNames: options.preserveDebugNames,
     });
     if (optResult.optimized) {
-      result.binary = optResult.binary;
+      const drift = runtimeRecGroupDrift(optResult.binary, result.runtimeRecGroupFingerprint);
+      if (drift) {
+        result.errors.push({
+          message:
+            `wasm-opt output was rejected because it changed the canonical runtime rec-group — ${drift}; ` +
+            `using the unoptimized module`,
+          line: 0,
+          column: 0,
+          severity: "warning",
+        });
+      } else {
+        result.binary = optResult.binary;
+      }
     }
     if (optResult.warning) {
       result.errors.push({ message: optResult.warning, line: 0, column: 0, severity: "warning" });

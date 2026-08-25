@@ -483,7 +483,11 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
-import { irNativeNumberToFixedAvailable, irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462/#4576
+import {
+  emitNativeNumberFormat,
+  irNativeNumberToFixedAvailable,
+  irNativeNumberToStringAvailable,
+} from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
@@ -4411,6 +4415,43 @@ export interface GeneratedModule extends GeneratedCodegenModule {
   moduleInitPlanning?: IrModuleInitPlanningEvidence;
 }
 
+const SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS = [
+  "number_toString",
+  "number_toString_radix",
+  "number_toFixed",
+  "number_toPrecision",
+  "number_toExponential",
+] as const;
+
+/**
+ * Publish the compiler-owned number-format ABI for `js2wasm:runtime`.
+ *
+ * These are the raw `(f64[, f64]) -> externref` helpers, rather than wrapper
+ * functions returning a source-level string. The exact signatures are the
+ * same ones consumers import, and the native-string rec group is retained by
+ * the normal #2527 metadata/emit path so the returned GC strings canonicalize
+ * across the shared store.
+ */
+function emitSharedRuntimeProviderExports(ctx: CodegenContext): void {
+  if (!ctx.runtimeProvider) return;
+  if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+    throw new Error("the js2wasm:runtime provider requires standalone/WASI native strings");
+  }
+
+  emitNativeNumberFormat(ctx, new Set(SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS));
+  for (const name of SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS) {
+    const funcIdx = ctx.funcMap.get(name);
+    const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+    if (funcIdx === undefined || !func || func.name !== name) {
+      throw new Error(`shared runtime provider failed to materialize ${name}`);
+    }
+    func.exported = true;
+    if (!ctx.mod.exports.some((entry) => entry.name === name && entry.desc.kind === "func")) {
+      exportFunc(ctx.mod, name, funcIdx);
+    }
+  }
+}
+
 export function generateModule(
   ast: TypedAST,
   options?: CodegenOptions,
@@ -5902,6 +5943,11 @@ export function generateModule(
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
     // Additive + before dead-elim (which remaps declaredFuncRefs).
     collectDeclaredFuncRefs(ctx, { additive: true });
+
+    // #2527 — publish compiler-owned helpers only for the dedicated runtime
+    // provider build, before DCE so their exports keep the full dependency
+    // closure alive and all type references are remapped together.
+    emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
@@ -9273,6 +9319,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
     // Additive + before dead-elim (which remaps declaredFuncRefs).
     collectDeclaredFuncRefs(ctx, { additive: true });
+
+    // #2527 — same provider publication point as the single-source pipeline.
+    emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
