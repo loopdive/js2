@@ -23,6 +23,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { getStringToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
@@ -1049,7 +1050,9 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
 
   // ── __object_assign(externref target, externref sources) -> externref ─────
   //
-  // ES §20.1.2.1 Object.assign(target, ...sources). `sources` is a $ObjVec of
+  // ES §20.1.2.1 Object.assign(target, ...sources). Step 1 applies §7.1.20
+  // ToObject to the target before any source is inspected; null and undefined
+  // therefore throw a TypeError. `sources` is a $ObjVec of
   // source externrefs (the call sites build it via __js_array_new/__js_array_push,
   // which standalone routes to __objvec_new/__objvec_push — same signatures). For
   // each source that is one of our $Objects, copy every LIVE + enumerable own
@@ -1063,7 +1066,30 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   //         6=srcAny(anyref) 7=so(ref null $Object) 8=arr(ref $PropMap) 9=cap 10=i
   //         11=e(ref null $PropEntry) 12=srcExt(externref)
   {
+    // The helper is selected only for native-first/no-host lowering. Keep the
+    // host body byte-identical (its JS import already performs ToObject), but
+    // make the native path use the singleton-aware nullish predicate when the
+    // S1 representation is active. In legacy mode `ref.is_null` covers both
+    // null and the null-backed undefined representation.
+    const nullishPredicateIdx = ctx.funcMap.get("__extern_is_nullish");
+    const targetNullishCheck: Instr =
+      nullishPredicateIdx !== undefined ? { op: "call", funcIdx: nullishPredicateIdx } : { op: "ref.is_null" };
+    const nativeTargetGuard: Instr[] =
+      ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
+        ? [
+            { op: "local.get", index: 0 },
+            targetNullishCheck,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+                forceInModuleCtor: true,
+              }),
+            },
+          ]
+        : [];
     const body: Instr[] = [
+      ...nativeTargetGuard,
       // any = any.convert_extern(sources) ; if !$ObjVec → return target
       { op: "local.get", index: 1 },
       { op: "any.convert_extern" },
