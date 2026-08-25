@@ -39,6 +39,10 @@ import {
 } from "./provider-manifest.js";
 
 const LINKER_VERSION = PROVIDER_LINKER_ABI_VERSION;
+// The generated entry facade is part of the provider ABI. Bump this when its
+// source shape changes so an old provider cannot be reused with new wrappers.
+const PROVIDER_FACADE_ABI_VERSION = 3;
+const LINKED_DEFAULT_DECLARATION = "__js2wasm_default";
 
 export interface PackageLinkInput {
   allFiles: Map<string, string>;
@@ -58,6 +62,8 @@ export type PackageLinkAttempt =
 interface FunctionExport {
   name: string;
   declaration: ts.FunctionDeclaration;
+  /** Physical source file containing the declaration (aliases may cross files). */
+  sourceFile: string;
   /** A missing/any/unknown annotation requires engine signature validation. */
   uncertain: boolean;
 }
@@ -82,6 +88,14 @@ interface ExternalBinding {
   target: string;
   exportName: string;
   localName: string;
+}
+
+function linkedBindingLookupNames(binding: Pick<ExternalBinding, "exportName" | "localName">): string[] {
+  if (binding.exportName !== "default") return [binding.exportName];
+  // The declaration stub gives default imports a legal stable function name;
+  // different codegen paths key the import by that declaration name or by the
+  // source-level local alias. Keep all spellings pointed at one Wasm field.
+  return ["default", LINKED_DEFAULT_DECLARATION, binding.localName];
 }
 
 interface CachedProvider {
@@ -186,6 +200,13 @@ function functionSignature(exported: FunctionExport, sourceFile: ts.SourceFile):
     })
     .join(", ");
   const returnType = fn.type?.getText(sourceFile) ?? "any";
+  // A declaration-only facade cannot spell `declare function default`. Keep a
+  // stable private name; buildDeclarationStub publishes that name and aliases
+  // it to the default slot. The compiler's default-import path can then be
+  // rewritten to the same deterministic local declaration when needed.
+  if (exported.name === "default") {
+    return `export declare function ${LINKED_DEFAULT_DECLARATION}${typeParameters}(${parameters}): ${returnType};`;
+  }
   return `export declare function ${exported.name}${typeParameters}(${parameters}): ${returnType};`;
 }
 
@@ -234,51 +255,262 @@ function primitiveFunctionState(declaration: ts.FunctionDeclaration): BoundaryTy
   return states.includes("uncertain") ? "uncertain" : "safe";
 }
 
-/**
- * Find the directly declared function exports of a package entry.  Re-exported
- * functions and value/class exports are intentionally rejected in this ABI
- * slice: silently dropping a value at a Wasm boundary is worse than choosing
- * the documented monolithic fallback.
- */
-function inspectFunctionExports(
+type ExportResolution = { kind: "function"; exported: FunctionExport } | { kind: "unsupported"; reason: string };
+
+interface PackageExportAnalysis {
+  exports: Map<string, ExportResolution>;
+  cycle?: boolean;
+}
+
+interface PackageExportAnalyzer {
+  node: PackageNode;
+  sourceByPhysical: Map<string, string>;
+  physicalByKey: Map<string, string>;
+  packageByFile: Map<string, string>;
+  fileKeys: Map<string, string>;
+  projectResolutions: ProjectModuleResolutions;
+}
+
+function unsupportedExport(reason: string): ExportResolution {
+  return { kind: "unsupported", reason };
+}
+
+function cloneFunctionExport(exported: FunctionExport, name: string): FunctionExport {
+  return { ...exported, name };
+}
+
+function localDeclarationMaps(
   fileName: string,
-  source: string,
-): { exports?: Map<string, FunctionExport>; reason?: string } {
-  const sourceFile = parseSource(fileName, source);
-  const exports = new Map<string, FunctionExport>();
-  let sawRuntimeExport = false;
+  sourceFile: ts.SourceFile,
+): {
+  functions: Map<string, ExportResolution>;
+  values: Map<string, ExportResolution>;
+  defaultExport?: ExportResolution;
+} {
+  const functions = new Map<string, ExportResolution>();
+  const values = new Map<string, ExportResolution>();
+  let defaultExport: ExportResolution | undefined;
+
   for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name && isExported(statement)) {
-      if (isDefault(statement)) return { reason: "default package exports are not yet link-safe" };
-      const boundaryState = primitiveFunctionState(statement);
-      if (boundaryState === "unsupported") return { reason: "package function has a non-primitive ABI signature" };
-      exports.set(statement.name.text, {
-        name: statement.name.text,
-        declaration: statement,
-        uncertain: boundaryState === "uncertain",
-      });
-      sawRuntimeExport = true;
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name) {
+        const state = primitiveFunctionState(statement);
+        functions.set(
+          statement.name.text,
+          state === "unsupported"
+            ? unsupportedExport("package function has a non-primitive ABI signature")
+            : {
+                kind: "function",
+                exported: {
+                  name: statement.name.text,
+                  declaration: statement,
+                  sourceFile: fileName,
+                  uncertain: state === "uncertain",
+                },
+              },
+        );
+      }
+      if (isDefault(statement)) {
+        const state = primitiveFunctionState(statement);
+        defaultExport =
+          state === "unsupported"
+            ? unsupportedExport("default function has a non-primitive ABI signature")
+            : {
+                kind: "function",
+                exported: {
+                  name: "default",
+                  declaration: statement,
+                  sourceFile: fileName,
+                  uncertain: state === "uncertain",
+                },
+              };
+      }
       continue;
     }
-    if (!isExported(statement)) continue;
-    if (
-      ts.isVariableStatement(statement) ||
-      ts.isClassDeclaration(statement) ||
-      ts.isEnumDeclaration(statement) ||
-      (ts.isExportAssignment(statement) && !ts.isIdentifier(statement.expression))
-    ) {
-      return { reason: "package exports a value, class, enum, or expression boundary" };
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        const name = ts.isIdentifier(declaration.name) ? declaration.name.text : undefined;
+        if (name) values.set(name, unsupportedExport("package exports a value boundary"));
+      }
+      continue;
     }
-    if (ts.isExportDeclaration(statement)) {
-      return { reason: "re-exported package entrypoints are not yet link-safe" };
+    if (ts.isClassDeclaration(statement)) {
+      if (statement.name) values.set(statement.name.text, unsupportedExport("package exports a class boundary"));
+      if (isDefault(statement)) defaultExport = unsupportedExport("package exports a class boundary");
+      continue;
     }
-    // Interfaces and type aliases have no runtime boundary and are harmless.
-    if (!ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement)) {
-      return { reason: "unsupported runtime package export declaration" };
+    if (ts.isEnumDeclaration(statement)) {
+      values.set(statement.name.text, unsupportedExport("package exports an enum boundary"));
     }
   }
-  if (!sawRuntimeExport) return { reason: "package entry has no directly exported functions" };
-  return { exports };
+  return { functions, values, defaultExport };
+}
+
+function packageResolvedTarget(
+  analyzer: PackageExportAnalyzer,
+  fileName: string,
+  specifier: string,
+): string | undefined {
+  const key = analyzer.fileKeys.get(fileName);
+  const targetKey = key ? analyzer.projectResolutions[key]?.[specifier] : undefined;
+  if (!targetKey) return undefined;
+  const target = analyzer.physicalByKey.get(targetKey);
+  if (!target || analyzer.packageByFile.get(target) !== analyzer.node.root) return undefined;
+  return target;
+}
+
+function resolveLocalExport(locals: ReturnType<typeof localDeclarationMaps>, name: string): ExportResolution {
+  return (
+    locals.functions.get(name) ?? locals.values.get(name) ?? unsupportedExport(`package export ${name} is not defined`)
+  );
+}
+
+/**
+ * Analyze a package's exact relative export graph. Unsupported declarations
+ * are retained as named resolutions rather than poisoning the whole package;
+ * only a binding that crosses the package boundary decides whether linking is
+ * safe. This is what lets `export class Box` coexist with a linkable `add`.
+ */
+function analyzePackageExports(analyzer: PackageExportAnalyzer): PackageExportAnalysis {
+  const cache = new Map<string, PackageExportAnalysis>();
+  const visiting = new Set<string>();
+
+  function analyzeFile(fileName: string): PackageExportAnalysis {
+    const cached = cache.get(fileName);
+    if (cached) return cached;
+    if (visiting.has(fileName)) return { exports: new Map(), cycle: true };
+    visiting.add(fileName);
+    const source = analyzer.sourceByPhysical.get(fileName);
+    if (source === undefined) {
+      const missing = { exports: new Map<string, ExportResolution>(), cycle: true };
+      visiting.delete(fileName);
+      cache.set(fileName, missing);
+      return missing;
+    }
+    const sourceFile = parseSource(fileName, source);
+    const locals = localDeclarationMaps(fileName, sourceFile);
+    const exports = new Map<string, ExportResolution>();
+    const explicitExports = new Set<string>();
+    let cycle = false;
+
+    const publish = (name: string, resolution: ExportResolution, fromExportStar = false): void => {
+      // Explicit exports win over `export *` collisions, matching ESM's
+      // deterministic surface. A duplicate explicit export is conservatively
+      // marked unsupported rather than selecting one arbitrarily.
+      const previous = exports.get(name);
+      if (!previous) {
+        exports.set(name, resolution);
+        if (!fromExportStar) explicitExports.add(name);
+      } else if (fromExportStar && explicitExports.has(name)) {
+        return;
+      } else if (!fromExportStar && !explicitExports.has(name)) {
+        exports.set(name, resolution);
+        explicitExports.add(name);
+      } else {
+        const sameFunction =
+          previous.kind === "function" &&
+          resolution.kind === "function" &&
+          previous.exported.sourceFile === resolution.exported.sourceFile &&
+          previous.exported.declaration === resolution.exported.declaration;
+        if (!sameFunction) exports.set(name, unsupportedExport(`ambiguous re-export ${name}`));
+      }
+    };
+
+    for (const statement of sourceFile.statements) {
+      if (ts.isFunctionDeclaration(statement) && isExported(statement)) {
+        if (isDefault(statement)) {
+          const resolution = locals.defaultExport ?? unsupportedExport("default function export is unavailable");
+          publish("default", resolution);
+        } else if (statement.name) {
+          publish(
+            statement.name.text,
+            locals.functions.get(statement.name.text) ?? unsupportedExport("function export unavailable"),
+          );
+        }
+        continue;
+      }
+      if (isExported(statement) && ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) {
+            publish(
+              declaration.name.text,
+              locals.values.get(declaration.name.text) ?? unsupportedExport("value export unavailable"),
+            );
+          }
+        }
+        continue;
+      }
+      if (isExported(statement) && ts.isClassDeclaration(statement)) {
+        const name = isDefault(statement) ? "default" : statement.name?.text;
+        if (name) publish(name, unsupportedExport("package exports a class boundary"));
+        continue;
+      }
+      if (isExported(statement) && ts.isEnumDeclaration(statement)) {
+        publish(statement.name.text, unsupportedExport("package exports an enum boundary"));
+        continue;
+      }
+      if (ts.isExportAssignment(statement)) {
+        if (statement.isExportEquals) {
+          publish("default", unsupportedExport("CommonJS export assignment is not link-safe"));
+        } else if (ts.isIdentifier(statement.expression)) {
+          publish("default", resolveLocalExport(locals, statement.expression.text));
+        } else {
+          publish("default", unsupportedExport("default value expression is not link-safe"));
+        }
+        continue;
+      }
+      if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue;
+      const clause = statement.exportClause;
+      if (!statement.moduleSpecifier) {
+        if (!clause || !ts.isNamedExports(clause)) continue;
+        for (const element of clause.elements) {
+          if (element.isTypeOnly) continue;
+          const sourceName = element.propertyName?.text ?? element.name.text;
+          publish(element.name.text, resolveLocalExport(locals, sourceName));
+        }
+        continue;
+      }
+      const target = ts.isStringLiteral(statement.moduleSpecifier)
+        ? packageResolvedTarget(analyzer, fileName, statement.moduleSpecifier.text)
+        : undefined;
+      if (!target) {
+        if (clause && ts.isNamedExports(clause)) {
+          for (const element of clause.elements) {
+            if (!element.isTypeOnly)
+              publish(element.name.text, unsupportedExport("re-export target is outside package graph"));
+          }
+        } else if (clause && ts.isNamespaceExport(clause)) {
+          publish(clause.name.text, unsupportedExport("namespace re-export is not link-safe"));
+        }
+        continue;
+      }
+      const targetAnalysis = analyzeFile(target);
+      cycle ||= targetAnalysis.cycle === true;
+      if (!clause) {
+        for (const [name, resolution] of targetAnalysis.exports) {
+          if (name !== "default") publish(name, resolution, true);
+        }
+      } else if (ts.isNamespaceExport(clause)) {
+        publish(clause.name.text, unsupportedExport("namespace re-export is not link-safe"));
+      } else if (ts.isNamedExports(clause)) {
+        for (const element of clause.elements) {
+          if (element.isTypeOnly) continue;
+          const sourceName = element.propertyName?.text ?? element.name.text;
+          publish(
+            element.name.text,
+            targetAnalysis.exports.get(sourceName) ??
+              unsupportedExport(`re-exported export ${sourceName} is unavailable`),
+          );
+        }
+      }
+    }
+    const analysis = { exports, ...(cycle ? { cycle: true } : {}) };
+    visiting.delete(fileName);
+    cache.set(fileName, analysis);
+    return analysis;
+  }
+
+  return analyzeFile(analyzer.node.entry);
 }
 
 function importBindings(
@@ -306,18 +538,108 @@ function importBindings(
   return { bindings };
 }
 
+/**
+ * The regular codegen path treats a declaration-file default import as a
+ * module global rather than a callable function. Provider stubs expose a
+ * stable named alias as well, so rewrite only linked default imports to that
+ * alias while leaving the user's source untouched on the bundled fallback.
+ */
+function rewriteLinkedDefaultImports(fileName: string, source: string, linkedSpecifiers: ReadonlySet<string>): string {
+  if (linkedSpecifiers.size === 0) return source;
+  const sourceFile = parseSource(fileName, source);
+  const replacements: Array<{ start: number; end: number; text: string }> = [];
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !statement.importClause ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+    if (!statement.importClause.name || !linkedSpecifiers.has(statement.moduleSpecifier.text)) continue;
+    const defaultName = statement.importClause.name.text;
+    const namedBindings = statement.importClause.namedBindings;
+    if (namedBindings && !ts.isNamedImports(namedBindings)) continue;
+    const named =
+      namedBindings && ts.isNamedImports(namedBindings)
+        ? namedBindings.elements.map((element) => element.getText(sourceFile))
+        : [];
+    const imports = [`${LINKED_DEFAULT_DECLARATION} as ${defaultName}`, ...named].join(", ");
+    replacements.push({
+      start: statement.getStart(sourceFile),
+      end: statement.end,
+      text: `import { ${imports} } from ${statement.moduleSpecifier.getText(sourceFile)};`,
+    });
+  }
+  let rewritten = source;
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    rewritten = `${rewritten.slice(0, replacement.start)}${replacement.text}${rewritten.slice(replacement.end)}`;
+  }
+  return rewritten;
+}
+
+function declarationSourceFile(node: PackageNode, exported: FunctionExport): ts.SourceFile {
+  const source = nodeSource(node, exported.sourceFile);
+  return parseSource(exported.sourceFile, source);
+}
+
 function buildDeclarationStub(node: PackageNode): string {
-  const source = nodeSource(node, node.entry);
-  const sourceFile = parseSource(node.entry, source);
-  return Array.from(node.exports.values(), (exported) => functionSignature(exported, sourceFile)).join("\n") + "\n";
+  const declarations = Array.from(node.exports.values(), (exported) =>
+    functionSignature(exported, declarationSourceFile(node, exported)),
+  );
+  if (node.exports.has("default")) declarations.push(`export { ${LINKED_DEFAULT_DECLARATION} as default };`);
+  return `${declarations.join("\n")}\n`;
 }
 
 function exportSignaturesFor(node: PackageNode): Record<string, string> {
-  const source = nodeSource(node, node.entry);
-  const sourceFile = parseSource(node.entry, source);
   return Object.fromEntries(
-    Array.from(node.exports.values(), (exported) => [exported.name, functionSignature(exported, sourceFile)]),
+    Array.from(node.exports.values(), (exported) => [
+      exported.name,
+      functionSignature(exported, declarationSourceFile(node, exported)),
+    ]),
   );
+}
+
+interface ProviderFacade {
+  key: string;
+  source: string;
+}
+
+function buildProviderFacade(node: PackageNode): ProviderFacade | undefined {
+  const lines = [
+    "// Generated by js2wasm package linker; the original package entry remains the source of truth.",
+    "// Facade ABI: 1",
+  ];
+  const wrappers: string[] = [];
+  const entrySpecifier = "./__js2wasm_provider_entry";
+  const ordered = Array.from(node.exports.values()).sort((a, b) => a.name.localeCompare(b.name));
+  for (const [index, exported] of ordered.entries()) {
+    const sourceFile = declarationSourceFile(node, exported);
+    const fn = exported.declaration;
+    const params: string[] = [];
+    const args: string[] = [];
+    for (const parameter of fn.parameters) {
+      if (!ts.isIdentifier(parameter.name) || parameter.name.text === "this") return undefined;
+      const parameterText = parameter.getText(sourceFile);
+      params.push(parameterText);
+      args.push(parameter.dotDotDotToken ? `...${parameter.name.text}` : parameter.name.text);
+    }
+    const sourceBinding = `__js2wasm_provider_source_${index}`;
+    const wrapper = `__js2wasm_provider_export_${index}`;
+    const importedName = exported.name === "default" ? "default" : exported.name;
+    if (!/^[$A-Z_a-z][$\w]*$/.test(importedName)) return undefined;
+    lines.push(`import { ${importedName} as ${sourceBinding} } from "${entrySpecifier}";`);
+    const typeParameters = fn.typeParameters
+      ? `<${fn.typeParameters.map((parameter) => parameter.getText(sourceFile)).join(", ")}>`
+      : "";
+    const returnType = fn.type?.getText(sourceFile) ?? "any";
+    lines.push(
+      `export function ${wrapper}${typeParameters}(${params.join(", ")}): ${returnType} { return ${sourceBinding}(${args.join(", ")}); }`,
+    );
+    wrappers.push(`export { ${wrapper} as ${exported.name === "default" ? "default" : exported.name} };`);
+  }
+  lines.push(...wrappers);
+  return { key: "./__js2wasm_provider_facade.ts", source: `${lines.join("\n")}\n` };
 }
 
 function providerMetadata(result: CompileResult): LinkedProviderMetadata {
@@ -733,15 +1055,33 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       }
     }
   }
-  // A package only reached through a side-effect import still needs a stable
-  // entry, and a missing entry cannot be instantiated safely.
+  // Analyze the package's complete relative export graph, then retain only
+  // the names that an actual consumer imports. Unsupported values/classes in
+  // an otherwise useful package are therefore harmless until requested.
   for (const node of packages.values()) {
     if (!sourceByPhysical.has(node.entry)) return makeFallback(`missing source for package ${node.name}`);
-    const inspected = inspectFunctionExports(node.entry, sourceByPhysical.get(node.entry)!);
-    if (!inspected.exports) return makeFallback(`${node.name}: ${inspected.reason ?? "unsupported exports"}`);
-    node.exports = inspected.exports;
-    node.requiresSignatureValidation = Array.from(node.exports.values()).some((entry) => entry.uncertain);
     (node as PackageNode & { sourceByFile?: Map<string, string> }).sourceByFile = sourceByPhysical;
+    const analysis = analyzePackageExports({
+      node,
+      sourceByPhysical,
+      physicalByKey,
+      packageByFile,
+      fileKeys: input.fileKeys,
+      projectResolutions: input.projectResolutions,
+    });
+    if (analysis.cycle) return makeFallback(`${node.name}: cyclic relative export graph`);
+    const requested = new Set(
+      bindings.filter((binding) => binding.packageRoot === node.root).map((binding) => binding.exportName),
+    );
+    if (requested.size === 0) return makeFallback(`${node.name}: package has no named function boundary`);
+    node.exports = new Map();
+    for (const name of requested) {
+      const resolution = analysis.exports.get(name);
+      if (!resolution) return makeFallback(`${node.name} does not expose ${name}`);
+      if (resolution.kind === "unsupported") return makeFallback(`${node.name}: ${resolution.reason}`);
+      node.exports.set(name, cloneFunctionExport(resolution.exported, name));
+    }
+    node.requiresSignatureValidation = Array.from(node.exports.values()).some((entry) => entry.uncertain);
   }
   const topo = topoPackages(packages);
   if (!topo.order) return makeFallback(topo.reason ?? "cyclic npm package dependency graph");
@@ -807,6 +1147,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       ...sourceParts,
       ...dependencyIdentities.flatMap((dependency) => [dependency.packageName, dependency.cacheKey]),
       ...exportNames,
+      String(PROVIDER_FACADE_ABI_VERSION),
       compilerOptionFingerprint(input.options),
     ]);
 
@@ -844,13 +1185,25 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     for (const file of node.files) {
       const key = packageFileKey(node.root, file);
       providerKeyByPhysical.set(file, key);
-      providerFiles[key] = sourceByPhysical.get(file)!;
+      const linkedDefaultSpecifiers = new Set(
+        bindings
+          .filter((binding) => binding.importer === file && binding.exportName === "default")
+          .map((binding) => binding.specifier),
+      );
+      providerFiles[key] = rewriteLinkedDefaultImports(file, sourceByPhysical.get(file)!, linkedDefaultSpecifiers);
     }
+    const facade = buildProviderFacade(node);
+    if (!facade) return makeFallback(`${node.name} export cannot be represented by the function facade`);
+    const providerEntryKey = packageFileKey(node.root, node.entry);
+    providerFiles[facade.key] = facade.source;
+    providerResolutions[facade.key] = { "./__js2wasm_provider_entry": providerEntryKey };
     const dependencyBindings = new Map<string, { module: string; field: string }>();
     for (const binding of bindings.filter((candidate) => packageByFile.get(candidate.importer) === node.root)) {
       const dependencyNamespace = namespaceByRoot.get(binding.packageRoot);
       if (!dependencyNamespace) return makeFallback(`missing dependency namespace for ${node.name}`);
-      dependencyBindings.set(binding.exportName, { module: dependencyNamespace, field: binding.exportName });
+      for (const lookupName of linkedBindingLookupNames(binding)) {
+        dependencyBindings.set(lookupName, { module: dependencyNamespace, field: binding.exportName });
+      }
     }
     // Preserve relative edges inside the provider and replace bare dependency
     // edges with declaration-only stubs. The original resolver map is exact,
@@ -894,7 +1247,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     };
     const providerResult = await compileMultiSource(
       providerFiles,
-      packageFileKey(node.root, node.entry),
+      facade.key,
       providerOptions,
       undefined,
       providerResolutions,
@@ -1000,7 +1353,14 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
   for (const [physical, source] of sourceByPhysical) {
     if (packageByFile.has(physical)) continue;
     const key = input.fileKeys.get(physical);
-    if (key) rootFiles[key] = source;
+    if (key) {
+      const linkedDefaultSpecifiers = new Set(
+        bindings
+          .filter((binding) => binding.importer === physical && binding.exportName === "default")
+          .map((binding) => binding.specifier),
+      );
+      rootFiles[key] = rewriteLinkedDefaultImports(physical, source, linkedDefaultSpecifiers);
+    }
   }
   const rootResolutions: ProjectModuleResolutions = {};
   for (const [importerKey, resolution] of Object.entries(input.projectResolutions)) {
@@ -1029,11 +1389,21 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
         if (!targetNode.exports.has(binding.exportName)) {
           return makeFallback(`${targetNode.name} does not expose ${binding.exportName}`);
         }
-        const existing = rootBindings.get(binding.exportName);
-        if (existing && existing.module !== namespace) {
-          return makeFallback(`ambiguous root package export ${binding.exportName}`);
+        const externalBinding: ExternalBinding = {
+          importer,
+          specifier,
+          packageRoot: targetRoot,
+          target,
+          exportName: binding.exportName,
+          localName: binding.localName,
+        };
+        for (const lookupName of linkedBindingLookupNames(externalBinding)) {
+          const existing = rootBindings.get(lookupName);
+          if (existing && existing.module !== namespace) {
+            return makeFallback(`ambiguous root package export ${binding.exportName}`);
+          }
+          rootBindings.set(lookupName, { module: namespace, field: binding.exportName });
         }
-        rootBindings.set(binding.exportName, { module: namespace, field: binding.exportName });
       }
     }
     if (Object.keys(rewritten).length > 0) rootResolutions[importerKey] = rewritten;

@@ -58,12 +58,20 @@ the compiler never emits an unsatisfied runtime import by default.
 ## npm package providers
 
 `compileProject` now has a conservative function-only package linker. A bare
-package whose selected entry exports directly declared named functions with
+package whose selected entry exposes the *requested* function bindings with
 primitive-compatible signatures is compiled into a real provider binary. The
 consumer receives declaration-only stubs and imports the provider under a
 content-addressed namespace such as `js2wasm:npm:pkg:<hash>`. Package-to-package
 edges are compiled in dependency order, and the binary plus its export/signature
 manifest is cached in `.js2wasm-cache/npm-modules` (or `packageCacheDir`).
+
+The export analyzer follows exact relative package edges, including named
+aliases, `export { fn } from`, `export * from`, and default function
+re-exports. A generated provider facade gives each requested binding a stable
+Wasm field. An unused class or value in the same package does not disable a
+function provider; requesting that value/class still selects the monolithic
+fallback. Default imports use the same stable declaration/import path in the
+consumer and provider DAG.
 
 Every provider binary carries one canonical-JSON `js2wasm.provider.v1` custom
 section. It records the source fingerprint, package/dependency identities,
@@ -90,9 +98,9 @@ used by repeated benchmark runs. `result.linkPlan` reports `compiledProviders`
 and `cachedProviders` telemetry.
 
 The first ABI deliberately falls back to deterministic monolithic compilation
-for cycles, ambiguous/multiple entrypoints, re-exports/default/namespace
-imports, targets that cannot defer provider initialization, and runtime
-value/class/object exports. Host/runtime imports are link-safe when the
+for package cycles, ambiguous/multiple entrypoints, namespace imports or
+re-exports outside the exact relative graph, targets that cannot defer provider
+initialization, and requested runtime value/class/object exports. Host/runtime imports are link-safe when the
 provider's generated import manifest can rebuild their adapter; arbitrary
 user-supplied capabilities still need an explicit dependency injection path.
 Those value/object boundaries need a stable global/object/closure ABI before

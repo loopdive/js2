@@ -12,10 +12,18 @@ function project(prefix: string): string {
 }
 
 function writePackage(root: string, name: string, source: string): void {
+  writePackageFiles(root, name, { "index.ts": source });
+}
+
+function writePackageFiles(root: string, name: string, files: Record<string, string>): void {
   const packageRoot = join(root, "node_modules", ...name.split("/"));
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name, main: "index.ts" }));
-  writeFileSync(join(packageRoot, "index.ts"), source);
+  for (const [file, source] of Object.entries(files)) {
+    const filePath = join(packageRoot, file);
+    mkdirSync(join(filePath, ".."), { recursive: true });
+    writeFileSync(filePath, source);
+  }
 }
 
 async function compile(root: string, entry: string, cacheDir: string) {
@@ -161,7 +169,7 @@ describe("#2527 npm package module linking", () => {
     expect(linked.instance.exports.run?.()).toBe("1.50");
   });
 
-  it("falls back monolithically for value/class exports instead of dropping them", async () => {
+  it("links a requested function even when the package also exports unused values/classes", async () => {
     const root = project("package-link-boundary");
     writePackage(
       root,
@@ -173,11 +181,63 @@ describe("#2527 npm package module linking", () => {
       'import { add } from "mixed"; export function run(): number { return add(2, 3); }\n',
     );
     const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exports).toEqual(["add"]);
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(5);
+  });
+
+  it("falls back when a value or class is the requested package boundary", async () => {
+    const root = project("package-link-requested-value");
+    writePackage(
+      root,
+      "mixed-value",
+      "export function add(a: number, b: number): number { return a + b; }\nexport const answer = 42;\nexport class Box {}\n",
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { answer } from "mixed-value"; export function run(): number { return answer; }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
     expect(result.linkPlan?.mode).toBe("bundled");
     expect(result.linkedModules).toBeUndefined();
     expect(result.linkPlan?.fallbackReason).toMatch(/value|class/i);
     const instance = await WebAssembly.instantiate(result.binary, result.importObject);
-    expect(instance.instance.exports.run?.()).toBe(5);
+    expect(instance.instance.exports.run?.()).toBe(42);
+  });
+
+  it("links relative barrels, aliases, export-star functions, and default re-exports", async () => {
+    const root = project("package-link-barrel");
+    writePackageFiles(root, "barrel-fn", {
+      "index.ts":
+        'function local(x: number): number { return x - 1; }\nexport { local as localAlias };\nexport { add as sum } from "./impl";\nexport { default as inc } from "./default";\nexport * from "./more";\nexport const unused = 99;\nexport class Unused {}\n',
+      "impl.ts": "export function add(a: number, b: number): number { return a + b; }\n",
+      "default.ts": "export default function inc(x: number): number { return x + 1; }\n",
+      "more.ts": "export function triple(x: number): number { return x * 3; }\n",
+    });
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { sum as add, inc, triple, localAlias } from "barrel-fn"; export function run(): number { return add(2, 3) + inc(4) + triple(2) + localAlias(4); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exports).toEqual(["inc", "localAlias", "sum", "triple"]);
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(5 + 5 + 6 + 3);
+  });
+
+  it("links a direct default function export", async () => {
+    const root = project("package-link-default");
+    writePackage(root, "default-fn", "export default function scale(x: number): number { return x * 4; }\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import scale from "default-fn"; export function run(): number { return scale(3); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exports).toEqual(["default"]);
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(12);
   });
 
   it("falls back deterministically for package cycles", async () => {

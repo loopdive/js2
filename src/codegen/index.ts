@@ -8215,6 +8215,34 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       // a normal import alias instead of falling through to the null sentinel.
       targetName = ctx.defaultExpressionGlobals?.get(decl)?.bindingName;
     }
+    // A separately linked package can publish a declaration-only function that
+    // has no local body to seed `funcMap` (notably a default export re-exposed
+    // through a generated facade). Materialize that one narrow boundary as a
+    // real Wasm import from the checker signature. Ordinary ambient globals and
+    // unsupported module values never enter this path because they have no
+    // linked-package manifest entry.
+    const linked =
+      (targetName && ctx.linkedPackageBindings.get(targetName)) ?? ctx.linkedPackageBindings.get(localName);
+    if (linked && (!targetName || ctx.funcMap.get(targetName) === undefined)) {
+      const type = ctx.checker.getTypeAtLocation(localId);
+      const signature = ctx.checker.getSignaturesOfType(type, ts.SignatureKind.Call)[0];
+      if (signature) {
+        const params = signature.parameters.map((parameter) =>
+          mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(parameter, localId), ctx.checker, ctx.fast),
+        );
+        const returnType = ctx.checker.getReturnTypeOfSignature(signature);
+        const results = isVoidType(returnType) ? [] : [mapTsTypeToWasm(returnType, ctx.checker, ctx.fast)];
+        const typeIdx = addFuncType(ctx, params, results, `${targetName ?? localName}_linked_type`);
+        const imported = addImport(ctx, linked.module, linked.field, { kind: "func", typeIdx });
+        if (imported) {
+          const importedIndex = ctx.funcMap.get(linked.field);
+          if (importedIndex !== undefined) {
+            if (targetName) ctx.funcMap.set(targetName, importedIndex);
+            ctx.funcMap.set(localName, importedIndex);
+          }
+        }
+      }
+    }
     if (!targetName || targetName === localName) return;
     // Imported class bindings need the same canonical class identity as the
     // exporting module.  `classExprNameMap` normally aliases a variable-bound
