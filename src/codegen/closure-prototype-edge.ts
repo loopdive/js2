@@ -97,6 +97,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -128,6 +129,47 @@ interface PrototypeEdge {
 }
 
 /**
+ * The module global is a canonical function value only while its binding is
+ * never replaced. Function-expression fnctors (`var F = function(){}`) do not
+ * get a cached `__fn_closure_F` singleton, so the edge collector falls back to
+ * their mutable module global; an assignment such as `F = G` would otherwise
+ * make that global match the stale `F` prototype. Conservatively reject the
+ * fallback for any source-level assignment to the same name. A shadowed local
+ * assignment may cause a missed edge, never a wrong prototype identity.
+ */
+function hasModuleBindingAssignment(ctx: CodegenContext, name: string): boolean {
+  const declaration = ctx.fnctorEscapeGate?.ctorDeclByName.get(name);
+  const sourceFile = declaration?.getSourceFile();
+  if (sourceFile === undefined) return ctx.liveFuncBindingGlobals?.has(name) === true;
+
+  let reassigned = false;
+  const visit = (node: ts.Node): void => {
+    if (reassigned) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name
+    ) {
+      reassigned = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name
+    ) {
+      reassigned = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return reassigned;
+}
+
+/**
  * The edges that exist in this module, in a deterministic order (fnctors by
  * registration order, then classes). Both halves of every pair must be present:
  * a function with a prototype global but no singleton VALUE global was never
@@ -136,7 +178,13 @@ interface PrototypeEdge {
 function collectPrototypeEdges(ctx: CodegenContext): PrototypeEdge[] {
   const edges: PrototypeEdge[] = [];
   for (const [name, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
-    const valueGlobalIdx = ctx.funcClosureGlobals.get(name);
+    // Function declarations use the cached `__fn_closure_<name>` singleton,
+    // while `var F = function(){}` publishes the same callable through its
+    // module binding global. Both are canonical values for the fnctor edge;
+    // the latter is the only value available for expression-backed fnctors.
+    const valueGlobalIdx = hasModuleBindingAssignment(ctx, name)
+      ? undefined
+      : (ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name));
     if (valueGlobalIdx === undefined) continue;
     edges.push({ valueGlobalIdx, protoGlobalIdx, vivify: true, name });
   }

@@ -32,7 +32,7 @@ import {
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression, resolveComputedKeyExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -56,6 +56,10 @@ import { tryEmitTransferredNativeProtoMethodCall } from "./transferred-native-pr
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
+import { ensureFunctionNativeProtoGlue } from "../array-object-proto.js";
+import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "../function-proto-has-instance.js";
+import { ensureStandaloneNativeMethodClosure } from "../native-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
@@ -1627,6 +1631,87 @@ export function compileCallableElementAccessCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
+  // `%Function.prototype%[@@hasInstance]` is a native method closure whose
+  // first user parameter is the dynamic `this` receiver. The generic element
+  // call path treats the value as an ordinary one-argument closure and thus
+  // drops that receiver, selecting the wrong lifted signature (and eventually
+  // calling a null funcref). Bind the receiver explicitly and call the native
+  // closure ABI directly; this is deliberately limited to the statically
+  // resolvable Function-prototype symbol and standalone mode.
+  if (
+    ctx.standalone &&
+    resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
+  ) {
+    const receiver = elemAccess.expression;
+    const fact = ctx.oracle.typeFactOf(receiver);
+    const directFunctionProto =
+      ts.isPropertyAccessExpression(receiver) &&
+      receiver.name.text === "prototype" &&
+      ts.isIdentifier(receiver.expression) &&
+      receiver.expression.text === "Function" &&
+      !fctx.localMap.has("Function") &&
+      !(fctx.boxedCaptures?.has("Function") ?? false);
+    const sourceText = elemAccess.getSourceFile().text;
+    const hasCustomPrototype =
+      sourceText.includes("prototype") && (sourceText.includes("defineProperty") || /\.prototype\s*=/.test(sourceText));
+    if (
+      (fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function") || directFunctionProto) &&
+      !hasCustomPrototype
+    ) {
+      ensureFunctionProtoEdge(ctx, fctx, receiver);
+      const receiverType = compileExpression(ctx, fctx, receiver, { kind: "externref" });
+      if (receiverType !== null) {
+        if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+        const receiverLocal = allocLocal(fctx, `__has_instance_recv_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        fctx.body.push({ op: "local.set", index: receiverLocal });
+
+        const brand = ensureFunctionNativeProtoGlue(ctx);
+        const closure =
+          brand === undefined
+            ? null
+            : ensureStandaloneNativeMethodClosure(ctx, brand, FUNCTION_PROTO_HAS_INSTANCE_MEMBER, "method", {
+                refusalBodyFallback: true,
+              });
+        const closureInfo = closure ? ctx.closureInfoByTypeIdx.get(closure.type.typeIdx) : undefined;
+        if (closure && closureInfo) {
+          const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, closureInfo.funcTypeIdx) ?? closure.type.typeIdx;
+          const closureLocal = allocLocal(fctx, `__has_instance_fn_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: selfTypeIdx,
+          });
+          fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+          fctx.body.push({ op: "extern.convert_any" });
+          emitGuardedRefCast(fctx, selfTypeIdx);
+          fctx.body.push({ op: "local.set", index: closureLocal });
+
+          // Native-method ABI: (closure self, this, value). Extra source
+          // arguments are evaluated for side effects and ignored by the
+          // one-parameter @@hasInstance operation.
+          fctx.body.push({ op: "local.get", index: closureLocal });
+          fctx.body.push({ op: "local.get", index: receiverLocal });
+          if (expr.arguments.length > 0) {
+            const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+            if (argType !== null && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+          } else {
+            pushDefaultValue(fctx, { kind: "externref" }, ctx);
+          }
+          for (let i = 1; i < expr.arguments.length; i++) {
+            const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
+            if (extraType !== null) fctx.body.push({ op: "drop" });
+          }
+          fctx.body.push({ op: "local.get", index: closureLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 });
+          emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
+          emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx });
+          fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
+          return closureInfo.returnType ?? VOID_RESULT;
+        }
+      }
+    }
+  }
+
   // 1. Resolve element type's call signatures (with NonNullable fallback)
   const elemTsType = ctx.checker.getTypeAtLocation(elemAccess);
   let callSigs = elemTsType.getCallSignatures?.();

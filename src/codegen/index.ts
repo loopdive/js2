@@ -40,6 +40,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { planCountedStringAppend } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
@@ -2555,6 +2556,8 @@ function planIrOverlay(
   options: {
     readonly resolveModuleBindings?: boolean;
     readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+    /** Transaction B2 is single-source only; Transaction C owns graph composition. */
+    readonly enableCountedStringAppendProof?: boolean;
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
@@ -2766,6 +2769,12 @@ function planIrOverlay(
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
+      ...(options.enableCountedStringAppendProof
+        ? {
+            planCountedStringAppend: (loop: ts.ForStatement) =>
+              planCountedStringAppend({ checker: ast.checker, oracle: ctx.oracle }, loop),
+          }
+        : {}),
       jsHostExterns,
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
@@ -5019,7 +5028,7 @@ export function generateModule(
     let irSkipBodies: ReadonlySet<string> | undefined;
     let irPreserveBodies: ReadonlySet<string> | undefined;
     if (irFirst) {
-      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!);
+      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
       const routing = planIrFirstBodyRouting(ctx, ast.sourceFile, irPlan, moduleInitPlanning);
       requestedSkipProjection = routing.requestedSkipProjection;
       preparedFreeFunctions = routing.preparedFreeFunctions;
@@ -5108,7 +5117,8 @@ export function generateModule(
       // flag-off pipeline is order-identical. `planIrOverlay` holds the
       // planning code verbatim (typeMap → selection → STRICT_IR_REASONS →
       // classShapes → overrideMap → safeSelection → new.target gate).
-      const plan = irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!);
+      const plan =
+        irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
       const { classShapes, overrideMap } = plan;
       const safeSelection = preparedSelection ?? finalizePreparedIrSelection(ctx, ast.sourceFile, plan);
       const report = completePreparedIrIntegration({
