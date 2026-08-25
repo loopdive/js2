@@ -67,6 +67,7 @@ import {
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
@@ -386,6 +387,11 @@ export interface IrModuleInitAssessment {
 
 export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly experimentalIR?: boolean;
+  /**
+   * Exact shared #3518 proof for a counted string append loop. When omitted,
+   * the selector retains the historical checker-free direct-path deferral.
+   */
+  readonly planCountedStringAppend?: (loop: ts.ForStatement) => IrCountedStringAppendPlan | null;
   /** When true, the returned selection includes a `fallbacks` array listing
    *  every top-level FunctionDeclaration that the selector did NOT claim
    *  along with the reason it was rejected. Off by default — populating
@@ -1420,7 +1426,7 @@ function prepareFunctionBodySelection(
   body: ts.Block,
 ): boolean {
   currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(fn, parameterNames);
-  return stringBuilderForcedLegacy(body);
+  return stringBuilderForcedLegacy(body, currentSelectionOptions?.planCountedStringAppend);
 }
 
 // Current-run checker resolvers. A null host resolver means host-free/deferred.

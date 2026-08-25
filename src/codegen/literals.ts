@@ -85,6 +85,7 @@ import {
   emitArgumentsObject,
   ensureLateImport,
   flushLateImportShifts,
+  isAnyValue,
   registerMaterializeStructAsObject,
   registerResolveComputedKeyExpression,
   valTypesMatch,
@@ -100,6 +101,7 @@ import {
 } from "./struct-accessor-closure.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
+
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -653,6 +655,48 @@ export function materializeStructAsDynamicObject(
 registerMaterializeStructAsObject(materializeStructAsDynamicObject);
 
 /**
+ * Compile a runtime object-literal key for the open-object bridge.
+ *
+ * The standalone object runtime's `__to_property_key` must see a canonical
+ * primitive key.  Materializing a nominal key and leaving conversion to the
+ * later `__extern_set` path makes the erased `$Object` route revisit the
+ * callback while it probes the key.  Convert the materialized copy to its
+ * string-hint primitive here, exactly once, before storing the property.  The
+ * key's own object remains ephemeral; only its ToPropertyKey result crosses
+ * into the target object.  AnyValue carriers keep their dedicated path, while
+ * scalar and symbol keys retain normal type-aware boxing in `coerceType`.
+ */
+function compileRuntimeComputedPropertyKey(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+): void {
+  const keyTag = ctx.oracle.staticJsTypeOf(expression);
+  const objectKey = keyTag === "object" || keyTag === "function";
+  const keyType = compileExpression(ctx, fctx, expression, objectKey ? undefined : { kind: "externref" });
+  if (!keyType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (objectKey && (keyType.kind === "ref" || keyType.kind === "ref_null") && !isAnyValue(keyType, ctx)) {
+    coerceType(ctx, fctx, keyType, { kind: "externref" });
+    const toPropertyKeyIdx = ensureLateImport(
+      ctx,
+      "__to_property_key",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (toPropertyKeyIdx !== undefined) {
+      fctx.body.push({
+        op: "call",
+        funcIdx: ctx.funcMap.get("__to_property_key") ?? toPropertyKeyIdx,
+      });
+    }
+  } else if (keyType.kind !== "externref") {
+    coerceType(ctx, fctx, keyType, { kind: "externref" });
+  }
+}
+
+/**
  * (#1239) Compile an object literal whose property list contains at least
  * one `GetAccessorDeclaration` / `SetAccessorDeclaration`.
  *
@@ -806,6 +850,11 @@ function compileObjectLiteralWithAccessors(
   );
   flushLateImportShifts(ctx, fctx);
   if (setIdx === undefined || accIdx === undefined) return null;
+  // Late imports can be inserted while compiling a key, value, or method
+  // closure. Their function-index shifts invalidate indices captured before
+  // the property walk, so resolve the setters at each emission site.
+  const currentSetIdx = (): number => ctx.funcMap.get("__extern_set") ?? setIdx;
+  const currentAccIdx = (): number => ctx.funcMap.get("__defineProperty_accessor") ?? accIdx;
 
   // 3. Walk properties in source order. Value/method properties → __extern_set.
   //    Accessor declarations → emit __defineProperty_accessor at the FIRST
@@ -919,22 +968,12 @@ function compileObjectLiteralWithAccessors(
         // pass it to __extern_set as the externref key. The host coerces a
         // non-string key (e.g. a boxed number) per ToPropertyKey.
         fctx.body.push({ op: "local.get", index: objLocal });
-        // (#1336) Pass the `externref` expected-type hint so an ESSymbol-typed
-        // key (a user `Symbol()`, lowered to a bare i32 id) is boxed into a REAL
-        // JS Symbol via `__box_symbol` — matching the element-READ path
-        // (property-access.ts → compileExpression(..., {kind:"externref"}),
-        // expressions.ts:753 ESSymbolLike arm). Without the hint the manual
-        // `coerceType(i32→externref)` below boxed the id as a NUMBER
-        // (`__box_number`), so `{ [k]: v }` landed under string key "<id>" and
-        // symbol identity was lost (getOwnPropertySymbols empty; `o[k]`,
-        // Object.assign, spread all missed it). A non-symbol runtime key
-        // (number/string) is unaffected — the hint boxes those exactly as before.
-        const keyType = compileExpression(ctx, fctx, prop.name.expression, { kind: "externref" });
-        if (!keyType) {
-          fctx.body.push({ op: "ref.null.extern" });
-        } else if (keyType.kind !== "externref") {
-          coerceType(ctx, fctx, keyType, { kind: "externref" });
-        }
+        // (#1336) Keep type-aware scalar/symbol boxing while preserving a
+        // nominal object key until `__extern_set` performs ToPropertyKey.  The
+        // generic expected-externref path materializes object keys into a
+        // second plain object, so its user `toString`/`valueOf` runs once while
+        // building the copy and once again for the actual property write.
+        compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
       } else {
         if (propName === undefined) continue;
         // (#51) Materialize the data-property key via the dual-mode helper, not a
@@ -969,7 +1008,7 @@ function compileObjectLiteralWithAccessors(
       } else if (valType.kind !== "externref") {
         coerceType(ctx, fctx, valType, { kind: "externref" });
       }
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
     } else if (ts.isMethodDeclaration(prop)) {
       // Compile method as a callback closure, then __extern_set.
       //
@@ -1008,32 +1047,21 @@ function compileObjectLiteralWithAccessors(
         if (!ok) {
           fctx.body.push({ op: "ref.null.extern" });
         }
-        fctx.body.push({ op: "call", funcIdx: setIdx });
+        fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
         continue;
       }
       if (methodName === undefined && ts.isComputedPropertyName(prop.name)) {
         // (#2126) Runtime computed method key — same as the PropertyAssignment
         // branch: evaluate the key expression and pass it as the externref key.
         fctx.body.push({ op: "local.get", index: objLocal });
-        // (#1336) Pass the `externref` expected-type hint so an ESSymbol-typed
-        // key (a user `Symbol()`, lowered to a bare i32 id) is boxed into a REAL
-        // JS Symbol via `__box_symbol` — matching the element-READ path
-        // (property-access.ts → compileExpression(..., {kind:"externref"}),
-        // expressions.ts:753 ESSymbolLike arm). Without the hint the manual
-        // `coerceType(i32→externref)` below boxed the id as a NUMBER
-        // (`__box_number`), so `{ [k]: v }` landed under string key "<id>" and
-        // symbol identity was lost (getOwnPropertySymbols empty; `o[k]`,
-        // Object.assign, spread all missed it). A non-symbol runtime key
-        // (number/string) is unaffected — the hint boxes those exactly as before.
-        const keyType = compileExpression(ctx, fctx, prop.name.expression, { kind: "externref" });
-        if (!keyType) {
-          fctx.body.push({ op: "ref.null.extern" });
-        } else if (keyType.kind !== "externref") {
-          coerceType(ctx, fctx, keyType, { kind: "externref" });
-        }
+        // (#1336) Keep type-aware scalar/symbol boxing while preserving a
+        // nominal object key until `__extern_set` performs ToPropertyKey; see
+        // the PropertyAssignment arm above for why the expected-externref
+        // materialization path is not used here.
+        compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
         const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
         if (okRt) {
-          fctx.body.push({ op: "call", funcIdx: setIdx });
+          fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
         } else {
           // Callback compilation declined — keep the pre-#2126 "property
           // skipped" semantics (drop key + obj) but the key expression's
@@ -1057,7 +1085,7 @@ function compileObjectLiteralWithAccessors(
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });
       }
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
     } else if (ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) {
       // Emit one __defineProperty_accessor call per pair, at the position
       // of the FIRST get/set declaration on this name. Subsequent siblings
@@ -1119,7 +1147,7 @@ function compileObjectLiteralWithAccessors(
       const flags = (1 << 4) | (1 << 1) | (1 << 5) | (1 << 2);
       fctx.body.push({ op: "f64.const", value: flags });
 
-      fctx.body.push({ op: "call", funcIdx: accIdx });
+      fctx.body.push({ op: "call", funcIdx: currentAccIdx() });
       fctx.body.push({ op: "drop" }); // returns the same externref
     }
   }
@@ -3660,6 +3688,12 @@ export function compileObjectLiteralForStruct(
         };
         pushDefinedFunc(ctx, methodFuncIdx, methodFunc);
       }
+      // Struct-shape deduplication may have forked this method into a
+      // per-literal function. Keep the declaration identity alongside the
+      // body handle so a direct call through a variable initialized by this
+      // literal does not fall back to the shared (possibly empty) placeholder.
+      const actualMethodFuncIdx = existingFunc !== undefined ? existingFuncIdx! : ctx.funcMap.get(fullName)!;
+      ctx.objectLiteralMethodFuncIdx.set(prop, actualMethodFuncIdx);
 
       // Promote captured locals to globals so the method body can access them.
       // (#3040) ALSO scan the parameter-default initializers — an object-literal

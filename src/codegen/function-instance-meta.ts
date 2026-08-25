@@ -271,7 +271,9 @@ export function fnInstanceNameOf(decl: ts.Node): string {
 
   // NamedEvaluation: the anonymous definition takes the name of what it is
   // being bound to. Only the syntactic forms that carry an identifier/literal
-  // key are resolvable here; computed keys are runtime values.
+  // key are resolvable here; computed keys are runtime values. Private names
+  // are syntactic keys too, and their `#` spelling is the observable function
+  // name (the class-field layout's `__priv_` spelling must not leak here).
   //
   // Parentheses are TRANSPARENT to NamedEvaluation — the CoverParenthesized
   // production keeps `var cover = (function () {});` anonymous, so the binding
@@ -293,7 +295,7 @@ export function fnInstanceNameOf(decl: ts.Node): string {
   }
   if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
     const key = parent.name;
-    return ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
+    return ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
   }
   if (
     ts.isBinaryExpression(parent) &&

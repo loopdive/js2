@@ -158,8 +158,10 @@ export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
@@ -1557,7 +1559,9 @@ export function computeClosureWrapperSig(
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
   const arrowParams: ValType[] = [];
-  for (const p of runtimeParameters(arrow)) {
+  const runtimeParams = runtimeParameters(arrow);
+  for (let runtimeIndex = 0; runtimeIndex < runtimeParams.length; runtimeIndex++) {
+    const p = runtimeParams[runtimeIndex]!;
     const paramType = ctx.checker.getTypeAtLocation(p);
     let wasmType =
       !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
@@ -1618,6 +1622,16 @@ export function computeClosureWrapperSig(
       ctx.widenTupleCallbackParams === true &&
       (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
       isTupleType(paramType)
+    ) {
+      wasmType = { kind: "externref" };
+    }
+    // #4701: preserve a nonnumeric value written back through a mapped
+    // arguments slot, but leave ordinary numeric closure ABIs untouched.
+    if (
+      p.type === undefined &&
+      ts.getJSDocType(p) === undefined &&
+      (wasmType.kind === "f64" || wasmType.kind === "i32") &&
+      mappedFormalNeedsExternref(ctx, arrow, runtimeIndex)
     ) {
       wasmType = { kind: "externref" };
     }
@@ -2968,6 +2982,22 @@ export function compileArrowAsClosure(
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
   const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
+  // Ordinary function frames do not bind `this` in localMap: their receiver
+  // is resolved through __current_this at each source read.  An arrow must
+  // snapshot that value at creation, however. Keep the snapshot in a private
+  // local instead of installing it as the frame's ordinary `this` binding;
+  // direct reads before this arrow is created must retain their old lowering.
+  if (
+    ts.isArrowFunction(arrow) &&
+    !fctx.localMap.has("this") &&
+    (bodyReferencesOwnThis(body) || genBodyReferencesSuper(body))
+  ) {
+    const thisLocal = fctx.lexicalThisCaptureLocal ?? allocLocal(fctx, "__arrow_lexical_this", { kind: "externref" });
+    fctx.lexicalThisCaptureLocal = thisLocal;
+    const thisNode = findOwnThisReference(body) ?? ts.factory.createThis();
+    compileExpression(ctx, fctx, thisNode, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: thisLocal });
+  }
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
   captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 

@@ -88,6 +88,7 @@ import {
 } from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
+import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -269,6 +270,8 @@ const STRING_PROTO_METHODS = [
   "toWellFormed",
   "trim",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "trimStart",
   "valueOf",
 ] as const;
@@ -320,7 +323,7 @@ const ITERATOR_PROTO_METHODS = [
 ] as const;
 
 /** `Function.prototype`'s own method names (ES2024 §20.2.3). */
-const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString"] as const;
+const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
 
 /** `Symbol.prototype`'s own method names (ES2024 §20.4.3). `description` is an
  * accessor getter, resolved by the computed-access path. */
@@ -548,6 +551,8 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     toLocaleUpperCase: 0,
     trim: 0,
     trimEnd: 0,
+    trimLeft: 0,
+    trimRight: 0,
     trimStart: 0,
     isWellFormed: 0,
     toWellFormed: 0,
@@ -1757,10 +1762,18 @@ function makeGlue(
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
-    // .../toGMTString/value.js). Alias the closure identity, not the member
-    // set: `toGMTString` stays in `DATE_PROTO_METHODS` so it is still an own
-    // property for hasOwnProperty/gOPD. No other family has an identity alias.
-    memberAliasOf: (member) => (name === "Date" && member === "toGMTString" ? "toUTCString" : undefined),
+    // .../toGMTString/value.js). The Annex B String aliases have the same
+    // identity rule: trimLeft→trimStart and trimRight→trimEnd. Alias the
+    // closure identity, not the member set: each spelling stays in its own
+    // proto CSV entry for hasOwnProperty/gOPD.
+    memberAliasOf: (member) =>
+      name === "Date" && member === "toGMTString"
+        ? "toUTCString"
+        : name === "String" && member === "trimLeft"
+          ? "trimStart"
+          : name === "String" && member === "trimRight"
+            ? "trimEnd"
+            : undefined,
     // (#2193 PR-B) Array.prototype.slice is now a real native closure body;
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
@@ -1779,6 +1792,13 @@ function makeGlue(
       // VALUE. Same "ask first, emit second" contract as the two arms above, so a
       // decline leaves the ladder byte-identical.
       (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
+      // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
+      // shared with the standalone dynamic-instanceof substrate so ordinary
+      // function receivers and direct `Function.prototype` reads use the same
+      // prototype walk and TypeError sentinel.
+      (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
+        ? emitFunctionProtoHasInstanceBody(c, fctx)
+        : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"

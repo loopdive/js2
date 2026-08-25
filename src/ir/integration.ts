@@ -190,7 +190,10 @@ import {
   type IrDirectCallLoweringPlan,
   type IrDirectCallTarget,
   type IrIntegrationLoweringPlans,
+  type IrCountedStringAppendLoweringPlan,
+  type PreparedCountedStringAppendReceipt,
 } from "./ast-lowering-plans.js";
+import { digestIrInstructions } from "./instruction-digest.js";
 import {
   irGlobalBindingKey,
   irSourceGlobalRef,
@@ -419,6 +422,7 @@ function prepareSuspendingAsyncLowering(
     main: prepared.main,
     lifted: [...lowered.lifted, ...prepared.stateFunctions],
     liftedUnitProvenance: [...lowered.liftedUnitProvenance, ...prepared.provenance],
+    ...(lowered.countedStringAppendPlans ? { countedStringAppendPlans: lowered.countedStringAppendPlans } : {}),
   };
 }
 
@@ -520,6 +524,7 @@ interface BuiltFn {
   /** Public/legacy terminal-owner label; synthesized artifacts never become rows. */
   readonly ownerName: string;
   readonly fn: IrFunction;
+  readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
   /** Complete Program ABI provenance when this artifact was lifted from a source unit. */
   readonly derivedUnit?: ProgramAbiDerivedUnitRecord;
   /** True when a pass-created artifact owns a fresh callable slot. */
@@ -1219,6 +1224,10 @@ export function compileIrPathFunctions(
   const compiled: string[] = [];
   const compiledOwners: string[] = [];
   const compiledArtifactEvidence: IrIntegrationCompiledArtifactEvidence[] = [];
+  const preparedCountedStringAppendReceipts: PreparedCountedStringAppendReceipt[] = [];
+  const nonRetryableCountedStringOwnerUnitIds = new Set(
+    [...(loweringPlans?.countedStringAppends?.values() ?? [])].map((plan) => plan.ownerUnitId),
+  );
   const failures = new IrIntegrationFailureLog();
   const { errors } = failures;
   const finishReport = (
@@ -1227,15 +1236,43 @@ export function compileIrPathFunctions(
     reportCompiledOwners: readonly string[] = compiledOwners,
     reportTerminalFailures: readonly IrIntegrationTerminalFailureEvent[] = failures.terminalFailureEvents,
     reportCompiledArtifactEvidence: readonly IrIntegrationCompiledArtifactEvidence[] = compiledArtifactEvidence,
-  ): IrIntegrationReport =>
-    buildIrIntegrationReport(
+    reportCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[] = preparedCountedStringAppendReceipts,
+  ): IrIntegrationReport => {
+    const hardenedErrors = [...reportErrors];
+    const hardenedTerminalFailures = reportTerminalFailures.map((event) => {
+      if (!nonRetryableCountedStringOwnerUnitIds.has(event.unitId)) return event;
+      const existingInvariant = event.errors.find((error) => error.outcome.kind === "invariant");
+      if (existingInvariant) {
+        return event.error === existingInvariant ? event : { ...event, error: existingInvariant };
+      }
+      if (event.error.outcome.stage === "select") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `counted-string owner ${event.unitId} retained an exact lowering plan but reported a select-stage terminal failure`,
+        );
+      }
+      const invariant = integrationFailure(event.legacyName, {
+        kind: "invariant",
+        code: "selection-preparation-mismatch",
+        stage: event.error.outcome.stage,
+        detail:
+          `counted-string owner ${event.unitId} failed after its exact proof was retained and cannot retry direct: ` +
+          `${event.error.outcome.code}: ${event.error.outcome.detail}`,
+      });
+      hardenedErrors.push(invariant);
+      return { ...event, error: invariant, errors: [invariant, ...event.errors] };
+    });
+    return buildIrIntegrationReport(
       reportCompiled,
-      reportErrors,
+      hardenedErrors,
       loweringPlans?.ownerProjection,
       reportCompiledOwners,
-      reportTerminalFailures,
+      hardenedTerminalFailures,
       reportCompiledArtifactEvidence,
+      reportCountedStringAppendReceipts,
     );
+  };
   // #1370 Phase B: don't short-circuit when only class members are claimed —
   // a source file may declare a class with IR-eligible methods but no
   // top-level FunctionDeclarations.
@@ -1435,6 +1472,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: loweringPlans?.hostDateSnapshots,
         hostDateGetters: loweringPlans?.hostDateGetters,
         promiseDelays: loweringPlans?.promiseDelays,
+        countedStringAppends: loweringPlans?.countedStringAppends,
         identityContext: moduleBindingIdentityContext,
         classShapes,
         // Slice 6 part 4 refactor (#1185): thread the from-ast subset
@@ -1480,6 +1518,7 @@ export function compileIrPathFunctions(
         name,
         ownerName: owner.legacyName,
         fn: result.main,
+        ...(result.countedStringAppendPlans ? { countedStringAppendPlans: result.countedStringAppendPlans } : {}),
       });
       for (const lifted of result.lifted) {
         built.push({
@@ -2525,6 +2564,7 @@ export function compileIrPathFunctions(
         synthesized: before?.synthesized === true || wasCloned,
         classMember: before?.classMember,
         moduleInit: before?.moduleInit,
+        ...(before?.countedStringAppendPlans ? { countedStringAppendPlans: before.countedStringAppendPlans } : {}),
       });
     } catch (error) {
       markOwnerFailure(owner, fn.unitId, fn.name, error, "verify");
@@ -3389,6 +3429,50 @@ export function compileIrPathFunctions(
     }
   }
 
+  const countedReceiptsByArtifact = new Map<IrUnitId, readonly PreparedCountedStringAppendReceipt[]>();
+  for (const patch of pendingPatches) {
+    if (failedOwners.has(patch.entry.terminalOwnerUnitId) || !patch.entry.countedStringAppendPlans?.length) continue;
+    if (patch.entry.artifactUnitId !== patch.entry.terminalOwnerUnitId) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `counted-string plans cannot attach to synthetic artifact ${patch.entry.artifactUnitId}`,
+      );
+    }
+    const repeats: Extract<IrInstr, { kind: "string.repeat" }>[] = [];
+    const finalInstructions = [
+      ...patch.entry.fn.blocks.flatMap((block) => block.instrs),
+      ...(patch.entry.fn.asyncPlan?.states.flatMap((state) => state.body) ?? []),
+    ];
+    for (const instr of finalInstructions) {
+      forEachInstrDeep(instr, (nested) => {
+        if (nested.kind === "string.repeat") repeats.push(nested);
+      });
+    }
+    const expectedRepeatPlans = patch.entry.countedStringAppendPlans.filter((plan) => plan.syntaxPlan.tripCount >= 2);
+    if (
+      repeats.length !== expectedRepeatPlans.length ||
+      repeats.some(
+        (repeat, index) =>
+          !repeat.provider ||
+          !sameIrCallableBinding(repeat.provider.binding, expectedRepeatPlans[index]!.provider.binding),
+      )
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `counted-string provider/final-instruction census drift for ${patch.entry.artifactUnitId}`,
+      );
+    }
+    const finalInstructionDigest = digestIrInstructions(finalInstructions);
+    countedReceiptsByArtifact.set(
+      patch.entry.artifactUnitId,
+      Object.freeze(
+        patch.entry.countedStringAppendPlans.map((plan) => Object.freeze({ plan, finalInstructionDigest })),
+      ),
+    );
+  }
+
   // Patch only after every artifact lowered successfully. A lifted/clone
   // failure invalidates its whole source owner, including an already-lowered
   // main artifact, so the ledger can never report emitted+fatal for one row.
@@ -3423,6 +3507,7 @@ export function compileIrPathFunctions(
     if (patch.entry.artifactUnitId === patch.entry.terminalOwnerUnitId) {
       compiledOwners.push(patch.entry.ownerName);
     }
+    preparedCountedStringAppendReceipts.push(...(countedReceiptsByArtifact.get(patch.entry.artifactUnitId) ?? []));
   }
 
   // (#3551) Stub orphaned empty slots. Two slot families can be stranded
@@ -3483,6 +3568,7 @@ export function compileIrPathFunctions(
         retainedCompiledOwners,
         failures.terminalFailureEvents.filter((event) => event.unitId !== owner.unitId),
         retainedCompiledArtifacts,
+        preparedCountedStringAppendReceipts.filter((receipt) => receipt.plan.ownerUnitId !== owner.unitId),
       );
     }
   }

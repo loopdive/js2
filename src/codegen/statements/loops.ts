@@ -11,7 +11,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
-import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget } from "../expressions/helpers.js";
+import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -514,6 +514,28 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
           : (fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? {
               kind: "f64",
             });
+
+      // A closure in a later for-head declarator can capture an earlier head
+      // binding while the initializer is compiled (for example
+      // `for (let i = 0, f = () => i; ... )`). The closure capture path has
+      // already promoted that binding to its first ref cell. Reuse that cell
+      // as C₀ instead of wrapping the cell in a second ref cell; the latter
+      // would make the incrementor update the inner value while closures keep
+      // reading the outer cell.
+      const existingCapture = fctx.boxedCaptures?.get(name);
+      if (existingCapture && oldType.kind === "ref_null" && oldType.typeIdx === existingCapture.refCellTypeIdx) {
+        if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
+        if (!savedForBoxedCaptures.has(name)) {
+          savedForBoxedCaptures.set(name, existingCapture);
+        }
+        perIterCells.push({
+          name,
+          refCellTypeIdx: existingCapture.refCellTypeIdx,
+          boxedLocal: oldLocalIdx,
+        });
+        continue;
+      }
+
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, oldType);
       const boxedLocal = allocLocal(fctx, `__pi_box_${name}`, {
         kind: "ref_null",
@@ -1577,6 +1599,42 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
+/** #4700 — outer descriptors shadowed by a simple lexical for-of head. */
+interface ForOfHeadSaved {
+  name: string;
+  localMap: number | undefined;
+  tdz: number | undefined;
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  boxedTdz: { localIdx: number; refCellTypeIdx: number } | undefined;
+  isConst: boolean;
+}
+
+/** Restore the binding descriptors that surround a bounded lexical for-of. */
+function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
+  fctx.localMap.delete(saved.name);
+  fctx.tdzFlagLocals?.delete(saved.name);
+  fctx.boxedCaptures?.delete(saved.name);
+  fctx.boxedTdzFlags?.delete(saved.name);
+  fctx.constBindings?.delete(saved.name);
+  if (saved.localMap !== undefined) fctx.localMap.set(saved.name, saved.localMap);
+  if (saved.tdz !== undefined) {
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(saved.name, saved.tdz);
+  }
+  if (saved.boxed !== undefined) {
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    fctx.boxedCaptures.set(saved.name, saved.boxed);
+  }
+  if (saved.boxedTdz !== undefined) {
+    if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+    fctx.boxedTdzFlags.set(saved.name, saved.boxedTdz);
+  }
+  if (saved.isConst) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    fctx.constBindings.add(saved.name);
+  }
+}
+
 // (#2769) Does this for-of need the in-bounds undefined/hole sentinel preserved
 // through the OUTER array-literal construction? True ONLY when the subject is a
 // *direct array literal* AND the for-of binding pattern has an element default
@@ -1602,6 +1660,47 @@ function compileForOfArray(
   // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
   // before reporting. With `preVec` no compile happens, so rollback is a no-op.
   const snap = snapshotSpeculative(ctx, fctx);
+  // #4700 — a simple lexical ForDeclaration shadows the outer binding while
+  // the receiver is evaluated. Keep this reconstruction limited to the direct
+  // array/vec path; destructuring, collection materialization, and iterator
+  // paths remain outside the bounded TDZ slice.
+  const headDecl =
+    !preVec &&
+    !iterableOverride &&
+    ts.isVariableDeclarationList(stmt.initializer) &&
+    stmt.initializer.declarations.length === 1
+      ? stmt.initializer.declarations[0]!
+      : undefined;
+  const isLexicalIdentifierHead =
+    headDecl !== undefined &&
+    ts.isIdentifier(headDecl.name) &&
+    !!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+  const headName = isLexicalIdentifierHead ? (headDecl!.name as ts.Identifier).text : undefined;
+  const savedHead: ForOfHeadSaved | undefined =
+    headName === undefined
+      ? undefined
+      : {
+          name: headName,
+          localMap: fctx.localMap.get(headName),
+          tdz: fctx.tdzFlagLocals?.get(headName),
+          boxed: fctx.boxedCaptures?.get(headName),
+          boxedTdz: fctx.boxedTdzFlags?.get(headName),
+          isConst: fctx.constBindings?.has(headName) ?? false,
+        };
+  if (headName !== undefined) {
+    // The value slot only keeps identifier lowering well-typed; every receiver
+    // read checks the zero-initialized flag before that value can matter.
+    const headValueLocal = allocLocal(fctx, `__forof_hbind_${headName}_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    const headTdzLocal = allocLocal(fctx, `__forof_hflag_${headName}_${fctx.locals.length}`, { kind: "i32" });
+    fctx.localMap.set(headName, headValueLocal);
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(headName, headTdzLocal);
+    fctx.boxedCaptures?.delete(headName);
+    fctx.boxedTdzFlags?.delete(headName);
+    fctx.constBindings?.delete(headName);
+  }
   // (#2769) Preserve in-bounds undefined/hole identity through the OUTER
   // array-literal construction for the spec'd for-of-dstr template family. The
   // flag is scoped tightly to the subject compile (set→compile→restore) so it
@@ -1614,6 +1713,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1623,6 +1723,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1631,10 +1732,16 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
+  // HeadEvaluation step 4: the receiver TDZ environment ends before the
+  // loop's per-iteration binding is installed. The emitted receiver reads
+  // retain the temporary locals/flag; only the compiler's active descriptors
+  // are restored here.
+  if (savedHead) restoreForOfHead(fctx, savedHead);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -1645,7 +1752,12 @@ function compileForOfArray(
   // (`array.get_u`); the storage kind alone cannot distinguish them (#2648).
   // For non-packed elements both are identity (`readElemType === elemType`,
   // plain `array.get`), so host mode and plain arrays emit byte-identical code.
-  const readElemType = unpackedElemType(elemType);
+  // Numeric vec storage also carries the signaling-NaN undefined marker for
+  // explicit `undefined`/holes (the storage ABI remains plain f64). Preserve
+  // that identity on the loop value so consumers that distinguish undefined
+  // from a numeric NaN, such as optional String arguments, can inspect it.
+  const readElemType =
+    elemType.kind === "f64" ? { kind: "f64" as const, undefSentinel: true as const } : unpackedElemType(elemType);
   const elemReadOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, iterableOverride ?? stmt.expression));
 
   // Save vec ref to temp local. With `preVec` the vec is already in `vecLocal`.
@@ -1905,6 +2017,9 @@ function compileForOfArray(
       });
     }
   }
+  // #4700 — lexical head bindings end with the loop and must not leak into
+  // later code in the surrounding function.
+  if (savedHead) restoreForOfHead(fctx, savedHead);
 }
 
 /**
@@ -3536,6 +3651,54 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     return;
   }
 
+  // Annex B B.3.5 keeps the legacy initializer in a sloppy `for (var x =
+  // value in expr)` head.  The initializer runs once, before the receiver is
+  // evaluated, and its value is observable both from the receiver expression
+  // and after the loop.  The normal for-in lowering only used the declaration
+  // to choose `keyLocal`, silently dropping this expression (and its effects).
+  // Keep the existing key slot/capture representation and use the same
+  // expected-type/coercion path as an ordinary variable initializer.
+  if (ts.isVariableDeclarationList(init) && init.declarations.length > 0) {
+    const decl = init.declarations[0]!;
+    if (ts.isIdentifier(decl.name) && decl.initializer) {
+      const boxed = fctx.boxedCaptures?.get(varName);
+      let targetType = boxed?.valType ?? getLocalType(fctx, keyLocal) ?? { kind: "externref" as const };
+      // A legacy for-in head is normally inferred as a native string because
+      // its per-iteration value is an enumerable key. B.3.5 makes the same
+      // slot observable as an arbitrary initializer value before the first
+      // iteration, so a string-ref slot cannot represent `a = 0` without
+      // changing the value to "0". Widen an unboxed ref slot to externref;
+      // subsequent key writes remain externrefs and the receiver sees the
+      // original number/string/object identity.
+      if (!boxed && (targetType.kind === "ref" || targetType.kind === "ref_null")) {
+        targetType = { kind: "externref" };
+        updateLocalType(fctx, keyLocal, targetType);
+      }
+      const initType = compileExpression(ctx, fctx, decl.initializer, targetType);
+      if (initType) {
+        if (!valTypesMatch(initType, targetType)) coerceType(ctx, fctx, initType, targetType);
+        if (boxed) {
+          const valueLocal = allocLocal(fctx, `__forin_init_${fctx.locals.length}`, targetType);
+          fctx.body.push({ op: "local.set", index: valueLocal });
+          fctx.body.push({ op: "local.get", index: keyLocal });
+          fctx.body.push({ op: "ref.is_null" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [],
+            else: [
+              { op: "local.get", index: keyLocal },
+              { op: "local.get", index: valueLocal },
+              { op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 },
+            ],
+          });
+        } else {
+          emitCoercedLocalSet(ctx, fctx, keyLocal, targetType);
+        }
+      }
+    }
+  }
+
   // (#2705) §14.7.5.6 step 7: a `null`/`undefined` receiver yields zero
   // iterations. When the receiver is statically the `null`/`undefined`/`void`
   // literal, emit NO loop — the body is never reached (so a body that would
@@ -3616,6 +3779,12 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // fallback when no enumeration primitive is available. (#4561) It owns its
     // own `block $break` / per-iteration `block $continue` scaffolding; see
     // `for-in-static-unroll.ts` for why it had none.
+    // Evaluate the receiver even though its statically-known keys let the
+    // unroller avoid runtime enumeration. Its effects (notably the Annex B
+    // `stored = a` receiver in `for (var a = init in stored = a, obj)`) are
+    // still observable and must run before the first iteration.
+    const receiverType = compileExpression(ctx, fctx, stmt.expression);
+    if (receiverType) fctx.body.push({ op: "drop" });
     emitForInStaticUnroll(
       ctx,
       fctx,

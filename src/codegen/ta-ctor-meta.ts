@@ -50,6 +50,11 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
   // singletons are minted only from TA_CTOR_KINDS indices) misses to null.
   let nameChain: Instr[] = [{ op: "ref.null.extern" }, { op: "return" }];
   for (let k = TA_CTOR_KINDS.length - 1; k >= 0; k--) {
+    // (#4490 wave 2) Int8Array kind 0 no longer has a `$__ta_ctor` value: its
+    // constructor is the mutable `$Object` carrier, whose own-property store
+    // is the sole source of `name`/`length` state. Keep this synthetic metadata
+    // arm retired for this ctor while the remaining constructors use it.
+    if (k === 0) continue;
     nameChain = [
       { op: "local.get", index: 2 },
       { op: "ref.cast", typeIdx: taCtorTypeIdx },
@@ -108,15 +113,29 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        ...classifyKey,
-        { op: "local.get", index: 4 }, // isName
-        { op: "if", blockType: { kind: "empty" }, then: nameChain },
-        { op: "local.get", index: 5 }, // isLen
+        // Int8Array (kind 0) is intentionally excluded from the synthetic
+        // metadata surface; its `$Object` carrier is handled by the ordinary
+        // object runtime instead.
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx: taCtorTypeIdx },
+        { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ne" },
         {
           op: "if",
           blockType: { kind: "empty" },
-          // §23.2.5.1: every TypedArray constructor's `length` property is 3.
-          then: [{ op: "f64.const", value: 3 }, { op: "call", funcIdx: boxNumIdx }, { op: "return" }],
+          then: [
+            ...classifyKey,
+            { op: "local.get", index: 4 }, // isName
+            { op: "if", blockType: { kind: "empty" }, then: nameChain },
+            { op: "local.get", index: 5 }, // isLen
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              // §23.2.5.1: every TypedArray constructor's `length` property is 3.
+              then: [{ op: "f64.const", value: 3 }, { op: "call", funcIdx: boxNumIdx }, { op: "return" }],
+            },
+          ],
         },
         // A `$__ta_ctor` receiver with any other key keeps the null-miss
         // default so `__extern_get`'s remaining ladder still runs.

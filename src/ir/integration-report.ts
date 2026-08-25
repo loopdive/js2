@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrUnitId } from "./identity.js";
+import type { PreparedCountedStringAppendReceipt } from "./ast-lowering-plans.js";
 import {
   classifyIrFailure,
   type IrInvariantCode,
@@ -24,6 +25,8 @@ export interface IrIntegrationReport {
    * exact source/synthetic classification lives in compiledArtifactEvidence.
    */
   readonly syntheticCompiledArtifacts?: readonly string[];
+  /** Exact #3518 source/unit/provider receipts finalized over provider-bound IR. */
+  readonly preparedCountedStringAppendReceipts?: readonly PreparedCountedStringAppendReceipt[];
 }
 
 export type IrIntegrationTerminalEvidence =
@@ -213,8 +216,14 @@ export function buildIrIntegrationReport(
   compiledOwners?: readonly string[],
   terminalFailureEvents: readonly (IrIntegrationTerminalFailureEvent | IrIntegrationError)[] = errors,
   compiledArtifactEvidence?: readonly IrIntegrationCompiledArtifactEvidence[],
+  preparedCountedStringAppendReceipts?: readonly PreparedCountedStringAppendReceipt[],
 ): IrIntegrationReport {
-  if (!ownerProjection) return { compiled, errors };
+  if (!ownerProjection) {
+    if (preparedCountedStringAppendReceipts?.length) {
+      throw new TypeError("prepared counted-string receipts require an exact owner projection");
+    }
+    return { compiled, errors };
+  }
   if (!compiledArtifactEvidence) {
     throw new TypeError("exact compiled-artifact evidence is required when an owner projection is supplied");
   }
@@ -267,6 +276,31 @@ export function buildIrIntegrationReport(
   ) {
     throw new TypeError("public compiled-owner labels do not match exact compiled-artifact evidence");
   }
+  const compiledTerminalOwnerUnitIds = new Set(
+    compiledArtifactEvidence
+      .filter((artifact) => artifact.artifactUnitId === artifact.terminalOwnerUnitId)
+      .map((artifact) => artifact.terminalOwnerUnitId),
+  );
+  const receiptLoops = new Set<object>();
+  for (const receipt of preparedCountedStringAppendReceipts ?? []) {
+    ownerProjection.requireUnit(receipt.plan.ownerUnitId);
+    if (
+      !Object.isFrozen(receipt) ||
+      !Object.isFrozen(receipt.plan) ||
+      !Object.isFrozen(receipt.plan.syntaxPlan) ||
+      !compiledTerminalOwnerUnitIds.has(receipt.plan.ownerUnitId) ||
+      receiptLoops.has(receipt.plan.syntaxPlan.loop) ||
+      !/^[0-9a-f]{16}$/.test(receipt.finalInstructionDigest)
+    ) {
+      throw new TypeError(
+        "prepared counted-string receipt is mutable, duplicated, uncompiled, or has a malformed digest",
+      );
+    }
+    receiptLoops.add(receipt.plan.syntaxPlan.loop);
+  }
+  const frozenCountedStringAppendReceipts = preparedCountedStringAppendReceipts?.length
+    ? Object.freeze([...preparedCountedStringAppendReceipts])
+    : undefined;
 
   for (const failureEvent of terminalFailureEvents) {
     const event =
@@ -300,5 +334,8 @@ export function buildIrIntegrationReport(
     terminalEvidence,
     terminalCompiledOwners: structuralCompiledOwners,
     syntheticCompiledArtifacts: structuralSyntheticArtifacts,
+    ...(frozenCountedStringAppendReceipts
+      ? { preparedCountedStringAppendReceipts: frozenCountedStringAppendReceipts }
+      : {}),
   };
 }
