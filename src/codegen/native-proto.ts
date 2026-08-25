@@ -35,7 +35,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 // (#4491 T9) `constructor` is an own data property of every builtin prototype and
@@ -165,6 +165,13 @@ export interface NativeProtoBuiltinGlue {
    * arity), so families that don't define it emit byte-identical modules.
    */
   memberParamSlots?: (member: string) => number;
+  /**
+   * True when a method uses the receiver-aware variadic closure ABI:
+   * `(self, thisValue, (ref null $vec_externref)) -> result`. The method
+   * dispatcher supplies `thisValue`, and packs the complete JavaScript
+   * argument list into the vector, so omitted arguments remain omitted.
+   */
+  memberIsVariadic?: (member: string) => boolean;
   /**
    * (#4485) Member-IDENTITY alias. Some spec members are not merely equivalent
    * to another member, they ARE the same function object: §B.2.4.3 says "the
@@ -727,9 +734,20 @@ export function ensureStandaloneNativeMethodClosure(
   // stays honest regardless — it reads `nativeClosureMeta` (set below from the
   // spec arity), never the func type.
   const arity = kind === "getter" ? 0 : glue.memberLength(member);
+  const isVariadic = kind === "method" && glue.memberIsVariadic?.(member) === true;
   const paramSlots = kind === "getter" ? 0 : Math.max(arity, glue.memberParamSlots?.(member) ?? 0);
   const userParams: ValType[] = [{ kind: "externref" }];
-  for (let i = 0; i < paramSlots; i++) userParams.push({ kind: "externref" });
+  if (isVariadic) {
+    // The receiver-aware variadic ABI keeps the receiver separate from the
+    // JavaScript argument list. The vector is the same canonical externref
+    // carrier used by genuinely variadic static builtin values, but unlike a
+    // source rest closure it is reached through the native-proto method
+    // dispatcher and therefore has an internal receiver slot before it.
+    const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    userParams.push({ kind: "ref_null", typeIdx: vecTypeIdx });
+  } else {
+    for (let i = 0; i < paramSlots; i++) userParams.push({ kind: "externref" });
+  }
 
   // Probe the member body to learn its result type by emitting into a throwaway
   // fctx, then keep that body (it's the real body — no double emission).
@@ -738,6 +756,7 @@ export function ensureStandaloneNativeMethodClosure(
   const selfType: ValType = { kind: "ref", typeIdx: wrapperProbe.liftedSelfTypeIdx };
   const bodyFctx = makeNativeClosureFctx(`__probe_${brand}_${member}`, selfType, userParams, null);
   const probedResult = glue.emitMemberBody(ctx, bodyFctx, member, kind);
+  if (isVariadic) wrapperProbe.closureInfo.nativeProtoVariadic = true;
   // (#2984 Phase 2) Refusal + opted-in fallback (methods only): keep going with
   // a uniform externref result; the committed emission below swaps the refused
   // body for a catchable-TypeError throw. Every non-opted-in caller keeps the
@@ -765,6 +784,7 @@ export function ensureStandaloneNativeMethodClosure(
   const resultTypes = [resultType];
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, resultTypes);
   if (!wrapperTypes) return null;
+  if (isVariadic) wrapperTypes.closureInfo.nativeProtoVariadic = true;
 
   const funcName = kind === "getter" ? `__proto_method_${brand}_get_${member}` : `__proto_method_${brand}_${member}`;
   let funcIdx = ctx.funcMap.get(funcName);
