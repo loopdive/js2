@@ -24,9 +24,10 @@
  * is active (`ctx.standalone || ctx.wasi`). The JS-host path is untouched.
  */
 import { ts } from "../ts-api.js";
+import { isVoidType } from "../checker/type-mapper.js";
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
 import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjVecBuilders, reserveApplyClosure, FLAG_DEFAULT } from "./object-runtime.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -35,11 +36,12 @@ import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.
 import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
 import { emitReceiverBrandCheck, type ReceiverBrandSpec } from "./receiver-brand.js";
 import { emitThrowTypeError } from "./js-errors.js";
-import { coercionInstrs } from "./type-coercion.js";
+import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import { resolveWasmType, resolveWasmTypeForClosureReturn } from "./index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
 import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
-import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
  *  object keys (only GC eqrefs can be compared by identity). */
@@ -1698,6 +1700,40 @@ export function tryCompileNativeMapSizeGet(
   return { kind: "i32" } as ValType;
 }
 
+/** Resolve a function-valued local to the canonical Wasm closure wrapper.
+ *
+ * Function expressions assigned to a variable are represented as externref by
+ * the general expression path. Native forEach still knows their TypeScript
+ * call signature, so it can recover the wrapper type used by call_ref instead
+ * of falling back to a host Map_forEach import. Inline callbacks and statically
+ * known function identifiers continue through the existing ref path.
+ */
+function resolveDynamicCallbackClosure(
+  ctx: CodegenContext,
+  cbArg: ts.Expression,
+): { closureInfo: ClosureInfo; selfStructTypeIdx: number } | undefined {
+  const cbType = ctx.checker.getTypeAtLocation(cbArg);
+  const sigs = cbType.getCallSignatures();
+  if (sigs.length !== 1) return undefined;
+  const sig = sigs[0]!;
+  const paramTypes: ValType[] = [];
+  for (const param of sig.parameters) {
+    const loc = param.valueDeclaration ?? param.declarations?.[0] ?? cbArg;
+    paramTypes.push(resolveWasmType(ctx, ctx.checker.getTypeOfSymbolAtLocation(param, loc)));
+  }
+  const returnType = ctx.checker.getReturnTypeOfSignature(sig);
+  const results: ValType[] =
+    isVoidType(returnType) || (returnType.flags & ts.TypeFlags.Never) !== 0
+      ? []
+      : [resolveWasmTypeForClosureReturn(ctx, returnType)];
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, paramTypes, results);
+  if (!wrapper) return undefined;
+  return {
+    closureInfo: wrapper.closureInfo,
+    selfStructTypeIdx: getClosureFuncSelfTypeIdx(ctx, wrapper.liftedFuncTypeIdx) ?? wrapper.structTypeIdx,
+  };
+}
+
 /**
  * (#2162) Intercept `Map.prototype.forEach` / `Set.prototype.forEach` in
  * standalone / `nativeStrings` mode and drive the callback over the native
@@ -1738,7 +1774,10 @@ export function tryCompileNativeCollectionForEach(
   const willBeClosure =
     ts.isArrowFunction(cbArg) ||
     ts.isFunctionExpression(cbArg) ||
-    (ts.isIdentifier(cbArg) && (ctx.funcMap.has(cbArg.text) || ctx.closureMap.has(cbArg.text)));
+    (ts.isIdentifier(cbArg) &&
+      (ctx.funcMap.has(cbArg.text) ||
+        ctx.closureMap.has(cbArg.text) ||
+        (ctx.nativeStrings && ctx.checker.getTypeAtLocation(cbArg).getCallSignatures().length === 1)));
   if (!willBeClosure) {
     // (#3573) Spec 24.1.3.5 / 24.2.3.6: "If IsCallable(callbackfn) is false,
     // throw a TypeError". A statically non-callable LITERAL argument (`null` /
@@ -1802,11 +1841,25 @@ export function tryCompileNativeCollectionForEach(
     ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
       ? compileArrowAsClosure(ctx, fctx, cbArg)
       : compileExpression(ctx, fctx, cbArg);
-  if (!cbResult || (cbResult.kind !== "ref" && cbResult.kind !== "ref_null")) return undefined;
-  const closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
-  const closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
-  if (!closureInfo) return undefined;
-  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, cbResult);
+  let closureTypeIdx: number | undefined;
+  let closureInfo: ClosureInfo | undefined;
+  let closureValue = cbResult;
+  if (cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null")) {
+    closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
+    closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+  } else if (ctx.nativeStrings && cbResult?.kind === "externref") {
+    const dynamic = resolveDynamicCallbackClosure(ctx, cbArg);
+    if (dynamic) {
+      closureInfo = dynamic.closureInfo;
+      closureTypeIdx = dynamic.selfStructTypeIdx;
+      fctx.body.push({ op: "any.convert_extern" });
+      emitGuardedRefCast(fctx, dynamic.selfStructTypeIdx);
+      fctx.body.push({ op: "ref.as_non_null" });
+      closureValue = { kind: "ref", typeIdx: dynamic.selfStructTypeIdx };
+    }
+  }
+  if (!closureInfo || closureTypeIdx === undefined || !closureValue) return undefined;
+  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, closureValue);
   fctx.body.push({ op: "local.set", index: closureTmp });
 
   const numParams = closureInfo.paramTypes.length;
