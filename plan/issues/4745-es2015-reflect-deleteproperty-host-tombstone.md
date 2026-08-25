@@ -1,10 +1,11 @@
 ---
 id: 4745
 title: "ES2015 Reflect.deleteProperty host closed-struct tombstone"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-26
 updated: 2026-08-26
+completed: 2026-08-26
 priority: high
 horizon: s
 feasibility: medium
@@ -17,6 +18,7 @@ goal: test262-conformance
 source_loc_cap: 180
 loc-budget-allow:
   - src/runtime.ts
+  - src/runtime/wasm-struct-host-semantics.ts
   - src/codegen/source-scan-predicates.ts
   - src/codegen/index.ts
   - src/codegen/context/types.ts
