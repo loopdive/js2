@@ -288,7 +288,7 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["before=[object Object]", "hasOwn=false", "after=TypeError"]);
   });
 
-  it.fails("RESIDUAL Array.prototype.concat has no reflective body", async () => {
+  it("RESIDUAL Array.prototype.concat has no reflective body", async () => {
     // `built-ins/Array/prototype/concat/S15.4.4.4_A2_T{1,2}`. Unrelated to the
     // prototype link: `emitArrayProtoMemberBody` has a native core for `slice`
     // and the HOF family only, so every other member degrades to a catchable
@@ -303,7 +303,7 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["len=1", "zero=true"]);
   });
 
-  it.fails("RESIDUAL `new <Builtin>.prototype.constructor` is classified non-constructable", async () => {
+  it("RESIDUAL `new <Builtin>.prototype.constructor` is classified non-constructable", async () => {
     // `built-ins/{Object,String}/prototype/constructor/S15.*_A1_T2`. The
     // `isNewOnNonConstructablePrototype` / `classifyNonConstructableValue`
     // predicates read every `X.prototype.<name>` as a prototype METHOD;
