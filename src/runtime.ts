@@ -7531,11 +7531,41 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
           }
         }
       }
-      // Always report success — Array.prototype.pop etc. call
-      // `delete O[len-1]` on sparse arrayLikes where the index may not be
-      // present in the sidecar. Returning false here throws a Proxy
-      // invariant TypeError. Sidecar delete is best-effort.
+      // (#4745) Reflect.deleteProperty reaches this proxy before the generated
+      // exports are available when the call runs in module initialization.
+      // Keep the same own-property and integrity checks as __delete_property;
+      // otherwise deleting a fixed struct field only removes a sidecar entry
+      // (if one exists), and the field reappears through its struct shape.
+      const normalizedKey = typeof key === "symbol" ? key : String(key);
+      const hasOwn = _wasmStructHasOwn(obj, normalizedKey, liveExports);
+      const descs = _wasmPropDescs.get(obj);
+      const flags = descs?.get(normalizedKey);
+      if (
+        ((hasOwn || liveExports === undefined) && (_wasmFrozenObjs.has(obj) || _wasmSealedObjs.has(obj))) ||
+        (flags !== undefined && !(flags & _SC_CONFIGURABLE))
+      ) {
+        return false;
+      }
+      // Always report success for an absent key — Array.prototype.pop etc.
+      // call `delete O[len-1]` on sparse arrayLikes where the index may not be
+      // present in the sidecar. Returning false here throws a Proxy invariant
+      // TypeError. Sidecar delete is best-effort.
       _sidecarDelete(obj, key);
+      if (descs) descs.delete(normalizedKey);
+      if (typeof key === "symbol") {
+        _wasmStructAccessors.get(obj)?.delete(key);
+      }
+      // A module-init call cannot discover the fixed struct shape until
+      // setExports wires the getters. Treat that unresolved delete as an own
+      // deletion; with exports available, only tombstone a confirmed own key.
+      if (hasOwn || liveExports === undefined) {
+        let tomb = _wasmStructDeletedKeys.get(obj);
+        if (!tomb) {
+          tomb = new Set<string | symbol>();
+          _wasmStructDeletedKeys.set(obj, tomb);
+        }
+        tomb.add(normalizedKey);
+      }
       // #1364b — if `obj` is a registered class prototype or class object and
       // `key` is a method/static name from its allowlist, mark it deleted so
       // subsequent `Object.getOwnPropertyDescriptor(obj, key)` returns

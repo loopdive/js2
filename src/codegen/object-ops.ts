@@ -4940,6 +4940,13 @@ export function compilePropertyIntrospection(
       // from the same mechanism. See `scanModuleMemberDeletes`.
       const standaloneDeleteObserved =
         ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
+      // (#4745) Host Reflect.deleteProperty mutates the runtime sidecar, while
+      // a closed-struct hasOwnProperty call would otherwise fold from its
+      // immutable shape. Route that receiver through the host predicate even
+      // when no Object.defineProperty widening is present.
+      const hostReflectDeleteObserved =
+        !ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
+      if (hostReflectDeleteObserved) needsRuntime = true;
       if (!needsRuntime && (!ctx.standalone || standaloneDeleteObserved)) {
         for (const k of ctx.definePropertyReceiverKeys) {
           if (k.startsWith(prefix)) {

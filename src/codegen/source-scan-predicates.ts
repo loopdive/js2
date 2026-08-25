@@ -38,14 +38,14 @@ export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
  * short-circuit unconditionally cost **+3,847** on the #3437 harness
  * compile-work budget (111,568 → 115,415), which meters shared-helper
  * `forEachChild` invocations over a fixture whose prelude is prepended to all
- * ~43k test262 files. Since `memberDeleteReceiverNames` is read only by the
- * STANDALONE arm of the `hasOwnProperty` routing gate, host-mode callers pass
- * `false` and keep main's exact traversal — the budget fixture compiles in host
- * mode and returns to 111,568.
+ * ~43k test262 files. Host-mode callers still pass `false` unless the source
+ * contains the narrow `Reflect.deleteProperty` spelling (#4745), preserving
+ * the baseline traversal for the common case.
  *
- * @returns `any` — a `delete o.a` / `delete o[k]` occurs somewhere (a no-op
- *   `delete x` of a bare identifier does NOT count: it leaves no tombstone for
- *   the inline `struct.get` read fast-path to miss).
+ * @returns `any` — a `delete o.a` / `delete o[k]` or
+ *   `Reflect.deleteProperty(o, k)` occurs somewhere (a no-op `delete x` of a
+ *   bare identifier does NOT count: it leaves no tombstone for the inline
+ *   `struct.get` read fast-path to miss).
  * @returns `receiverNames` — see {@link scanModuleMemberDeletes}; empty
  *   when `collectReceivers` is false. A strict subset of what sets `any`:
  *   `delete a.b.c` and `delete f().x` have no identifier receiver, so they set
@@ -70,6 +70,23 @@ function scanMemberDeletes(
         if (!collectReceivers) return;
       }
     }
+    // Reflect.deleteProperty(target, key) has the same observable tombstone
+    // effect as the delete operator, but its target is the first call
+    // argument rather than a member-expression receiver. Keep it in this
+    // pre-scan so host hasOwnProperty reads do not fold past a Reflect delete.
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "deleteProperty" &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Reflect" &&
+      node.arguments.length >= 2
+    ) {
+      anyDelete = true;
+      const receiver = node.arguments[0];
+      if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+      if (!collectReceivers) return;
+    }
     forEachChild(node, walk);
   }
   walk(sourceFile);
@@ -78,32 +95,33 @@ function scanMemberDeletes(
 
 /**
  * Both member-delete answers from ONE walk — the module-setup entry point.
- * Pass `collectReceivers: false` outside `--target standalone`; nothing reads
- * the names there and the boolean-only walk short-circuits (see
+ * Pass `collectReceivers: false` outside `--target standalone` unless the
+ * source contains `Reflect.deleteProperty`; the host gate needs those target
+ * names, while the common boolean-only walk still short-circuits (see
  * {@link scanMemberDeletes} for the measured cost).
  *
  * ---
  *
- * (#2179) `any` is true when the source contains a `delete` operating on a
- * property or element access (`delete o.a` / `delete o[k]`). `delete x` of a
- * bare identifier and `delete <other expr>` (no-op deletes) do NOT count — only
- * member deletes can leave a runtime tombstone that the inline `struct.get`
- * read fast-path would bypass. Gates the tombstone-aware read routing so
- * delete-free modules emit byte-identical wasm.
+ * (#2179/#4745) `any` is true when the source contains a `delete` operating on
+ * a property or element access (`delete o.a` / `delete o[k]`) or a
+ * `Reflect.deleteProperty(o, k)` call. `delete x` of a bare identifier and
+ * `delete <other expr>` (no-op deletes) do NOT count — only operations that can
+ * leave a runtime tombstone need the tombstone-aware read routing. Delete-free
+ * modules emit byte-identical wasm.
  *
  * ---
  *
- * (#4187) `receiverNames` holds identifier names used as the RECEIVER of a
- * member delete anywhere in the program — `delete r.k` / `delete r[e]` yields
- * `r`.
+ * (#4187/#4745) `receiverNames` holds identifier names used as the RECEIVER of
+ * a member delete anywhere in the program — `delete r.k` / `delete r[e]` yields
+ * `r`; `Reflect.deleteProperty(r, k)` yields the first argument `r`.
  *
- * Consumed by `compilePropertyIntrospection` to decide whether a STANDALONE
- * `r.hasOwnProperty(k)` / `r.propertyIsEnumerable(k)` on a receiver that also
- * saw an `Object.defineProperty` may keep its compile-time constant fold. The
- * fold answers from the (defineProperty-widened) struct SHAPE, which no runtime
- * `delete` can retract, so it and the runtime state diverge for exactly the
- * receivers that appear here — and only for those. Receivers never deleted from
- * keep folding, so the overwhelming majority of modules stay byte-identical.
+ * Consumed by `compilePropertyIntrospection` to decide whether an
+ * `r.hasOwnProperty(k)` / `r.propertyIsEnumerable(k)` on a receiver that may
+ * have been deleted from can keep its compile-time constant fold. The fold
+ * answers from the struct SHAPE, which no runtime delete retracts, so it and
+ * runtime state diverge for exactly the receivers that appear here — and only
+ * for those. Receivers never deleted from keep folding, so the overwhelming
+ * majority of modules stay byte-identical.
  *
  * Why a whole-program PRE-SCAN and not record-as-you-compile: in the canonical
  * repro the first read (`obj.hasOwnProperty("property")`, expected `true`)
