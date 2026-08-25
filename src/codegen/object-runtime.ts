@@ -4360,6 +4360,64 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 },
               ] satisfies Instr[])
             : []),
+          // A carrier-bag miss is not the end of an approved fnctor's chain:
+          // walk its per-fnctor prototype `$Object` before consulting the
+          // builtin-prototype companion fallback. This mirrors the
+          // `__extern_get` arm above and makes dynamic `key in new F()` agree
+          // with the inherited value read.
+          ...(fnctorProtoStartIdx === undefined
+            ? []
+            : ([
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: fnctorProtoStartIdx },
+                { op: "local.tee", index: 4 + (boundaryObjectHasIdx !== undefined ? 1 : 0) },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    {
+                      op: "local.get",
+                      index: 4 + (boundaryObjectHasIdx !== undefined ? 1 : 0),
+                    },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: objectTypeIdx },
+                    { op: "local.set", index: 2 },
+                    {
+                      op: "block",
+                      blockType: { kind: "empty" },
+                      body: [
+                        {
+                          op: "loop",
+                          blockType: { kind: "empty" },
+                          body: [
+                            { op: "local.get", index: 2 },
+                            { op: "ref.is_null" },
+                            { op: "br_if", depth: 1 },
+                            { op: "local.get", index: 2 },
+                            { op: "ref.as_non_null" },
+                            { op: "local.get", index: 1 },
+                            { op: "call", funcIdx: objFindIdx },
+                            { op: "ref.is_null" },
+                            { op: "i32.eqz" },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                            },
+                            { op: "local.get", index: 2 },
+                            { op: "ref.as_non_null" },
+                            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+                            { op: "local.set", index: 2 },
+                            { op: "br", depth: 0 },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ] satisfies Instr[])),
           // …then the inherited proto-companion consult (or the legacy 0).
           ...(protoIndexRecvHasMissInstrs(ctx, 0, 1) ?? [{ op: "i32.const", value: 0 } satisfies Instr]),
           { op: "return" },
@@ -4419,6 +4477,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "o", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
         ...(boundaryObjectHasIdx !== undefined ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
+        ...(fnctorProtoStartIdx === undefined ? [] : [{ name: "fnctorProto", type: { kind: "externref" } as ValType }]),
       ],
       body,
     );
