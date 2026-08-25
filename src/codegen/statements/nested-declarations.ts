@@ -24,7 +24,7 @@ import {
   prepareHoistedFunctionBindings,
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
-import { emitArgumentsLengthBrandMark } from "../arguments-length-brand.js"; // (#4658) §10.4.4 `length` brand
+import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -1792,45 +1792,6 @@ function isAnnexBValueReference(id: ts.Identifier): boolean {
 }
 
 /**
- * (#2552) Is the block-fn `name` REASSIGNED (an assignment write target) anywhere
- * inside its declaring `block`? — e.g. `{ function f() { f = 123; } }`. When it
- * is, the block-local function binding and the outer var binding hold *distinct*
- * values (per §B.3.3: the outer binding captures the function value at block
- * entry and is independent of a later in-block reassignment of the block-local
- * `f`). The flag-gated single-slot outer-binding machinery cannot model that
- * split (it shares one `localMap` slot for both), so such a shape is excluded
- * from the outer-binding allocation and reverts to the pre-Phase-2 path — which
- * already passes the `*-block-scoping` test262 files. Only assignment WRITES
- * count (not reads); the scan stays within the declaring block (nested function
- * scopes are skipped — they have their own bindings).
- */
-function annexBNameReassignedInRange(name: string, declaringRange: ts.Node): boolean {
-  let reassigned = false;
-  const visit = (node: ts.Node): void => {
-    if (reassigned) return;
-    // Descend through the WHOLE block subtree, INCLUDING the block-fn's own body:
-    // the canonical mutable-binding shape is `{ function f() { f = 123; } }`, where
-    // the reassignment lives inside `f`'s body and still mutates the binding (the
-    // block-local `f` and the outer var binding then diverge). A same-named decl in
-    // a *deeper* nested scope would shadow, but conflating it here only makes the
-    // gate MORE conservative (skip the outer binding → pre-Phase-2 path), never
-    // less correct, so we accept the slight over-approximation for soundness.
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name
-    ) {
-      reassigned = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(declaringRange, visit);
-  return reassigned;
-}
-
-/**
  * (#2552) Does the enclosing Annex-B scope (the nearest function body / global
  * holding `block`) already declare a function-scoped `var name` or direct
  * `function name`? Per Annex B B.3.3 step 2 ("If instantiatedVarNames does not
@@ -1919,7 +1880,10 @@ function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Node | nu
   const scope = enclosingVarScope(fnDecl);
   if (scope && hasInterveningLexicalBinder(fnDecl.parent, name, scope)) return null;
   if (!annexBNameObservedOutsideRange(name, declaringRange)) return null; // (#2552) not observed → no binding
-  if (annexBNameReassignedInRange(name, declaringRange)) return null; // (#2552) mutable split → pre-Phase-2 path
+  // The block function's own lexical binding may be reassigned by its body;
+  // that does not mutate the Annex-B outer var binding. Keep the declaration
+  // on the TDZ/closure path so the outer value remains callable after the
+  // block's function activation changes its self binding.
   if (annexBSameNameVarOrFunctionInScope(name, declaringRange)) return null; // (#2552) existing F → use it
   return declaringRange;
 }
@@ -3162,6 +3126,8 @@ export function emitArgumentsVecBody(
 ): void {
   const numArgs = paramTypes.length;
   const { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp } = locals;
+  const argumentsVecTypeIdx = registerWithHost && ctx.standalone ? getOrRegisterArgumentsVecType(ctx, vti, ati) : vti;
+  if (argumentsVecTypeIdx !== vti) reserveArgumentsLengthBrand(ctx);
   // (#2743 a) Register this arguments vec with the host so its `[[Prototype]]`
   // resolves to %Object.prototype% and `.constructor`/`hasOwnProperty` behave
   // like an ordinary Object (§10.4.4). This is a NEW host import; adding it
@@ -3174,9 +3140,10 @@ export function emitArgumentsVecBody(
     flushLateImportShifts(ctx, fctx);
   }
 
-  const { globalIdx: extrasGlobalIdx } = ensureExtrasArgvGlobal(ctx);
+  const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const argcGlobalIdx = ensureArgcGlobal(ctx);
-  const extrasVecType: ValType = { kind: "ref_null", typeIdx: vti };
+  // Keep extras at the canonical parent type; materialize the branded child below.
+  const extrasVecType: ValType = { kind: "ref_null", typeIdx: extrasVecTypeIdx };
   const extrasLocal = allocLocal(fctx, "__extras_argv_local", extrasVecType);
   const extrasLenLocal = allocLocal(fctx, "__extras_len", { kind: "i32" });
   const totalLenLocal = allocLocal(fctx, "__args_total_len", { kind: "i32" });
@@ -3212,7 +3179,7 @@ export function emitArgumentsVecBody(
   // don't see stale data.
   fctx.body.push({ op: "global.get", index: extrasGlobalIdx });
   fctx.body.push({ op: "local.set", index: extrasLocal });
-  fctx.body.push({ op: "ref.null", typeIdx: vti });
+  fctx.body.push({ op: "ref.null", typeIdx: extrasVecTypeIdx });
   fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
 
   // extrasLen = extrasLocal != null ? extrasLocal.length : 0
@@ -3225,7 +3192,7 @@ export function emitArgumentsVecBody(
     else: [
       { op: "local.get", index: extrasLocal },
       { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: vti, fieldIdx: 0 },
+      { op: "struct.get", typeIdx: extrasVecTypeIdx, fieldIdx: 0 },
     ],
   });
   fctx.body.push({ op: "local.set", index: extrasLenLocal });
@@ -3241,6 +3208,7 @@ export function emitArgumentsVecBody(
     paramOffset,
     numArgs,
     vecTypeIdx: vti,
+    argumentsVecTypeIdx,
     arrTypeIdx: ati,
     argsLocalIdx: argsLocal,
     arrTmpIdx: arrTmp,
@@ -3260,15 +3228,8 @@ export function emitArgumentsVecBody(
     fctx.body.push({ op: "call", funcIdx: registerArgsIdx });
   }
 
-  // (#4658) The standalone twin of that registration: brand the vec so
-  // `__vec_gopd` answers §10.4.4's `length` descriptor (`configurable: true`)
-  // instead of §10.4.2's Array one. Gated on the SAME `registerWithHost`
-  // observability proof (#4578) — an arguments object that provably never
-  // escapes its function cannot have its descriptor queried, and marking it
-  // would append a pair to the overlay's linearly scanned table on every call.
-  if (registerWithHost && ctx.standalone) {
-    emitArgumentsLengthBrandMark(ctx, fctx, argsLocal);
-  }
+  // Standalone arguments identity is carried by the concrete WasmGC subtype
+  // constructed above; no global overlay-table registration is required.
 }
 
 /**
@@ -3287,8 +3248,7 @@ export function emitArgumentsObject(
   unmapped = false,
 ): void {
   const numArgs = paramTypes.length;
-  const elemType: ValType = { kind: "externref" };
-  const vti = getOrRegisterVecType(ctx, "externref", elemType);
+  const vti = getOrRegisterVecType(ctx, "arguments");
   const ati = getArrTypeIdxFromVec(ctx, vti);
   const vecRef: ValType = { kind: "ref", typeIdx: vti };
   const argsLocal = allocLocal(fctx, "arguments", vecRef);

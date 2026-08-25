@@ -16,9 +16,8 @@
 //
 //  2. **`arguments` had no runtime brand,** so `__vec_gopd` answered its
 //     `length` with §10.4.2's Array rules (`configurable: false`) instead of
-//     §10.4.4's (`configurable: true`). Fixed by `OBJ_FLAG_ARGUMENTS` on the
-//     #3251 overlay companion, plus an `OBJ_FLAG_ARGS_LENGTH_ABSENT` tombstone
-//     so a successful `delete args.length` is actually observable.
+//     §10.4.4's (`configurable: true`). Fixed by a dedicated WasmGC arguments
+//     vec subtype whose mutable third field records the deleted-length state.
 //
 // ## Every pin EXECUTES the operation it guards
 // The descriptor pins call `Object.getOwnPropertyDescriptor` and assert the
@@ -127,6 +126,19 @@ describe("#4658 root 1 — a vec define must not inherit its own value", () => {
 });
 
 describe("#4658 root 2 — §10.4.4 length descriptor on an arguments object", () => {
+  it("brands arguments by WasmGC type, never by per-call overlay registration", async () => {
+    const r = await compile(
+      `function f() { return Object.getOwnPropertyDescriptor(arguments, "length").configurable; }
+       export function test() { var n = 0; for (var i = 0; i < 100; i++) if (f(i)) n++; return n; }`,
+      { fileName: "test.js", allowJs: true, skipSemanticDiagnostics: true, target: "standalone" },
+    );
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(r.wat).toContain("__arguments_vec");
+    expect(r.wat).not.toContain("__args_brand_mark");
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as { test: () => number }).test()).toBe(100);
+  });
+
   it("gOPD(arguments, 'length') reports writable+configurable, non-enumerable", async () => {
     // 1 writable | 4 configurable = 5; value 0 (no args passed) contributes 0.
     expect(

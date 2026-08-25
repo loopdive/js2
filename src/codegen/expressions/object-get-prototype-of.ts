@@ -59,6 +59,33 @@ function isTopLevelThis(expr: ts.Expression): boolean {
 }
 
 /**
+ * Return true when an expression is a statically-known JSON object parse.
+ *
+ * The standalone JSON codec materialises parsed objects as ordinary open
+ * objects, but their runtime `$Object` carrier intentionally keeps the
+ * prototype link implicit. Recognising a literal object payload here lets
+ * `Object.getPrototypeOf` expose the canonical `%Object.prototype%` value,
+ * matching the ordinary-object result without changing `Object.create(null)`.
+ * Only a literal whose first non-whitespace character is `{` is admitted:
+ * arrays and primitive JSON payloads have different intrinsic prototypes.
+ */
+function isJsonObjectParseCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  if (
+    !ts.isCallExpression(expr) ||
+    !ts.isPropertyAccessExpression(expr.expression) ||
+    expr.expression.name.text !== "parse" ||
+    !ts.isIdentifier(expr.expression.expression) ||
+    expr.expression.expression.text !== "JSON" ||
+    !isGlobalBuiltinIdentifier(ctx, fctx, expr.expression.expression)
+  ) {
+    return false;
+  }
+  const source = expr.arguments[0];
+  if (!source || !ts.isStringLiteralLike(source)) return false;
+  return source.text.trim().startsWith("{");
+}
+
+/**
  * Emit the compiler-owned intrinsic prototype singleton rather than asking the
  * host MOP for the prototype of an opaque Wasm closure/struct.
  */
@@ -163,6 +190,13 @@ export function tryCompileEs5GetPrototypeOfValue(
   expr: ts.CallExpression,
 ): InnerResult | null {
   const arg0 = expr.arguments[0]!;
+  if (isJsonObjectParseCall(ctx, fctx, arg0)) {
+    // Preserve JSON.parse validation and reviver side effects before replacing
+    // only the prototype query with the canonical intrinsic singleton.
+    const parsedType = compileExpression(ctx, fctx, arg0);
+    if (parsedType) fctx.body.push({ op: "drop" });
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
+  }
   const staticType = ctx.oracle.staticJsTypeOf(arg0);
   if (staticType === "boolean") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Boolean");
   if (staticType === "string") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "String");
@@ -183,6 +217,9 @@ export function tryCompileEs5GetPrototypeOfValue(
   }
   if (ts.isIdentifier(arg0)) {
     const initializer = ctx.oracle.variableInitializerOf(arg0);
+    if (initializer && isJsonObjectParseCall(ctx, fctx, initializer)) {
+      return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
+    }
     if (initializer && ts.isArrayLiteralExpression(initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
     }

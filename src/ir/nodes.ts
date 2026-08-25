@@ -620,6 +620,7 @@ function fnctorShapeEquals(
   if (
     left.sourceId !== right.sourceId ||
     left.constructorUnitId !== right.constructorUnitId ||
+    left.hiddenIdentity !== right.hiddenIdentity ||
     left.constructorIdentity.unitId !== right.constructorIdentity.unitId ||
     left.constructorIdentity.paramIndex !== right.constructorIdentity.paramIndex ||
     left.constructorTarget.kind !== right.constructorTarget.kind ||
@@ -1267,8 +1268,9 @@ export type IrStringLengthProvider =
 
 /**
  * Materialize one source-qualified function-style constructor instance.
- * `captureArgs` is the flattened capture ABI (value plus an optional TDZ
- * flag per capture); `args` is the user-visible constructor ABI. The hidden
+ * `captureArgs` is the flattened legacy capture ABI: all capture values in
+ * capture order, followed by all paired TDZ flags in capture order;
+ * `args` is the user-visible constructor ABI. The hidden
  * constructor identity is explicit so standalone lowering can preserve the
  * exact trailing parameter without recovering it from a display name.
  *

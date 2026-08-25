@@ -24,6 +24,7 @@ import { ProgramAbiGlobalRegistry } from "../program-abi-global-planning.js";
 import { ProgramAbiModuleInitCallableRegistry } from "../program-abi-module-init-planning.js";
 import { ProgramAbiSourceCallableRegistry } from "../program-abi-source-callable-planning.js";
 import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
+import { ProgramAbiFnctorRegistry } from "../program-abi-fnctor-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
@@ -459,6 +460,7 @@ export function createCodegenContext(
         ctx,
         irPlanningIdentityContext,
       );
+      ctx.programAbiFnctors = new ProgramAbiFnctorRegistry(programAbiSession, ctx, irPlanningIdentityContext);
       ctx.programAbiTypes = new ProgramAbiTypeRegistry(programAbiSession, ctx, irPlanningIdentityContext);
     }
   }

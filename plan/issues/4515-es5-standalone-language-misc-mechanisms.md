@@ -29,7 +29,13 @@ loc-budget-allow:
   # register's whole lifecycle and rationale live in the new leaf module
   # src/codegen/statements/eval-completion-value.ts, and eval-inline.ts SHRANK.
   - src/codegen/context/types.ts
+  # A carrier-bag miss on a fnctor must continue through the constructor's
+  # prototype object before the builtin-prototype fallback.
+  - src/codegen/object-runtime.ts
 func-budget-allow:
+  # Extend the existing `__extern_has` builder with the same fnctor prototype
+  # walk already used by value reads.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   # 2026-08-23 wave-5, §14.15.3 step 5 (a NORMALLY-completing `finally`
   # contributes no completion value). +2 LINES, both calls: the snapshot local's
   # lifecycle, the abrupt-exit argument and the clone-safety argument all live in

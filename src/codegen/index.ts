@@ -10,6 +10,7 @@ import {
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
+import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -2560,6 +2561,8 @@ function planIrOverlay(
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
+  const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
     if (process.env.JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW === "1") {
@@ -2570,6 +2573,7 @@ function planIrOverlay(
       ast.checker,
       identityContext,
       ctx.dtsEntrypointSeeds,
+      { resolveFnctorAdmission: resolveFnctorPropagationAdmission },
     );
   } catch (error) {
     throw new IrInvariantError(
@@ -2797,6 +2801,7 @@ function planIrOverlay(
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
+      resolveFnctorAdmission,
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,
