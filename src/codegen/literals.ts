@@ -1133,6 +1133,7 @@ function compileObjectLiteralWithAccessors(
         const ok = emitObjectLiteralAccessorFn(ctx, fctx, pair.setter as unknown as ts.FunctionExpression, {
           forceMutableCaptures: accessorForceMutable,
           sharedRefCells: accessorSharedRefCells,
+          forceExternrefParams: true,
         });
         if (!ok) fctx.body.push({ op: "ref.null.extern" });
       } else {
@@ -1169,7 +1170,11 @@ function emitObjectLiteralAccessorFn(
   fctx: FunctionContext,
   fn: ts.FunctionExpression | ts.ArrowFunction,
   // (#2128) per-literal shared-cell capture options — see compileArrowAsCallback
-  captureOptions?: { forceMutableCaptures?: Set<string>; sharedRefCells?: SharedRefCellMap },
+  captureOptions?: {
+    forceMutableCaptures?: Set<string>;
+    sharedRefCells?: SharedRefCellMap;
+    forceExternrefParams?: boolean;
+  },
 ): boolean {
   if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
     const closureType = compileArrowAsClosure(ctx, fctx, fn);
