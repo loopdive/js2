@@ -1,9 +1,10 @@
 ---
 id: 4693
 title: "ES2015 standalone assignment destructuring: exclude computed object-rest keys"
-status: in-progress
+status: done
 created: 2026-08-25
 updated: 2026-08-25
+completed: 2026-08-25
 priority: medium
 horizon: s
 feasibility: easy
@@ -123,3 +124,10 @@ is an object instead of `undefined`.
 - `pnpm run check:func-budget` — **pass**.
 - `pnpm run check:oracle-ratchet` and `pnpm run check:coercion-sites` —
   **pass**, with no checker or coercion-site growth.
+- Fetched and merged `upstream/main` at `7cb7e0b8053c635639529c1e51d1ae1751872656`
+  in merge commit `725c3061a`; the exact focused suite remained **12/12
+  pass** after the merge.
+- Post-merge `pnpm run typecheck`, `pnpm run lint`, `pnpm run format:check`,
+  both budget gates, both ratchets, and `pnpm run check:issues` — **pass**.
+- Post-merge numeric-local pre-push control
+  (`tests/issue-3765-numeric-locals.test.ts`) — **18/18 pass**.
