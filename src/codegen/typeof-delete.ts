@@ -2034,7 +2034,7 @@ export function compileTypeofComparison(
   // Static resolution: if the typeof result is known at compile time,
   // emit a constant comparison result without any runtime call.
   const operand = typeofExpr.expression;
-  let guardOperand = operand;
+  let guardOperand: ts.Expression = operand;
   while (
     ts.isParenthesizedExpression(guardOperand) ||
     ts.isAsExpression(guardOperand) ||
