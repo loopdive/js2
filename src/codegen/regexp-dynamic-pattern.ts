@@ -52,6 +52,12 @@ export const TOKEN_LITERAL = 1;
 export const TOKEN_ANY = 2;
 /** `|` — alternation separator. */
 export const TOKEN_PIPE = 3;
+/** `*` — greedy zero-or-more quantifier (Annex B `\\c` fallback only). */
+export const TOKEN_STAR = 4;
+/** `+` — greedy one-or-more quantifier (Annex B `\\c` fallback only). */
+export const TOKEN_PLUS = 5;
+/** `?` — greedy zero-or-one quantifier (Annex B `\\c` fallback only). */
+export const TOKEN_OPT = 6;
 
 /**
  * The decoder packs its answer into one i32 so the callers need no
@@ -121,6 +127,8 @@ const inRange = (local: number, lo: number, hi: number): Instr[] => [
  * | `\c` + other      | LITERAL(`\`)  (Annex B)      | 1   |
  * | `\f\n\r\t\v`      | LITERAL(control)             | 2   |
  * | `\` + non-alnum   | LITERAL(that unit)           | 2   |
+ * | `\\c` + `*+?`       | STAR/PLUS/OPT quantifier      | 1   |
+ * | `\\c` + `{}`        | LITERAL(that unit)            | 1   |
  * | ordinary unit     | LITERAL(unit)                | 1   |
  * | anything else     | UNSUPPORTED                  | 1   |
  *
@@ -179,6 +187,29 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
         { op: "local.get", index: I },
         { op: "i32.add" },
         { op: "i32.const", value: delta },
+        { op: "i32.add" },
+        { op: "array.get_u", typeIdx: dataTypeIdx },
+      ],
+      else: [{ op: "i32.const", value: -1 }],
+    },
+  ];
+
+  /** Read a preceding source unit, or -1 before the pattern start. */
+  const readBehind = (delta: number): Instr[] => [
+    { op: "local.get", index: I },
+    { op: "i32.const", value: delta },
+    { op: "i32.add" },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ge_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: PDATA },
+        { op: "local.get", index: POFF },
+        { op: "local.get", index: I },
+        { op: "i32.const", value: delta },
+        { op: "i32.add" },
         { op: "i32.add" },
         { op: "array.get_u", typeIdx: dataTypeIdx },
       ],
@@ -327,6 +358,29 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
     return out;
   })();
 
+  // Annex B's `\\c` fallback consumes only the backslash. The following `c`
+  // is an ordinary atom, so `\\c*`, `\\c+`, and `\\c?` quantify that `c`;
+  // unmatched braces remain literal identity escapes. Keep this context local
+  // to the fallback so ordinary dynamic `a*b` remains a loud refusal.
+  const annexBControlFallbackMeta: Instr[] = [
+    ...readBehind(-1),
+    { op: "i32.const", value: 0x63 },
+    { op: "i32.eq" },
+    ...readBehind(-2),
+    { op: "i32.const", value: 0x5c },
+    { op: "i32.eq" },
+    { op: "i32.and" },
+  ];
+
+  const annexBControlFallbackLiteral = cond(
+    annexBControlFallbackMeta,
+    packDynamic(TOKEN_LITERAL, 1, [{ op: "local.get", index: C }]),
+    cond(isMeta, UNSUPPORTED, packDynamic(TOKEN_LITERAL, 1, [{ op: "local.get", index: C }])),
+  );
+
+  const annexBControlFallbackQuantifier = (kind: number): Instr[] =>
+    cond(annexBControlFallbackMeta, packConst(kind, 1, 0), annexBControlFallbackLiteral);
+
   const body: Instr[] = [
     ...readAhead(0),
     { op: "local.set", index: C },
@@ -356,9 +410,17 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
         eqConst(C, 0x2e),
         packConst(TOKEN_ANY, 1, 0),
         cond(
-          eqConst(C, 0x5c),
-          backslash,
-          cond(isMeta, UNSUPPORTED, packDynamic(TOKEN_LITERAL, 1, [{ op: "local.get", index: C }])),
+          eqConst(C, 0x2a),
+          annexBControlFallbackQuantifier(TOKEN_STAR),
+          cond(
+            eqConst(C, 0x2b),
+            annexBControlFallbackQuantifier(TOKEN_PLUS),
+            cond(
+              eqConst(C, 0x3f),
+              annexBControlFallbackQuantifier(TOKEN_OPT),
+              cond(eqConst(C, 0x5c), backslash, annexBControlFallbackLiteral),
+            ),
+          ),
         ),
       ),
     ),
