@@ -1009,12 +1009,24 @@ function compileIdentifierCore(
     // runtime `undefined` to NaN before `=== undefined` / any-param uses can
     // observe it. Return the raw externref; numeric consumers coerce at
     // their own use site (ToNumber(undefined) = NaN matches JS).
+    // #4701: a widened mapped-arguments formal is intentionally a dynamic
+    // carrier. Its checker type can remain numeric because the original
+    // call-site argument was numeric, but reverse sync may later write any JS
+    // value (for example, a string descriptor value) into the formal. Preserve
+    // the carrier on a bare read; numeric consumers coerce it at their use site.
+    const mappedExternrefParam = (() => {
+      const info = fctx.mappedArgsInfo;
+      if (!info || localIdx < info.paramOffset) return false;
+      const paramIndex = localIdx - info.paramOffset;
+      return paramIndex < info.paramCount && info.paramTypes[paramIndex]?.kind === "externref";
+    })();
     if (
       declaredType.kind === "externref" &&
       !fctx.captureExternrefNames?.has(name) &&
       !fctx.undefWidenedLocals?.has(name) &&
       !fctx.forInIdentifierVars?.has(name) &&
-      !fctx.mixedAssignmentCarrierVars?.has(name)
+      !fctx.mixedAssignmentCarrierVars?.has(name) &&
+      !mappedExternrefParam
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
       const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);
