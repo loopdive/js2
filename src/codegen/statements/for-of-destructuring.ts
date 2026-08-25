@@ -23,6 +23,7 @@ import {
   patternIteratorStepCount,
 } from "../destructuring-params.js";
 import { emitAssignToTarget, isStrictContext } from "../expressions/assignment.js";
+import { analyzeTdzAccess, emitStaticTdzThrow } from "../expressions/identifiers.js";
 import { findUnresolvableInArrayPattern, findUnresolvableInObjectPattern } from "../expressions/unresolvable-assign.js";
 import { emitCoercedLocalSet, emitThrowTypeError } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
@@ -52,6 +53,36 @@ import {
   tryEmitArrayProtoIteratorReadDrive,
 } from "./destructuring.js";
 import { collectInstrs } from "./shared.js";
+import { emitTdzCheck } from "./tdz.js";
+
+/**
+ * Preserve §13.15.5 PutValue errors for identifier targets in an assignment
+ * pattern. The ordinary assignment-expression path already performs these
+ * checks, but the for-of destructuring writer emits direct stores. A TDZ check
+ * must precede the const check: an uninitialised lexical binding is a
+ * ReferenceError even when its declaration is const.
+ */
+function emitForOfAssignmentTargetGuard(ctx: CodegenContext, fctx: FunctionContext, target: ts.Identifier): boolean {
+  const name = target.text;
+  if (ctx.tdzGlobals.has(name)) {
+    const tdzResult = analyzeTdzAccess(ctx, target);
+    if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, name);
+      return true;
+    }
+    if (tdzResult === "check") emitTdzCheck(ctx, fctx, name);
+  }
+  const declaration = ctx.oracle.variableDeclarationOf(target);
+  const isConst =
+    fctx.constBindings?.has(name) === true ||
+    (declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0);
+  if (!isConst) return false;
+  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+  fctx.body.push({ op: "unreachable" });
+  return true;
+}
 
 /**
  * Emit the "write the destructured local back to its module global" tail —
@@ -1188,6 +1219,9 @@ export function compileForOfAssignDestructuring(
             oobTarget = el.left;
             oobInit = el.right;
           }
+          if (!oobInit && ts.isIdentifier(oobTarget) && emitForOfAssignmentTargetGuard(ctx, fctx, oobTarget)) {
+            continue;
+          }
           if (oobInit && ts.isIdentifier(oobTarget)) {
             let oobLocal = fctx.localMap.get(oobTarget.text);
             let oobSyncGlobalIdx: number | undefined;
@@ -1303,6 +1337,7 @@ export function compileForOfAssignDestructuring(
           // Check for undefined and apply default — BEFORE type coercion
           emitDefaultValueCheck(ctx, fctx, fieldType, targetLocal, defaultInit, targetType ?? undefined);
         } else {
+          if (emitForOfAssignmentTargetGuard(ctx, fctx, targetEl)) continue;
           if (targetType && !valTypesMatch(fieldType, targetType)) {
             coerceType(ctx, fctx, fieldType, targetType);
           }
@@ -1536,10 +1571,12 @@ export function compileForOfAssignDestructuring(
             // Check for undefined and apply default — BEFORE type coercion
             emitDefaultValueCheck(ctx, fctx, innerElemType, targetLocal, defaultInit, targetType ?? undefined);
           } else if (boxedCapVec) {
+            if (emitForOfAssignmentTargetGuard(ctx, fctx, targetEl)) continue;
             // (#2692) Box-aware plain write (boxed+default already handled and
             // `continue`d at the #1510 branch above, so here it is no-default).
             emitBoxedForOfAssignStore(ctx, fctx, targetLocal, innerElemType, boxedCapVec);
           } else {
+            if (emitForOfAssignmentTargetGuard(ctx, fctx, targetEl)) continue;
             if (targetType && !valTypesMatch(innerElemType, targetType)) {
               coerceType(ctx, fctx, innerElemType, targetType);
             }
@@ -1674,6 +1711,10 @@ function emitForOfRestAssignment(
   fctx.body.push({ op: "f64.const", value: restStartIndex });
   fctx.body.push({ op: "call", funcIdx: sliceIdx });
 
+  // The slice has now been evaluated; PutValue can report a lexical target's
+  // TDZ/const error without skipping observable source evaluation.
+  if (ts.isIdentifier(restTarget) && emitForOfAssignmentTargetGuard(ctx, fctx, restTarget)) return true;
+
   // Coerce externref slice -> the rest target's declared type and store. For an
   // untyped (`any` → externref) target this is a no-op; for `number[]` (a vec
   // ref) coerceType reconstructs the vec from the JS-array externref (its
@@ -1784,6 +1825,12 @@ function emitVecRestAssignment(
   fctx.body.push({ op: "local.get", index: restLenLocal });
   fctx.body.push({ op: "local.get", index: restArrLocal });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+
+  if (!isNestedPattern && !isMemberTarget && ts.isIdentifier(restTarget)) {
+    // Materialisation is complete; PutValue is the first operation that can
+    // observe a TDZ or immutable lexical target.
+    if (emitForOfAssignmentTargetGuard(ctx, fctx, restTarget)) return;
+  }
 
   if (isNestedPattern) {
     // Store the fresh rest vec into the temp local, then recurse into the
