@@ -5713,7 +5713,7 @@ export function compileElementAccessBody(
       elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
       !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments")
     ) {
-      const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression);
+      const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression, true);
       if (namedKey !== undefined) {
         const named = emitNonIndexVecElementGet(ctx, fctx, namedKey);
         if (named) return named;

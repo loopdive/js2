@@ -102,6 +102,7 @@ import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
 import {
   buildArgumentsBrandBit,
@@ -735,38 +736,6 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: inner },
   ];
-
-  /**
-   * (#4434) Mark the module as carrying an indexed-lane-reachable companion
-   * entry when the key is a canonical numeric STRING that is not an array
-   * index (`"4294967295"`, `"4294967296"`, `"1e21"`).
-   *
-   * The `__extern_get_idx` prologue is gated on this flag, and the define path
-   * set it only for keys with an index `>= 0` — but `arr[4294967295]` reaches
-   * that same prologue as an f64 whose `number_toString` is the stored key. So
-   * the flag has to follow reachability, not index-ness; see
-   * `canonicalNumericKeyGuard`'s doc comment. Returns `[]` (no-op) when
-   * `__str_to_number` is unavailable, leaving today's behaviour.
-   */
-  const markNumericLikeNamedKey = (keyLocal: number, scratchF64: number): Instr[] => {
-    const strToNumberIdx = ctx.funcMap.get("__str_to_number");
-    if (strToNumberIdx === undefined) return [];
-    return canonicalNumericKeyGuard(
-      keyLocal,
-      scratchF64,
-      {
-        strToNumber: strToNumberIdx,
-        numberToString: numToStringIdx,
-        strFlatten: strFlattenIdx,
-        strEquals: strEqualsIdx,
-        anyStrTypeIdx,
-      },
-      [
-        { op: "i32.const", value: 1 },
-        { op: "global.set", index: core.numericFlagGlobalIdx },
-      ],
-    );
-  };
 
   /** `idxLocal = __obj_index_of_key(cast key)` — canonical array index or -1. */
   const parseIndex = (keyLocal: number, idxLocal: number): Instr[] => [
@@ -1511,7 +1480,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: markNumericLikeNamedKey(1, 20),
+          then: markNumericLikeNamedKey(
+            ctx,
+            1,
+            20,
+            core.numericFlagGlobalIdx,
+            numToStringIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            anyStrTypeIdx,
+            13,
+          ),
         },
         // (#4010 S1′) Named-key twin of the index seed above — see `vec-bag-seed.ts`.
         // Deliberately NOT applied on the accessor path: converting a data
@@ -1524,6 +1503,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 3 },
         { op: "call", funcIdx: dpValueIdx },
         { op: "drop" },
+        ...growHighArrayIndexLength(4, 20, 13, vecBaseIdx),
         // Write-back for index-keyed DATA defines carrying a [[Value]].
         { op: "local.get", index: 3 },
         { op: "i32.trunc_f64_s" },
@@ -1747,7 +1727,16 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: markNumericLikeNamedKey(1, 13),
+          then: markNumericLikeNamedKey(
+            ctx,
+            1,
+            13,
+            core.numericFlagGlobalIdx,
+            numToStringIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            anyStrTypeIdx,
+          ),
         },
         // Delegate the accessor define (validation + merge live in the native).
         { op: "local.get", index: 7 },

@@ -48,7 +48,7 @@
  * WITHIN one write (`[obj, true]`) is the array-literal element-typing lane's
  * job and is not touched here.
  */
-import type { JsTag } from "../../checker/oracle.js";
+import { jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
@@ -79,8 +79,130 @@ export function rebindWidenedArrayVecType(
   if (!ts.isIdentifier(decl.name)) return undefined;
   const descriptorCarrier = descriptorArrayCarrierType(ctx, decl);
   if (descriptorCarrier !== undefined) return descriptorCarrier;
+  const descriptorType = descriptorValueWidenedArrayVecType(ctx, sourceFile, decl);
+  if (descriptorType !== undefined) return descriptorType;
   if (!widenedVarsOf(ctx, sourceFile).has(decl.name.text)) return undefined;
   return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) };
+}
+
+/**
+ * (#4491) A standalone data descriptor can write a value whose JS tag cannot
+ * live in the array's inferred primitive element carrier. The descriptor
+ * overlay correctly keeps that value in its companion, but a typed element
+ * read would otherwise bypass the companion and return the stale primitive
+ * slot. Widen the binding's element carrier before its initializer is built so
+ * the ordinary vec read/write path remains authoritative.
+ *
+ * This is deliberately limited to statically known indexed data descriptors:
+ * unknown descriptors and non-index expandos retain their existing lowering,
+ * while a dynamic value remains the overlay's responsibility. The standalone
+ * lane is the only one with this WasmGC vec/companion split; host arrays do not
+ * need a representation change here.
+ */
+export function descriptorValueWidenedArrayVecType(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  decl: ts.VariableDeclaration,
+): ValType | undefined {
+  if (!ctx.standalone || !ts.isIdentifier(decl.name)) return undefined;
+  const elementTag = jsTagOfFact(ctx.oracle.elementFactOf(decl));
+  if (elementTag === undefined || !["number", "string", "boolean", "bigint"].includes(elementTag)) {
+    return undefined;
+  }
+
+  let widened = false;
+  const indexedKey = (node: ts.Node): boolean => {
+    const key = ts.isStringLiteral(node) || ts.isNumericLiteral(node) ? node.text : undefined;
+    if (key === undefined || !/^(0|[1-9][0-9]*)$/.test(key)) return false;
+    const numeric = Number(key);
+    return Number.isInteger(numeric) && numeric >= 0 && numeric < 0xffffffff;
+  };
+  const descriptorValue = (node: ts.Expression): ts.Expression | undefined => {
+    let desc = node;
+    while (
+      ts.isParenthesizedExpression(desc) ||
+      ts.isAsExpression(desc) ||
+      ts.isTypeAssertionExpression(desc) ||
+      ts.isNonNullExpression(desc) ||
+      ts.isSatisfiesExpression(desc)
+    ) {
+      desc = desc.expression;
+    }
+    if (!ts.isObjectLiteralExpression(desc)) return undefined;
+    let value: ts.Expression | undefined;
+    for (const property of desc.properties) {
+      if (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) {
+        const name = property.name;
+        if ((ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === "value") {
+          value = ts.isPropertyAssignment(property) ? property.initializer : property.name;
+        }
+      }
+      if (
+        (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        (property.name.text === "get" || property.name.text === "set")
+      ) {
+        return undefined;
+      }
+    }
+    return value;
+  };
+  const incompatible = (value: ts.Expression): boolean => {
+    const valueTag = ctx.oracle.staticJsTypeOf(value);
+    return valueTag !== "mixed" && valueTag !== elementTag;
+  };
+  const visit = (node: ts.Node): void => {
+    if (widened || !ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    const callee = node.expression;
+    if (
+      !ts.isIdentifier(callee.expression) ||
+      callee.expression.text !== "Object" ||
+      !ts.isIdentifier(callee.name) ||
+      (callee.name.text !== "defineProperty" && callee.name.text !== "defineProperties")
+    ) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    const receiver = node.arguments[0];
+    if (!receiver || !ts.isIdentifier(receiver) || ctx.oracle.variableDeclarationOf(receiver) !== decl) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    if (callee.name.text === "defineProperty" && node.arguments.length >= 3) {
+      const key = node.arguments[1]!;
+      const value = descriptorValue(node.arguments[2]!);
+      if (indexedKey(key) && value !== undefined && incompatible(value)) widened = true;
+    } else if (callee.name.text === "defineProperties" && node.arguments.length >= 2) {
+      let descriptors = node.arguments[1]!;
+      while (
+        ts.isParenthesizedExpression(descriptors) ||
+        ts.isAsExpression(descriptors) ||
+        ts.isTypeAssertionExpression(descriptors) ||
+        ts.isNonNullExpression(descriptors) ||
+        ts.isSatisfiesExpression(descriptors)
+      ) {
+        descriptors = descriptors.expression;
+      }
+      if (ts.isObjectLiteralExpression(descriptors)) {
+        for (const property of descriptors.properties) {
+          if (!ts.isPropertyAssignment(property)) continue;
+          const value = descriptorValue(property.initializer);
+          if (indexedKey(property.name) && value !== undefined && incompatible(value)) {
+            widened = true;
+            break;
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return widened
+    ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
+    : undefined;
 }
 
 /**
