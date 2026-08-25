@@ -1837,20 +1837,6 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     );
   };
 
-  const forOfBodyHasThrow = (statement: ts.Statement): boolean => {
-    let found = false;
-    const visit = (child: ts.Node): void => {
-      if (found || isFunctionLikeScope(child)) return;
-      if (ts.isThrowStatement(child)) {
-        found = true;
-        return;
-      }
-      ts.forEachChild(child, visit);
-    };
-    visit(statement);
-    return found;
-  };
-
   /** Every reference of a RESULT binding is an allowlisted result consumer? */
   const resultBindingUsesAreSafe = (bindingName: ts.Identifier): boolean => {
     const sym = checker.getSymbolAtLocation(bindingName);
@@ -1915,9 +1901,10 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     }
     // A direct call exposes the state-struct ValType. A binding used as a
     // for-of subject is also safe when its initializer is a native generator;
-    // the loop driver recovers the state ref from the externref slot.
+    // the loop driver recovers the state ref from the externref slot. Its
+    // throw path now closes the native state machine before rethrowing.
     if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) {
-      return !viaBinding || (bindingHasGeneratorInitializer(node) && !forOfBodyHasThrow(p.statement));
+      return !viaBinding || bindingHasGeneratorInitializer(node);
     }
     if (!viaBinding) {
       if (ts.isSpreadElement(p)) return true;
