@@ -7950,6 +7950,8 @@ function compileCallExpression(
               "trim",
               "trimStart",
               "trimEnd",
+              "trimLeft",
+              "trimRight",
               "concat",
               "repeat",
               "padStart",

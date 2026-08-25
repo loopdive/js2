@@ -9473,6 +9473,8 @@ export const STRING_METHODS: Record<string, { params: ValType[]; result: ValType
   trim: { params: [], result: { kind: "externref" } },
   trimStart: { params: [], result: { kind: "externref" } },
   trimEnd: { params: [], result: { kind: "externref" } },
+  trimLeft: { params: [], result: { kind: "externref" } },
+  trimRight: { params: [], result: { kind: "externref" } },
   charAt: { params: [{ kind: "f64" }], result: { kind: "externref" } },
   slice: {
     params: [{ kind: "f64" }, { kind: "f64" }],

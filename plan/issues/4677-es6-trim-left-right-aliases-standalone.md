@@ -1,10 +1,11 @@
 ---
 id: 4677
 title: "ES6 standalone: String.prototype.trimLeft/trimRight aliases"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-25
 updated: 2026-08-25
+completed: 2026-08-25
 assignee: codex/es6-trim-alias-wave3
 priority: medium
 horizon: s
@@ -17,27 +18,39 @@ related: [4444, 4445, 3217, 4485]
 files:
   - src/checker/inhouse-globals.ts
   - src/codegen/array-object-proto.ts
+  - src/codegen/builtin-value-read.ts
   - src/codegen/char-at-transfer.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/extern-declarations.ts
   - src/codegen/index.ts
   - src/codegen/numeric-property-analysis.ts
   - src/codegen/string-ops.ts
   - src/codegen/string-proto-tostring.ts
+  - src/ir/analysis/encoding.ts
+  - src/runtime/wasm-struct-host-semantics.ts
   - tests/issue-4677.test.ts
 loc-budget-allow:
   - src/checker/inhouse-globals.ts
   - src/codegen/array-object-proto.ts
+  - src/codegen/builtin-value-read.ts
   - src/codegen/char-at-transfer.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/extern-declarations.ts
   - src/codegen/index.ts
   - src/codegen/numeric-property-analysis.ts
   - src/codegen/string-ops.ts
   - src/codegen/string-proto-tostring.ts
+  - src/ir/analysis/encoding.ts
+  - src/runtime/wasm-struct-host-semantics.ts
 func-budget-allow:
   - src/codegen/array-object-proto.ts::makeGlue
   - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
+  - src/codegen/builtin-value-read.ts::tryCompileStandaloneBuiltinProtoMemberMeta
+  - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
 ---
 
@@ -98,3 +111,26 @@ made from this scoped baseline.
   explicit pass→fail loss count; no zero-loss claim may be extrapolated from a
   different runner or baseline artifact.
 
+## Implementation Summary
+
+- Registered `trimLeft` and `trimRight` in the standalone String method,
+  transfer, type, encoding, and host-semantics tables.
+- Routed direct and borrowed calls to the existing `__str_trimStart` and
+  `__str_trimEnd` helpers without adding imports.
+- Kept both alias names as own prototype entries while using the native-proto
+  identity hook to share the canonical closure and metadata. Direct `.name`
+  folds now emit `trimStart`/`trimEnd` for the aliases.
+- Added six standalone equivalence tests in `tests/issue-4677.test.ts`.
+
+## Test Results
+
+- Focused Test262 cohort: **8/8 pass, 0/8 fail** after the fix (same eight-file
+  denominator as the baseline; measured pass delta **+8**, fail delta **-8**).
+- `tests/issue-4677.test.ts`: **6/6 pass** with Vitest, one worker.
+- Existing trim controls `tests/issue-3217.test.ts` and
+  `tests/issue-3256.test.ts`: **19/19 pass** (standalone and WASI lanes).
+- TypeScript 7 check: `node node_modules/typescript7/lib/tsc.js --noEmit -p
+  tsconfig.ts7.json` — pass.
+- LOC and function budget gates — pass.
+- Direct standalone smoke: both calls, borrowed `.call`, exact identity,
+  canonical names, zero arity, valid Wasm, and zero imports — pass.

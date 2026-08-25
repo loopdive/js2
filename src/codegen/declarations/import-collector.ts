@@ -1645,6 +1645,8 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       "trim",
       "trimStart",
       "trimEnd",
+      "trimLeft",
+      "trimRight",
       "repeat",
       "padStart",
       "padEnd",
