@@ -978,6 +978,31 @@ export function coerceType(
   return coerceTypeImpl(ctx, fctx, from, to, toPrimitiveHint);
 }
 
+function compileBigIntLiteral(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BigIntLiteral,
+  expectedType: ValType | undefined,
+): ValType | null {
+  const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
+  if (!ctx.standalone && !ctx.wasi && expectedType?.kind === "externref") {
+    const stringType = compileStringLiteral(ctx, fctx, text, expr);
+    if (!stringType) return null;
+    if (stringType.kind !== "externref") {
+      coerceType(ctx, fctx, stringType, { kind: "externref" });
+    }
+    const ctorIdx = ensureLateImport(ctx, "__bigint_ctor_ref", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__bigint_ctor_ref") ?? ctorIdx;
+    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __bigint_ctor_ref");
+    fctx.body.push({ op: "call", funcIdx: finalIdx });
+    return { kind: "externref" };
+  }
+  const value = BigInt(text);
+  fctx.body.push({ op: "i64.const", value });
+  return { kind: "i64", bigint: true };
+}
+
 function compileExpressionInner(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -995,10 +1020,7 @@ function compileExpressionInner(
   }
 
   if (ts.isBigIntLiteral(expr)) {
-    const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
-    const value = BigInt(text);
-    fctx.body.push({ op: "i64.const", value });
-    return { kind: "i64", bigint: true };
+    return compileBigIntLiteral(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {

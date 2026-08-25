@@ -75,9 +75,11 @@
 const _apply = Reflect.apply;
 const _wmGet = WeakMap.prototype.get;
 const _wmSet = WeakMap.prototype.set;
+const _objectIs = Object.is;
 
 /** mirror JS array → the WasmGC vec struct it was materialised from. */
 const _vecMirrorSource = new WeakMap<object, unknown>();
+const _vecMirrorElements = new WeakMap<object, unknown[]>();
 
 /** `map.get(key)` that cannot be broken by a test deleting `WeakMap.prototype.get`. */
 function _mirrorGet(key: object): unknown {
@@ -87,6 +89,14 @@ function _mirrorGet(key: object): unknown {
 /** `map.set(key, value)` that cannot be broken by a test deleting `WeakMap.prototype.set`. */
 function _mirrorSet(key: object, value: unknown): void {
   _apply(_wmSet, _vecMirrorSource, [key, value]);
+}
+
+function _mirrorElementsGet(key: object): unknown[] | undefined {
+  return _apply(_wmGet, _vecMirrorElements, [key]) as unknown[] | undefined;
+}
+
+function _mirrorElementsSet(key: object, value: unknown[]): void {
+  _apply(_wmSet, _vecMirrorElements, [key, value]);
 }
 
 export type VecMirrorSnapshot = {
@@ -111,6 +121,30 @@ export function registerVecMirror(mirror: unknown[], vec: unknown): void {
 export function vecForMirror(v: unknown): unknown {
   if (v == null || typeof v !== "object") return undefined;
   return _mirrorGet(v as object);
+}
+
+/** Save the mirror contents last known to match its Wasm vec. */
+export function recordVecMirrorElements(v: unknown): void {
+  if (v == null || typeof v !== "object") return;
+  const value = v as { length?: unknown; [index: number]: unknown };
+  if (typeof value.length !== "number" || value.length < 0) return;
+  const length = value.length >>> 0;
+  if (length !== value.length) return;
+  const snapshot = new Array<unknown>(length);
+  for (let i = 0; i < length; i++) snapshot[i] = value[i];
+  _mirrorElementsSet(v, snapshot);
+}
+
+/** Whether host code changed a registered mirror since its last vec sync. */
+export function vecMirrorElementsChanged(v: unknown): boolean {
+  if (v == null || typeof v !== "object") return false;
+  const value = v as { length?: unknown; [index: number]: unknown };
+  const snapshot = _mirrorElementsGet(v);
+  if (snapshot === undefined || typeof value.length !== "number" || value.length !== snapshot.length) return true;
+  for (let i = 0; i < snapshot.length; i++) {
+    if (!_objectIs(value[i], snapshot[i])) return true;
+  }
+  return false;
 }
 
 /** Shared no-mirrors result — `__extern_method_call` / `__call_function` are HOT paths; the common case must not allocate. */

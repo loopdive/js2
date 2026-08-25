@@ -13,6 +13,7 @@ import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-sour
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { coercionPlan } from "../coercion-plan.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { ensureAnyHelpers, ensureAnyToExternHelper } from "../any-helpers.js";
 import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
@@ -1757,6 +1758,70 @@ export function compileIdentifierCall(
             paramTypes: ValType[];
             hasRestParam?: boolean;
           };
+
+          // A module import is typed from its published JavaScript signature,
+          // which is commonly `(any) => any`, while the linked compiled body
+          // may have proven a scalar ABI such as `(f64) => f64`. The runtime
+          // closure stores the latter funcref. Exact-only candidate selection
+          // therefore omitted the real target and ended in the TypeError arm
+          // even though both sides have a lossless box/unbox bridge (UUID's
+          // default-exported v1/v6/v7 helpers are the package witness).
+          //
+          // Register numeric bridges before any detached dispatch arm is built
+          // so helper insertion cannot shift already-baked function indices.
+          // The pure planner is then shared by candidate admission, argument
+          // conversion, and result conversion; lossy placeholder plans are
+          // never eligible runtime ABI bridges.
+          const scalarBridgePlan = (
+            from: ValType,
+            to: ValType,
+            helpers: { boxNumberIdx: number | null; unboxNumberIdx: number | null },
+          ): Instr[] | null => {
+            if (valTypesMatch(from, to)) return [];
+            const plan = coercionPlan(from, to, helpers);
+            return plan !== null && plan.lossy !== true ? plan.instrs : null;
+          };
+          const theoreticalHelpers = { boxNumberIdx: 0, unboxNumberIdx: 0 };
+          let needsScalarBridge = false;
+          for (const [, info] of ctx.closureInfoByTypeIdx) {
+            const hasRest = info.hasRestParam === true;
+            const fixedCount = hasRest ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
+            if (fixedCount > sigParamWasmTypes.length) {
+              continue;
+            }
+            let compatible = true;
+            let differs = false;
+            for (let pi = 0; pi < fixedCount; pi++) {
+              const from = sigParamWasmTypes[pi]!;
+              const to = info.paramTypes[pi]!;
+              if (valTypesMatch(from, to)) continue;
+              differs = true;
+              if (scalarBridgePlan(from, to, theoreticalHelpers) === null) {
+                compatible = false;
+                break;
+              }
+            }
+            if (!compatible) continue;
+            const returnDiffers =
+              expectedReturn !== null &&
+              info.returnType !== null &&
+              !valTypesMatch(info.returnType, expectedReturn) &&
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers) !== null;
+            if (differs || returnDiffers) {
+              needsScalarBridge = true;
+              break;
+            }
+          }
+          if (needsScalarBridge) {
+            addUnionImports(ctx);
+            flushLateImportShifts(ctx, fctx);
+          }
+          const dispatchBridgePlan = (from: ValType, to: ValType): Instr[] | null =>
+            scalarBridgePlan(from, to, {
+              boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
+              unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+            });
+
           const funcCandidates: FuncCandidate[] = [
             {
               funcTypeIdx: matchedClosureInfo.funcTypeIdx,
@@ -1805,7 +1870,10 @@ export function compileIdentifierCall(
             if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
             let paramsMatch = true;
             for (let pi = 0; pi < candidateParamTypes.length; pi++) {
-              if (!valTypesMatch(candidateParamTypes[pi]!, sigParamWasmTypes[pi]!)) {
+              if (
+                !valTypesMatch(candidateParamTypes[pi]!, sigParamWasmTypes[pi]!) &&
+                dispatchBridgePlan(sigParamWasmTypes[pi]!, candidateParamTypes[pi]!) === null
+              ) {
                 paramsMatch = false;
                 break;
               }
@@ -2335,9 +2403,31 @@ export function compileIdentifierCall(
                 fcCallBody.push({ op: "ref.cast", typeIdx: candidateSelfTypeIdx });
               }
               // Push args
+              let candidateArgsCoercible = true;
               for (let ai = 0; ai < fcFixedParamCount; ai++) {
+                const fromType = matchedClosureInfo.paramTypes[ai]!;
+                const toType = fc.paramTypes[ai]!;
+                // A missing dynamic argument is materialized as host
+                // `undefined`. Unboxing that value produces an ordinary NaN,
+                // but a compiled f64 parameter uses the signalling-NaN payload
+                // as its "run the default initializer" sentinel. Preserve that
+                // protocol when a typed runtime candidate is selected; the
+                // sentinel is still JavaScript NaN for a non-defaulted formal.
+                if (ai >= expr.arguments.length && toType.kind === "f64" && fromType.kind === "externref") {
+                  fcCallBody.push(...defaultValueInstrs(toType));
+                  continue;
+                }
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
+                if (!valTypesMatch(fromType, toType)) {
+                  const bridge = dispatchBridgePlan(fromType, toType);
+                  if (bridge === null) {
+                    candidateArgsCoercible = false;
+                    break;
+                  }
+                  fcCallBody.push(...bridge);
+                }
               }
+              if (!candidateArgsCoercible) continue;
               if (fcHasRest) {
                 const restType = fc.paramTypes[fcFixedParamCount]!;
                 const restTypeIdx =
@@ -2378,43 +2468,23 @@ export function compileIdentifierCall(
               // runtime). The live arm always matches `expectedReturn` exactly
               // (so `valTypesMatch` is true and this block is skipped for it).
               const matchedDispatch = expectedReturn !== null && fc.returnType !== null;
-              const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
               if (expectedReturn === null && fc.returnType !== null) {
                 fcCallBody.push({ op: "drop" });
               } else if (expectedReturn !== null && fc.returnType === null) {
                 fcCallBody.push(...defaultValueInstrs(expectedReturn));
-              } else if (
-                matchedDispatch &&
-                !valTypesMatch(fc.returnType!, expectedReturn!) &&
-                numericKind(expectedReturn!) &&
-                numericKind(fc.returnType!)
-              ) {
-                // (#1693) Numeric-primitive divergence between a real matching
-                // candidate and the declared block type (e.g. expected i32,
-                // candidate returns f64). `coerceType` between numeric kinds
-                // emits ONLY pure ops (`f64.convert_i32_s` / `i32.trunc_sat_f64_s`
-                // / …) — no late imports, no index shift — so it is safe even on
-                // a dead arm. Surfaces at full-module scale in axios/lib/utils.js
-                // where ~30 same-arity arrow predicates with diverging numeric
-                // returns populate ctx.closureInfoByTypeIdx.
-                const savedBody = fctx.body;
-                fctx.body = fcCallBody;
-                coerceType(ctx, fctx, fc.returnType!, expectedReturn!);
-                fctx.body = savedBody;
               } else if (matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)) {
-                // (#2174) Any remaining mismatch is externref/ref ↔ primitive on
-                // a candidate that does NOT match the runtime funcref (the live
-                // arm matched `expectedReturn` and skipped this block). Bridging
-                // these via `coerceType` would pull `__box_number`/`__unbox_number`
-                // — a late import that shifts indices and corrupts earlier
-                // `ref.func`s. Since this arm never executes, drop its value and
-                // push a type-valid default for the block result instead — no
-                // import, no shift. (The async case from #2174 is handled by
-                // widening `expectedReturn` to externref above, which makes the
-                // live async/Promise arm `valTypesMatch` and pass through; the
-                // dead f64 candidates land here and get a null-extern default.)
-                fcCallBody.push({ op: "drop" });
-                fcCallBody.push(...defaultValueInstrs(expectedReturn!));
+                // Numeric/ref-external scalar bridges were reserved before the
+                // dispatch was detached, so a LIVE signature-divergent arm can
+                // preserve its value (for example f64 -> boxed externref) with
+                // no late index mutation. Non-bridgeable candidates retain the
+                // historical dead-arm placeholder.
+                const bridge = dispatchBridgePlan(fc.returnType!, expectedReturn!);
+                if (bridge !== null) {
+                  fcCallBody.push(...bridge);
+                } else {
+                  fcCallBody.push({ op: "drop" });
+                  fcCallBody.push(...defaultValueInstrs(expectedReturn!));
+                }
               }
 
               funcDispatch = [

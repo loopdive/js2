@@ -1,10 +1,10 @@
 ---
 id: 4383
 title: "UUID original suite exposes vector, crypto, exception, and callback ABI gaps"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-12
-updated: 2026-08-13
+updated: 2026-08-26
 priority: high
 horizon: m
 feasibility: hard
@@ -112,11 +112,11 @@ acceptance oracle.
 - [x] `v7.test.ts` emits valid Wasm and its 14 callbacks execute.
 - [x] The v1 illegal-cast cluster is reduced to a minimal compiler regression
       and fixed without UUID-specific source rewriting.
-- [ ] Byte-vector parse/stringify/buffer-offset behavior matches Node.
-- [ ] Node-platform `crypto`/RNG capability is either provided honestly or
+- [x] Byte-vector parse/stringify/buffer-offset behavior matches Node.
+- [x] Node-platform `crypto`/RNG capability is either provided honestly or
       reported as unavailable without silently returning wrong bytes.
-- [ ] Expected RangeError/validation paths preserve throw behavior.
-- [ ] The unchanged original suite reaches 75/75 Node and 75/75 Wasm, with zero
+- [x] Expected RangeError/validation paths preserve throw behavior.
+- [x] The unchanged original suite reaches 75/75 Node and 75/75 Wasm, with zero
       harness-incompatible tests.
 
 ## 2026-08-12 implementation checkpoint
@@ -176,3 +176,28 @@ absent Test262 harness file, and nine pre-existing module-binding cases. The
 exact 74 host regressions now pass 74/74, the 86 locally executable standalone
 rows pass, and the authoritative merge-group baseline remains the final oracle
 before removing the hold label.
+
+## 2026-08-26 resolution
+
+The unchanged pinned `uuid@14.0.1` suite now reaches **75/75 Node and 75/75
+Wasm**. All ten original upstream test files compile and validate, including
+`v7.test.ts` at 14/14. There are no skipped registrations and no unavailable
+infrastructure rows.
+
+The final generic fixes cover:
+
+- identity-preserving typed-array host mirrors, mutation replay, and vec
+  write-back exports;
+- Web Crypto global/method dispatch over compiled byte vectors;
+- lossless scalar ABI bridges for imported compiled callables;
+- lexical callable capture when a local shadows a same-named module function;
+- arbitrary-width JS-host BigInt locals, parameters, returns, operators,
+  comparisons, unary operations, compound assignments, literals, and methods.
+
+The last v7 failure was a genuine 128-bit semantic gap: the UUID bit-flip test
+reduced sixteen bytes into a BigInt, while the compiler narrowed every BigInt
+to i64. JS-host mode now keeps real arbitrary-width host BigInts; standalone
+and WASI retain their existing i64 carrier. Focused BigInt coverage is **90/90**
+after the representation change. One separate WASI `BigInt(1.5)` validation
+test still fails identically on clean current `origin/main`; it is not a
+withdrawal from this work.

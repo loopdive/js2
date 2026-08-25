@@ -8,6 +8,7 @@
  * values produced by a TypedArray constructor; plain vecs remain unbranded.
  */
 import type { ValType } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { noJsHost } from "./helpers.js";
@@ -28,6 +29,49 @@ const TYPED_ARRAY_HOST_TAGS: Readonly<Record<string, number>> = {
   BigInt64Array: 10,
   BigUint64Array: 11,
 };
+
+/**
+ * Whether evaluating a dynamic-looking constructor argument is nevertheless
+ * guaranteed to produce a primitive before `%TypedArray%` sees it. Arithmetic
+ * operators run ToPrimitive on their operands and return a primitive (or
+ * throw), so their result can never be an ArrayBuffer or array-like object.
+ *
+ * This carrier fact is intentionally narrower than "number-like": `+` may
+ * produce a string or bigint. The existing TypedArray count path still applies
+ * the constructor's numeric coercion; this helper only prevents an arithmetic
+ * result typed as `any` from being mistaken for a host buffer/object carrier.
+ */
+export function typedArrayCtorArgIsArithmeticPrimitive(expr: ts.Expression): boolean {
+  let value = expr;
+  while (
+    ts.isParenthesizedExpression(value) ||
+    ts.isAsExpression(value) ||
+    ts.isSatisfiesExpression(value) ||
+    ts.isNonNullExpression(value) ||
+    ts.isTypeAssertionExpression(value)
+  ) {
+    value = value.expression;
+  }
+  if (ts.isPrefixUnaryExpression(value) || ts.isPostfixUnaryExpression(value)) return true;
+  if (!ts.isBinaryExpression(value)) return false;
+  switch (value.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.LessThanLessThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
+    case ts.SyntaxKind.AmpersandToken:
+    case ts.SyntaxKind.BarToken:
+    case ts.SyntaxKind.CaretToken:
+      return true;
+    default:
+      return false;
+  }
+}
 
 export function isHostTypedArrayCarrierName(name: string | undefined): name is string {
   return name !== undefined && TYPED_ARRAY_HOST_TAGS[name] !== undefined;

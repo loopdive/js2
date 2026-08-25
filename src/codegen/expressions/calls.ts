@@ -4055,6 +4055,16 @@ export function tryEmitInlineDynamicCall(
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
     ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
+  const needsHostFacadeUnwrap =
+    ctx.targetProfile.environment === "javascript" &&
+    candidates.some((candidate) =>
+      candidate.info.paramTypes.some(
+        (param) => param.kind === "externref" || param.kind === "ref" || param.kind === "ref_null",
+      ),
+    );
+  if (needsHostFacadeUnwrap) {
+    ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+  }
 
   // (#820/#1543) `undefined` externref source for padding missing trailing
   // args (call arity < a candidate's formal count), and (#3031) for the Proxy
@@ -4103,7 +4113,13 @@ export function tryEmitInlineDynamicCall(
   let boxNumberIdx = ctx.funcMap.get("__box_number");
   let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   let isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
+  let unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  if (
+    boxNumberIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    (needsHostFacadeUnwrap && unwrapForWasmIdx === undefined)
+  )
+    return null;
 
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
   // object/proxy runtime registers DEFINED functions only (no import → no index
@@ -4210,7 +4226,12 @@ export function tryEmitInlineDynamicCall(
   boxNumberIdx = ctx.funcMap.get("__box_number");
   unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) {
+  unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  if (
+    boxNumberIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    (needsHostFacadeUnwrap && unwrapForWasmIdx === undefined)
+  ) {
     // The helpers existed at the first capture; funcMap entries are shifted,
     // never removed, so this cannot happen — bail defensively if it ever does
     // (callee/args are all consumed into locals, the stack is empty here).
@@ -4411,8 +4432,16 @@ export function tryEmitInlineDynamicCall(
         callBody.push({ op: "call", funcIdx: unboxNumberIdx });
         callBody.push({ op: "i32.trunc_sat_f64_s" });
       } else if (pType.kind === "externref") {
-        // already externref
+        // A dynamic JS carrier may be a host facade for a compiled value. Send
+        // the underlying identity to a compiled externref parameter as well;
+        // dynamic reads in that callee understand raw vec/object carriers.
+        if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
       } else if (pType.kind === "ref" || pType.kind === "ref_null") {
+        // Dynamic arguments are saved as externrefs. A compiled GC value may
+        // therefore be represented by its host facade here (object Proxy,
+        // Array mirror, or TypedArray mirror). Reverse that view before the
+        // concrete call_ref parameter cast; plain host values pass through.
+        if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
         callBody.push({ op: "any.convert_extern" });
         callBody.push({ op: "ref.cast", typeIdx: (pType as { typeIdx: number }).typeIdx });
       }

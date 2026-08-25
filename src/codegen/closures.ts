@@ -3486,33 +3486,14 @@ function callbackBindingDeclaration(
   return declaration;
 }
 
-/** Whether a checker declaration denotes a callable value in `funcMap`. */
-function isCallbackFunctionDeclaration(declaration: ts.Declaration | undefined): boolean {
-  if (!declaration) return false;
-  if (
-    ts.isFunctionDeclaration(declaration) ||
-    ts.isFunctionExpression(declaration) ||
-    ts.isArrowFunction(declaration) ||
-    ts.isMethodDeclaration(declaration) ||
-    ts.isGetAccessorDeclaration(declaration) ||
-    ts.isSetAccessorDeclaration(declaration) ||
-    ts.isClassDeclaration(declaration) ||
-    ts.isClassExpression(declaration)
-  ) {
-    return true;
-  }
-  if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
-  let initializer = declaration.initializer;
-  while (
-    ts.isParenthesizedExpression(initializer) ||
-    ts.isAsExpression(initializer) ||
-    ts.isTypeAssertionExpression(initializer) ||
-    ts.isNonNullExpression(initializer) ||
-    ts.isSatisfiesExpression(initializer)
-  ) {
-    initializer = initializer.expression;
-  }
-  return ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer) || ts.isClassExpression(initializer);
+/** Whether this exact declaration owns the graph-wide `funcMap` entry. */
+function callbackBindingOwnsMappedFunction(
+  ctx: CodegenContext,
+  name: string,
+  declaration: ts.Declaration | undefined,
+): boolean {
+  if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
+  return ctx.funcMapOwnerDecl.get(name) === declaration || ctx.topLevelFunctionDeclarations.get(name) === declaration;
 }
 
 /** Compile an arrow function as a host callback via __make_callback.
@@ -3616,8 +3597,9 @@ export function compileArrowAsCallback(
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     // #2669: skip a name only when the checker says THIS callback reference
-    // resolves to a callable declaration. `funcMap` is name-indexed, so its
-    // entry can collide with a lexical local (lodash's `result` callback).
+    // resolves to the exact FunctionDeclaration that owns the name-indexed
+    // `funcMap` entry. A lexical callable local must still be captured: a
+    // same-named function in another scope/module is a different binding.
     // Names added transitively above are always environment captures; the
     // nested function's capture record already proves that they are needed.
     const bindingDeclaration = directReferencedNames.has(name)
@@ -3627,7 +3609,7 @@ export function compileArrowAsCallback(
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       directReferencedNames.has(name) &&
-      isCallbackFunctionDeclaration(bindingDeclaration) &&
+      callbackBindingOwnsMappedFunction(ctx, name, bindingDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
       !fctx.hoistedFunctionValueBindings?.has(name)
     ) {

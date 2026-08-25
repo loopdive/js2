@@ -37,7 +37,7 @@ import {
   emitNullGuardedStructGet,
   getCapturedBoxGlobal,
 } from "../property-access.js";
-import { coerceType, compileExpression } from "../shared.js";
+import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { patchStructNewForDynamicField } from "./extern.js";
@@ -65,7 +65,12 @@ import {
   getBuilderInfo,
   type StringBuilderInfo,
 } from "../string-builder.js";
-import { compileExternSetFallback, isNonWritableDataProperty, isStrictContext } from "./assignment.js";
+import {
+  compileAssignment,
+  compileExternSetFallback,
+  isNonWritableDataProperty,
+  isStrictContext,
+} from "./assignment.js";
 
 /**
  * Compile logical assignment operators: ??=, ||=, &&=
@@ -1658,6 +1663,67 @@ function hasStringAssignmentInParentScopes(name: string, fromExpr: ts.Node): boo
   return found;
 }
 
+function compoundBinaryOperator(op: ts.SyntaxKind): ts.BinaryOperator | undefined {
+  switch (op) {
+    case ts.SyntaxKind.PlusEqualsToken:
+      return ts.SyntaxKind.PlusToken;
+    case ts.SyntaxKind.MinusEqualsToken:
+      return ts.SyntaxKind.MinusToken;
+    case ts.SyntaxKind.AsteriskEqualsToken:
+      return ts.SyntaxKind.AsteriskToken;
+    case ts.SyntaxKind.SlashEqualsToken:
+      return ts.SyntaxKind.SlashToken;
+    case ts.SyntaxKind.PercentEqualsToken:
+      return ts.SyntaxKind.PercentToken;
+    case ts.SyntaxKind.AsteriskAsteriskEqualsToken:
+      return ts.SyntaxKind.AsteriskAsteriskToken;
+    case ts.SyntaxKind.AmpersandEqualsToken:
+      return ts.SyntaxKind.AmpersandToken;
+    case ts.SyntaxKind.BarEqualsToken:
+      return ts.SyntaxKind.BarToken;
+    case ts.SyntaxKind.CaretEqualsToken:
+      return ts.SyntaxKind.CaretToken;
+    case ts.SyntaxKind.LessThanLessThanEqualsToken:
+      return ts.SyntaxKind.LessThanLessThanToken;
+    case ts.SyntaxKind.GreaterThanGreaterThanEqualsToken:
+      return ts.SyntaxKind.GreaterThanGreaterThanToken;
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken:
+      return ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken;
+    default:
+      return undefined;
+  }
+}
+
+function tryCompileHostBigIntCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  left: ts.Identifier,
+  right: ts.Expression,
+  op: ts.SyntaxKind,
+): ValType | null | undefined {
+  if (ctx.standalone || ctx.wasi || ctx.oracle.staticJsTypeOf(left) !== "bigint") return undefined;
+  const binaryOp = compoundBinaryOperator(op);
+  if (binaryOp === undefined) return undefined;
+  const value = ts.factory.createBinaryExpression(left, binaryOp, right);
+  const assignment = ts.factory.createBinaryExpression(left, ts.SyntaxKind.EqualsToken, value);
+  const result = compileAssignment(ctx, fctx, assignment);
+  return result === VOID_RESULT ? null : result;
+}
+
+function tryCompileConstCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  right: ts.Expression,
+): ValType | undefined {
+  if (!fctx.constBindings?.has(name)) return undefined;
+  const rhsType = compileExpression(ctx, fctx, right);
+  if (rhsType) fctx.body.push({ op: "drop" });
+  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+  fctx.body.push({ op: "unreachable" });
+  return { kind: "f64" };
+}
+
 export function compileCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1704,13 +1770,12 @@ export function compileCompoundAssignment(
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  if (fctx.constBindings?.has(name)) {
-    const rhsType = compileExpression(ctx, fctx, expr.right);
-    if (rhsType) fctx.body.push({ op: "drop" });
-    emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-    fctx.body.push({ op: "unreachable" });
-    return { kind: "f64" };
-  }
+  const constCompound = tryCompileConstCompoundAssignment(ctx, fctx, name, expr.right);
+  if (constCompound !== undefined) return constCompound;
+
+  // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
+  const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (hostBigIntCompound !== undefined) return hostBigIntCompound;
 
   // (#3039) Boxed captured global compound-assign (`c += 1` in a method-
   // shorthand / class-method / accessor body reading a transitively-captured

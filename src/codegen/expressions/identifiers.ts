@@ -556,6 +556,10 @@ function emitNullablePrimitiveUnbox(
     }
   }
   if (primitiveKind === "bigint") {
+    // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
+    // through __to_bigint would collapse it to the compiler's host-free i64
+    // carrier and discard every bit above 63.
+    if (!ctx.standalone && !ctx.wasi) return null;
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -1460,7 +1464,15 @@ function compileIdentifierCore(
       name === "BigInt64Array" ||
       name === "BigUint64Array" ||
       name === "Buffer" ||
-      name === "process") &&
+      name === "process" ||
+      // Web Crypto is also a genuine host-global VALUE. Direct
+      // `crypto.randomUUID()` / `crypto.getRandomValues()` calls have typed
+      // builtin lowerings, but a guard such as `if (crypto.randomUUID)` reads
+      // the namespace first. Multi-module JS projects do not necessarily
+      // retain the lib.dom ambient declaration for that dependency, so the
+      // read used to fall through to the unresolvable-name path even though
+      // the host supplies globalThis.crypto.
+      name === "crypto") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -2055,6 +2067,10 @@ function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedT
     }
   }
   if (isBigIntType(narrowedType)) {
+    // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
+    // host BigInts. A checker narrowing changes the logical type, not that
+    // physical representation, so leave the externref on the stack.
+    if (!ctx.standalone && !ctx.wasi) return null;
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {

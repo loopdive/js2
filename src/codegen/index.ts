@@ -9188,6 +9188,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#3058) Resizable-ArrayBuffer helper exports (mirrors generateModule path).
     emitResizableAbExports(ctx);
 
+    // Multi-source parity with generateModule: linked Web Crypto calls need a
+    // byte writer for their Wasm vec argument, and exported typed-array params
+    // need the inbound f64-vec allocator.
+    emitVecSetByteExport(ctx);
+    emitNewVecF64Export(ctx);
+
     // Emit __test_str_from_externref / __test_str_to_externref helpers
     // (no-op unless ctx.testRuntime && ctx.nativeStrings).
     emitTestRuntimeStringHelpers(ctx);
@@ -10045,6 +10051,18 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // Check aliasSymbol first — TypeScript preserves the alias name on the type.
   const nativeType = resolveNativeTypeAnnotation(tsType);
   if (nativeType) return nativeType;
+
+  // A JavaScript BigInt is arbitrary precision. The native i64 carrier is a
+  // useful host-free representation, but using it in JS-host mode silently
+  // truncates values wider than 64 bits at every local/parameter/return
+  // boundary. Keep host BigInts as externref so arithmetic can delegate to the
+  // real JS BigInt operators without losing high bits. Standalone/WASI retain
+  // the existing i64 carrier until they have a native arbitrary-precision
+  // implementation. Explicit native `i64` annotations returned above remain
+  // i64 on every target.
+  if (!ctx.standalone && !ctx.wasi && isBigIntType(tsType)) {
+    return { kind: "externref" };
+  }
   const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
   if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
 
