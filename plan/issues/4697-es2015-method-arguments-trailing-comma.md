@@ -27,11 +27,11 @@ func-budget-allow:
 
 This bounded slice owns exactly these five current-main Test262 rows:
 
-- `test/language/arguments-object/meth-args-trailing-comma-undefined.js`
-- `test/language/arguments-object/meth-args-trailing-comma-null.js`
-- `test/language/arguments-object/meth-args-trailing-comma-single-args.js`
-- `test/language/arguments-object/meth-args-trailing-comma-multiple.js`
-- `test/language/arguments-object/meth-args-trailing-comma-spread-operator.js`
+- `test262/test/language/arguments-object/meth-args-trailing-comma-undefined.js`
+- `test262/test/language/arguments-object/meth-args-trailing-comma-null.js`
+- `test262/test/language/arguments-object/meth-args-trailing-comma-single-args.js`
+- `test262/test/language/arguments-object/meth-args-trailing-comma-multiple.js`
+- `test262/test/language/arguments-object/meth-args-trailing-comma-spread-operator.js`
 
 Generator, async, class, private-method, host-import, and mapped descriptor
 rows remain out of scope. The mapped descriptor work in #4695 is not part of
