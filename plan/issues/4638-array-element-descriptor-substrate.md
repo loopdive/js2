@@ -46,6 +46,11 @@ loc-budget-allow:
   #   below the new arm), so the arm is inlined there exactly as the spread arm is.
   - src/codegen/index.ts
   - src/codegen/declarations.ts
+  # Follow-on B5 concat hole/presence work: the native runtime must keep the
+  # marker and prototype fallback in the same dispatch table as the existing
+  # indexed object substrate; moving the arms out would split the carrier
+  # tests from the helpers they extend.
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   # `compileObjectDefineProperty` +29: the mapped-arguments §10.4.4.2 block gains
   #   the `applyAttributeState` closure and the flag-word computation. Both are
@@ -60,6 +65,12 @@ func-budget-allow:
   #   `moduleInitForcesExternref`, a nested function whose entire job is to list
   #   the reasons a module global must be externref. The list is the function.
   - src/codegen/declarations.ts::collectDeclarations
+  # Follow-on B5 concat hole/presence dispatch is intentionally kept adjacent
+  # to the existing native indexed runtime arms and its call-site finalization.
+  - src/codegen/object-runtime.ts::fillConcatNativeHoleArms
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4638 — array element/descriptor substrate

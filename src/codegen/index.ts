@@ -306,6 +306,7 @@ import {
   fillExternArrayLikeStructArms,
   fillExternGetIdxVecArms,
   fillExternSetVecArms,
+  fillConcatNativeHoleArms,
   fillFnctorPrototypeDispatchArms,
   fillExternIsArray,
   fillProxyDispatch,
@@ -5763,6 +5764,10 @@ export function generateModule(
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
     fillF64HoleHasIdxArms(ctx);
+    // (#4446) Native concat preserves absent source indices in `$ObjVec` via
+    // the shared `$Hole` marker. Patch its dynamic readers and add the sparse
+    // physical-backing HasProperty guard after every competing vec fill.
+    fillConcatNativeHoleArms(ctx);
 
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
@@ -9073,6 +9078,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
     fillF64HoleHasIdxArms(ctx);
+    // (#4446) Multi-source parity for concat's `$Hole`-aware ObjVec readers
+    // and sparse-tail HasProperty guard.
+    fillConcatNativeHoleArms(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 

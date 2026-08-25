@@ -4652,6 +4652,18 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32", boolean: true };
     }
+    // (#4446) Native concat returns a `$ObjVec` through an externref boundary,
+    // while TypeScript still sees the expression as a numeric `T[]`.  A
+    // non-literal result can therefore reach this numeric-vector branch even
+    // though its own-index state is represented by the native runtime (and may
+    // contain inherited values copied by concat).  Keep the static fold out of
+    // that shape: the runtime predicate knows the actual `$ObjVec` carrier and
+    // its hole marker.  Dense literal proofs above remain byte-identical.
+    if (ctx.holeGlobalIdx !== undefined && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
+      if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, keyArg, false)) {
+        return { kind: "i32", boolean: true };
+      }
+    }
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
       // (#4491) The runtime native is now the WHOLE answer. This arm used to
       // compute `present := index < length AND data[index] != null` inline and OR

@@ -21,6 +21,7 @@ import { allocLocal } from "./context/locals.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 
@@ -77,15 +78,13 @@ const MAX_SAFE_LENGTH = 9007199254740991;
  *   constructor call. The `create-species-*` bucket is a separate (already
  *   failing, not regressed) concern that needs the species protocol on the
  *   native constructor channel.
- * - **Holes are not preserved.** `$ObjVec` has no hole representation, so a
- *   skipped index materialises as `undefined` rather than an absent property.
- *   The VALUES are spec-correct (`Get` of an absent index is `undefined`, which
- *   is exactly what `__extern_get_idx` answers), so `compareArray`-style tests
- *   pass; only a `hasOwnProperty` probe on the result could tell the difference.
- *   That is why the loop does NOT gate on `__extern_has_idx`: the gate would buy
- *   nothing here and would actively DROP legitimately-present `null` elements
- *   (`__extern_has_idx` answers 0 for a field holding the externref null —
- *   see the #1382 note in array-prototype-borrow.ts).
+ * - **Holes use the shared absence marker.** `$ObjVec` stores externrefs, so a
+ *   `$Hole` sentinel preserves the distinction between an absent source index
+ *   and an explicit `undefined`/`null` value. The output readers map the marker
+ *   back to `undefined`, while the output presence helpers keep the index
+ *   absent. `__extern_has_idx` is therefore consulted before `Get`: it answers
+ *   HasProperty (including inherited numeric properties), not merely whether a
+ *   value happens to be non-null.
  *
  * Returns `undefined` (nothing emitted) when the substrate is unavailable, so
  * the caller falls back to the host bridge unchanged.
@@ -100,6 +99,11 @@ export function compileArrayConcatNativeSpec(
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
 
+  // `$ObjVec` is the native concat result carrier. Register the shared hole
+  // marker before the runtime builders are first requested; if the object
+  // runtime was already emitted, its finalize fills below still see the same
+  // context-owned type/global and patch the existing readers in place.
+  ensureHoleType(ctx);
   const builders = ensureObjVecBuilders(ctx);
   // Register every helper BEFORE resolving any index; each of these is a
   // DEFINED native under the native-first provider, so a later registration
@@ -108,6 +112,7 @@ export function compileArrayConcatNativeSpec(
   // `compileExpression`, which is the only other shift source in this body.
   ensureLateImport(ctx, "__extern_length", [externref], [f64]);
   ensureLateImport(ctx, "__extern_get_idx", [externref, f64], [externref]);
+  ensureLateImport(ctx, "__extern_has_idx", [externref, f64], [i32]);
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   ensureLateImport(ctx, "__extern_is_array", [externref], [i32]);
   ensureLateImport(ctx, "__extern_is_undefined", [externref], [i32]);
@@ -118,6 +123,7 @@ export function compileArrayConcatNativeSpec(
   const required = [
     "__extern_length",
     "__extern_get_idx",
+    "__extern_has_idx",
     "__extern_get",
     "__extern_is_array",
     "__extern_is_undefined",
@@ -134,6 +140,7 @@ export function compileArrayConcatNativeSpec(
   const len = allocLocal(fctx, `__cat_spec_len_${fctx.locals.length}`, i32);
   const idx = allocLocal(fctx, `__cat_spec_i_${fctx.locals.length}`, i32);
   const total = allocLocal(fctx, `__cat_spec_n_${fctx.locals.length}`, f64);
+  const present = allocLocal(fctx, `__cat_spec_present_${fctx.locals.length}`, i32);
 
   // out = ArraySpeciesCreate(O, 0) ≈ a fresh $ObjVec ; n = 0
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? builders.newIdx });
@@ -161,6 +168,7 @@ export function compileArrayConcatNativeSpec(
     const pushIdx = ctx.funcMap.get("__objvec_push") ?? builders.pushIdx;
     const externLenIdx = ctx.funcMap.get("__extern_length")!;
     const getIdxIdx = ctx.funcMap.get("__extern_get_idx")!;
+    const hasIdxIdx = ctx.funcMap.get("__extern_has_idx")!;
     const externGetIdx = ctx.funcMap.get("__extern_get")!;
     const isArrayIdx = ctx.funcMap.get("__extern_is_array")!;
     const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined")!;
@@ -228,11 +236,28 @@ export function compileArrayConcatNativeSpec(
               { op: "local.get", index: len },
               { op: "i32.ge_s" },
               { op: "br_if", depth: 1 },
-              { op: "local.get", index: out },
+              // §23.1.3.1 step 5.c.ii — HasProperty decides whether the
+              // result receives an own index. Inherited Array/Object prototype
+              // entries therefore copy as ordinary values; a genuine hole is
+              // retained as the internal `$Hole` marker.
               { op: "local.get", index: src },
               { op: "local.get", index: idx },
               { op: "f64.convert_i32_s" },
-              { op: "call", funcIdx: getIdxIdx },
+              { op: "call", funcIdx: hasIdxIdx },
+              { op: "local.set", index: present },
+              { op: "local.get", index: out },
+              { op: "local.get", index: present },
+              {
+                op: "if",
+                blockType: { kind: "val", type: externref },
+                then: [
+                  { op: "local.get", index: src },
+                  { op: "local.get", index: idx },
+                  { op: "f64.convert_i32_s" },
+                  { op: "call", funcIdx: getIdxIdx },
+                ],
+                else: holeSentinelInstrs(ctx),
+              },
               { op: "call", funcIdx: pushIdx },
               { op: "local.get", index: idx },
               { op: "i32.const", value: 1 },
