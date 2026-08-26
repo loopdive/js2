@@ -57,6 +57,8 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   moduleImportAlias: 20,
   /** M1A internal export/re-export aliases; these never allocate a function slot. */
   moduleExportAlias: 21,
+  /** Compiler-generated vec [[DefineOwnProperty]] write-back helpers. */
+  vecDefineWriteback: 22,
 } as const);
 
 /**

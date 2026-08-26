@@ -19,8 +19,11 @@
 // present so modules that never define properties stay byte-identical.
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { planProgramAbiEntrySourceSupportCallable, PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { nativeStrVecElemTypeIdx } from "./vec-access-exports.js";
+
+const VEC_DEFINE_WRITEBACK_ROLE = "vec-define-writeback";
 
 /**
  * Emit the two write-back exports. `mutEntries` is the caller's filtered
@@ -217,6 +220,13 @@ export function emitVecDefineWritebackExports(
       body,
       exported: true,
     } as never);
+    planProgramAbiEntrySourceSupportCallable(ctx, {
+      role: VEC_DEFINE_WRITEBACK_ROLE,
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.vecDefineWriteback,
+      derivedOrdinal: 0,
+      displayName: "__vec_set_elem",
+      func: mod.functions[mod.functions.length - 1]!,
+    });
     mod.exports.push({ name: "__vec_set_elem", desc: { kind: "func", index: setElemFuncIdx } });
     ctx.funcMap.set("__vec_set_elem", setElemFuncIdx);
   }
@@ -311,6 +321,13 @@ export function emitVecDefineWritebackExports(
       body,
       exported: true,
     } as never);
+    planProgramAbiEntrySourceSupportCallable(ctx, {
+      role: VEC_DEFINE_WRITEBACK_ROLE,
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.vecDefineWriteback,
+      derivedOrdinal: 1,
+      displayName: "__vec_set_len",
+      func: mod.functions[mod.functions.length - 1]!,
+    });
     mod.exports.push({ name: "__vec_set_len", desc: { kind: "func", index: setLenFuncIdx } });
     ctx.funcMap.set("__vec_set_len", setLenFuncIdx);
   }
