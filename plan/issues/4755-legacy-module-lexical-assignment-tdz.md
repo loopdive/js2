@@ -74,21 +74,31 @@ neither throws nor preserves the expected abrupt completion. The un-injected
 Prepared route returns `1`. This is not an accessor-dispatch failure: the setter
 runs, reaches the assignment, and stores through `ctx.moduleGlobals`.
 
-The exact missing guards are in
+The exact missing simple-write guards are in
 `src/codegen/expressions/assignment.ts`:
 
 - the ordinary identifier `=` module-global arm compiles/coerces the RHS and
   immediately emits `global.set`; and
-- `emitIdentifierWriteFromLocal`, used by destructuring, dynamic-`with` miss,
-  and runtime-eval-shadow miss paths after they have evaluated the RHS once,
-  also immediately emits `global.set` for the module-global arm.
+- `emitIdentifierWriteFromLocal`, used by dynamic-`with` and
+  runtime-eval-shadow miss paths after they have evaluated the RHS once, also
+  immediately emits `global.set` for the module-global arm.
 
-Both paths ignore `ctx.tdzGlobals`. Direct identifier **reads** already use the
-correct contract in `src/codegen/expressions/identifiers.ts`: resolve the exact
-lexical symbol, classify the access as `skip`, `throw`, or `check`, and either
-elide the guard, emit a static `ReferenceError`, or call `emitTdzCheck` before
-loading storage. The write path must reuse that authority after RHS evaluation
-and before storage mutation.
+Both paths ignore `ctx.tdzGlobals`. A 2026-08-26 source audit also found that
+ordinary object/array destructuring does **not** call
+`emitIdentifierWriteFromLocal`: its externref, typed, iterator-override, and
+defaulted identifier-target branches either emit their own `global.set` or
+incorrectly auto-allocate a local when the target is a module binding. The
+required destructuring acceptance therefore cannot be proved by patching only
+the two simple arms.
+
+Direct identifier **reads** already own the correct symbol/order classifier in
+`src/codegen/expressions/identifiers.ts`, but their dynamic `check` emitter is
+not yet a complete semantic oracle: `emitTdzCheck` currently throws
+`ref.null.extern` through the exception tag. It is catchable, but the caught
+value is not a `ReferenceError` instance. The cross-function class setter takes
+that `check` arm, so merely adding the planned guard would change the measured
+verdict from `0` to `2`, not the required `1`. This implementation must reuse
+the classifier while also closing that existing real-instance gap.
 
 ## Implementation plan
 
@@ -111,16 +121,34 @@ Keep the source-aware module-environment check used by identifier reads
 available to the assignment path as well. A flat `moduleGlobals` spelling is
 not sufficient evidence: a local shadow, import binding, declaration-file
 ambient, or leaked same-spelled script declaration from another source must
-not acquire this lexical's TDZ flag.
+not acquire this lexical's TDZ flag. The write-side identity predicate must
+join the checker-resolved symbol back to an exact declaration in the current
+runtime `SourceFile`, require that declaration to be a source-file-level
+`let`, `const`, `using`, or `await using` variable, and reject import-shaped,
+ambient/declaration-file, nested, and foreign-source declarations. The
+separate `ctx.tdzGlobals` membership check remains mandatory; neither a
+same-source spelling nor a checker symbol alone is enough.
+
+Strengthen `emitTdzCheck` in `src/codegen/statements/tdz.ts` to build the
+conditional throw through the canonical real-`ReferenceError` instruction
+builder in `src/codegen/js-errors.ts`. Build/settle the provider, string, tag,
+and late-import dependencies before capturing the TDZ global index; then
+re-read the flag index and emit the conditional. Standalone/WASI must use the
+existing in-module constructor, while GC may use the existing host/native
+provider policy. Do not add a second error representation or an assignment-only
+TDZ throw template.
 
 This is an internal codegen seam only. Do not change IR analysis, Program ABI,
 the public compiler API, or the shape of a `CompileResult`.
 
-### 2. Guard the two already-live module storage writes
+### 2. Centralize the live identifier-target storage writes
 
-Add one small helper in `src/codegen/expressions/assignment.ts` that accepts the
-exact assignment-target `Identifier`. It may act only when all of the following
-are true:
+Add one typed precomputed-value identifier writer in
+`src/codegen/expressions/assignment.ts`. It accepts the exact
+assignment-target `Identifier`, value local/type, and the already-resolved
+storage family. It must preserve the existing local/captured/dynamic/
+unresolvable behavior and may engage the module TDZ guard only when all of the
+following are true:
 
 1. the ordinary resolver has selected this identifier's actual module-global
    storage rather than a local, capture, dynamic environment, property, or
@@ -135,12 +163,25 @@ Map the shared decision without weakening it:
 - `throw`: call the existing `emitStaticTdzThrow` for this identifier; and
 - `check`: call the existing `emitTdzCheck` for this exact name.
 
-Invoke the helper in both module-global write arms:
+Route these already-live identifier targets through the shared writer/guard:
 
 - ordinary simple identifier assignment, after the RHS is compiled and
   coerced but before `global.set`; and
 - `emitIdentifierWriteFromLocal`, after the caller has captured/evaluated the
-  RHS and immediately before its module `global.set`.
+  RHS and immediately before its module `global.set`;
+- plain and defaulted identifier targets in ordinary object destructuring,
+  covering both typed-struct and externref extraction; and
+- plain and defaulted identifier targets in ordinary array destructuring,
+  covering typed/tuple/vec, externref, and the existing iterator-override
+  drive.
+
+Where a destructuring branch currently holds the extracted value on the stack,
+store it once in a typed temporary and call the shared writer. Where it already
+has a temporary, reuse it. Do not recompile the RHS/default/property read. A
+tracked module lexical must no longer be auto-allocated as a function local;
+all non-TDZ names retain their current route and representation. Rest targets,
+nested-pattern feature expansion, and unrelated missing destructuring support
+remain out of scope unless they already reach the shared identifier writer.
 
 JavaScript evaluation order is load-bearing. For `target = rhs()`, `rhs()`
 must execute exactly once before `PutValue` observes the TDZ and throws. For a
@@ -149,9 +190,12 @@ then each binding target performs its own ordered TDZ check before its write.
 Do not move the guard before RHS evaluation, mark the lexical initialized,
 write and roll back, or catch the thrown error.
 
-Re-read mutable indices after any helper that can register an exception
-provider/import. Do not retain an index captured before RHS compilation or
-before `emitStaticTdzThrow`/`emitTdzCheck` settles the relevant runtime seam.
+Re-read mutable function/global indices after any helper that can register an
+exception provider/import/global. Detached destructuring branch buffers must be
+registered with the existing repoint machinery for their whole construction
+window, and no branch may retain an index captured before RHS/default
+compilation or before `emitStaticTdzThrow`/`emitTdzCheck` settles the relevant
+runtime seam.
 
 ### 3. Preserve every neighboring write route
 
@@ -168,11 +212,12 @@ This prerequisite does not repair or redesign:
 - the direct frontend's general module-binding identity model, which R5/R9
   removes rather than extending here.
 
-The change is gated by an existing TDZ flag and therefore byte-neutral for
-`var`, initialized/elided `let`/`const`, locals, properties, imports, and files
-with no module lexical TDZ. Do not add a new runtime helper or a
-`__new_ReferenceError` special case; reuse the same exception paths as direct
-identifier reads.
+The assignment change is gated by an exact tracked module lexical and therefore
+byte-neutral for `var`, elided `let`/`const`, locals, properties, imports, and
+files with no module lexical TDZ. The shared `emitTdzCheck` semantic correction
+may change only sites that already retained a dynamic module TDZ check; those
+sites must now throw a real `ReferenceError` without adding a new runtime helper
+or a special assignment-only constructor path.
 
 ## Required focused proof
 
@@ -187,20 +232,38 @@ body cannot hide a direct-body failure.
 2. **RHS-before-PutValue order.** Use a side-effecting RHS in the setter. The
    side effect must occur exactly once, then `ReferenceError` must be caught,
    and statements following the assignment must remain unreachable.
-3. **Destructuring sink.** Cover object and array assignment targets whose
-   extracted value targets the same uninitialized module `let`. Require one RHS
-   evaluation, spec-order extraction, the TDZ throw before storage mutation,
-   and no later binding write after abrupt completion.
+3. **Destructuring sink matrix.** Cover plain and defaulted identifier targets
+   separately for each already-live route: typed-struct object extraction,
+   `any`/externref object extraction, typed tuple/vec/array extraction, and
+   `any`/externref array extraction. Add an isolated
+   `Array.prototype[Symbol.iterator]` override row in the existing
+   issue-1719-cpr shape so the iterator-driven arm cannot be hidden by the
+   native typed/externref controls. In every row the extracted value targets
+   the same uninitialized module `let`; require one RHS evaluation, spec-order
+   property/default/iterator work, the TDZ throw before storage mutation, and
+   no later binding write after abrupt completion. Rest and nested-pattern
+   support remain outside this issue and are not acceptance substitutes.
 4. **Static/elided control.** An assignment provably after initialization must
    execute without a throw and must not manufacture a TDZ provider/import or
    in-module error-constructor call solely for that write. A `var` twin remains
    artifact-neutral.
 5. **Identity and shadow controls.** A same-named parameter/local, an imported
-   binding, and a same-spelled declaration in another multi-source module must
-   not consult or mutate the target module lexical's TDZ flag. Preserve the
-   existing direct outcome for genuinely unresolvable and dynamic-`with`
-   references.
-6. **Abrupt-completion identity.** The caught value must satisfy
+   binding, an ambient declaration supplied by a `.d.ts`, and a same-spelled
+   declaration in another multi-source runtime module must not consult or
+   mutate the target module lexical's TDZ flag. The declaration-file collision
+   is a distinct row: the read-side module-goal resolver intentionally treats
+   ambient symbols differently from ordinary foreign runtime declarations, so
+   the import/foreign controls do not prove it.
+6. **Precomputed-writer route controls.** Force both branches of the two routes
+   that call `emitIdentifierWriteFromLocal`: a dynamic-`with` HasBinding hit and
+   miss, plus a runtime-eval value-cell present and miss. Each hit must write
+   only its dynamic object/cell and must not consult the module TDZ flag. Each
+   miss must fall through to the same uninitialized module lexical, evaluate
+   the RHS once, throw a real `ReferenceError`, and leave its storage
+   unchanged. A genuinely unresolvable reference remains on its existing
+   GlobalEnvironmentRecord/strict-error route rather than borrowing the module
+   lexical writer.
+7. **Abrupt-completion identity.** The caught value must satisfy
    `error instanceof ReferenceError`, not merely be truthy or carry matching
    text. Standalone must retain zero host imports and a live in-module path;
    GC must not retain an unused error import/provider.
@@ -223,15 +286,18 @@ that atomic provider publication is fixed.
 - [ ] Direct GC and standalone assignment to an uninitialized top-level
       lexical throws the correct `ReferenceError` after evaluating the RHS
       exactly once and before mutating storage.
-- [ ] Ordinary and destructuring identifier-write paths use one shared,
-      symbol-aware `skip`/`throw`/`check` decision and the existing error
-      emitters; there is no name-only TDZ heuristic or second analysis.
+- [ ] Ordinary and every in-scope plain/defaulted destructuring
+      identifier-write path use one shared, symbol-aware
+      `skip`/`throw`/`check` decision and the existing error emitters; there is
+      no name-only TDZ heuristic or second analysis.
 - [ ] Writes provably after initialization retain the current no-check fast
       path, while ambiguous cross-function writes retain the runtime flag
       check.
-- [ ] Local shadows, imports, foreign same-named source declarations, `var`,
-      properties, global-object writes, dynamic environments, and
-      unresolvable references do not acquire the module lexical guard.
+- [ ] Local shadows, imports, `.d.ts` ambients, foreign same-named runtime
+      declarations, `var`, properties, global-object writes, dynamic
+      HasBinding/value-cell hits, and unresolvable references do not acquire
+      the module lexical guard; dynamic/eval misses reach the guarded lexical
+      writer exactly once.
 - [ ] The exact #4260 class-setter prerequisite passes in direct GC and
       standalone, and #4260 can then prove its injected fallback transaction
       without weakening runtime acceptance.
@@ -243,10 +309,14 @@ that atomic provider publication is fixed.
 ## Landing and retirement discipline
 
 Land this as a separate prerequisite PR before the #4260 behavioral PR. Keep
-the production delta bounded to the two direct module-storage write sites and
-the smallest shared TDZ-analysis export/source-identity seam. No LOC or
-function-budget allowance is pre-authorized; measure and delete duplication
-before requesting one.
+the production delta bounded to the shared TDZ classifier/source-identity
+seam, the existing dynamic-check emitter's real-`ReferenceError` correction,
+the simple module-global assignment arm, the precomputed identifier writer,
+and the enumerated typed/externref/iterator object-and-array identifier-target
+sinks. Do not describe or review this as a two-write-site patch: ordinary
+destructuring currently owns distinct storage routes that are required scope.
+No LOC or function-budget allowance is pre-authorized; measure and delete
+duplication before requesting one.
 
 Before every heavy command, commit, and push, require a finite, non-negative
 one-minute load strictly below `logical cores - 2`. Run
