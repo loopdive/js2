@@ -4,6 +4,8 @@
 export const NO_GENERATED_FIELD = Symbol("no-generated-field");
 export const PRIMITIVE_STRING_UNDEFINED = Symbol("primitive-string-undefined");
 const CONFIGURABLE_FLAG = 4;
+type CallbackState = { getExports: () => Record<string, Function> | undefined };
+const callableOwners = new WeakMap<Function, CallbackState>();
 const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({
   charAt: String.prototype.charAt,
   charCodeAt: String.prototype.charCodeAt,
@@ -56,6 +58,31 @@ export function readField(
 
 export function ordinaryFields(fields: readonly string[] | null): boolean {
   return fields !== null && !fields.includes("__tag");
+}
+
+export function recordCallableOwner(callable: Function, owner: CallbackState | undefined): void {
+  if (owner) callableOwners.set(callable, owner);
+}
+
+/** Preserve cross-module facades and normalize values returning to their owning module. */
+export function normalizeSandboxValue(
+  receiver: unknown,
+  value: any,
+  key: PropertyKey,
+  sandbox: Record<string, any> | undefined,
+  owner: CallbackState | undefined,
+  unwrap: (value: any) => any,
+): any {
+  if (sandbox && receiver === sandbox && typeof value === "function") {
+    const callableOwner = callableOwners.get(value);
+    if (!callableOwner || !owner || callableOwner !== owner) return value;
+  }
+  const normalized = unwrap(value);
+  if (sandbox && key === "constructor" && typeof normalized === "function") {
+    const name = normalized.name;
+    if (name && normalized === (globalThis as any)[name] && sandbox[name] !== undefined) return sandbox[name];
+  }
+  return normalized;
 }
 
 interface StructDeleteState {
