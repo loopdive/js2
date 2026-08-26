@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-12
+updated: 2026-08-26
 priority: critical
 horizon: xl
 complexity: XL
@@ -25,6 +25,8 @@ origin: "#3518 R6 — replace AST-driven lazy runtime registration with typed se
 files:
   - src/ir/intrinsics.ts
   - src/ir/runtime-manifest.ts
+  - src/ir/async-runtime-providers.ts
+  - src/ir/async-plan.ts
   - src/ir/nodes.ts
   - src/ir/intrinsic-support.ts
   - src/ir/math-runtime-providers.ts
@@ -44,6 +46,7 @@ files:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/expressions/builtins.ts
+  - src/codegen/ir-async-runtime-adapters.ts
   - src/codegen/math-helpers.ts
   - src/codegen/stdlib-selfhost.ts
   - src/stdlib/math.ts
@@ -53,6 +56,8 @@ files:
   - tests/issue-3526-ir-runtime-manifest.test.ts
   - tests/issue-3526-ir-math-intrinsic-integration.test.ts
   - tests/issue-3526-ir-linear-math-intrinsics.test.ts
+  - tests/issue-4103-ir-async-runtime-providers.test.ts
+  - tests/issue-4104-ir-async-plan-runtime-consumer.test.ts
 loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/builder.ts
@@ -299,6 +304,176 @@ results match the direct backend. Shadowed, coercive, wrong-arity, and
 M1 changes semantic authority but does not widen the selector, so the strict
 fixed-corpus census is unchanged. The legacy direct Math route remains only for
 non-Prepared shapes until their owning family slices and final R9/R10 deletion.
+
+### A1 implementation plan — frozen async capability catalog (2026-08-26)
+
+The first dependency-safe async checkpoint is a behavior-neutral schema
+consolidation. The current async provider graph closes over typed capability
+IDs, but `prepareIrRuntimeManifest` later filters the module-global
+`ALL_ASYNC_HOST_ADAPTERS` table again to recover the concrete import records.
+That second lookup is deterministic today, yet it leaves the frozen manifest
+unable to prove the exact adapter ABI consumed by the prepared async runtime.
+
+This documentation checkpoint may land immediately. The A1 implementation is
+a separate, independently reviewed PR based on fresh `main` after this plan
+lands. It does not unblock production R6 routing: public `ImportIntent`
+projection, import allocation, provider transactions, lazy-registration
+deletion, and any new async lowering remain blocked on the #3521 migration and
+the #4260 transaction boundary. Re-ground live overlap with #4976, #4980,
+#4956, and #4898 before editing; do not stack an implementation on an unmerged
+compiler branch.
+
+#### Exact closed catalog
+
+Keep `src/ir/async-runtime-providers.ts` as the sole authority for the seven
+already-shipped async capability records. Promote the existing adapter objects
+themselves into the typed capability catalog; do not copy their fields into a
+second table:
+
+1. `async.callback.wrap` is `env.__make_callback`, a function with
+   `(i32, externref) -> externref` and exact exception policy
+   `module-tag-payload`.
+2. `async.promise.capability.create` is `env.Promise_new_pending`, a function
+   with `() -> externref`.
+3. `async.promise.react` is `env.Promise_then2`, a function with
+   `(externref, externref, externref) -> externref`.
+4. `async.promise.resolve` is `env.Promise_resolve`, a function with
+   `(externref) -> externref`.
+5. `async.promise.settle.fulfill` is `env.Promise_settle_resolve`, a function
+   with `(externref, externref) -> externref`.
+6. `async.promise.settle.reject` is `env.Promise_settle_reject`, a function
+   with `(externref, externref) -> externref`.
+7. Optional `async.value.undefined` is `env.__get_undefined`, a function with
+   `() -> externref`.
+
+The catalog is closed, canonically ordered by capability ID, and deeply frozen
+through each parameter/result array. Arbitrary input traversal order is
+normalized to that canonical order; non-canonical record contents are rejected.
+Capability IDs stay the provider-edge currency so the runtime-feature fixed
+point remains target-neutral. The frozen manifest resolves each selected ID
+exactly once. Keep
+`FrozenRuntimeManifest.hostCapabilities` as the sorted ID compatibility
+projection and add `hostCapabilityRecords` as the correspondingly sorted exact
+records consumed by prepared runtime projection. Each host
+`PreparedIrAsyncHostAdapter` carries the exact selected frozen record alongside
+its symbolic target, so codegen materialization receives the manifest authority
+instead of reconstructing it. Missing, duplicate, unknown, or non-canonical
+definitions are preparation-time invariants; no consumer may silently skip
+them or refilter a different global catalog.
+
+Do not invent `permissions`, compile-mode availability, ABI versions, digests,
+or policy defaults in A1. The repository's root
+`src/capability-registry.ts` has a broader permission/version contract and an
+unsafe dependency direction for direct reuse here. A later checkpoint may
+extract dependency-neutral primitives after the permission and compile-mode
+vocabularies are designed, but A1 must neither create empty permissions as
+authority nor introduce a cyclic IR-to-root registry dependency.
+
+#### Production ownership
+
+The implementation owns only these schema and projection seams:
+
+- `src/ir/async-runtime-providers.ts`: define the one closed capability record
+  catalog and its fail-closed ID resolver by reusing `AsyncHostAdapter` as the
+  record type; do not introduce a parallel record interface. Publish an exact
+  structural validator plus an identity-based canonical-record guard over the
+  factory-created frozen objects. Validation rejects missing or extra keys and
+  any unexpected `exceptionPolicy`, not only wrong field values. The guard may
+  authenticate an attachment but must not return a second record or let
+  codegen rediscover ABI fields by ID.
+- `src/ir/runtime-manifest.ts`: resolve selected provider capability IDs to the
+  exact records during `freeze()`, retain `hostCapabilities` as the canonical
+  ID projection for provider assertions, publish the exact records as
+  `hostCapabilityRecords`, and deep-freeze both views. A test-only builder
+  catalog option may supply reversed or malformed records; production always
+  uses the single async catalog.
+- `src/ir/async-plan.ts`: extend `PreparedIrAsyncHostAdapter` with the exact
+  frozen capability record selected by the manifest under required field
+  `record`. Keep the existing capability ID and symbolic `IrFuncRef` as
+  explicit joins; do not flatten or recopy record fields into the attachment.
+- `src/ir/intrinsic-support.ts`: in the existing async adapter-selection block
+  only, consume the resolved records published by the frozen manifest instead
+  of filtering `ALL_ASYNC_HOST_ADAPTERS`, and attach that exact record to the
+  prepared host runtime.
+- `src/codegen/ir-async-runtime-adapters.ts`: remove the
+  `ALL_ASYNC_HOST_ADAPTERS` catalog reconstruction. Authenticate that each
+  attachment carries a canonical catalog record whose ID and import binding
+  match the attachment, deduplicate by exact capability ID, sort selected
+  records canonically, and derive type/import materialization only from those
+  attached records. Existing imports are still byte-exactly validated and
+  reused.
+
+Do not edit `src/ir/integration.ts`, `src/ir/from-ast.ts`, lowering, backend
+legality/emission, Program ABI planning, public `src/index.ts`, or
+`src/compiler/import-manifest.ts`. A1 changes the internal authority consumed
+by async import materialization and deliberately adds the internal `record`
+field to each host runtime attachment, but changes no provider choice, target
+policy, concrete import spelling/order/signature, semantic async plan, Wasm,
+declaration, or public compile-result shape. The host path still materializes
+exactly the existing six mandatory imports; the standalone-native path still
+materializes none.
+
+#### Anti-vacuity and mutation matrix
+
+Keep the test ownership bounded to
+`tests/issue-3526-ir-runtime-manifest.test.ts`,
+`tests/issue-4103-ir-async-runtime-providers.test.ts`, and
+`tests/issue-4104-ir-async-plan-runtime-consumer.test.ts`.
+
+- Prove forward and reversed feature/provider traversal publish byte-equivalent
+  canonical ID and record projections. Every manifest, catalog record, and
+  nested parameter/result array must be frozen.
+- For the full host async feature set, require the exact six mandatory records,
+  unique IDs, and the current adapter order/signatures. Requesting the optional
+  undefined feature adds only its seventh exact record. Math-only and
+  standalone-native manifests retain zero capability records.
+- Prove the prepared host runtime's import bindings are derived from the
+  manifest records and remain the exact six current `env` imports. Supply a
+  poisoned or reversed catalog through the explicit test-only builder seam;
+  after freeze, the published plan must remain immutable and lookup-only.
+- Replace the current assertions that the entire serialized manifest omits
+  concrete adapter fields. The target-neutral `IrAsyncPlan`, feature closure,
+  and provider edges must remain free of module/field spellings, while the new
+  `hostCapabilityRecords` projection intentionally contains the exact concrete
+  ABI selected before materialization.
+- Substitute, drop, duplicate, or cross-wire an attachment's record, capability
+  ID, or symbolic target after preparation. The canonical attachment check in
+  materialization must reject before type or import allocation. Reordering
+  functions or attachments must retain canonical import order and the same
+  Program-ABI dependencies.
+- Reject a dropped or duplicated record; an unknown or mismatched capability
+  ID; wrong module, field, kind, parameter, result, or callback exception
+  policy; a provider that names an unregistered capability; an optional record
+  appearing in the selected `hostCapabilityRecords` projection without a
+  provider edge that requests it; and any late capability request after freeze.
+  The complete closed catalog legitimately retains the optional definition
+  even when no manifest selects it.
+- Retain strict-no-host and missing-linear-adapter failures, scheduler features
+  with no concrete capability, native-managed providers with no host
+  capability, async owner/currentness failures, exact Program-ABI planning of
+  the six imports, and all existing M1 Math controls.
+
+Run `tests/issue-4106-ir-async-fetch-user.test.ts` and
+`tests/issue-4167-async-rejection-identity.test.ts` unchanged as affected
+regression controls; they do not widen A1 test-file ownership.
+
+The tests must demonstrate that deleting the manifest-to-record join or
+restoring either the prepared-runtime or codegen consumer-side global filter
+fails. A renamed or reordered concrete adapter may affect only the
+catalog-backed ABI projection; it cannot change semantic feature/provider
+closure or be rediscovered from an emitted import string.
+
+#### Landing and hold gates
+
+Run focused tests first, then TypeScript 7 and 5, formatting, IR layering,
+fallback/dialect/oracle checks, and the function and LOC regrowth ratchets. Run
+the LOC ratchet again immediately before the signed commit, followed by every
+normal pre-commit and pre-push hook without skips. Each heavy boundary uses a
+fresh finite, non-negative one-minute load sample strictly below
+`logical cores - 2` (10 cores means `< 8`). Obtain an independent read-only
+audit of the exact signed head before push, open the implementation PR ready
+for review, and keep production R6 routing blocked until its upstream
+transactions and typed permission/mode contract are separately approved.
 
 ### Later measured family slices
 
