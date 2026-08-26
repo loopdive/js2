@@ -1791,7 +1791,13 @@ export function compileIdentifierCall(
           // explicit coercion sites but are lossy ABI substitutions, and its
           // physical ValType rows cannot recover the Boolean/Symbol/BigInt
           // brands carried on i32/i64.
+          const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
           const scalarAbiTypesMatch = (from: ValType, to: ValType): boolean => {
+            // `externref` and `ref_extern` are two internal spellings of the
+            // same physical Wasm ABI. The retired generic coercion planner
+            // treated this pair as a no-op; keep that invariant while the
+            // scalar bridge below remains deliberately brand-restricted.
+            if (isHostExtern(from) && isHostExtern(to)) return true;
             if (!valTypesMatch(from, to)) return false;
             if (from.kind === "i32" && to.kind === "i32") {
               return from.boolean === to.boolean && from.symbol === to.symbol;
@@ -1804,7 +1810,6 @@ export function compileIdentifierCall(
             }
             return true;
           };
-          const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
           const scalarBridgePlan = (
             from: ValType,
             to: ValType,

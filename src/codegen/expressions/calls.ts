@@ -4463,7 +4463,11 @@ export function tryEmitInlineDynamicCall(
         callBody.push({ op: "call", funcIdx: unboxNumberIdx });
         callBody.push({ op: "i32.trunc_sat_f64_s" });
       } else if (pType.kind === "externref") {
-        // already externref
+        // The saved value is already an externref, but it may be a host mirror
+        // for a compiled vec. Reconcile same-length host/compiled mutations
+        // before handing the value to an extern consumer (for example
+        // node:crypto hashing a Uint8Array assembled in Wasm).
+        if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
       } else if (pType.kind === "ref") {
         // A compiled GC value may be represented by a host facade in this
         // dynamic lane. Recover the underlying value before preserving the
@@ -4496,17 +4500,13 @@ export function tryEmitInlineDynamicCall(
               return vecMaterializerIdx === undefined
                 ? [
                     { op: "local.get", index: argLocals[i]! } as Instr,
-                    ...(unwrapForWasmIdx === undefined
-                      ? []
-                      : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
+                    ...(unwrapForWasmIdx === undefined ? [] : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
                     { op: "any.convert_extern" } as Instr,
                     { op: "ref.cast_null", typeIdx: pType.typeIdx } as Instr,
                   ]
                 : [
                     { op: "local.get", index: argLocals[i]! } as Instr,
-                    ...(unwrapForWasmIdx === undefined
-                      ? []
-                      : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
+                    ...(unwrapForWasmIdx === undefined ? [] : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
                     { op: "call", funcIdx: vecMaterializerIdx } as Instr,
                   ];
             })(),
