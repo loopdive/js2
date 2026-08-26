@@ -9313,6 +9313,84 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-25T15:27:57.144Z",
+      "sourceRevision": "03d0e488f01528d07d3198db36964eab1c492fe2",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 313996.7770531587,
+            "dynamic": 0.1350233504549036
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 532.9009145429713,
+            "dynamic": 0.24613293732540611
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 14.904106244814328,
+            "dynamic": 0.1737661427665198
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-26T02:24:30.983Z",
+      "sourceRevision": "ff56e3d9b5abbd85201dc8087106431128915f49",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 224090.5406709674,
+            "dynamic": 0.10214254928453376
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 528.4082536703503,
+            "dynamic": 0.2559975994638571
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.954254532080586,
+            "dynamic": 0.15896690055121354
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-26T04:42:40.859Z",
+      "sourceRevision": "1b73ff79119d84630296728d31681aa29707dec7",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010301811776473106
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
