@@ -45,7 +45,7 @@ different causes and must be isolated before implementation.
    compile/ABI rows as explicit follow-up handoffs rather than conflating them.
 5. Run both targets, TypeScript 5/7, formatting, lint, budgets, and issue gates.
    Commit a clean branch tip for integration into the sole successor draft PR
-   #5008 and update this issue with exact denominators.
+   #5010 and update this issue with exact denominators.
 
 ## Acceptance
 

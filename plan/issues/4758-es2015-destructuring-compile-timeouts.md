@@ -45,7 +45,7 @@ changing compiler behavior.
 4. Rerun all 40 exact host pins and their standalone counterparts, TypeScript
    5/7 checks, formatting, lint, LOC/function budgets, and issue metadata gates.
 5. Commit a clean branch tip for integration into the single successor draft
-   PR #5008. Record exact denominators and any rows proven to belong to a
+   PR #5010. Record exact denominators and any rows proven to belong to a
    different semantic issue in this file.
 
 ## Acceptance
@@ -53,4 +53,3 @@ changing compiler behavior.
 - Zero confirmed compile-timeout rows remain in this 40-row cluster.
 - Regression and controls pass in host and standalone lanes.
 - No timeout increase, skip, fixture rewrite, or filter exemption is used.
-

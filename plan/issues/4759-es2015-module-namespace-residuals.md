@@ -47,11 +47,10 @@ sufficient, so each row needs isolated confirmation.
    mixing unrelated fixes.
 5. Run exact pins and controls in both lanes plus TypeScript 5/7, formatting,
    lint, budgets, and issue gates. Commit a clean branch tip for integration
-   into the single draft PR #5008 and record exact results here.
+   into the single draft PR #5010 and record exact results here.
 
 ## Acceptance
 
 - Every one of the 20 baseline rows has an isolated disposition.
 - The confirmed shared namespace-binding cluster passes host and standalone.
 - No test filtering, fixture rewrite, host-oracle shortcut, or skip is added.
-

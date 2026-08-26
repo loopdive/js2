@@ -30,10 +30,11 @@ benchmark artifacts are supporting evidence only; they cannot close this issue.
 
 ## Current state
 
-- PR #4974 merged into `loopdive/js2:main` on 2026-08-26. Continued close-out
-  work uses `codex/es6-conformance-closeout` on the `ttraenkler/js2` fork and a
-  successor upstream draft PR #5008 so checkpoints remain reviewable:
-  <https://github.com/loopdive/js2/pull/5008>.
+- PR #4974 merged into `loopdive/js2:main` on 2026-08-26. PR #5008 then
+  auto-merged its first close-out checkpoint while measurement was active.
+  Continued work uses `codex/es6-conformance-closeout` on the `ttraenkler/js2`
+  fork and successor upstream draft PR #5010 so checkpoints remain reviewable:
+  <https://github.com/loopdive/js2/pull/5010>.
 - Handoff head before this issue commit: `df70faa5e`.
 - The first combined CI run found one integration-only dead helper. Issue
   #4752 deleted it; the dead-export gate now reports 23 known entries and 0
@@ -215,7 +216,10 @@ also a required close-out item. Artifacts are preserved at:
 
 The measurement used `TEST262_WORKERS=5`, `COMPILER_POOL_SIZE=5`,
 `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, `TEST262_TARGET=gc`,
-`TEST262_REPORTER=dot`, and `TEST262_PUBLISH_HISTORY=0`. The next action is to
-commit and push this checkpoint, run the complete standalone lane from the
-successor PR, then solo-confirm and cluster both inventories for issue-backed
-Luna/max worktrees.
+`TEST262_REPORTER=dot`, and `TEST262_PUBLISH_HISTORY=0`. The host checkpoint was
+committed and pushed. PR #5008 subsequently auto-merged at `39f279650`;
+successor draft PR #5010 now carries commits `0bed210fd` and `3fb21eb37`.
+Standalone run `20260826-194014` is active at exact code head `0bed210fd` with
+the pinned QuickJS artifact. Issues #4758, #4759, and #4760 track the first
+three residual clusters in separate Luna/max worktrees for integration into
+#5010.
