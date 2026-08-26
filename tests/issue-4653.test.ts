@@ -261,20 +261,19 @@ describe("#4653 P/V — raw arguments and omitted actuals", () => {
 
 // ───────────────────────── measured residuals ─────────────────────────
 //
-// Each of these reproduces one of the seven #4653 rows this change does NOT
-// fix, with the root measured on this branch. They are `it.fails` so the suite
-// records the current answer and flips loudly when the owning lane lands.
+// Each of the remaining rows below reproduces an #4653 behavior this change
+// does NOT fix, with the root measured on this branch. They are `it.fails` so
+// the suite records the current answer and flips loudly when the owning lane
+// lands.
 
-describe("#4653 residuals — measured standalone", () => {
-  // ROWS S13.2.2_A18_T1 / _T2. `arguments.callee` is synthesized by a
-  // compile-time property-access arm; it is NOT an own property of the runtime
-  // vec that backs the arguments object, so the dynamic `with` HasBinding gate
-  // (`__extern_has`) misses it and `callee = 1` writes the OUTER binding.
-  // Measured: `with (arguments) { return length }` answers correctly (the vec
-  // DOES own `length`), `{ return callee }` does not. Fixing it needs `callee`
-  // to become a real, writable own property of the arguments object — vec
-  // representation work, another lane's territory.
-  it.fails("(#4653 residual, vec-overlay) `with (arguments)` resolves `callee`", async () => {
+describe("#4653 fixed arguments.callee binding", () => {
+  // ROWS S13.2.2_A18_T1 / _T2. `callee` is a real, writable own property of
+  // the standalone arguments vec (§10.6 step 13.a). The dynamic `with`
+  // HasBinding arm now consults that descriptor through the arguments subtype,
+  // so the assignment lands on the arguments object instead of the outer
+  // binding. The exact upstream pair and declaration/expression identity
+  // controls live in es5-function-callee-with.test.ts.
+  it("(#4653) `with (arguments)` resolves the non-enumerable `callee`", async () => {
     expect(
       await runScript(`
         var callee = 0;
@@ -288,7 +287,9 @@ describe("#4653 residuals — measured standalone", () => {
       `),
     ).toBe(null);
   });
+});
 
+describe("#4653 residuals — measured standalone", () => {
   // ROW S13.2.2_A19_T8. Two `with` blocks over a RE-DECLARED `var obj` share one
   // static target proof, keyed off the FIRST initializer's key set, so a name
   // only the second literal owns falls through to the outer lexical binding.
