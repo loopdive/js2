@@ -36,6 +36,28 @@ async function run(files: Record<string, string>, entry: string, expectedImports
 }
 
 describe("issue #4527: cross-module dynamic callback invocation", () => {
+  it("keeps class methods on the prototype through borrowed hasOwnProperty", async () => {
+    const w = await run(
+      {
+        "./main.js": `
+          export function t() {
+            class C {
+              field = 1;
+              method() { return 42; }
+            }
+            const value = new C();
+            const hasOwn = Object.prototype.hasOwnProperty;
+            return (!hasOwn.call(value, 'method') ? 1 : 0)
+              + (hasOwn.call(value, 'field') ? 2 : 0)
+              + (value.method() === 42 ? 4 : 0);
+          }
+        `,
+      },
+      "./main.js",
+    );
+    expect(w.t()).toBe(7);
+  });
+
   it("preserves an Object.create result through a callback-driven strategy", async () => {
     const w = await run(
       {

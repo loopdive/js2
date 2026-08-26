@@ -7726,29 +7726,29 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
           }
         }
       }
-      // For Proxy invariants, getOwnPropertyDescriptor must match target's
-      // non-configurable keys. Our target is an empty extensible object, so
-      // we can return any descriptor we like. We must also reflect the
-      // descriptor back onto target so ownKeys invariants are satisfied when
-      // the host enumerates via Object.keys/getOwnPropertyNames (some
-      // engines cross-check).
+      // The extensible target permits synthesized descriptors; mirror them
+      // onto it below so ownKeys invariants also hold.
       const sc = _wasmStructProps.get(obj);
       const hasInSidecar = !!sc && key in sc;
       const fieldNames = fieldNamesForHost();
       const hasInFields = typeof key === "string" && fieldNames.includes(key);
-      // #1047 — for registered class prototypes, only consult the allowlist
-      // and the sidecar. Do NOT call safeGetField (which would read default
-      // struct field values for leaking instance fields like `a = 0`).
+      // Hide physical method slots unless an explicit own shadow exists.
+      if (
+        typeof key === "string" &&
+        !hasInSidecar &&
+        !_wasmPropDescs.get(obj)?.has(_normalizeDescKey(key)) &&
+        _prototypeMethodNames.get(obj) === undefined &&
+        _staticMethodNames.get(obj) === undefined &&
+        _resolveClassMember(obj, key, currentExports()) !== _MISS
+      ) {
+        return undefined;
+      }
+      // #1047 — prototypes expose only their allowlist and sidecar.
       const protoMethods = _prototypeMethodNames.get(obj);
       if (protoMethods !== undefined) {
         if (!hasInFields && !hasInSidecar) return undefined;
       }
-      // (#3479 Slice C / #3512) Registered class OBJECT: symmetric to the #1047
-      // prototype restriction — only the static-method allowlist (already handled
-      // above) and the sidecar are own properties of the constructor. Do NOT
-      // report the class's INSTANCE struct fields (`hasInFields`) via the
-      // constructor's `[[GetOwnProperty]]`, so `Object.getOwnPropertyDescriptor(C,
-      // "foo")` / `hasOwnProperty.call(C, "foo")` are `undefined`/false.
+      // (#3479 / #3512) Class objects never expose instance-shape fields.
       const staticMethods = _staticMethodNames.get(obj);
       if (staticMethods !== undefined && !hasInSidecar) return undefined;
       const val = safeGetField(key);
