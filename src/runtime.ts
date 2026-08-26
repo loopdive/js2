@@ -6900,10 +6900,7 @@ function _vecDefineOwnProperty(
   // in-bounds elements, which matches §10.4.2 defaults for literal elements.
   const nKey = _normalizeDescKey(keyStr);
   let hadEntry = sDescs.has(nKey);
-  // Numeric arguments elements already exist as ordinary mapped data
-  // properties. Their omitted descriptor fields therefore preserve the
-  // default writable/enumerable/configurable attributes; treating the first
-  // sidecar write as a fresh array element incorrectly cleared those bits.
+  // Existing mapped arguments preserve their default flags when first mirrored.
   if (!hadEntry && _argumentsObjects.has(obj) && idx < oldLen) {
     sDescs.set(nKey, _SC_ELEM_DEFAULT);
     hadEntry = true;
