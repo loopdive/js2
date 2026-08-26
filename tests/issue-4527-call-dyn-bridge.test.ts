@@ -36,6 +36,22 @@ async function run(files: Record<string, string>, entry: string, expectedImports
 }
 
 describe("issue #4527: cross-module dynamic callback invocation", () => {
+  it("reads reflective array carriers through canonical dynamic string indices", async () => {
+    const w = await run(
+      {
+        "./main.js": `
+          export function t(key) {
+            const names = Object.getOwnPropertyNames({ answer: 42 });
+            return names[key];
+          }
+        `,
+      },
+      "./main.js",
+      ["__extern_get"],
+    );
+    expect(w.t("0")).toBe("answer");
+  });
+
   it("keeps class methods on the prototype through borrowed hasOwnProperty", async () => {
     const w = await run(
       {

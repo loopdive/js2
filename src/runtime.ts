@@ -4918,11 +4918,22 @@ function _safeGet(
   // (e.g. getOwnPropertyNames conversion loop uses __extern_get with integer indices).
   // #1830 — the range must cover every id in `_symbolIdToKeys` (1-15, 15 =
   // @@matchAll); `<= 14` silently dropped Symbol.matchAll on WasmGC structs.
-  // #2014: a small integer key (1-15) collides with the well-known-symbol ID
-  // range below. A genuine numeric data property (`o[2]` on `{ 2: "two" }`) is
-  // stored under the string field name "2" and exposed as `__sget_2`, so try
-  // that real-property getter BEFORE interpreting the key as a symbol ID —
-  // otherwise `o[2]` is mis-resolved as Symbol(2) and returns undefined.
+  // #4527: dynamic canonical string keys on reflective vec carriers must take
+  // the same fast path as numeric indices; other strings continue to sidecars.
+  if (_isWasmStruct(obj) && typeof key === "string" && _isCanonicalArrayIndexKey(key)) {
+    const exports = callbackState?.getExports();
+    const isVec = exports?.__is_vec as ((value: any) => number) | undefined;
+    const vecLen = exports?.__vec_len as ((value: any) => number) | undefined;
+    const vecGet = exports?.__vec_get as ((value: any, index: number) => any) | undefined;
+    if (typeof isVec === "function" && typeof vecLen === "function" && typeof vecGet === "function") {
+      try {
+        if (isVec(obj) === 1) return Number(key) < vecLen(obj) ? vecGet(obj, Number(key)) : undefined;
+      } catch {
+        /* Continue through the ordinary struct path. */
+      }
+    }
+  }
+  // #2014: prefer genuine numeric data properties to symbol-ID collisions.
   if (_isWasmStruct(obj) && typeof key === "number" && Number.isInteger(key) && key >= 0) {
     const exports = callbackState?.getExports();
     const index = _asArrayIndex(String(key));
@@ -4956,19 +4967,8 @@ function _safeGet(
       return tupleGetter(obj);
     }
   }
-  // (#2706 / #1830) A genuine integer-index key (`o[5]`) on a WasmGC struct is
-  // NOT a well-known-symbol ID. `runtime.ts` only runs in host mode, where the
-  // compiler boxes every well-known-symbol access into a REAL JS Symbol via
-  // `__box_symbol` (verified: `o[Symbol.species]` arrives as
-  // `typeof key === "symbol"`, never a number). So a NUMBER key reaching here is
-  // always a real integer index — the old `1 <= key <= 15 → _symbolIdToKeys`
-  // remap mis-routed `o[5]=55` onto the `@@species` slot, leaking a `"@@species"`
-  // string from for-in / Object.keys and making `5 in o` false even though
-  // `o[5]` round-tripped its value. Dropping the remap lets the numeric key fall
-  // through to the sidecar (stored under `"5"`) so enumeration / `in` / Object.keys
-  // see `"5"` (ordered by `_orderOwnKeysSpec`). Real symbol keys still resolve via
-  // the `typeof key === "symbol"` arm below; only standalone mode (object-runtime.ts,
-  // never this file) uses i32 symbol ids.
+  // (#2706 / #1830) Numeric keys fall through to the sidecar as real integer
+  // indices; real symbol keys resolve via the `typeof key === "symbol"` arm below.
   if (_isWasmStruct(obj)) {
     const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
     if (nativeString !== _MISS) return (nativeString as any)[key as any];
