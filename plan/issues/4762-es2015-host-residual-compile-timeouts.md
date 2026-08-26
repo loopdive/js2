@@ -121,3 +121,8 @@ Artifacts are
 zero timeout: the object and throwing-object `instanceof` rows plus the Set row
 remain semantic failures there. This issue's timeout objective is complete;
 the explicit semantic handoffs remain open.
+
+Permanent regression coverage lives in `tests/issue-4762.test.ts`. It runs the
+exact inherited `Function.prototype.prototype` accessor and poisoned
+`Array.prototype[1]` rows through the fork-worker realm canary and requires
+both to finish, pass, reach the test body, and request safe worker recycling.
