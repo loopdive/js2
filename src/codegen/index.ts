@@ -11251,7 +11251,10 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         if (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return false;
         return typeMayCarryObjectValue(rhsType) && !ctx.checker.isTypeAssignableTo(rhsType, propType);
       }) ?? false;
-    const assignedIndexedWrites = ctx.objectLiteralIndexedAssignedPropertyTypes.get(prop);
+    const indexedPropertyDeclaration = prop.valueDeclaration ?? prop.declarations?.[0];
+    const assignedIndexedWrites = indexedPropertyDeclaration
+      ? ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedPropertyDeclaration)
+      : undefined;
     const hasIncompatibleIndexedWrite =
       assignedIndexedWrites?.some((rhsType) => !ctx.checker.isTypeAssignableTo(rhsType, propType)) ?? false;
     const receivesObjectCarrier =
@@ -11260,7 +11263,7 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         hasIncompatibleObjectWrite ||
         nullishScalarSeed);
     const receivesIndexedCarrier = assignedIndexedWrites !== undefined && hasIncompatibleIndexedWrite;
-    if (receivesIndexedCarrier) markIndexedPropertyStale(ctx, prop);
+    if (receivesIndexedCarrier && indexedPropertyDeclaration) markIndexedPropertyStale(ctx, indexedPropertyDeclaration);
     wasmType = widenObjectLiteralFieldType(wasmType, receivesIndexedCarrier, receivesObjectCarrier, nullishScalarSeed);
     // (#1468) `{ k: undefined }` makes TS infer the property's type as the
     // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for

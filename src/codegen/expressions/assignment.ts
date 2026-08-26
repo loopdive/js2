@@ -3675,9 +3675,10 @@ function compilePropertyAssignment(
   // classifier finds the accessor (the private branch below returns first),
   // but use the real class declaration as the defensive fallback instead of
   // querying the unbound foreign `this` node.
-  const objType = foreignStaticPrivateClassName
-    ? ctx.checker.getTypeAtLocation(ctx.classDeclarationMap.get(foreignStaticPrivateClassName)!)
-    : ctx.checker.getTypeAtLocation(target.expression);
+  const objTypeNode = foreignStaticPrivateClassName
+    ? ctx.classDeclarationMap.get(foreignStaticPrivateClassName)!
+    : target.expression;
+  const objType = ctx.checker.getTypeAtLocation(objTypeNode);
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;

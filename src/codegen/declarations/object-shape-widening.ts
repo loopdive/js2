@@ -172,13 +172,13 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
       const indexedName = ts.isElementAccessExpression(node.left)
         ? staticElementKey(node.left.argumentExpression)
         : undefined;
-      if (indexedName !== undefined) {
+      if (indexedName !== undefined && ts.isElementAccessExpression(node.left)) {
         // Indexed writes are the narrow dynamic-carrier case: a closed field
         // may start as a string/number and receive a different primitive on a
         // later `obj["key"] = rhs`. Record every concrete RHS type so the
         // field-registration pass can widen the slot before any body emits.
-        const receiverType = getTypeAtLocationBounded(ctx.checker, node.left.expression);
-        const indexedProperty = receiverType.getProperty(indexedName);
+        const indexedProperty =
+          ctx.oracle.declarationsOf(node.left.argumentExpression)[0] ?? ctx.oracle.declarationsOf(node.left)[0];
         if (indexedProperty && (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
           const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedProperty) ?? [];
           writes.push(rhsType);

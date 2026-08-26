@@ -7,12 +7,12 @@ import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
-const indexedStaleProperties = new WeakMap<CodegenContext, Set<ts.Symbol>>();
+const indexedStaleProperties = new WeakMap<CodegenContext, Set<ts.Declaration>>();
 
-export function markIndexedPropertyStale(ctx: CodegenContext, property: ts.Symbol): void {
+export function markIndexedPropertyStale(ctx: CodegenContext, property: ts.Declaration): void {
   let stale = indexedStaleProperties.get(ctx);
   if (stale === undefined) {
-    stale = new Set<ts.Symbol>();
+    stale = new Set<ts.Declaration>();
     indexedStaleProperties.set(ctx, stale);
   }
   stale.add(property);
@@ -33,10 +33,13 @@ export function equalityOperandHasStaleStaticType(
 
   let key: string | undefined;
   let receiver: ts.Expression | undefined;
+  let propertyNode: ts.Node | undefined;
   if (ts.isPropertyAccessExpression(expr)) {
     key = expr.name.text;
     receiver = expr.expression;
+    propertyNode = expr.name;
   } else if (ts.isElementAccessExpression(expr)) {
+    propertyNode = expr.argumentExpression;
     let keyExpr: ts.Expression = expr.argumentExpression;
     while (
       ts.isParenthesizedExpression(keyExpr) ||
@@ -56,8 +59,8 @@ export function equalityOperandHasStaleStaticType(
     receiver = expr.expression;
   }
   if (receiver === undefined || key === undefined) return false;
-  const receiverType = ctx.checker.getTypeAtLocation(receiver);
-  const property = receiverType.getProperty(key);
+  const property =
+    (propertyNode ? ctx.oracle.declarationsOf(propertyNode)[0] : undefined) ?? ctx.oracle.declarationsOf(expr)[0];
   const stale = property !== undefined && indexedStaleProperties.get(ctx)?.has(property) === true;
   if (!stale) return false;
   const propertyKey = key;
