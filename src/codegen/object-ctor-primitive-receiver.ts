@@ -162,6 +162,55 @@ function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression)
 }
 
 /**
+ * Return the statically object-valued argument preserved by `Object(x)` /
+ * `new Object(x)`, when the receiver can be traced to that exact coercion.
+ *
+ * The checker gives every Object-constructor result the broad `Object` type,
+ * even though §20.1.1.1 returns an object argument unchanged.  That erasure is
+ * observable by native receiver dispatch: `new Object(date).getFullYear()`
+ * needs the Date lowering and `Object(fn).constructor` needs the Function
+ * lowering.  Keep this proof narrow: only exact, non-primitive oracle facts
+ * are returned, while primitives, nullish values, unions, `any`, and unknown
+ * values continue through the existing Object carrier paths.
+ */
+export function objectCoercionObjectArgumentOf(
+  ctx: CodegenContext,
+  recvExpr: ts.Expression,
+): ts.Expression | undefined {
+  const producer = traceToProducer(ctx, recvExpr);
+  if (producer === undefined || (!ts.isNewExpression(producer) && !ts.isCallExpression(producer))) return undefined;
+  const callee = producer.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "Object") return undefined;
+  const decl = ctx.oracle.valueDeclarationOf(callee);
+  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return undefined;
+  const argument = producer.arguments?.[0];
+  if (argument === undefined) return undefined;
+  const fact = ctx.oracle.typeFactOf(argument);
+  switch (fact.kind) {
+    case "array":
+    case "builtin":
+    case "class":
+    case "function":
+    case "object":
+      return argument;
+    default:
+      return undefined;
+  }
+}
+
+export function objectCoercionPreservesDate(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  const argument = objectCoercionObjectArgumentOf(ctx, recvExpr);
+  return argument !== undefined && ctx.oracle.builtinReceiverOf(argument) === "Date";
+}
+
+export function objectCoercionPreservesFunction(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  const argument = objectCoercionObjectArgumentOf(ctx, recvExpr);
+  if (argument === undefined) return false;
+  const fact = ctx.oracle.typeFactOf(argument);
+  return fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function");
+}
+
+/**
  * The guard #3133's fold consults: `true` ⇒ this receiver is a primitive
  * wrapper, so the `Object` fold must stand down and let the runtime
  * `.constructor` arm (#4223's `wrapper-constructor-carrier.ts`) answer.

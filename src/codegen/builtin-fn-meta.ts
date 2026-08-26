@@ -301,9 +301,18 @@ export function pushBuiltinFnClosureValueInstrs(
   const instrs: Instr[] = [{ op: "ref.func", funcIdx: closure.funcIdx }];
   // (#3673) $arity field 1 — the builtin's spec `length` when meta-typed,
   // else the registered closure signature's param count.
-  const arity = isMeta
-    ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
-    : (ctx.closureInfoByTypeIdx.get(closure.type.typeIdx)?.paramTypes.length ?? 0);
+  // Receiver-aware variadic native-proto values are the one exception: their
+  // internal lifted signature is `(self, thisValue, argsVec)`, while the
+  // in-Wasm `__apply_closure` selector must see zero positional arguments and
+  // leave the exact vector length to the method dispatcher. Their reflective
+  // JavaScript `.length` still comes from `nativeClosureMeta` / bfn metadata.
+  const closureInfo = ctx.closureInfoByTypeIdx.get(closure.type.typeIdx);
+  const arity =
+    closureInfo?.nativeProtoVariadic === true
+      ? 0
+      : isMeta
+        ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
+        : (closureInfo?.paramTypes.length ?? 0);
   instrs.push({ op: "i32.const", value: arity });
   instrs.push(closureBagInitInstr()); // (#4241) $bag field 2
   if (isMeta) {

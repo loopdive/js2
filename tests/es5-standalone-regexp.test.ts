@@ -79,6 +79,21 @@ describe("#4233 — ES5 RegExp semantics in --target standalone", () => {
     });
   });
 
+  describe("global lastIndex assignment — defer object coercion until exec", () => {
+    it("does not invoke valueOf during assignment, but does at g/y exec", async () => {
+      const src = `var re = /a/g; var calls = 0;
+        var value = { valueOf: function() { calls++; return 1; } };
+        re.lastIndex = value; var assignmentCalls = calls;
+        var match = re.exec("ba");
+        return assignmentCalls === 0 && calls === 1 && match !== null && match.index === 1 && re.lastIndex === 2 ? 1 : 0;`;
+      expect(await runStandalone(src)).toBe(1);
+    });
+
+    it("keeps numeric lastIndex writes on the existing fast path", async () => {
+      expect(await runStandalone(`var re = /a/g; re.lastIndex = 1; return re.test("ba") ? 1 : 0;`)).toBe(1);
+    });
+  });
+
   describe("RegExp(R) identity vs new RegExp(R) clone (§22.2.4.1 step 1)", () => {
     it("RegExp(R) returns R itself, so later own properties are visible", async () => {
       const src = `var re = /x/i; var inst = RegExp(re); re.indicator = 1;

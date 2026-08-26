@@ -1,7 +1,8 @@
 ---
 id: 3966
 title: "fix(codegen): `position++` on an implicit global does not persist — the increment/compound write path does not consult `sloppyImplicitGlobals`"
-status: ready
+status: done
+completed: 2026-08-25
 sprint: current
 priority: medium
 horizon: s
@@ -11,6 +12,12 @@ area: codegen
 goal: core-semantics
 created: 2026-08-01
 related: [3956, 2726]
+loc-budget-allow:
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/expressions/unary-updates.ts
+func-budget-allow:
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
 ---
 
 # #3966 — increment / compound-assignment write on an implicit global is lost
@@ -60,6 +67,14 @@ and narrower than #3956.
 
 ## Acceptance criteria
 
-- [ ] `this.p = 0; (function(){ p++ })(); p === 1` holds in both lanes
-- [ ] `p = 0; p += 2; p === 2` holds for an implicit global in both lanes
-- [ ] A/B measured over the affected population with denominators, both directions
+- [x] `this.p = 0; (function(){ p++ })(); p === 1` holds in both lanes
+- [x] `p = 0; p += 2; p === 2` holds for an implicit global in both lanes
+- [x] A/B measured over the affected population with denominators, both directions
+
+## Test Results
+
+- Exact standalone Test262 bucket: 3/3 passing (+3), with no regressions in the
+  focused implicit-global cases.
+- Focused Vitest: `tests/issue-3966.test.ts` — 5/5 tests passing.
+- TypeScript 7 and TypeScript 5 typechecks, formatting, lint, and the invariant
+  guard suite pass on the implementation branch.

@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#4656) Three ES5 standalone defects fixed, and five MEASURED residuals whose
-// roots this lane corrected rather than inherited.
+// (#4656) Three ES5 standalone defects plus four Function call/apply rows
+// fixed, and the measured residuals whose roots this lane corrected rather
+// than inherited.
 //
 // TWO of those residuals were written here as CONTROLS and demoted after
 // measurement showed them failing on BOTH arms — recorded rather than quietly
@@ -33,6 +34,10 @@
 //      compiled. Fixed in `closed-method-dispatch.ts`
 //      (`buildCallSiteNullishReceiverGuard`) + `call-receiver-method.ts`. Row:
 //      `language/expressions/call/11.2.3-3_3.js`.
+//   4. Constant standalone Function bodies invoked through `.call`/`.apply`
+//      now retain the explicit receiver and materialized argument vector. The
+//      foreign body uses dynamic property access and reserved fnctor layouts
+//      retain expandos. Rows: Function call/apply A5/A6; A7/A8 remain residuals.
 //
 // RESIDUALS are `it.fails` and each carries POSITIVE CONTROLS chosen so the
 // suite claims the SPECIFIC root, not the general area (brief methodology 8).
@@ -48,8 +53,11 @@
 // (R2, and %Object.prototype% too). So this is the builtin-as-value family
 // (#4480/#4481/#4483, dev-4515's C1), not a prototype-link gap.
 import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import { runTest262File } from "./test262-runner.js";
 
 /**
  * CI's changed-root `quality` lane runs `JS2WASM_EVAL_ENGINE=interpreter` with
@@ -239,6 +247,52 @@ describe("#4656 F2 — calling a resolved callee that BRANDS as a primitive is a
   });
 });
 
+describe("#4656 A — standalone Function call/apply preserves an explicit thisArg", () => {
+  it("call writes an expando on a Function() receiver", async () => {
+    expect(
+      await run(`
+        var obj: any = Function();
+        Function("this.touched = true; return this;").call(obj);
+        return obj.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("apply writes an expando on a Function() receiver", async () => {
+    expect(
+      await run(`
+        var obj: any = Function();
+        Function("this.touched = true; return this;").apply(obj);
+        return obj.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("apply forwards the FACTORY arguments object to a standalone Function", async () => {
+    expect(
+      await run(`
+        function FACTORY() {
+          Function("a1,a2,a3", "this.shifted = a1 + a2 + a3;").apply(this, arguments);
+        }
+        var obj: any = new (FACTORY as any)("", 4, 2);
+        return obj.shifted === "42" ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("call forwards an arguments object and trailing values", async () => {
+    expect(
+      await run(`
+        function FACTORY() {
+          Function("a1,a2,a3", "this.shifted = a1.length + a2 + a3;").call(this, arguments, "", 2);
+        }
+        var obj: any = new (FACTORY as any)("", 4, 2, "A");
+        return obj.shifted === "42" ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+});
+
 describe("#4656 R1 — %Function.prototype% members are not reachable as a dynamic VALUE", () => {
   // The correction to #4643's residual attribution. `f.apply` answers
   // "function" only through the compile-time fold on a LITERAL key; with an
@@ -289,15 +343,17 @@ describe("#4656 R1 — %Function.prototype% members are not reachable as a dynam
  * reason — brief methodology 8). It does not: an ARGUMENT-LESS `Function()` is
  * AOT-synthesized by #2924 and never reaches the provider at all. Pinned by
  * running the block on `JS2WASM_EVAL_ENGINE=interpreter` and watching it
- * answer `0`, identically to the quickjs tier, instead of rejecting.
+ * answer `0`, identically to the quickjs tier, instead of rejecting. The
+ * aggregate ES5 branch now supplies the missing builtin prototype values, so
+ * the same probe correctly answers `1` on both tiers.
  *
  * So this file has NO tier-sensitive pin and needs no tier arm — every one of
- * its 27 tests executes on both tiers. Recorded rather than deleted because
+ * its 36 tests executes on both tiers. Recorded rather than deleted because
  * "does this snippet mint?" is not answerable by looking at it; the compiler
  * decides, and here it declines.
  */
-describe("#4656 R2 — a function-valued prototype does not carry %Function.prototype%", () => {
-  it.fails("RESIDUAL `FACTORY.prototype = Function(); typeof (new FACTORY()).apply` is undefined", async () => {
+describe("#4656 R2 — a function-valued prototype carries its builtin prototype chain", () => {
+  it("`FACTORY.prototype = Function()` exposes %Function.prototype%.apply", async () => {
     expect(
       await run(`
         var P: any = Function();
@@ -326,14 +382,9 @@ describe("#4656 R2 — a function-valued prototype does not carry %Function.prot
     ).toBe(5);
   });
 
-  // MEASURED CORRECTION — also written as a CONTROL, also not one. It fails on
-  // BOTH arms, and that changes R2's conclusion for the better: the miss is NOT
-  // specific to `%Function.prototype%`. `%Object.prototype%.toString` is
-  // equally unreachable through the same link, while an OWN property of the
-  // same prototype object (the control immediately above, which DOES pass on
-  // both arms) reads through fine. So the link carries whatever VALUES exist;
-  // builtin-prototype members are simply not values.
-  it.fails("RESIDUAL %Object.prototype%.toString is NOT reachable through the same link either", async () => {
+  // The aggregate implementation also carries the next builtin link through
+  // to %Object.prototype%, matching ordinary JavaScript prototype lookup.
+  it("%Object.prototype%.toString is reachable through the same link", async () => {
     expect(
       await run(`
         var P: any = Function();
@@ -359,7 +410,7 @@ describe("#4656 tier — an argument-less `Function()` does NOT reach the eval p
         var inst: any = new (FACTORY as any)();
         return (typeof inst.apply === "function") ? 1 : 0;
       `),
-    ).toBe(0);
+    ).toBe(1);
   });
 });
 
@@ -465,4 +516,65 @@ describe("#4656 R4 — a function declaration does not override a same-named PAR
       `),
     ).toBe(1);
   });
+});
+
+// ───────────────────── Function.bind residual cluster ─────────────────────
+// These are the exact standalone Test262 rows owned by the bind lane. The
+// controls below exercise both direct and indirect bind for an ordinary user
+// function, so a constructor-only arm cannot silently regress closure binding.
+const BIND_TEST262_ROOT = join(__dirname, "..", "test262");
+const BIND_TEST262 = existsSync(join(BIND_TEST262_ROOT, "harness", "assert.js"));
+const BIND_CONTROL_DIR = join(__dirname, "..", ".tmp", "issue-4656-bind-controls");
+
+function pinBindRow(rel: string, note: string): void {
+  it.skipIf(!BIND_TEST262)(rel, { timeout: 60_000 }, async () => {
+    const result = await runTest262File(join(BIND_TEST262_ROOT, "test", rel), "issue-4656-bind", 30_000, "standalone");
+    expect(`${result.status}: ${result.error ?? ""}`, note).toBe("pass: ");
+  });
+}
+
+function pinBindSource(name: string, source: string, note: string): void {
+  it.skipIf(!BIND_TEST262)(name, { timeout: 60_000 }, async () => {
+    mkdirSync(BIND_CONTROL_DIR, { recursive: true });
+    const path = join(BIND_CONTROL_DIR, `${name}.js`);
+    writeFileSync(path, source);
+    const result = await runTest262File(path, "issue-4656-bind", 30_000, "standalone");
+    expect(`${result.status}: ${result.error ?? ""}`, note).toBe("pass: ");
+  });
+}
+
+describe("#4656 — Function.prototype.bind standalone residuals", () => {
+  pinBindRow(
+    "built-ins/Function/prototype/bind/15.3.4.5-2-6.js",
+    "Object.bind(null)(42) must return the boxed argument",
+  );
+  pinBindRow(
+    "built-ins/Function/prototype/bind/15.3.4.5-2-8.js",
+    "Array.bind(null)(42) must preserve Array length and indexed writes",
+  );
+  pinBindRow(
+    "built-ins/Function/prototype/bind/S15.3.4.5_A5.js",
+    "bind.apply(Date, [null].concat(args)) must curry [[Construct]]",
+  );
+
+  pinBindSource(
+    "ordinary-direct-bind",
+    `
+      function add(a, b) { return this.base + a + b; }
+      var bound = add.bind({ base: 1 }, 2);
+      assert.sameValue(bound(3), 6);
+    `,
+    "direct bind must preserve its receiver and partial argument",
+  );
+
+  pinBindSource(
+    "ordinary-indirect-bind-apply",
+    `
+      function add(a, b) { return a + b; }
+      var args = [2];
+      var bound = Function.prototype.bind.apply(add, [null].concat(args));
+      assert.sameValue(bound(3), 5);
+    `,
+    "indirect bind.apply must preserve partial arguments for an ordinary function",
+  );
 });

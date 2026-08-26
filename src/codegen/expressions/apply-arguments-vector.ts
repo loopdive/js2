@@ -25,3 +25,5 @@ export function emitMaterializedArgumentsVector(
   if (type.kind === "ref" || type.kind === "ref_null") fctx.body.push({ op: "extern.convert_any" });
   else if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
 }
+
+export { tryCompileIndirectFunctionBindApplyCall as tryBindApply } from "../function-bind-apply.js";

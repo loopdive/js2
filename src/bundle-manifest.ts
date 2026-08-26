@@ -9,7 +9,7 @@
  * section after merge and metadata DCE have completed.
  */
 
-import { createHash } from "node:crypto";
+import * as nodeCrypto from "node:crypto";
 import { WasmEncoder } from "./emit/encoder.js";
 import type { LinkedProviderMetadata } from "./index.js";
 import {
@@ -212,5 +212,5 @@ export function decodeBundleManifest(binary: Uint8Array): BundleManifestV1 {
 }
 
 export function bundleArtifactHash(binary: Uint8Array): string {
-  return createHash("sha256").update(binary).digest("hex");
+  return nodeCrypto.createHash("sha256").update(binary).digest("hex");
 }

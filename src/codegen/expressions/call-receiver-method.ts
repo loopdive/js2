@@ -9,7 +9,7 @@
 // generic valueOf / toString / toLocaleString fallbacks. It returns `undefined`
 // when nothing matched, so the caller in calls.ts continues its post-arm
 // dispatch. Moved verbatim: the emitted Wasm is byte-identical.
-import { ts } from "../../ts-api.js";
+import { ts, forEachChild } from "../../ts-api.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -24,6 +24,7 @@ import {
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
+import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { exactClassExpressionTypeName } from "../class-expression-identity.js";
@@ -142,8 +143,16 @@ import {
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall, compileSpreadCallArgs } from "./extern.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
-import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
+import { sourceOverridesBuiltinPrototypeMember, sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
+import {
+  tryCompileWrapperDynamicMethodCall,
+  tryCompileStandaloneBooleanToString,
+  tryCompileStandaloneDeletedStringToString,
+  tryCompileStandaloneNumberPrototypeTail,
+} from "./standalone-primitive-tail.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
+import { tryCompileStandaloneErrorPrototypeToString } from "./error-prototype-tostring.js";
+import { resolveObjectToStringTag } from "../object-proto-tostring.js";
 import {
   directObjectMethodFuncIdx,
   emitKnownRestMethodArguments,
@@ -165,6 +174,67 @@ import {
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
+
+/**
+ * A source-level delete removes the builtin prototype member before the call
+ * is evaluated.  The generic zero-argument `.toString()` fast path below is a
+ * static answer for the *present* intrinsic and would otherwise resurrect it
+ * for `Object.prototype.toString()` after `delete Object.prototype.toString`.
+ * Keep the check syntactic and shadow-aware; dynamic receivers continue to use
+ * their existing runtime lookup.
+ */
+function sourceDeletesBuiltinPrototypeMember(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  member: string,
+): boolean {
+  const proto = skipTransparentExpressions(receiver);
+  if (!ts.isPropertyAccessExpression(proto) || proto.name.text !== "prototype") return false;
+  const builtinName = resolveBuiltinNamespaceValueName(ctx, proto.expression);
+  if (!builtinName) return false;
+  if (fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false)) return false;
+  const key = `${builtinName}.prototype.${member}`;
+  if (!ctx.deletedBuiltinPrototypeMembers?.has(key)) return false;
+
+  // The module-level delete scan is intentionally order-independent so that
+  // earlier reflective reads do not fold while a later delete is present. For
+  // this direct call, however, the distinction matters: the intrinsic is
+  // callable before the delete and absent afterwards. Cache only the exact
+  // builtin-prototype delete positions for this source file.
+  const cacheHolder = ctx as unknown as {
+    __builtinPrototypeDeletePositions?: WeakMap<ts.SourceFile, Map<string, number[]>>;
+  };
+  const sourceFile = receiver.getSourceFile();
+  const cache = (cacheHolder.__builtinPrototypeDeletePositions ??= new WeakMap());
+  let positions = cache.get(sourceFile);
+  if (!positions) {
+    positions = new Map();
+    const walk = (node: ts.Node): void => {
+      if (ts.isDeleteExpression(node)) {
+        const target = node.expression;
+        if (ts.isPropertyAccessExpression(target) && ts.isPropertyAccessExpression(target.expression)) {
+          const prototype = target.expression;
+          if (
+            prototype.name.text === "prototype" &&
+            ts.isIdentifier(prototype.expression) &&
+            ts.isIdentifier(target.name)
+          ) {
+            const deletedKey = `${prototype.expression.text}.prototype.${target.name.text}`;
+            const entries = positions!.get(deletedKey);
+            if (entries) entries.push(node.getStart(sourceFile));
+            else positions!.set(deletedKey, [node.getStart(sourceFile)]);
+          }
+        }
+      }
+      forEachChild(node, walk);
+    };
+    walk(sourceFile);
+    cache.set(sourceFile, positions);
+  }
+  const callStart = receiver.getStart(sourceFile);
+  return (positions.get(key) ?? []).some((deleteStart) => deleteStart < callStart);
+}
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -638,6 +708,18 @@ export function compileReceiverMethodCall(
       expectedType,
     );
     if (__r !== undefined) return __r;
+  }
+
+  if (ctx.standalone && propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
+    const text = propAccess.getSourceFile().text;
+    const escaped = propAccess.expression.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const installed = new RegExp(
+      `\\b${escaped}\\s*\\.\\s*concat\\s*=\\s*Array\\s*\\.\\s*prototype\\s*\\.\\s*concat\\b`,
+    ).test(text);
+    if (installed) {
+      const nativeResult = compileArrayConcatNativeSpec(ctx, fctx, propAccess, expr);
+      if (nativeResult !== undefined) return nativeResult;
+    }
   }
 
   // Check if receiver is an externref object
@@ -1179,61 +1261,25 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // (#1397) Wrapper-object dynamic dispatch on reassigned methods.
-  //
-  // For wrapper-object receivers (`new String/Number/Boolean(...)`) where
-  // `.toString` or `.valueOf` has been reassigned somewhere in the source,
-  // skip every static fast-path and route through `__extern_method_call`
-  // so the runtime property lookup picks up the override. Required for
-  // spec compliance with transferred prototype methods (S15.7.4.2_A4_*,
-  // S15.7.4.4_A2_*, S15.6.4.2_A2_*, S15.6.4.3_A2_*):
-  //
-  //   var s1 = new String();
-  //   s1.toString = Number.prototype.toString;
-  //   s1.toString();   // spec: TypeError; we used to return s1 itself.
-  //
-  // Primitives keep the static fast-path — primitives can't have own
-  // properties, so `"abc".toString = …` is a no-op and the short-circuit
-  // is correct. Wrappers without any matching reassignment in the source
-  // also keep the static fast-path (no perf regression for the common
-  // case). The reassignment scan is conservative — any
-  // `<expr>.<method> = …` anywhere in the source disables the static
-  // path for wrappers; that's a narrower hit than Option B (always
-  // dynamic) and matches the architect's Option D feasibility study.
-  {
-    const wrapperMethodName = propAccess.name.text;
-    const isWrapperReceiver =
-      isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
-    const wrapperDynamicCandidate =
-      isWrapperReceiver &&
-      (wrapperMethodName === "valueOf" || wrapperMethodName === "toString") &&
-      sourceHasMethodReassignment(ctx, propAccess.expression, wrapperMethodName);
-    if (wrapperDynamicCandidate) {
-      // (#4619 family D) Make the destination of this hand-off EXIST — and do
-      // it regardless of the argument count that gates the dispatch below, for
-      // the reason recorded in wrapper-proto-dynamic-demand.ts.
-      ensureWrapperProtoDynamicMember(
-        ctx,
-        isStringWrapperType(receiverType) ? "String" : isNumberWrapperType(receiverType) ? "Number" : "Boolean",
-        wrapperMethodName,
-      );
-    }
-    // (#4619) …and dispatch dynamically for an ARGUMENT-CARRYING call too, but
-    // only for the members the spec gives no parameters — §20.3.3.3 / §22.1.3.28
-    // `valueOf` and §20.3.3.2 / §22.1.3.27 `toString`, which ignore anything
-    // passed. `Number.prototype.toString` is excluded because its argument is
-    // the §21.1.3.6 RADIX and the standalone `__extern_method_call` path
-    // deliberately carries no args (`emitWrapperDynamicMethodCall`), so routing
-    // it here would silently drop the radix. Measured on base:
-    // `(new Boolean(-1)).valueOf(false)` (test262 `S15.6.4.3_A1_T2`) fell to the
-    // legacy arm that recompiles the WRAPPER as `i32` and answered `false`.
-    const memberIgnoresArguments =
-      wrapperMethodName === "valueOf" || (wrapperMethodName === "toString" && !isNumberWrapperType(receiverType));
-    if (wrapperDynamicCandidate && (expr.arguments.length === 0 || memberIgnoresArguments)) {
-      const dynResult = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, wrapperMethodName);
-      if (dynResult) return dynResult;
-    }
-  }
+  const dynamicWrapper = tryCompileWrapperDynamicMethodCall(ctx, fctx, propAccess, expr, receiverType, {
+    sourceOverridesMethodOnReceiver,
+    emitWrapperDynamicMethodCall,
+  });
+  if (dynamicWrapper !== undefined) return dynamicWrapper;
+
+  const deletedStringToString = tryCompileStandaloneDeletedStringToString(
+    ctx,
+    fctx,
+    propAccess,
+    expr,
+    receiverType,
+    expectedType,
+    compileCallExpression,
+  );
+  if (deletedStringToString !== undefined) return deletedStringToString;
+
+  const booleanToString = tryCompileStandaloneBooleanToString(ctx, fctx, propAccess, expr, receiverType);
+  if (booleanToString !== undefined) return booleanToString;
 
   // Handle wrapper type method calls: new Number(x).valueOf(), etc.
   // Since wrapper constructors now return primitives, valueOf() is a no-op identity.
@@ -2359,6 +2405,12 @@ export function compileReceiverMethodCall(
 
   // Primitive method calls: number.toString(), number.toFixed()
   if (isNumberMethodReceiver(ctx, receiverType) && propAccess.name.text === "toString") {
+    const primitiveTail = tryCompileStandaloneNumberPrototypeTail(ctx, fctx, propAccess, expr, expectedType, {
+      sourceOverridesBuiltinPrototypeMember,
+      compileCallExpression,
+      emitWrapperDynamicMethodCall,
+    });
+    if (primitiveTail !== undefined) return primitiveTail;
     // RangeError: if radix argument is provided, must be integer 2-36
     // Also captures the validated, floored radix in `radixLocalIdx` so it can
     // be passed to the 2-arg `number_toString_radix` host import below (#1321).
@@ -3291,8 +3343,45 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // Fallback .toString() for any type not already handled above
-  // Handles: function.toString(), object.toString(), array.toString(), class instance.toString()
+  const errorPrototypeToString = tryCompileStandaloneErrorPrototypeToString(ctx, fctx, expr, propAccess);
+  if (errorPrototypeToString !== undefined) return errorPrototypeToString;
+
+  // A whole-program delete scan proves that this exact builtin-prototype
+  // member is absent. Calling the resulting `undefined` must throw a
+  // catchable TypeError; do not fall through to the generic externref call
+  // ladder, which would reintroduce a host-only toString import in standalone.
+  if (
+    ctx.standalone &&
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    sourceDeletesBuiltinPrototypeMember(ctx, fctx, propAccess.expression, "toString")
+  ) {
+    emitThrowTypeError(ctx, fctx, "Object.prototype.toString is not a function");
+    return { kind: "externref" };
+  }
+
+  // `Array` is a Function-valued builtin constructor.  When source transfers
+  // `Object.prototype.toString` onto `Function.prototype.toString`, the
+  // inherited call must use Object's brand classifier (`[object Function]`),
+  // not the captured callable-source fast path below.  This is deliberately
+  // an exact transferred-intrinsic proof; arbitrary user functions stay on
+  // their existing dynamic/refusal path.
+  if (
+    ctx.standalone &&
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    resolveBuiltinNamespaceValueName(ctx, propAccess.expression) === "Array" &&
+    sourceOverridesBuiltinPrototypeMember(ctx, expr, "Function", "toString", "Object", "toString")
+  ) {
+    const tag = resolveObjectToStringTag(ctx, propAccess.expression);
+    if (tag !== undefined) {
+      const result = `[object ${tag}]`;
+      addStringConstantGlobal(ctx, result);
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, result));
+      return { kind: "externref" };
+    }
+  }
+
   if (
     propAccess.name.text === "toString" &&
     expr.arguments.length === 0 &&

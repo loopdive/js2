@@ -110,3 +110,63 @@ export function collectEvalMutableNames(sourceFile: ts.SourceFile): Set<string> 
   visit(sourceFile);
   return out;
 }
+
+/**
+ * Names assigned an accessor-bearing object literal by a direct constant eval.
+ *
+ * The normal declaration pass can see `var o = { get x() {} }` and forces `o`
+ * onto the host-object representation. A foreign eval AST has no declaration
+ * parent, so that representation decision is otherwise missed: JavaScript
+ * inference may converge on a closed object shape for `o`, while the eval
+ * literal correctly emits a real host accessor descriptor. Keep the binding on
+ * the dynamic path whenever the folded source visibly assigns such a literal.
+ */
+export function collectEvalAccessorObjectNames(sourceFile: ts.SourceFile): Set<string> {
+  const out = new Set<string>();
+  const unwrap = (node: ts.Expression): ts.Expression => {
+    let current = node;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+  const visit = (node: ts.Node): void => {
+    const source = directEvalLiteralSource(node);
+    if (source !== undefined) {
+      const evalFile = ts.createSourceFile(
+        "<eval-accessor-shape>.js",
+        source,
+        ts.ScriptTarget.Latest,
+        /* setParentNodes */ true,
+        ts.ScriptKind.JS,
+      );
+      const visitEval = (evalNode: ts.Node): void => {
+        if (
+          ts.isBinaryExpression(evalNode) &&
+          evalNode.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(evalNode.left)
+        ) {
+          const rhs = unwrap(evalNode.right);
+          if (
+            ts.isObjectLiteralExpression(rhs) &&
+            rhs.properties.some(
+              (property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property),
+            )
+          ) {
+            out.add(evalNode.left.text);
+          }
+        }
+        ts.forEachChild(evalNode, visitEval);
+      };
+      visitEval(evalFile);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return out;
+}

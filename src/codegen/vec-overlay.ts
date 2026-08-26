@@ -78,7 +78,7 @@ import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-k
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
@@ -101,12 +101,20 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
 import {
   buildArgumentsBrandBit,
   buildArgumentsLengthDeletedBail,
   fillArgumentsLengthBrand,
 } from "./arguments-length-brand.js"; // (#4658)
+import {
+  allowedCarriers,
+  carrierDefaultInstrs,
+  carrierRefWriteBack,
+  type OverlayCarrier,
+} from "./vec-overlay-carriers.js";
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -215,58 +223,6 @@ export function reserveVecOverlayHelpers(ctx: CodegenContext): VecOverlayReserve
   // driver — reserve it now (idempotent) so its funcIdx is stable.
   reserveAccessorGetDriver(ctx);
   return { dpValueIdx, dpAccessorIdx, gopdIdx };
-}
-
-/** JS-array element carriers the overlay serves (TypedArray storage + subviews
- *  keep the legacy no-op — integer-indexed-exotic semantics are out of scope). */
-interface OverlayCarrier {
-  vecTypeIdx: number;
-  arrTypeIdx: number;
-  elemType: ValType;
-  kind: "f64" | "externref" | "anystr";
-}
-
-function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
-  const seen = new Set<number>();
-  const out: OverlayCarrier[] = [];
-  const addCarrier = (vecTypeIdx: number): void => {
-    if (seen.has(vecTypeIdx)) return;
-    seen.add(vecTypeIdx);
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    if (arrTypeIdx < 0) return;
-    const arrDef = ctx.mod.types[arrTypeIdx];
-    if (!arrDef || arrDef.kind !== "array") return;
-    const elemType = arrDef.element as ValType;
-    if (elemType.kind === "f64") {
-      out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "f64" });
-    } else if (elemType.kind === "externref") {
-      out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "externref" });
-    } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-      const ti = (elemType as { typeIdx: number }).typeIdx;
-      if (ti >= 0 && (ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx)) {
-        out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "anystr" });
-      }
-    }
-  };
-  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
-    addCarrier(vecTypeIdx);
-  }
-  // `$ObjVec` is the growable externref-array carrier used by Object
-  // enumeration and RegExp `d`-flag indices. It deliberately lives outside
-  // `vecTypeMap`, but is still a genuine Array and therefore participates in
-  // the same dense-index and named-property descriptor overlay.
-  const objVec = ctx.objectRuntimeTypes;
-  if (objVec) addCarrier(objVec.objVecTypeIdx);
-  // RegExp exec results are an extended native-string vec subtype rather than
-  // a direct `vecTypeMap` entry. Include that exact exotic so its spec own
-  // properties (`index`, `input`, `groups`, `indices`) can be materialised in
-  // the overlay without broadening the carrier whitelist to arbitrary structs.
-  const regexpMatchVecTypeIdx = ctx.structMap.get("__regexp_match_vec");
-  if (regexpMatchVecTypeIdx !== undefined) {
-    addCarrier(regexpMatchVecTypeIdx);
-  }
-  out.sort((a, b) => a.vecTypeIdx - b.vecTypeIdx);
-  return out;
 }
 
 /** Overlay-core state minted by the fill (types, global, lookup/ensure). */
@@ -781,38 +737,6 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "if", blockType: { kind: "empty" }, then: inner },
   ];
 
-  /**
-   * (#4434) Mark the module as carrying an indexed-lane-reachable companion
-   * entry when the key is a canonical numeric STRING that is not an array
-   * index (`"4294967295"`, `"4294967296"`, `"1e21"`).
-   *
-   * The `__extern_get_idx` prologue is gated on this flag, and the define path
-   * set it only for keys with an index `>= 0` — but `arr[4294967295]` reaches
-   * that same prologue as an f64 whose `number_toString` is the stored key. So
-   * the flag has to follow reachability, not index-ness; see
-   * `canonicalNumericKeyGuard`'s doc comment. Returns `[]` (no-op) when
-   * `__str_to_number` is unavailable, leaving today's behaviour.
-   */
-  const markNumericLikeNamedKey = (keyLocal: number, scratchF64: number): Instr[] => {
-    const strToNumberIdx = ctx.funcMap.get("__str_to_number");
-    if (strToNumberIdx === undefined) return [];
-    return canonicalNumericKeyGuard(
-      keyLocal,
-      scratchF64,
-      {
-        strToNumber: strToNumberIdx,
-        numberToString: numToStringIdx,
-        strFlatten: strFlattenIdx,
-        strEquals: strEqualsIdx,
-        anyStrTypeIdx,
-      },
-      [
-        { op: "i32.const", value: 1 },
-        { op: "global.set", index: core.numericFlagGlobalIdx },
-      ],
-    );
-  };
-
   /** `idxLocal = __obj_index_of_key(cast key)` — canonical array index or -1. */
   const parseIndex = (keyLocal: number, idxLocal: number): Instr[] => [
     { op: "local.get", index: keyLocal },
@@ -939,19 +863,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     for (const c of carriers) {
       const elemSetIdx = ensureVecElemSet(ctx, c.vecTypeIdx);
       if (elemSetIdx === null) continue;
-      const defaultVal: Instr[] =
-        c.kind === "f64"
-          ? [{ op: "f64.const", value: 0 }]
-          : c.kind === "externref"
-            ? // (#4491) A DATA define with no [[Value]] gives the property
-              // `undefined` (CompletePropertyDescriptor), not the carrier's
-              // null hole — `arr[0]` must read `undefined`. Opt-in, so the
-              // accessor arm (whose slot is dead, the getter answers) and the
-              // ArraySetLength growth keep the null default.
-              externAsUndefined
-              ? missExtern()
-              : [{ op: "ref.null.extern" }]
-            : [{ op: "ref.null", typeIdx: NONE_HEAP }];
+      const defaultVal = carrierDefaultInstrs(ctx, c, externAsUndefined, missExtern);
       arms.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: c.vecTypeIdx },
@@ -1472,27 +1384,26 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           }
           inner = arms;
         } else {
-          // anystr carrier: value must be an $AnyString.
-          inner = [
-            { op: "local.get", index: 12 },
-            { op: "ref.test", typeIdx: anyStrTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...castVecAndIdx,
-                { op: "local.get", index: 12 },
-                { op: "ref.cast", typeIdx: anyStrTypeIdx },
-                { op: "call", funcIdx: elemSetIdx },
-                ...wrote,
-              ],
-            },
-          ];
+          inner = carrierRefWriteBack(c, castVecAndIdx, wrote, elemSetIdx, anyStrTypeIdx);
         }
+        // The descriptor companion is authoritative for an unbacked sparse
+        // tail. Keep the physical write-back helper on its dense domain: its
+        // normal growth sequence intentionally traps on a four-billion-slot
+        // request, while a dynamic ordinary assignment must remain a
+        // companion-only write.
         writeBackArms.push(
-          { op: "local.get", index: 4 },
-          { op: "ref.test", typeIdx: c.vecTypeIdx },
-          { op: "if", blockType: { kind: "empty" }, then: inner },
+          { op: "local.get", index: 7 },
+          { op: "i32.const", value: SPARSE_INDEX_CEILING },
+          { op: "i32.lt_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 4 },
+              { op: "ref.test", typeIdx: c.vecTypeIdx },
+              { op: "if", blockType: { kind: "empty" }, then: inner },
+            ],
+          },
         );
       }
 
@@ -1569,7 +1480,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: markNumericLikeNamedKey(1, 20),
+          then: markNumericLikeNamedKey(
+            ctx,
+            1,
+            20,
+            core.numericFlagGlobalIdx,
+            numToStringIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            anyStrTypeIdx,
+            13,
+          ),
         },
         // (#4010 S1′) Named-key twin of the index seed above — see `vec-bag-seed.ts`.
         // Deliberately NOT applied on the accessor path: converting a data
@@ -1582,6 +1503,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 3 },
         { op: "call", funcIdx: dpValueIdx },
         { op: "drop" },
+        // Ordinary sparse assignment already uses the companion store/read
+        // lane. Growing its logical length to u32::MAX makes the legacy vec
+        // read guard swallow lower dynamic indices before that companion can
+        // answer. Descriptor defines still need §10.4.2.2 length growth; the
+        // all-true ordinary-set flags distinguish the existing assignment
+        // call sites from the descriptor API's partial descriptor here.
+        ...growHighArrayIndexLength(4, 20, 13, vecBaseIdx, 3, SEED_FLAGS),
         // Write-back for index-keyed DATA defines carrying a [[Value]].
         { op: "local.get", index: 3 },
         { op: "i32.trunc_f64_s" },
@@ -1618,6 +1546,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "local.get", index: 7 },
             { op: "local.get", index: 8 },
             { op: "i32.ge_s" },
+            { op: "local.get", index: 7 },
+            { op: "i32.const", value: SPARSE_INDEX_CEILING },
+            { op: "i32.lt_u" },
+            { op: "i32.and" },
             { op: "i32.and" },
             {
               op: "if",
@@ -1685,6 +1617,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 7 },
         { op: "local.get", index: 8 },
         { op: "i32.ge_s" },
+        { op: "local.get", index: 7 },
+        { op: "i32.const", value: SPARSE_INDEX_CEILING },
+        { op: "i32.lt_u" },
+        { op: "i32.and" },
         { op: "i32.and" },
         {
           op: "if",
@@ -1797,7 +1733,16 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: markNumericLikeNamedKey(1, 13),
+          then: markNumericLikeNamedKey(
+            ctx,
+            1,
+            13,
+            core.numericFlagGlobalIdx,
+            numToStringIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            anyStrTypeIdx,
+          ),
         },
         // Delegate the accessor define (validation + merge live in the native).
         { op: "local.get", index: 7 },

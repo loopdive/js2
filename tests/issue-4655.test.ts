@@ -203,6 +203,17 @@ describe("#4655 — the element step of Array.prototype.toLocaleString", () => {
   );
 });
 
+describe("#4655 — Array constructor carriers used by Array.prototype.toString", () => {
+  pinRow(
+    "built-ins/Array/prototype/toString/S15.4.4.2_A1_T2.js",
+    "a null element survives rebinding after an earlier numeric constructor",
+  );
+  pinRow(
+    "built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js",
+    "a one-element object constructor preserves OrdinaryToPrimitive and its TypeError",
+  );
+});
+
 describe("#4655 — measured residuals, each with the control that pins its root", () => {
   // ── R1. an overridden PRIMITIVE prototype method is never consulted ──────
   // The array lowering renders booleans/numbers natively, so the first guess is
@@ -277,15 +288,17 @@ describe("#4655 — measured residuals, each with the control that pins its root
   // control below is the refutation: the SAME expression standing alone renders
   // ",1,,3" and answers `x[2] === null` TRUE. The defect is carrier SELECTION
   // for a reassigned variable whose wasm type was fixed by an earlier numeric
-  // array — #3580's union-collapse at the local/var slot. test262
-  // `toString/S15.4.4.2_A1_T2.js`.
-  failSource(
+  // array — #3580's union-collapse at the local/var slot. The constructor now
+  // widens null-containing dense writes and the rebind analysis widens the slot
+  // when that representation differs. test262
+  // `toString/S15.4.4.2_A1_T2.js` is now pinned as a passing corpus row.
+  pinSource(
     "R3-nullish-into-a-reused-numeric-carrier",
     `${LOOP_CARRIED}
      var x = new Array(0, 1, 2, __n);
      x = Array(undefined, 1, null, __n);
      assert.sameValue(x.toString(), ",1,,3", "reused carrier: " + x.toString());`,
-    "a null element assigned into a var already typed number[] renders 0 (#3580, not a missing NULL payload)",
+    "a null element assigned into a var already typed number[] keeps its nullish representation (#3580)",
   );
   // POSITIVE CONTROL for R3 — the discriminator. It PASSES, which is what makes
   // R3 a statement about the variable rather than about `null` elements.
@@ -499,7 +512,7 @@ describe("#4655 — measured residuals, each with the control that pins its root
   // precisely the mistake this comment records. Unfoldability is not at risk:
   // answering `x.toString()` at compile time would mean running the user's
   // `valueOf`/`toString` closures.
-  failSource(
+  pinSource(
     "R8-new-Array-element-loses-the-toprimitive-throw",
     `${LOOP_CARRIED}
      var both = { valueOf: function () { return {}; }, toString: function () { return {}; } };
@@ -509,7 +522,7 @@ describe("#4655 — measured residuals, each with the control that pins its root
      catch (e) { threw = e instanceof TypeError ? "TypeError" : "other:" + e; }
      assert.sameValue(threw, "TypeError", "new Array(elem): " + threw);
      assert.sameValue(__n, 3, "loop-carried");`,
-    "an element passed to new Array() renders '' where the spec throws a TypeError",
+    "an element passed to new Array() preserves its object carrier so the spec TypeError is observed",
   );
   // POSITIVE CONTROLS for R8 — the two cells that WORK. Without them the pin
   // above reads as "array element ToPrimitive is broken", which is the claim

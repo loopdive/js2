@@ -229,6 +229,7 @@ function verifyQuickjsPair(adapterBinary, artifact) {
     "__runtime_new_function",
     "__runtime_indirect_eval",
     "__runtime_direct_eval",
+    "__runtime_script_eval",
     "__runtime_apply_interpreted",
   ]) {
     if (typeof namespace[name] !== "function") {

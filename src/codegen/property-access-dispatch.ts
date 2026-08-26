@@ -49,7 +49,7 @@ import {
   reserveMemberGetDispatch,
 } from "./member-get-dispatch.js";
 import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
-import { patchStructNewForAddedField } from "./expressions/late-imports.js";
+import { ensureExternIsUndefinedImport, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -190,7 +190,7 @@ import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import {
   emitStandaloneFunctionIntrinsicValue,
-  tryEmitFunctionValueConstructorRead,
+  tryEmitObjectCoercionFunctionConstructorRead,
 } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`; (#4484) `<Builtin>.constructor`
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
@@ -472,7 +472,7 @@ export function tryConstructorPrototypeIdentity(
 
   // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1); the arm and the
   // emitter the bare `Function` read shares live in function-intrinsic-carrier.ts.
-  const fnValueCtor = tryEmitFunctionValueConstructorRead(ctx, fctx, expr, propName, objType);
+  const fnValueCtor = tryEmitObjectCoercionFunctionConstructorRead(ctx, fctx, expr, propName, objType);
   if (fnValueCtor !== undefined) return fnValueCtor;
 
   // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`
@@ -502,17 +502,17 @@ export function tryConstructorPrototypeIdentity(
     const builtinName = objType.getSymbol()?.name;
     if (
       builtinName !== undefined &&
-      isBuiltinConstructorIdentityName(builtinName) &&
+      (isBuiltinConstructorIdentityName(builtinName) || isWasiErrorName(builtinName)) &&
       isExternalDeclaredClass(objType, ctx.checker)
     ) {
-      // Evaluate the receiver for its side effects (spec: the object expression is
-      // evaluated), then discard it — the constructor identity does not depend on
-      // the receiver instance.
+      // Evaluate the receiver for spec side effects before returning its identity.
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {
         fctx.body.push({ op: "drop" });
       }
-      return emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
+      return isBuiltinConstructorIdentityName(builtinName)
+        ? emitBuiltinConstructorIdentity(ctx, fctx, builtinName)
+        : emitBuiltinNamespaceObject(ctx, fctx, builtinName)!;
     }
   }
 
@@ -2603,6 +2603,32 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
   });
 }
 
+/** Emit a boxed read for standalone `IArguments.length`. */
+function emitArgumentsLengthRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+  objType: ts.Type,
+): PADispatchResult {
+  if (propName !== "length" || objType.getSymbol?.()?.name !== "IArguments") return PA_FALLTHROUGH;
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) return PA_FALLTHROUGH;
+  const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+  if (!recvType) return null;
+  if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+  addStringConstantGlobal(ctx, "length");
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "length"));
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  return { kind: "externref" };
+}
+
 export function tryLengthAndNameReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2612,10 +2638,10 @@ export function tryLengthAndNameReads(
 ): PADispatchResult {
   const derivedLength = tryEmitDerivedLengthLocal(ctx, fctx, expr, propName);
   if (derivedLength !== undefined) return derivedLength;
-
+  const argumentsLength = emitArgumentsLengthRead(ctx, fctx, expr, propName, objType);
+  if (argumentsLength !== PA_FALLTHROUGH) return argumentsLength;
   // `split(literal).length` normally enters the array-length arm below before
   // the string-derived-length dispatcher gets a chance to see the call. If an
-  // immutable literal table proves the field count is uniform, retain the
   // receiver read/trap and return that count without building a string array.
   if (
     ctx.nativeStrings &&
@@ -3618,6 +3644,7 @@ function emitExternGetReceiverGuard(
   expr: ts.PropertyAccessExpression,
   objExprType: ValType | null,
   objTmp: number,
+  isUndefinedIdx?: number,
 ): void {
   const numeric = objExprType?.kind === "f64" || objExprType?.kind === "i32";
   emitReceiverNullGuard(
@@ -3637,6 +3664,14 @@ function emitExternGetReceiverGuard(
     // local (allocated by the caller), which is the shape this builder wants.
     () => (receiverIsUndefinedIdentifier(expr.expression) ? undefined : nullishExternTestInstrs(ctx, objTmp)),
   );
+  // `__extern_get` can return a non-null undefined singleton in standalone.
+  // A subsequent member read must reject that value just like a null
+  // externref; the legacy `ref.is_null` check alone is insufficient.
+  if (isUndefinedIdx !== undefined && objExprType?.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: objTmp });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, expr), else: [] });
+  }
 }
 
 export function finalizeStructAndDynamicMemberGet(
@@ -4127,7 +4162,19 @@ export function finalizeStructAndDynamicMemberGet(
       typeName && !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName)
         ? ({ kind: "externref" } as const)
         : resolveWasmType(ctx, objType);
+    // (#4249) A direct-eval accessor assignment can widen a function-local
+    // binding through its eval ref-cell without widening the checker's type of
+    // that binding. `resolveStructNameForExpr` already treats the binding as
+    // dynamic, but the old representation test below only looked at the
+    // checker/local slot and therefore still fell through to the null default
+    // for `o.foo`. Keep this marker separate from the broader
+    // `externrefAccessorVars` set: that set also tracks growable objects and
+    // proxies, and treating every such name as an eval accessor regresses
+    // ordinary same-named closed-struct consumers.
+    const isEvalAccessorReceiver =
+      ts.isIdentifier(expr.expression) && ctx.evalAccessorObjectVars.has(expr.expression.text);
     const isExternObj =
+      isEvalAccessorReceiver ||
       objWasmType.kind === "externref" ||
       // (#3033 Bug 2b) CHAINED dynamic read: the receiver is itself a purely-
       // undefined-typed member read off an externref receiver (`this.type` in
@@ -4158,7 +4205,7 @@ export function finalizeStructAndDynamicMemberGet(
       // NaN. The dispatch may still use its struct fast arms; only its result
       // representation stays honest.
       const preserveDynamicResultCarrier =
-        (ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text)) ||
+        isEvalAccessorReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
         foreignReturnReceiver;
@@ -4170,6 +4217,7 @@ export function finalizeStructAndDynamicMemberGet(
       );
       let unboxIdx = ensureScalarUnbox(ctx, fctx, accessWasm);
       if (getIdx !== undefined) {
+        flushLateImportShifts(ctx, fctx);
         const objExprType = compileExpression(ctx, fctx, expr.expression);
         // (#4155 Phase 2) The receiver's compiled ValType is already a
         // `$__fnctor_<Name>` struct ref and `propName` is one of its plain data
@@ -4203,10 +4251,14 @@ export function finalizeStructAndDynamicMemberGet(
             fctx.body.push({ op: "call", funcIdx: boxIdx });
           }
         }
+        const receiverExpr = skipTransparentExpressions(expr.expression);
+        const isUndefinedIdx =
+          ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+        flushLateImportShifts(ctx, fctx);
         // Null check: throw TypeError for property access on null/undefined.
         // (#4157) Skipped when the receiver is PROVABLY non-null.
         const objTmp = allocLocal(fctx, `__nullchk_${fctx.locals.length}`, { kind: "externref" });
-        emitExternGetReceiverGuard(ctx, fctx, expr, objExprType, objTmp);
+        emitExternGetReceiverGuard(ctx, fctx, expr, objExprType, objTmp, isUndefinedIdx);
         // An interface / object-type receiver is only a structural contract.
         // When its runtime value is externref, let the canonical dynamic
         // provider discriminate exact closed shapes by their `$shape` stamps.

@@ -249,7 +249,6 @@ unrelated to this diff; its non-provider half is green.
 
 | residual | rows | owner |
 | --- | --- | --- |
-| `ToNumber(Symbol)` does not throw TypeError anywhere in standalone | `annexB/.../setYear/year-to-number-err.js` (1) | value-representation lane — NOT an Annex B gap; the last annexB/Date row |
 | `Error.prototype.toString` on an ARBITRARY receiver — needs a reflective body doing a real property Get plus ToString/ToPrimitive abrupt propagation; the native helper only reads `$Error_struct` fields | `toString/{undefined-props, invalid-receiver, called-as-function, tostring-get-throws, tostring-message-throws-symbol, tostring-message-throws-toprimitive}.js` (6) | successor A-slice; the composition half is done |
 | Bare builtin **CONSTRUCTOR** globals (`Date`, `Array`, `Object`, `Error`, …) still read as `null` | `built-ins/Date/{prop-desc, name, length, is-a-constructor, S15.9.4_A1..A5}.js` and the same shape per builtin (dozens) | the #4442 carrier generalisation. `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` is the seam, but a plain `$Object` carrier is NOT enough: these rows need a CALLABLE with own `length`/`name`/`prototype`. Family B here covered the function-PROPERTY half only |
 | `Object.prototype.toString` @@toStringTag overrides + builtin class tags (`[object Map Iterator]`, …) | `built-ins/Object/prototype/toString/symbol-tag-*.js` (~14) | separate slice; the `[object Array]` tag family D asked for already works |

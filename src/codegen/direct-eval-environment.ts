@@ -264,6 +264,56 @@ export function collectDirectEvalActivationBindingNames(decl: ts.FunctionLikeDec
   return names;
 }
 
+/** Preserve a real eval-created `undefined` when a closure returns a captured
+ * identifier whose inferred numeric ABI can be shadowed by direct eval. */
+export function widenClosureReturnForDirectEval(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionDeclaration | ts.FunctionExpression,
+  closureReturnType: ValType | null,
+): ValType | null {
+  if (
+    closureReturnType === null ||
+    (!ctx.standalone && !ctx.wasi) ||
+    !functionOwnScopeMayReachDirectEval(arrow, ctx.oracle) ||
+    !arrow.body ||
+    !ts.isBlock(arrow.body)
+  ) {
+    return closureReturnType;
+  }
+  const activationNames = collectDirectEvalActivationBindingNames(arrow);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== arrow.body && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression !== undefined) {
+      let expression = node.expression;
+      while (
+        ts.isParenthesizedExpression(expression) ||
+        ts.isAsExpression(expression) ||
+        ts.isNonNullExpression(expression) ||
+        ts.isTypeAssertionExpression(expression)
+      ) {
+        expression = ts.isParenthesizedExpression(expression)
+          ? expression.expression
+          : ts.isAsExpression(expression)
+            ? expression.expression
+            : ts.isNonNullExpression(expression)
+              ? expression.expression
+              : expression.expression;
+      }
+      if (ts.isIdentifier(expression) && expression.text !== "undefined" && !activationNames.has(expression.text)) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(arrow.body, visit);
+  return found ? { kind: "externref" } : closureReturnType;
+}
+
 function boxTopAsExternref(ctx: CodegenContext, fctx: FunctionContext, type: ValType): void {
   if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
 }

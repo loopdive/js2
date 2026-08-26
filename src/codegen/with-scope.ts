@@ -334,6 +334,7 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
   if (!ts.isIdentifier(ident)) return null;
   // `undefined` is an identifier syntactically but never a struct target.
   if (ident.text === "undefined") return null;
+  if (ctx.growableObjectLiteralVars.has(ident.text)) return null;
 
   // Resolve the identifier's type via its SYMBOL's declaration, not its use
   // site. Inside a `with` body the TS checker widens every identifier to `any`

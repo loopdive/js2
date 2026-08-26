@@ -8260,6 +8260,23 @@ function phase1NewExpression(
   return true;
 }
 
+function programCallablePhase1Verdict(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  if (!phase1CallPreambleIsBuildable(expr)) return false;
+  if (!currentSelectionOptions?.resolveProgramCallableUse?.(expr)) return undefined;
+  if (expr.questionDotToken || expr.typeArguments?.length) {
+    return capabilityNo("call-resolution-unsupported", "expr-program-callable-dynamic-shape", expr);
+  }
+  for (const arg of expr.arguments) {
+    if (ts.isSpreadElement(arg)) return shapeNo("expr-program-callable-spread", arg);
+    if (!isPhase1Expr(arg, scope, localClasses)) return false;
+  }
+  return true;
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -8268,8 +8285,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
-  // (#3583) Type-erased assertion wrappers emit NOTHING at runtime, so the
-  // claimable shape is exactly the operand's; `lowerExpr` unwraps identically.
+  // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
   // The other `isAsExpression` sites here are helper-local unwrappers for one
   // analysis each, NOT this shape gate — which is why these really did reject
   // at `expr-unhandled` before this arm. Full measurement in #3583.
@@ -8567,18 +8583,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
-    if (!phase1CallPreambleIsBuildable(expr)) return false;
-    const programCallableUse = currentSelectionOptions?.resolveProgramCallableUse?.(expr);
-    if (programCallableUse) {
-      if (expr.questionDotToken || expr.typeArguments?.length) {
-        return capabilityNo("call-resolution-unsupported", "expr-program-callable-dynamic-shape", expr);
-      }
-      for (const arg of expr.arguments) {
-        if (ts.isSpreadElement(arg)) return shapeNo("expr-program-callable-spread", arg);
-        if (!isPhase1Expr(arg, scope, localClasses)) return false;
-      }
-      return true;
-    }
+    const programCallableVerdict = programCallablePhase1Verdict(expr, scope, localClasses);
+    if (programCallableVerdict !== undefined) return programCallableVerdict;
     const indirectEvalStatement = exactIndirectEvalStatement(expr);
     if (indirectEvalStatement) {
       const certified = certifiedHostIndirectEval(expr, scope);

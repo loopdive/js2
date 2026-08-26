@@ -1742,7 +1742,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       // already registered EARLY by registerWasiImports (before any defined
       // functions) so adding it here doesn't shift indices of helpers like
       // `__str_copy_tree`.
-      if (ctx.wasi) {
+      if (ctx.wasi || ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
         ctx.pendingMathMethods.add(method);
       } else {
         const typeIdx = addFuncType(ctx, [], [{ kind: "f64" }]);

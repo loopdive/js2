@@ -215,6 +215,13 @@ export function elideDeadTopLevelBindings(
       names.push(decl.name.text);
     }
     if (!ok || names.length === 0) continue;
+    // A script `var toString = fn` / `var valueOf = fn` is observable through
+    // the realm object even when the source never reads the binding by name:
+    // OrdinaryToPrimitive(globalThis) consults these own conversion hooks.
+    // Host-free targets reify that carrier, so dead-binding elision must keep
+    // these declarations alive for the same reason it keeps dynamic property
+    // mentions alive below.
+    if (names.some((name) => name === "toString" || name === "valueOf")) continue;
     // (#4464) The `EARLY_ERROR_BINDING_NAMES` guard above covers early errors
     // carried by the binding NAME; this covers the ones carried by the
     // INITIALIZER. A dead `var f = function (param, param) { }` under

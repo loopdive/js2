@@ -3,6 +3,7 @@
  * Control flow statement lowering: return, if, switch, break, continue, labeled.
  */
 import { ts } from "../../ts-api.js";
+import { conditionRequiresDocumentPresence } from "../../ir/dom-capability.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import type { TypeFact } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -909,7 +910,11 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
   // Constant-folding: if the condition is a compile-time constant (e.g. after
   // --define substitution of process.env.NODE_ENV), emit only the taken branch.
   // Handles: "x" === "y", "x" !== "y", true, false, !true, !false
-  const constResult = evaluateConstantCondition(stmt.expression);
+  const optionalHostGuardIsFalse =
+    (ctx.standalone || ctx.wasi) &&
+    ctx.requiresStandaloneDomCapability !== true &&
+    conditionRequiresDocumentPresence(stmt.expression);
+  const constResult = optionalHostGuardIsFalse ? false : evaluateConstantCondition(stmt.expression);
   if (constResult !== undefined) {
     // Route the taken branch through compileStatement so its Block case runs
     // block-scope save/restore — a const-folded `if (true) { let x = ... }`

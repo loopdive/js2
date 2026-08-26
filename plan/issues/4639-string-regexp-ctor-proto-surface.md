@@ -4,7 +4,7 @@ title: "ES5 standalone: String/RegExp constructor+prototype surface — new Stri
 status: in-review
 sprint: current
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-25
 assignee: dev-4639
 priority: high
 horizon: m
@@ -35,9 +35,20 @@ loc-budget-allow:
   # The arm itself lives in the new `builtin-static-expando.ts`; what lands in
   # the dispatcher is the call plus the rationale for why a CE became a read.
   - src/codegen/property-access-dispatch.ts
+  # (C3) Prototype-constructor values need a small dispatch seam in the
+  # existing new/call drivers; the proof and Error-specific lowering live in
+  # new expression modules.
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/new-builtin-globals.ts
 func-budget-allow:
   # Same C2 splice — the dispatcher's builtin arm grows by the guarded call.
   - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
+  # (C3) The constructor-name override and two dispatcher seams are bounded
+  # entry points for the new intrinsic prototype-constructor lowering.
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
 ---
 
 # #4639 — String/RegExp ctor+proto surface
@@ -71,7 +82,7 @@ func-budget-allow:
   RegExp.prototype, not own data props). Move the flag surface to proto
   accessors while keeping reads working — check the #4481 identity
   singleton pattern for where proto accessors live.
-- **C5 — dynamic-pattern refusals (3)**: "Unsupported dynamic regular
+- **C5 — dynamic-pattern refusals (2)**: "Unsupported dynamic regular
   expression pattern" for runtime-BUILT pattern strings
   (S15.10.2.8_A3_T15/T16, annexB control-escape-russian-letter). Read
   the #4439 deferred-refusal design — the refusal fires at compile time
@@ -334,10 +345,10 @@ lane does not re-derive it.
 
 | family | rows | why it did not land |
 | ------ | ---- | ------------------- |
-| **C1 rest** | `S15.5.2.1_A1_T11`, `S15.5.2.1_A1_T8`, `S15.5.1.1_A1_T8`, `slice/S15.5.4.13_A3_T4`, `S15.5.5.1_A5` (5) | Each is a DIFFERENT receiver family from the fnctor instance C1 fixes. T11/T8 are a **callable** with own/inherited `valueOf`/`toString`, not a `$Object`. `S15.5.1.1_A1_T8` needs `String(arr)` to honour a REPLACED `Array.prototype.toString` (today `tryEmitArrayToStringNative` intercepts it). `slice/A3_T4` is a BORROWED `String.prototype.slice` whose receiver is the instance — the escape gate classifies a method-call receiver `neutral`. `S15.5.5.1_A5` needs `__to_primitive` to stop short-circuiting on the wrapper's [[PrimitiveValue]] slot when the wrapper carries an OWN `valueOf`/`toString`; that is a hot-path edit to the core runtime and was deliberately not attempted without capacity to sweep every wrapper consumer. |
-| **C3 — `<B>.prototype.constructor` as a CONSTRUCTOR** | `String/prototype/constructor/S15.5.4.1_A1_T2`, `RegExp/prototype/S15.10.6.1_A1_T2` (2) | The `.constructor` VALUE read is right (it is the identity-stable carrier); the carrier has no [[Construct]] arm. Routing `new <alias>(…)` back to `new <Builtin>(…)` needs either a `ctorNameOverride` threaded through `tryCompileBuiltinGlobalNew` (which keys on `expr.expression.text` in ~20 places) or a per-builtin arm; `new RegExp` additionally lives in `regexp-standalone.ts`, a separate subsystem keyed on the syntactic shape. Not started. |
-| **C4 — RegExp flags as proto accessors** | `global/S15.10.7.2_A9`, `ignoreCase/S15.10.7.3_A9`, `multiline/S15.10.7.4_A9` (3) | **PRIOR FAILED ATTEMPT — do not repeat the obvious fix.** The rows need `delete RegExp.prototype.global` to be OBSERVABLE, which requires the flag ACCESSORS to be authoritative in the brand companion. `ensureNativeProtoCompanionSeeder` (native-proto.ts) records that seeding getters flips `tests/issue-2885.test.ts` "plain read `RegExp.prototype.global` is undefined" from pass to FAIL, by a mechanism its own note calls unidentified — the divergence is between the INLINE and MATERIALIZED read paths, not receiver binding. Start there, not from a receiver theory. |
-| **C5 — dynamic-pattern refusals** | `S15.10.2.8_A3_T15/T16`, `annexB/RegExp-control-escape-russian-letter` (3) | The runtime pattern compiler's grammar cannot take the input (T15/T16 build a 200-deep nested-capture pattern). Raising the limit is work inside the emitted regex compiler in `regexp-standalone.ts`; the refusal is already deferred to first USE (#4439), so `.source`/`.flags` reads are unaffected. Not started. |
+| **C1 rest** | `S15.5.1.1_A1_T8`, `slice/S15.5.4.13_A3_T4`, `S15.5.5.1_A5` (3 remaining) | The remaining rows are DIFFERENT receiver families from the fnctor instance C1 fixes. `S15.5.1.1_A1_T8` needs `String(arr)` to honour a REPLACED `Array.prototype.toString` (today `tryEmitArrayToStringNative` intercepts it). `slice/A3_T4` is a BORROWED `String.prototype.slice` whose receiver is the instance — the escape gate classifies a method-call receiver `neutral`. `S15.5.5.1_A5` needs `__to_primitive` to stop short-circuiting on the wrapper's [[PrimitiveValue]] slot when the wrapper carries an OWN `valueOf`/`toString`; that is a hot-path edit to the core runtime and was deliberately not attempted without capacity to sweep every wrapper consumer. |
+| **C3 — `<B>.prototype.constructor` as a CONSTRUCTOR** | `String/prototype/S15.5.4.1_A1_T2`, `Object/prototype/S15.2.4.1_A1_T2`, `Error/prototype/S15.11.4.1_A1_T2`, `RegExp/prototype/S15.10.6.1_A1_T2` (all green) | This branch now routes direct and immutable multi-hop `String`/`Object`/`Error` prototype-constructor values through their intrinsic `new` paths, including the Error prototype replacement check. The RegExp counterpart landed in upstream PR #4867 and is retained as a positive control after rebasing onto current `upstream/main`. |
+| **C4 — RegExp flags as proto accessors** | `global/S15.10.7.2_A9`, `ignoreCase/S15.10.7.3_A9`, `multiline/S15.10.7.4_A9` (all green) | `regexp-proto-delete.ts` adds a demand-gated standalone arm for exactly these keys and removes the token from the mutable member list. It leaves accessors unseeded, preserving the #2885 inline/materialized read split. |
+| **C5 — dynamic-pattern refusals** | `S15.10.2.8_A3_T16`, `annexB/RegExp-control-escape-russian-letter` (2) | T15 is fixed upstream in PR #4882. The remaining runtime pattern compiler refusals are deferred to first USE (#4439), so `.source`/`.flags` reads are unaffected. |
 | **C6 rest** | `replace/S15.5.4.11_A1_T5`, `A1_T9`, `split/argument-is-regexp-and-instance-is-number`, `split/instance-is-math`, `split/separator-regexp-limit-string-via-eval`, `concat/S15.5.4.6_A2` (6) | T5 is now `fail`, not `compile_error`, and **its remaining cause is NOT in `replace` at all** — the "unchanged" output is a coincidence, not a missed match. Root-caused here: a `Function()`-minted function with an EMPTY body returns JS **`null`**, not `undefined`. Measured directly, host-free: `function h(){}; var g = Function(); String(h()) + "|" + String(g())` answers **`"undefined|null"`**. In T5 the replacer therefore contributes the TEXT `"null"`, which for the subject `"gnulluna"` is exactly the needle, so the result is indistinguishable from no replacement. Every other shape on this path is already correct after C6b: `"gnulluna".replace(null, function(){})` → `"gundefineduna"`, `"gnulluna".replace(null, Function("return 'Z';"))` → `"gZuna"`, and an IIFE receiver is fine. **Owner: runtime-eval (#4624 family).** Handed to dev-4637 first as a Function-surface defect; they reproduced it, declined (correctly — it is not proto-representation scope), and returned a discriminator that **refutes my first hypothesis and mine in turn narrows theirs**. See "## Handed to another lane — `Function()` implicit completion" below for the whole chain; it is NOT the return conversion, NOT engine-specific, and NOT in `src/`. T9 needs the §22.1.3.19 replacer ARG types (it renders `NaN` — the position argument reaches `a1+a2+a3` as a number, so the args are not the spec's `« matched, position, string »` strings). `split/instance-is-math` is narrower than it looks and I measured where the seam is: `Object.prototype.toString.call(Math)` ALREADY answers `"[object Math]"`, but `String(Math)` answers `"[object Object]"`. The tag is a COMPILE-TIME fold (`resolveObjectToStringTag` / `emitObjectProtoToStringClassifier`, which is emitted into a closure body, not minted as a shared native), while `__to_primitive`'s `tryOrdinaryMethod("toString", /*defaultObjectToStringOnMissing*/ true)` arm hardcodes the literal `"[object Object]"`. Fixing it means minting the classifier as a callable native and calling it from that arm — ordering-sensitive against `ensureObjectRuntime`, so not a one-liner; `trim/15.5.4.20-2-51`, listed below, is the same class one level out (an ARGUMENTS object stringifying as an array). |
 | **C7 — regexp-literal 65k-eval** | `S7.8.5_A{1.1,1.4,2.1,2.4}_T2`, `annexB` leading/trailing escape (6 in my row list; the issue's header says 7 — I did not reconcile which row it counted seventh) | **Re-verified, wall holds.** `annexB/RegExp-leading-escape-BMP` still fails on `Code unit: 0` single-threaded, i.e. runtime-eval throughput, exactly as #4621 measured. Owner: runtime-eval-throughput. One caution for the next measurer: under 3-worker parallel load the same row reports `compilation timeout (19489.6ms)` instead — that is LOAD NOISE, not a second defect; re-run single-threaded before believing a status change on this family. |
 | **not in any family** | `RegExp/S15.10.4.1_A6_T1`, `RegExp/prototype/exec/S15.10.6.2_A4_T11`, `RegExp/S15.10.2_A1_T1`, `String/S15.5.1.1_A1_T9`, `slice/S15.5.4.13_A1_T5`, `substring/S15.5.4.15_A1_T5`, `trim/15.5.4.20-2-51` (7) | The last two are `Function.prototype.toString is not yet implemented in --target standalone` — **dev-4637's lane** (#4442 Function-surface), declined here by the coordination rule. `S15.5.1.1_A1_T9` is `String(this)` at global scope with a global `toString`, i.e. a global-object receiver. `A6_T1`/`A4_T11` were not triaged. |

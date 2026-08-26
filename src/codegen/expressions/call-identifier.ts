@@ -108,6 +108,7 @@ import {
   calleeIsPromiseExecutorParam,
   calleeMayBeHostCallable,
   compileCallExpression,
+  emitBareCallReceiverReset,
   ensureFuncValueWrappersRegistered,
   emitBoundFunctionCall,
   emitDynamicSpreadCall,
@@ -1497,6 +1498,26 @@ export function compileIdentifierCall(
     const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
+    // A redeclared `var` binding has multiple initializer-specific closure
+    // records, while closureMap intentionally tracks the last declaration's
+    // callable value. Only let declaration-owned metadata override that map
+    // when the binding has one variable declaration (the A17 case).
+    const bindingHasUniqueVariableDeclaration =
+      ctx.oracle.declarationsOf(expr.expression).filter((declaration) => ts.isVariableDeclaration(declaration))
+        .length === 1;
+    const bindingInitializer =
+      calleeBindingDecl !== undefined && ts.isVariableDeclaration(calleeBindingDecl)
+        ? calleeBindingDecl.initializer
+        : undefined;
+    const bindingClosureRecord =
+      bindingInitializer !== undefined &&
+      (ts.isFunctionExpression(bindingInitializer) || ts.isArrowFunction(bindingInitializer))
+        ? ctx.closureStructByNode?.get(bindingInitializer)
+        : undefined;
+    const bindingClosureInfo =
+      bindingHasUniqueVariableDeclaration && bindingClosureRecord !== undefined
+        ? ctx.closureInfoByTypeIdx.get(bindingClosureRecord.structTypeIdx)
+        : undefined;
     // A runtime table read is not represented by the one closure signature
     // cached under this local's spelling. The slot may hold any callable the
     // table exposes, including a closure compiled in a later source unit.
@@ -1511,7 +1532,7 @@ export function compileIdentifierCall(
       calleeComesFromElementRead ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
-        : ctx.closureMap.get(funcName);
+        : (bindingClosureInfo ?? ctx.closureMap.get(funcName));
 
     if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined && !calleeComesFromElementRead) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
@@ -2139,6 +2160,14 @@ export function compileIdentifierCall(
             argLocals.push(argLocal);
           }
 
+          // The code below emits only the actual invocation. Argument evaluation
+          // above must retain the surrounding receiver, but the call itself is
+          // a bare identifier call and therefore runs with an absent
+          // Reference base (§13.3.6.2). Keep this offset so the receiver marker
+          // can wrap the invocation after the optional foreign-call split is
+          // assembled.
+          const callableInvocationStart = fctx.body.length;
+
           // (#1712/#2928) Foreign-callable fallback: when the callee arrived as externref
           // and the guarded cast to the wrapper struct failed (closureLocal is
           // null) while the raw value is non-null, the callee is callable but
@@ -2625,6 +2654,9 @@ export function compileIdentifierCall(
               else: dispatchInstrs,
             });
           }
+
+          const callableInvocation = fctx.body.splice(callableInvocationStart);
+          fctx.body.push(...emitBareCallReceiverReset(ctx, fctx, callableInvocation, expectedReturn));
 
           return expectedReturn ?? VOID_RESULT;
         }
