@@ -602,6 +602,46 @@ interface PreparedProgramAbiScopeRecord {
   readonly view: SealedPreparedProgramAbiScope;
 }
 
+/**
+ * Detached planning state for one prepared component.
+ *
+ * The session keeps the committed maps as the publication authority. During a
+ * component transaction, planners read and write these detached maps instead;
+ * the maps become visible to the session only after the component has passed
+ * its complete preparation/lowering validation.
+ */
+interface ActiveProgramAbiComponentPlanning {
+  readonly module: WasmModule;
+  readonly structuralOrder: ProgramAbiStructuralOrder;
+  readonly drafts: Map<IrBindingId, ProgramAbiDraft>;
+  readonly draftOrderOwners: Map<string, IrBindingId>;
+  readonly derivedUnits: Map<IrUnitId, ProgramAbiDerivedUnitRecord>;
+  readonly locators: Map<IrBindingId, ProgramAbiSlotLocator>;
+  readonly locatorOwners: Map<object, IrBindingId>;
+  readonly structuralReferenceKeys: Map<IrBindingId, string>;
+  readonly typeCells: Set<ProgramAbiTypeCell>;
+  readonly typeCellsByObject: Map<TypeDef, MutableProgramAbiTypeCell>;
+  readonly callableTypeContracts: Map<IrBindingId, ProgramAbiCallableTypeContract>;
+  readonly globalTypeContracts: Map<IrBindingId, ProgramAbiGlobalTypeContract>;
+  readonly preparedScopes: Map<string, PreparedProgramAbiScopeRecord>;
+  readonly preparedScopeByUnitId: Map<IrUnitId, string>;
+  readonly preparedScopeByClassId: Map<IrClassId, string>;
+  readonly preparedScopeIdsByBindingId: Map<IrBindingId, Set<string>>;
+  readonly preparedImplicitConstructorSupportContracts: Map<IrUnitId, PreparedImplicitConstructorSupportContract>;
+  readonly openPreparedScopeIds: Set<string>;
+}
+
+/**
+ * One-shot detached Program ABI planning transaction for a prepared
+ * component. `commit()` is the only publication path; `abort()` discards the
+ * detached write set without changing the containing session.
+ */
+export interface ProgramAbiComponentPlanningTransaction {
+  readonly module: WasmModule;
+  commit(): void;
+  abort(): void;
+}
+
 function validOrdinal(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
@@ -985,35 +1025,36 @@ export class ProgramAbiSession {
   private readonly inventoryUnitIds = new Set<IrUnitId>();
   private readonly inventoryClassIds = new Set<IrClassId>();
   private readonly preparedTerminalUnitIds = new Set<IrUnitId>();
-  private readonly drafts = new Map<IrBindingId, ProgramAbiDraft>();
-  private readonly draftOrderOwners = new Map<string, IrBindingId>();
-  private readonly derivedUnits = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
-  private readonly locators = new Map<IrBindingId, ProgramAbiSlotLocator>();
-  private readonly locatorOwners = new Map<object, IrBindingId>();
-  private readonly structuralReferenceKeys = new Map<IrBindingId, string>();
-  private readonly typeCells = new Set<ProgramAbiTypeCell>();
-  private readonly typeCellsByObject = new Map<TypeDef, MutableProgramAbiTypeCell>();
-  private readonly callableTypeContracts = new Map<IrBindingId, ProgramAbiCallableTypeContract>();
-  private readonly globalTypeContracts = new Map<IrBindingId, ProgramAbiGlobalTypeContract>();
-  private readonly preparedScopes = new Map<string, PreparedProgramAbiScopeRecord>();
-  private readonly preparedScopeByUnitId = new Map<IrUnitId, string>();
-  private readonly preparedScopeByClassId = new Map<IrClassId, string>();
-  private readonly preparedScopeIdsByBindingId = new Map<IrBindingId, Set<string>>();
-  private readonly preparedImplicitConstructorSupportContracts = new Map<
+  private readonly draftsState = new Map<IrBindingId, ProgramAbiDraft>();
+  private readonly draftOrderOwnersState = new Map<string, IrBindingId>();
+  private readonly derivedUnitsState = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
+  private readonly locatorsState = new Map<IrBindingId, ProgramAbiSlotLocator>();
+  private readonly locatorOwnersState = new Map<object, IrBindingId>();
+  private readonly structuralReferenceKeysState = new Map<IrBindingId, string>();
+  private readonly typeCellsState = new Set<ProgramAbiTypeCell>();
+  private readonly typeCellsByObjectState = new Map<TypeDef, MutableProgramAbiTypeCell>();
+  private readonly callableTypeContractsState = new Map<IrBindingId, ProgramAbiCallableTypeContract>();
+  private readonly globalTypeContractsState = new Map<IrBindingId, ProgramAbiGlobalTypeContract>();
+  private readonly preparedScopesState = new Map<string, PreparedProgramAbiScopeRecord>();
+  private readonly preparedScopeByUnitIdState = new Map<IrUnitId, string>();
+  private readonly preparedScopeByClassIdState = new Map<IrClassId, string>();
+  private readonly preparedScopeIdsByBindingIdState = new Map<IrBindingId, Set<string>>();
+  private readonly preparedImplicitConstructorSupportContractsState = new Map<
     IrUnitId,
     PreparedImplicitConstructorSupportContract
   >();
-  private readonly openPreparedScopeIds = new Set<string>();
+  private readonly openPreparedScopeIdsState = new Set<string>();
+  private structuralOrderState: ProgramAbiStructuralOrder;
+  private activeComponentPlanning: ActiveProgramAbiComponentPlanning | undefined;
   private applyingPreparedTypeLayoutRemap = false;
   private state: SessionState = "planning";
   private sealedDrafts: readonly ProgramAbiDraft[] | undefined;
   private sealedPlanView: SealedProgramAbiPlan | undefined;
   private publishedValue: PublishedProgramAbi | undefined;
-  readonly structuralOrder: ProgramAbiStructuralOrder;
 
   constructor(
     readonly inventory: IrUnitInventory,
-    readonly module: WasmModule,
+    private readonly liveModule: WasmModule,
   ) {
     for (const source of inventory.sources) {
       this.sourceOrderById.set(source.id, source.order);
@@ -1022,12 +1063,281 @@ export class ProgramAbiSession {
     for (const unit of inventory.allUnits) this.inventoryUnitIds.add(unit.id);
     for (const classRecord of inventory.classes) this.inventoryClassIds.add(classRecord.id);
     for (const unit of inventory.terminalUnits) this.preparedTerminalUnitIds.add(unit.id);
-    this.structuralOrder = new ProgramAbiStructuralOrder(inventory);
+    this.structuralOrderState = new ProgramAbiStructuralOrder(inventory);
+  }
+
+  /** Current module view; an active component may use a detached module view. */
+  get module(): WasmModule {
+    return this.activeComponentPlanning?.module ?? this.liveModule;
+  }
+
+  /** Current structural-order view, including derived units staged by a component. */
+  get structuralOrder(): ProgramAbiStructuralOrder {
+    return this.activeComponentPlanning?.structuralOrder ?? this.structuralOrderState;
+  }
+
+  private get drafts(): Map<IrBindingId, ProgramAbiDraft> {
+    return this.activeComponentPlanning?.drafts ?? this.draftsState;
+  }
+
+  private get draftOrderOwners(): Map<string, IrBindingId> {
+    return this.activeComponentPlanning?.draftOrderOwners ?? this.draftOrderOwnersState;
+  }
+
+  private get derivedUnits(): Map<IrUnitId, ProgramAbiDerivedUnitRecord> {
+    return this.activeComponentPlanning?.derivedUnits ?? this.derivedUnitsState;
+  }
+
+  private get locators(): Map<IrBindingId, ProgramAbiSlotLocator> {
+    return this.activeComponentPlanning?.locators ?? this.locatorsState;
+  }
+
+  private get locatorOwners(): Map<object, IrBindingId> {
+    return this.activeComponentPlanning?.locatorOwners ?? this.locatorOwnersState;
+  }
+
+  private get structuralReferenceKeys(): Map<IrBindingId, string> {
+    return this.activeComponentPlanning?.structuralReferenceKeys ?? this.structuralReferenceKeysState;
+  }
+
+  private get typeCells(): Set<ProgramAbiTypeCell> {
+    return this.activeComponentPlanning?.typeCells ?? this.typeCellsState;
+  }
+
+  private get typeCellsByObject(): Map<TypeDef, MutableProgramAbiTypeCell> {
+    return this.activeComponentPlanning?.typeCellsByObject ?? this.typeCellsByObjectState;
+  }
+
+  private get callableTypeContracts(): Map<IrBindingId, ProgramAbiCallableTypeContract> {
+    return this.activeComponentPlanning?.callableTypeContracts ?? this.callableTypeContractsState;
+  }
+
+  private get globalTypeContracts(): Map<IrBindingId, ProgramAbiGlobalTypeContract> {
+    return this.activeComponentPlanning?.globalTypeContracts ?? this.globalTypeContractsState;
+  }
+
+  private get preparedScopes(): Map<string, PreparedProgramAbiScopeRecord> {
+    return this.activeComponentPlanning?.preparedScopes ?? this.preparedScopesState;
+  }
+
+  private get preparedScopeByUnitId(): Map<IrUnitId, string> {
+    return this.activeComponentPlanning?.preparedScopeByUnitId ?? this.preparedScopeByUnitIdState;
+  }
+
+  private get preparedScopeByClassId(): Map<IrClassId, string> {
+    return this.activeComponentPlanning?.preparedScopeByClassId ?? this.preparedScopeByClassIdState;
+  }
+
+  private get preparedScopeIdsByBindingId(): Map<IrBindingId, Set<string>> {
+    return this.activeComponentPlanning?.preparedScopeIdsByBindingId ?? this.preparedScopeIdsByBindingIdState;
+  }
+
+  private get preparedImplicitConstructorSupportContracts(): Map<IrUnitId, PreparedImplicitConstructorSupportContract> {
+    return (
+      this.activeComponentPlanning?.preparedImplicitConstructorSupportContracts ??
+      this.preparedImplicitConstructorSupportContractsState
+    );
+  }
+
+  private get openPreparedScopeIds(): Set<string> {
+    return this.activeComponentPlanning?.openPreparedScopeIds ?? this.openPreparedScopeIdsState;
+  }
+
+  /**
+   * Start one detached Program ABI write set for a prepared component.
+   *
+   * Every existing session map is copied before the caller is allowed to
+   * invoke planners. The copy keeps repeated observations and all previously
+   * committed scopes visible while ensuring new drafts, locators, contracts,
+   * and scopes are not published incrementally.
+   */
+  beginComponentPlanning(module: WasmModule = this.liveModule): ProgramAbiComponentPlanningTransaction {
+    this.assertPlanning("begin component ABI planning");
+    if (this.activeComponentPlanning !== undefined) {
+      throw new ProgramAbiInvariantError(
+        "duplicate-session-draft",
+        "ProgramAbiSession already has an active component planning transaction",
+      );
+    }
+    const structuralOrder = new ProgramAbiStructuralOrder(this.inventory);
+    for (const record of this.derivedUnitsState.values()) structuralOrder.registerDerivedUnit(record);
+    const staged: ActiveProgramAbiComponentPlanning = {
+      module,
+      structuralOrder,
+      drafts: new Map([...this.draftsState].map(([id, draft]) => [id, cloneDraft(draft)] as const)),
+      draftOrderOwners: new Map(this.draftOrderOwnersState),
+      derivedUnits: new Map(this.derivedUnitsState),
+      locators: new Map(this.locatorsState),
+      locatorOwners: new Map(this.locatorOwnersState),
+      structuralReferenceKeys: new Map(this.structuralReferenceKeysState),
+      typeCells: new Set(this.typeCellsState),
+      typeCellsByObject: new Map(this.typeCellsByObjectState),
+      callableTypeContracts: new Map(
+        [...this.callableTypeContractsState].map(
+          ([id, contract]) => [id, cloneProgramAbiCallableTypeContract(contract)] as const,
+        ),
+      ),
+      globalTypeContracts: new Map(
+        [...this.globalTypeContractsState].map(
+          ([id, contract]) =>
+            [id, Object.freeze({ type: cloneProgramAbiValType(contract.type), mutable: contract.mutable })] as const,
+        ),
+      ),
+      preparedScopes: new Map(this.preparedScopesState),
+      preparedScopeByUnitId: new Map(this.preparedScopeByUnitIdState),
+      preparedScopeByClassId: new Map(this.preparedScopeByClassIdState),
+      preparedScopeIdsByBindingId: new Map(
+        [...this.preparedScopeIdsByBindingIdState].map(([id, scopeIds]) => [id, new Set(scopeIds)] as const),
+      ),
+      preparedImplicitConstructorSupportContracts: new Map(this.preparedImplicitConstructorSupportContractsState),
+      openPreparedScopeIds: new Set(this.openPreparedScopeIdsState),
+    };
+    this.activeComponentPlanning = staged;
+
+    let closed = false;
+    const assertOpen = (): void => {
+      if (closed || this.activeComponentPlanning !== staged) {
+        throw new ProgramAbiInvariantError("session-closed", "component ABI planning transaction is no longer active");
+      }
+    };
+    return Object.freeze({
+      module,
+      commit: (): void => {
+        assertOpen();
+        this.commitComponentPlanning(staged);
+        closed = true;
+      },
+      abort: (): void => {
+        assertOpen();
+        this.activeComponentPlanning = undefined;
+        closed = true;
+      },
+    });
+  }
+
+  /** Publish a validated component write set in one map publication section. */
+  private commitComponentPlanning(staged: ActiveProgramAbiComponentPlanning): void {
+    if (this.activeComponentPlanning !== staged) {
+      throw new ProgramAbiInvariantError("session-closed", "component ABI planning transaction is no longer active");
+    }
+    this.assertPlanning("commit component ABI planning");
+
+    // The planning methods already validate every staged entry as it is
+    // formed. These checks cover the publication boundary itself: a component
+    // may not erase or silently replace a committed identity while it was
+    // detached. All checks happen before the first committed map changes.
+    for (const [id, draft] of this.draftsState) {
+      const current = staged.drafts.get(id);
+      if (!current || !draftsEqual(draft, current)) {
+        throw new ProgramAbiInvariantError(
+          "session-draft-mismatch",
+          `component ABI planning changed committed draft ${id} while detached`,
+        );
+      }
+    }
+    for (const [id, locator] of this.locatorsState) {
+      if (staged.locators.get(id) !== locator) {
+        throw new ProgramAbiInvariantError(
+          "locator-remap-mismatch",
+          `component ABI planning changed committed locator ${id} while detached`,
+        );
+      }
+    }
+    for (const [id, reference] of this.structuralReferenceKeysState) {
+      if (staged.structuralReferenceKeys.get(id) !== reference) {
+        throw new ProgramAbiInvariantError(
+          "binding-reference-mismatch",
+          `component ABI planning changed committed structural reference ${id} while detached`,
+        );
+      }
+    }
+    for (const [id, contract] of this.callableTypeContractsState) {
+      const current = staged.callableTypeContracts.get(id);
+      if (
+        !current ||
+        !programAbiCallableSignaturesEqual(
+          canonicalProgramAbiCallableTypeContract(contract),
+          canonicalProgramAbiCallableTypeContract(current),
+        )
+      ) {
+        throw new ProgramAbiInvariantError(
+          "session-draft-mismatch",
+          `component ABI planning changed committed callable contract ${id} while detached`,
+        );
+      }
+    }
+    for (const [id, contract] of this.globalTypeContractsState) {
+      const current = staged.globalTypeContracts.get(id);
+      if (
+        !current ||
+        current.mutable !== contract.mutable ||
+        canonicalProgramAbiValType(current.type) !== canonicalProgramAbiValType(contract.type)
+      ) {
+        throw new ProgramAbiInvariantError(
+          "session-draft-mismatch",
+          `component ABI planning changed committed global contract ${id} while detached`,
+        );
+      }
+    }
+    for (const [id, record] of this.derivedUnitsState) {
+      const current = staged.derivedUnits.get(id);
+      if (
+        !current ||
+        current.parentId !== record.parentId ||
+        current.terminalOwnerId !== record.terminalOwnerId ||
+        current.sourceId !== record.sourceId ||
+        current.role !== record.role ||
+        current.ordinal !== record.ordinal
+      ) {
+        throw new ProgramAbiInvariantError(
+          "session-draft-mismatch",
+          `component ABI planning changed committed derived unit ${id} while detached`,
+        );
+      }
+    }
+    for (const scopeId of this.preparedScopesState.keys()) {
+      if (!staged.preparedScopes.has(scopeId)) {
+        throw new ProgramAbiInvariantError(
+          "session-draft-mismatch",
+          `component ABI planning changed committed prepared scope ${scopeId} while detached`,
+        );
+      }
+    }
+
+    const replaceMap = <K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>): void => {
+      target.clear();
+      for (const [key, value] of source) target.set(key, value);
+    };
+    const replaceSet = <T>(target: Set<T>, source: ReadonlySet<T>): void => {
+      target.clear();
+      for (const value of source) target.add(value);
+    };
+    replaceMap(this.draftsState, staged.drafts);
+    replaceMap(this.draftOrderOwnersState, staged.draftOrderOwners);
+    replaceMap(this.derivedUnitsState, staged.derivedUnits);
+    replaceMap(this.locatorsState, staged.locators);
+    replaceMap(this.locatorOwnersState, staged.locatorOwners);
+    replaceMap(this.structuralReferenceKeysState, staged.structuralReferenceKeys);
+    replaceSet(this.typeCellsState, staged.typeCells);
+    replaceMap(this.typeCellsByObjectState, staged.typeCellsByObject);
+    replaceMap(this.callableTypeContractsState, staged.callableTypeContracts);
+    replaceMap(this.globalTypeContractsState, staged.globalTypeContracts);
+    replaceMap(this.preparedScopesState, staged.preparedScopes);
+    replaceMap(this.preparedScopeByUnitIdState, staged.preparedScopeByUnitId);
+    replaceMap(this.preparedScopeByClassIdState, staged.preparedScopeByClassId);
+    replaceMap(this.preparedScopeIdsByBindingIdState, staged.preparedScopeIdsByBindingId);
+    replaceMap(
+      this.preparedImplicitConstructorSupportContractsState,
+      staged.preparedImplicitConstructorSupportContracts,
+    );
+    replaceSet(this.openPreparedScopeIdsState, staged.openPreparedScopeIds);
+    this.structuralOrderState = staged.structuralOrder;
+    this.activeComponentPlanning = undefined;
   }
 
   /** Fail early if a context/module attempts to adopt another compilation's session. */
   assertModule(module: WasmModule): void {
-    if (module !== this.module) {
+    if (module !== this.liveModule && module !== this.activeComponentPlanning?.module) {
       throw new ProgramAbiInvariantError(
         "context-session-mismatch",
         "ProgramAbiSession belongs to a different WasmModule",

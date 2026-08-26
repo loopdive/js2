@@ -269,6 +269,31 @@ function buildDeterministicSession(reverse: boolean): DeterministicSession {
 }
 
 describe("#3520 ProgramAbiSession", () => {
+  it("discards detached component drafts on abort and publishes them only on commit", () => {
+    const fixture = sessionFixture();
+    const module = createEmptyModule();
+    const session = new ProgramAbiSession(fixture.inventory, module);
+    const sourceId = binding(fixture, "callable", "component-source", fixture.firstUnitId);
+    const aliasId = binding(fixture, "callable", "component-alias");
+
+    const aborted = session.beginComponentPlanning();
+    session.plan(callableDraft(fixture, sourceId, fixture.firstUnitId, "first", 0));
+    session.plan(callableAliasDraft(fixture, aliasId, sourceId, "first-alias", 1));
+    expect(session.hasPlan(sourceId)).toBe(true);
+    expect(session.hasPlan(aliasId)).toBe(true);
+    aborted.abort();
+    expect(session.hasPlan(sourceId)).toBe(false);
+    expect(session.hasPlan(aliasId)).toBe(false);
+    expectInvariant(() => aborted.abort(), "session-closed");
+
+    const committed = session.beginComponentPlanning();
+    session.plan(callableDraft(fixture, sourceId, fixture.firstUnitId, "first", 0));
+    session.plan(callableAliasDraft(fixture, aliasId, sourceId, "first-alias", 1));
+    committed.commit();
+    expect(session.hasPlan(sourceId)).toBe(true);
+    expect(session.hasPlan(aliasId)).toBe(true);
+  });
+
   it("publishes deterministic dense plans from structural order, not registration order", () => {
     const forward = buildDeterministicSession(false);
     const reversed = buildDeterministicSession(true);

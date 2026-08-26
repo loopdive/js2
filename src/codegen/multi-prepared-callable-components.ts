@@ -27,6 +27,153 @@ import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayPlan } from "./index.js";
 import type { MultiPreparedProgramCallableComponent } from "./multi-prepared-program.js";
+import type { WasmFunction, WasmModule } from "../ir/types.js";
+
+interface ComponentContextPlanningTransaction {
+  readonly module: WasmModule;
+  deferPreparedCallableReplacement(previous: WasmFunction, replacement: WasmFunction): WasmFunction;
+  commit(): void;
+  abort(): void;
+}
+
+function clonePlanningContainer(value: unknown): unknown {
+  if (Array.isArray(value)) return [...value];
+  if (value instanceof Map) {
+    return new Map([...value].map(([key, nested]) => [key, clonePlanningContainer(nested)] as const));
+  }
+  if (value instanceof Set) return new Set(value);
+  return value;
+}
+
+function cloneComponentModule(module: WasmModule): WasmModule {
+  return {
+    ...module,
+    types: [...module.types],
+    imports: [...module.imports],
+    functions: [...module.functions],
+    exports: [...module.exports],
+    tables: [...module.tables],
+    elements: [...module.elements],
+    globals: [...module.globals],
+    tags: [...module.tags],
+    stringPool: [...module.stringPool],
+    externClasses: [...module.externClasses],
+    nodeBuiltinModules: new Set(module.nodeBuiltinModules),
+    ...(module.platformCapabilityImportProvenance
+      ? { platformCapabilityImportProvenance: new Map(module.platformCapabilityImportProvenance) }
+      : {}),
+    stringLiteralValues: new Map(module.stringLiteralValues),
+    asyncFunctions: new Set(module.asyncFunctions),
+    declaredFuncRefs: [...module.declaredFuncRefs],
+    funcOrdinalToPosition: [...module.funcOrdinalToPosition],
+    memories: module.memories.map((memory) => ({ ...memory })),
+    dataSegments: module.dataSegments.map((segment) => ({ ...segment, bytes: new Uint8Array(segment.bytes) })),
+    ...(module.exportSignatures ? { exportSignatures: { ...module.exportSignatures } } : {}),
+    ...(module.codegenErrors ? { codegenErrors: [...module.codegenErrors] } : {}),
+    ...(module.strictDroppedHostImports ? { strictDroppedHostImports: [...module.strictDroppedHostImports] } : {}),
+  };
+}
+
+function beginComponentContextPlanning(ctx: CodegenContext): ComponentContextPlanningTransaction {
+  const liveModule = ctx.mod;
+  const stagedModule = cloneComponentModule(liveModule);
+  const context = ctx as unknown as Record<string, unknown>;
+  const originalKeys = new Set(Object.keys(context));
+  const originalValues = new Map<string, unknown>();
+  for (const key of originalKeys) {
+    const value = context[key];
+    originalValues.set(key, value);
+    context[key] = key === "mod" ? stagedModule : clonePlanningContainer(value);
+  }
+
+  const pendingPreparedReplacements = new Map<WasmFunction, WasmFunction>();
+  let closed = false;
+  const assertOpen = (): void => {
+    if (closed) throw new IrInvariantError("selection-preparation-mismatch", "patch", "component planning is closed");
+  };
+  const restoreContext = (): void => {
+    for (const key of Object.keys(context)) {
+      if (!originalKeys.has(key)) delete context[key];
+    }
+    for (const [key, value] of originalValues) context[key] = value;
+  };
+  const publishContainer = (original: unknown, staged: unknown): unknown => {
+    if (Array.isArray(original) && Array.isArray(staged)) {
+      original.length = 0;
+      original.push(...staged);
+      return original;
+    }
+    if (original instanceof Map && staged instanceof Map) {
+      original.clear();
+      for (const [key, value] of staged) original.set(key, value);
+      return original;
+    }
+    if (original instanceof Set && staged instanceof Set) {
+      original.clear();
+      for (const value of staged) original.add(value);
+      return original;
+    }
+    return staged;
+  };
+
+  return {
+    module: stagedModule,
+    deferPreparedCallableReplacement(previous, replacement) {
+      assertOpen();
+      if (
+        previous.typeIdx !== replacement.typeIdx ||
+        previous.name !== replacement.name ||
+        previous.exported !== replacement.exported
+      ) {
+        throw new IrInvariantError(
+          "abi-type-index-mismatch",
+          "patch",
+          `prepared component cannot change the reserved callable contract for ${previous.name}`,
+        );
+      }
+      const existing = pendingPreparedReplacements.get(previous);
+      if (existing && (existing.locals !== replacement.locals || existing.body !== replacement.body)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `prepared component scheduled contradictory replacements for ${previous.name}`,
+        );
+      }
+      pendingPreparedReplacements.set(previous, replacement);
+      return previous;
+    },
+    commit() {
+      assertOpen();
+      // Every fallible check is performed while detached. These assignments
+      // are the non-throwing body publication section for prepared slots.
+      for (const [previous, replacement] of pendingPreparedReplacements) {
+        previous.locals = replacement.locals;
+        previous.body = replacement.body;
+      }
+      const stagedKeys = new Set(Object.keys(stagedModule));
+      for (const key of Object.keys(liveModule)) {
+        if (!stagedKeys.has(key)) delete (liveModule as unknown as Record<string, unknown>)[key];
+      }
+      for (const [key, value] of Object.entries(stagedModule)) {
+        (liveModule as unknown as Record<string, unknown>)[key] = value;
+      }
+      for (const [key, original] of originalValues) {
+        if (key === "mod") {
+          context[key] = liveModule;
+          continue;
+        }
+        context[key] = publishContainer(original, context[key]);
+      }
+      closed = true;
+    },
+    abort() {
+      assertOpen();
+      pendingPreparedReplacements.clear();
+      restoreContext();
+      closed = true;
+    },
+  };
+}
 
 export interface MultiPreparedCallableCandidate {
   readonly sourceFile: ts.SourceFile;
@@ -278,108 +425,139 @@ export function prepareMultiPreparedCallableGroup(
     const integrationSourceFiles = input.multiAst.sourceFiles.filter((sourceFile) =>
       group.some((candidate) => candidate.sourceFile === sourceFile),
     );
-    const moduleAliasBindingIds = planAggregateModuleCallableAliases(input.ctx, group, graph, recordsByBindingId);
-    const preparedBindingIdsByTerminalUnitId = new Map<IrUnitId, ReadonlySet<IrBindingId>>([
-      [group[0]!.unitId, moduleAliasBindingIds],
-    ]);
-    for (const candidate of group) attempted.add(candidate.unitId);
-    input.ctx.irProgramCallableAttemptedUnitIds = attempted;
-
-    const report = compileIrPathFunctions(
-      input.ctx,
-      group[0]!.sourceFile,
-      aggregateSelection,
-      overrides,
-      undefined,
-      loweringPlans,
-      {
-        sealPreparedComponents: true,
-        integrationSourceFiles,
-        atomicComponent: true,
-        preparedBindingIdsByTerminalUnitId,
-      },
-    );
-    if (report.errors.length > 0) {
-      if ((report.compiledArtifactEvidence?.length ?? 0) !== 0 || report.compiled.length !== 0) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "patch",
-          "atomic callable component reported both a failure and an installed artifact",
-        );
+    const contextPlanning = beginComponentContextPlanning(input.ctx);
+    const componentPlanning = input.ctx.programAbiSession?.beginComponentPlanning(contextPlanning.module);
+    let componentPlanningOpen = componentPlanning !== undefined;
+    let contextPlanningOpen = true;
+    const abortComponentPlanning = (): void => {
+      if (componentPlanningOpen) {
+        componentPlanning?.abort();
+        componentPlanningOpen = false;
       }
-      input.recordMultiPreparedCallableAggregateFailure(input.ctx, report, originalNameBySyntheticName);
-      continue;
-    }
+      if (contextPlanningOpen) {
+        contextPlanning.abort();
+        contextPlanningOpen = false;
+      }
+    };
+    try {
+      const moduleAliasBindingIds = planAggregateModuleCallableAliases(input.ctx, group, graph, recordsByBindingId);
+      const preparedBindingIdsByTerminalUnitId = new Map<IrUnitId, ReadonlySet<IrBindingId>>([
+        [group[0]!.unitId, moduleAliasBindingIds],
+      ]);
 
-    const artifacts = report.compiledArtifactEvidence ?? [];
-    const terminalEvidence = report.terminalEvidence ?? [];
-    const componentId = artifacts[0]?.preparedComponentId;
-    const expectedSyntheticNames = new Set(namesByUnitId.values());
-    const reportIsExact =
-      componentId !== undefined &&
-      report.compiled.length === group.length &&
-      new Set(report.compiled).size === group.length &&
-      [...expectedSyntheticNames].every((name) => report.compiled.includes(name)) &&
-      report.terminalCompiledOwners?.length === group.length &&
-      new Set(report.terminalCompiledOwners).size === group.length &&
-      [...expectedSyntheticNames].every((name) => report.terminalCompiledOwners?.includes(name)) &&
-      report.errors.length === 0 &&
-      artifacts.length === group.length &&
-      artifacts.every(
-        (artifact) =>
-          artifact.artifactUnitId === artifact.terminalOwnerUnitId &&
-          groupUnitIds.has(artifact.artifactUnitId) &&
-          artifact.name === namesByUnitId.get(artifact.artifactUnitId) &&
-          artifact.preparedComponentId === componentId,
-      ) &&
-      terminalEvidence.length === group.length &&
-      terminalEvidence.every(
-        (evidence) =>
-          evidence.kind === "patched" &&
-          groupUnitIds.has(evidence.unitId) &&
-          evidence.legacyName === namesByUnitId.get(evidence.unitId) &&
-          evidence.preparedComponentId === componentId,
+      const report = compileIrPathFunctions(
+        input.ctx,
+        group[0]!.sourceFile,
+        aggregateSelection,
+        overrides,
+        undefined,
+        loweringPlans,
+        {
+          sealPreparedComponents: true,
+          integrationSourceFiles,
+          atomicComponent: true,
+          preparedBindingIdsByTerminalUnitId,
+          deferPreparedCallableReplacement: contextPlanning.deferPreparedCallableReplacement,
+        },
       );
-    if (!reportIsExact) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        "atomic callable component did not return exact terminal and artifact evidence",
-      );
-    }
-
-    const preparedComponentId = componentId;
-    preparedComponent = {
-      preparedComponentId,
-      units: group.map((candidate) => ({
-        sourceFile: candidate.sourceFile,
-        sourceId: candidate.sourceId,
-        unitId: candidate.unitId,
-        legacyName: candidate.legacyName,
-        declaration: candidate.declaration,
-      })),
-      assertCurrent: () => {
-        const sourceCallables = input.ctx.programAbiSourceCallables;
-        if (!sourceCallables) {
+      if (report.errors.length > 0) {
+        if ((report.compiledArtifactEvidence?.length ?? 0) !== 0 || report.compiled.length !== 0) {
           throw new IrInvariantError(
             "selection-preparation-mismatch",
             "patch",
-            `prepared callable component ${preparedComponentId} lost its source callable registry`,
+            "atomic callable component reported both a failure and an installed artifact",
           );
         }
-        for (const candidate of group) {
-          const current = input.ctx.irUnitFuncMap.get(candidate.unitId);
-          const observed = sourceCallables.functionForUnit(candidate.unitId);
-          if (!current || observed !== current || current.name !== candidate.legacyName || current.body.length === 0) {
+        abortComponentPlanning();
+        input.recordMultiPreparedCallableAggregateFailure(input.ctx, report, originalNameBySyntheticName);
+        continue;
+      }
+
+      const artifacts = report.compiledArtifactEvidence ?? [];
+      const terminalEvidence = report.terminalEvidence ?? [];
+      const componentId = artifacts[0]?.preparedComponentId;
+      const expectedSyntheticNames = new Set(namesByUnitId.values());
+      const reportIsExact =
+        componentId !== undefined &&
+        report.compiled.length === group.length &&
+        new Set(report.compiled).size === group.length &&
+        [...expectedSyntheticNames].every((name) => report.compiled.includes(name)) &&
+        report.terminalCompiledOwners?.length === group.length &&
+        new Set(report.terminalCompiledOwners).size === group.length &&
+        [...expectedSyntheticNames].every((name) => report.terminalCompiledOwners?.includes(name)) &&
+        report.errors.length === 0 &&
+        artifacts.length === group.length &&
+        artifacts.every(
+          (artifact) =>
+            artifact.artifactUnitId === artifact.terminalOwnerUnitId &&
+            groupUnitIds.has(artifact.artifactUnitId) &&
+            artifact.name === namesByUnitId.get(artifact.artifactUnitId) &&
+            artifact.preparedComponentId === componentId,
+        ) &&
+        terminalEvidence.length === group.length &&
+        terminalEvidence.every(
+          (evidence) =>
+            evidence.kind === "patched" &&
+            groupUnitIds.has(evidence.unitId) &&
+            evidence.legacyName === namesByUnitId.get(evidence.unitId) &&
+            evidence.preparedComponentId === componentId,
+        );
+      if (!reportIsExact) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          "atomic callable component did not return exact terminal and artifact evidence",
+        );
+      }
+
+      componentPlanning?.commit();
+      componentPlanningOpen = false;
+      contextPlanning.commit();
+      contextPlanningOpen = false;
+      for (const candidate of group) attempted.add(candidate.unitId);
+      input.ctx.irProgramCallableAttemptedUnitIds = attempted;
+
+      const preparedComponentId = componentId;
+      preparedComponent = {
+        preparedComponentId,
+        units: group.map((candidate) => ({
+          sourceFile: candidate.sourceFile,
+          sourceId: candidate.sourceId,
+          unitId: candidate.unitId,
+          legacyName: candidate.legacyName,
+          declaration: candidate.declaration,
+        })),
+        assertCurrent: () => {
+          const sourceCallables = input.ctx.programAbiSourceCallables;
+          if (!sourceCallables) {
             throw new IrInvariantError(
               "selection-preparation-mismatch",
               "patch",
-              `prepared callable component ${preparedComponentId} lost exact unit ${candidate.unitId}`,
+              `prepared callable component ${preparedComponentId} lost its source callable registry`,
             );
           }
-        }
-      },
-    };
+          for (const candidate of group) {
+            const current = input.ctx.irUnitFuncMap.get(candidate.unitId);
+            const observed = sourceCallables.functionForUnit(candidate.unitId);
+            if (
+              !current ||
+              observed !== current ||
+              current.name !== candidate.legacyName ||
+              current.body.length === 0
+            ) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "patch",
+                `prepared callable component ${preparedComponentId} lost exact unit ${candidate.unitId}`,
+              );
+            }
+          }
+        },
+      };
+    } catch (error) {
+      abortComponentPlanning();
+      throw error;
+    }
   }
   return preparedComponent;
 }

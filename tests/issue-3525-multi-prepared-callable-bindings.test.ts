@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { compileMulti } from "../src/index.js";
@@ -105,6 +105,58 @@ describe("#3525 whole-program callable binding graph", () => {
     const legacyExports = (await instantiateWithRuntime(legacy)).exports as unknown as { run(value: number): number };
     expect(irExports.run(5)).toBe(legacyExports.run(5));
     expect(irExports.run(5)).toBe(7);
+  }, 120_000);
+
+  it("withdraws every aggregate member before the direct fallback on a phase failure", async () => {
+    const previous = process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW;
+    vi.stubEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW", "inline");
+    try {
+      const result = await compileMulti(
+        {
+          "./dep.ts": `
+            export function add(left: number, right: number): number {
+              return left + right;
+            }
+          `,
+          "./entry.ts": `
+            import { add as plus } from "./dep";
+            export function run(value: number): number {
+              return plus(value, 2);
+            }
+          `,
+        },
+        "./entry.ts",
+        { experimentalIR: true, target: "standalone", trackIrOutcomes: true },
+      );
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(false);
+      expect(result.irCompiledFuncs ?? []).not.toEqual(expect.arrayContaining(["add", "run"]));
+      expect(result.irPostClaimErrors?.map((error) => error.func).sort()).toEqual(["add", "run"]);
+      expect(result.irOutcomes?.filter((outcome) => ["add", "run"].includes(outcome.displayName))).toEqual([
+        expect.objectContaining({
+          displayName: "add",
+          kind: "invariant",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        }),
+        expect.objectContaining({
+          displayName: "run",
+          kind: "invariant",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        }),
+      ]);
+      const directEntries = result.irBodyRouteAudit?.legacyEntries.filter(
+        (entry) => entry.entryPoint === "compileFunctionBody" && ["add", "run"].includes(entry.bodyName),
+      );
+      expect(directEntries?.map((entry) => entry.bodyName).sort()).toEqual(["add", "run"]);
+      expect(directEntries?.every((entry) => entry.count === 1)).toBe(true);
+      expect(result.irBodyRouteAudit?.structurallyComplete).toBe(true);
+      expect(result.irOutcomes?.some((outcome) => outcome.displayName.startsWith("__ir_m1a_"))).toBe(false);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_INJECT_IR_PHASE_THROW");
+      else process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW = previous;
+    }
   }, 120_000);
 
   it("resolves renamed/default/namespace/re-export calls to exact units", () => {

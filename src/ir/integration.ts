@@ -534,6 +534,12 @@ export interface IrIntegrationOptions {
    * source-callable closure; they never become an unrelated global dependency.
    */
   readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
+  /**
+   * Stage the body of a prepared callable until the enclosing component
+   * transaction has validated every member. The callback returns the exact
+   * allocator object that remains the Program ABI locator.
+   */
+  readonly deferPreparedCallableReplacement?: (previous: WasmFunction, replacement: WasmFunction) => WasmFunction;
 }
 
 interface BuiltFn {
@@ -3244,7 +3250,9 @@ export function compileIrPathFunctions(
     }
     const preparedComponentId = preparedComponentIdByTerminalUnitId.get(terminalOwnerUnitId);
     if (preparedComponentId !== undefined) {
-      const installed = fillSealedPreparedCallable(preparedComponentId, previous, replacement);
+      const installed = options?.deferPreparedCallableReplacement
+        ? options.deferPreparedCallableReplacement(previous, replacement)
+        : fillSealedPreparedCallable(preparedComponentId, previous, replacement);
       ctx.irUnitFuncMap.set(unitId, installed);
       return installed;
     }
