@@ -418,7 +418,7 @@ function tryFlattenBinaryChain(
  * existing path. The numbering is a private ABI shared only with the
  * `host_bigint_binop` runtime intent — keep the two in lockstep.
  */
-function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
+export function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
   switch (op) {
     case ts.SyntaxKind.PlusToken:
       return 0;
@@ -534,6 +534,7 @@ export function compileBinaryExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
+  expectedType?: ValType,
 ): InnerResult {
   const op = expr.operatorToken.kind;
 
@@ -558,15 +559,15 @@ export function compileBinaryExpression(
 
   // Handle logical && and ||
   if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
-    return compileLogicalAnd(ctx, fctx, expr);
+    return compileLogicalAnd(ctx, fctx, expr, expectedType);
   }
   if (op === ts.SyntaxKind.BarBarToken) {
-    return compileLogicalOr(ctx, fctx, expr);
+    return compileLogicalOr(ctx, fctx, expr, expectedType);
   }
 
   // Nullish coalescing: a ?? b
   if (op === ts.SyntaxKind.QuestionQuestionToken) {
-    return compileNullishCoalescing(ctx, fctx, expr);
+    return compileNullishCoalescing(ctx, fctx, expr, expectedType);
   }
 
   // §7.1.3 ToNumeric / §13.x operator evaluation — a Symbol operand of an
@@ -1509,6 +1510,70 @@ export function compileBinaryExpression(
     const leftIsBigInt = isBigIntType(leftTsType);
     const rightIsBigInt = isBigIntType(rightTsType);
 
+    // JS BigInts are arbitrary precision. In JS-host mode both statically
+    // bigint operands use externref slots (see resolveWasmType), so preserve
+    // that representation through every operator instead of narrowing through
+    // the standalone i64 lowering. This is also necessary for accumulators:
+    // computing a wide host result and then storing it in an i64 local would
+    // otherwise lose the high bits before the next iteration.
+    if (leftIsBigInt && rightIsBigInt && !ctx.standalone && !ctx.wasi) {
+      const isEq =
+        op === ts.SyntaxKind.EqualsEqualsToken ||
+        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        op === ts.SyntaxKind.ExclamationEqualsToken ||
+        op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      const isNeq = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      const isRelational =
+        op === ts.SyntaxKind.LessThanToken ||
+        op === ts.SyntaxKind.LessThanEqualsToken ||
+        op === ts.SyntaxKind.GreaterThanToken ||
+        op === ts.SyntaxKind.GreaterThanEqualsToken;
+
+      if (isRelational) {
+        return emitAnyRelational(ctx, fctx, expr, op);
+      }
+
+      // Keep the historical i64 extension for BigInt `>>>`. JavaScript itself
+      // rejects that operator for BigInt, but the compiler's existing contract
+      // (and standalone lane) defines it as an unsigned i64 shift.
+      const hostOpcode =
+        op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ? undefined : bigIntHostBinopOpcode(op);
+      if (isEq || hostOpcode !== undefined) {
+        const externref: ValType = { kind: "externref" };
+        const leftType = compileExpression(ctx, fctx, expr.left, externref);
+        if (!leftType) return null;
+        if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
+        const leftTmp = allocTempLocal(fctx, externref);
+        fctx.body.push({ op: "local.set", index: leftTmp });
+
+        const rightType = compileExpression(ctx, fctx, expr.right, externref);
+        if (!rightType) {
+          releaseTempLocal(fctx, leftTmp);
+          return null;
+        }
+        if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
+        const rightTmp = allocTempLocal(fctx, externref);
+        fctx.body.push({ op: "local.set", index: rightTmp });
+
+        const importName = isEq ? "__host_eq" : "__host_bigint_binop";
+        const params: ValType[] = isEq ? [externref, externref] : [{ kind: "i32" }, externref, externref];
+        const results: ValType[] = isEq ? [{ kind: "i32" }] : [externref];
+        const imported = ensureLateImport(ctx, importName, params, results);
+        flushLateImportShifts(ctx, fctx);
+        const finalIdx = ctx.funcMap.get(importName) ?? imported;
+        if (finalIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${importName}`);
+
+        if (!isEq) fctx.body.push({ op: "i32.const", value: hostOpcode! });
+        fctx.body.push({ op: "local.get", index: leftTmp });
+        fctx.body.push({ op: "local.get", index: rightTmp });
+        releaseTempLocal(fctx, rightTmp);
+        releaseTempLocal(fctx, leftTmp);
+        fctx.body.push({ op: "call", funcIdx: finalIdx });
+        if (isNeq) fctx.body.push({ op: "i32.eqz" });
+        return isEq ? { kind: "i32", boolean: true } : externref;
+      }
+    }
+
     // Mixed BigInt + Number/String: comparison and equality operators (#227, #228, #295)
     if (leftIsBigInt !== rightIsBigInt) {
       const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
@@ -1538,6 +1603,41 @@ export function compileBinaryExpression(
         op === ts.SyntaxKind.LessThanEqualsToken ||
         op === ts.SyntaxKind.GreaterThanToken ||
         op === ts.SyntaxKind.GreaterThanEqualsToken;
+
+      // The i64 comparison below cannot represent arbitrary-width host BigInts
+      // and its f64 conversion also loses integer precision. Let JavaScript
+      // perform the exact abstract equality / relational algorithm whenever a
+      // host is available.
+      if (!ctx.standalone && !ctx.wasi && (isLooseEq || isLooseNeq || isComparison)) {
+        if (isComparison) {
+          return emitAnyRelational(ctx, fctx, expr, op);
+        }
+        const externref: ValType = { kind: "externref" };
+        const leftType = compileExpression(ctx, fctx, expr.left, externref);
+        if (!leftType) return null;
+        if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
+        const leftTmp = allocTempLocal(fctx, externref);
+        fctx.body.push({ op: "local.set", index: leftTmp });
+        const rightType = compileExpression(ctx, fctx, expr.right, externref);
+        if (!rightType) {
+          releaseTempLocal(fctx, leftTmp);
+          return null;
+        }
+        if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
+        const rightTmp = allocTempLocal(fctx, externref);
+        fctx.body.push({ op: "local.set", index: rightTmp });
+        const imported = ensureLateImport(ctx, "__host_loose_eq", [externref, externref], [{ kind: "i32" }]);
+        flushLateImportShifts(ctx, fctx);
+        const finalIdx = ctx.funcMap.get("__host_loose_eq") ?? imported;
+        if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_loose_eq");
+        fctx.body.push({ op: "local.get", index: leftTmp });
+        fctx.body.push({ op: "local.get", index: rightTmp });
+        releaseTempLocal(fctx, rightTmp);
+        releaseTempLocal(fctx, leftTmp);
+        fctx.body.push({ op: "call", funcIdx: finalIdx });
+        if (isLooseNeq) fctx.body.push({ op: "i32.eqz" });
+        return { kind: "i32", boolean: true };
+      }
 
       // #1827 — BigInt × Number loose (in)equality must use EXACT
       // mathematical-value equality, not an f64 collapse. `f64.convert_i64_s`
@@ -1700,9 +1800,16 @@ export function compileBinaryExpression(
       const hostBinopCode = bigIntHostBinopOpcode(op);
       if (!noJsHost3481 && ctx.anyValueTypeIdx < 0 && nonBigIntIsObjectish && hostBinopCode !== undefined) {
         // Evaluate operands left→right, box each to externref, store in temps.
-        // The statically-bigint side is a branded i64 → __box_bigint yields a JS
-        // bigint (force the brand: isBigIntType already proved it is a bigint).
-        const lHint: ValType = leftIsBigInt ? { kind: "i64" } : { kind: "externref" };
+        // A host BigInt must be compiled directly as an externref: forcing a
+        // wide literal through i64 here wraps it modulo 2^64 before
+        // __host_bigint_binop sees it. Keep the historical i64 hint for the
+        // standalone/WASI lanes, whose BigInt carrier is intentionally i64.
+        const hostBigIntCarrier = !ctx.standalone && !ctx.wasi;
+        const lHint: ValType = leftIsBigInt
+          ? hostBigIntCarrier
+            ? { kind: "externref" }
+            : { kind: "i64" }
+          : { kind: "externref" };
         const lType = compileExpression(ctx, fctx, expr.left, lHint);
         if (!lType) return null;
         if (lType.kind === "i64") {
@@ -1712,7 +1819,11 @@ export function compileBinaryExpression(
         }
         const lTmp = allocTempLocal(fctx, { kind: "externref" });
         fctx.body.push({ op: "local.set", index: lTmp });
-        const rHint: ValType = rightIsBigInt ? { kind: "i64" } : { kind: "externref" };
+        const rHint: ValType = rightIsBigInt
+          ? hostBigIntCarrier
+            ? { kind: "externref" }
+            : { kind: "i64" }
+          : { kind: "externref" };
         const rType = compileExpression(ctx, fctx, expr.right, rHint);
         if (!rType) return null;
         if (rType.kind === "i64") {

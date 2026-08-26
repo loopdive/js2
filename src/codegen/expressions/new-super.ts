@@ -119,7 +119,10 @@ import {
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
-import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
+import {
+  emitHostTypedArrayCarrierRegistration,
+  typedArrayCtorArgIsArithmeticPrimitive,
+} from "./typed-array-host-carrier.js";
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
@@ -699,6 +702,10 @@ export function emitHostTaBufferConstruct(
 export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Expression[]): string | undefined {
   if (noJsHost(ctx)) return undefined;
   if (args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return undefined;
+  // (#4383) An arithmetic expression may inherit `any` from an operand, but
+  // evaluation has already reduced it to a primitive. It cannot be the dynamic
+  // ArrayBuffer/array-like carrier this host-constructor escape is for.
+  if (typedArrayCtorArgIsArithmeticPrimitive(args[0]!)) return undefined;
   const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
   if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return argSymName;
   // An unannotated JavaScript parameter can carry either a numeric element

@@ -46,7 +46,7 @@ import {
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
-import { compileStringLiteral } from "./string-ops.js";
+import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
@@ -978,6 +978,41 @@ export function coerceType(
   return coerceTypeImpl(ctx, fctx, from, to, toPrimitiveHint);
 }
 
+function compileBigIntLiteral(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BigIntLiteral,
+  expectedType: ValType | undefined,
+): ValType | null {
+  const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
+  const hostBigIntRef =
+    !ctx.standalone &&
+    !ctx.wasi &&
+    (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
+  if (hostBigIntRef) {
+    const stringType = compileStringLiteral(ctx, fctx, text, expr);
+    if (!stringType) return null;
+    if (stringType.kind !== "externref") {
+      // `fast`/native-strings still targets the JS host. Convert the native
+      // `$AnyString` value to a real host string before calling BigInt; a bare
+      // `extern.convert_any` would expose an opaque WasmGC object and the host
+      // constructor would throw `Cannot convert [object Object] to a BigInt`.
+      if (!emitNativeStringToHostExternref(ctx, fctx)) {
+        coerceType(ctx, fctx, stringType, { kind: "externref" });
+      }
+    }
+    const ctorIdx = ensureLateImport(ctx, "__bigint_ctor_ref", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__bigint_ctor_ref") ?? ctorIdx;
+    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __bigint_ctor_ref");
+    fctx.body.push({ op: "call", funcIdx: finalIdx });
+    return { kind: "externref" };
+  }
+  const value = BigInt(text);
+  fctx.body.push({ op: "i64.const", value });
+  return { kind: "i64", bigint: true };
+}
+
 function compileExpressionInner(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -995,10 +1030,7 @@ function compileExpressionInner(
   }
 
   if (ts.isBigIntLiteral(expr)) {
-    const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
-    const value = BigInt(text);
-    fctx.body.push({ op: "i64.const", value });
-    return { kind: "i64", bigint: true };
+    return compileBigIntLiteral(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
@@ -1151,7 +1183,7 @@ function compileExpressionInner(
         return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
     }
-    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr));
+    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr, expectedType));
   }
 
   if (ts.isTypeOfExpression(expr)) {
@@ -1286,7 +1318,7 @@ function compileExpressionInner(
   }
 
   if (ts.isConditionalExpression(expr)) {
-    return compileConditionalExpression(ctx, fctx, expr);
+    return compileConditionalExpression(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {

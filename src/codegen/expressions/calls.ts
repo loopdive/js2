@@ -4086,6 +4086,16 @@ export function tryEmitInlineDynamicCall(
   if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
     ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
+  const needsHostFacadeUnwrap =
+    ctx.targetProfile.environment === "javascript" &&
+    candidates.some((candidate) =>
+      candidate.info.paramTypes.some(
+        (param) => param.kind === "externref" || param.kind === "ref" || param.kind === "ref_null",
+      ),
+    );
+  if (needsHostFacadeUnwrap) {
+    ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+  }
 
   // (#820/#1543) `undefined` externref source for padding missing trailing
   // args (call arity < a candidate's formal count), and (#3031) for the Proxy
@@ -4134,7 +4144,13 @@ export function tryEmitInlineDynamicCall(
   let boxNumberIdx = ctx.funcMap.get("__box_number");
   let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   let isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
+  let unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  if (
+    boxNumberIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    (needsHostFacadeUnwrap && unwrapForWasmIdx === undefined)
+  )
+    return null;
 
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
   // object/proxy runtime registers DEFINED functions only (no import → no index
@@ -4241,7 +4257,12 @@ export function tryEmitInlineDynamicCall(
   boxNumberIdx = ctx.funcMap.get("__box_number");
   unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) {
+  unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  if (
+    boxNumberIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    (needsHostFacadeUnwrap && unwrapForWasmIdx === undefined)
+  ) {
     // The helpers existed at the first capture; funcMap entries are shifted,
     // never removed, so this cannot happen — bail defensively if it ever does
     // (callee/args are all consumed into locals, the stack is empty here).
@@ -4444,6 +4465,10 @@ export function tryEmitInlineDynamicCall(
       } else if (pType.kind === "externref") {
         // already externref
       } else if (pType.kind === "ref") {
+        // A compiled GC value may be represented by a host facade in this
+        // dynamic lane. Recover the underlying value before preserving the
+        // existing vec materialization and concrete cast behavior.
+        if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
         const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
         if (vecMaterializerIdx !== undefined) {
           callBody.push({ op: "call", funcIdx: vecMaterializerIdx });
@@ -4471,17 +4496,24 @@ export function tryEmitInlineDynamicCall(
               return vecMaterializerIdx === undefined
                 ? [
                     { op: "local.get", index: argLocals[i]! } as Instr,
+                    ...(unwrapForWasmIdx === undefined
+                      ? []
+                      : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
                     { op: "any.convert_extern" } as Instr,
                     { op: "ref.cast_null", typeIdx: pType.typeIdx } as Instr,
                   ]
                 : [
                     { op: "local.get", index: argLocals[i]! } as Instr,
+                    ...(unwrapForWasmIdx === undefined
+                      ? []
+                      : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
                     { op: "call", funcIdx: vecMaterializerIdx } as Instr,
                   ];
             })(),
           });
         } else {
           const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+          if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
           if (vecMaterializerIdx !== undefined) {
             callBody.push({ op: "call", funcIdx: vecMaterializerIdx });
           } else {

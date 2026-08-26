@@ -2444,7 +2444,7 @@ export function compileReceiverMethodCall(
   // boundary as i64. Mirror the number branch: validate radix range (2-36),
   // throw RangeError otherwise, then call bigint_toString_radix (or the
   // 1-arg bigint_toString for the default radix-10 case).
-  if (isBigIntType(receiverType) && propAccess.name.text === "toString") {
+  if ((ctx.standalone || ctx.wasi) && isBigIntType(receiverType) && propAccess.name.text === "toString") {
     let radixLocalIdx: number | undefined;
     if (expr.arguments.length > 0) {
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });

@@ -9,10 +9,16 @@
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
-import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
-import { emitAnyAdd, emitAnyAddFromExternTemps, emitModulo, emitToInt32 } from "../binary-ops.js";
+import {
+  bigIntHostBinopOpcode,
+  emitAnyAdd,
+  emitAnyAddFromExternTemps,
+  emitModulo,
+  emitToInt32,
+} from "../binary-ops.js";
 import { compileWithCompoundAssignment } from "../with-rmw.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -32,12 +38,13 @@ import { EMIT_COMPOUND_OP_HANDLES, tryEmitTypedThisCompound } from "../typed-thi
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js";
 import {
   emitAlternateStructSetDispatch,
+  emitBoundsGuardedArraySet,
   emitCapturedBoxGlobalRead,
   emitCapturedBoxGlobalWrite,
   emitNullGuardedStructGet,
   getCapturedBoxGlobal,
 } from "../property-access.js";
-import { coerceType, compileExpression } from "../shared.js";
+import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { patchStructNewForDynamicField } from "./extern.js";
@@ -59,13 +66,19 @@ import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } 
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalCompoundAssign } from "./implicit-global-binding.js"; // (#4640 D3)
 import { resolveStructNameForExpr } from "./misc.js";
+import { emitHostBigIntBinaryOpFromStack, isHostBigIntUpdate } from "./host-bigint-updates.js";
 import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
   getBuilderInfo,
   type StringBuilderInfo,
 } from "../string-builder.js";
-import { compileExternSetFallback, isNonWritableDataProperty, isStrictContext } from "./assignment.js";
+import {
+  compileAssignment,
+  compileExternSetFallback,
+  isNonWritableDataProperty,
+  isStrictContext,
+} from "./assignment.js";
 
 /**
  * Compile logical assignment operators: ??=, ||=, &&=
@@ -1658,6 +1671,67 @@ function hasStringAssignmentInParentScopes(name: string, fromExpr: ts.Node): boo
   return found;
 }
 
+function compoundBinaryOperator(op: ts.SyntaxKind): ts.BinaryOperator | undefined {
+  switch (op) {
+    case ts.SyntaxKind.PlusEqualsToken:
+      return ts.SyntaxKind.PlusToken;
+    case ts.SyntaxKind.MinusEqualsToken:
+      return ts.SyntaxKind.MinusToken;
+    case ts.SyntaxKind.AsteriskEqualsToken:
+      return ts.SyntaxKind.AsteriskToken;
+    case ts.SyntaxKind.SlashEqualsToken:
+      return ts.SyntaxKind.SlashToken;
+    case ts.SyntaxKind.PercentEqualsToken:
+      return ts.SyntaxKind.PercentToken;
+    case ts.SyntaxKind.AsteriskAsteriskEqualsToken:
+      return ts.SyntaxKind.AsteriskAsteriskToken;
+    case ts.SyntaxKind.AmpersandEqualsToken:
+      return ts.SyntaxKind.AmpersandToken;
+    case ts.SyntaxKind.BarEqualsToken:
+      return ts.SyntaxKind.BarToken;
+    case ts.SyntaxKind.CaretEqualsToken:
+      return ts.SyntaxKind.CaretToken;
+    case ts.SyntaxKind.LessThanLessThanEqualsToken:
+      return ts.SyntaxKind.LessThanLessThanToken;
+    case ts.SyntaxKind.GreaterThanGreaterThanEqualsToken:
+      return ts.SyntaxKind.GreaterThanGreaterThanToken;
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken:
+      return ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken;
+    default:
+      return undefined;
+  }
+}
+
+function tryCompileHostBigIntCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  left: ts.Identifier,
+  right: ts.Expression,
+  op: ts.SyntaxKind,
+): ValType | null | undefined {
+  if (ctx.standalone || ctx.wasi || ctx.oracle.staticJsTypeOf(left) !== "bigint") return undefined;
+  const binaryOp = compoundBinaryOperator(op);
+  if (binaryOp === undefined) return undefined;
+  const value = ts.factory.createBinaryExpression(left, binaryOp, right);
+  const assignment = ts.factory.createBinaryExpression(left, ts.SyntaxKind.EqualsToken, value);
+  const result = compileAssignment(ctx, fctx, assignment);
+  return result === VOID_RESULT ? null : result;
+}
+
+function tryCompileConstCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  right: ts.Expression,
+): ValType | undefined {
+  if (!fctx.constBindings?.has(name)) return undefined;
+  const rhsType = compileExpression(ctx, fctx, right);
+  if (rhsType) fctx.body.push({ op: "drop" });
+  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+  fctx.body.push({ op: "unreachable" });
+  return { kind: "f64" };
+}
+
 export function compileCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1704,13 +1778,12 @@ export function compileCompoundAssignment(
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  if (fctx.constBindings?.has(name)) {
-    const rhsType = compileExpression(ctx, fctx, expr.right);
-    if (rhsType) fctx.body.push({ op: "drop" });
-    emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-    fctx.body.push({ op: "unreachable" });
-    return { kind: "f64" };
-  }
+  const constCompound = tryCompileConstCompoundAssignment(ctx, fctx, name, expr.right);
+  if (constCompound !== undefined) return constCompound;
+
+  // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
+  const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (hostBigIntCompound !== undefined) return hostBigIntCompound;
 
   // (#3039) Boxed captured global compound-assign (`c += 1` in a method-
   // shorthand / class-method / accessor body reading a transitively-captured
@@ -2504,6 +2577,19 @@ function compilePropertyCompoundAssignment(
   fctx.body.push({ op: "local.get", index: objTmp });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
 
+  const hostBigIntCompound = tryEmitHostBigIntStructCompoundAssignment(
+    ctx,
+    fctx,
+    target,
+    rhs,
+    op,
+    fieldType,
+    objTmp,
+    structTypeIdx,
+    fieldIdx,
+  );
+  if (hostBigIntCompound !== undefined) return hostBigIntCompound;
+
   const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
     ctx,
     fctx,
@@ -2615,6 +2701,19 @@ function compilePropertyCompoundAssignmentExternref(
           // Read current value
           fctx.body.push({ op: "local.get", index: objTmp });
           fctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
+
+          const hostBigIntCompound = tryEmitHostBigIntStructCompoundAssignment(
+            ctx,
+            fctx,
+            target,
+            rhs,
+            op,
+            fieldType,
+            objTmp,
+            typeIdx,
+            fieldIdx,
+          );
+          if (hostBigIntCompound !== undefined) return hostBigIntCompound;
 
           const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
             ctx,
@@ -2914,6 +3013,126 @@ function compilePropertyCompoundAssignmentExternref(
 
   // Return the result as f64
   fctx.body.push({ op: "local.get", index: resultLocal });
+  return { kind: "f64" };
+}
+
+function tryEmitHostBigIntArrayCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.ElementAccessExpression,
+  rhs: ts.Expression,
+  op: ts.SyntaxKind,
+  elemType: ValType,
+  objTmp: number,
+  vecTypeIdx: number,
+  idxTmp: number,
+  arrayTypeIdx: number,
+): ValType | null | undefined {
+  if (elemType.kind !== "externref" || !isHostBigIntUpdate(ctx, target)) return undefined;
+  const binaryOp = compoundBinaryOperator(op);
+  const hostOpcode = binaryOp === undefined ? undefined : bigIntHostBinopOpcode(binaryOp);
+  if (hostOpcode === undefined) return undefined;
+  return emitHostBigIntBinaryOpFromStack(ctx, fctx, elemType, rhs, hostOpcode, false, (newValue) =>
+    emitBoundsGuardedArraySet(fctx, objTmp, vecTypeIdx, idxTmp, newValue, arrayTypeIdx),
+  );
+}
+
+function tryEmitHostBigIntStructCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  rhs: ts.Expression,
+  op: ts.SyntaxKind,
+  fieldType: ValType,
+  objTmp: number,
+  structTypeIdx: number,
+  fieldIdx: number,
+): ValType | null | undefined {
+  if (fieldType.kind !== "externref" || !isHostBigIntUpdate(ctx, target)) return undefined;
+  const binaryOp = compoundBinaryOperator(op);
+  const hostOpcode = binaryOp === undefined ? undefined : bigIntHostBinopOpcode(binaryOp);
+  if (hostOpcode === undefined) return undefined;
+  return emitHostBigIntBinaryOpFromStack(ctx, fctx, fieldType, rhs, hostOpcode, false, (newValue) => {
+    fctx.body.push({ op: "local.get", index: objTmp });
+    fctx.body.push({ op: "local.get", index: newValue });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+  });
+}
+
+function compileVecElementCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.ElementAccessExpression,
+  rhs: ts.Expression,
+  op: ts.SyntaxKind,
+  objResult: ValType,
+  typeIdx: number,
+  typeDef: StructTypeDef,
+): ValType | null {
+  const objTmp = allocLocal(fctx, `__cmpd_arr_${fctx.locals.length}`, objResult);
+  fctx.body.push({ op: "local.set", index: objTmp });
+
+  const idxResult = compileExpression(ctx, fctx, target.argumentExpression);
+  if (!idxResult) return null;
+  if (idxResult.kind === "f64") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  const idxTmp = allocLocal(fctx, `__cmpd_idx_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.set", index: idxTmp });
+
+  const dataFieldType = typeDef.fields[1]!.type;
+  const arrayTypeIdx = (dataFieldType as { typeIdx: number }).typeIdx;
+  const arrayDef = ctx.mod.types[arrayTypeIdx];
+  const elemType = arrayDef && arrayDef.kind === "array" ? arrayDef.element : { kind: "f64" as const };
+
+  fctx.body.push({ op: "local.get", index: objTmp });
+  fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.get", index: idxTmp });
+  emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType);
+
+  const hostBigIntResult = tryEmitHostBigIntArrayCompoundAssignment(
+    ctx,
+    fctx,
+    target,
+    rhs,
+    op,
+    elemType,
+    objTmp,
+    typeIdx,
+    idxTmp,
+    arrayTypeIdx,
+  );
+  if (hostBigIntResult !== undefined) return hostBigIntResult;
+
+  if (elemType.kind !== "f64") coerceType(ctx, fctx, elemType, { kind: "f64" });
+  const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
+  if (!rhsType) return null;
+  emitCompoundOp(ctx, fctx, op);
+
+  const resultTmp = allocLocal(fctx, `__cmpd_res_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push({ op: "local.set", index: resultTmp });
+
+  fctx.body.push({ op: "local.get", index: idxTmp });
+  fctx.body.push({ op: "local.get", index: objTmp });
+  fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "array.len" });
+  fctx.body.push({ op: "i32.lt_u" });
+  {
+    const setInstrs: Instr[] = [
+      { op: "local.get", index: objTmp },
+      { op: "struct.get", typeIdx, fieldIdx: 1 },
+      { op: "local.get", index: idxTmp },
+      { op: "local.get", index: resultTmp },
+    ];
+    if (elemType.kind !== "f64") {
+      const savedBody = fctx.body;
+      fctx.body = setInstrs as any;
+      coerceType(ctx, fctx, { kind: "f64" }, elemType);
+      fctx.body = savedBody;
+    }
+    setInstrs.push({ op: "array.set", typeIdx: arrayTypeIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" as const }, then: setInstrs, else: [] });
+  }
+
+  fctx.body.push({ op: "local.get", index: resultTmp });
   return { kind: "f64" };
 }
 
@@ -3246,83 +3465,7 @@ function compileElementCompoundAssignment(
       }
     }
 
-    // Vec struct: arr[i] += value
-    if (isVec) {
-      const objTmp = allocLocal(fctx, `__cmpd_arr_${fctx.locals.length}`, objResult);
-      fctx.body.push({ op: "local.set", index: objTmp });
-
-      // Compile index
-      const idxResult = compileExpression(ctx, fctx, target.argumentExpression);
-      if (!idxResult) return null;
-      if (idxResult.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
-      const idxTmp = allocLocal(fctx, `__cmpd_idx_${fctx.locals.length}`, {
-        kind: "i32",
-      });
-      fctx.body.push({ op: "local.set", index: idxTmp });
-
-      // Get the data array type
-      const dataFieldType = typeDef.fields[1]!.type;
-      const arrayTypeIdx = (dataFieldType as { typeIdx: number }).typeIdx;
-      const arrayDef = ctx.mod.types[arrayTypeIdx];
-      const elemType = arrayDef && arrayDef.kind === "array" ? arrayDef.element : { kind: "f64" as const };
-
-      // Read current value: arr.data[idx] (bounds-checked)
-      fctx.body.push({ op: "local.get", index: objTmp });
-      fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
-      fctx.body.push({ op: "local.get", index: idxTmp });
-      emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType);
-
-      // Coerce to f64 for arithmetic
-      if (elemType.kind !== "f64") {
-        coerceType(ctx, fctx, elemType, { kind: "f64" });
-      }
-
-      // Compile RHS as f64
-      const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
-      if (!rhsType) return null;
-
-      // Apply compound operation
-      emitCompoundOp(ctx, fctx, op);
-
-      // Save result
-      const resultTmp = allocLocal(fctx, `__cmpd_res_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.set", index: resultTmp });
-
-      // Store back: arr.data[idx] = result (bounds-guarded)
-      fctx.body.push({ op: "local.get", index: idxTmp });
-      fctx.body.push({ op: "local.get", index: objTmp });
-      fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
-      fctx.body.push({ op: "array.len" });
-      fctx.body.push({ op: "i32.lt_u" });
-      {
-        const setInstrs: Instr[] = [
-          { op: "local.get", index: objTmp },
-          { op: "struct.get", typeIdx, fieldIdx: 1 },
-          { op: "local.get", index: idxTmp },
-          { op: "local.get", index: resultTmp },
-        ];
-        if (elemType.kind !== "f64") {
-          const savedBody = fctx.body;
-          fctx.body = setInstrs as any;
-          coerceType(ctx, fctx, { kind: "f64" }, elemType);
-          fctx.body = savedBody;
-        }
-        setInstrs.push({ op: "array.set", typeIdx: arrayTypeIdx });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" as const },
-          then: setInstrs,
-          else: [],
-        });
-      }
-
-      fctx.body.push({ op: "local.get", index: resultTmp });
-      return { kind: "f64" };
-    }
+    if (isVec) return compileVecElementCompoundAssignment(ctx, fctx, target, rhs, op, objResult, typeIdx, typeDef);
   }
 
   reportError(ctx, target, `Unsupported compound assignment on element access`);

@@ -41,6 +41,7 @@ import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
+import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitPreparedAccessorComputedNameEffects } from "./nested-declarations.js";
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
@@ -1019,6 +1020,10 @@ export function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression 
   // stay on the legacy path here too.
   if (!noJsHost(ctx)) {
     if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return { kind: "externref" };
+    // (#4383) Keep this in lock-step with hostTaBufferArgSymName: arithmetic
+    // results are primitives even when an `any` operand makes the checker lose
+    // their type, so the constructor remains on the native count/vec path.
+    if (typedArrayCtorArgIsArithmeticPrimitive(args[0]!)) return null;
     // Keep the local representation aligned with hostTaBufferArgSymName: a
     // genuinely dynamic first argument is constructed by the real host
     // TypedArray constructor, whose result is an externref rather than a

@@ -121,6 +121,34 @@ describe("#4383 — typed-array identity across internal calls", () => {
     ).toBe(1);
   });
 
+  it("captures the shadowing callable through a host callback bridge", async () => {
+    expect(
+      await run(`
+        function rng() {
+          return Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+        }
+        function requireRandom(options: any) {
+          if (options.rng().length < 16) throw new Error("too short");
+        }
+        const assert = {
+          throws(callback: any) {
+            try {
+              callback();
+            } catch {
+              return 1;
+            }
+            return 0;
+          },
+        };
+
+        export function test() {
+          const rng = () => Uint8Array.of(0);
+          return assert.throws(() => requireRandom({ rng }));
+        }
+      `),
+    ).toBe(1);
+  });
+
   it("copies an any-typed Uint8Array source with TypedArray.prototype.set", async () => {
     expect(
       await run(`
@@ -135,6 +163,42 @@ describe("#4383 — typed-array identity across internal calls", () => {
         }
       `),
     ).toBe(123);
+  });
+
+  it("unwraps a typed-array mirror after an any-typed callable assignment", async () => {
+    expect(
+      await run(`
+        function digest(bytes: Uint8Array): Uint8Array {
+          const out = new Uint8Array(bytes.length);
+          out.set(bytes);
+          return out;
+        }
+
+        function apply(hash: any, value: Uint8Array) {
+          let bytes: any = new Uint8Array(value.length);
+          bytes.set(value);
+          bytes = hash(bytes);
+          return bytes[0];
+        }
+
+        export function test() {
+          return apply(digest, Uint8Array.of(7));
+        }
+      `),
+    ).toBe(7);
+  });
+
+  it("passes a module-global Uint8Array to crypto.getRandomValues", async () => {
+    expect(
+      await run(`
+        declare const crypto: any;
+        const random = new Uint8Array(16);
+
+        export function test() {
+          return crypto.getRandomValues(random).length;
+        }
+      `),
+    ).toBe(16);
   });
 
   it("preserves undefined through a nullish-defaulted numeric parameter", async () => {
@@ -319,6 +383,48 @@ describe("#4383 — typed-array identity across internal calls", () => {
 
         export function test() {
           return present(Example.prototype);
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("returns a byte vector from a UUID-style dynamic helper", async () => {
+    expect(
+      await run(`
+        // @ts-nocheck
+        function writeBytes(rnds: any, msecs: any, seq: any, buf: any, offset = 0) {
+          if (!buf) {
+            buf = new Uint8Array(16);
+            offset = 0;
+          }
+          buf[offset++] = (msecs / 0x10000000000) & 0xff;
+          buf[offset++] = (msecs / 0x100000000) & 0xff;
+          buf[offset++] = 0x70 | ((seq >>> 28) & 0x0f);
+          buf[offset++] = rnds[15];
+          return buf;
+        }
+
+        export function test() {
+          const result = writeBytes(Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), 1, 2, undefined);
+          return result[0] * 100 + result[2] + result[3];
+        }
+      `),
+    ).toBe(127);
+  });
+
+  it("preserves arbitrary-width BigInt arithmetic in JS-host mode", async () => {
+    expect(
+      await run(`
+        const asBigInt = (bytes: Uint8Array) =>
+          bytes.reduce((acc, value) => (acc << 8n) | BigInt(value), 0n);
+
+        export function test() {
+          const allBits = asBigInt(Uint8Array.of(
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+          ));
+          const flipped = allBits ^ (1n << 127n);
+          return flipped.toString(16) === "7fffffffffffffffffffffffffffffff" ? 1 : 0;
         }
       `),
     ).toBe(1);

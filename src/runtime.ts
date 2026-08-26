@@ -66,6 +66,8 @@ import {
   snapshotVecMirrors,
   reconcileVecMirrors,
   vecForMirror,
+  recordVecMirrorElements,
+  vecMirrorElementsChanged,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
@@ -553,7 +555,28 @@ function _compiledTypedArrayMirror(
   const kind = _compiledTypedArrayKinds.get(carrier);
   if (kind === undefined) return undefined;
   const cached = _compiledTypedArrayMirrors.get(carrier);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    // Refresh a clean cached facade from its vec. If host code changed the
+    // mirror since the previous sync, preserve those edits until the explicit
+    // mirror→Wasm unwrap path replays them.
+    if (!vecMirrorElementsChanged(cached)) {
+      const exports = callbackState?.getExports();
+      const vecLen = exports?.__vec_len as ((vec: any) => number) | undefined;
+      const vecGet = exports?.__vec_get as ((vec: any, index: number) => any) | undefined;
+      if (typeof vecLen === "function" && typeof vecGet === "function") {
+        try {
+          const length = vecLen(carrier);
+          if (length === Number((cached as any).length)) {
+            for (let i = 0; i < length; i++) (cached as any)[i] = vecGet(carrier, i);
+            recordVecMirrorElements(cached);
+          }
+        } catch {
+          // Keep the last valid facade when the vec cannot be inspected.
+        }
+      }
+    }
+    return cached;
+  }
   const Ctor = _COMPILED_TYPED_ARRAY_CTORS[kind] as
     | (new (values: ArrayLike<number | bigint>) => ArrayBufferView)
     | undefined;
@@ -570,6 +593,7 @@ function _compiledTypedArrayMirror(
     // to a plain Array. Register the mirror for the same reverse-unwrapping
     // used by ordinary __make_iterable arrays.
     registerVecMirror(mirror as unknown as unknown[], carrier);
+    recordVecMirrorElements(mirror);
     return mirror;
   } catch {
     return undefined;
@@ -11119,6 +11143,40 @@ assert._isSameValue = isSameValue;
             _compiledTypedArrayKinds.set(vec, kind);
           }
         };
+      // Reverse any host-side facade that originated from a Wasm value before
+      // codegen narrows the externref back to a concrete GC representation.
+      // A vec mirror may have been mutated by a host Array/TypedArray method;
+      // replay its current elements before returning the original vec so the
+      // concrete call_ref parameter observes both identity and data.
+      if (name === "__unwrap_for_wasm")
+        return (value: any): any => {
+          const mirroredVec = vecForMirror(value);
+          if (mirroredVec === undefined) return _unwrapForHost(value);
+          const exports = callbackState?.getExports();
+          const vecLen = exports?.__vec_len as ((vec: any) => number) | undefined;
+          const vecSet = exports?.__vec_set_elem as ((vec: any, index: number, element: any) => number) | undefined;
+          if (
+            exports !== undefined &&
+            vecMirrorElementsChanged(value) &&
+            typeof vecLen === "function" &&
+            typeof vecSet === "function"
+          ) {
+            try {
+              const length = vecLen(mirroredVec);
+              if (typeof length === "number" && length === Number(value.length)) {
+                for (let i = 0; i < length; i++) {
+                  const element = _nativeDynamicFromHost(value[i], exports);
+                  if (vecSet(mirroredVec, i, element) !== 1) break;
+                }
+                recordVecMirrorElements(value);
+              }
+            } catch {
+              // The identity round-trip is still preferable to an illegal
+              // cast; unsupported element carriers keep their existing data.
+            }
+          }
+          return mirroredVec;
+        };
       // (#2743 b) `%Array.prototype.values%` — the value of
       // `arguments[Symbol.iterator]` and `[][Symbol.iterator]` (§10.4.4.6 /
       // §10.4.4.7). Returning the host intrinsic gives both sites the same
@@ -16037,6 +16095,7 @@ assert._isSameValue = isSameValue;
                 }
                 // (#2761 B) Surface set-like own props (`arr.size/has/keys`).
                 _copyVecSidecarOntoArray(obj, arr, exports);
+                recordVecMirrorElements(arr);
               } finally {
                 convertInFlight.delete(obj);
               }
