@@ -107,6 +107,31 @@ describe("#3525 whole-program callable binding graph", () => {
     expect(irExports.run(5)).toBe(7);
   }, 120_000);
 
+  it("prepares an anonymous default-export callable through its exact default slot", async () => {
+    const files = {
+      "./dep.ts": `
+        export default function (value: number): number {
+          return value + 2;
+        }
+      `,
+      "./entry.ts": `
+        import defaultFn from "./dep";
+        export function run(value: number): number {
+          return defaultFn(value);
+        }
+      `,
+    };
+    const ir = await compileMulti(files, "./entry.ts", { experimentalIR: true, target: "standalone" });
+    const legacy = await compileMulti(files, "./entry.ts", { experimentalIR: false, target: "standalone" });
+    expect(ir.success, ir.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(legacy.success, legacy.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(new Set(ir.irCompiledFuncs ?? [])).toEqual(new Set(["default", "run"]));
+    const irExports = (await instantiateWithRuntime(ir)).exports as unknown as { run(value: number): number };
+    const legacyExports = (await instantiateWithRuntime(legacy)).exports as unknown as { run(value: number): number };
+    expect(irExports.run(5)).toBe(legacyExports.run(5));
+    expect(irExports.run(5)).toBe(7);
+  }, 120_000);
+
   it("withdraws every aggregate member before the direct fallback on a phase failure", async () => {
     const previous = process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW;
     vi.stubEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW", "inline");

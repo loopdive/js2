@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrUnitId } from "../ir/identity.js";
+import { irTopLevelFunctionLegacyName, type IrUnitId } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { asVal, type IrType } from "../ir/nodes.js";
@@ -68,7 +68,7 @@ export function buildIrExactFunctionClaimIndex(
       claim.declaration.parent !== sourceFile ||
       claim.declaration.getSourceFile() !== sourceFile ||
       !sourceFile.statements.includes(claim.declaration) ||
-      claim.declaration.name?.text !== claim.legacyName ||
+      irTopLevelFunctionLegacyName(claim.declaration) !== claim.legacyName ||
       !claim.declaration.body ||
       terminal.declarationStart !== claim.declaration.getStart(sourceFile) ||
       terminal.declarationEnd !== claim.declaration.end

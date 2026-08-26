@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { irTopLevelFunctionLegacyName } from "./identity.js";
 import type { IrIntegrationLoweringPlans } from "./ast-lowering-plans.js";
 import type { IrClassId, IrSourceId, IrTerminalUnitRecord, IrUnitId } from "./identity.js";
 import { IrInvariantError } from "./outcomes.js";
@@ -193,8 +194,9 @@ export function validateIrIntegrationPopulation(
   const missingFunctions = new Set(selection.funcs);
 
   for (const declaration of sourceFile.statements) {
-    if (!ts.isFunctionDeclaration(declaration) || !declaration.name || !declaration.body) continue;
-    const legacyName = declaration.name.text;
+    if (!ts.isFunctionDeclaration(declaration) || !declaration.body) continue;
+    const legacyName = irTopLevelFunctionLegacyName(declaration);
+    if (!legacyName) continue;
     if (!selection.funcs.has(legacyName)) continue;
     if (!missingFunctions.delete(legacyName) || declaration.parent !== sourceFile) {
       integrationMismatch(`selected function ${JSON.stringify(legacyName)} is not unique in the current AST`);

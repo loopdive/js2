@@ -575,6 +575,20 @@ function functionDisplayName(node: ts.FunctionDeclaration | ts.FunctionExpressio
   return "<arrow>";
 }
 
+/**
+ * Return the compatibility slot name used by the declaration emitter for one
+ * top-level function declaration. Anonymous default exports are registered
+ * under `default`; all other unnamed declarations remain outside the bounded
+ * source-callable projection until they receive an explicit identity.
+ */
+export function irTopLevelFunctionLegacyName(node: ts.FunctionDeclaration): string | undefined {
+  if (node.name) return node.name.text;
+  return ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword) ?? false)
+    ? "default"
+    : undefined;
+}
+
 function objectMemberDisplayName(
   node: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
 ): string {
@@ -677,7 +691,7 @@ class SourceInventoryBuilder {
             "top-level-function",
             null,
             statement,
-            statement.name?.text ?? `<unnamed:${this.unnamedFunction++}>`,
+            irTopLevelFunctionLegacyName(statement) ?? `<unnamed:${this.unnamedFunction++}>`,
             "function",
           );
           this.scanCallable(statement, terminal.id, terminal.id);

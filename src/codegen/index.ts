@@ -105,6 +105,7 @@ import {
 import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
 import {
   buildIrUnitInventory,
+  irTopLevelFunctionLegacyName,
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
@@ -2485,9 +2486,11 @@ function makeIrImplicitParamTypeResolver(
   return (parameter) => {
     if (parameter.type) return undefined;
     const declaration = parameter.parent;
-    if (!ts.isFunctionDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
+    if (!ts.isFunctionDeclaration(declaration) || declaration.parent !== sourceFile) {
       return undefined;
     }
+    const legacyName = irTopLevelFunctionLegacyName(declaration);
+    if (legacyName === undefined) return undefined;
     let candidates = candidatesByDeclaration.get(declaration);
     if (!candidates) {
       candidates = collectIrImplicitParamProjectionCandidates(declaration);
@@ -2521,11 +2524,11 @@ function makeIrImplicitParamTypeResolver(
     if (parameterFact.kind !== "any" && parameterFact.kind !== "unknown") return undefined;
     const parameterIndex = declaration.parameters.indexOf(parameter);
     if (parameterIndex < 0) return undefined;
-    const callSites = inferParamTypeFromCallSites(ctx, declaration.name.text, parameterIndex, sourceFile);
+    const callSites = inferParamTypeFromCallSites(ctx, legacyName, parameterIndex, sourceFile);
     if (callSites.sawCallSite && callSites.type === null) {
       return { kind: "dynamic", type: irDynamic() };
     }
-    const inferred = inferImplicitAnyParamType(ctx, declaration.name.text, parameterIndex, sourceFile, declaration);
+    const inferred = inferImplicitAnyParamType(ctx, legacyName, parameterIndex, sourceFile, declaration);
     if (inferred?.kind === "f64") return { kind: "f64", type: irVal(inferred) };
     if (inferred?.kind === "i32" && inferred.boolean === true) {
       return { kind: "bool", type: irVal(inferred) };
@@ -3703,7 +3706,7 @@ function multiPreparedCallableOwnerIsEligible(
   if (
     !declaration.body ||
     declaration.parent !== sourceFile ||
-    declaration.name === undefined ||
+    irTopLevelFunctionLegacyName(declaration) === undefined ||
     declaration.asteriskToken !== undefined ||
     hasAsyncModifier(declaration) ||
     (declaration.typeParameters?.length ?? 0) > 0 ||

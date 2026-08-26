@@ -84,7 +84,7 @@
 import type { DtsEntrypointSeeds } from "../checker/dts-entrypoint-seeds.js";
 import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { ts, forEachChild } from "../ts-api.js";
-import { buildIrUnitInventory, type IrSourceId, type IrUnitId } from "./identity.js";
+import { buildIrUnitInventory, irTopLevelFunctionLegacyName, type IrSourceId, type IrUnitId } from "./identity.js";
 import {
   buildIrLegacyUnitProjection,
   buildIrPlanningIdentityContext,
@@ -1394,17 +1394,19 @@ function collectIndexedFunctionDeclarations(
   const functions: PropagationFunction[] = [];
   for (const unit of identityContext.inventory.allUnits) {
     const declaration = identityContext.declarationByUnitId.get(unit.id);
+    const legacyName =
+      declaration && ts.isFunctionDeclaration(declaration) ? irTopLevelFunctionLegacyName(declaration) : undefined;
     if (
       !declaration ||
       !ts.isFunctionDeclaration(declaration) ||
-      !declaration.name ||
       !declaration.body ||
       !ts.isSourceFile(declaration.parent) ||
-      !selectedSources.has(declaration.parent)
+      !selectedSources.has(declaration.parent) ||
+      legacyName === undefined
     ) {
       continue;
     }
-    functions.push({ unitId: unit.id, displayName: declaration.name.text, declaration });
+    functions.push({ unitId: unit.id, displayName: legacyName, declaration });
   }
   return functions;
 }

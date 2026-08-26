@@ -7,7 +7,7 @@ import {
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import { irIntrinsicFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
-import type { IrUnitId } from "../ir/identity.js";
+import { irTopLevelFunctionLegacyName, type IrUnitId } from "../ir/identity.js";
 import { irVal } from "../ir/nodes.js";
 import {
   makeIrIdentityImportedFunctionResolver,
@@ -125,7 +125,7 @@ export function planIrOverlayByIdentity(
       !declaration ||
       !ts.isFunctionDeclaration(declaration) ||
       declaration.parent !== sourceFile ||
-      declaration.name?.text !== legacyName ||
+      irTopLevelFunctionLegacyName(declaration) !== legacyName ||
       !declaration.body ||
       !typeEntry ||
       maps.projectedTypeMap.get(legacyName) !== typeEntry ||

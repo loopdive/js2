@@ -2,7 +2,14 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
-import type { IrClassId, IrSourceId, IrTerminalUnitRecord, IrUnitId, IrUnitRecord } from "./identity.js";
+import {
+  irTopLevelFunctionLegacyName,
+  type IrClassId,
+  type IrSourceId,
+  type IrTerminalUnitRecord,
+  type IrUnitId,
+  type IrUnitRecord,
+} from "./identity.js";
 import { collectModuleInitPopulation } from "./module-init.js";
 import {
   IrPlanningIdentityInvariantError,
@@ -504,7 +511,7 @@ function exactSubjectTypeMap(
   indexed: IndexedFunction,
   structural: IrUnitTypeMap | undefined,
 ): TypeMap | undefined {
-  const name = indexed.declaration.name?.text;
+  const name = irTopLevelFunctionLegacyName(indexed.declaration);
   if (!name) return helper;
   const exact = structural?.get(indexed.unit.unitId);
   if (!helper && !exact) return undefined;
@@ -666,7 +673,7 @@ function buildIdentityCallGraph(
 
   for (const indexed of functions) {
     const callerId = indexed.unit.unitId;
-    const callerName = indexed.declaration.name?.text;
+    const callerName = irTopLevelFunctionLegacyName(indexed.declaration);
     const duplicateCaller = callerName !== undefined && (functionsByName.get(callerName)?.length ?? 0) > 1;
     for (const calleeName of directIdentifierCallees(indexed.declaration.body!)) {
       const targets = functionsByName.get(calleeName);
@@ -783,7 +790,8 @@ function selectionFunctionPopulation(
   const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
   for (const indexed of functions) {
     units.set(indexed.unit.unitId, indexed.unit);
-    if (indexed.declaration.name) addNameIndex(functionsByName, indexed.declaration.name.text, indexed);
+    const legacyName = irTopLevelFunctionLegacyName(indexed.declaration);
+    if (legacyName) addNameIndex(functionsByName, legacyName, indexed);
   }
   return { functions, fnctorArgumentProjections, functionsByName, units };
 }
@@ -877,7 +885,7 @@ export function planIrCompilationByIdentity(
   const individuallyClaimed = new Map<IrUnitId, IrIdentityFunctionClaim>();
   const preparedTimerUnitIds = claimPreparedTimerShims(identityContext, functions, options, individuallyClaimed);
   for (const indexed of functions.filter(({ unit }) => !preparedTimerUnitIds.has(unit.unitId))) {
-    if (!indexed.declaration.name) {
+    if (!irTopLevelFunctionLegacyName(indexed.declaration)) {
       if (trackFallbacks) reasons.set(indexed.unit.unitId, "unnamed");
       continue;
     }

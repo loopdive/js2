@@ -12,7 +12,14 @@
 
 import type { MultiTypedAST } from "../checker/index.js";
 import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import type { IrSourceId, IrSourceKind, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "../ir/identity.js";
+import {
+  irTopLevelFunctionLegacyName,
+  type IrSourceId,
+  type IrSourceKind,
+  type IrTerminalUnitRecord,
+  type IrUnitId,
+  type IrUnitInventory,
+} from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjectionEntry, IrPlanningIdentityContext } from "../ir/planning-identity.js";
@@ -525,7 +532,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             !ts.isFunctionDeclaration(declaration) ||
             declaration !== unit.declaration ||
             declaration.parent !== unit.sourceFile ||
-            declaration.name?.text !== unit.legacyName ||
+            irTopLevelFunctionLegacyName(declaration) !== unit.legacyName ||
             terminal.legacyMatchName !== unit.legacyName ||
             !declaration.body ||
             names.has(unit.legacyName)
@@ -541,7 +548,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             if (
               ts.isFunctionDeclaration(statement) &&
               statement.body &&
-              statement.name?.text === unit.legacyName &&
+              irTopLevelFunctionLegacyName(statement) === unit.legacyName &&
               statement !== unit.declaration
             ) {
               this.#fail(
@@ -899,7 +906,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         reverseUnit !== slot.unitId ||
         declaration.getSourceFile() !== sourceFile ||
         declaration.parent !== sourceFile ||
-        declaration.name?.text !== slot.legacyName ||
+        irTopLevelFunctionLegacyName(declaration) !== slot.legacyName ||
         terminal.legacyMatchName !== slot.legacyName ||
         !claim ||
         claim.unitId !== slot.unitId ||

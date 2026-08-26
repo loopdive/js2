@@ -8,7 +8,13 @@
 
 import { ts } from "../ts-api.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
-import { createIrBindingId, type IrBindingId, type IrSourceId, type IrUnitId } from "./identity.js";
+import {
+  createIrBindingId,
+  irTopLevelFunctionLegacyName,
+  type IrBindingId,
+  type IrSourceId,
+  type IrUnitId,
+} from "./identity.js";
 import type { IrTerminalUnitRecord } from "./identity.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 
@@ -338,8 +344,7 @@ function collectCallableGraphPopulation(
             " has a wrong unit join",
         );
       }
-      const localName =
-        statement.name?.text ?? (hasModifier(statement, ts.SyntaxKind.DefaultKeyword) ? "default" : "<anonymous>");
+      const localName = irTopLevelFunctionLegacyName(statement) ?? "<anonymous>";
       const bindingId = irUnitCallableBindingId(unitId);
       if (sourceRecordsByUnitId.has(unitId)) {
         return invariant("duplicate-binding", "source callable unit " + unitId + " was recorded more than once");
