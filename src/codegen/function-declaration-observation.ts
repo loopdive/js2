@@ -273,6 +273,16 @@ export function prepareHoistedFunctionValueBindings(
 ): void {
   for (const stmt of stmts) {
     const hasExistingBinding = ts.isFunctionDeclaration(stmt) && !!stmt.name && fctx.localMap.has(stmt.name.text);
+    const existingBindingHasInitializer =
+      hasExistingBinding &&
+      stmts.some(
+        (s) =>
+          ts.isVariableStatement(s) &&
+          s.declarationList.declarations.some(
+            (declaration) =>
+              ts.isIdentifier(declaration.name) && declaration.name.text === stmt.name?.text && declaration.initializer,
+          ),
+      );
     if (
       !ts.isFunctionDeclaration(stmt) ||
       !stmt.name ||
@@ -311,19 +321,12 @@ export function prepareHoistedFunctionValueBindings(
         allocLocal(fctx, stmt.name.text, { kind: "externref" });
       }
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
-    } else {
+    } else if (!existingBindingHasInitializer) {
       // FunctionDeclarationInstantiation installs a same-named function value
       // into the existing var/parameter binding (ES5 §10.2.1, steps 5/8).
-      // Keeping the parameter/var slot in localMap made `return x` observe its
-      // entry value instead of the hoisted function for shapes such as
-      // `function f(x) { return x; function x() {} }` and
-      // `function f() { var x; return x; function x() {} }`.
-      // Preserve the old slot for any source-position machinery, but route
-      // subsequent identifier reads/writes through a stable function-value
-      // slot. The value remains lazy, matching the identity-observed path
-      // above and avoiding a closure construction in skipped control flow.
-      const bindingLocal = allocLocal(fctx, stmt.name.text, { kind: "externref" });
-      fctx.localMap.set(stmt.name.text, bindingLocal);
+      // Keep that original carrier for initialized vars: allocating a second
+      // slot makes later var writes target the old slot while reads target a
+      // stale function-valued slot (S13_A19_T2 observes NaN instead of 1).
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
     }
   }
