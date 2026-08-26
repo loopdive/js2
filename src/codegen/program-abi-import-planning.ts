@@ -14,6 +14,12 @@ import {
   programAbiCallableSignaturesEqual,
   type ProgramAbiCallableTypeContract,
 } from "./program-abi-signatures.js";
+import type {
+  PreparedProgramAbiDescriptorLifecycle,
+  PreparedProgramAbiDescriptorPart,
+  PreparedProgramAbiMapWrite,
+  PreparedProgramAbiProvisionalBinding,
+} from "./program-abi-prepared-transaction.js";
 import type { ProgramAbiDraft, ProgramAbiSession, ProgramAbiSlotLocator } from "./program-abi-session.js";
 
 /** Source-anchored global roles not owned by source declaration planning. */
@@ -255,13 +261,14 @@ interface PreparedCallableImportEntry extends PreparedCallableImportDenominatorE
 
 interface PreparedCallableImportDescriptorPayload {
   readonly registry: ProgramAbiCallableImportRegistry;
+  readonly lifecycle: PreparedProgramAbiDescriptorLifecycle;
   readonly sealedEntries: readonly ProgramAbiCallableImport[] | undefined;
   readonly denominator: readonly PreparedCallableImportDenominatorEntry[];
   readonly selected: readonly PreparedCallableImportEntry[];
 }
 
 /** Opaque registry-authenticated token; its payload never crosses this module. */
-interface PreparedCallableImportDescriptor {
+export interface PreparedCallableImportDescriptor {
   readonly kind: "prepared-callable-import-descriptor";
 }
 
@@ -345,9 +352,18 @@ function draftStructuralOrderOwner(session: ProgramAbiSession, draft: ProgramAbi
  * later receive deterministic trailing ordinals.
  */
 export class ProgramAbiCallableImportRegistry {
-  private sealedEntries: readonly ProgramAbiCallableImport[] | undefined;
+  private readonly preparedPublication = new Map<"sealedEntries", readonly ProgramAbiCallableImport[]>();
   private readonly plannedByImport = new Map<Import, PlannedCallableImport>();
   private plannedValue: ReadonlyMap<string, IrBindingId> | undefined;
+
+  private get sealedEntries(): readonly ProgramAbiCallableImport[] | undefined {
+    return this.preparedPublication.get("sealedEntries");
+  }
+
+  private set sealedEntries(entries: readonly ProgramAbiCallableImport[] | undefined) {
+    if (entries === undefined) this.preparedPublication.delete("sealedEntries");
+    else this.preparedPublication.set("sealedEntries", entries);
+  }
 
   constructor(
     readonly session: NonNullable<CodegenContext["programAbiSession"]>,
@@ -377,6 +393,9 @@ export class ProgramAbiCallableImportRegistry {
       descriptor,
       Object.freeze({
         registry: this,
+        lifecycle: Object.freeze({
+          state: new Map<"state" | "scopeId", string>([["state", "fresh"]]),
+        }),
         sealedEntries,
         denominator,
         selected,
@@ -427,8 +446,9 @@ export class ProgramAbiCallableImportRegistry {
   }
 
   publishPreparedDescriptor(descriptor: PreparedCallableImportDescriptor): void {
-    this.assertPreparedDescriptorCurrent(descriptor);
     const payload = this.requirePreparedDescriptor(descriptor);
+    assertDescriptorFresh(payload.lifecycle, "callable-import");
+    this.assertPreparedDescriptorCurrent(descriptor);
     if (payload.selected.length === 0) return;
     this.sealedEntries ??= Object.freeze(payload.denominator.map(({ entry }) => entry));
     for (const entry of payload.selected) this.planPreparedEntry(entry);
@@ -720,6 +740,73 @@ export class ProgramAbiCallableImportRegistry {
     return entry.bindingId;
   }
 
+  /** Build one scope-authenticated write set without publishing it. */
+  prepareDescriptorForScope(
+    descriptor: PreparedCallableImportDescriptor,
+    session: ProgramAbiSession,
+    scopeId: string,
+  ): PreparedProgramAbiDescriptorPart {
+    const payload = this.requirePreparedDescriptor(descriptor);
+    if (session !== this.session || scopeId.length === 0) {
+      throw callableImportError("prepared callable-import descriptor targets a foreign session or empty scope");
+    }
+    assertDescriptorFresh(payload.lifecycle, "callable-import");
+    payload.lifecycle.state.set("scopeId", scopeId);
+    payload.lifecycle.state.set("state", "claimed");
+    try {
+      this.assertPreparedDescriptorCurrent(descriptor);
+      const bindings = Object.freeze(
+        payload.selected.map(
+          (entry): PreparedProgramAbiProvisionalBinding =>
+            Object.freeze({
+              draft: entry.draft,
+              structuralReferenceKey: entry.entry.key,
+              locator: entry.locator,
+              callableTypeContract: entry.typeContract,
+            }),
+        ),
+      );
+      const registryWrites: PreparedProgramAbiMapWrite[] = [];
+      if (payload.selected.length > 0 && this.sealedEntries === undefined) {
+        registryWrites.push(
+          Object.freeze({
+            target: this.preparedPublication as Map<unknown, unknown>,
+            key: "sealedEntries",
+            value: Object.freeze(payload.denominator.map(({ entry }) => entry)),
+          }),
+        );
+      }
+      for (const entry of payload.selected) {
+        if (entry.planned !== undefined) continue;
+        registryWrites.push(
+          Object.freeze({
+            target: this.plannedByImport as Map<unknown, unknown>,
+            key: entry.entry.value,
+            value: Object.freeze({ key: entry.entry.key, bindingId: entry.bindingId, ordinal: entry.ordinal }),
+          }),
+        );
+      }
+      const keys = Object.freeze(payload.selected.map((entry) => entry.entry.key));
+      return Object.freeze({
+        kind: "callable-imports" as const,
+        session,
+        descriptor,
+        lifecycle: payload.lifecycle,
+        bindings,
+        requestedStructuralReferenceKeys: keys,
+        closureStructuralReferenceKeys: Object.freeze([]),
+        registryWrites: Object.freeze(registryWrites),
+        assertCurrent: () => {
+          assertDescriptorClaimed(payload.lifecycle, scopeId, "callable-import");
+          this.assertPreparedDescriptorCurrent(descriptor);
+        },
+      });
+    } catch (error) {
+      payload.lifecycle.state.set("state", "consumed");
+      throw error;
+    }
+  }
+
   private planEntry(entry: ProgramAbiCallableImport, ordinal: number): IrBindingId {
     const existing = this.plannedByImport.get(entry.value);
     if (existing) {
@@ -762,6 +849,49 @@ export class ProgramAbiCallableImportRegistry {
     this.plannedByImport.set(entry.value, Object.freeze({ key: entry.key, bindingId, ordinal }));
     return bindingId;
   }
+}
+
+function descriptorLifecycleState(lifecycle: PreparedProgramAbiDescriptorLifecycle): string | undefined {
+  return lifecycle.state.get("state");
+}
+
+function assertDescriptorFresh(lifecycle: PreparedProgramAbiDescriptorLifecycle, kind: string): void {
+  if (descriptorLifecycleState(lifecycle) !== "fresh" || lifecycle.state.has("scopeId")) {
+    throw callableImportError(`prepared ${kind} descriptor is not fresh`);
+  }
+}
+
+function assertDescriptorClaimed(
+  lifecycle: PreparedProgramAbiDescriptorLifecycle,
+  scopeId: string,
+  kind: string,
+): void {
+  if (descriptorLifecycleState(lifecycle) !== "claimed" || lifecycle.state.get("scopeId") !== scopeId) {
+    throw callableImportError(`prepared ${kind} descriptor is not claimed by exact scope ${scopeId}`);
+  }
+}
+
+export function prepareCallableImportDescriptorForScope(
+  descriptor: PreparedCallableImportDescriptor,
+  session: ProgramAbiSession,
+  scopeId: string,
+): PreparedProgramAbiDescriptorPart {
+  const payload = preparedCallableImportDescriptors.get(descriptor);
+  if (!payload) throw callableImportError("prepared callable-import descriptor is forged");
+  return payload.registry.prepareDescriptorForScope(descriptor, session, scopeId);
+}
+
+export function consumePreparedCallableImportDescriptor(
+  descriptor: PreparedCallableImportDescriptor,
+  session: ProgramAbiSession,
+  scopeId: string,
+): void {
+  const payload = preparedCallableImportDescriptors.get(descriptor);
+  if (!payload || payload.registry.session !== session) {
+    throw callableImportError("prepared callable-import descriptor is forged or belongs to another session");
+  }
+  assertDescriptorClaimed(payload.lifecycle, scopeId, "callable-import");
+  payload.lifecycle.state.set("state", "consumed");
 }
 
 function callableImportRegistry(ctx: CodegenContext): ProgramAbiCallableImportRegistry | undefined {

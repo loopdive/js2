@@ -106,7 +106,7 @@ function failed(unitId: IrUnitId, legacyName: string): IrIntegrationTerminalEvid
     kind: "verify",
     outcome,
   };
-  return { kind: "failed", unitId, legacyName, error };
+  return { kind: "failed", unitId, legacyName, error, diagnosticVisibility: "report" };
 }
 
 function reconcile(
