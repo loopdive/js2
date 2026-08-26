@@ -67,17 +67,26 @@ function collectTypeDefRefs(t: TypeDef, refs: Set<number>): void {
  * them validate. Singleton groups (start === end) are emitted without a rec
  * wrapper, preserving canonical type identity for non-recursive entries.
  */
-export function computeRecGroups(types: TypeDef[]): Array<[number, number]> {
+export function computeRecGroups(
+  types: TypeDef[],
+  forcedGroups: ReadonlyArray<readonly [number, number]> = [],
+): Array<[number, number]> {
   const groups: Array<[number, number]> = [];
   let i = 0;
   while (i < types.length) {
     let end = i;
+    for (const [forcedStart, forcedEnd] of forcedGroups) {
+      if (forcedStart <= i && i <= forcedEnd) end = Math.max(end, forcedEnd);
+    }
     let scan = i;
     while (scan <= end) {
       const refs = new Set<number>();
       collectTypeDefRefs(types[scan]!, refs);
       for (const r of refs) {
         if (r > end && r < types.length) end = r;
+      }
+      for (const [forcedStart, forcedEnd] of forcedGroups) {
+        if (forcedStart <= end && forcedEnd >= i) end = Math.max(end, forcedEnd);
       }
       scan++;
     }
@@ -326,7 +335,20 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     // where the `__arr_ref_1`/`__vec_ref_1` types are appended after the class
     // placeholder — fails with "Type index N is out of bounds" because each
     // singleton type can only reference earlier types or itself. (#1293)
-    const recGroups = computeRecGroups(mod.types);
+    const forcedGroups = mod.canonicalRuntimeRecGroup
+      ? [[mod.canonicalRuntimeRecGroup.start, mod.canonicalRuntimeRecGroup.end] as const]
+      : [];
+    const recGroups = computeRecGroups(mod.types, forcedGroups);
+    if (mod.canonicalRuntimeRecGroup) {
+      const { start, end } = mod.canonicalRuntimeRecGroup;
+      const encodedGroup = recGroups.find(([groupStart, groupEnd]) => groupStart === start);
+      if (!encodedGroup || encodedGroup[1] !== end) {
+        throw new Error(
+          `canonical runtime rec-group was merged with an adjacent type ` +
+            `(expected ${start}..${end}, emitted ${encodedGroup ? `${encodedGroup[0]}..${encodedGroup[1]}` : "missing"})`,
+        );
+      }
+    }
     enc.section(SECTION.type, (s) => {
       s.u32(recGroups.length);
       for (const [start, end] of recGroups) {

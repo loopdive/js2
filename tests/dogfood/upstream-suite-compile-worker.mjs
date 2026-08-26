@@ -1,15 +1,25 @@
 import { performance } from "node:perf_hooks";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
-import { compile, compileProject } from "../../src/index.ts";
+import { compile, compileProject, instantiateLinkedProject } from "../../src/index.ts";
 import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
 import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.ts";
+import {
+  configuredUpstreamTestTimeoutMs,
+  runSequentialUpstreamTests,
+  signalWorkerCompileComplete,
+} from "./upstream-suite-worker-protocol.mjs";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
 
-function emit(value) {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
+function emit(value, exitCode = 0) {
+  // Every invocation of this worker produces exactly one terminal result.
+  // Write it synchronously before exiting so abandoned upstream timers,
+  // streams, or scheduler handles cannot keep the disposable child alive and
+  // turn a completed test result into an outer worker timeout.
+  writeFileSync(process.stdout.fd, `${JSON.stringify(value)}\n`);
+  process.exit(exitCode);
 }
 
 function errorText(error, instance) {
@@ -191,6 +201,7 @@ async function main() {
       // available after the instance is handed to the runtime. Run the same
       // initializer after that handoff instead of inside WebAssembly.start.
       deferTopLevelInit: true,
+      ...(process.env.DOGFOOD_PACKAGE_CACHE_DIR ? { packageCacheDir: process.env.DOGFOOD_PACKAGE_CACHE_DIR } : {}),
     };
     result =
       mode === "source"
@@ -219,6 +230,10 @@ async function main() {
   }
 
   const durationMs = Math.round(performance.now() - started);
+  // The parent owns two independent deadlines. Signal the stage boundary
+  // before validation, instantiation, or an upstream async test can wait on
+  // runtime/host behavior and be mislabeled as a compile timeout.
+  signalWorkerCompileComplete(durationMs);
   if (!result.success || !result.binary?.length) {
     emit({
       compile: { success: false, validates: false, durationMs, binaryBytes: 0, errors: result.errors ?? [] },
@@ -236,6 +251,7 @@ async function main() {
         validates: false,
         durationMs,
         binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
         errors: [],
         validationError: errorText(error),
       },
@@ -246,7 +262,14 @@ async function main() {
 
   if (mode === "source") {
     emit({
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+      },
       wasm: null,
     });
     return;
@@ -259,7 +282,9 @@ async function main() {
         ? await loadNodeHostDependencies()
         : await loadWebHostDependencies(),
     );
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const { instance } = result.linkedModules?.length
+      ? await instantiateLinkedProject(result, imports)
+      : await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);
     try {
@@ -268,7 +293,14 @@ async function main() {
       const sourceLocation =
         process.env.DOGFOOD_SOURCE_DIAG === "1" ? sourceLocationForWasmError(error, result.sourceMap) : null;
       emit({
-        compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+        compile: {
+          success: true,
+          validates: true,
+          durationMs,
+          binaryBytes: result.binary.length,
+          linkPlan: result.linkPlan ?? null,
+          errors: [],
+        },
         wasm: {
           fatal: `module init: ${errorText(error, instance)}${sourceLocation ? `\nsource: ${sourceLocation}` : ""}`,
           count: 0,
@@ -278,85 +310,86 @@ async function main() {
       return;
     }
     const exports = wrapExports(instance, { signatures: result.exportSignatures });
+    const testTimeoutMs = configuredUpstreamTestTimeoutMs();
     let statuses;
     let errors;
     if (process.env.DOGFOOD_NAMED_TEST_EXPORTS === "1" && typeof exports.upstreamTestNames === "function") {
       const names = Array.from(await exports.upstreamTestNames(), String);
-      statuses = [];
-      errors = [];
-      for (const name of names) {
-        let value;
-        let thrown = null;
-        try {
-          value = await exports[name]();
-        } catch (error) {
-          thrown = error;
-        }
-        statuses.push(Number(value) === 1);
-        if (Number(value) === 1) errors.push("");
-        else if (thrown) errors.push(errorText(thrown, instance));
-        else {
+      ({ statuses, errors } = await runSequentialUpstreamTests({
+        ids: names,
+        invoke: (name) => exports[name](),
+        timeoutMs: testTimeoutMs,
+        thrownText: (error) => errorText(error, instance),
+        failureText: () => {
           try {
-            errors.push(String(exports.__react_last_error?.() ?? exports.__last_error?.() ?? ""));
+            return String(exports.__react_last_error?.() ?? exports.__last_error?.() ?? "");
           } catch {
-            errors.push("");
+            return "";
           }
-        }
-      }
+        },
+      }));
     } else if (typeof exports.runUpstreamTest === "function") {
       // Run one callback at a time so Promise-returning upstream tests can be
       // awaited without putting the whole synchronous suite behind one async
       // state machine. This keeps the Wasm/native contract aligned while
       // preserving the original fast path for synchronous callbacks.
       const count = Number(await exports.upstreamTestCount());
-      statuses = [];
-      errors = [];
-      for (let index = 0; index < count; index++) {
-        let value;
-        let thrown = null;
-        try {
-          value = await exports.runUpstreamTest(index);
-        } catch (error) {
-          thrown = error;
-        }
-        statuses.push(Number(value) === 1);
-        if (Number(value) === 1) errors.push("");
-        else if (thrown) errors.push(errorText(thrown, instance));
-        else {
+      ({ statuses, errors } = await runSequentialUpstreamTests({
+        ids: Array.from({ length: count }, (_, index) => index),
+        invoke: (index) => exports.runUpstreamTest(index),
+        timeoutMs: testTimeoutMs,
+        thrownText: (error) => errorText(error, instance),
+        failureText: (index) => {
           try {
-            errors.push(String(exports.upstreamTestErrors()[index] ?? ""));
+            return String(exports.upstreamTestErrors()[index] ?? "");
           } catch {
-            errors.push("");
+            return "";
           }
-        }
-      }
+        },
+      }));
     } else {
       statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
       errors = Array.from(exports.upstreamTestErrors(), String);
     }
     await exports.cleanupUpstreamTestEnvironment?.();
     emit({
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+      },
       wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },
     });
   } catch (error) {
     emit({
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+      },
       wasm: { fatal: errorText(error), count: 0, statuses: [] },
     });
   }
 }
 
 main().catch((error) => {
-  emit({
-    compile: {
-      success: false,
-      validates: false,
-      durationMs: 0,
-      binaryBytes: 0,
-      errors: [{ message: errorText(error) }],
+  emit(
+    {
+      compile: {
+        success: false,
+        validates: false,
+        durationMs: 0,
+        binaryBytes: 0,
+        errors: [{ message: errorText(error) }],
+      },
+      wasm: null,
     },
-    wasm: null,
-  });
-  process.exitCode = 1;
+    1,
+  );
 });

@@ -64,11 +64,16 @@ function calleeTypeIdx(ctx: CodegenContext, calleeIdx: number): number | undefin
 }
 
 /** Mirror of the legacy return-type compatibility check (control-flow.ts). */
-function resultsMatchCaller(calleeResults: ValType[], caller: CallerSig): boolean {
+function resultsMatchCaller(ctx: CodegenContext, calleeResults: ValType[], caller: CallerSig): boolean {
   if (caller.returnType === null) return calleeResults.length === 0;
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = caller.returnType;
+  // Wasmtime 47 can corrupt a WasmGC value returned through an externref
+  // `return_call`. Preserve an ordinary call + return for host-free targets
+  // that execute in Wasmtime, without disabling JS-host proper tail calls.
+  // Keep this guard in sync with both legacy checks in control-flow.ts.
+  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
   if (calleeRet.kind === callerRet.kind) return true;
   // ref/ref_null are compatible for return purposes.
   if (
@@ -87,14 +92,14 @@ function callIsTailEligible(ctx: CodegenContext, instr: Instr, caller: CallerSig
     const ft = funcTypeOf(ctx, tIdx);
     if (!ft) return false;
     if (ft.params.length !== caller.paramCount) return false;
-    return resultsMatchCaller(ft.results, caller);
+    return resultsMatchCaller(ctx, ft.results, caller);
   }
   if (instr.op === "call_ref") {
     if (instr.typeIdx === undefined) return false;
     const ft = funcTypeOf(ctx, instr.typeIdx);
     if (!ft) return false;
     if (ft.params.length !== caller.paramCount) return false;
-    return resultsMatchCaller(ft.results, caller);
+    return resultsMatchCaller(ctx, ft.results, caller);
   }
   return false;
 }

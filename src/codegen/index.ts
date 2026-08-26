@@ -11,7 +11,13 @@ import {
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
+import {
+  collectIrFnctorArgumentProjectionsForPlanning,
+  makeIrFnctorArgumentProjectionAuthority,
+  makeIrFnctorAdmissionResolver,
+  makeIrFnctorPropagationAdmissionResolver,
+  type IrFnctorArgumentProjectionRoute,
+} from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -486,7 +492,11 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
-import { irNativeNumberToFixedAvailable, irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462/#4576
+import {
+  emitNativeNumberFormat,
+  irNativeNumberToFixedAvailable,
+  irNativeNumberToStringAvailable,
+} from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
@@ -2557,6 +2567,8 @@ function planIrOverlay(
     readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
     /** Transaction B2 is single-source only; Transaction C owns graph composition. */
     readonly enableCountedStringAppendProof?: boolean;
+    /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
+    readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
@@ -2583,6 +2595,17 @@ function planIrOverlay(
       error,
     );
   }
+  const fnctorArgumentProjections =
+    !options.fnctorArgumentProjectionRoute || (ctx.fnctorEscapeGate?.approved.size ?? 0) === 0
+      ? []
+      : collectIrFnctorArgumentProjectionsForPlanning(
+          ctx,
+          ast.checker,
+          identityContext,
+          ast.sourceFile,
+          identityMaps.unitTypeMap,
+          options.fnctorArgumentProjectionRoute,
+        );
   // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS is set, request the
   // selector to track every top-level FunctionDeclaration that didn't
   // make it into `funcs` along with the rejection reason. Logged to
@@ -2808,6 +2831,12 @@ function planIrOverlay(
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
       resolveFnctorAdmission,
+      ...(fnctorArgumentProjections.length > 0
+        ? {
+            fnctorArgumentProjections,
+            fnctorArgumentProjectionAuthority: makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker),
+          }
+        : {}),
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,
@@ -3532,6 +3561,7 @@ function planMultiIrOverlaySource(
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
+  fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3543,6 +3573,7 @@ function planMultiIrOverlaySource(
   return planIrOverlay(ctx, sourceAst, identityContext, {
     resolveModuleBindings: false,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
+    ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
   });
 }
 
@@ -3676,7 +3707,12 @@ function compileMultiIrOverlaySource(
   early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
 ): void {
   const plan =
-    early?.plan ?? planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions);
+    early?.plan ??
+    planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions, {
+      experimentalIR: true,
+      postLegacyPhysicalReservation: true,
+      irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+    });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
@@ -4426,6 +4462,43 @@ export interface GeneratedModule extends GeneratedCodegenModule {
   moduleInitPlanning?: IrModuleInitPlanningEvidence;
 }
 
+const SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS = [
+  "number_toString",
+  "number_toString_radix",
+  "number_toFixed",
+  "number_toPrecision",
+  "number_toExponential",
+] as const;
+
+/**
+ * Publish the compiler-owned number-format ABI for `js2wasm:runtime`.
+ *
+ * These are the raw `(f64[, f64]) -> externref` helpers, rather than wrapper
+ * functions returning a source-level string. The exact signatures are the
+ * same ones consumers import, and the native-string rec group is retained by
+ * the normal #2527 metadata/emit path so the returned GC strings canonicalize
+ * across the shared store.
+ */
+function emitSharedRuntimeProviderExports(ctx: CodegenContext): void {
+  if (!ctx.runtimeProvider) return;
+  if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+    throw new Error("the js2wasm:runtime provider requires standalone/WASI native strings");
+  }
+
+  emitNativeNumberFormat(ctx, new Set(SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS));
+  for (const name of SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS) {
+    const funcIdx = ctx.funcMap.get(name);
+    const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+    if (funcIdx === undefined || !func || func.name !== name) {
+      throw new Error(`shared runtime provider failed to materialize ${name}`);
+    }
+    func.exported = true;
+    if (!ctx.mod.exports.some((entry) => entry.name === name && entry.desc.kind === "func")) {
+      exportFunc(ctx.mod, name, funcIdx);
+    }
+  }
+}
+
 export function generateModule(
   ast: TypedAST,
   options?: CodegenOptions,
@@ -5123,7 +5196,15 @@ export function generateModule(
       // planning code verbatim (typeMap → selection → STRICT_IR_REASONS →
       // classShapes → overrideMap → safeSelection → new.target gate).
       const plan =
-        irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
+        irPlan ??
+        planIrOverlay(ctx, ast, irPlanningIdentityContext!, {
+          enableCountedStringAppendProof: true,
+          fnctorArgumentProjectionRoute: {
+            experimentalIR: true,
+            postLegacyPhysicalReservation: true,
+            irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+          },
+        });
       const { classShapes, overrideMap } = plan;
       const safeSelection = preparedSelection ?? finalizePreparedIrSelection(ctx, ast.sourceFile, plan);
       const report = completePreparedIrIntegration({
@@ -5931,6 +6012,11 @@ export function generateModule(
     // Additive + before dead-elim (which remaps declaredFuncRefs).
     collectDeclaredFuncRefs(ctx, { additive: true });
 
+    // #2527 — publish compiler-owned helpers only for the dedicated runtime
+    // provider build, before DCE so their exports keep the full dependency
+    // closure alive and all type references are remapped together.
+    emitSharedRuntimeProviderExports(ctx);
+
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
@@ -6416,6 +6502,35 @@ function supportsHostClassBridgeParam(type: ValType): boolean {
   return type.kind === "externref" || type.kind === "ref_extern";
 }
 
+/**
+ * Return whether a host-visible class bridge will need to box a numeric
+ * result. The bridge bodies below have an `(externref, ...externref) ->
+ * externref` ABI, so every numeric class method/accessor result must go through
+ * `__box_number`. Keep this scan ahead of bridge entry collection: adding the
+ * union imports shifts defined-function indices, and collecting `funcIdx`
+ * values before that shift would make the emitted bridge call the wrong
+ * function.
+ */
+function classBridgeNeedsNumberBox(ctx: CodegenContext): boolean {
+  const numeric = new Set(["f64", "f32", "i32", "i64"]);
+  for (const [structName] of ctx.structFields) {
+    if (isSyntheticStructName(structName)) continue;
+    for (const key of ctx.hostDynamicClassMethodNames) {
+      for (const fullName of [`${structName}_${key}`, `${structName}_get_${key}`]) {
+        if (!ctx.classMethodSet.has(fullName) && !ctx.classAccessorSet.has(fullName)) continue;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+        if (methodIdx === undefined) continue;
+        const method = definedFuncAt(ctx, methodIdx);
+        const methodType = method === undefined ? undefined : ctx.mod.types[method.typeIdx];
+        const resultType =
+          methodType && methodType.kind === "func" && methodType.results.length > 0 ? methodType.results[0] : undefined;
+        if (resultType !== undefined && numeric.has(resultType.kind)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function emitIteratorMethodExport(ctx: CodegenContext): void {
   // The iterator protocol and the host-side dynamic class-member bridge share
   // the same `(externref) -> externref` dispatcher shape.  Keep the old
@@ -6447,6 +6562,13 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, null);
+  }
+  // Numeric class methods/accessors return a Wasm primitive but the dynamic
+  // host bridge must return externref. Ensure the boxing helper exists before
+  // the bridge entry loop captures any function indices; addUnionImports owns
+  // the required index shift and is idempotent with the rest-parameter path.
+  if (classBridgeNeedsNumberBox(ctx)) {
+    addUnionImports(ctx);
   }
   // A host dynamic call supplies externrefs.  A class bridge may therefore
   // only target methods whose formal arguments are already externref-shaped;
@@ -8409,6 +8531,34 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       // is registered under the synthetic name "default".
       targetName = "default";
     }
+    // A separately linked package can publish a declaration-only function that
+    // has no local body to seed `funcMap` (notably a default export re-exposed
+    // through a generated facade). Materialize that one narrow boundary as a
+    // real Wasm import from the checker signature. Ordinary ambient globals and
+    // unsupported module values never enter this path because they have no
+    // linked-package manifest entry.
+    const linked =
+      (targetName && ctx.linkedPackageBindings.get(targetName)) ?? ctx.linkedPackageBindings.get(localName);
+    if (linked && (!targetName || ctx.funcMap.get(targetName) === undefined)) {
+      const type = ctx.checker.getTypeAtLocation(localId);
+      const signature = ctx.checker.getSignaturesOfType(type, ts.SignatureKind.Call)[0];
+      if (signature) {
+        const params = signature.parameters.map((parameter) =>
+          mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(parameter, localId), ctx.checker, ctx.fast),
+        );
+        const returnType = ctx.checker.getReturnTypeOfSignature(signature);
+        const results = isVoidType(returnType) ? [] : [mapTsTypeToWasm(returnType, ctx.checker, ctx.fast)];
+        const typeIdx = addFuncType(ctx, params, results, `${targetName ?? localName}_linked_type`);
+        const imported = addImport(ctx, linked.module, linked.field, { kind: "func", typeIdx });
+        if (imported) {
+          const importedIndex = ctx.funcMap.get(linked.field);
+          if (importedIndex !== undefined) {
+            if (targetName) ctx.funcMap.set(targetName, importedIndex);
+            ctx.funcMap.set(localName, importedIndex);
+          }
+        }
+      }
+    }
     if (!targetName || targetName === localName) return;
     // Imported class bindings need the same canonical class identity as the
     // exporting module.  `classExprNameMap` normally aliases a variable-bound
@@ -9531,6 +9681,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
     // Additive + before dead-elim (which remaps declaredFuncRefs).
     collectDeclaredFuncRefs(ctx, { additive: true });
+
+    // #2527 — same provider publication point as the single-source pipeline.
+    emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI

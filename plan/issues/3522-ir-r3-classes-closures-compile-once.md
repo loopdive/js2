@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-21
+updated: 2026-08-26
 assignee: ttraenkler/fable-lead
 branch: claude/ir-3522-static-nested-family
 priority: critical
@@ -3050,3 +3050,394 @@ the previous slice), static-ONLY class expressions (the binding-proof residual
 above), computed member names, static fields with their class-definition-time
 ordered contract, nested heritage, and then top-level class expressions with
 their module-global binding ABI.
+
+### Implementation plan — nested instance-field direct calls (2026-08-26)
+
+This plan owns the first remaining boundary named above: an initialized
+instance field of a bounded nested class calling one exact same-source
+top-level function. It does not admit method calls, constructors, tagged
+templates, imported targets, arbitrary dynamic calls, or static-field
+definition evaluation.
+
+The current failure has two independent causes, and neither is a lowering
+deficiency:
+
+1. **The explicit-constructor inventory owner is wrong.** A bounded nested
+   explicit constructor is already promoted to a terminal class-member unit,
+   but the field support records still inherit the containing function as their
+   terminal owner. The corresponding implicit initialized constructor already
+   self-owns its fields correctly. For both forms the field's lexical owner is
+   the class; its execution owner must be the exact constructor terminal, while
+   that constructor retains the containing function in
+   **containingTerminalOwnerId**.
+2. **The direct-call collector is ownership-blind.**
+   **collectIrDirectCallLoweringPlans** recursively walks whichever root it is
+   given and assigns every nested call to the supplied owner. The overlay can
+   therefore record the same field call once as an outer-function call and
+   again as a constructor call. Constructor integration rescans the exact
+   initializer and correctly throws **selection-preparation-mismatch** rather
+   than accept the conflicting owners.
+
+The exact seams already exist. **requireIrPlanningOwnerUnitId** resolves an AST
+site through its nearest scanner-indexed declaration to the authoritative R0
+terminal owner. **collectLocalCallEdgesByIdentity** already treats property
+initializers as ownership boundaries and already drives the combined R2/R3
+free-function plus class-member fixed point. Once inventory ownership is
+correct, it naturally records constructor → callee rather than outer function
+→ callee.
+
+Do not generalize **IrIdentitySelection.localCallees** in this work. That map is
+deliberately the function-only legacy projection, and its validator requires
+both endpoints to be function units. The later identity call-edge collector is
+the authoritative mixed-owner graph. Its conservative function-only
+over-approximation across a nested class is harmless because nested ordinary
+class atomicity already withdraws the enclosing owner with the class.
+
+Land the plan amendment and the following four implementation checkpoints as
+separate ready PRs. Each implementation checkpoint is rebased from live
+**main** only after its predecessor merges. No checkpoint may be stacked
+behind an unpublished predecessor.
+
+#### F1. Correct existing explicit-constructor field ownership
+
+Limit production changes to:
+
+- **src/ir/identity.ts**.
+
+Focused test ownership:
+
+- **tests/issue-3520-ir-unit-identity.test.ts**;
+- **tests/issue-3520-planning-owner.test.ts**; and
+- only the exact identity-edge assertion needed in
+  **tests/issue-3520-ir-first-identity.test.ts**.
+
+For an already-bounded nested class, choose **explicitConstructor.id** as the
+instance-field support terminal owner when that exact record is terminal.
+Otherwise retain the current inherited owner. This is an identity correction,
+not an admission change:
+
+- the constructor remains terminal and self-owned;
+- the constructor's **containingTerminalOwnerId** remains the outer executable;
+- the field's **lexicalOwnerId** remains the exact class ID;
+- the field's **terminalOwnerId** becomes that exact constructor ID; and
+- an unsupported nested constructor remains support-owned by the outer
+  executable exactly as before.
+
+Prove explicit and implicit initialized constructors side by side, with and
+without an enclosing function, and mutate one owner/source/class/declaration
+join at a time. The runtime route, selector population, emitted bytes, and
+current call-bearing-field rejection must remain unchanged. No selector,
+direct-call, Program ABI, component, or lowering file belongs in F1.
+
+#### F2. Make source direct-call collection exact-owner-aware
+
+Limit production changes to:
+
+- **src/ir/ast-lowering-plans.ts**;
+- **src/codegen/ir-overlay-identity.ts**; and
+- **src/ir/integration.ts**;
+- **src/codegen/index.ts**, to thread the already-built identity resolver to
+  every identity-aware projection/reconciliation call; and
+- **src/ir/imported-functions.ts** only if the existing resolver interface
+  needs a narrowly shared certification method rather than a new resolver.
+
+Focused test ownership:
+
+- **tests/issue-3520-lowering-plan-identity.test.ts**; and
+- **tests/issue-3522-ir-nested-class-ownership.test.ts**.
+
+Add a distinctly named identity-aware collector rather than an optional
+best-effort mode. For each candidate call, require:
+
+- the exact call AST belongs to the supplied source;
+- **requireIrPlanningOwnerUnitId(identityContext, call)** equals the requested
+  owner;
+- that owner is an exact active terminal record;
+- an **IrIdentityImportedFunctionResolver**, or an equivalently exact AST-keyed
+  certification retained from it, resolves the call's identifier through
+  **resolveTopLevelFunctionValueTarget(call.expression)**;
+- the resolved declaration, source, source-qualified unit ID, binding, and
+  compatibility name all equal the retained callable target; and
+- the retained signature is equal by the canonical closure-signature
+  comparator.
+
+The checker-backed/AST-keyed result is the authority. The current
+**targetsByLegacyName** map may remain only as a compatibility projection after
+that exact target has been certified; it must never choose or authenticate the
+target. A lexical shadow, imported binding, reassigned declaration, or
+same-spelled declaration from another source must fail even if the legacy map
+contains an otherwise compatible row. Thread the one resolver already created
+for the source through overlay projection and integration reconciliation; do
+not reconstruct checker authority from a name, span, or owner context.
+
+Use that collector in both overlay projection and integration reconciliation.
+An outer traversal must skip a call whose exact terminal owner is a nested
+constructor; the constructor traversal retains it. A nested support callable
+whose inventory terminal owner legitimately remains the containing function
+continues to belong to that function.
+
+Do not rely on **Map.set** to resolve a collision. A second producer for one
+AST call must either revalidate and reuse the one authenticated retained row or
+fail before replacing it; a different owner, binding, name, signature, source,
+or AST object always fails closed. Preserve the context-free collector for
+isolated stdlib-selfhost and linear callers until those routes supply the same
+authoritative identity context. Their behavior must remain byte-identical.
+
+F2 remains behavior-neutral because the field-call gate is still closed. Use
+an already-admitted nested method calling a top-level function as the positive
+class-owner control. Add outer-root, nested-function, implicit-constructor,
+explicit-constructor, stale AST, copied SourceFile, wrong owner, same-spelled
+foreign target, binding, name, and signature mutations. **from-ast.ts** needs
+no change: it already consumes an exact AST-site plan and verifies its owner
+before emitting the symbolic target.
+
+#### F3. Retain dormant source-qualified field-call evidence
+
+Build the proof before selection and keep production behavior closed. Prefer a
+narrow new module:
+
+- **src/ir/class-field-call-planning.ts**.
+
+Expected integration ownership:
+
+- **src/ir/class-accessor-safety.ts**, for a syntax-only inventory-candidate
+  predicate that is not a selector admission predicate;
+- **src/ir/identity.ts**, to mint the exact constructor and field-support
+  identities for that candidate while leaving it unclaimed;
+- **src/ir/select-identity.ts**, only for the immutable proof/candidate
+  input/output and exact typed fallback normalization described below;
+- **src/codegen/ir-overlay-identity.ts**;
+- **src/codegen/index.ts**; and
+- **src/ir/imported-functions.ts** only if the existing exact resolver needs a
+  narrowly shared method.
+
+Focused test ownership:
+
+- new
+  **tests/issue-3522-nested-class-field-call-planning.test.ts**; and
+- resolver tests only if the resolver API changes.
+
+F3 first splits identity candidacy from the current lowering/admission
+predicate. Add one explicitly named syntax-only candidate for the narrow bare
+field-call shape. Only the inventory scanner consumes it: a call-bearing nested
+class receives the same constructor terminal, containing-owner edge,
+field-support unit, and constructor-owned support edge that an
+already-bounded initialized class receives. The existing
+**isBoundedPreparedNestedOrdinaryClass** remains unchanged and remains the
+selector/preparation gate, so this new identity population is typed but
+unclaimed. No other predicate consumer may switch to the candidate in F3.
+
+Retain an immutable, proof-independent inventory-candidate marker for that
+exact class, constructor, source, and inventory snapshot. It exists for every
+syntax candidate even when proof collection is disabled, missing, or invalid.
+**select-identity.ts** may consume this marker only to normalize the
+still-unclaimed implicit or explicit constructor and body-member terminals to the promised typed
+**class-member-unsupported@select** fallback/outcome. It must not turn the
+candidate into a claim or preparation input. The instance-field initializer
+remains a constructor-owned support unit and therefore has no independent
+terminal outcome.
+
+This ordering is load-bearing. Building the exact field-call proof before the
+constructor and field support identities exist would force it to invent an ID
+or borrow the outer owner; waiting until F4 to mint those identities would make
+selection depend circularly on evidence that cannot yet be constructed.
+
+The proof is keyed by the exact initializer **CallExpression** and retains:
+
+- exact source file and source ID;
+- exact class, field, constructor, call, and callee declaration objects;
+- class ID, field-support unit ID, constructor terminal ID, containing terminal
+  ID, and callee unit ID;
+- the exact bare-identifier call edge;
+- the target's exact source-unit callable reference and stable signature; and
+- a frozen argument/arity projection for the bounded family.
+
+Reuse
+**IrIdentityImportedFunctionResolver.resolveTopLevelFunctionValueTarget**.
+That resolver already proves a unique, non-reassigned, same-file top-level
+function and returns its exact source-qualified unit ID. Do not create a
+parallel name resolver, use the checker-free call graph as admission authority,
+or fall back to a suffix, span, display name, or legacy map. The checker-free
+graph remains component-closure evidence only.
+
+The forward and reverse joins are mandatory: AST call → field support →
+constructor terminal → class/source, and target identifier → exact declaration
+→ exact callee unit/source. A copied AST, rebuilt inventory, wrong source,
+wrong field or constructor, ambiguous/reassigned/overloaded target, stale
+signature, optional/spread/generic call, or changed argument population
+invalidates the proof.
+
+Retain the proof as a separate optional immutable sidecar keyed back to the
+proof-independent inventory-candidate marker; never make the marker's
+existence depend on proof success. Retain both on the identity/overlay plan as
+source-qualified evidence. The newly inventoried constructor/member terminal
+rows are deliberate: while admission is inactive they must each reconcile to the exact typed
+**class-member-unsupported@select** disposition/outcome required by the
+existing terminal-outcome contract. Do not silently omit those terminals or
+leave them without an outcome. Field-initializer support rows instead reconcile
+through their constructor terminal exactly as the inventory contract requires.
+
+F3 must not change claims, prepared candidates, runtime output, or emitted
+bytes. Its new typed inventory denominator and matching terminal/fallback rows
+are expected and must be pinned explicitly. Proof-enabled versus proof-disabled
+A/B controls compare after constructing the same candidate inventory and must
+have identical claims, terminal outcomes, preparation, runtime, and bytes;
+only the immutable dormant proof sidecar may differ. A comparison against the
+pre-F3 implementation may therefore differ only by those pinned candidate
+inventory and typed fallback/outcome rows, never by an admitted body.
+
+F3 shares the identity-selection and direct-call sidecar seam with #3521.
+Rebase it onto the exact landed #3521 L1/L3 API and use that API's ownership and
+copy-on-write rules. Do not land a competing resolver or mutable sidecar.
+
+#### F4. Activate only the exact prepared field-call family
+
+Primary production ownership:
+
+- **src/ir/class-accessor-safety.ts**;
+- **src/ir/identity.ts**;
+- **src/ir/select-identity.ts**;
+- **src/codegen/index.ts**;
+- **src/codegen/ir-overlay-identity.ts**;
+- **src/codegen/ir-class-shapes.ts**;
+- **src/codegen/ir-prepared-free-functions.ts**;
+- **src/codegen/class-bodies.ts**;
+- **src/codegen/ir-prepared-nested-executable-syntax.ts**;
+- **src/ir/module-bindings.ts**; and
+- **src/ir/from-ast.ts**, for the exact admitted immutable class-expression
+  binding at the final lowering boundary.
+
+Audit, but do not edit without a demonstrated shared-API need:
+
+- **src/codegen/ir-plain-implicit-constructors.ts**;
+- **src/ir/prepared-component-dependencies.ts**.
+
+Separate inventory candidacy from selector admission. A class may receive the
+exact constructor/field identities required to validate an F3 proof in F3, but
+it becomes claimable only here and only when every call-bearing field carries a
+current exact proof. Replace only the selector/preparation uses of the strict
+predicate with a proof-consuming admission decision; keep syntax-only
+inventory candidacy distinct.
+Never make arbitrary calls admissible by deleting **CallExpression** from
+**boundedPreparedInstanceFieldInitializer**.
+
+F3 may retain dormant proof and inventory candidacy, but it may not manufacture
+admission. In F4, **codegen/index.ts** validates the complete proof and computes
+one immutable, proof-derived admitted-class marker before local class-expression
+resolution and identity selection. The overlay plan carries that marker without
+recomputation into **ir-class-shapes**, **module-bindings**, and the selector.
+For `const C = class { ... }`, project one exact marker-aware binding
+identity/name into the class-shape sidecar, carry that same identity through
+local-class resolution, and require it again at the **from-ast** lowering site.
+No consumer may call
+**boundedPreparedNestedOrdinaryClassBindingName** as an independent admission
+decision for that candidate. Thread that same marker through selection,
+**ir-prepared-free-functions**, **class-bodies**,
+**ir-prepared-nested-executable-syntax**, and **module-bindings**. Those
+consumers must not independently re-run, approximate, or widen the syntax
+predicate: they either consume the exact admitted marker for the same class,
+source, constructor, and proof snapshot or fail closed. The
+plain-implicit-constructor and final dependency routes remain audit controls
+unless a test demonstrates that this immutable marker must cross one of their
+existing boundaries. The final combined prepared fixed point must
+revalidate every admitted marker against surviving constructor/callee units and
+withdraw the whole class if any dependency or proof row disappeared; the
+preselection marker is evidence, never a bypass around final reconciliation.
+
+The first positive family is deliberately narrow:
+
+- one nested ordinary class declaration or immutable class expression;
+- no heritage, static field, computed field name, decorator, nested executable,
+  **super**, construction, member call, tagged template, import, or
+  cross-source target;
+- a fixed-arity bare call to one unique non-reassigned same-source top-level
+  function;
+- no optional, spread, generic, or dynamic argument edge;
+- exact stable parameter/return types already supported by the prepared
+  constructor field lowerer; and
+- caller, constructor, callee, and enclosing owner all surviving the existing
+  combined R2/R3 candidate fixed point.
+
+The existing pipeline remains authoritative after admission:
+**collectIrClassInstanceInitializers** preserves source order; constructor
+integration binds each exact initializer to the constructor owner; direct calls
+lower through the retained **IrFuncRef**; final IR calls become Program ABI unit
+references; and post-pass component derivation closes over the final symbolic
+edge. Do not add a new lowering opcode, eager legacy body, provider
+publication, sealing exemption, or compile-twice retry.
+
+Positive runtime/Wasm coverage runs on both **gc** and **standalone**:
+
+- implicit nested declaration with **p = seed(40)**;
+- explicit constructor proving field initialization precedes constructor-body
+  reads;
+- immutable nested class expression;
+- two source-ordered call-bearing fields;
+- inlining disabled, with one exact constructor call target visible in WAT;
+- inlining enabled, where optimization may remove the call but semantic and
+  final component evidence remains valid;
+- the already-admitted nested-method call from F2; and
+- an unchanged top-level initialized-field call.
+
+Poison every expected direct body. Require exact outcomes for the outer owner,
+constructor, members, and callee; one prepared component before a legitimate
+optimizer removes an edge; zero legacy bodies for the positive component; no
+post-claim errors; valid Wasm; node/direct/IR runtime equality; and exact
+evaluation order.
+
+Negative source controls remain direct without an invariant:
+
+- unpreparable, unknown, imported, cross-source, duplicate, overloaded,
+  reassigned, or same-spelled foreign target;
+- lexical shadowing or enclosing-frame capture;
+- optional, generic, or spread call;
+- member call such as **Math.floor(...)**;
+- **new**, tagged template, nested executable, or **super**;
+- static field, heritage, dynamic computed field, or mutable class-expression
+  binding; and
+- a callee removed by the final prepared fixed point.
+
+One-fact fail-closed mutations cover:
+
+- field owner changed from constructor to outer;
+- field/class/source/constructor ID or AST object replaced;
+- constructor no longer self-owned or its containing owner changed;
+- call plan owner changed, missing, duplicated, or attached to a copied AST;
+- same-spelled target UnitId, binding, compatibility name, or signature changed;
+- source file/source ID mismatch;
+- selected callee removed from the prepared denominator;
+- final symbolic call missing its Program ABI unit binding; and
+- component evidence attributing the call to the outer function.
+
+The unpreparable-callee control must prove successful direct execution, exact
+direct binary/WAT parity, a typed Unsupported outcome, and poison evidence that
+the direct constructor emitter remained live. Successful execution alone is
+not acceptance evidence.
+
+#### Dependencies, conflicts, and landing gates
+
+This issue formally depends on #3521. The docs-only plan amendment is unblocked
+and may land now; it authorizes no runtime replay and no R3 completion claim.
+F1 is technically disjoint and behavior-neutral. F2 and F3 share the
+source-qualified direct-call map with #3521's active L1/L3 work, so they wait
+for that API to land or rebase onto it exactly. F4 remains HOLD until the shared
+#3521 evidence API has one owner and F1–F3 are merged.
+
+#4260's prepared provider transaction is disjoint provided this work does not
+edit Program ABI session/provider/import/type planning or component sealing.
+Do not solve field calls by moving provider publication, weakening atomic
+sealing, or retaining dead imports.
+
+For every implementation checkpoint run its focused suites, the full existing
+#3522 class-family matrix, TypeScript 7 and 5, Prettier/Biome, IR
+layering/dialect/fallback/IR-only/adoption gates, cross-backend differential
+coverage, oracle/coercion/optimization/dead-export ratchets, and LOC/function
+budgets. Measure source/function growth before adding any exact issue-scoped
+allowance; never raise a global baseline speculatively. Run
+**pnpm run check:loc-budget** again immediately before every signed commit.
+Never skip pre-commit or pre-push hooks.
+
+Every heavy command and every commit/push boundary requires a fresh finite,
+non-negative one-minute load strictly below **logical cores - 2**. Each signed
+checkpoint receives independent read-only review before push and is shepherded
+through actual merge before its successor is published.

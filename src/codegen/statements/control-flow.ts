@@ -105,9 +105,8 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = fctx.returnType;
-  // Exact kind match (we allow ref subtyping — same kind is sufficient)
+  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
   if (calleeRet.kind === callerRet.kind) return true;
-  // ref/ref_null are compatible for return purposes
   if (
     (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
     (callerRet.kind === "ref" || callerRet.kind === "ref_null")
@@ -131,6 +130,7 @@ function canTailCallRef(ctx: CodegenContext, fctx: FunctionContext, typeIdx: num
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = fctx.returnType;
+  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
   if (calleeRet.kind === callerRet.kind) return true;
   if (
     (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&

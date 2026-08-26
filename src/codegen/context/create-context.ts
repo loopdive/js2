@@ -11,6 +11,7 @@ import { createTypeOracle } from "../../checker/oracle-backend.js";
 import { UsageInference } from "../../checker/usage-inference.js";
 import { resolveCompileTargetProfile, type CompileTargetProfile } from "../../target-profile.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
+import { RUNTIME_RECGROUP_ABI_VERSION, RUNTIME_RECGROUP_TYPE_NAMES } from "../../emit/canonical-recgroup.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
 import type { ProgramAbiSession } from "../program-abi-session.js";
@@ -62,7 +63,11 @@ export function createCodegenContext(
   // both link an explicit Wasm/embedder provider. The internal node:fs lowering
   // remains WASI-specific below so existing non-WASI code generation is byte
   // neutral when the namespace is merely declared as externally provided.
-  const linkedNamespaces: ReadonlySet<string> = new Set(options?.link ?? []);
+  const linkedPackageBindings = options?.linkedPackageBindings ?? new Map();
+  const linkedNamespaces: ReadonlySet<string> = new Set([
+    ...(options?.link ?? []),
+    ...Array.from(linkedPackageBindings.values(), (binding) => binding.module),
+  ]);
   const ctx: CodegenContext = {
     mod,
     targetProfile,
@@ -348,6 +353,8 @@ export function createCodegenContext(
     nodeGlobals: options?.nodeGlobals ?? false,
     // #2783 — namespaces left as link-time imports (WASI-gated above).
     linkedNamespaces,
+    linkedPackageBindings,
+    runtimeProvider: options?.runtimeProvider ?? false,
     // #2625/#2783 — the linkable js2wasm:node-<mod> std-IO path only applies under
     // WASI; derived from `node:fs` membership in the (already WASI-gated) link set.
     linkNodeShims: targetProfile.target === "wasi" && linkedNamespaces.has("node:fs"),
@@ -470,7 +477,36 @@ export function createCodegenContext(
   getOrRegisterVecType(ctx, "f64", { kind: "f64" });
   ctx.suppressVecUsageFlag = false;
 
-  if (ctx.nativeStrings) registerNativeStringTypes(ctx);
+  if (ctx.nativeStrings) {
+    registerNativeStringTypes(ctx);
+
+    // #2527 P2a — artifacts crossing the package/runtime core-Wasm boundary
+    // carry one complete, frozen runtime GC rec group. Keep this opt-in: older
+    // provider seams (notably QuickJS runtime-eval) already share their own
+    // established type layout, and regrouping those otherwise unrelated
+    // modules changes their runtime exception/value ABI.
+    const members = RUNTIME_RECGROUP_TYPE_NAMES.map((name) => {
+      const index = ctx.mod.types.findIndex((type) => type.kind !== "rec" && type.name === name);
+      if (index < 0) throw new Error(`canonical runtime rec-group member '${name}' was not registered`);
+      return index;
+    });
+    const start = members[0]!;
+    for (let i = 0; i < members.length; i++) {
+      if (members[i] !== start + i) {
+        throw new Error(
+          `canonical runtime rec-group is not contiguous: '${RUNTIME_RECGROUP_TYPE_NAMES[i]}' ` +
+            `is type ${members[i]}, expected ${start + i}`,
+        );
+      }
+    }
+    if (options?.canonicalRuntimeTypes === true || ctx.runtimeProvider || linkedNamespaces.has("js2wasm:runtime")) {
+      ctx.mod.canonicalRuntimeRecGroup = {
+        start,
+        end: start + members.length - 1,
+        abiVersion: RUNTIME_RECGROUP_ABI_VERSION,
+      };
+    }
+  }
 
   return ctx;
 }

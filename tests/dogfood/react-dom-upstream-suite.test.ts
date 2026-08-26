@@ -1,9 +1,13 @@
 import { execFile } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+
+import { compileProject, instantiateLinkedProject } from "../../src/index.ts";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { loadReactDomUpstreamSuitePin, setupReactDomImplementation } from "./setup-react-dom-upstream-suite.mjs";
@@ -12,6 +16,7 @@ import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
 import {
   createNativeRequire,
+  buildProjectFiles,
   buildServerProjectFiles,
   installNativeHostErrorBoundary,
   isExpectedLateJsdomHostError,
@@ -230,10 +235,11 @@ describe("react-dom upstream suite", () => {
       serverSource: "exports.renderToString = function () { return '<div></div>'; };",
       tests: [test],
     });
-    expect(Object.keys(legacy).sort()).toEqual(["entry.ts", "react.ts", "scheduler.ts", "server.ts", "shared.ts"]);
-    expect(legacy["entry.ts"]).toContain('import { __serverExports } from "./server.ts";');
+    expect(Object.keys(legacy)).toContain("node_modules/react-dom-server/index.ts");
+    expect(Object.keys(legacy)).toContain("node_modules/react-dom-shared/index.ts");
+    expect(legacy["entry.ts"]).toContain('import { __serverExports } from "react-dom-server";');
     expect(legacy["entry.ts"]).toContain("export function upstreamTestCount() { return 1; }");
-    expect(legacy["server.ts"]).toContain("__serverExports");
+    expect(legacy["node_modules/react-dom-server/index.ts"]).toContain("__serverExports");
 
     const fizz = buildServerProjectFiles({
       reactSource: "exports.createElement = function () {};",
@@ -243,9 +249,52 @@ describe("react-dom upstream suite", () => {
       tests: [test],
       fizzPlatform: "node",
     });
-    expect(Object.keys(fizz).sort()).toEqual(["entry.ts", "fizz.ts", "react.ts", "scheduler.ts", "shared.ts"]);
-    expect(fizz["entry.ts"]).toContain('import { __fizzExports } from "./fizz.ts";');
+    expect(Object.keys(fizz)).toContain("node_modules/react-dom-fizz/index.ts");
+    expect(fizz["entry.ts"]).toContain('import { __fizzExports } from "react-dom-fizz";');
     expect(fizz["entry.ts"]).toContain("__REACTDOM_FIZZ__");
+  });
+
+  it("models the client implementation as cacheable npm provider packages", () => {
+    const files = buildProjectFiles({
+      reactSource: "exports.createElement = function () {};",
+      sharedSource: "exports.flushSync = function (callback) { return callback(); };",
+      clientSource: "exports.createRoot = function () {};",
+      tests: [],
+    });
+    expect(files["entry.ts"]).toContain('from "react-dom-client"');
+    expect(files["node_modules/react-dom-client/index.ts"]).toContain('from "react-dom-shared"');
+    expect(files["node_modules/react-dom-client/package.json"]).toContain('"exports":"./index.ts"');
+    expect(Object.keys(files).some((name) => /^react\.ts$|^client\.ts$/.test(name))).toBe(false);
+  });
+
+  it("compiles generated React DOM providers once across test entries", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-react-dom-packages-"));
+    const cacheDir = join(root, ".cache");
+    const files = buildProjectFiles({
+      reactSource: "exports.createElement = function () { return 1; };",
+      sharedSource: "exports.flushSync = function (callback) { return callback(); };",
+      clientSource: "exports.createRoot = function () { return 1; };",
+      tests: [],
+    });
+    for (const [relativePath, source] of Object.entries(files)) {
+      const target = join(root, relativePath);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, source);
+    }
+    const options = { allowJs: true, emitWat: false, skipSemanticDiagnostics: true, packageCacheDir: cacheDir };
+    const first = await compileProject(join(root, "entry.ts"), options);
+    expect(first.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 4, cachedProviders: 0 });
+    expect(first.linkedModules?.map((artifact) => artifact.packageName).sort()).toEqual([
+      "react",
+      "react-dom-client",
+      "react-dom-shared",
+      "scheduler",
+    ]);
+    const linked = await instantiateLinkedProject(first);
+    expect(linked.instance.exports.upstreamTestCount?.()).toBe(0);
+
+    const second = await compileProject(join(root, "entry.ts"), options);
+    expect(second.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 0, cachedProviders: 4 });
   });
 
   // The pinned React checkout is a generated, network-backed fixture. Keep the

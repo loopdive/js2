@@ -43,6 +43,16 @@ export interface ExternClassMeta {
 
 export interface WasmModule {
   types: TypeDef[];
+  /**
+   * A retained, explicitly encoded recursive type group used by separately
+   * instantiated core-Wasm modules (#2527). The range addresses the flat
+   * `types` table and is updated by any pass that compacts that table.
+   */
+  canonicalRuntimeRecGroup?: {
+    start: number;
+    end: number;
+    abiVersion: number;
+  };
   imports: Import[];
   functions: WasmFunction[];
   exports: WasmExport[];
