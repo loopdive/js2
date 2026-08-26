@@ -62,6 +62,8 @@ import {
   buildArgumentsToPrimitiveArm,
   buildArgumentsLengthAbsentMiss,
   buildArgumentsLengthAbsentTail,
+  ARGUMENTS_LENGTH_OVERRIDE_FIELD,
+  ARGUMENTS_LENGTH_VALUE_FIELD,
   reserveArgumentsLengthBrand,
 } from "./arguments-length-brand.js"; // (#4658/#4491)
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
@@ -10326,6 +10328,44 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                 // fold on a vec-typed receiver still reads the field; that
                 // residual is pinned in tests/issue-4658.test.ts.
                 ...buildArgumentsLengthAbsentMiss(ctx, 0, getMiss),
+                // An arguments object's `length` is an ordinary writable data
+                // property. It can therefore hold any JS value, unlike the
+                // physical i32 vec length used by Array-like indexing. The
+                // setter records such a value in the nominal arguments subtype
+                // and this arm returns it before the numeric fallback below.
+                ...(ctx.structMap.get("__arguments_vec") === undefined
+                  ? []
+                  : ([
+                      { op: "local.get", index: gAny },
+                      { op: "ref.test", typeIdx: ctx.structMap.get("__arguments_vec")! },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: gAny },
+                          { op: "ref.cast", typeIdx: ctx.structMap.get("__arguments_vec")! },
+                          {
+                            op: "struct.get",
+                            typeIdx: ctx.structMap.get("__arguments_vec")!,
+                            fieldIdx: ARGUMENTS_LENGTH_OVERRIDE_FIELD,
+                          },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: [
+                              { op: "local.get", index: gAny },
+                              { op: "ref.cast", typeIdx: ctx.structMap.get("__arguments_vec")! },
+                              {
+                                op: "struct.get",
+                                typeIdx: ctx.structMap.get("__arguments_vec")!,
+                                fieldIdx: ARGUMENTS_LENGTH_VALUE_FIELD,
+                              },
+                              { op: "return" },
+                            ],
+                          },
+                        ],
+                      },
+                    ] satisfies Instr[])),
                 { op: "local.get", index: gAny },
                 { op: "ref.cast", typeIdx: vecBaseIdx },
                 { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },

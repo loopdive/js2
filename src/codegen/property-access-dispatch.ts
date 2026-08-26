@@ -2621,6 +2621,32 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
   });
 }
 
+/** Emit a boxed read for standalone `IArguments.length`. */
+function emitArgumentsLengthRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+  objType: ts.Type,
+): PADispatchResult {
+  if (propName !== "length" || objType.getSymbol?.()?.name !== "IArguments") return PA_FALLTHROUGH;
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) return PA_FALLTHROUGH;
+  const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+  if (!recvType) return null;
+  if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+  addStringConstantGlobal(ctx, "length");
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "length"));
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  return { kind: "externref" };
+}
+
 export function tryLengthAndNameReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2630,10 +2656,10 @@ export function tryLengthAndNameReads(
 ): PADispatchResult {
   const derivedLength = tryEmitDerivedLengthLocal(ctx, fctx, expr, propName);
   if (derivedLength !== undefined) return derivedLength;
-
+  const argumentsLength = emitArgumentsLengthRead(ctx, fctx, expr, propName, objType);
+  if (argumentsLength !== PA_FALLTHROUGH) return argumentsLength;
   // `split(literal).length` normally enters the array-length arm below before
   // the string-derived-length dispatcher gets a chance to see the call. If an
-  // immutable literal table proves the field count is uniform, retain the
   // receiver read/trap and return that count without building a string array.
   if (
     ctx.nativeStrings &&

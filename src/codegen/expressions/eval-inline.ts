@@ -914,6 +914,19 @@ function restoreFoldedEvalLexicalScope(fctx: FunctionContext, scope: FoldedEvalL
   }
 }
 
+/** Add an inherited strict directive to a foreign direct-eval Script. */
+function inheritedStrictEvalSource(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+  directEval: boolean,
+  src: string,
+): string {
+  if (!directEval || !isStrictContext(call, ctx.inferModuleStrictArguments)) return src;
+  // Foreign eval nodes have no parent chain back to the caller. A directive is
+  // equivalent to inherited strictness and lets every nested emitter observe it.
+  return `"use strict";\n${src}`;
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -950,12 +963,12 @@ export function tryStaticEvalInline(
     src = resolveConstantString(expr.arguments[0]!, ctx.checker);
   }
   if (src === null) return undefined;
-
   // Parse the eval source as a Script with parent pointers set so the
   // nested codegen paths (which walk upward via node.parent) work.
+  const evalSource = inheritedStrictEvalSource(ctx, expr, directEval, src);
   const sf = ts.createSourceFile(
     EVAL_SOURCE_FILENAME,
-    src,
+    evalSource,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ true,
     ts.ScriptKind.JS,

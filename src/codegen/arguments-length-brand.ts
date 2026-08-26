@@ -19,12 +19,21 @@ import { addFuncType } from "./registry/types.js";
 const EXT: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 const ARGUMENTS_VEC_STRUCT = "__arguments_vec";
-const LENGTH_ABSENT_FIELD = 2;
+export const ARGUMENTS_LENGTH_ABSENT_FIELD = 2;
+const LENGTH_ABSENT_FIELD = ARGUMENTS_LENGTH_ABSENT_FIELD;
+/** The ordinary `arguments.length` value, when it has been assigned a value
+ * that is not representable by the vec's physical i32 length. */
+export const ARGUMENTS_LENGTH_VALUE_FIELD = 3;
+/** Whether `ARGUMENTS_LENGTH_VALUE_FIELD` contains the current own property. */
+export const ARGUMENTS_LENGTH_OVERRIDE_FIELD = 4;
 
 /**
  * A distinct subtype makes the arguments brand an O(1) WasmGC `ref.test`.
- * Field 2 records the only mutable exotic state required by #4658: whether
- * the configurable own `length` property has been deleted.
+ * Field 2 records the configurable-own-property tombstone required by #4658.
+ * Fields 3/4 preserve an arbitrary ordinary-object `length` assignment. The
+ * vec's field 0 remains the physical/index-domain length used by array-like
+ * operations; an arguments object's own `length` is not an Array exotic and
+ * therefore must not coerce a string assignment into that field.
  */
 export function getOrRegisterArgumentsVecType(ctx: CodegenContext, baseVecTypeIdx: number, arrTypeIdx: number): number {
   const existing = ctx.structMap.get(ARGUMENTS_VEC_STRUCT);
@@ -35,6 +44,8 @@ export function getOrRegisterArgumentsVecType(ctx: CodegenContext, baseVecTypeId
     { name: "length", type: { kind: "i32" } as ValType, mutable: true },
     { name: "data", type: { kind: "ref", typeIdx: arrTypeIdx } as ValType, mutable: true },
     { name: "lengthAbsent", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "lengthValue", type: EXT, mutable: true },
+    { name: "lengthOverride", type: { kind: "i32" } as ValType, mutable: true },
   ];
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: ARGUMENTS_VEC_STRUCT, superTypeIdx: baseVecTypeIdx, fields });
@@ -301,6 +312,9 @@ export function fillArgumentsLengthBrand(
           ...castArguments(),
           { op: "i32.const", value: 1 },
           { op: "struct.set", typeIdx: argumentsTypeIdx, fieldIdx: LENGTH_ABSENT_FIELD },
+          ...castArguments(),
+          { op: "i32.const", value: 0 },
+          { op: "struct.set", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_LENGTH_OVERRIDE_FIELD },
           { op: "i32.const", value: 1 },
         ],
   );
