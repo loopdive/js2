@@ -917,3 +917,58 @@ emission counts, support-unit counts, startup invocation count for every mode,
 and before/after proof that no legacy slot was created or patched for a
 Prepared module. A green numeric initializer with no statics, TDZ, aliases, or
 startup-mode matrix does not close R4.
+
+## 2026-08-26 scalar-assignment checkpoint publication record
+
+Publish the bounded scalar-assignment retirement as an independently reviewable
+checkpoint rather than holding it behind the rest of R4. The semantic diff is
+restricted to `src/codegen/index.ts` and
+`tests/issue-3523-ir-module-init-compile-once.test.ts`: consume binding intents
+by `declarationOrdinal`, keep evaluations population-exhaustive, and admit only
+an exact source-local mutable `let` assignment of the form
+`Identifier = same-Identifier + NumericLiteral` after all admitted lexical
+declarations. Every declaration, binding, evaluation, source range, and oracle
+identity must join exactly; all adjacent syntax and authority shapes remain on
+the existing route.
+
+The existing `loc-budget-allow` for `src/codegen/index.ts` applies to this
+checkpoint because the added code is the fail-closed Program-ABI join and its
+bounded route predicate, not a general lowering expansion. The PR must report
+the exact net delta and still run `check:loc-budget` immediately before the
+signed semantic commit. It must also prove four host/standalone start/deferred
+lanes emit the module-init body through IR only, preserve runtime/TDZ behavior,
+and bypass the direct emitter; WASI and malformed/near-miss sources remain
+unchanged controls.
+
+This checkpoint does not complete R4, delete the legacy module-init emitter, or
+weaken any dependency. It may merge independently after the focused matrix,
+hybrid and strict IR-only reports, fallback/type/format checks, all equivalence
+shards, regrowth ratchets, full unskipped commit/push hooks, and an independent
+exact-head audit pass.
+
+### Signed semantic checkpoint evidence
+
+The exact signed semantic checkpoint is
+`81244c155890210a5962c5b67066c2041caea8d9` (stable patch ID
+`e27620d2fe5c8384d82439c902bbf767b5d5fbc1`). Its two-file semantic diff is
+`src/codegen/index.ts` +229/-59 and the focused root test +267/-0. The source
+file grows from 12,246 to 12,416 lines (+170) under this issue's existing
+allowance; function budget and checker-usage growth remain zero.
+
+The focused root test passes 19/19. The seven-file adjacent matrix is 62/68:
+all six non-passing rows reproduce exactly on an untouched current-main
+control (three #3142 expectations, one host-engine exnref limitation in #2965,
+and two #3505 rows whose optional `test262-fyi/data` checkout is absent).
+TypeScript 7 and TypeScript 5, fallback, hybrid, strict IR-only, scoped format,
+lint, LOC, function, oracle, and full unskipped pre-commit gates pass. Hybrid
+and strict reports both show, per host and standalone lane, 38/38 emitted IR
+terminals with legacy, Unsupported, and Invariant counts all zero.
+
+All eight equivalence shards pass with 1,661 passing, 24 known, and zero new
+failures. Every successful heavy command and the commit boundary used a fresh
+finite, nonnegative one-minute load below the 10-core host's strict limit of 8;
+one earlier shard-6 sample of 10.086 correctly prevented child execution and a
+fresh 6.110 replay supplied the accepted result. The semantic checkpoint is
+not publication acceptance until it is reconciled append-only with current
+main, independently audited at the exact final head, and passes the full
+unskipped pre-push hook.
