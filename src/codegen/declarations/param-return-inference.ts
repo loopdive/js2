@@ -337,6 +337,48 @@ export function functionNameEscapesAsValue(funcName: string, sourceFile: ts.Sour
   return valueReferencedNames(sourceFile).has(funcName);
 }
 
+/**
+ * An `any` identifier is only a transparent forwarding carrier when its local
+ * definition is transparent too. A named alias does not make a dynamic member
+ * read or call result safer than the same expression passed directly:
+ *
+ *   const entry = links[key];
+ *   consume(entry);
+ *
+ * Treating `entry` as neutral lets another object-literal call site narrow
+ * `consume` to that literal's nominal struct. The dynamic entry then fails the
+ * guarded cast and reaches the body as null/default fields. Follow simple
+ * identifier aliases so `const forwarded = callerParam` retains the trusted
+ * forwarding behavior needed by untyped byte-buffer pipelines.
+ */
+function anyIdentifierHasOpaqueLocalOrigin(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  seen = new Set<ts.VariableDeclaration>(),
+): boolean {
+  const declaration = ctx.oracle.variableDeclarationOf(identifier);
+  if (!declaration) return false;
+  if (seen.has(declaration)) return true;
+  seen.add(declaration);
+
+  let initializer = declaration.initializer;
+  if (!initializer) return true;
+  while (
+    ts.isParenthesizedExpression(initializer) ||
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer) ||
+    ts.isSatisfiesExpression(initializer) ||
+    ts.isNonNullExpression(initializer)
+  ) {
+    initializer = initializer.expression;
+  }
+  if (ts.isIdentifier(initializer)) {
+    return anyIdentifierHasOpaqueLocalOrigin(ctx, initializer, seen);
+  }
+  const initializerType = ctx.checker.getTypeAtLocation(initializer);
+  return (initializerType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+}
+
 export function inferParamTypeFromCallSites(
   ctx: CodegenContext,
   funcName: string,
@@ -504,6 +546,13 @@ export function inferParamTypeFromCallSites(
                 const argDecl = ctx.oracle.variableDeclarationOf(arg);
                 if (argDecl && ts.isVariableDeclaration(argDecl) && ts.isCatchClause(argDecl.parent)) {
                   sawCatchVarArg = true;
+                } else if (anyIdentifierHasOpaqueLocalOrigin(ctx, arg)) {
+                  // Naming a dynamic member/call result does not turn it into
+                  // evidence for another site's nominal object carrier. This
+                  // is the identifier-alias twin of the direct-expression
+                  // #4530 withdrawal above (Marked's reference definition
+                  // record is the real-world shape).
+                  sawOpaqueAnyArg = true;
                 }
               }
             } else if (isRecursiveCall(node)) {

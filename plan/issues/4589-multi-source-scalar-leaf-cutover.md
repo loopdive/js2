@@ -3,7 +3,7 @@ id: 4589
 title: "Cut one exact multi-source scalar leaf over to Prepared IR"
 status: done
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-26
 completed: 2026-08-21
 priority: critical
 feasibility: medium
@@ -104,3 +104,37 @@ Both modes report `irCompiledFuncs: ["entryPure"]` and leave
 - `tests/issue-2138-multi-module-ir-overlay.test.ts`: 6/6 passed.
 - `pnpm run typecheck`: passed.
 - LOC and function budget gates: passed without allowances.
+
+## 2026-08-26 raw-artifact pin repair
+
+The route/runtime contract above remains complete, but its raw binary and WAT
+pins became stale after two intentional runtime-helper changes landed without a
+matching #4589 relock. This is a test-evidence repair, not an M0 behavior change.
+
+The signed boundary audit proves:
+
+- the last pinned tree `e4075140e6e643` emitted binary
+  `6facf9cc597fc8b9b3070723139d5d91d88dfaf11868644e15d6eb606eb96bef`
+  and WAT
+  `ebb3d4b26b057ac3798e423678c46f425da34c3b0a466cd7b7c2bc70f2fb5c74`;
+- #4700 intentionally added the fnctor-instance `toString` scratch path to
+  `$__any_to_string` and its exception-renderer inline copy; and
+- #4781 intentionally added the raw-null `"null"` `ToString` arm to those same
+  two helpers. Its artifact is byte-identical to current `main`: binary
+  `eea62478d48e657956a877b74652beaf33677f1b9ebf3ae536b70efbbffd4161`
+  and WAT
+  `9e3c53b147043f2b44a0f49e691380c7a5889cfa50ffdc56e9778ed321b3b196`.
+
+All three audited boundaries retain exactly 176 top-level WAT fields. Only
+`$__any_to_string` and `$__exn_render_prepare` differ; no type, import, export,
+global, tag, or user-function block changes. Prepared/direct route ledgers,
+outcomes, `irCompiledFuncs`, zero-import surface, public exports, DTS, repeated
+compilation, and runtime `[9, 15, 42]` are unchanged. With optimization enabled,
+both routes at every boundary remain the same 191-byte binary with SHA-256
+`d5d127605cec70a95886b6a45fbcb2b902a39fd7623d1378d2d2fc461b09b5d0`;
+the two evolved helpers are dead-eliminated and the user bodies are identical.
+
+Relock only the two canonical raw-artifact expectations to the current settled
+hashes. Keep every route/count/runtime/optimized/surface assertion unchanged,
+run the focused 15-test suite, and do not mix the relock into #3525 M0 or widen
+any baseline.

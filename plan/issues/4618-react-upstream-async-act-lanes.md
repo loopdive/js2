@@ -3,7 +3,7 @@ id: 4618
 title: "react upstream suite: async it-body/act() lanes — depth-3 nested-async unwrap, fn-decl capture in suspending bodies, IR nested-fn CE"
 status: ready
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-08-24
 priority: high
 horizon: l
 feasibility: hard
@@ -14,6 +14,7 @@ language_feature: async, await, closures
 goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
+  - src/codegen/class-bodies.ts
   - src/codegen/closure-exports.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/function-body.ts
@@ -26,11 +27,13 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/destructuring-params.ts
   - src/codegen/expressions/extern.ts
+  - src/codegen/expressions/new-super.ts
   - src/codegen/index.ts
   - src/codegen/statements/nested-declarations.ts
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
 func-budget-allow:
+  - src/codegen/class-bodies.ts::compileSuperCall
   - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
   - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
   - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
@@ -877,3 +880,239 @@ same-named siblings), and the sync only fires when the fresh local's ValType
 matches the recorded global's. Regression test:
 `tests/issue-4787-temporal-merge-group-regressions.test.ts` (same-named
 sibling classes case, fails on the merged base).
+
+## 2026-08-24 assignment-position class identity checkpoint
+
+The ReactES6Class setup uses `let Inner; Inner = class extends
+React.Component { ... }`, so its class value took the generic
+`wasmClosureDynamicBridge` path. That wrapper was constructible but had no
+registered class prototype or dynamic-parent mirror. A narrowly gated class
+expression RHS of plain `=` now materializes the canonical lazy class-object
+singleton and registers dynamic heritage at ClassDefinitionEvaluation.
+Classes with an implicit constructor and runtime parent also stamp the class
+registration; the host mirror applies the synthesized parent initializer to
+the allocated derived receiver. Inline class expressions and Proxy/call
+argument sites keep their existing closure representation.
+
+Two adjacent name/capture defects surfaced while exercising the original
+shape and are fixed generically:
+
+- late-discovered class declarations inside host callbacks no longer reuse an
+  earlier same-named graph-wide class entry; each lexical owner receives its
+  per-site synthetic identity;
+- same-named boxed method captures no longer reuse a sibling frame's global,
+  and the per-class capture record now restores its boxed-cell metadata on the
+  module's later compile pass.
+
+Focused regressions are green: assignment-position host construction,
+ReactDOM rendering, implicit and explicit runtime/compiled-parent
+initialization, late class-owner isolation, and sibling boxed-capture
+isolation are **10/10**. The nearby host class constructor and var-bound
+class-identity guards remain green.
+
+The exact original ReactES6Class filter now executes 24/273 upstream tests:
+14 scored (**3 pass, 11 fail**) and 10 harness-incompatible; the module still
+compiles and validates. This is up from the original 2/14 baseline: the simple
+stateless class component is the newly passing full-batch case.
+
+An additional generic superclass fix now calls a statically named top-level
+function parent on the already allocated derived receiver when there is no
+compiled class `_init` (`class Foo extends Component { constructor(props) {
+super(props); } }`). The isolated verbatim upstream test "renders based on
+state using initial values in this.props" flips to **1/1 pass**, proving that
+`React.Component` initializes `this.props` and the derived constructor can
+initialize `this.state`. The complete 24-test batch remains 3/14, however:
+later same-named class declarations in the same generated module still perturb
+that earlier test's class identity and leave its container empty. The next
+blocker is therefore the batch-scale per-site class registry/lookup, not the
+fixed assignment representation or SuperCall semantics.
+
+## 2026-08-24 batch-only same-layout class-member collision fixed
+
+The 3/14 batch result above was not a remaining class-object lookup failure.
+The earlier and later `class Foo` declarations have distinct tags, but the
+host-visible class-member dispatch only requested a tag guard when *another
+class declaring the same member* had the same canonical WasmGC layout. That
+missed the important negative case: a later same-layout `Foo` declared a
+lifecycle method that the earlier `Foo` did not declare at all. Because the
+method had only one positive dispatch entry, its unguarded structural
+`ref.test` accepted the earlier instance and exposed the later class's method.
+
+Class-member dispatch now compares each arm against every emitted struct with
+the same canonical layout, including siblings that do not own that member,
+and applies the existing per-class tag test on collision. The focused
+regression `does not expose a method owned only by a same-layout sibling` pins
+the exact positive/negative pair without React-specific names or behavior.
+
+Fresh evidence on the shared candidate tree:
+
+- isolated original upstream `renders based on state using initial values in
+  this.props`: **1/1 pass**;
+- complete original `ReactES6Class` filter: **8/14 scored pass**, 24/273
+  upstream tests executed, 10 harness-incompatible, 0 quarantined, and the
+  module compiles and validates;
+- focused class identity/capture matrix: **18/18 pass** across
+  `issue-4618-scoped-same-name-classes`,
+  `issue-4618-class-capture-owner-isolation`, and
+  `issue-4618-class-expression-assignment-bridge`.
+
+This closes the batch-withdrawal subproblem (3/14 → 8/14). The six remaining
+scored ReactES6Class failures are later semantics (state updates, derived
+state, force-update, and lifecycle ordering), not the same-named class leak.
+
+## 2026-08-24 host-visible static results and React state writeback
+
+The first full-suite measurement after the class-member tag fix is now the
+authoritative checkpoint: **138/180 scored pass**, 42 fail, 92
+harness-incompatible, 272/273 upstream tests executed (one upstream skip), 44
+batches, zero quarantined, and every batch compiles and validates. This is a
+measured +5 over the prior 133/180 checkpoint; no denominator was projected.
+
+The remaining derived-state cluster exposed two separate boundary defects:
+
+- a registered class static method used the generic closure bridge's
+  deliberately raw plain-call return. React successfully called
+  `getDerivedStateFromProps` with the right arguments, but received an opaque
+  WasmGC object and could not read its returned state keys. Registered static
+  closures are now branded in a `WeakSet`; only their Wasm-struct object
+  results are reified for the host. Ordinary closure exits retain the raw
+  behavior that protects the broader regression corpus;
+- a class extending a runtime property/element-access parent such as
+  `React.Component` stored a declared closed-object field like `state =
+  {foo, bar}` in a typed Wasm ref. React later replaced `instance.state` with
+  a plain host object after merging derived state. The typed `__sset_state`
+  could not store that host object, so compiled `render()` kept reading the
+  initializer while the host sidecar held the new state. Closed-object fields
+  on this dynamic-host-parent class family now use an externref carrier, making
+  host replacement and compiled reads share the same live field.
+
+Exact original upstream evidence (clean pinned checkout, no source probes):
+
+- `sets initial state with value returned by static
+  getDerivedStateFromProps`: **0/1 → 1/1**;
+- `updates initial state with values returned by static
+  getDerivedStateFromProps`: **0/1 → 1/1**;
+- `renders updated state with values returned by static
+  getDerivedStateFromProps`: **0/1 → 1/1**.
+
+Every focused binary compiles and validates. The static-object return is also
+pinned outside React by the assignment-position class bridge regression,
+including own-key enumeration and `Object.assign`; dynamic-parent field
+writeback has a separate host-replacement regression.
+
+The fresh complete measurement confirms all three flips with no withdrawals:
+**141/180 scored pass**, 39 fail, 92 harness-incompatible, 272/273 executed,
+44/44 batches compile and validate, zero quarantined. That is exactly +3 over
+the preceding 138/180 measurement. The ReactES6Class batch is now **11/14**
+scored pass (formerly 8/14), with the three remaining failures limited to the
+explicit-constructor ref, forceUpdate, and lifecycle-ordering cases.
+
+The next shared cluster is now localized but intentionally not patched in this
+checkpoint. In ReactCreateElement's default-prop/ref case, the component's own
+compiled `render()` observes `this.props.fruit === "mango"`, and a temporary
+host-side inspection of the exact same ref instance observes an own `props`
+object with key `fruit` and value `"mango"`; nevertheless the subsequent
+compiled expression `instance.props.fruit` answers `undefined`. The value is
+there and the host proxy is correct. The remaining defect is the dynamic
+consumer read: an `any`/externref class instance can enter the call-site
+closed-struct candidate ladder before the authoritative `__extern_get`
+sidecar-aware fallback, allowing a structural false-positive to mask inherited
+host state. The NaN-prop ref case and the lifecycle-captured instance case have
+the same outward symptom. Any follow-up should preserve the in-Wasm candidate
+fast path for ordinary dynamic objects (Acorn performance); route only proven
+host-mutated/class-instance carriers to the sidecar-aware read or add an exact
+class/sidecar discriminator. All temporary probes were removed and the pinned
+upstream checkout is clean.
+
+## 2026-08-24 React ref-cell identity at the host renderer boundary
+
+The explicit-constructor test's class and `setState` method were already
+correct. Its `React.createRef()` value crossed through the harness's required
+Wasm-element reifier, which recursively cloned every props object. Cloning the
+public ref shape `{ current: null }` broke its defining identity contract:
+ReactDOM wrote the rendered instance into the clone while the compiled test
+read the original cell and still saw `null`.
+
+The reifier now preserves a one-key `{ current }` cell instead of cloning it.
+The existing Wasm host wrapper provides live reads and writes, so ReactDOM and
+the compiled caller share the same ref without a React-specific compiler
+builtin. Ordinary props and element records continue through the recursive
+reifier.
+
+Exact evidence:
+
+- original `renders based on state using props in the constructor`: **0/1 →
+  1/1**;
+- full original `ReactES6Class` filter: **11/14 → 12/14**, 24/273 upstream
+  tests executed, 10 harness-incompatible, zero quarantined, and the binary
+  compiles and validates;
+- focused infrastructure identity assertion confirms
+  `prepareReactValue(ref) === ref`.
+
+The two remaining scored failures are the `forceUpdate` rerender and complete
+lifecycle-ordering cases. They no longer share the ref-cell blocker.
+
+## 2026-08-24 ReactES6Class wind-down and remaining two-test handoff
+
+The last clean full-batch measurement remains the authoritative result:
+**12/14 scored ReactES6Class tests pass**, with 24/273 upstream tests executed,
+10 harness-incompatible, zero quarantined, and a compiling, validating module.
+The focused retained regression matrix is **31/31 pass** across assignment-
+position class construction/static dispatch, same-named class identity and
+capture isolation, and the React host-infrastructure adapter. The TypeScript
+typecheck is green.
+
+The two remaining original failures are deliberately not hidden or rewritten:
+
+- `renders using forceUpdate even when there is no state`: a temporary probe
+  proved the compiled assignment has already changed `mutativeValue` from
+  `"foo"` to `"bar"` before `forceUpdate`; the same canonical host proxy still
+  has React's updater and fiber metadata, and the native `forceUpdate` call
+  returns. The observed output nevertheless remains `"foo"`. This localizes
+  the remaining defect after the field write and inherited method dispatch,
+  in rerender scheduling/result propagation. A proposed broad fnctor-parent
+  fallback was not retained: its isolated probe passed but withdrew in the
+  complete focused file because the runtime's dynamic-parent registry is
+  still keyed by a repeated class name rather than the class object's lexical
+  identity.
+- `will call all the normal life cycle methods`: the original test remains the
+  exact oracle for mount, update and unmount callback order and arguments. It
+  needs the same stable per-class host identity across successive root renders
+  before individual lifecycle callback semantics can be attributed safely.
+
+After this checkpoint, concurrent shared-tree work made an exact filtered
+rerun stop during instantiation with `WebAssembly objects are opaque`; that is
+not counted as a React result and does not replace the measured 12/14 baseline.
+All temporary React diagnostics were removed. The oracle-ratchet check now
+reports only unrelated concurrent files (array/import/call lowering), not the
+retained React closure changes, so no React-specific oracle allowance was
+added.
+
+## 2026-08-24 ReactES6Class completion: tagged field writes and underscore methods
+
+The final two scored failures had independent generic causes:
+
+- React writes several framework-owned keys (`state`, `props`, `context`) onto
+  a compiled class instance through the host proxy. WasmGC `ref.test` is
+  structural, so `__sset_state` could match a same-layout sibling class and
+  overwrite an unrelated field at the same physical slot. In the forceUpdate
+  case it reset `mutativeValue` from `"bar"` to `"foo"` between scheduling and
+  `render()`. Struct-field setter arms now include the class's nominal `__tag`
+  (plus descendant tags for inherited fields). Crucially, a tag or anonymous
+  shape mismatch is part of the outer arm condition and falls through to the
+  next structurally-equal candidate; treating it as an inner no-op fixed the
+  false write but initially blocked legitimate React state writes.
+- Host class-member collection recovered a method key with
+  `fullName.slice(fullName.lastIndexOf("_") + 1)`. That truncated methods whose
+  real source name contains underscores, so argument-bearing lifecycle hooks
+  such as `UNSAFE_componentWillReceiveProps(nextProps)` and
+  `UNSAFE_componentWillUpdate(nextProps, nextState)` were excluded from the
+  host bridge. The collector now receives the already-known source key rather
+  than re-parsing a synthesized identifier.
+
+Exact original upstream evidence is now **14/14 scored ReactES6Class tests
+pass**, with 24/273 upstream tests executed, 10 harness-incompatible, zero
+quarantined, and a module that compiles and validates. The two-test completion
+filter is **2/2**, and the generic same-layout class regression file is
+**10/10**. No upstream test body was changed and all temporary diagnostics
+were removed.

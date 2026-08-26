@@ -10,6 +10,7 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import {
   getClosureFuncSelfTypeIdx,
   getFuncRefWrapperRootTypeIdx,
@@ -81,6 +82,63 @@ type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: V
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
 const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
+
+/**
+ * True when a closed object's callable property is a shorthand reference to a
+ * function extracted from a host builtin, for example:
+ *
+ *   const { isArray } = Array;
+ *   export default { isArray };
+ *
+ * The field contains a genuine host function externref, not a compiled Wasm
+ * closure. Calling it through the typed closure-wrapper path null-casts the
+ * value and traps. Keep these declaration-proven values on the ordinary host
+ * method bridge, which also materializes Wasm array arguments for native
+ * `Array.isArray` and similar observers.
+ */
+function callablePropertyIsExtractedHostBuiltin(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
+  const propertyDecl = ctx.oracle.declarationsOf(propAccess.name).find(ts.isShorthandPropertyAssignment);
+  if (!propertyDecl || !ts.isShorthandPropertyAssignment(propertyDecl)) return false;
+
+  const valueDecl = ctx.oracle.valueDeclarationOf(propertyDecl.name);
+  if (!valueDecl || !ts.isBindingElement(valueDecl) || !ts.isObjectBindingPattern(valueDecl.parent)) return false;
+
+  const variableDecl = valueDecl.parent.parent;
+  if (!ts.isVariableDeclaration(variableDecl) || !variableDecl.initializer) return false;
+  let source = variableDecl.initializer;
+  while (ts.isParenthesizedExpression(source)) source = source.expression;
+  return ts.isIdentifier(source) && (BUILTIN_CLASS_NAMES.has(source.text) || ctx.declaredGlobals.has(source.text));
+}
+
+/**
+ * True when a callable property comes from a function-declaration shorthand
+ * whose source ABI contains a destructured parameter:
+ *
+ *   function forEach(value, fn, { allOwnKeys = false } = {}) { ... }
+ *   export default { forEach };
+ *
+ * The function body receives that binding pattern through the compiler's open
+ * `externref` parameter carrier. TypeScript, however, exposes the shorthand
+ * property with the closed object type of the binding pattern. Synthesizing a
+ * wrapper from that property signature therefore produces a different lifted
+ * funcref type; the root-wrapper dispatch cannot admit the actual closure and
+ * throws even though the stored value is callable. In the JS-host profile,
+ * use the existing dynamic closure bridge for this declaration-proven ABI
+ * mismatch. Ordinary shorthand functions retain the direct `call_ref` path.
+ */
+function callablePropertyHasDestructuredFunctionParam(
+  ctx: CodegenContext,
+  propAccess: ts.PropertyAccessExpression,
+): boolean {
+  const propertyDecl = ctx.oracle.declarationsOf(propAccess.name).find(ts.isShorthandPropertyAssignment);
+  if (!propertyDecl || !ts.isShorthandPropertyAssignment(propertyDecl)) return false;
+
+  const valueDecl = ctx.oracle.valueDeclarationOf(propertyDecl.name);
+  if (!valueDecl || !ts.isFunctionDeclaration(valueDecl)) return false;
+  return valueDecl.parameters.some(
+    (parameter) => ts.isObjectBindingPattern(parameter.name) || ts.isArrayBindingPattern(parameter.name),
+  );
+}
 
 /**
  * TypeScript gives an unannotated JavaScript function that reads `arguments`
@@ -528,23 +586,13 @@ export function compileClosureCall(
   const localIdx = fctx.localMap.get(varName);
   const moduleIdx = localIdx === undefined ? ctx.moduleGlobals.get(varName) : undefined;
   if (localIdx === undefined && moduleIdx === undefined) return null;
-  if (process.env.DEBUG_MARKED_CODEGEN === "1" && fctx.name.includes("closure")) {
-    console.error(
-      "[marked-closure-call-direct]",
-      fctx.name,
-      varName,
-      "local",
-      localIdx,
-      "module",
-      moduleIdx,
-      "params",
-      info.paramTypes,
-      "return",
-      info.returnType,
-      "funcType",
-      info.funcTypeIdx,
-    );
-  }
+
+  const localType =
+    localIdx === undefined
+      ? undefined
+      : localIdx < fctx.params.length
+        ? fctx.params[localIdx]?.type
+        : fctx.locals[localIdx - fctx.params.length]?.type;
 
   // The lifted function type is authoritative for its self carrier. Shared
   // `__fn_wrap_*` functions use the canonical wrapper root; private/named
@@ -559,8 +607,6 @@ export function compileClosureCall(
   // struct ref type before struct.get can be used.
   let effectiveLocalIdx = localIdx;
   if (localIdx !== undefined) {
-    const localType =
-      localIdx < fctx.params.length ? fctx.params[localIdx]?.type : fctx.locals[localIdx - fctx.params.length]?.type;
     // Boxed capture: the local is a ref cell wrapping the real value. Unwrap
     // it first, then coerce the underlying externref to the closure struct type
     // (#1048).
@@ -1014,13 +1060,6 @@ export function compileCallablePropertyCall(
     ? "__priv_" + propAccess.name.text.slice(1)
     : propAccess.name.text;
 
-  if (
-    process.env.DEBUG_MARKED_CODEGEN === "1" &&
-    (fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral") || methodName === "preprocess")
-  ) {
-    console.error("[marked-callable-enter]", fctx.name, className, methodName);
-  }
-
   // (#2875 b2) `o.charAt(1)` where `o`'s literal seeded `charAt` from
   // `String.prototype.charAt` — the arity-filtered dispatch below can never
   // match that lifted `(self, this, …args)` closure. See
@@ -1190,6 +1229,15 @@ export function compileCallablePropertyCall(
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
   }
 
+  if (
+    !noJsHost(ctx) &&
+    (callablePropertyIsExtractedHostBuiltin(ctx, propAccess) ||
+      callablePropertyHasDestructuredFunctionParam(ctx, propAccess))
+  ) {
+    const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+    if (dynamic !== null) return dynamic;
+  }
+
   // A structural contract asserted over a live realm-global capability keeps
   // an open externref carrier (#4376). Its callable properties are likewise
   // live JavaScript properties: the function installed at runtime need not use
@@ -1345,42 +1393,6 @@ export function compileCallablePropertyCall(
   if (fieldType.kind === "externref") {
     const resultTypes = sigRetWasm ? [sigRetWasm] : [];
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, sigParamWasmTypes, resultTypes);
-
-    if (
-      process.env.DEBUG_MARKED_CODEGEN === "1" &&
-      (fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral") || methodName === "preprocess")
-    ) {
-      console.error(
-        "[marked-callable-field]",
-        fctx.name,
-        className,
-        methodName,
-        "struct",
-        structTypeIdx,
-        "field",
-        fieldIdx,
-        "fieldType",
-        fieldType,
-        "sigParams",
-        sigParamWasmTypes,
-        "sigRet",
-        sigRetWasm,
-        "wrapper",
-        wrapperTypes && {
-          structTypeIdx: wrapperTypes.structTypeIdx,
-          funcTypeIdx: wrapperTypes.closureInfo.funcTypeIdx,
-          returnType: wrapperTypes.closureInfo.returnType,
-        },
-        "closures",
-        [...ctx.closureInfoByTypeIdx.values()]
-          .filter((candidate) => candidate.paramTypes.length === sigParamWasmTypes.length)
-          .map((candidate) => ({
-            structTypeIdx: candidate.structTypeIdx,
-            funcTypeIdx: candidate.funcTypeIdx,
-            returnType: candidate.returnType,
-          })),
-      );
-    }
 
     if (wrapperTypes) {
       const { structTypeIdx: wrapperStructIdx, closureInfo: matchedClosureInfo } = wrapperTypes;

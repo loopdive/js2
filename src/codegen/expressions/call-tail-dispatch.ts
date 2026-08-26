@@ -10,6 +10,7 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
@@ -26,6 +27,8 @@ import { rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
+  destructureParamArray,
+  destructureParamObject,
   getArrTypeIdxFromVec,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
@@ -152,10 +155,24 @@ export function compileTailDispatch(
       // shape inline would either expose caller bindings or omit IIFE-owned
       // bindings from the eval environment. Use the normal closure path.
       const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
-      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval || argumentsEscapesIife(callee, expr)) {
+      // A genuinely-suspending async IIFE needs its own Promise/frame
+      // activation. Inlining its statements into a synchronous caller makes
+      // `await` use the legacy identity lowering, so a pending Promise is
+      // consumed as the awaited value (for numeric results, unboxed to NaN).
+      // Route only engine-claimed async shapes through the ordinary closure
+      // path; await-free/elidable IIFEs keep the byte-identical fast path.
+      const isAsyncIIFE = callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const isDrivenAsyncIIFE = isAsyncIIFE && planAsyncClosureActivation(ctx, callee, /*isAsync*/ true) !== null;
+      if (
+        isGeneratorIIFE ||
+        isRecursiveNamedFnExprIIFE ||
+        reachesDirectEval ||
+        argumentsEscapesIife(callee, expr) ||
+        isDrivenAsyncIIFE
+      ) {
         // Cannot inline: a generator IIFE needs a generator context for `yield`,
         // and a recursive named-fn-expr IIFE needs a real callable to bind its
-        // own name to. Compile as closure, store in temp local, invoke via
+        // own name to; a driven async IIFE needs a real frame. Compile as closure, store in temp local, invoke via
         // call_ref — the closure path binds `function*`'s context and a named
         // expression's own name (self-reference) correctly.
         const closureType = compileArrowFunction(ctx, fctx, callee as ts.FunctionExpression);
@@ -198,6 +215,7 @@ export function compileTailDispatch(
             (fctx.inlinedIifeNodes ??= new Set()).add(callee);
             // Allocate locals for parameters and compile arguments
             const paramLocals: number[] = [];
+            const paramLocalTypes: ValType[] = [];
             const allArgLocals: { idx: number; type: ValType }[] = [];
             for (let i = 0; i < params.length; i++) {
               const param = params[i]!;
@@ -207,6 +225,7 @@ export function compileTailDispatch(
               const idx = allocLocal(fctx, paramName, localType);
               fctx.body.push({ op: "local.set", index: idx });
               paramLocals.push(idx);
+              paramLocalTypes.push(localType);
               if (iifeNeedsArguments) {
                 allArgLocals.push({ idx, type: localType });
               }
@@ -295,6 +314,25 @@ export function compileTailDispatch(
               fctx.body.push({ op: "local.set", index: argsLocal });
             }
 
+            // An inlined IIFE still performs ordinary parameter binding
+            // initialization. The fast path previously stored a binding-
+            // pattern argument only in its synthetic `__iife_pN` local and
+            // never created or initialized the pattern's lexical bindings.
+            // A nested closure therefore could not capture them and could
+            // fall through to an unrelated same-named module global (Axios's
+            // `hasOwnProperty` helper then called itself forever). Run this
+            // after every argument has been evaluated and after `arguments`
+            // exists, matching function-entry ordering without sacrificing
+            // the inline path.
+            for (let i = 0; i < params.length; i++) {
+              const param = params[i]!;
+              if (ts.isObjectBindingPattern(param.name)) {
+                destructureParamObject(ctx, fctx, paramLocals[i]!, param.name, paramLocalTypes[i]!);
+              } else if (ts.isArrayBindingPattern(param.name)) {
+                destructureParamArray(ctx, fctx, paramLocals[i]!, param.name, paramLocalTypes[i]!);
+              }
+            }
+
             // Compile body
             if (ts.isArrowFunction(callee) && !ts.isBlock(callee.body)) {
               // Concise body: expression — no return issue
@@ -346,12 +384,20 @@ export function compileTailDispatch(
             // returns — nested function boundaries keep their own return type.
             if (iifeWasmRetType && (iifeWasmRetType.kind === "ref" || iifeWasmRetType.kind === "ref_null")) {
               let divertedObjlitReturn = false;
+              let realmGlobalReturn = false;
               const scanReturns = (node: ts.Node): void => {
-                if (divertedObjlitReturn) return;
+                if (divertedObjlitReturn || realmGlobalReturn) return;
                 if (ts.isFunctionLike(node) && node !== callee) return;
                 if (ts.isReturnStatement(node) && node.expression) {
                   let retExpr: ts.Expression = node.expression;
-                  while (ts.isParenthesizedExpression(retExpr)) retExpr = retExpr.expression;
+                  while (
+                    ts.isParenthesizedExpression(retExpr) ||
+                    ts.isAsExpression(retExpr) ||
+                    ts.isTypeAssertionExpression(retExpr) ||
+                    ts.isNonNullExpression(retExpr)
+                  ) {
+                    retExpr = retExpr.expression;
+                  }
                   if (
                     ts.isObjectLiteralExpression(retExpr) &&
                     objectLiteralTakesStandaloneAnyObjectPath(ctx, retExpr)
@@ -359,11 +405,26 @@ export function compileTailDispatch(
                     divertedObjlitReturn = true;
                     return;
                   }
+                  // The realm global object is a host externref (or native open
+                  // object), never the enormous closed `typeof globalThis`
+                  // struct inferred by TypeScript. Axios's global-object IIFE
+                  // returns it from a statement body; typing this return local
+                  // as that struct guard-casts the real global to null.
+                  if (
+                    ts.isIdentifier(retExpr) &&
+                    retExpr.text === "globalThis" &&
+                    !ctx.moduleGlobals.has("globalThis")
+                  ) {
+                    if (!ctx.oracle.declarationsOf(retExpr).some((decl) => !decl.getSourceFile().isDeclarationFile)) {
+                      realmGlobalReturn = true;
+                      return;
+                    }
+                  }
                 }
                 forEachChild(node, scanReturns);
               };
               for (const stmt of bodyStmts) scanReturns(stmt);
-              if (divertedObjlitReturn) {
+              if (divertedObjlitReturn || realmGlobalReturn) {
                 iifeWasmRetType = { kind: "externref" };
               }
             }
@@ -1751,6 +1812,22 @@ export function compileTailDispatch(
         // treat the null return as a compilation failure and roll back instructions
         return matchedClosureInfo.returnType ?? VOID_RESULT;
       }
+    }
+
+    // A JavaScript implementation imported without declarations commonly
+    // leaves the inner result typed as `any`, even when the value returned at
+    // runtime is one of our compiled closure wrappers. In that case there is
+    // no checker call signature for the exact arm above to match, and the
+    // generic tail used to evaluate both calls but silently answer
+    // `undefined`. Reuse the ordinary dynamic-call ladder for the outer call:
+    // it evaluates the inner call exactly once, dispatches a Wasm closure by
+    // its runtime funcref shape, and retains the host-call fallback for a real
+    // host function. This is the untyped twin of the exact signature path, not
+    // a package-specific compose optimization. Typed call results continue to
+    // the established exact/fallback paths below.
+    if (!callSigs || callSigs.length === 0) {
+      const dynamicCallOfCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (dynamicCallOfCall !== null) return dynamicCallOfCall;
     }
   }
 

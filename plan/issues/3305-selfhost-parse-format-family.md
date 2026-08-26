@@ -390,3 +390,125 @@ the exact base/head, production LOC delta, A/B digests/counts, performance
 numbers, host/runtime-provider containment hashes, and full hook results here
 before requesting merge. `__str_to_number`, `parseInt`, and the remaining
 number-format helpers stay scheduled as later independent checkpoints.
+
+### Slice 2 measured HOLD and raw-descriptor carrier amendment (2026-08-26, Codex)
+
+The first implementation attempt validates the semantic carrier but fails both
+publication stops above. It is diagnostic evidence, not an acceptance
+checkpoint, and remains uncommitted in the implementation worktree based on
+`c3178e5911e677f8b64141e913d9c5af8ca484b1` (source parent
+`c4cda3922aa754374faaf09c86b5afd8c35be9bb`):
+
+- the base-1e9 source scanner, seven-f64 finalizer, standalone/WASI paths, and
+  raw-result oracle pass the focused 7/7 tests; #2654 **Standalone: parseFloat /
+  Number(string) decimal fraction precision** passes 35/35; TS 7 passes;
+- the generic guarded reader measured 6.138 ms median against the hand
+  baseline's 1.253 ms, or 4.90×. The bounded
+  `__pnd_cu(ref $AnyString, f64)` wrapper still measured 5.048 ms, or 4.03×;
+- in the 50,000-call, 21-sample optimized-standalone length control, hand
+  medians for 1/8/20/60 digits were 0.378/0.695/1.073/2.154 ms, while the
+  wrapper checkpoint measured 0.597/1.765/3.965/7.916 ms. The significant-limb
+  `(20-8)/12` and post-cap `(60-20)/40` slopes remain materially worse;
+- production code is net +19 lines (`parse-number-native.ts` −122 plus the new
+  source +141). No LOC allowance, baseline update, commit, push, or PR exists.
+
+The hot-path cause is exact: `__str_flat_charCodeAt` retains the logical string
+carrier so every code unit pays a proven `ref.cast`, two `struct.get` loads, an
+offset add, and the f64-to-i32 index truncation. That design is correct for a
+general prepared IR unit, but this private stdlib-selfhost graph is emitted
+directly and already supports context-bound raw reference parameters when it
+has no `memoKey`. Slice 1 uses the same supported mechanism for its private
+`$__str_data` buffer kernels. Do not widen JS inference, the generic IR type
+surface, prepared-component reference support, or a backend resolver to repair
+this private scanner.
+
+This amendment supersedes only emission-order steps 3–4 and the fixed
+`__pnd_cu(ref $AnyString, f64)` clause above. The semantic, precision,
+containment, fail-closed, net-negative, and load/hook gates remain literal.
+
+#### Exact raw carrier and publication boundary
+
+1. Make `parseFloatSelfHostedDef(dataRef)` context-bound and keep it without a
+   process `memoKey`. Its private source signature is
+   `__sh_parseFloat(flat: string, data: unknown, off: number, len: number) ->
+   number`; the exact initial descriptor types are
+   `[string, ref $__str_data, f64, f64] -> f64`. `unknown` is the intentional TS
+   spelling for the override-authoritative raw reference. Remove the source's
+   `__str_flatten` call and `.length` read. The existing
+   `__str_ws_start(flat, 0, len)` remains the exact StrWhiteSpace oracle; its
+   result is a logical index, so every digit read uses absolute
+   `off + logicalIndex` and the scan end is `off + len`.
+2. Change the private reader to
+   `__pnd_cu(ref $__str_data, f64 absoluteIndex) -> f64`. Its complete body is
+   the exact raw load projection: get the data ref, truncate the already-proven
+   in-range absolute index once, `array.get_u`, and widen the code unit. It must
+   contain no flatten, cast, struct access, allocation, bounds branch, global,
+   import, or indirect call. The optimized scanner must inline or otherwise
+   eliminate the per-code-unit helper call so its digit/fraction/exponent loops
+   contain the same direct raw-load kernel as the retained hand body.
+3. Move the one materializing flatten to the canonical public
+   `(externref) -> f64` thunk. After extern-to-`$AnyString`, bind exactly one
+   `$NativeString` local, call `__str_flatten` once, and read `.data`, `.off`,
+   and `.len` once each. Pass those exact values plus the flat logical carrier
+   to the private source body. A whitespace helper may receive that already-flat
+   carrier, but it must not allocate or materialize a second representation;
+   no digit/fraction/exponent loop may reload the descriptor. Publish the public
+   `parseFloat` name only after the raw reader, finalizer, self-hosted body, and
+   public thunk signature all validate.
+4. Preserve nonzero substring-view offsets exactly. Absolute `i` and `end`
+   retain current signed-i32 index/addition semantics; neither a logical index
+   nor `len` may be used directly against the raw array. Keep one immutable
+   pow10 table, the exact i64 reconstruction/scaling kernel, zero scanner-state
+   allocation, and zero JS-host imports.
+
+Add exact materialized-signature checks for the raw reader and four-parameter
+self-hosted body beside the existing seven-f64 finalizer check. Mutations must
+reject a foreign/raw-data type index, nullable or wrong raw ref, logical instead
+of absolute index, swapped/missing `off` or `len`, source/descriptor arity or
+type drift, a public thunk that extracts from a different flat object, duplicate
+flatten/descriptor loads, a retained cast/struct load in the hot reader, a
+stale private funcMap identity, and any partial public-name publication. Add a
+nonzero-offset view control and retain every earlier carrier/precision mutation.
+
+#### Performance-preserving prototype ladder
+
+The raw descriptor is necessary but may not be sufficient: the current TS body
+still carries `i`/`end` as f64, so every read truncates its index and every loop
+uses f64 compare/increment. Existing canonical char-read-loop promotion does
+not apply to this multi-loop helper-call scanner. Prototype in this exact order,
+without committing either failed stage:
+
+1. **Raw/f64 stage.** Implement the contract above and run the full interleaved
+   benchmark against the exact source base.
+2. **Raw/i32 stage if needed.** If any slope gate fails, change only the private
+   reader ABI to `(ref $__str_data, i32) -> f64` and make absolute `i`/`end`
+   provably i32 in the ordinary source with one conversion after whitespace
+   start and explicit `| 0` preservation on initialization and every write.
+   Do not change mantissa limbs or widen generic i32 inference. Optimized WAT
+   must then contain no per-read `i32.trunc_sat_f64_s` and must use i32
+   comparison/increment in every scan loop.
+
+For each stage, interleave exact hand base, the rejected AnyString checkpoint,
+and candidate runs under the strict finite/non-negative
+`oneMinuteLoad < logicalCores - 2` gate. Use the same compiler options, fixture,
+warmup, 50,000-call samples, and 21 samples at 1/8/20/60 digits; record median,
+p25, p75, checksum, raw result bits, and exact WAT operation/call census. Also
+cover leading whitespace, fraction-heavy, exponent, Infinity, and trailing-junk
+paths so a faster digit-only special case cannot hide another lost scan
+optimization.
+
+Advance only when all candidate results match the hand base, every 8/20/60
+median ratio and both `(20-8)/12` and `(60-20)/40` slope ratios are at most
+1.10, and their paired-bootstrap 95% upper bounds are at most 1.15. The 1-digit
+control must show only bounded fixed call/thunk cost, not a per-character
+descriptor cost. Independently require optimized WAT to retain one effective
+flatten, one descriptor extraction, direct `array.get_u` reads, and no
+per-character cast/struct load/allocation; performance alone cannot excuse a
+structural optimization loss. A failed raw/i32 stage leaves Slice 2 on HOLD.
+
+Finally remeasure production LOC. The accepted slice must remain honestly
+net-negative and materially shrink `parse-number-native.ts`; do not minify the
+ordinary source, move executable text into tests/generated data, grant a LOC
+allowance, or silently add `__str_to_number`/`parseInt` to amortize a positive
+result. If correctness and performance pass but LOC is still nonnegative,
+record the exact residual and amend the issue before changing unit scope.

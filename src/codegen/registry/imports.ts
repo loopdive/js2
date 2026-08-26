@@ -166,6 +166,53 @@ export function addStringConstantGlobal(ctx: CodegenContext, value: string): voi
   }
 }
 
+/**
+ * Register a real host string constant even when native strings are enabled.
+ *
+ * Native-string literals normally use a `-1` sentinel in `stringGlobalMap` and
+ * materialize a WasmGC value. That value cannot be handed to a host import,
+ * and copying it through exported linear memory is unavailable while the
+ * Wasm start function is still running. Keep this separate map so the same
+ * source text can retain its native carrier everywhere else.
+ */
+export function addHostStringConstantGlobal(ctx: CodegenContext, value: string): number | undefined {
+  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+  if (!ctx.nativeStrings) {
+    addStringConstantGlobal(ctx, value);
+    const globalIdx = ctx.stringGlobalMap.get(value);
+    return globalIdx !== undefined && globalIdx >= 0 ? globalIdx : undefined;
+  }
+
+  const existing = ctx.hostStringGlobalMap.get(value);
+  if (existing !== undefined) return existing;
+
+  const hasModuleGlobals = ctx.mod.globals.length > 0 || ctx.mod.functions.length > 0;
+  const oldNumImportGlobals = ctx.numImportGlobals;
+  const globalIdx = ctx.numImportGlobals;
+  const useSurrogateNs = hasLoneSurrogate(value);
+  const importModule = useSurrogateNs ? STRING_CONSTANTS16_NS : "string_constants";
+  const importName = useSurrogateNs ? hexCodeUnits(value) : value;
+  const stableOrdinal = ctx.stringLiteralCounter;
+  const importValue = addImport(ctx, importModule, importName, {
+    kind: "global",
+    type: { kind: "externref" },
+    mutable: false,
+  });
+  if (!importValue) return undefined;
+
+  planProgramAbiStringConstantImport(ctx, importValue, stableOrdinal);
+  ctx.hostStringGlobalMap.set(value, globalIdx);
+  if (!ctx.stringLiteralMap.has(value)) {
+    const literalName = `__str_${ctx.stringLiteralCounter}`;
+    ctx.stringLiteralMap.set(value, literalName);
+    ctx.stringLiteralValues.set(literalName, value);
+  }
+  ctx.stringLiteralCounter++;
+  if (!ctx.mod.stringPool.includes(value)) ctx.mod.stringPool.push(value);
+  if (hasModuleGlobals) fixupModuleGlobalIndices(ctx, oldNumImportGlobals, 1);
+  return globalIdx;
+}
+
 /** Return the absolute Wasm global index for a new module-defined global. */
 export function nextModuleGlobalIdx(ctx: CodegenContext): number {
   return ctx.numImportGlobals + ctx.mod.globals.length;

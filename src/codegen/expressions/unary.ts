@@ -19,6 +19,38 @@ import { coerceType, compileExpression } from "../shared.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { tryStaticToNumber } from "./misc.js";
 import { compileMemberIncDec, compilePostfixUnary, compilePrefixUpdate } from "./unary-updates.js";
+import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+
+function compileHostBigIntUnary(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+  opcode: 1 | 8,
+): ValType | null {
+  const externref: ValType = { kind: "externref" };
+  const operandType = compileExpression(ctx, fctx, operand, externref);
+  if (!operandType) return null;
+  if (operandType.kind !== "externref") coerceType(ctx, fctx, operandType, externref);
+  const operandTmp = allocLocal(fctx, `__bigint_unary_operand_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: operandTmp });
+
+  fctx.body.push({ op: "i64.const", value: opcode === 1 ? 0n : -1n });
+  coerceType(ctx, fctx, { kind: "i64", bigint: true }, externref);
+  const constantTmp = allocLocal(fctx, `__bigint_unary_constant_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: constantTmp });
+
+  const imported = ensureLateImport(ctx, "__host_bigint_binop", [{ kind: "i32" }, externref, externref], [externref]);
+  flushLateImportShifts(ctx, fctx);
+  const finalIdx = ctx.funcMap.get("__host_bigint_binop") ?? imported;
+  if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_bigint_binop");
+  fctx.body.push({ op: "i32.const", value: opcode });
+  // -x is 0n - x; ~x is x ^ -1n.
+  fctx.body.push({ op: "local.get", index: opcode === 1 ? constantTmp : operandTmp });
+  fctx.body.push({ op: "local.get", index: opcode === 1 ? operandTmp : constantTmp });
+  fctx.body.push({ op: "call", funcIdx: finalIdx });
+  return externref;
+}
 
 /**
  * §7.1.4 ToNumber / §7.1.3 ToNumeric step 3 — a Symbol operand in any numeric
@@ -48,6 +80,17 @@ function compilePrefixUnary(
       // Unary + is ToNumber coercion
       // ToNumber(Symbol) must throw TypeError (§7.1.4).
       if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
+        return { kind: "f64" };
+      }
+      if (ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
+        const operandType = compileExpression(
+          ctx,
+          fctx,
+          expr.operand,
+          usesHostBigIntCarrier(ctx) ? { kind: "externref" } : { kind: "i64", bigint: true },
+        );
+        if (operandType) fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "Cannot convert a BigInt value to a number");
         return { kind: "f64" };
       }
       // Try static resolution first (handles objects with valueOf, {}, NaN, etc.)
@@ -91,6 +134,9 @@ function compilePrefixUnary(
       // Unary - applies ToNumber (§7.1.4); Symbol operand must throw TypeError.
       if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
         return { kind: "f64" };
+      }
+      if (usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
+        return compileHostBigIntUnary(ctx, fctx, expr.operand, 1);
       }
       // Try static resolution first (handles strings, null, undefined, booleans, etc.)
       const staticVal = tryStaticToNumber(ctx, expr.operand);
@@ -157,6 +203,9 @@ function compilePrefixUnary(
       // Bitwise ~ applies ToNumber (§7.1.4) → ToInt32; Symbol must throw TypeError.
       if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+      }
+      if (usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
+        return compileHostBigIntUnary(ctx, fctx, expr.operand, 8);
       }
       const operandType = compileExpression(ctx, fctx, expr.operand);
       if (operandType?.kind === "i64") {

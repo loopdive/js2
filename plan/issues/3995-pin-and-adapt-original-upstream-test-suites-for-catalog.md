@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-22
+updated: 2026-08-26
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -20,6 +20,12 @@ oracle-ratchet-allow:
   # registry-free facts, so it cannot answer whether their concrete typeIdx
   # values match; keep this exact representation query at the codegen seam.
   - src/codegen/literals.ts
+  # Async continuation planning needs declaration identity to prove a callable
+  # is a lexical `const`, plus the exact resumed AwaitExpression type to keep
+  # the synthetic delivery local ABI aligned. TypeOracle intentionally does
+  # not expose symbols, declaration lists, resolved signatures, or ValTypes.
+  - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/expressions/calls.ts
@@ -27,18 +33,51 @@ loc-budget-allow:
   - src/codegen/expressions/identifiers.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/assignment.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/literals.ts
   - src/codegen/index.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/control-flow.ts
+  # Hono's typed-array carrier keeps the ArrayBuffer overload and `.buffer`
+  # identity without exposing TypedArray-only properties on ordinary vecs.
+  # Its route-table spread also needs a runtime-sized native/host copy path;
+  # the implementation is isolated below the array-method dispatcher.
+  - src/codegen/array-methods.ts
+  - src/codegen/type-coercion.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/expressions/new-builtin-globals.ts
   - src/compiler.ts
   - src/codegen/extern-declarations.ts
+  # Hono's recursive middleware dispatcher needs the already-structured async
+  # CFG to admit conditional-owned awaits, with one shared nested-declaration
+  # activation decision for reservation and final body compilation.
+  - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/statements/nested-declarations.ts
+  # The completed trailing-slash path preserves class-expression private
+  # receiver identity, dynamic void-cleared fields, and bounded async call
+  # continuations across the generic class/expression seams.
+  - src/codegen/class-bodies.ts
+  - src/codegen/expressions.ts
+  - src/codegen/expressions/helpers.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls-optional.ts
 func-budget-allow:
+  # The dispatcher adds one narrow selector for `vec.push(...runtimeSource)`;
+  # the runtime-sized copy lives in extracted helpers below the switch.
+  - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/calls.ts::compileIIFE
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
+  - src/runtime.ts::_safeSet
   - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/type-coercion.ts::buildVecFromExternref
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/codegen/object-runtime.ts::fillApplyClosure
   - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
   - src/codegen/closures.ts::compileArrowAsCallback
@@ -57,6 +96,12 @@ func-budget-allow:
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/runtime.ts::<anonymous>#89
   - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+  # A nested await continuation installs its delivered-value alias only while
+  # compiling the corresponding resume state, then restores the prior map.
+  - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/expressions.ts::compileExpressionInner
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -75,6 +120,31 @@ stubs; constructors absent from JSDOM remain unavailable rather than being
 reported as passing infrastructure. This includes the event constructors used
 by Fizz and event-plugin tests, which JSDOM exposes on `window` but not on
 Node's `globalThis` by default.
+
+## 2026-08-26 PR quality and equivalence audit
+
+The combined upstream-suite branch exposed two generic boundary regressions
+before it could land:
+
+- the host-call fallback for `identifier.call/apply` also claimed the
+  non-callable `Reflect` namespace, so `Reflect.apply(...)` emitted legacy
+  `__js_array_new`/`__js_array_push` imports instead of its native-first
+  boundary lowering. The fallback now requires a callable or genuinely
+  dynamic receiver type;
+- plain struct materialization was applied to every extern constructor
+  argument. That correctly made `new Response(body, init)` dictionaries
+  visible to the host, but cloned the target of `new WeakRef(target)` and
+  broke its round-trip Wasm struct identity. Materialization is now limited to
+  the second `Request`/`Response` Web IDL dictionary argument.
+
+The policy gate was then remeasured rather than widened speculatively. The
+intentional TypedArray instance-wiring import is documented in
+[#4360](https://github.com/loopdive/js2wasm/blob/main/plan/issues/4360-host-arraybuffer-copy-typedarray-views.md): native-first imports move exactly
+393 to 394, with legacy-semantic and unknown imports still zero. The runtime
+support added by this package-compatibility slice moves `src/runtime.ts` from
+the previous 17,949-line ceiling to the measured 18,188 lines. The baseline is
+set to that exact count; the resolveImport, adapter, capability, legacy, and
+unknown ceilings are unchanged.
 
 ## Provenance
 
@@ -1199,3 +1269,224 @@ document-carrier validation failures. The four deferred files
 reported as unavailable infrastructure rather than silently disappearing. The
 pinned inventory counts direct `it`/`test` call sites; table-driven
 registrations are expanded separately by the runner.
+
+## 2026-08-24 Hono Web-base64 infrastructure checkpoint
+
+The fresh npm-compat artifact reports Hono at **105/324** scored upstream
+callbacks. Its single largest exact failure file is the unchanged
+`src/utils/encode.test.ts`: **0/44** before this checkpoint. The first shared
+infrastructure defect was that the upstream worker exposed Web constructors
+but not Node/browser's real `atob` and `btoa` functions, so both imports were
+bound to the missing-provider fallback. Adding those standard globals to the
+Web host provider changes the exact file to **23/44**: all decode callbacks
+execute instead of throwing on an undefined `atob` result.
+
+A second generic boundary fix routes `new Uint8Array(value)` through the real
+host constructor when `value` is genuinely `any`/`unknown`. This preserves the
+runtime ArrayBuffer overload used by unannotated package JavaScript instead of
+coercing a host ArrayBuffer to the numeric length `0`. The exact Hono file then
+measures **27/44**. The focused
+[#3097](./3097-compiled-arraybuffer-host-ta-ctor-boundary.md) suite is
+**11/11**, including the new
+host-ArrayBuffer-through-untyped-helper regression.
+
+The final **17/44** failures were encode rows whose input was created by Hono's
+compiled `str2UInt8Array` helper. Indexed bytes and `.length` were correct, but
+the compiled vec lost its concrete TypedArray identity when it crossed inside
+a heterogeneous table-test row. Codegen now registers only compiler-created
+TypedArray carriers, and `__make_iterable` preserves that brand as an
+identity-stable host TypedArray mirror. A plain compiled Array remains
+unbranded and still has no `.buffer` property. The exact original file now
+passes **44/44** without changing any upstream callback or expected value.
+
+A full Hono rerun has not been performed, so no whole-suite numerator is
+inferred from this one-file measurement. The next largest measured Hono file,
+unchanged `src/middleware/trailing-slash/index.test.ts`, declares **36**
+callbacks. Its async outcome transport first exposed a generic runner defect:
+reading a promise-result object after `.then()` could lose the anonymous object
+carrier. The runner now awaits the callback directly and stores the pass/error
+outcome in scalar locals. The shared focused async-runner regression passes.
+
+That correction exposes three separate compiler/runtime findings in Hono's
+dispatch path. Dynamic writes such as `context.res = response` now call a
+positively matched compiled prototype setter before the host sidecar fallback;
+this preserves the setter's `finalized = true` side effect. A compiled class
+method invoked as `router.add(...route)` now uses the runtime-sized vararg
+dispatcher and receives three positional arguments instead of one nested
+route vector. Both changes have package-independent regressions in this issue.
+
+The exact original file now reaches the next boundary but is not green: it
+compiles and validates, exposes **1/36** declared callbacks, and that callback
+fails. In `RegExpRouter.#buildMatcher`, native
+`routes.push(...ownRoute)` still treats its dynamic spread source as one
+compile-time argument, appending the complete `ownRoute` vector as a nested
+row. Consequently `buildMatcherFromPreprocessedRoutes` observes an array in
+`route[0]` where the route path string belongs and eventually throws
+`TypeError: null is not iterable`. The generic runtime-sized native-vector
+push helper exists but is not yet selected by the array-method call lowering.
+This remains a scored compiler finding, not unavailable infrastructure; the
+next handoff is to wire that helper for an exact single dynamic spread while
+preserving ordinary fixed-arity `push`.
+
+## 2026-08-24 Hono trailing-slash async-CFG handoff
+
+The native-vector spread and nested row-carrier fixes described above are now
+covered by the focused regressions in this issue. That suite is **11/11**, including
+an out-of-bounds nested member read that still throws a catchable `TypeError`.
+The exact original Hono trailing-slash file is restored to all **36** declared
+callbacks and compiles and validates in about 17 seconds. A binary exposure
+run now passes callbacks 1 and 2, then callback 3 reaches an unhandled late
+continuation (`Context is not finalized`, followed by `new URL(undefined)`).
+Therefore the exact current result is **2/36 before a fatal worker exit**, not
+an inferred whole-file score. The generated callback source and expectations
+were not changed.
+
+The remaining failure is a generic async lowering gap, not unavailable test
+infrastructure. Hono's recursive `compose` helper defines `async function
+dispatch(i)` and awaits handlers inside `if` branches. Host async-drive
+admission currently accepts the linear-await and try/catch planners, but an
+await buried in an `if` has no matching CFG plan. It consequently falls back
+to legacy synchronous await passthrough. The minimal reduction is:
+
+```ts
+export async function test(): Promise<number> {
+  async function inner(depth: number): Promise<number> {
+    if (depth > 0) return await (() => inner(depth - 1))();
+    return 7;
+  }
+  return await inner(1);
+}
+```
+
+It currently returns `NaN`. The emitted WAT gives `$inner` the direct
+`(param f64) (result f64)` ABI and emits no `$__async_resume_finner`; the
+branch creates a Promise and then tries to unbox it as the synchronous numeric
+return. This localizes the next implementation to the branch-capable
+host-drive CFG/resume planner owned by
+[1042](./1042-async-await-state-machine-lowering.md) and
+[2906](./2906-async-drive-multistate-cfg-resume-machine.md). Merely widening
+the admission gate is insufficient: the planner must create condition and
+branch states, split each branch at awaits, join them, and preserve the union
+of live spills across both successors.
+
+Exact reproduction:
+
+```sh
+node --import tsx tests/dogfood/upstream-suite-compile-worker.mjs \
+  .hono-upstream-suite-generated/src/middleware/trailing-slash/index.test.ts project
+```
+
+The separate exact Hono encode file remains **44/44**. Focused evidence is
+**11/11** in `tests/issue-3995-hono-class-boundary.test.ts`, **11/11** in the
+typed-array [#3097](./3097-compiled-arraybuffer-host-ta-ctor-boundary.md)
+suite, and **1/1** for the upstream runner's async callback
+transport. No full Hono rerun has been performed, so the artifact's overall
+105/324 numerator must not be adjusted from these file-local results.
+
+## 2026-08-25 Hono conditional-await resume checkpoint
+
+The recursive reduction above now returns **7**, not `NaN`, and its expected
+failure is a normal passing regression. The generic CFG builder already had
+condition and branch states for try/catch bodies; admission incorrectly
+required at least one try/catch group, so an otherwise identical `if`-owned
+await could never reach those states. Branch-aware analysis now accepts a body
+when either a try/catch group or a conditional owns every suspension point.
+
+Nested `async function` declarations also used a separate lifted-body path that
+never invoked async activation. The bounded fix routes a nested declaration
+through the existing frame engine only when an `if` arm lexically owns one of
+that declaration's awaits. Its reserved function signature is changed to the
+real Promise carrier (`externref`) before recursive and forward calls are
+compiled. Phase-0 sibling reservation and the real lifted-body compile use the
+same activation decision; otherwise a bodyless forward slot can retain the
+legacy unwrapped numeric result while the final body switches to `externref`.
+The focused sibling-recursion and forward-sibling-caller regressions both
+instantiate and return 7 with the shared ABI. An unrelated synchronous guard
+plus a linear top-level await remains on its previous lane; the focused guard
+proves that merely co-occurring in one body is not enough to change routing.
+The same conditional admission is also covered at the exported host-visible
+async boundary, rather than only through nested declarations.
+
+Measured focused evidence on the replacement PR worktree:
+
+- `tests/issue-3995-hono-class-boundary.test.ts`: **18/18**;
+- `tests/async-await.test.ts`: **8/8**;
+- `tests/equivalence/async-function.test.ts`: **7/7**;
+- `tests/equivalence/promise-chains.test.ts`: **8/8**;
+- `tests/issue-3587-async-rejection-delivery.test.ts`: **21/21**;
+- `tests/issue-4618-async-nested-fn-decl.test.ts`: **1/1**.
+
+The local Node engine cannot execute the WASI try/catch control suite: all 38
+cases stop at instantiation on opcode `0x1f` with its exnref feature disabled,
+before any test value runs. That is an engine-infrastructure limitation, not a
+pass claim.
+
+The exact selected Hono rerun on this branch scores **138/322** native-admitted
+callbacks in Wasm (19/20 selected modules compile and 17 validate). That is a
+branch-wide measurement, not an attribution of all 33 additional passes to
+this async slice. In particular, the unchanged original trailing-slash file
+does **not** advance past its earlier boundary: callbacks 1 and 2 pass, while
+callback 3 still reports `Context is not finalized` and a late
+`new URL(undefined)` rejection leaves its test promise unresolved. The normal
+worker exits on that rejection; running Node in warning mode confirms the
+unresolved continuation rather than producing a later callback result. The
+exact conservative outcome therefore remains **2/36 before the fatal/pending
+third callback**. Neither the generated callback source nor its expectations
+were edited for this measurement.
+
+## 2026-08-26 Hono trailing-slash completion checkpoint
+
+The exact pinned and transformed-but-otherwise-unchanged
+`src/middleware/trailing-slash/index.test.ts` now compiles, validates, exposes
+all **36** declared callbacks, and passes **36/36** in Wasm. A final isolated
+worker run compiled the 1,165,051-byte binary in **6.432 s**. No upstream
+assertion, callback, or expected value changed.
+
+Three generic runtime/compiler boundaries closed the post-conditional-CFG
+residue. A named class expression now keeps its actual private-field receiver
+when the lexical and visible class carriers refer to the same declaration,
+instead of projecting `this` through a duplicate synthetic class layout.
+Inferred native-ref fields that the class later clears with `void` use the
+dynamic externref carrier, preserving the real `undefined` state rather than
+materializing an empty native array. The class-body scan is cached per AST
+declaration: the uncached first implementation increased the exact compile to
+**29.230 s**, while the cached implementation restored the isolated result to
+**6.432 s**.
+
+The last two callbacks used
+`expect(await response.text()).toBe("wildcard")`. That nested await made the
+whole async test closure fall back to synchronous passthrough, so its earlier
+`await app.request(...)` exposed the raw pending host Promise and `status`
+became `NaN`. The linear async planner now admits the bounded, replay-safe form
+where the awaited value is the first dynamic argument of a checker-proven
+`const` callable and all enclosing member/call operations occur after that
+call. Recompilation therefore repeats only an immutable binding read. Mutable
+or global callees, earlier arguments, embedding as another operand, and
+concrete scalar callable parameters remain on their prior lane; the latter
+need a separate typed continuation ABI and are explicitly pinned by the
+focused regression.
+
+Focused Hono/compiler evidence is **27/27** in
+`tests/issue-3995-hono-class-boundary.test.ts`, including both the dynamic
+nested-await activation and its concrete-scalar non-admission control. The
+separate exact encode file remains **44/44** from the preceding checkpoint.
+
+A fresh full selected-Hono run now scores **170/322** native-admitted callbacks
+in Wasm, up from the preceding branch measurement of **138/322**. All 20
+selected modules were attempted: 18 compiled, 16 validated, and the runner
+recorded zero runtime-failed callbacks outside the ordinary scored failures.
+The trailing-slash module contributes the directly measured **36/36**. This is
+a branch-wide result rather than attribution of all 32 additional passes to
+the final nested-await slice; the report preserves each remaining package
+failure and the separately deferred upstream inventory.
+
+## 2026-08-26 combined integration report audit
+
+The fresh combined report preserves the exact Hono result: **170/322** admitted
+original callbacks pass in Wasm and **152/322** are scored compatibility
+failures. Node passes the same **322/322** admitted denominator; two additional
+registrations fail natively and are not admitted. Of 20 selected modules,
+**18/20 compile** and **16/20 validate**. The unchanged
+`src/middleware/trailing-slash/index.test.ts` module itself compiles, validates,
+and passes **36/36**. Separately, **2,031 registrations in 100 deferred files**
+remain unavailable infrastructure; they are not counted as scored failures.

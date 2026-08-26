@@ -27,6 +27,7 @@ import {
   addStringConstantGlobal,
   addUnionImports,
   ensureExnTag,
+  findUserBindingDecl,
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
@@ -38,7 +39,7 @@ import {
   isShadowStaticArmFor,
   withShadowReadSuppressed,
 } from "../fn-global-shadow.js"; // (#4630 / #4648)
-import { emitTdzCheck } from "../statements.js";
+import { emitTdzCheck, emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -71,7 +72,11 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
-import { tryEmitPromiseSubclassValue } from "./promise-subclass.js";
+import {
+  emitPromiseSubclassCtor,
+  resolvePromiseSubclassIdentifier,
+  tryEmitPromiseSubclassValue,
+} from "./promise-subclass.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -85,6 +90,7 @@ import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -92,6 +98,8 @@ import {
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import { tryEmitCompiledModuleNamespaceObject } from "../module-namespace-value.js";
 
 const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
 
@@ -554,6 +562,10 @@ function emitNullablePrimitiveUnbox(
     }
   }
   if (primitiveKind === "bigint") {
+    // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
+    // through __to_bigint would collapse it to the compiler's host-free i64
+    // carrier and discard every bit above 63.
+    if (usesHostBigIntCarrier(ctx)) return null;
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -747,6 +759,78 @@ function ambientGlobalReadIsUserFunctionShadowed(ctx: CodegenContext, id: ts.Ide
   if (decl === undefined) return false;
   if (decl.getSourceFile().isDeclarationFile) return false;
   return ts.isFunctionDeclaration(decl) && decl.name?.text === name;
+}
+
+/** Resolve an imported top-level function by declaration/allocator identity. */
+function exactImportedTopLevelFunction(
+  ctx: CodegenContext,
+  id: ts.Identifier,
+): { declaration: ts.FunctionDeclaration; funcIdx: number; name: string } | undefined {
+  const binding = ctx.oracle.valueDeclarationOf(id);
+  if (!binding || (!ts.isImportClause(binding) && !ts.isImportSpecifier(binding))) return undefined;
+  const declaration = ctx.importBindingTargets?.get(binding);
+  if (
+    !declaration ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.body === undefined ||
+    declaration.parent !== declaration.getSourceFile()
+  ) {
+    return undefined;
+  }
+  // Reassigned function declarations are live module bindings. The immutable
+  // direct body is not their current value; let the existing live-global import
+  // path serve them instead. This check must use declaration identity: the
+  // legacy storage registry is graph-wide and name-keyed, so an unrelated
+  // reassigned `source` must not hide this immutable declaration.
+  if (ctx.reassignedFunctionDeclarations?.has(declaration)) return undefined;
+  const registry = ctx.programAbiSourceCallables;
+  const identity = registry?.identityContext;
+  const unitId = identity?.unitIdByDeclaration.get(declaration);
+  if (
+    unitId === undefined ||
+    identity?.declarationByUnitId.get(unitId) !== declaration ||
+    registry?.functionForUnit(unitId) === undefined
+  ) {
+    return undefined;
+  }
+  const funcIdx = registry.handleForUnit(unitId);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) !== registry.functionForUnit(unitId)) return undefined;
+  return {
+    declaration,
+    funcIdx,
+    name: declaration.name?.text ?? registry.functionForUnit(unitId)!.name,
+  };
+}
+
+/**
+ * Read a user module binding that TypeScript resolved to a same-named ambient
+ * declaration in script mode (#2176). The source lookup establishes lexical
+ * ownership; Program ABI allocator identity then prevents another module's
+ * same-named global from serving the read.
+ */
+function compileExactAmbientShadowedModuleBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | undefined {
+  const declaration = findUserBindingDecl(id);
+  if (!declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+  const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
+  if (!binding) return undefined;
+  const localIdx = ctx.mod.globals.indexOf(binding.value);
+  if (localIdx < 0) return undefined;
+  if (binding.tdz) {
+    const tdzLocalIdx = ctx.mod.globals.indexOf(binding.tdz);
+    if (tdzLocalIdx < 0) return undefined;
+    const tdzResult = analyzeTdzAccess(ctx, id);
+    if (tdzResult === "check") {
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text);
+    } else if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, id.text);
+    }
+  }
+  fctx.body.push({ op: "global.get", index: ctx.numImportGlobals + localIdx });
+  return binding.value.type;
 }
 
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,
@@ -959,6 +1043,11 @@ function compileIdentifierCore(
       // tdzResult === "skip" — no check needed, variable is guaranteed initialized
     }
 
+    const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
+    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+      return { kind: "externref" };
+    }
+
     // Check if this is a boxed (ref cell) mutable capture
     const boxed = fctx.boxedCaptures?.get(name);
     if (boxed) {
@@ -1115,12 +1204,75 @@ function compileIdentifierCore(
     }
   }
 
+  // An imported default expression is identified by its checker declaration,
+  // not by the import's bare local spelling. This must precede every graph-wide
+  // name registry: an unrelated same-named function/closure/global in another
+  // source file is not visible through this import binding.
+  const importedDefaultExpression = resolveDefaultExpressionImportGlobal(ctx, id);
+  if (importedDefaultExpression) {
+    emitTdzCheckAtGlobal(ctx, fctx, importedDefaultExpression.initializedGlobalIdx, name);
+    fctx.body.push({ op: "global.get", index: importedDefaultExpression.globalIdx });
+    return importedDefaultExpression.type;
+  }
+
+  // Default/named imports of top-level functions must retain source identity.
+  // The graph-wide funcMap is keyed by spelling, so two dependencies that both
+  // declare `function source()` cannot safely be projected through that map.
+  const importedFunction = exactImportedTopLevelFunction(ctx, id);
+  if (importedFunction) {
+    const constructible =
+      importedFunction.declaration.asteriskToken === undefined &&
+      !(importedFunction.declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+    const valueType = emitCachedFuncClosureAccess(
+      ctx,
+      fctx,
+      importedFunction.name,
+      importedFunction.funcIdx,
+      constructible,
+    );
+    if (valueType) return valueType;
+  }
+
+  const namespaceObject = tryEmitCompiledModuleNamespaceObject(ctx, fctx, id);
+  if (namespaceObject) return namespaceObject;
+
+  const resolvedValueDeclaration = ctx.oracle.valueDeclarationOf(id);
+  const readsAmbientDeclaration = resolvedValueDeclaration?.getSourceFile().isDeclarationFile === true;
+  const ambientShadowType = readsAmbientDeclaration
+    ? compileExactAmbientShadowedModuleBinding(ctx, fctx, id)
+    : undefined;
+  if (ambientShadowType) return ambientShadowType;
+
+  // (#4618) A class declaration is already represented by its canonical,
+  // identity-stable class-object singleton, so it never needs a value-copy
+  // capture. Resolve the checker-verified declaration before the graph-wide,
+  // name-keyed capture tables below. Otherwise a sibling callback that
+  // previously promoted its own same-named class (React's many per-test
+  // `class Foo` declarations) can intercept this read with a foreign null
+  // capture global. Per-site synthetic identities keep duplicate lexical
+  // declarations distinct while preserving the ordinary class name for the
+  // first declaration.
+  const declaredClass = resolvedValueDeclaration;
+  if (declaredClass && (ts.isClassDeclaration(declaredClass) || ts.isClassExpression(declaredClass))) {
+    const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
+    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+      return { kind: "externref" };
+    }
+    const classIdentity =
+      ctx.anonClassExprNames.get(declaredClass) ??
+      (declaredClass.name?.text && ctx.classObjectGlobals?.has(declaredClass.name.text)
+        ? declaredClass.name.text
+        : (ctx.classExprNameMap.get(name) ?? name));
+    if (ctx.classObjectGlobals?.has(classIdentity) && emitLazyClassObjectGet(ctx, fctx, classIdentity)) {
+      return { kind: "externref" };
+    }
+  }
   // (#3039) Check BOXED captured globals FIRST — a transitively-captured
   // mutable var (ref cell) that a method-shorthand / class-method / accessor
   // body reads. The promoted global holds the box; deref it (global.get;
   // struct.get field 0) rather than returning the ref cell as if it were the
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
-  const capturedBox = getCapturedBoxGlobal(ctx, name);
+  const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
@@ -1135,9 +1287,10 @@ function compileIdentifierCore(
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
   // for THIS module's environment record — see moduleGoalReadIsUndeclared.
   const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, id);
+  const graphNameRegistryUnavailable = unresolvedInModuleGoal || readsAmbientDeclaration;
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
-  const capturedIdx = unresolvedInModuleGoal ? undefined : ctx.capturedGlobals.get(name);
+  const capturedIdx = graphNameRegistryUnavailable ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis — captured globals are often accessed from closures,
@@ -1160,7 +1313,7 @@ function compileIdentifierCore(
   }
 
   // Check module-level globals (top-level let/const declarations)
-  const moduleIdx = unresolvedInModuleGoal ? undefined : ctx.moduleGlobals.get(name);
+  const moduleIdx = graphNameRegistryUnavailable ? undefined : ctx.moduleGlobals.get(name);
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
@@ -1329,7 +1482,15 @@ function compileIdentifierCore(
       name === "BigInt64Array" ||
       name === "BigUint64Array" ||
       name === "Buffer" ||
-      name === "process") &&
+      name === "process" ||
+      // Web Crypto is also a genuine host-global VALUE. Direct
+      // `crypto.randomUUID()` / `crypto.getRandomValues()` calls have typed
+      // builtin lowerings, but a guard such as `if (crypto.randomUUID)` reads
+      // the namespace first. Multi-module JS projects do not necessarily
+      // retain the lib.dom ambient declaration for that dependency, so the
+      // read used to fall through to the unresolvable-name path even though
+      // the host supplies globalThis.crypto.
+      name === "crypto") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1438,7 +1599,7 @@ function compileIdentifierCore(
   {
     // (#3505) A foreign module's class must not resolve by bare name — see
     // `unresolvedInModuleGoal`.
-    let resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    let resolvedClassName = graphNameRegistryUnavailable ? undefined : (ctx.classExprNameMap.get(name) ?? name);
     // (#4618) Checker-verified identity: a bare name is not a binding. A
     // nested FUNCTION named like a class elsewhere (react's StrictMode batch
     // declares `class Foo` in one test and `function Foo()` in the next) was
@@ -1679,7 +1840,7 @@ function compileIdentifierCore(
   // path (which would otherwise re-wrap the func index into a fresh closure,
   // ignoring the live value). Gated on the normally-empty set — byte-identical
   // for programs that never reassign a function declaration.
-  if (fctx.localMap.get(name) === undefined && !unresolvedInModuleGoal && ctx.liveFuncBindingGlobals?.has(name)) {
+  if (fctx.localMap.get(name) === undefined && !graphNameRegistryUnavailable && ctx.liveFuncBindingGlobals?.has(name)) {
     const liveGlobalIdx = ctx.moduleGlobals.get(name);
     if (liveGlobalIdx !== undefined) {
       fctx.body.push({ op: "global.get", index: liveGlobalIdx });
@@ -1694,7 +1855,7 @@ function compileIdentifierCore(
   // (#3505) A foreign module's function declaration must not resolve by bare
   // name (funcMap is graph-wide) — skip the funcref-as-value arm so the read
   // reaches the undeclared -> ReferenceError emission below.
-  const funcRefIdx = unresolvedInModuleGoal ? undefined : ctx.funcMap.get(name);
+  const funcRefIdx = graphNameRegistryUnavailable ? undefined : ctx.funcMap.get(name);
   // (#1809) Only wrap DEFINED functions (index >= numImportFuncs) in a funcref
   // closure. A host import (e.g. the ambient DOM global `resizeTo`/`resizeBy`
   // from lib.dom.d.ts) has no in-module body to forward to via `ref.func`, so
@@ -1924,6 +2085,10 @@ function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedT
     }
   }
   if (isBigIntType(narrowedType)) {
+    // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
+    // host BigInts. A checker narrowing changes the logical type, not that
+    // physical representation, so leave the externref on the stack.
+    if (usesHostBigIntCarrier(ctx)) return null;
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
@@ -2511,6 +2676,35 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (namespaceThrow) return namespaceThrow;
   }
 
+  // Promise subclasses are represented by cached host constructors. Their
+  // instances therefore need the actual RHS value, not the name-based user
+  // class/tag predicate used for WasmGC classes and other builtin subclasses.
+  if (
+    ts.isIdentifier(expr.right) &&
+    resolvePromiseSubclassIdentifier(ctx, expr.right) !== undefined &&
+    !noJsHost(ctx)
+  ) {
+    const helperIdx = ensureLateImport(
+      ctx,
+      "__promise_subclass_instanceof",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (!leftType) fctx.body.push({ op: "ref.null.extern" });
+    else if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, { kind: "externref" });
+    const rightType = compileExpression(ctx, fctx, expr.right);
+    if (!rightType) fctx.body.push({ op: "ref.null.extern" });
+    else if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, { kind: "externref" });
+    if (helperIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
+    } else {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__promise_subclass_instanceof") ?? helperIdx });
+    }
+    return { kind: "i32" };
+  }
+
   // Resolve constructor name from the RHS expression (simple identifiers only)
   let ctorName: string | undefined;
   if (ts.isIdentifier(expr.right)) {
@@ -2570,7 +2764,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     ts.isIdentifier(expr.right) &&
     !isBuiltinTypeName(ctorName) &&
     identifierHasSourceDeclaration(ctx, expr.right) &&
-    userErrorParent === undefined
+    userErrorParent === undefined &&
+    !ctx.classExternrefBackedSet.has(ctorName)
   ) {
     // (#3962) Host-free answer for a plain user function constructor — the
     // `e instanceof Test262Error` shape, 26 of the 36 ≤ES5 sole leaks of
@@ -2579,6 +2774,15 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (nativeCtor) return nativeCtor;
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
+
+  // An externref-backed user Error subclass has no callable Wasm constructor
+  // value to hand to `__instanceof_check`: reading the class binding through
+  // the ordinary dynamic RHS path currently produces null. Construction has
+  // already registered the exact synthetic class name via
+  // `__set_subclass_proto` / `__tag_user_class`, so keep this shape on the
+  // name-based `__instanceof(value, ctorName)` path below. This is required for
+  // caught/dynamic values, where the typed static shortcut cannot answer (the
+  // Hono `error instanceof UnsupportedPathError` router fallback).
 
   // #1473 — no JS host: `e instanceof TypeError` (and other Error subtypes)
   // where the LHS is a dynamic value (any/externref). The caught value is the

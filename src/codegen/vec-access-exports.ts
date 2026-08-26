@@ -1065,7 +1065,23 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ctx.funcMap.has("__defineProperty_accessor") ||
     ctx.funcMap.has("__defineProperties");
   const wantsDynamicWriteback =
-    !ctx.standalone && !ctx.wasi && (ctx.funcMap.has("__extern_set") || ctx.funcMap.has("__extern_set_strict"));
+    !ctx.standalone &&
+    !ctx.wasi &&
+    (ctx.funcMap.has("__extern_set") ||
+      ctx.funcMap.has("__extern_set_strict") ||
+      ctx.funcMap.has("__unwrap_for_wasm") ||
+      // Host calls can receive an Array/TypedArray facade and mutate it
+      // without changing its length (`reverse`, `sort`, `fill`, ...). Their
+      // runtime bracketing needs the element writer to reconcile that mirror
+      // before compiled aliases observe the vec again.
+      ctx.funcMap.has("__proto_method_call") ||
+      ctx.funcMap.has("__extern_method_call") ||
+      ctx.funcMap.has("__call_function") ||
+      ctx.funcMap.has("__call_function_0") ||
+      ctx.funcMap.has("__call_function_1") ||
+      ctx.funcMap.has("__call_function_2") ||
+      ctx.funcMap.has("__call_function_3") ||
+      ctx.funcMap.has("__call_function_4"));
   const wantsNativeBoundaryWriteback =
     ctx.targetProfile.semanticProviders === "native-first" &&
     ctx.emitHostBridge &&
@@ -1097,7 +1113,15 @@ export function emitVecSetByteExport(ctx: CodegenContext): void {
   // (#1700) Now also needed by the JS-host `wrapExports` to populate freshly
   // allocated f64 vecs with Uint8Array bytes. Emit when either consumer is
   // present.
-  if (!ctx.funcMap.has("__crypto_get_random_values") && !hasExportedVecParam(ctx)) return;
+  // Linked/deferred projects can retain the imported function in the module
+  // even after their per-source funcMap entry has been projected away. The
+  // binary import is the authoritative reachability signal at finalize time.
+  const hasCryptoConsumer =
+    ctx.funcMap.has("__crypto_get_random_values") ||
+    ctx.mod.imports.some(
+      (entry) => entry.desc.kind === "func" && entry.module === "env" && entry.name === "__crypto_get_random_values",
+    );
+  if (!hasCryptoConsumer && !hasExportedVecParam(ctx)) return;
   try {
     _emitVecSetByteExportInner(ctx);
   } catch {

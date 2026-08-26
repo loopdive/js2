@@ -77,7 +77,7 @@ export {
 export { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 export { emitArgumentsObject, hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 export { collectInstrs } from "./statements/shared.js";
-export { emitTdzCheck } from "./statements/tdz.js";
+export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
 
 // ---------------------------------------------------------------------------
 // Dispatcher helpers
@@ -398,7 +398,8 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   if (ts.isExportDeclaration(stmt)) return;
 
   // Export assignment — `export default expr` or `export = expr`
-  // Evaluate the expression (for side effects) but discard the result.
+  // Evaluate the expression and store it when this linked module owns an exact
+  // default-export snapshot cell; otherwise preserve the effects and discard it.
   if (ts.isExportAssignment(stmt)) {
     const resultType = compileExpression(ctx, fctx, stmt.expression);
     const expressionGlobal = ctx.defaultExpressionGlobals?.get(stmt);
@@ -406,7 +407,16 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       if (resultType.kind !== expressionGlobal.type.kind) {
         coerceType(ctx, fctx, resultType, expressionGlobal.type);
       }
-      fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(expressionGlobal.bindingName)! });
+      const valueLocalIdx = ctx.mod.globals.indexOf(expressionGlobal.value);
+      const initializedLocalIdx = ctx.mod.globals.indexOf(expressionGlobal.initialized);
+      if (valueLocalIdx < 0 || initializedLocalIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot cell lost its allocator identity");
+        fctx.body.push({ op: "drop" });
+        return;
+      }
+      fctx.body.push({ op: "global.set", index: ctx.numImportGlobals + valueLocalIdx });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "global.set", index: ctx.numImportGlobals + initializedLocalIdx });
     } else if (resultType !== null) {
       fctx.body.push({ op: "drop" });
     }

@@ -53,6 +53,7 @@ import {
 } from "./global-environment.js";
 import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
+import * as tf from "./typeof-static-folds.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -1586,18 +1587,12 @@ export function compileTypeofExpression(
 ): ValType | null {
   const operand = expr.expression;
 
+  const realmGlobalTypeof = tf.tryCompileRealmGlobalTypeof(ctx, fctx, operand);
+  if (realmGlobalTypeof !== undefined) return realmGlobalTypeof;
+
   // typeof Math.<constant> -> "number", typeof Math.<method> -> "function"
-  if (
-    ts.isPropertyAccessExpression(operand) &&
-    ts.isIdentifier(operand.expression) &&
-    operand.expression.text === "Math"
-  ) {
-    const mathConstants = new Set(["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"]);
-    if (mathConstants.has(operand.name.text)) {
-      return compileStringLiteral(ctx, fctx, "number");
-    }
-    return compileStringLiteral(ctx, fctx, "function");
-  }
+  const mathTypeof = tf.tryCompileMathMemberTypeof(ctx, fctx, operand);
+  if (mathTypeof !== undefined) return mathTypeof;
 
   // typeof import.meta -> "object"
   if (
@@ -1950,11 +1945,9 @@ export function compileTypeofComparison(
   const isEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
   const isNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   if (!isEq && !isNeq) return null;
-
   // Detect typeof on left or right
   let typeofExpr: ts.TypeOfExpression | null = null;
   let stringLiteral: string | null = null;
-
   if (ts.isTypeOfExpression(expr.left) && ts.isStringLiteral(expr.right)) {
     typeofExpr = expr.left;
     stringLiteral = expr.right.text;
@@ -1962,12 +1955,13 @@ export function compileTypeofComparison(
     typeofExpr = expr.right;
     stringLiteral = expr.left.text;
   }
-
   if (!typeofExpr || !stringLiteral) return null;
-
   // Static resolution: if the typeof result is known at compile time,
   // emit a constant comparison result without any runtime call.
   const operand = typeofExpr.expression;
+
+  const realmGlobalComparison = tf.tryCompileRealmGlobalTypeofComparison(ctx, fctx, operand, stringLiteral, isEq);
+  if (realmGlobalComparison !== undefined) return realmGlobalComparison;
 
   // typeof UndeclaredIdentifier -> "undefined" (#1050)
   {
@@ -1985,11 +1979,12 @@ export function compileTypeofComparison(
       if (emitArgumentsTypeofComparison(ctx, fctx, ident, stringLiteral, isEq)) return { kind: "i32" };
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
-        const actual = staticTypeofForWasmType(ctx, withBinding.field.type);
-        const matches = actual === stringLiteral;
-        const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
-        fctx.body.push({ op: "i32.const", value: result });
-        return { kind: "i32" };
+        return tf.emitStaticTypeofComparison(
+          fctx,
+          staticTypeofForWasmType(ctx, withBinding.field.type),
+          stringLiteral,
+          isEq,
+        );
       }
       // (#4640) The `typeof x <op> "<literal>"` twin of the sloppy-implicit-
       // global arm in `compileTypeofExpression`. It has to be repeated here
