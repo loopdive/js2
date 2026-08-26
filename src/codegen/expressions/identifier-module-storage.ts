@@ -107,6 +107,11 @@ export function currentSourceModuleGlobalIndex(
   id: ts.Identifier,
   allowUnresolvedTopLevelVariable = false,
 ): number | undefined {
+  // Script files share one GlobalEnvironmentRecord. A declaration resolved
+  // through another script (notably the assembled Test262 harness) therefore
+  // names the same runtime binding; source qualification is only meaningful
+  // for module environment records.
+  if (!ctx.sourceIsModule) return ctx.moduleGlobals.get(id.text);
   const sourceFile = id.getSourceFile();
   if (sourceFile.isDeclarationFile) return undefined;
   const declaration = resolvedDeclaration(ctx, id, allowUnresolvedTopLevelVariable);

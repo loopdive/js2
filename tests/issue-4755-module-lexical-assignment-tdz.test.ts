@@ -928,10 +928,10 @@ describe.each(TARGETS)("#4755 direct assignment identity controls — %s", (targ
       { target: 0 },
     );
     expect(value).toBe(7);
-    // The compiler deliberately inlines lexicalStorageClean4755 into this
-    // body, contributing exactly one legitimate provider call. A leaked guard
-    // on either ambient access would increase the census beyond one.
-    expect(referenceErrorCallCount(result, "writeAmbient4755")).toBe(1);
+    // The current inliner proves the initialized foreign lexical read safe,
+    // so neither it nor either ambient access may retain a ReferenceError
+    // provider in this body.
+    expect(referenceErrorCallCount(result, "writeAmbient4755")).toBe(0);
   });
 
   it("keeps a genuinely unresolvable collision on the strict GlobalEnvironmentRecord route", async () => {

@@ -7,7 +7,7 @@ import { getLocalType } from "../context/locals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { coerceType, valTypesMatch } from "../shared.js";
 import { emitTdzCheck } from "../statements/tdz.js";
-import { analyzeIdentifierTdzAccess, emitStaticTdzThrow } from "./identifiers.js";
+import { analyzeTdzAccess as analyzeIdentifierTdzAccess, emitStaticTdzThrow } from "./identifiers.js";
 import { identifierResolvesToCurrentTopLevelLexical } from "./identifier-module-storage.js";
 
 function moduleLexicalAssignmentTdzDecision(

@@ -343,3 +343,38 @@ while hybrid fallback remains reachable; #3090/R10 deletes the direct
 assignment handler only after reachability proves every supported module
 lexical write is Prepared or fails with a typed pre-emission outcome. Do not
 preserve this helper as a second frontend below the final IR-only boundary.
+
+## Implementation handover (2026-08-26)
+
+PR #4997 implements the bounded prerequisite above on current `main`. The
+shared writer now uses exact source/checker identity for ordinary and
+precomputed module-lexical writes, keeps dynamic/ambient/import/foreign/
+unresolvable carriers on their existing routes, re-reads mutable global
+indices after provider settlement, and keeps detached default-arm bodies live
+through final branch attachment. The production diff adds no LOC/function
+allowance and does not widen a baseline.
+
+The changed-root proof is 48/48: 46 rows in
+`tests/issue-4755-module-lexical-assignment-tdz.test.ts` plus two detached-body
+rows in `tests/issue-4755-detached-assignment-repoint.test.ts`, across direct GC
+and standalone as applicable. TypeScript 7/5, IR layering, optimization
+retirement, fallback/oracle/coercion ratchets, LOC/function budgets, formatting,
+and the normal precommit hook passed on the merged bytes. In the required
+`tests/issue-4259-class-accessor-outer-writeback-ir.test.ts` control, every
+#4755-relevant TDZ row passes; four other rows fail identically on a detached
+clean `origin/main` worktree and therefore remain a pre-existing #4259 baseline
+defect rather than a waiver or a regression introduced here.
+
+The continuation boundary is explicit:
+
+- #4260 still owns the injected pre-seal transaction rerun after #4997 lands;
+- #1719 owns the standalone CPR iterator producer/consumer contract exposed by
+  the isolated destructuring row; and
+- #3518 R9/#3090 R10 must preserve this matrix while moving the writer into IR
+  ownership and then delete this temporary direct-frontend seam.
+
+PR #4997 was re-anchored without a force push so its final tree is based on
+current `main` and excludes stale generated Test262 reports. Merge-queue,
+ordinary merge-commit, or squash landing is safe; do not use rebase-and-merge
+for this PR because replaying its preserved pre-anchor history can resurrect
+those unrelated generated artifacts.

@@ -105,11 +105,15 @@ export function emitTdzCheckAtGlobal(
     return;
   }
 
-  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
   // if (flag == 0) throw ReferenceError
+  // Emit the flag read before settling the real-ReferenceError provider: its
+  // constructor/message may insert imports, and the canonical global-index
+  // fixup can then relocate this already-live instruction. A numeric flagIdx
+  // captured by an exact-source caller cannot be repaired after the fact.
   fctx.body.push({ op: "global.get", index: flagIdx });
   fctx.body.push({ op: "i32.eqz" });
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
     addStringConstantGlobal(ctx, msg);
