@@ -3712,14 +3712,30 @@ function compilePropertyAssignment(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): InnerResult {
-  // A synthesized standalone Function body lives in the foreign `<eval>.ts`
-  // source file. The checker has no bound declaration for its `this` value and
-  // crashes if asked for the receiver type, while the dynamic member setter
-  // already has the correct externref semantics for this lane.
-  if (isForeignEvalNode(target)) {
+  // A folded direct-eval body lives in the foreign `<eval>.ts` source file.
+  // Its `this.#private` assignment is still lexically inside the surrounding
+  // static class method, so let the private-accessor path classify it with the
+  // FunctionContext's class hint. Every other foreign assignment remains on
+  // the dynamic member setter because the checker cannot type its bindings.
+  const foreignStaticPrivateClassName =
+    isForeignEvalNode(target) &&
+    fctx.isStaticContext &&
+    fctx.enclosingClassName !== undefined &&
+    ctx.classDeclarationMap.has(fctx.enclosingClassName) &&
+    ts.isPrivateIdentifier(target.name) &&
+    skipTransparentExpressions(target.expression).kind === ts.SyntaxKind.ThisKeyword
+      ? fctx.enclosingClassName
+      : undefined;
+  if (isForeignEvalNode(target) && foreignStaticPrivateClassName === undefined) {
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
   }
-  const objType = ctx.checker.getTypeAtLocation(target.expression);
+  // The foreign static-private lane never consumes `objType` when its
+  // classifier finds the accessor (the private branch below returns first),
+  // but use the real class declaration as the defensive fallback instead of
+  // querying the unbound foreign `this` node.
+  const objType = foreignStaticPrivateClassName
+    ? ctx.checker.getTypeAtLocation(ctx.classDeclarationMap.get(foreignStaticPrivateClassName)!)
+    : ctx.checker.getTypeAtLocation(target.expression);
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
@@ -3899,7 +3915,7 @@ function compilePropertyAssignment(
   // `(this as any).#m`) can otherwise send us through __extern_set and
   // silently drop the write.
   if (ts.isPrivateIdentifier(target.name)) {
-    const privateMember = classifyPrivateMember(ctx, target.name);
+    const privateMember = classifyPrivateMember(ctx, target.name, foreignStaticPrivateClassName);
     if (privateMember?.kind === "method" || privateMember?.kind === "accessor-readonly") {
       // Evaluate RHS for side effects before throwing (spec evaluation order).
       const rhsResult = compileExpression(ctx, fctx, value);

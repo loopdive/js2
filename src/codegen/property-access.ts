@@ -3593,6 +3593,28 @@ export function compilePropertyAccess(
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
 
+  // Static field initializers can contain a folded direct eval. Its AST is
+  // foreign, but `this.<name>` still denotes the surrounding class constructor
+  // and must see compiler-owned static-field storage. Handle that one receiver
+  // shape before the generic foreign-eval lane; all other foreign property
+  // accesses remain dynamic because the checker cannot type their bindings.
+  const foreignStaticClassName =
+    isForeignEvalNode(expr) &&
+    fctx.isStaticContext &&
+    fctx.enclosingClassName !== undefined &&
+    skipTransparentExpressions(expr.expression).kind === ts.SyntaxKind.ThisKeyword
+      ? fctx.enclosingClassName
+      : undefined;
+  if (foreignStaticClassName !== undefined) {
+    const staticPropName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+    const globalIdx = ctx.staticProps.get(`${foreignStaticClassName}_${staticPropName}`);
+    if (globalIdx !== undefined) {
+      fctx.body.push({ op: "global.get", index: globalIdx });
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+      return globalDef?.type ?? { kind: "externref" };
+    }
+  }
+
   // Static standalone Function bodies are parsed in a synthetic foreign
   // source file. Their identifiers are deliberately compiled as externrefs,
   // but TypeScript's checker cannot answer a property-access type query for

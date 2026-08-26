@@ -378,8 +378,41 @@ export type PrivateMemberKind = "method" | "accessor-readonly" | "accessor-write
 export function classifyPrivateMember(
   ctx: CodegenContext,
   name: ts.PrivateIdentifier,
+  classNameHint?: string,
 ): { className: string; fieldName: string; kind: PrivateMemberKind } | undefined {
   const fieldName = "__priv_" + name.text.slice(1);
+
+  // A folded direct-eval body is parsed into a synthetic SourceFile, so its
+  // PrivateIdentifier has no parent chain leading back to the class that owns
+  // the private name. The caller still carries that lexical class context on
+  // the FunctionContext; use it as a narrow first probe before walking the
+  // foreign AST below.
+  const classifyInClass = (
+    className: string,
+  ): { className: string; fieldName: string; kind: PrivateMemberKind } | undefined => {
+    const fullName = `${className}_${fieldName}`;
+    if (ctx.classMethodSet.has(fullName) || ctx.staticMethodSet.has(fullName)) {
+      return { className, fieldName, kind: "method" };
+    }
+    if (ctx.classAccessorSet.has(fullName)) {
+      const hasGetter = ctx.funcMap.has(`${className}_get_${fieldName}`);
+      const hasSetter = ctx.funcMap.has(`${className}_set_${fieldName}`);
+      if (hasGetter && !hasSetter) return { className, fieldName, kind: "accessor-readonly" };
+      if (hasSetter && !hasGetter) return { className, fieldName, kind: "accessor-writeonly" };
+      return { className, fieldName, kind: "accessor" };
+    }
+    const structFields = ctx.structFields.get(className);
+    if (structFields?.some((f) => f.name === fieldName)) {
+      return { className, fieldName, kind: "field" };
+    }
+    return undefined;
+  };
+
+  if (classNameHint !== undefined) {
+    const hinted = classifyInClass(classNameHint);
+    if (hinted !== undefined) return hinted;
+  }
+
   // Walk up parent links to find the lexically enclosing class that declares `#name`.
   // Unlike resolveDeclaringClassForPrivateName, we need to consider classes whose
   // PrivateIdentifier was registered as a method or accessor — those entries do
@@ -395,24 +428,8 @@ export function classifyPrivateMember(
         current = current.parent;
         continue;
       }
-      const fullName = `${className}_${fieldName}`;
-      // Method: registered in classMethodSet (instance) or staticMethodSet (static).
-      if (ctx.classMethodSet.has(fullName) || ctx.staticMethodSet.has(fullName)) {
-        return { className, fieldName, kind: "method" };
-      }
-      // Accessor: classAccessorSet has the accessor key.
-      if (ctx.classAccessorSet.has(fullName)) {
-        const hasGetter = ctx.funcMap.has(`${className}_get_${fieldName}`);
-        const hasSetter = ctx.funcMap.has(`${className}_set_${fieldName}`);
-        if (hasGetter && !hasSetter) return { className, fieldName, kind: "accessor-readonly" };
-        if (hasSetter && !hasGetter) return { className, fieldName, kind: "accessor-writeonly" };
-        return { className, fieldName, kind: "accessor" };
-      }
-      // Field: declared as a struct field on this class.
-      const structFields = ctx.structFields.get(className);
-      if (structFields?.some((f) => f.name === fieldName)) {
-        return { className, fieldName, kind: "field" };
-      }
+      const classified = classifyInClass(className);
+      if (classified !== undefined) return classified;
     }
     current = current.parent;
   }
