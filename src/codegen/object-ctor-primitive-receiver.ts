@@ -46,6 +46,7 @@
  * `.constructor` to the runtime path, where it currently reads `undefined`.
  */
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
 
@@ -185,17 +186,20 @@ export function objectCoercionObjectArgumentOf(
   if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return undefined;
   const argument = producer.arguments?.[0];
   if (argument === undefined) return undefined;
-  const fact = ctx.oracle.typeFactOf(argument);
-  switch (fact.kind) {
-    case "array":
-    case "builtin":
-    case "class":
-    case "function":
-    case "object":
-      return argument;
-    default:
-      return undefined;
-  }
+  return isObjectLikeFact(ctx.oracle.typeFactOf(argument)) ? argument : undefined;
+}
+
+/** Whether a TypeOracle fact proves a value is already an object identity. */
+export function isObjectLikeFact(fact: TypeFact): boolean {
+  if (fact.kind === "union") return fact.parts.length > 0 && fact.parts.every(isObjectLikeFact);
+  return (
+    fact.kind === "array" ||
+    fact.kind === "tuple" ||
+    fact.kind === "builtin" ||
+    fact.kind === "class" ||
+    fact.kind === "function" ||
+    fact.kind === "object"
+  );
 }
 
 export function objectCoercionPreservesDate(ctx: CodegenContext, recvExpr: ts.Expression): boolean {

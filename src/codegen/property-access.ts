@@ -3702,13 +3702,13 @@ export function compilePropertyAccess(
     }
   }
 
-  // Static standalone Function bodies are parsed in a synthetic foreign
-  // source file. Their identifiers are deliberately compiled as externrefs,
-  // but TypeScript's checker cannot answer a property-access type query for
-  // those unbound declarations (it throws while resolving `this`). Keep this
-  // narrow lane entirely dynamic so expressions such as `a1.length` and
-  // `this.shifted` can still be lowered and evaluated by the object runtime.
+  // Static standalone Function bodies are parsed in a synthetic foreign source
+  // file; their identifiers are compiled as externrefs, but the checker cannot
+  // answer property-access queries for those unbound declarations. Keep this
+  // lane dynamic so expressions such as `a1.length` and `this.shifted` remain evaluable.
   if (isForeignEvalNode(expr)) {
+    const foreignPoison = tryCompileFunctionPoisonRead(ctx, fctx, expr);
+    if (foreignPoison !== undefined) return foreignPoison;
     const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
     const getIdx = ensureLateImport(
       ctx,

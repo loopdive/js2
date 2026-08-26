@@ -113,6 +113,7 @@ import {
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
+import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -9553,15 +9554,15 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const applyClosureIdx = ctx.funcMap.get("__apply_closure");
   if (!fn || externGetIdx === undefined || applyClosureIdx === undefined) return;
 
-  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor
-  // arm. The slow path below calls `__extern_get`, which walks its prepended
-  // ladder + `__fnctor_proto_start` before reaching the round-9b cache — but
+  const fnctorMissingMethod = buildFnctorMissingMethodDispatch(ctx, fn, externGetIdx, applyClosureIdx);
+
+  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor arm.
+  // The slow path calls `__extern_get` before reaching the round-9b cache, but
   // HERE the fnctor's prototype is a KNOWN GLOBAL, so the cache check is a
-  // handful of loads with zero calls: interned key + generation match +
-  // owner `ref.eq` against `global.get <proto>` + live-DATA entry flags →
-  // apply the cached method closure directly. Any miss falls to the exact
-  // old `__extern_get` path (which also populates the cache). Locals for the
-  // key/entry scratch are appended once below.
+  // handful of loads with zero calls: interned key + generation match + owner
+  // `ref.eq` against `global.get <proto>` + live-DATA entry flags. Any miss
+  // falls to the exact old `__extern_get` path, which also populates the cache;
+  // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
@@ -9586,7 +9587,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         ? (objStructDef.type.fields[1].type as { typeIdx: number }).typeIdx
         : undefined;
 
-  const arms: Instr[] = [];
+  const arms: Instr[] = [...fnctorMissingMethod.noPrototypeArms];
   for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
     const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
     if (typeIdx === undefined) continue;
@@ -9680,9 +9681,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: externGetIdx },
-          ...(ctx.funcMap.has("__nullish_to_null")
-            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-            : []),
+          ...fnctorMissingMethod.missingMethodGuard,
+          { op: "local.get", index: fnctorMissingMethod.missingMethodLocal },
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
           { op: "call", funcIdx: applyClosureIdx },

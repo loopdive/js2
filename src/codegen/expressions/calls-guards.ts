@@ -15,10 +15,11 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType } from "../../checker/type-mapper.js";
 import { noJsHost } from "../js-errors.js";
-import { pushDefaultValue } from "../type-coercion.js";
+import { coerceType, pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { isFreshOrdinaryObjectExpression } from "../native-ordinary-instanceof.js";
+import { isObjectLikeFact } from "../object-ctor-primitive-receiver.js";
 
 /**
  * (#4221) Unwrap the transparent wrappers that sit between a call expression
@@ -679,6 +680,36 @@ export function emitObjectCoercion(
     // typeof null === "object" still satisfies the §20.1.1.1 typeof contract.
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
+  }
+
+  // §7.1.18 is an identity operation for an object argument.  In the
+  // standalone backend an object-valued struct can otherwise be reified by
+  // `compileExpression(..., { kind: "externref" })` when it carries a
+  // user-defined `valueOf`/`toString`; that materialization creates a new
+  // `$Object` mirror and changes `Object(x) === x`.  Prove the argument is
+  // already an object before the primitive wrapper arms and cross the raw
+  // carrier directly, preserving identity (and the object's live methods).
+  // Unknown/`any` values deliberately keep the existing fallback below.
+  if (noJsHost(ctx)) {
+    const argFact = ctx.oracle.typeFactOf(args[0]!);
+    if (isObjectLikeFact(argFact)) {
+      const argResult = compileExpression(ctx, fctx, args[0]!);
+      if (argResult === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (argResult.kind !== "externref") {
+        if (
+          argResult.kind === "ref" ||
+          argResult.kind === "ref_null" ||
+          argResult.kind === "anyref" ||
+          argResult.kind === "eqref"
+        ) {
+          fctx.body.push({ op: "extern.convert_any" });
+        } else {
+          coerceType(ctx, fctx, argResult, { kind: "externref" });
+        }
+      }
+      return { kind: "externref" };
+    }
   }
 
   // Object(primitive) — wrap into the corresponding wrapper object.
