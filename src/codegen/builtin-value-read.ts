@@ -849,6 +849,59 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
 }
 
 /**
+ * (#4731) `<Map|Set>.prototype[Symbol.iterator]` is an alias for the
+ * prototype's `entries`/`values` method.  The ordinary computed-property path
+ * materializes the `$NativeProto` object and asks `__extern_get` for a dynamic
+ * symbol key; standalone has no symbol-key arm there, so it returned null.
+ * Resolve this exact static shape through the same identity-stable method
+ * closure used by the dot form.  Keeping this in the value-read subsystem also
+ * makes the Set and nearby Map controls share one spec-derived path.
+ */
+function tryCompileStandaloneBuiltinProtoIteratorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+
+  const key = skipTransparentExpressions(expr.argumentExpression);
+  if (
+    !ts.isPropertyAccessExpression(key) ||
+    !ts.isIdentifier(key.expression) ||
+    key.expression.text !== "Symbol" ||
+    key.name.text !== "iterator" ||
+    getWellKnownSymbolId(key.name.text) === undefined
+  ) {
+    return undefined;
+  }
+
+  const receiver = skipTransparentExpressions(expr.expression);
+  if (!ts.isPropertyAccessExpression(receiver) || receiver.name.text !== "prototype") return undefined;
+  if (!ts.isIdentifier(receiver.expression)) return undefined;
+
+  const builtinName = receiver.expression.text;
+  if (builtinName !== "Map" && builtinName !== "Set") return undefined;
+  if (
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    fctx.localMap.has("Symbol") ||
+    (fctx.boxedCaptures?.has("Symbol") ?? false)
+  ) {
+    return undefined;
+  }
+
+  const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
+  if (brand === undefined) return undefined;
+  const member = builtinName === "Set" ? "values" : "entries";
+  const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
+  if (!resolved || resolved.kind !== "method") return undefined;
+
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, resolved.closure));
+  fctx.body.push({ op: "extern.convert_any" });
+  return { kind: "externref" };
+}
+
+/**
  * The result ValType of a builtin static that returns a JS **boolean**
  * (`Array.isArray`, `Object.is`, `Object.hasOwn`, `Reflect.has`, `Reflect.set`,
  * `Number.isNaN` & friends).
@@ -1580,4 +1633,5 @@ export {
   reportUnsupportedStandaloneBuiltinValueRead,
   tryCompileStandaloneBuiltinProtoMemberMeta,
   tryCompileStandaloneBuiltinProtoMemberRead,
+  tryCompileStandaloneBuiltinProtoIteratorRead,
 };

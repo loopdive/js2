@@ -213,6 +213,7 @@ import {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryCompileStandaloneBuiltinProtoMemberMeta,
   tryCompileStandaloneBuiltinProtoMemberRead,
+  tryCompileStandaloneBuiltinProtoIteratorRead,
   tryEmitBuiltinNamespaceConstantValue,
   tryEnsureNativeProtoBrand,
   typedArrayViewSignedness,
@@ -237,6 +238,66 @@ export {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
+
+const PROTOTYPE_MUTATION_CACHE = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+const isAssignmentOperator = (kind: ts.SyntaxKind): boolean =>
+  kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+
+function prototypeMutationNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = PROTOTYPE_MUTATION_CACHE.get(sourceFile);
+  if (cached !== undefined) return cached;
+  const names = new Set<string>();
+  const isPrototypeAccess = (expr: ts.Expression): boolean => {
+    const inner = skipTransparentExpressions(expr);
+    return (
+      (ts.isPropertyAccessExpression(inner) && inner.name.text === "prototype") ||
+      (ts.isElementAccessExpression(inner) &&
+        ts.isStringLiteral(inner.argumentExpression) &&
+        inner.argumentExpression.text === "prototype")
+    );
+  };
+  const prototypeBaseName = (expr: ts.Expression): string | undefined => {
+    const inner = skipTransparentExpressions(expr);
+    const prototype = isPrototypeAccess(inner)
+      ? inner
+      : (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) &&
+          isPrototypeAccess(inner.expression)
+        ? inner.expression
+        : undefined;
+    const base =
+      prototype && (ts.isPropertyAccessExpression(prototype) || ts.isElementAccessExpression(prototype))
+        ? prototype.expression
+        : undefined;
+    return base && ts.isIdentifier(base) ? base.text : undefined;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && prototypeBaseName(node.left)) {
+      names.add(prototypeBaseName(node.left)!);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      prototypeBaseName(node.operand)
+    ) {
+      names.add(prototypeBaseName(node.operand)!);
+    } else if (ts.isDeleteExpression(node) && prototypeBaseName(node.expression)) {
+      names.add(prototypeBaseName(node.expression)!);
+    }
+    if (ts.isCallExpression(node) && node.arguments.length > 0 && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression;
+      if (
+        ts.isIdentifier(callee.expression) &&
+        (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+        (callee.name.text === "defineProperty" || callee.name.text === "defineProperties") &&
+        prototypeBaseName(node.arguments[0]!)
+      ) {
+        names.add(prototypeBaseName(node.arguments[0]!)!);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  PROTOTYPE_MUTATION_CACHE.set(sourceFile, names);
+  return names;
+}
 
 /**
  * Standalone computed-read arm for the inherited Function @@hasInstance
@@ -268,18 +329,10 @@ function tryCompileStandaloneFunctionHasInstanceRead(
     return undefined;
   }
 
-  // An own `prototype` write/getter is observable by OrdinaryHasInstance and
-  // must remain on the existing generic path until the native closure edge can
-  // model that own property. The conservative source gate covers both direct
-  // assignments and Object.defineProperty/defineProperties forms while keeping
-  // the common ordinary-function path native.
-  const sourceText = expr.getSourceFile().text;
-  if (
-    sourceText.includes("prototype") &&
-    (sourceText.includes("defineProperty") || /\.prototype\s*=/.test(sourceText))
-  ) {
-    return undefined;
-  }
+  // Syntax-aware guard: Test262 helper defineProperty text must not mask an
+  // untouched Function.prototype intrinsic read.
+  const mutationName = directFunctionProto ? "Function" : ts.isIdentifier(receiver) ? receiver.text : undefined;
+  if (mutationName !== undefined && prototypeMutationNames(expr.getSourceFile()).has(mutationName)) return undefined;
 
   // `__closure_proto_of` is filled from the compile-time fnctor/prototype
   // registry. A method-only read does not otherwise touch `F.prototype`, so
@@ -303,6 +356,40 @@ function tryCompileStandaloneFunctionHasInstanceRead(
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };
 }
+
+/** Fallback when no proto-index companion is demanded by the module. */
+function tryCompileStandaloneArrayIteratorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone || ctx.funcMap.has("__protoidx_get_k") || fctx.localMap.has("Symbol")) return undefined;
+  if (resolveComputedKeyExpression(ctx, expr.argumentExpression) !== "@@iterator") return undefined;
+  const receiver = skipTransparentExpressions(expr.expression);
+  if (
+    !ts.isPropertyAccessExpression(receiver) ||
+    receiver.name.text !== "prototype" ||
+    !ts.isIdentifier(receiver.expression) ||
+    receiver.expression.text !== "Array" ||
+    fctx.localMap.has("Array") ||
+    (fctx.boxedCaptures?.has("Array") ?? false)
+  ) {
+    return undefined;
+  }
+  const receiverType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+  if (!receiverType) return undefined;
+  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  fctx.body.push({ op: "drop" });
+  const brand = ensureArrayNativeProtoGlue(ctx);
+  if (brand === undefined) return undefined;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, "values", "method", {
+    refusalBodyFallback: true,
+  });
+  if (!closure) return undefined;
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" });
+  return { kind: "externref" };
+}
+
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
@@ -4598,6 +4685,15 @@ export function compileElementAccess(
   const functionHasInstanceRead = tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr);
   if (functionHasInstanceRead !== undefined) return functionHasInstanceRead;
 
+  // (#4731) Resolve the static Set/Map prototype iterator alias before the
+  // generic computed read materializes a `$NativeProto` and asks `__extern_get`
+  // for a symbol key (which has no standalone symbol-key arm).
+  const builtinProtoIteratorRead = tryCompileStandaloneBuiltinProtoIteratorRead(ctx, fctx, expr);
+  if (builtinProtoIteratorRead !== undefined) return builtinProtoIteratorRead;
+
+  const arrayIteratorRead = tryCompileStandaloneArrayIteratorRead(ctx, fctx, expr);
+  if (arrayIteratorRead !== undefined) return arrayIteratorRead;
+
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;
   // every other receiver falls through to the GC element-access path unchanged.
@@ -5818,6 +5914,37 @@ export function compileElementAccessBody(
     if (!arrDef || arrDef.kind !== "array") {
       reportErrorNoNode(ctx, "Element access: vec data is not array");
       return null;
+    }
+
+    if (
+      fctx.mappedArgsInfo?.accessorIndices &&
+      ts.isIdentifier(expr.expression) &&
+      expr.expression.text === "arguments"
+    ) {
+      const idxArg = expr.argumentExpression;
+      const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
+      const argIndex = idxText !== undefined ? Number(idxText) : NaN;
+      if (Number.isInteger(argIndex) && fctx.mappedArgsInfo.accessorIndices.has(argIndex)) {
+        fctx.body.push({ op: "extern.convert_any" });
+        const keyType = compileExpression(ctx, fctx, idxArg, { kind: "externref" });
+        if (!keyType) {
+          fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+        const getIdx = ensureLateImport(
+          ctx,
+          "__extern_get",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (getIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          return { kind: "externref" };
+        }
+        fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
     }
 
     // (#4247) READ twin of the element-write routing in assignment.ts: a

@@ -314,6 +314,7 @@ export type CodegenContextWithScheduler = CodegenContext & { asyncScheduler?: As
  *   - value: externref (fulfilled value or rejection reason)
  *   - callbacks: externref (nullable `$PromiseCallback` linked list for
  *     pending `.then` continuations)
+ *   - then: externref (nullable own `then` override)
  *
  * Returns the registered struct's typeIdx, cached for re-use.
  */
@@ -328,6 +329,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
       { name: "state", type: { kind: "i32" }, mutable: true },
       { name: "value", type: { kind: "externref" }, mutable: true },
       { name: "callbacks", type: { kind: "externref" }, mutable: true },
+      { name: "then", type: { kind: "externref" }, mutable: true },
     ],
   });
   // Mirror the bookkeeping that other struct registrations do so the
@@ -338,6 +340,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
     { name: "state", type: { kind: "i32" as const }, mutable: true },
     { name: "value", type: { kind: "externref" as const }, mutable: true },
     { name: "callbacks", type: { kind: "externref" as const }, mutable: true },
+    { name: "then", type: { kind: "externref" as const }, mutable: true },
   ]);
   state.promiseTypeIdx = typeIdx;
   return typeIdx;
@@ -4020,6 +4023,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
     fctx.body.push({ op: "i32.const", value: PROMISE_STATE_FULFILLED });
     for (const instr of valueInstrs) fctx.body.push(instr);
     fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });
     return;
@@ -4044,6 +4048,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
     else: [
       // p = pending $Promise; Resolve(p, v); result p.
       { op: "i32.const", value: PROMISE_STATE_PENDING },
+      { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: promiseTypeIdx },
@@ -4072,6 +4077,7 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
   ensureUnhandledRejectionTracking(ctx);
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_REJECTED });
   for (const instr of reasonInstrs) fctx.body.push(instr);
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   if (state.unhandledHeadGlobalIdx >= 0) {
@@ -4163,34 +4169,61 @@ export function emitStandalonePromiseThen(
   const rejectedCapsLocal = allocLocal(fctx, `__then_rejected_caps_${fctx.locals.length}`, {
     kind: "externref",
   });
+  const fulfilledArgLocal = allocLocal(fctx, `__then_fulfilled_arg_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const rejectedArgLocal = allocLocal(fctx, `__then_rejected_arg_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const overrideLocal = allocLocal(fctx, `__then_override_${fctx.locals.length}`, {
+    kind: "externref",
+  });
 
   for (const instr of promiseInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: promiseLocal });
 
-  // Chained promise starts pending with no callbacks.
-  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
-  fctx.body.push({ op: "local.set", index: chainedLocal });
-
+  // Evaluate the original handler values exactly once. Besides preserving
+  // ordinary call evaluation, these locals let the own-`then` override branch
+  // receive the same callback values as the native reaction branch without
+  // replaying callback expressions with side effects.
   if (onFulfilled) {
     for (const instr of onFulfilled.instrs) fctx.body.push(instr);
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }
-  fctx.body.push({ op: "local.get", index: chainedLocal });
-  fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
-  fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "local.set", index: fulfilledCapsLocal });
-
+  fctx.body.push({ op: "local.set", index: fulfilledArgLocal });
   if (onRejected) {
     for (const instr of onRejected.instrs) fctx.body.push(instr);
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }
+  fctx.body.push({ op: "local.set", index: rejectedArgLocal });
+
+  // Build the existing reaction machinery in a separate arm. The receiver and
+  // handler values above are already materialised, so the custom own-`then`
+  // arm below can dispatch without duplicating any source evaluation.
+  const outerBody = fctx.body;
+  const nativeBody: Instr[] = [];
+  fctx.savedBodies.push(outerBody);
+  fctx.body = nativeBody;
+
+  // Chained promise starts pending with no callbacks.
+  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+  fctx.body.push({ op: "local.set", index: chainedLocal });
+
+  fctx.body.push({ op: "local.get", index: fulfilledArgLocal });
+  fctx.body.push({ op: "local.get", index: chainedLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.set", index: fulfilledCapsLocal });
+
+  fctx.body.push({ op: "local.get", index: rejectedArgLocal });
   fctx.body.push({ op: "local.get", index: chainedLocal });
   fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
   fctx.body.push({ op: "extern.convert_any" });
@@ -4257,6 +4290,64 @@ export function emitStandalonePromiseThen(
     },
     { op: "local.get", index: chainedLocal },
     { op: "extern.convert_any" },
+  );
+  fctx.savedBodies.pop();
+  fctx.body = outerBody;
+
+  // A native Promise may carry an own callable `then` assigned by user code.
+  // Promise.resolve(p) preserves p by identity, and calling `.then` must then
+  // perform the ordinary property-call with p as `this`; only the null slot
+  // takes the compiler's native reaction path above. The bridge intentionally
+  // keeps this narrow: it handles compiled closure values and leaves the
+  // existing native substrate untouched for the default slot.
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+  if (objVecNewIdx === undefined || objVecPushIdx === undefined || applyClosureIdx === undefined) {
+    fctx.body.push(...nativeBody);
+    return;
+  }
+  const argsLocal = allocLocal(fctx, `__then_override_args_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const overrideBody: Instr[] = [
+    { op: "call", funcIdx: objVecNewIdx },
+    { op: "local.set", index: argsLocal },
+  ];
+  if (onFulfilled) {
+    overrideBody.push(
+      { op: "local.get", index: argsLocal },
+      { op: "local.get", index: fulfilledArgLocal },
+      { op: "call", funcIdx: objVecPushIdx },
+    );
+  }
+  if (onRejected) {
+    overrideBody.push(
+      { op: "local.get", index: argsLocal },
+      { op: "local.get", index: rejectedArgLocal },
+      { op: "call", funcIdx: objVecPushIdx },
+    );
+  }
+  overrideBody.push(
+    { op: "local.get", index: overrideLocal },
+    { op: "local.get", index: promiseLocal },
+    { op: "extern.convert_any" },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: applyClosureIdx },
+  );
+
+  fctx.body.push(
+    { op: "local.get", index: promiseLocal },
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 3 },
+    { op: "local.set", index: overrideLocal },
+    { op: "local.get", index: overrideLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: nativeBody,
+      else: overrideBody,
+    },
   );
 }
 
@@ -4420,6 +4511,7 @@ function ensurePromiseFinallyRuntime(ctx: CodegenContext): void {
       { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: callbackTypeIdx },
       { op: "extern.convert_any" },
+      { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 5 },
       // Resolve(tmp, result) — fires/enqueues the restore reaction.
@@ -4572,6 +4664,7 @@ export function emitStandalonePromiseFinally(
 
   // Chained promise starts pending with no callbacks.
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });

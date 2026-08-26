@@ -1553,6 +1553,37 @@ export function tryCompileErrorCtorCallWithoutNew(
   return result === NEW_GLOBAL_FALLTHROUGH ? undefined : result;
 }
 
+/**
+ * (#4732) `WeakSet(...)` is not callable — §23.4.1.1 step 1 requires a
+ * TypeError when `NewTarget` is undefined. The generic identifier-call path
+ * used to answer with the undefined sentinel instead, so both `WeakSet()` and
+ * `WeakSet([])` silently succeeded. Evaluate arguments first (including their
+ * side effects), then emit the same real TypeError instance used by the other
+ * call-without-`new` guards.
+ *
+ * The ambient-global and class checks are important: a user binding named
+ * `WeakSet` must retain ordinary call semantics, just like the Error and Date
+ * guards above.
+ */
+export function tryCompileWeakSetCallWithoutNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "WeakSet") return undefined;
+  if (ctx.classSet.has("WeakSet")) return undefined;
+  if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
+
+  for (const arg of expr.arguments ?? []) {
+    const argResult = compileExpression(ctx, fctx, arg);
+    if (argResult) fctx.body.push({ op: "drop" });
+  }
+  emitThrowTypeError(ctx, fctx, "Constructor WeakSet requires 'new'");
+  return { kind: "externref" };
+}
+
 /** `__date_format_string` mode selector for §21.4.4.41 `toString`. */
 const DATE_FORMAT_MODE_TO_STRING = 2;
 

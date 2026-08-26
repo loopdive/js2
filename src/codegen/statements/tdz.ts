@@ -5,7 +5,9 @@
 import { ts } from "../../ts-api.js";
 import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { ensureExnTag } from "../registry/imports.js";
+import { emitThrowReferenceError, noJsHost } from "../expressions/helpers.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
+import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 
 // (#4601 route 1) `collectPatternBindingNames` is a pure-AST walk with no
 // CodegenContext in sight; it moved below the IR (`ir/analysis/ast-scope.ts`)
@@ -56,37 +58,66 @@ export function emitLocalTdzInit(fctx: FunctionContext, name: string): void {
  * If the TDZ flag is 0 (uninitialized), throw a ReferenceError.
  * No-op if the variable doesn't have a TDZ flag.
  */
-export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
+export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string, throwJsError = false): void {
   const flagIdx = ctx.tdzGlobals.get(name);
   if (flagIdx === undefined) return;
-  emitTdzCheckAtGlobal(ctx, fctx, flagIdx, name);
+  emitTdzCheckAtGlobal(ctx, fctx, flagIdx, name, throwJsError);
 }
 
 /** Emit a TDZ check against an exact initialization-flag global. */
-export function emitTdzCheckAtGlobal(ctx: CodegenContext, fctx: FunctionContext, flagIdx: number, name: string): void {
-  const tagIdx = ensureExnTag(ctx);
+export function emitTdzCheckAtGlobal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  flagIdx: number,
+  name: string,
+  throwJsError = false,
+): void {
+  if (!throwJsError) {
+    const tagIdx = ensureExnTag(ctx);
+    fctx.body.push({ op: "global.get", index: flagIdx });
+    fctx.body.push({ op: "i32.eqz" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+      else: [],
+    });
+    return;
+  }
+
+  const msg = `${name} is not defined`;
+  // Keep this check's error payload aligned with local TDZ checks. A null
+  // exception payload is catchable by Wasm, but does not satisfy JS
+  // `assert.throws(ReferenceError, ...)` in the host lane.
+  if (noJsHost(ctx)) {
+    fctx.body.push({ op: "global.get", index: flagIdx });
+    fctx.body.push({ op: "i32.eqz" });
+    const savedBody = fctx.body;
+    fctx.savedBodies.push(savedBody);
+    fctx.body = [];
+    emitThrowReferenceError(ctx, fctx, msg);
+    fctx.body.push({ op: "unreachable" });
+    const then = fctx.body;
+    const si = fctx.savedBodies.lastIndexOf(savedBody);
+    if (si >= 0) fctx.savedBodies.splice(si, 1);
+    fctx.body = savedBody;
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then, else: [] });
+    return;
+  }
+
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
   // if (flag == 0) throw ReferenceError
   fctx.body.push({ op: "global.get", index: flagIdx });
   fctx.body.push({ op: "i32.eqz" });
-  // if (uninitialized) { throw }
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      // Push error message as externref string, then throw
-      emitTdzErrorString(ctx, name),
-      { op: "throw", tagIdx },
-    ],
-    else: [],
-  });
-}
-
-/**
- * Build an instruction that pushes a ReferenceError message as externref onto the stack.
- * Uses ref.null.extern as the payload to avoid adding string constant imports that
- * would require the string_constants module at instantiation time (#790).
- * The exception is still catchable via try/catch.
- */
-function emitTdzErrorString(_ctx: CodegenContext, _name: string): Instr {
-  return { op: "ref.null.extern" };
+  let then: Instr[];
+  if (throwRefErrIdx !== undefined) {
+    addStringConstantGlobal(ctx, msg);
+    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+  } else {
+    const tagIdx = ensureExnTag(ctx);
+    then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
+  }
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then, else: [] });
 }

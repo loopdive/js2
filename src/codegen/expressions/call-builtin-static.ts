@@ -20,6 +20,7 @@ import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import { sameValueNumberOps } from "../same-value-number-ops.js";
 import {
   emitArrayIteratorPrototypeSingleton,
+  emitIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
   emitGeneratorFunctionPrototypeSingleton,
   emitGeneratorPrototypeSingleton,
@@ -120,7 +121,7 @@ import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
+import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import {
   BUILTIN_CLASS_NAMES,
@@ -1902,9 +1903,45 @@ export function compileBuiltinStaticCall(
     isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
     propAccess.name.text === "getPrototypeOf"
   ) {
-    const es5Early = tryCompileEs5GetPrototypeOfEarly(ctx, fctx, expr);
+    const es5Early = objectGetPrototypeOf.tryCompileEs5GetPrototypeOfEarly(ctx, fctx, expr);
     if (es5Early) return es5Early;
     const arg0 = expr.arguments[0]!;
+
+    // (#4748) The native standalone generator-instance getPrototypeOf arm
+    // returns the intrinsic `%GeneratorPrototype%` singleton directly. The
+    // exact ES2015 bootstrap expression asks for one more prototype walk:
+    // `Object.getPrototypeOf(Object.getPrototypeOf(function*(){}()))`.
+    // Preserve that intrinsic result instead of sending the `$Object` GP
+    // singleton through its unmodeled `$proto` field (which otherwise yields
+    // null and makes the following `Symbol.toStringTag` read trap). Evaluate
+    // the inner call normally for source-order side effects, then reuse the
+    // same identity-stable GP singleton. Host/gc remains on its existing path.
+    if ((ctx.standalone || ctx.wasi) && ts.isCallExpression(arg0)) {
+      const innerCallee = arg0.expression;
+      if (
+        ts.isPropertyAccessExpression(innerCallee) &&
+        ts.isIdentifier(innerCallee.expression) &&
+        innerCallee.expression.text === "Object" &&
+        innerCallee.name.text === "getPrototypeOf" &&
+        arg0.arguments.length === 1
+      ) {
+        const innerArg = arg0.arguments[0]!;
+        let innerTypeName: string | undefined;
+        try {
+          innerTypeName = ctx.checker.getTypeAtLocation(innerArg).getSymbol()?.name;
+        } catch {
+          innerTypeName = undefined;
+        }
+        if (innerTypeName === "Generator") {
+          const innerType = compileExpression(ctx, fctx, arg0);
+          if (innerType) fctx.body.push({ op: "drop" });
+          const protoType = emitGeneratorPrototypeSingleton(ctx, fctx);
+          if (protoType) return protoType;
+          fctx.body.push({ op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+      }
+    }
 
     // (#2743 a) `Object.getPrototypeOf(arguments)` is %Object.prototype%
     // (§10.4.4), NOT the array prototype the vec representation would yield.
@@ -2032,7 +2069,7 @@ export function compileBuiltinStaticCall(
 
     const argTsType = ctx.checker.getTypeAtLocation(arg0);
 
-    const es5Value = tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr);
+    const es5Value = objectGetPrototypeOf.tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr);
     if (es5Value) return es5Value;
 
     // (#3013) `Object.getPrototypeOf(<array iterator>)` → the shared native
@@ -2050,6 +2087,21 @@ export function compileBuiltinStaticCall(
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) fctx.body.push({ op: "drop" });
       const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+      if (protoType) return protoType;
+      // Runtime unavailable: preserve the historical null return.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+
+    // (#4747) `Object.getPrototypeOf(<string iterator>)` → the shared native
+    // `%StringIteratorPrototype%` singleton (standalone/WASI). String iterator
+    // carriers do not model [[Prototype]], so the generic fallback returns
+    // null; route only checker-proven `StringIterator` values and preserve the
+    // argument's evaluation side effects before returning the singleton.
+    if ((ctx.standalone || ctx.wasi) && argTsType.getSymbol()?.name === "StringIterator") {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      const protoType = emitIteratorPrototypeSingleton(ctx, fctx, "String");
       if (protoType) return protoType;
       // Runtime unavailable: preserve the historical null return.
       fctx.body.push({ op: "ref.null.extern" });
@@ -2083,7 +2135,7 @@ export function compileBuiltinStaticCall(
     }
 
     const className = resolveStructName(ctx, argTsType);
-
+    if (objectGetPrototypeOf.tryNativeCollectionGpo(ctx, fctx, arg0, argTsType)) return { kind: "externref" };
     // For known class instances, return the class prototype singleton
     if (className && ctx.classSet.has(className)) {
       // (#802 Slice C) Marked-hierarchy receiver (standalone): the instance's

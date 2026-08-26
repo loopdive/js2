@@ -101,6 +101,7 @@ function _buildFreshSandbox(consoleProxy?: Console, exposeDone = true): Record<s
   // object sandbox otherwise lets strict writes create `undefined`/`Infinity`
   // and turns Test262's required TypeErrors into false negatives (#3367).
   Object.defineProperties(sandbox, {
+    eval: { value: runInContext("eval", ctx), writable: true, enumerable: false, configurable: true },
     undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
     Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
     NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },

@@ -87,6 +87,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
+import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
@@ -388,7 +389,7 @@ function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boo
  * - 'throw': access is before declaration in straight-line code — guaranteed TDZ error
  * - 'check': can't determine statically — keep runtime flag check
  */
-function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
+export function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
   // A shorthand property name (`{ value }`) has two symbols in TypeScript:
   // the property being declared and the lexical binding whose value is read.
   // `getSymbolAtLocation(id)` answers the former, whose declaration range is
@@ -1382,6 +1383,34 @@ function compileIdentifierCore(
     if (isGlobalIntrinsic) {
       const valueType = emitStandaloneIntrinsicEvalValue(ctx, fctx);
       if (valueType !== undefined) return valueType;
+    }
+  }
+  // Host/gc: expose the sandbox realm's genuine, non-constructible `%eval%`.
+  // Seed compiled script globals first so an alias performs indirect eval in
+  // the same GlobalEnvironmentRecord as the AOT module.
+  if (!ctx.standalone && !ctx.wasi && name === "eval") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      emitHostEvalGlobalBindingSeed(ctx, fctx);
+      const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (gtFuncIdx !== undefined && getIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
+        addStringConstantGlobal(ctx, name);
+        const strGlobalIdx = ctx.stringGlobalMap.get(name);
+        fctx.body.push(
+          strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+        );
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
     }
   }
   // `%Function%` is a genuine realm-owned callable in runtime-eval builds.

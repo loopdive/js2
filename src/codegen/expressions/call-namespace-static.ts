@@ -59,6 +59,7 @@ import {
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
@@ -67,6 +68,7 @@ import { ensureObjectRuntime, ensureObjVecBuilders } from "../object-runtime.js"
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCustomCapabilityCheck,
+  emitStandalonePromiseCustomResolve,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
@@ -819,6 +821,16 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "i32.const", value: 0 });
           return { kind: "i32" };
         }
+        // §26.1.13 step 1: Reflect.set requires an Object target. The native
+        // standalone helper implements the supported [[Set]] subset but its
+        // non-$Object refusal is not the Reflect TypeError, so validate the
+        // statically primitive target at the call site (including Symbol via
+        // the shared #4945 ESSymbolLike guard) before emitting native args.
+        const targetArg = expr.arguments[0]!;
+        if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.set")) {
+          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+          return { kind: "i32" };
+        }
         emitReflectArgs(3);
         const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef], [i32Ty]);
         flushLateImportShifts(ctx, fctx);
@@ -1111,8 +1123,8 @@ export function compileNamespaceStaticCall(
         //   step 2: proto not Object and not null → throw a TypeError. Reuse
         //     the same static guard on the proto arg, but `null` is a LEGAL
         //     proto here (unlike target), so only reject a statically-
-        //     primitive NON-null proto. A `null`/`undefined`/object proto
-        //     passes; a number/string/boolean proto literal throws.
+        //     primitive NON-null proto. A `null`/object proto passes;
+        //     undefined, number/string/boolean, and Symbol proto literals throw.
         //   step 4: return the boolean [[SetPrototypeOf]] result. The native
         //     has no failure channel (a refused set — non-extensible target or
         //     a cycle — silently no-ops and still returns obj), so we drop obj
@@ -1129,14 +1141,10 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
           return { kind: "i32" };
         }
-        // §28.1.14 step 2: a statically-primitive proto that is NOT null/
-        // undefined is illegal. `null`/`undefined` set the prototype to null
-        // (legal), so let them through to the native (which maps a non-$Object
-        // proto to a null $proto).
-        const protoIsNullish =
-          protoArg.kind === ts.SyntaxKind.NullKeyword ||
-          (ts.isIdentifier(protoArg) && protoArg.text === "undefined") ||
-          protoArg.kind === ts.SyntaxKind.UndefinedKeyword;
+        // §28.1.14 step 2: a statically-primitive proto that is not null is
+        // illegal. Only `null` is a legal primitive prototype; undefined and
+        // void expressions must take the shared TypeError guard below.
+        const protoIsNullish = protoArg.kind === ts.SyntaxKind.NullKeyword;
         if (!protoIsNullish && emitNonObjectArgGuard(ctx, fctx, protoArg, "Reflect.setPrototypeOf")) {
           fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
           return { kind: "i32" };
@@ -1964,6 +1972,81 @@ export function compileNamespaceStaticCall(
   // The current call expression looks like `(Promise.METHOD).call(thisArg, iter)`,
   // i.e. propAccess.name.text === "call" and propAccess.expression is a
   // PropertyAccess `Promise.METHOD`.
+  if (
+    propAccess.name.text === "call" &&
+    ts.isPropertyAccessExpression(propAccess.expression) &&
+    ts.isIdentifier(propAccess.expression.expression) &&
+    propAccess.expression.expression.text === "Promise" &&
+    propAccess.expression.name.text === "resolve" &&
+    isStandalonePromiseActive(ctx) &&
+    expr.arguments.length === 2
+  ) {
+    const ctorArg = unwrapReflectConstructExpr(expr.arguments[0]!);
+    const ctorDecl = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
+    const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
+    const ctorExpr = ctorInit ? unwrapReflectConstructExpr(ctorInit) : ctorDecl;
+    const isOrdinaryCtorDecl =
+      (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||
+      (ctorDecl !== undefined &&
+        ts.isFunctionDeclaration(ctorDecl) &&
+        ctorDecl.asteriskToken === undefined &&
+        !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false));
+    if (isOrdinaryCtorDecl) {
+      const snap = snapshotSpeculative(ctx, fctx);
+      ensurePromiseSettleFunctions(ctx);
+      ensureObjectRuntime(ctx);
+      const ctorType = compileExpression(ctx, fctx, expr.arguments[0]!);
+      const ctorInfo =
+        ctorType && (ctorType.kind === "ref" || ctorType.kind === "ref_null")
+          ? ctx.closureInfoByTypeIdx.get(ctorType.typeIdx)
+          : ts.isIdentifier(ctorArg)
+            ? ctx.closureMap.get(ctorArg.text)
+            : undefined;
+      const supportsCapabilityCtor =
+        ctorInfo !== undefined &&
+        ctorInfo.paramTypes.length === 1 &&
+        ctorInfo.paramTypes[0]?.kind === "externref" &&
+        (ctorInfo.returnType === null ||
+          ctorInfo.returnType.kind === "externref" ||
+          ctorInfo.returnType.kind === "ref" ||
+          ctorInfo.returnType.kind === "ref_null");
+      const ctorSelfTypeIdx =
+        ctorInfo && (getClosureFuncSelfTypeIdx(ctx, ctorInfo.funcTypeIdx) ?? ctorInfo.structTypeIdx);
+      if (
+        ctorType &&
+        ctorInfo &&
+        supportsCapabilityCtor &&
+        ctorSelfTypeIdx !== undefined &&
+        (ctorType.kind === "ref" || ctorType.kind === "ref_null" || ctorType.kind === "externref")
+      ) {
+        const ctorLocal = allocLocal(fctx, `__promise_custom_ctor_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: ctorSelfTypeIdx,
+        });
+        coerceType(ctx, fctx, ctorType, { kind: "ref_null", typeIdx: ctorSelfTypeIdx });
+        fctx.body.push({ op: "local.set", index: ctorLocal });
+        const valueInstrs: Instr[] = [];
+        ctx.liveBodies.add(valueInstrs);
+        const savedBody = fctx.body;
+        fctx.body = valueInstrs;
+        try {
+          const valueType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+          if (valueType === null) fctx.body.push({ op: "ref.null.extern" });
+          else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+        } finally {
+          fctx.body = savedBody;
+        }
+        try {
+          if (emitStandalonePromiseCustomResolve(ctx, fctx, ctorLocal, ctorInfo, ctorSelfTypeIdx, valueInstrs)) {
+            return { kind: "externref" };
+          }
+        } finally {
+          ctx.liveBodies.delete(valueInstrs);
+        }
+      }
+      rollbackSpeculative(ctx, fctx, snap);
+    }
+  }
   if (
     propAccess.name.text === "call" &&
     ts.isPropertyAccessExpression(propAccess.expression) &&
@@ -2836,8 +2919,17 @@ export function compileNamespaceStaticCall(
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
+        const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          const sourceParam =
+            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+          const forceArrayLiteralVec =
+            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          if (forceArrayLiteralVec) {
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
+          } else {
+            compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          }
         }
         if (expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {
