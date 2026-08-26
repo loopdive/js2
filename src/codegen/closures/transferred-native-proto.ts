@@ -84,12 +84,15 @@ export function collectTransferredNativeProtoReceivers(
   arity: number,
 ): TransferredNativeReceiverEntry[] {
   const entries: TransferredNativeReceiverEntry[] = [];
-  if (!ctx.nativeProtoReceiverClosureStructTypes) return entries;
+  const receiverTypes = ctx.nativeProtoReceiverClosureStructTypes;
+  const accessorTypes = ctx.nativeProtoAccessorGetterClosureStructTypes;
+  if (!receiverTypes && !accessorTypes) return entries;
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     // At least the `thisValue` slot — the whole point of this arm. The arg
     // mapping handles both under- and over-application (see the header).
     if (info.paramTypes.length < 1) continue;
-    if (!ctx.nativeProtoReceiverClosureStructTypes.has(typeIdx)) continue;
+    const isAccessorGetter = accessorTypes?.has(typeIdx) ?? false;
+    if (!(receiverTypes?.has(typeIdx) && !isAccessorGetter) && !(arity === 0 && isAccessorGetter)) continue;
     // Only the per-(brand, member) META subtype carries the field-3 exact-identity
     // discriminator that the call arm re-checks after its structural `ref.test`.
     // The shared base wrapper is also in the set but has no such field, and

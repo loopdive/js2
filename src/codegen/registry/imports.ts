@@ -409,6 +409,11 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
   shiftMap(ctx.staticProps);
   shiftMap(ctx.protoGlobals);
+  if (ctx.nativeProtoGlobals !== undefined) {
+    for (const [brand, idx] of ctx.nativeProtoGlobals) {
+      if (idx >= threshold) ctx.nativeProtoGlobals.set(brand, idx + delta);
+    }
+  }
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
   shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
