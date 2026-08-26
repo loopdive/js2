@@ -9423,6 +9423,22 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-26T11:16:01.870Z",
+      "sourceRevision": "6a5f67238d2525dd1bc00e92f24525a7f11a9d45",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010135152465397422
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
