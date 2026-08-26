@@ -114,9 +114,21 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * `wasi_snapshot_preview1` import for the stream IO path; console.log /
    * process.std*.write lower to `writeSync(1|2, …)`; `node-fs.wasm` implements
    * the interface over WASI). WASI-gated in `create-context.ts` (ignored for
-   * non-WASI targets). Default empty — the inline fd_read/fd_write path stays.
+   * non-WASI targets). `js2wasm:runtime` is the compiler-owned native
+   * number-format provider namespace. Default empty — the inline
+   * fd_read/fd_write path stays.
    */
   link?: string[];
+  /** Package export names routed to a separately compiled provider namespace. */
+  linkedPackageBindings?: ReadonlyMap<string, { module: string; field: string }>;
+  /**
+   * Internal runtime-artifact build mode (#2527). It publishes compiler-owned
+   * helper exports for a separately instantiated provider; ordinary user
+   * compiles must leave this unset.
+   */
+  runtimeProvider?: boolean;
+  /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
+  canonicalRuntimeTypes?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -3714,6 +3726,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * provider edges rather than implicit host leaks.
    */
   linkedNamespaces: ReadonlySet<string>;
+  /** Package import bindings retained as link-time Wasm imports. */
+  linkedPackageBindings: ReadonlyMap<string, { module: string; field: string }>;
+  /** Internal flag for publishing the shared runtime provider artifact. */
+  runtimeProvider: boolean;
   /**
    * (#4238 slice 1) Resolve `declare function` extern param/result types
    * through `nativeTypeFromTypeNode` (the `type i32 = number` annotations)
