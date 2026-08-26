@@ -9572,6 +9572,30 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-26T22:28:50.115Z",
+      "sourceRevision": "9894d1ead59ef2d7dfbaa0e64d9d4df9c4a420eb",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 645.43491663976,
+            "dynamic": 0.22045479511037622
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 21.668509774509886,
+            "dynamic": 0.11237191091814318
+          }
+        }
+      }
     }
   ]
 }
