@@ -56,8 +56,11 @@ benchmark artifacts are supporting evidence only; they cannot close this issue.
 2. Generate an exact temporary filter from
    `website/public/benchmarks/results/test262-file-editions.json`: retain rows
    whose edition index is `ES2015` and whose path does not start with
-   `intl402/`. Assert exactly 11,704 distinct paths and verify positive-control
-   paths exist before running.
+   `intl402/`, then prefix each retained map key with `test/` for the runner's
+   `relative(TEST262_ROOT, filePath)` contract. Assert exactly 11,704 distinct
+   paths and verify positive-control paths exist before running. The nearby
+   `TEST262_PATH_FILTER_FILE` comment saying paths are `test/`-relative is
+   stale; unprefixed edition-map keys register zero shard tests.
 3. Run the maintained runner with two workers and `--official-scope-only` for
    the host (`TEST262_TARGET=gc`) and standalone (`TEST262_TARGET=standalone`,
    default QuickJS eval provider) lanes. Preserve both timestamped JSONL files
@@ -79,6 +82,7 @@ outside the repository. The run environment must include:
 
 ```text
 TEST262_WORKERS=2
+COMPILER_POOL_SIZE=2
 TEST262_PATH_FILTER_FILE=<absolute path to the verified 11,704-row filter>
 TEST262_TARGET=gc               # first lane
 TEST262_TARGET=standalone       # second lane
@@ -103,3 +107,48 @@ Do not mark this issue or the ES6 conformance goal done until both complete
 reports satisfy the denominators above. The immediate next action is to update
 the detached measurement worktree to the latest PR head, link `test262`, create
 and validate the exact filter, and start the host lane.
+
+### Measurement checkpoint — 2026-08-26
+
+The detached worktree was updated to PR head `0a2003bcf`. Because a symlink at
+the gitlink root makes `git status` reject the submodule path, the working
+layout uses a physical `test262/` directory with `test262/test` and
+`test262/harness` symlinked to `/Users/thomas/Code/js2/test262`.
+
+Two filter spellings were explicitly tested:
+
+- 11,704 bare edition-map keys: invalid for this runner; all 16 local shards
+  registered zero suites. Run `20260826-024040` produced no result rows and is
+  not conformance evidence.
+- 11,704 distinct `test/`-prefixed keys: valid. All paths exist, and the
+  positive control
+  `test/language/statements/for-of/generator-close-via-break.js` registered and
+  passed 1/1 under the authoritative host runner (run `20260826-024241`).
+
+The complete host sweep then started as run `20260826-024316` with
+`TEST262_WORKERS=2`, `COMPILER_POOL_SIZE=2`, `TEST262_TARGET=gc`,
+`TEST262_PUBLISH_HISTORY=0`, and the corrected file
+`/private/tmp/js2-es2015-11704-runner-paths.txt`. It was stopped gracefully on
+user wrap-up before the first 732-row weighted shard completed. The preserved
+partial report contains 457/11,704 rows:
+
+```text
+367 pass
+85 fail
+2 compile_error
+3 compile_timeout
+0 skip
+```
+
+This is explicitly an interrupted partial sample, not a pass-rate baseline and
+not a complete residual inventory. The partial artifacts are:
+
+```text
+/private/tmp/js2-es6-authoritative-measure/benchmarks/results/test262-report-20260826-024316.json
+/private/tmp/js2-es6-authoritative-measure/benchmarks/results/test262-results-20260826-024316.jsonl
+```
+
+Resume by rerunning the same complete host command from the measurement
+worktree; do not append to or infer from the interrupted report. After the host
+lane completes, run the standalone lane sequentially, solo-confirm every
+non-pass, then allocate issue-backed Luna/max worktrees by semantic cluster.
