@@ -1669,6 +1669,10 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+// A constructible callable mirror delegates property writes back to the same
+// raw closure through its property proxy. Keep the bridge mirror re-entrancy
+// guard separate from the caches so a mirrored write cannot recurse forever.
+const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
 // #3214 B2 — `__make_callback(-1, closure)` bridges a reusable canonical void
@@ -3219,6 +3223,60 @@ function _sidecarSet(obj: any, key: any, val: any): void {
   const tomb = _wasmStructDeletedKeys.get(obj);
   if (tomb) {
     tomb.delete(typeof key === "symbol" ? key : String(key));
+  }
+}
+
+/**
+ * Keep host callable views of a Wasm closure in sync with properties written
+ * through the raw closure carrier. A closure crossing from a host object into
+ * compiled code is canonicalized back to its WasmGC struct by
+ * `_unwrapForHost`; a subsequent `fn[Symbol.species] = C` therefore reaches
+ * `_safeSet` with that raw struct, while native Promise/RegExp protocols still
+ * hold the JS bridge that was originally stored on the host object. The
+ * sidecar is authoritative for compiled reads, but native protocols read the
+ * bridge directly. Mirror the assignment on every cached callable bridge so
+ * both representations observe the same property.
+ */
+function _mirrorClosurePropertyToHostBridges(
+  closure: any,
+  key: PropertyKey,
+  val: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): void {
+  if (closure == null || typeof closure !== "object") return;
+  let active = _closurePropertyMirrorActive.get(closure);
+  if (!active) {
+    active = new Set<PropertyKey>();
+    _closurePropertyMirrorActive.set(closure, active);
+  }
+  if (active.has(key)) return;
+  active.add(key);
+  try {
+    const bridges = new Set<Function>();
+    const dynamic = _wasmClosureDynamicWrapperCache.get(closure);
+    if (typeof dynamic === "function") bridges.add(dynamic);
+    const known = _wasmClosureWrapperCache.get(closure);
+    if (known) {
+      for (const bridge of known.values()) {
+        if (typeof bridge === "function") bridges.add(bridge);
+      }
+    }
+    const callable = _hostCallableCache.get(closure);
+    if (typeof callable === "function") bridges.add(callable);
+    if (bridges.size === 0) return;
+    const hostValue = _maybeWrapCallableUnknownArity(val, callbackState);
+    for (const bridge of bridges) {
+      try {
+        Reflect.set(bridge, key, hostValue, bridge);
+      } catch {
+        // A callable proxy can reject a direct [[Set]] through its delegated
+        // property mirror. Its own sidecar remains authoritative for compiled
+        // reads; native consumers are best-effort here.
+      }
+    }
+  } finally {
+    active.delete(key);
+    if (active.size === 0) _closurePropertyMirrorActive.delete(closure);
   }
 }
 
@@ -5428,6 +5486,7 @@ function _safeSet(
         }
       }
     }
+    _mirrorClosurePropertyToHostBridges(obj, key, _unwrapForHost(val), callbackState);
     return;
   }
   // Strict [[Set]] pre-check (§13.15.2 → §10.1.9), by resolved descriptor kind:
@@ -15520,7 +15579,15 @@ assert._isSameValue = isSameValue;
           if (p && typeof p.__j === "function") p.__j(reason);
         };
       // (#1382) `executor` is called as `executor(resolve, reject)` — arity 2.
-      if (name === "Promise_new") return (executor: any) => new Promise(_maybeWrapCallable(executor, 2, callbackState));
+      if (name === "Promise_new") {
+        // Keep test262's source realm aligned with the Promise constructor used
+        // by the host import. `global_Promise` resolves the local sandbox realm
+        // while the legacy import always minted a host-realm promise, so a
+        // source-level Promise[@@species] patch could never affect `.then()`.
+        // Product callers without a sandbox retain the intrinsic Promise.
+        const PromiseCtor = (globalSandbox?.Promise ?? Promise) as PromiseConstructor;
+        return (executor: any) => new PromiseCtor(_maybeWrapCallable(executor, 2, callbackState));
+      }
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
       if (name === "Promise_then") return (p: any, cb: any) => p.then(_wrapPromiseReaction(cb));
       if (name === "Promise_then2")
