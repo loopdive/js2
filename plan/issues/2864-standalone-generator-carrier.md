@@ -2,12 +2,13 @@
 id: 2864
 title: "Standalone: no Wasm-native generator carrier — sync generators leak __create_generator/__gen_* host imports"
 status: in-progress
-assignee: claude/es6-team-generators
+assignee: ttraenkler/codex-es6-closeout
 created: 2026-06-30
-updated: 2026-08-15
+updated: 2026-08-26
 priority: high
 feasibility: hard
-model: fable
+model: gpt-5.6-luna
+reasoning_effort: max
 task_type: feature
 area: codegen
 goal: standalone
@@ -1123,3 +1124,38 @@ measured above as a real CE today. It does not commit the lane to either design.
 Out of this lane on the measured evidence: `star-rhs-iter-*` (~35) → #2173
 slice-2b; `prototype-*` / brand (~21) → #2175; `unscopables-with*` (4) → `with`;
 sloppy-mode `yield`-as-identifier (11) → parser.
+
+## ES2015 authoritative closeout handoff (2026-08-26)
+
+The complete standalone ES2015 run `20260826-194014` provides a current exact
+denominator across the authoritative 11,704-row filter. Exactly **297/11,704**
+rows are generator-carrier compile errors owned by this umbrella:
+
+- 104/297 report that native generator lowering supports only sequential
+  numeric yields;
+- 193/297 emit forbidden standalone imports containing
+  `__create_generator` or `__gen_*`;
+- the corresponding host rows are 143 pass and 154 fail, so host success is a
+  required control but not an oracle for the standalone implementation.
+
+Source artifacts:
+
+- `/private/tmp/js2-es6-authoritative-measure4/benchmarks/results/test262-standalone-results-20260826-194014.jsonl`
+- `/private/tmp/js2-es6-authoritative-measure3/benchmarks/results/test262-results-20260826-180615.jsonl`
+
+### Closeout implementation plan
+
+1. Materialize the exact 297-path list from the standalone JSONL and group it
+   by native-plan refusal versus emitted import set; do not use filename-only
+   generator classification.
+2. Reduce one representative per distinct plan refusal/import set and route it
+   through the existing F1/F2/D2/D4 carrier before adding new machinery.
+3. Check the routed child issues named above first (#2173, #2175, #2906 and the
+   parser handoff); update those issue files when a row belongs there instead
+   of duplicating implementation in this umbrella.
+4. Implement and checkpoint the largest proven shared gate, with standalone
+   semantic pins plus host controls. No host import, skip, fixture rewrite, or
+   oracle-only fallback is acceptable.
+5. Rerun all 297 standalone rows and their 297 host controls, record exact
+   pass/fail/compile-error counts, and integrate the checkpoint into the sole
+   upstream draft PR #5010.
