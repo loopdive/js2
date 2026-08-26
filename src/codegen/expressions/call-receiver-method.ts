@@ -1944,7 +1944,8 @@ export function compileReceiverMethodCall(
       const restInfoNn = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
       const handledRestNn =
         restInfoNn !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNn, 1);
-      const handledSpreadNn = !handledRestNn && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+      const handledSpreadNn =
+        !handledRestNn && methodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
       if (handledSpreadNn) {
         compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
       } else if (!handledRestNn) {

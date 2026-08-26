@@ -36,6 +36,26 @@ async function run(files: Record<string, string>, entry: string, expectedImports
 }
 
 describe("issue #4527: cross-module dynamic callback invocation", () => {
+  it("routes mixed spreads to arguments for zero-formal class methods", async () => {
+    const w = await run(
+      {
+        "./main.js": `
+          class C {
+            method() {
+              return arguments.length + arguments[0] + arguments[1] + arguments[2] + arguments[3];
+            }
+          }
+          export function t() {
+            const tail = [2, 3];
+            return C.prototype.method(42, ...[1], ...tail,);
+          }
+        `,
+      },
+      "./main.js",
+    );
+    expect(w.t()).toBe(52);
+  });
+
   it("reads reflective array carriers through canonical dynamic string indices", async () => {
     const w = await run(
       {

@@ -1009,7 +1009,10 @@ function compileObjectLiteralWithAccessors(
         // (`language/expressions/{array,new,super}/spread-obj-manipulate-outter-
         // obj-in-getter.js` all flip pass→fail). Dropping the gate to reach a
         // dogfood case in the host lane is not a safe trade.
-        const spreadStructIdx = materializableSpreadStructTypeIdx(ctx, prop.expression, srcType);
+        const spreadStructIdx =
+          ctx.targetProfile.semanticProviders === "native-first"
+            ? materializableSpreadStructTypeIdx(ctx, prop.expression, srcType)
+            : undefined;
         if (
           spreadStructIdx !== undefined &&
           materializeStructAsDynamicObject(ctx, fctx, spreadStructIdx, { skipInternalFields: true })

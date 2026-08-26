@@ -72,7 +72,11 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
-import { tryEmitPromiseSubclassValue } from "./promise-subclass.js";
+import {
+  emitPromiseSubclassCtor,
+  resolvePromiseSubclassIdentifier,
+  tryEmitPromiseSubclassValue,
+} from "./promise-subclass.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -1039,6 +1043,11 @@ function compileIdentifierCore(
       // tdzResult === "skip" — no check needed, variable is guaranteed initialized
     }
 
+    const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
+    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+      return { kind: "externref" };
+    }
+
     // Check if this is a boxed (ref cell) mutable capture
     const boxed = fctx.boxedCaptures?.get(name);
     if (boxed) {
@@ -1245,6 +1254,10 @@ function compileIdentifierCore(
   // first declaration.
   const declaredClass = resolvedValueDeclaration;
   if (declaredClass && (ts.isClassDeclaration(declaredClass) || ts.isClassExpression(declaredClass))) {
+    const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
+    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+      return { kind: "externref" };
+    }
     const classIdentity =
       ctx.anonClassExprNames.get(declaredClass) ??
       (declaredClass.name?.text && ctx.classObjectGlobals?.has(declaredClass.name.text)
@@ -2661,6 +2674,35 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   {
     const namespaceThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
     if (namespaceThrow) return namespaceThrow;
+  }
+
+  // Promise subclasses are represented by cached host constructors. Their
+  // instances therefore need the actual RHS value, not the name-based user
+  // class/tag predicate used for WasmGC classes and other builtin subclasses.
+  if (
+    ts.isIdentifier(expr.right) &&
+    resolvePromiseSubclassIdentifier(ctx, expr.right) !== undefined &&
+    !noJsHost(ctx)
+  ) {
+    const helperIdx = ensureLateImport(
+      ctx,
+      "__promise_subclass_instanceof",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (!leftType) fctx.body.push({ op: "ref.null.extern" });
+    else if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, { kind: "externref" });
+    const rightType = compileExpression(ctx, fctx, expr.right);
+    if (!rightType) fctx.body.push({ op: "ref.null.extern" });
+    else if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, { kind: "externref" });
+    if (helperIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
+    } else {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__promise_subclass_instanceof") ?? helperIdx });
+    }
+    return { kind: "i32" };
   }
 
   // Resolve constructor name from the RHS expression (simple identifiers only)

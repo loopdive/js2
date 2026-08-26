@@ -16535,7 +16535,7 @@ assert._isSameValue = isSameValue;
         };
       if (name === "__instanceof_check")
         return (v: any, ctor: any) => _instanceofResult(v, ctor, callbackState, /* strict */ false);
-      if (name === "__instanceof_dyn")
+      if (name === "__instanceof_dyn" || name === "__promise_subclass_instanceof")
         return (v: any, ctor: any) => {
           try {
             const wrappedCtor = _maybeWrapCallableUnknownArity(ctor, callbackState);
