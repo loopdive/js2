@@ -210,20 +210,18 @@ import {
   assertMultiPreparedScalarLeafRouteCurrent,
   buildMultiIrGraphSafety,
   collectMultiIrFunctionNameCollisions,
-  compileMultiPreparedScalarLeafDeclarations,
-  planEarlyMultiPreparedScalarLeafRoute,
   type EarlyMultiPreparedScalarLeafState,
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
+import { assertMultiPreparedArrayLeafRouteCurrent } from "./multi-prepared-array-leaf.js";
+import { assertMultiPreparedFibonacciPairRouteCurrent } from "./multi-prepared-fibonacci-pair.js";
 import {
-  assertMultiPreparedArrayLeafRouteCurrent,
-  planEarlyMultiPreparedArrayLeafRoute,
-} from "./multi-prepared-array-leaf.js";
-import {
-  assertMultiPreparedFibonacciPairRouteCurrent,
-  planEarlyMultiPreparedFunctionValueRoutes,
-} from "./multi-prepared-fibonacci-pair.js";
+  createMultiPreparedProgramOwner,
+  MultiPreparedProgramOwner,
+  publishMultiPreparedProgram,
+  type MultiPreparedProgramAudit,
+} from "./multi-prepared-program.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import {
@@ -3620,86 +3618,6 @@ function multiIrFunctionValueLeafHasForeignLateProvider(
   );
 }
 
-function planEarlyMultiIrOverlay(
-  ctx: CodegenContext,
-  multiAst: MultiTypedAST,
-  identityContext: IrPlanningIdentityContext,
-  options: CodegenOptions | undefined,
-): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<IrOverlayPlan>> {
-  const active =
-    !!options?.experimentalIR &&
-    !options.disableIrFirst &&
-    !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST) &&
-    ctx.standalone &&
-    !ctx.wasi &&
-    !ctx.fast &&
-    multiAst.sourceFiles.length > 1;
-  if (!active) return new Map();
-  const scalarStates = planEarlyMultiPreparedScalarLeafRoute({
-    active,
-    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  const arrayStates = planEarlyMultiPreparedArrayLeafRoute({
-    active,
-    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
-    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  for (const [sourceFile, state] of arrayStates) {
-    if (scalarStates.has(sourceFile)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `multi-source early routes both claimed ${sourceFile.fileName}`,
-      );
-    }
-    scalarStates.set(sourceFile, state);
-  }
-  const functionValueStates = planEarlyMultiPreparedFunctionValueRoutes({
-    active,
-    leafCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
-    fibonacciPairCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
-      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId, functionValueTarget),
-    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  for (const [sourceFile, state] of functionValueStates) {
-    if (scalarStates.has(sourceFile)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `multi-source early routes both claimed ${sourceFile.fileName}`,
-      );
-    }
-    scalarStates.set(sourceFile, state);
-  }
-  return scalarStates;
-}
-
 function compileMultiIrOverlaySource(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
@@ -4625,6 +4543,8 @@ export interface GeneratedCodegenModule extends CodegenResult {
   irPostClaimErrors?: { kind: string; func: string; message: string }[];
   irCompiledFuncs?: readonly string[];
   programAbi?: PublishedProgramAbi;
+  /** Internal M0 whole-program Prepared ownership evidence. */
+  multiPreparedProgramAudit?: MultiPreparedProgramAudit;
 }
 
 export interface GeneratedModule extends GeneratedCodegenModule {
@@ -8796,6 +8716,71 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
   }
 }
 
+function planMultiPreparedProgramEarlyRoutes(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  multiAst: MultiTypedAST,
+  options: CodegenOptions | undefined,
+  identityContext: IrPlanningIdentityContext | undefined,
+  ctx: CodegenContext,
+): void {
+  if (!owner || !identityContext) return;
+  owner.planExistingRoutes({
+    active:
+      !!options?.experimentalIR &&
+      !options.disableIrFirst &&
+      !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST) &&
+      ctx.standalone &&
+      !ctx.wasi &&
+      !ctx.fast &&
+      multiAst.sourceFiles.length > 1,
+    scalarCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
+    arrayCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
+    functionValueLeafCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
+    fibonacciPairCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
+    ctx,
+    sourceFiles: multiAst.sourceFiles,
+    entryFile: multiAst.entryFile,
+    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
+    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
+    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
+    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
+      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId, functionValueTarget),
+    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
+      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+  });
+  owner.sealBodyBoundary();
+}
+
+function compileMultiPreparedBodySource(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  moduleInitMode: ModuleInitMode,
+): void {
+  if (owner) owner.compileBodySource(sourceFile, moduleInitMode);
+  else compileDeclarations(ctx, sourceFile, undefined, undefined, undefined, moduleInitMode);
+}
+
+function compileMultiPreparedOverlaySource(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  ctx: CodegenContext,
+  multiAst: MultiTypedAST,
+  sourceFile: ts.SourceFile,
+  identityContext: IrPlanningIdentityContext,
+  safety: MultiIrGraphSafety,
+  hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
+): void {
+  if (owner) {
+    owner.withOverlayState(sourceFile, (early) =>
+      compileMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, safety, hostImportedFunctions, early),
+    );
+    return;
+  }
+  compileMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, safety, hostImportedFunctions, undefined);
+}
+
 /**
  * Compile multiple typed source files into a single WasmModule IR.
  * All source files share the same codegen context (funcMap, structMap, etc.).
@@ -8897,7 +8882,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
-  ctx.irBodyRouteAuditSession?.registerGenerator("multi", "generateMultiModule");
+  const multiPreparedProgram = createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
@@ -9283,8 +9268,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 
-    // (#4589) Prepare one exact standalone scalar leaf before direct bodies.
-    const earlyMultiIr = planEarlyMultiIrOverlay(ctx, multiAst, irPlanningIdentityContext!, options);
+    planMultiPreparedProgramEarlyRoutes(multiPreparedProgram, multiAst, options, irPlanningIdentityContext, ctx);
 
     // Phase 3: Compile all function bodies.
     //
@@ -9333,9 +9317,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.funcMap.set(name, idx);
         }
         rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
-        profilePhase(sf.fileName, () =>
-          compileMultiPreparedScalarLeafDeclarations(ctx, sf, earlyMultiIr.get(sf), moduleInitMode),
-        );
+        profilePhase(sf.fileName, () => compileMultiPreparedBodySource(multiPreparedProgram, ctx, sf, moduleInitMode));
       }
     });
     restoreNativeGeneratorEndState(ctx, nativeGenEndState);
@@ -9367,14 +9349,14 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       profilePhase("ir-overlay", () => {
         for (const sourceFile of multiAst.sourceFiles) {
           profilePhase(sourceFile.fileName, () =>
-            compileMultiIrOverlaySource(
+            compileMultiPreparedOverlaySource(
+              multiPreparedProgram,
               ctx,
               multiAst,
               sourceFile,
               irPlanningIdentityContext!,
               safety,
               hostImportedFunctions,
-              earlyMultiIr.get(sourceFile),
             ),
           );
         }
@@ -9385,6 +9367,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       finalizeMethodTrampolines(ctx);
       frameStage(ctx, "ir-overlay");
     }
+
+    multiPreparedProgram?.sealRoutesComplete();
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
@@ -9888,7 +9872,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // addImport/ensureLateImport after here throws at the producer site.
     finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
-    ctx.programAbiSession?.publish(mod);
+    publishMultiPreparedProgram(multiPreparedProgram, ctx.programAbiSession, mod);
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
@@ -9943,6 +9927,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     irOutcomes: ctx.irOutcomes,
     irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
+    multiPreparedProgramAudit: multiPreparedProgram?.audit,
   };
 }
 
