@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #2138 M0 — bounded multi-module IR overlay. Multi-source WasmGC compiles
-// legacy bodies first, then lets IR replace only unambiguous top-level function
-// slots. #3214 A+B1 additionally admits checker-certified host imported direct
-// calls (including exact bare top-level callbacks). Class members, module init,
-// and IR-first body skipping remain legacy-owned.
+// #2138 M0/M1A — bounded multi-module IR overlay. Multi-source WasmGC compiles
+// legacy bodies first, then lets the identity-owned IR paths replace exact
+// top-level function slots. M1A additionally admits standalone source-callable
+// components through the frozen program graph. Class members, module init, and
+// IR-first body skipping remain legacy-owned.
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -134,7 +134,7 @@ describe("#2138 M0 — multi-module top-level IR overlay", () => {
     }
   });
 
-  it("keeps imported targets legacy-owned on standalone while retaining independent entry coverage", async () => {
+  it("prepares imported source callables on standalone while retaining module-init fallback", async () => {
     const result = await compileMulti(MULTI_FILES, "./entry.ts", {
       experimentalIR: true,
       target: "standalone",
@@ -142,9 +142,9 @@ describe("#2138 M0 — multi-module top-level IR overlay", () => {
     expectSuccess(result, "standalone multi compile");
 
     const compiled = new Set(result.irCompiledFuncs ?? []);
-    expect(compiled.has("depPure"), "legacy imported caller is outside the dependency call graph").toBe(false);
+    expect(compiled.has("depPure"), "source callable component prepares the dependency target").toBe(true);
     expect(compiled.has("entryPure"), "independent entry function still proves genuine emission").toBe(true);
-    expect(compiled.has("callRenamed")).toBe(false);
+    expect(compiled.has("callRenamed"), "source callable component prepares the imported caller").toBe(true);
     expect(compiled.has("initHelper")).toBe(false);
     expect(compiled.has("<module-init>")).toBe(false);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
@@ -206,16 +206,16 @@ describe("#2138 M0 — multi-module top-level IR overlay", () => {
       expectSuccess(legacy, `${label} global-script legacy compile`);
 
       const compiled = new Set(ir.irCompiledFuncs ?? []);
-      // B0's canonical callable ABI makes the target itself safe in host mode.
-      // The caller is still outside A+B1 because this global-script edge has no
-      // supported ESM import binding; standalone remains conservative.
-      expect(compiled.has("apply"), `${label}: callable target mode gate`).toBe(label === "host");
-      expect(compiled.has("identity"), `${label}: callable-result target stays legacy`).toBe(false);
+      // B0's canonical callable ABI makes direct global-script targets safe in
+      // the backends that own their callable carrier. The callers remain
+      // outside M1A because this edge has no supported ESM import binding.
+      expect(compiled.has("apply"), `${label}: callable target mode gate`).toBe(true);
+      expect(compiled.has("identity"), `${label}: callable-result target mode gate`).toBe(label === "standalone");
       expect(compiled.has("callApply"), `${label}: cross-file caller stays legacy`).toBe(false);
       expect(compiled.has("callIdentity"), `${label}: callable-result caller stays legacy`).toBe(false);
-      // Host numeric calls share the scalar ABI; standalone/WASI conservatively
-      // keep every cross-file target legacy-owned until the canonical ABI slice.
-      expect(compiled.has("triple"), `${label}: numeric target mode gate`).toBe(label === "host");
+      // Numeric targets share the scalar ABI in both host and standalone
+      // backends; the cross-file callers still retain their direct bodies.
+      expect(compiled.has("triple"), `${label}: numeric target mode gate`).toBe(true);
       expect(compiled.has("callTriple"), `${label}: numeric caller stays legacy`).toBe(false);
       expect(compiled.has("dependencyLeaf"), `${label}: dependency anti-vacuity`).toBe(true);
       expect(compiled.has("entryLeaf"), `${label}: entry anti-vacuity`).toBe(true);
