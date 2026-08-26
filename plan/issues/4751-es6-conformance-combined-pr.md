@@ -12,7 +12,7 @@ task_type: integration
 area: conformance, test262
 es_edition: es2015
 goal: test262-conformance
-related: [4684, 4688, 4691, 4699, 4702, 4705, 4709, 4710, 4715, 4716, 4717, 4718, 4719, 4720, 4721, 4722, 4723, 4724, 4725, 4727, 4731, 4732, 4733, 4735, 4736, 4737, 4738, 4739, 4740, 4741, 4742, 4743, 4744, 4745, 4746, 4747, 4748, 4749, 4750]
+related: [4684, 4688, 4691, 4699, 4702, 4705, 4707, 4709, 4710, 4715, 4716, 4717, 4718, 4719, 4720, 4721, 4722, 4723, 4724, 4725, 4727, 4731, 4732, 4733, 4735, 4736, 4737, 4738, 4739, 4740, 4741, 4742, 4743, 4744, 4745, 4746, 4747, 4748, 4749, 4750]
 oracle-ratchet-allow:
   - src/codegen/expressions/call-builtin-static.ts
 ---
@@ -58,6 +58,8 @@ including the final #4749 Proxy-source fix. Integration validation passed:
 - All 37 pre-#4749 focused suites reported 251/251 passing tests. Vitest then
   emitted one worker RPC timeout after the completed pass set; no test failed.
 - The post-merge #4749 host/standalone pins and controls passed 10/10.
+- The late-discovered open #4707 component PR was incorporated before
+  supersession; its focused suite and both typechecks passed on the umbrella.
 
 Component branches retain their individual issue files and commits. The
 combined branch is the sole upstream review and CI surface for this wave.
