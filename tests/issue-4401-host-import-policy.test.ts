@@ -20,6 +20,13 @@ describe("#4401 host import policy inventory", () => {
       classification: "value-adapter",
       family: "js-value-bridge",
     });
+    expect(
+      classifyHostImport(descriptor("__unwrap_for_wasm", { type: "builtin", name: "__unwrap_for_wasm" })),
+    ).toMatchObject({
+      classification: "value-adapter",
+      family: "js-value-bridge",
+      ownerIssue: 4399,
+    });
     expect(classifyHostImport(descriptor("string_trim", { type: "string_method", method: "trim" }))).toMatchObject({
       classification: "legacy-semantic",
       family: "strings",

@@ -72,6 +72,30 @@ export function compileInternalCallArgument(
   if (ts.isPropertyAccessExpression(carrier) && canCompilePropertyAccessForNullishObservation(ctx, fctx, carrier)) {
     return compilePropertyAccessForNullishObservation(ctx, fctx, carrier);
   }
+  // (#4435) A closed-method dispatcher is an in-module call even though its
+  // uniform ABI uses externref. Compiling an inline array literal with an
+  // externref expectation runs the JS-host `__make_iterable` adapter and turns
+  // the Wasm vec into a real JS Array. The dispatcher then converts the value
+  // back to `anyref` and casts it to the method's vec parameter, which traps
+  // (`lexer.blockTokens(src, [])` in Marked). Preserve the raw vec carrier just
+  // like the identifier-held array arm below; the dispatcher's host fallback
+  // already wraps raw vec arguments before invoking JavaScript.
+  if (ts.isArrayLiteralExpression(carrier)) {
+    const actualType = compileExpression(ctx, fctx, expression);
+    if (
+      actualType &&
+      (actualType.kind === "ref" || actualType.kind === "ref_null") &&
+      getArrTypeIdxFromVec(ctx, actualType.typeIdx) >= 0
+    ) {
+      fctx.body.push({ op: "extern.convert_any" });
+      return expectedType;
+    }
+    if (actualType && !valTypesMatch(actualType, expectedType)) {
+      coerceType(ctx, fctx, actualType, expectedType);
+      return expectedType;
+    }
+    return actualType;
+  }
   if (!ts.isIdentifier(carrier)) {
     return compileExpression(ctx, fctx, expression, expectedType);
   }

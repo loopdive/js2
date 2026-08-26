@@ -57,9 +57,11 @@ import {
 } from "./index.js";
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
+import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { UNDEF_F64_BITS } from "./value-tags.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
@@ -627,6 +629,82 @@ export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyNam
   return undefined;
 }
 
+const voidClearedInstanceFieldsCache = new WeakMap<ts.ClassLikeDeclaration, ReadonlySet<string>>();
+
+/**
+ * Collect instance fields that are explicitly cleared with `void` in this
+ * class's own lexical `this` scope.
+ *
+ * JavaScript packages commonly initialize a field with an array or class
+ * instance and later use `field = void 0` as a state transition. The checker
+ * keeps the initializer's narrow type in untyped JavaScript, but a native ref
+ * slot cannot preserve the distinct `undefined` value: coercing it back to the
+ * narrow carrier can materialize an empty object/array. Such fields need the
+ * ordinary dynamic externref carrier. Arrow functions are included because
+ * they inherit class `this`; nested ordinary functions and classes are not.
+ */
+function collectVoidClearedInstanceFields(ctx: CodegenContext, decl: ts.ClassLikeDeclaration): ReadonlySet<string> {
+  const cached = voidClearedInstanceFieldsCache.get(decl);
+  if (cached !== undefined) return cached;
+  const fields = new Set<string>();
+
+  const bareExpression = (expression: ts.Expression): ts.Expression => {
+    let bare = expression;
+    while (
+      ts.isParenthesizedExpression(bare) ||
+      ts.isAsExpression(bare) ||
+      ts.isTypeAssertionExpression(bare) ||
+      ts.isSatisfiesExpression(bare) ||
+      ts.isNonNullExpression(bare)
+    ) {
+      bare = bare.expression;
+    }
+    return bare;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== decl &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isConstructorDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node))
+    ) {
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      bareExpression(node.left.expression).kind === ts.SyntaxKind.ThisKeyword &&
+      ts.isVoidExpression(bareExpression(node.right))
+    ) {
+      const fieldName = resolveClassMemberName(ctx, node.left.name);
+      if (fieldName !== undefined) fields.add(fieldName);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  for (const member of decl.members) {
+    if (ts.isPropertyDeclaration(member) && member.initializer) visit(member.initializer);
+    else if (
+      (ts.isConstructorDeclaration(member) ||
+        ts.isMethodDeclaration(member) ||
+        ts.isGetAccessorDeclaration(member) ||
+        ts.isSetAccessorDeclaration(member)) &&
+      member.body
+    ) {
+      visit(member.body);
+    }
+  }
+  voidClearedInstanceFieldsCache.set(decl, fields);
+  return fields;
+}
+
 // (#1983) `classMemberFuncKey` lives in the leaf module `class-member-keys.ts`
 // (imported above) so consumer files can use it without an import cycle; it is
 // re-exported here for callers that already import from `class-bodies.js`.
@@ -697,10 +775,17 @@ export function collectClassDeclaration(
   let parentClassName: string | undefined;
   let parentStructTypeIdx: number | undefined;
   let parentFields: FieldDef[] = [];
+  // A property/element-access heritage expression is resolved at runtime and
+  // may be a host framework class (React.Component is the canonical case).
+  // Such a parent is allowed to replace derived instance fields with ordinary
+  // host objects. Keep closed-object fields on the externref carrier so that
+  // the host writeback and subsequent compiled reads observe one live slot.
+  let hasDynamicHostParent = false;
   if (decl.heritageClauses) {
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = clause.types[0]!.expression;
+        if (!ts.isIdentifier(baseExpr) && !ctx.standalone && !ctx.wasi) hasDynamicHostParent = true;
         if (ts.isIdentifier(baseExpr)) {
           // (#4291) The local import spelling is not the class identity. Hono's
           // published base is declared as `var Hono = class _Hono {}`, exported
@@ -848,6 +933,7 @@ export function collectClassDeclaration(
     const declaredName = resolveClassMemberName(ctx, member.name);
     if (declaredName !== undefined) declaredPropertyByName.set(declaredName, member);
   }
+  const voidClearedInstanceFields = collectVoidClearedInstanceFields(ctx, decl);
 
   if (ctor?.body) {
     for (const stmt of ctor.body.statements) {
@@ -877,11 +963,28 @@ export function collectClassDeclaration(
         // class that both declares and constructor-assigns its fields (the
         // ordinary TypeScript shape) silently keeps the f64 slot while its
         // locals narrow, which measures WORSE than no narrowing at all.
-        const fieldType =
-          nativeTypeOfDeclaration(ctx.checker, declaredPropertyByName.get(fieldName)) ??
-          resolveWasmType(ctx, fieldTsType);
+        const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, declaredPropertyByName.get(fieldName));
+        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
+        if (
+          nativeFieldType === null &&
+          voidClearedInstanceFields.has(fieldName) &&
+          (fieldType.kind === "ref" || fieldType.kind === "ref_null")
+        ) {
+          fieldType = { kind: "externref" };
+        }
+        if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
+          fieldType = { kind: "externref" };
+        }
         if (!ownFields.some((f) => f.name === fieldName)) {
-          ownFields.push({ name: fieldName, type: fieldType, mutable: true });
+          const declaration = declaredPropertyByName.get(fieldName);
+          ownFields.push({
+            name: fieldName,
+            type: fieldType,
+            mutable: true,
+            ...(declaration?.questionToken && !declaration.initializer && fieldType.kind === "f64"
+              ? { undefinedDefault: true as const }
+              : {}),
+          });
         }
       }
     }
@@ -902,8 +1005,26 @@ export function collectClassDeclaration(
         // narrowing locals without the fields they flow into measurably
         // pessimises (see the issue's round-34 table), so the field, the
         // params and the locals must move together.
-        const fieldType = nativeTypeOfDeclaration(ctx.checker, member) ?? resolveWasmType(ctx, fieldTsType);
-        ownFields.push({ name: fieldName, type: fieldType, mutable: true });
+        const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, member);
+        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
+        if (
+          nativeFieldType === null &&
+          voidClearedInstanceFields.has(fieldName) &&
+          (fieldType.kind === "ref" || fieldType.kind === "ref_null")
+        ) {
+          fieldType = { kind: "externref" };
+        }
+        if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
+          fieldType = { kind: "externref" };
+        }
+        ownFields.push({
+          name: fieldName,
+          type: fieldType,
+          mutable: true,
+          ...(member.questionToken && !member.initializer && fieldType.kind === "f64"
+            ? { undefinedDefault: true as const }
+            : {}),
+        });
       }
     }
   }
@@ -2035,7 +2156,12 @@ function compileClassBodiesInner(
           const tagValue = ctx.classTagMap.get(className) ?? 0;
           fctx.body.push({ op: "i32.const", value: tagValue });
         } else if (field.type.kind === "f64") {
-          fctx.body.push({ op: "f64.const", value: 0 });
+          if (field.undefinedDefault) {
+            fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS });
+            fctx.body.push({ op: "f64.reinterpret_i64" });
+          } else {
+            fctx.body.push({ op: "f64.const", value: 0 });
+          }
         } else if (field.type.kind === "i32") {
           fctx.body.push({ op: "i32.const", value: 0 });
         } else if (field.type.kind === "externref") {
@@ -3365,7 +3491,56 @@ export function compileSuperCall(
   onHost = false,
 ): void {
   const parentClassName = ctx.classParentMap.get(childClassName);
-  if (!parentClassName) return;
+  if (!parentClassName) {
+    const childDecl = ctx.classDeclarationMap.get(childClassName);
+    const hasRuntimeParent =
+      childDecl?.heritageClauses?.some(
+        (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0,
+      ) === true && !ctx.classBuiltinParentMap.has(childClassName);
+    const args = callExpr.arguments;
+
+    // (#4618) `class C extends runtimeValue { constructor(props) {
+    // super(props); ... } }` has no statically-resolved parent init function.
+    // The class-definition path already registered that live parent by the
+    // synthetic class identity; invoke it here with the allocated derived
+    // receiver, at the source-level SuperCall position. This preserves the
+    // critical ordering that a host-mirror pre/post hook cannot: code before
+    // super runs first, the parent initializes `this`, then subsequent
+    // constructor statements and derived fields observe that state.
+    if (hasRuntimeParent && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+      const importName = `__call_dynamic_class_parent_${args.length}`;
+      const funcIdx = ensureLateImport(
+        ctx,
+        importName,
+        Array.from({ length: args.length + 2 }, () => ({ kind: "externref" }) as ValType),
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        addStringConstantGlobal(ctx, childClassName);
+        const nameIdx = ctx.stringGlobalMap.get(childClassName);
+        if (nameIdx !== undefined && nameIdx >= 0) {
+          fctx.body.push({ op: "global.get", index: nameIdx });
+        } else {
+          compileStringLiteral(ctx, fctx, childClassName);
+        }
+        fctx.body.push({ op: "local.get", index: selfLocal });
+        fctx.body.push({ op: "extern.convert_any" });
+        for (const arg of args) compileExternrefArgument(ctx, fctx, arg);
+        fctx.body.push({
+          op: "call",
+          funcIdx: ctx.funcMap.get(importName) ?? funcIdx,
+        });
+        return;
+      }
+    }
+
+    // Preserve ArgumentListEvaluation even when the dynamic-parent bridge is
+    // unavailable (standalone/WASI or a runtime spread not representable by
+    // the fixed-arity import yet).
+    for (const arg of args) evaluateArgumentForSideEffects(ctx, fctx, arg);
+    return;
+  }
 
   // (#1366a) Externref-backed subclass (extends Error / TypeError / ...).
   // `super(msg)` lowers to `__self = __new_<Parent>(msg)`. The host import
@@ -3478,10 +3653,41 @@ export function compileSuperCall(
   const parentInitName = `${parentClassName}_init`;
   const parentInitIdx = ctx.funcMap.get(parentInitName);
   if (parentInitIdx === undefined) {
+    // A statically named parent can still be a plain top-level function
+    // (`class C extends Component`). There is intentionally no compiled class
+    // `_init` for that fnctor, but `super(args)` must call it with the already
+    // allocated derived receiver. Forward the canonical closure through the
+    // same host bridge used for runtime-valued heritage. React.Component is
+    // this exact ES5-constructor shape.
+    const fnctorParent = fnctorAncestorOfClass(ctx, childClassName);
+    const args = callExpr.arguments;
+    if (fnctorParent !== undefined && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+      const importName = `__call_dynamic_class_parent_${args.length}`;
+      const bridgeIdx = ensureLateImport(
+        ctx,
+        importName,
+        Array.from({ length: args.length + 2 }, () => ({ kind: "externref" }) as ValType),
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const fnctorIdx = ctx.funcMap.get(fnctorParent);
+      if (bridgeIdx !== undefined && fnctorIdx !== undefined) {
+        const parentClosureType = emitCachedFuncClosureAccess(ctx, fctx, fnctorParent, fnctorIdx);
+        if (parentClosureType !== null) {
+          if (parentClosureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+          fctx.body.push({ op: "local.get", index: selfLocal });
+          fctx.body.push({ op: "extern.convert_any" });
+          for (const arg of args) compileExternrefArgument(ctx, fctx, arg);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? bridgeIdx });
+          return;
+        }
+      }
+    }
     // Parent is not a struct-backed user class with an init (should not
-    // happen — builtin parents took the branch above). Evaluate args for
-    // side effects to preserve §13.3.7.1 ArgumentListEvaluation.
-    for (const arg of callExpr.arguments) {
+    // happen outside a host fnctor parent — builtin parents took the branch
+    // above). Evaluate args for side effects to preserve
+    // §13.3.7.1 ArgumentListEvaluation.
+    for (const arg of args) {
       evaluateArgumentForSideEffects(ctx, fctx, arg);
     }
     return;

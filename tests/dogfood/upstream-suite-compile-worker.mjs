@@ -40,6 +40,46 @@ function errorText(error, instance) {
   return text;
 }
 
+function sourceLocationForWasmError(error, sourceMapText) {
+  const stack = String(error?.stack ?? "");
+  const match = stack.match(/wasm-function\[\d+\]:(0x[\da-f]+)/i);
+  if (!match || !sourceMapText) return null;
+  const target = Number.parseInt(match[1], 16);
+  const map = JSON.parse(sourceMapText);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const decode = (segment) => {
+    const values = [];
+    for (let index = 0; index < segment.length; ) {
+      let value = 0;
+      let shift = 0;
+      let digit;
+      do {
+        digit = alphabet.indexOf(segment[index++]);
+        value |= (digit & 31) << shift;
+        shift += 5;
+      } while (digit & 32);
+      values.push(value & 1 ? -(value >>> 1) : value >>> 1);
+    }
+    return values;
+  };
+  let offset = 0;
+  let source = 0;
+  let line = 0;
+  let column = 0;
+  let best = null;
+  for (const segment of String(map.mappings ?? "").split(",")) {
+    const values = decode(segment);
+    if (values.length < 4) continue;
+    offset += values[0];
+    source += values[1];
+    line += values[2];
+    column += values[3];
+    if (offset > target) break;
+    best = `${map.sources?.[source] ?? "?"}:${line + 1}:${column + 1}`;
+  }
+  return best;
+}
+
 async function loadNodeHostDependencies() {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
@@ -155,6 +195,7 @@ async function main() {
       // closed-dispatch functions, turning a valid compile into a watchdog
       // timeout without affecting validation or execution.
       emitWat: false,
+      sourceMap: process.env.DOGFOOD_SOURCE_DIAG === "1",
       // Original suites frequently initialize object graphs at module load.
       // In the JS-host lane, WasmGC field/callable reflection only becomes
       // available after the instance is handed to the runtime. Run the same
@@ -249,6 +290,8 @@ async function main() {
     try {
       instance.exports.__module_init?.();
     } catch (error) {
+      const sourceLocation =
+        process.env.DOGFOOD_SOURCE_DIAG === "1" ? sourceLocationForWasmError(error, result.sourceMap) : null;
       emit({
         compile: {
           success: true,
@@ -258,7 +301,11 @@ async function main() {
           linkPlan: result.linkPlan ?? null,
           errors: [],
         },
-        wasm: { fatal: `module init: ${errorText(error, instance)}`, count: 0, statuses: [] },
+        wasm: {
+          fatal: `module init: ${errorText(error, instance)}${sourceLocation ? `\nsource: ${sourceLocation}` : ""}`,
+          count: 0,
+          statuses: [],
+        },
       });
       return;
     }

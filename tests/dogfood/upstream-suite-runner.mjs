@@ -300,6 +300,19 @@ const __upstreamSpyCallValues = [];
 const __upstreamTimerSpies = { setTimeout: null, clearTimeout: null };
 let __upstreamSetTimeoutCallCount = 0;
 let __upstreamClearTimeoutCallCount = 0;
+function __upstreamMockCallsByIndex(index) {
+  const calls = [];
+  const base = __upstreamSpyCallBases[index] || 0;
+  for (let record = base; record < __upstreamSpyCallOwners.length; record++) {
+    if (__upstreamSpyCallOwners[record] !== index) continue;
+    const args = [];
+    const start = __upstreamSpyCallStarts[record] || 0;
+    const length = __upstreamSpyCallLengths[record] || 0;
+    for (let arg = 0; arg < length; arg++) args.push(__upstreamSpyCallValues[start + arg]);
+    calls.push(args);
+  }
+  return calls;
+}
 function __upstreamMockCalls(actual) {
   if (actual === __upstreamBareTimerAliases.setTimeout) {
     return { length: __upstreamSetTimeoutCallCount };
@@ -308,19 +321,7 @@ function __upstreamMockCalls(actual) {
     return { length: __upstreamClearTimeoutCallCount };
   }
   for (let index = 0; index < __upstreamSpyFunctions.length; index++) {
-    if (__upstreamSpyFunctions[index] === actual) {
-      const calls = [];
-      const base = __upstreamSpyCallBases[index] || 0;
-      for (let record = base; record < __upstreamSpyCallOwners.length; record++) {
-        if (__upstreamSpyCallOwners[record] !== index) continue;
-        const args = [];
-        const start = __upstreamSpyCallStarts[record] || 0;
-        const length = __upstreamSpyCallLengths[record] || 0;
-        for (let arg = 0; arg < length; arg++) args.push(__upstreamSpyCallValues[start + arg]);
-        calls.push(args);
-      }
-      return calls;
-    }
+    if (__upstreamSpyFunctions[index] === actual) return __upstreamMockCallsByIndex(index);
   }
   // Keep the live mock.calls vector on the spy itself. A WasmGC vector stored
   // inside another host-like vector is copied at the boundary and then stops
@@ -338,20 +339,23 @@ const vi = {
     const spyIndex = __upstreamSpyFunctions.length;
     __upstreamSpyCallCounts.push(0);
     __upstreamSpyCallBases.push(__upstreamSpyCallOwners.length);
-    const callList = [];
     function spy(...args) {
       __upstreamSpyCallCounts[spyIndex] = (__upstreamSpyCallCounts[spyIndex] || 0) + 1;
       __upstreamSpyCallOwners.push(spyIndex);
       __upstreamSpyCallStarts.push(__upstreamSpyCallValues.length);
       __upstreamSpyCallLengths.push(args.length);
       for (let index = 0; index < args.length; index++) __upstreamSpyCallValues.push(args[index]);
-      callList.push(args);
       if (typeof implementation === "function") return implementation.apply(this, args);
     }
     __upstreamSpyFunctions.push(spy);
-    spy.mock = { calls: callList };
+    const mock = {};
+    Object.defineProperty(mock, "calls", {
+      get() { return __upstreamMockCallsByIndex(spyIndex); },
+      enumerable: true,
+      configurable: true,
+    });
+    spy.mock = mock;
     spy.mockClear = function() {
-      callList.length = 0;
       __upstreamSpyCallCounts[spyIndex] = 0;
       __upstreamSpyCallBases[spyIndex] = __upstreamSpyCallOwners.length;
       return spy;
@@ -833,14 +837,21 @@ export async function runUpstreamTest(index: number): Promise<number> {
     return 0;
   }
   if (result && typeof result.then === "function") {
-    const outcome = await result.then(
-      () => ({ passed: true, error: "" }),
-      (error) => ({
-        passed: false,
-        error: error && error.message !== undefined ? String(error.message) : String(error),
-      }),
-    );
-    __upstreamErrors[index] = outcome.error;
+    // Await the test promise directly. Returning an anonymous object from the
+    // Promise.then callbacks makes the harness result depend on that object's
+    // inferred Wasm struct identity. In a large package graph (Hono's
+    // trailing-slash tests), an unrelated same-shape carrier can then make
+    // outcome.passed read as false even though the original callback and all
+    // assertions completed successfully.
+    let outcomePassed = true;
+    let outcomeError = "";
+    try {
+      await result;
+    } catch (error) {
+      outcomePassed = false;
+      outcomeError = error && error.message !== undefined ? String(error.message) : String(error);
+    }
+    __upstreamErrors[index] = outcomeError;
     if (index === __upstreamTests.length - 1) {
       const afterAllHooks = __upstreamTests[index].afterAllHooks || [];
       for (let hookIndex = afterAllHooks.length - 1; hookIndex >= 0; hookIndex--) {
@@ -848,7 +859,7 @@ export async function runUpstreamTest(index: number): Promise<number> {
         if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
       }
     }
-    return outcome.passed ? 1 : 0;
+    return outcomePassed ? 1 : 0;
   }
   __upstreamErrors[index] = "";
   if (index === __upstreamTests.length - 1) {

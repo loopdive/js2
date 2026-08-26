@@ -706,18 +706,54 @@ export function planClosureCaptures(
  * become a subtype of it so call-site `ref.cast` succeeds. Returns the struct /
  * func type indices and the lifted parameter list.
  */
+interface ClosureStructMintOptions {
+  captures: ArrowClosureCapture[];
+  arrowParams: ValType[];
+  closureResults: ValType[];
+  closureName: string;
+  isNamedFuncExpr: boolean;
+  constructible: boolean;
+  /** (#4437) The arrow / function expression itself, for the `$fnmeta` slot. */
+  decl?: ts.Node;
+}
+
+/**
+ * Publish a capturing rest closure's subtype before its lifted body compiles.
+ * A reduce callback can feed an earlier instance of this same closure back
+ * into that body; nominal registration distinguishes its positional call from
+ * a genuine one-vec-parameter closure with the same funcref signature.
+ */
+function registerCapturingRestClosureDuringBodyCompilation(
+  ctx: CodegenContext,
+  opts: ClosureStructMintOptions,
+  structTypeIdx: number,
+  liftedFuncTypeIdx: number,
+): void {
+  const { captures, arrowParams, closureResults, decl } = opts;
+  const returnType = closureResults.length === 1 ? closureResults[0]! : null;
+  if (
+    captures.length === 0 ||
+    decl === undefined ||
+    (!ts.isArrowFunction(decl) && !ts.isFunctionExpression(decl)) ||
+    !runtimeParameters(decl).some((param) => param.dotDotDotToken !== undefined) ||
+    returnType?.kind !== "externref"
+  ) {
+    return;
+  }
+  ctx.closureInfoByTypeIdx.set(structTypeIdx, {
+    structTypeIdx,
+    funcTypeIdx: liftedFuncTypeIdx,
+    returnType,
+    paramTypes: arrowParams,
+    hasCaptures: true,
+    hasRestParam: true,
+    needsCallSiteArity: true,
+  });
+}
+
 export function mintClosureStructTypes(
   ctx: CodegenContext,
-  opts: {
-    captures: ArrowClosureCapture[];
-    arrowParams: ValType[];
-    closureResults: ValType[];
-    closureName: string;
-    isNamedFuncExpr: boolean;
-    constructible: boolean;
-    /** (#4437) The arrow / function expression itself, for the `$fnmeta` slot. */
-    decl?: ts.Node;
-  },
+  opts: ClosureStructMintOptions,
 ): {
   structTypeIdx: number;
   liftedFuncTypeIdx: number;
@@ -872,6 +908,9 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
     }
   }
+  // The ordinary post-body registration replaces this provisional entry with
+  // the complete ClosureInfo.
+  registerCapturingRestClosureDuringBodyCompilation(ctx, opts, structTypeIdx, liftedFuncTypeIdx);
   if (metaSlot) {
     // Registered here rather than at each mint branch so every path that grew
     // the field also gets its family arm — the slot is always LAST, so its

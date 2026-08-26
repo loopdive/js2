@@ -15,6 +15,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
@@ -1009,7 +1010,8 @@ export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | u
 }
 
 export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
+  // Fast JS-host builds also need to project `$AnyValue` at typed boundaries.
+  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.fast) return undefined;
   if (ctx.anyValueTypeIdx < 0) return undefined;
 
   const existing = ctx.funcMap.get("__any_to_extern");
@@ -1079,41 +1081,10 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
         { op: "return" },
       ],
     },
-    // A genuine native string payload is safe to unwrap. Generic externref
-    // boxing recreates exactly the same tag-5 string box on the next any-typed
-    // operation. Keeping the whole box here instead creates a nested tag-5
-    // carrier; a second `+` then classifies the inner `$AnyValue` as an object
-    // (`let s = ""; s += "a"; s += "b"` became NaN in the standalone
-    // interpreter). The runtime type test is essential because field 4 is also
-    // used by legacy tag-5 boxes for numbers, booleans, null, and opaque refs.
-    ...((ctx.anyStrTypeIdx >= 0
-      ? [
-          { op: "local.get", index: 1 },
-          { op: "i32.const", value: 5 },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 0 },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 0 },
-                  { op: "ref.as_non_null" },
-                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
-                  { op: "return" },
-                ],
-              },
-            ],
-          },
-        ]
-      : []) satisfies Instr[]),
+    // A JS host owns tag 5's externval (including BigInt); project it directly.
+    // Host-free builds unwrap only a proven native string, preserving the
+    // round-trip rule for legacy tag-5 boxes of other values.
+    ...buildAnyTag5ExternProjection(ctx, anyTypeIdx),
     // (#2106 S1) Under the `undefinedSingleton` regime tag 0 (null) unwraps to
     // its canonical externref-plane representation `ref.null.extern` — and the
     // round-trip is SAFE there because `__any_from_extern`'s null arm boxes

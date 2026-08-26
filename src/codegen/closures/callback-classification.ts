@@ -354,6 +354,16 @@ const ANY_RECEIVER_DEFERRED_METHOD_NAMES: ReadonlySet<string> = new Set([
   "subscribe",
 ]);
 
+// `subscribe(callback)` is the structural observable/store contract: the
+// callback remains live until a returned teardown/unsubscribe operation runs.
+// Anonymous object-literal stores have a real checker symbol, so the
+// any/unknown fallback below does not see them even though their callback has
+// exactly the same lifetime. Treat this one conventional retaining API as
+// receiver-agnostic. The persistent-cell lowering is semantics-preserving for
+// a synchronous user-defined method too; it merely keeps the already-captured
+// local aliased to its ref cell after the call.
+const STRUCTURAL_DEFERRED_METHOD_NAMES: ReadonlySet<string> = new Set(["subscribe"]);
+
 const DEFERRED_CALLBACK_METHODS_BY_CLASS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["DisposableStack", new Set(["defer", "use", "adopt"])],
   ["AsyncDisposableStack", new Set(["defer", "use", "adopt"])],
@@ -380,6 +390,7 @@ export function isDeferredCallbackArgument(node: ts.Node, ctx: CodegenContext): 
   if (!parent.arguments.some((arg) => arg === node)) return false;
   if (!ts.isPropertyAccessExpression(parent.expression)) return false;
   const methodName = parent.expression.name.text;
+  if (STRUCTURAL_DEFERRED_METHOD_NAMES.has(methodName)) return true;
   try {
     const recType = ctx.checker.getTypeAtLocation(parent.expression.expression);
     const symName = recType.getSymbol?.()?.getName?.();

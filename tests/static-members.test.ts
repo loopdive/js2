@@ -79,6 +79,21 @@ describe("static class members", () => {
     ).toBe(15);
   });
 
+  it("keeps a module-scope data property assigned to a builtin subclass", async () => {
+    expect(
+      await run(
+        `
+      class PackageError extends Error {}
+      PackageError.CODE = "PACKAGE_ERROR";
+      export function main(): number {
+        return PackageError.CODE === "PACKAGE_ERROR" ? 1 : 0;
+      }
+    `,
+        "main",
+      ),
+    ).toBe(1);
+  });
+
   it("static property with initializer", async () => {
     expect(
       await run(

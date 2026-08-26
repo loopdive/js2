@@ -101,7 +101,7 @@ import {
   ensureObjectGroupBy,
   ensureObjectRuntime,
 } from "../object-runtime.js";
-import { isArrayCarrierValType } from "../array-carrier-brand.js"; // (#4556)
+import { isArrayCarrierValType, retainArrayIsArrayExternrefCandidate } from "../array-carrier-brand.js"; // (#4556)
 import {
   BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
@@ -638,12 +638,7 @@ export function compileBuiltinStaticCall(
     // host predicate is simply absent and only the `ref.test` path runs.
     if (argWasmType.kind === "externref") {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      if (argType && argType.kind !== "externref") {
-        // Non-externref values (numbers, bools) are never arrays.
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: 0 });
-        return { kind: "i32" };
-      }
+      if (!retainArrayIsArrayExternrefCandidate(fctx, argType)) return { kind: "i32" };
       emitArrayIsArrayExternrefPredicate(ctx, fctx);
       return { kind: "i32" };
     }

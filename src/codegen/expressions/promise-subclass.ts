@@ -71,6 +71,30 @@ export function resolvePromiseSubclassName(ctx: CodegenContext, name: string): s
   return undefined;
 }
 
+/** Resolve a Promise-subclass identifier by its lexical declaration identity. */
+export function resolvePromiseSubclassIdentifier(ctx: CodegenContext, id: ts.Identifier): string | undefined {
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  if (declaration !== undefined) {
+    if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
+      const identity =
+        ctx.anonClassExprNames.get(declaration) ??
+        (declaration.name?.text ? (ctx.classExprNameMap.get(declaration.name.text) ?? declaration.name.text) : id.text);
+      return resolvePromiseSubclassName(ctx, identity);
+    }
+    if (ts.isVariableDeclaration(declaration)) {
+      let initializer = declaration.initializer;
+      while (initializer !== undefined && ts.isParenthesizedExpression(initializer))
+        initializer = initializer.expression;
+      if (initializer !== undefined && ts.isClassExpression(initializer)) {
+        const identity = ctx.anonClassExprNames.get(initializer) ?? ctx.classExprNameMap.get(id.text) ?? id.text;
+        return resolvePromiseSubclassName(ctx, identity);
+      }
+    }
+    return undefined;
+  }
+  return resolvePromiseSubclassName(ctx, id.text);
+}
+
 /**
  * Emits an externref that is the cached `__promise_subclass_ctor` for the given
  * resolved class name (one synthesized `class extends Promise {}` per name).
@@ -201,5 +225,7 @@ export function tryEmitPromiseSubclassReceiver(
   argExpr: ts.Expression,
 ): boolean {
   if (!ts.isIdentifier(argExpr)) return false;
-  return tryEmitPromiseSubclassValue(ctx, fctx, argExpr.text);
+  if (isStandalonePromiseActive(ctx)) return false;
+  const resolved = resolvePromiseSubclassIdentifier(ctx, argExpr);
+  return resolved !== undefined && emitPromiseSubclassCtor(ctx, fctx, resolved);
 }

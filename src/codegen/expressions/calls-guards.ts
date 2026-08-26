@@ -695,10 +695,14 @@ export function emitObjectCoercion(
     }
   } else if (isBigIntType(argTsType)) {
     // (#1568) Object(bigint) → BigInt wrapper object (§7.1.18 Table 13).
-    // BigInt is i64-represented; `__new_BigInt` boxes via the spec's literal
-    // `Object(v)` — `BigInt` is not a constructor, so `new BigInt(v)` throws.
-    compileExpression(ctx, fctx, args[0]!, { kind: "i64" });
-    const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [{ kind: "i64" }], [{ kind: "externref" }]);
+    // A JS-host BigInt must stay an externref here: forcing a wide value through
+    // the standalone i64 carrier truncates it before Object(v) can preserve the
+    // primitive in the wrapper's [[BigIntData]] slot. Native-first/host-free
+    // targets keep the established i64 ABI and native `$BigInt` wrapper.
+    const hostBigInt = !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first";
+    const bigIntCarrier: ValType = hostBigInt ? { kind: "externref" } : { kind: "i64", bigint: true };
+    compileExpression(ctx, fctx, args[0]!, bigIntCarrier);
+    const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [bigIntCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalBigIntIdx = ctx.funcMap.get("__new_BigInt") ?? newBigIntIdx;
     if (finalBigIntIdx !== undefined) {

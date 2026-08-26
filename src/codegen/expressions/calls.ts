@@ -125,7 +125,7 @@ import {
   TYPED_ARRAY_NAMES,
   typedArrayVecStorage,
 } from "../index.js";
-import { getVecInfo } from "../type-coercion.js";
+import { buildVecFromExternMaterializer, getVecInfo, vecFromExternFuncIdx } from "../type-coercion.js";
 import {
   compileArrayConstructorCall,
   compileObjectLiteralAsExternref,
@@ -211,6 +211,7 @@ import {
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
 import { pushReflectiveCallReceiver } from "../reflective-call-receiver.js"; // (#3638)
 import {
@@ -2361,8 +2362,17 @@ export function compileFunctionBind(
  */
 export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression): boolean {
   if (!ts.isIdentifier(expr)) return false;
+  // A default-export expression cell can carry either a compiled closure or a
+  // host function selected at runtime (`Function.prototype.bind || fallback`).
+  // The exact import-cell lookup keeps this decision independent of unrelated
+  // same-named graph entries; the ordinary closure arm still handles compiled
+  // values and this only admits the non-closure host fallback.
+  if (resolveDefaultExpressionImportGlobal(ctx, expr) !== undefined) {
+    return !ctx.standalone && !ctx.wasi;
+  }
   const sym = ctx.checker.getSymbolAtLocation(expr);
   const decl = sym?.valueDeclaration;
+  const unparen = (node: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(node) ? node.expression : node);
   // (#4616) A callable PARAM of a CLASS METHOD routinely receives a host
   // function at runtime: an any-receiver dynamic method call marshals its
   // arrow argument through the host bridge, and test harnesses hand methods
@@ -2372,6 +2382,26 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // local-closure programs stay host-import-free.
   if (decl && ts.isParameter(decl) && decl.parent !== undefined && ts.isMethodDeclaration(decl.parent)) {
     return !ctx.standalone && !ctx.wasi;
+  }
+
+  // A callable extracted from a host builtin through object destructuring is
+  // still a real JS function, not a Wasm closure. For example Axios starts
+  // with `const { getPrototypeOf } = Object` and later calls
+  // `getPrototypeOf(Uint8Array)` during module initialization. The binding's
+  // checker type is callable, so the ordinary closure dispatch guard-casts the
+  // externref to a closure struct; that cast yields null and the following
+  // struct.get traps. Keep the raw externref fallback for this exact,
+  // statically-proven host source. User-object destructuring is deliberately
+  // excluded so pure compiled callback graphs retain the #1941 no-host-import
+  // property.
+  if (decl && ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent)) {
+    const variableDecl = decl.parent.parent;
+    if (ts.isVariableDeclaration(variableDecl) && variableDecl.initializer) {
+      const source = unparen(variableDecl.initializer);
+      if (ts.isIdentifier(source) && (BUILTIN_CLASS_NAMES.has(source.text) || ctx.declaredGlobals.has(source.text))) {
+        return !ctx.standalone && !ctx.wasi;
+      }
+    }
   }
   if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
 
@@ -2388,12 +2418,26 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // guarantee for pure local-closure programs is preserved.
   if (ctx.skippedClosureRecastDecls?.has(decl)) return true;
 
+  // Does an identifier denote a host builtin namespace either directly or
+  // through a local alias (`var $Object = Object`)? The latter is the standard
+  // shape in small CommonJS intrinsic helpers such as dunder-proto.
+  const isHostBuiltinNamespace = (node: ts.Expression, seen = new Set<ts.Declaration>()): boolean => {
+    const inner = unparen(node);
+    if (!ts.isIdentifier(inner)) return false;
+    if (BUILTIN_CLASS_NAMES.has(inner.text) || ctx.declaredGlobals.has(inner.text)) return true;
+    const aliasDecl = ctx.oracle.valueDeclarationOf(inner);
+    if (!aliasDecl || !ts.isVariableDeclaration(aliasDecl) || !aliasDecl.initializer || seen.has(aliasDecl)) {
+      return false;
+    }
+    seen.add(aliasDecl);
+    return isHostBuiltinNamespace(aliasDecl.initializer, seen);
+  };
+
   // Does `node` reference a host-builtin member (Object.hasOwn, Math.max, …)?
   const isHostBuiltinMember = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
     if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
-      const recv = inner.expression;
-      return ts.isIdentifier(recv) && BUILTIN_CLASS_NAMES.has(recv.text);
+      return isHostBuiltinNamespace(inner.expression);
     }
     return false;
   };
@@ -2416,7 +2460,6 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // unmasked: `getter()` with undefined `this` must throw a CATCHABLE TypeError,
   // not null-deref). Syntactic (no checker query → ratchet-safe); narrow — pure
   // local-closure programs stay host-import-free (#1941 dual-mode).
-  const unparen = (n: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(n) ? n.expression : n);
   const isReflectiveAccessorExtraction = (node: ts.Expression): boolean => {
     const inner = unparen(node);
     if (!ts.isPropertyAccessExpression(inner) || (inner.name.text !== "get" && inner.name.text !== "set")) return false;
@@ -3990,6 +4033,19 @@ export function tryEmitInlineDynamicCall(
   // arm can mis-cast its first arg to the vec type.
   candidates.push(...restCandidates);
 
+  // Dynamic callers save every argument as externref, while a selected
+  // closure may expose a concrete vec formal. Reserve the generic cross-rep
+  // materializers before capturing any helper indices below: a caller-owned
+  // array/vec is a valid JavaScript argument even when its allocation type is
+  // not the callee's exact inferred vec type.
+  for (const candidate of candidates) {
+    for (const paramType of candidate.info.paramTypes) {
+      if (paramType.kind === "ref" || paramType.kind === "ref_null") {
+        buildVecFromExternMaterializer(ctx, paramType.typeIdx);
+      }
+    }
+  }
+
   // Ensure box/unbox helpers exist (standalone: registered as native defined
   // functions, no import; host: late imports). Their indices are captured AFTER
   // the flush below — capturing them here, BEFORE a real import insertion (the
@@ -4008,9 +4064,37 @@ export function tryEmitInlineDynamicCall(
   // below): ensure the imports HERE, before the box/unbox indices are
   // captured, so the capture happens after every import insertion this
   // function performs (the stale-capture hazard the note above describes).
-  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+  const needsProvidedUndefinedCheck = candidates.some((candidate) => {
+    const fixedCount =
+      candidate.info.hasRestParam === true && candidate.info.paramTypes.length > 0
+        ? candidate.info.paramTypes.length - 1
+        : candidate.info.paramTypes.length;
+    return candidate.info.paramTypes
+      .slice(0, Math.min(arity, fixedCount))
+      .some((paramType) => paramType.kind === "f64" || paramType.kind === "ref_null");
+  });
+  // Explicit `undefined` is just as observable as an omitted argument. A
+  // dynamic caller stores every provided value as externref, so scalar/default
+  // and nullable-reference formals must classify that value before unboxing or
+  // casting it. This is required even when the host-call fallback is disabled:
+  // the exact Wasm-closure arm still needs to deliver the f64 undefined
+  // sentinel / typed-null default marker. Native-first targets route this name
+  // to the in-Wasm object runtime, so the check does not create a host import.
+  if (needsProvidedUndefinedCheck || (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback)) {
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
     ensureHostCallFallbackImports(ctx, hostCallPlan);
+  }
+  const needsHostFacadeUnwrap =
+    ctx.targetProfile.environment === "javascript" &&
+    candidates.some((candidate) =>
+      candidate.info.paramTypes.some(
+        (param) => param.kind === "externref" || param.kind === "ref" || param.kind === "ref_null",
+      ),
+    );
+  if (needsHostFacadeUnwrap) {
+    ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
 
   // (#820/#1543) `undefined` externref source for padding missing trailing
@@ -4060,7 +4144,13 @@ export function tryEmitInlineDynamicCall(
   let boxNumberIdx = ctx.funcMap.get("__box_number");
   let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   let isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
+  let unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  if (
+    boxNumberIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    (needsHostFacadeUnwrap && unwrapForWasmIdx === undefined)
+  )
+    return null;
 
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
   // object/proxy runtime registers DEFINED functions only (no import → no index
@@ -4167,7 +4257,12 @@ export function tryEmitInlineDynamicCall(
   boxNumberIdx = ctx.funcMap.get("__box_number");
   unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) {
+  unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  if (
+    boxNumberIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    (needsHostFacadeUnwrap && unwrapForWasmIdx === undefined)
+  ) {
     // The helpers existed at the first capture; funcMap entries are shifted,
     // never removed, so this cannot happen — bail defensively if it ever does
     // (callee/args are all consumed into locals, the stack is empty here).
@@ -4368,10 +4463,64 @@ export function tryEmitInlineDynamicCall(
         callBody.push({ op: "call", funcIdx: unboxNumberIdx });
         callBody.push({ op: "i32.trunc_sat_f64_s" });
       } else if (pType.kind === "externref") {
-        // already externref
-      } else if (pType.kind === "ref" || pType.kind === "ref_null") {
-        callBody.push({ op: "any.convert_extern" });
-        callBody.push({ op: "ref.cast", typeIdx: (pType as { typeIdx: number }).typeIdx });
+        // The saved value is already an externref, but it may be a host mirror
+        // for a compiled vec. Reconcile same-length host/compiled mutations
+        // before handing the value to an extern consumer (for example
+        // node:crypto hashing a Uint8Array assembled in Wasm).
+        if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
+      } else if (pType.kind === "ref") {
+        // A compiled GC value may be represented by a host facade in this
+        // dynamic lane. Recover the underlying value before preserving the
+        // existing vec materialization and concrete cast behavior.
+        if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
+        const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+        if (vecMaterializerIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: vecMaterializerIdx });
+          callBody.push({ op: "ref.as_non_null" });
+        } else {
+          callBody.push({ op: "any.convert_extern" });
+          callBody.push({ op: "ref.cast", typeIdx: pType.typeIdx });
+        }
+      } else if (pType.kind === "ref_null") {
+        // A concrete nullable-ref formal with a default commonly receives the
+        // host `undefined` singleton through this any-typed dispatch lane. It
+        // must arrive as typed null so the callee's default-parameter prologue
+        // can observe the missing argument. Casting the host singleton directly
+        // to the concrete GC type traps with `illegal cast` before the function
+        // runs (Redux's `currentReducer(currentState, action)` with an omitted
+        // initial state). Real null also remains nullable via ref.cast_null.
+        if (isUndefinedIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: isUndefinedIdx });
+          callBody.push({
+            op: "if",
+            blockType: { kind: "val", type: pType },
+            then: [{ op: "ref.null", typeIdx: pType.typeIdx }],
+            else: (() => {
+              const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+              return vecMaterializerIdx === undefined
+                ? [
+                    { op: "local.get", index: argLocals[i]! } as Instr,
+                    ...(unwrapForWasmIdx === undefined ? [] : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
+                    { op: "any.convert_extern" } as Instr,
+                    { op: "ref.cast_null", typeIdx: pType.typeIdx } as Instr,
+                  ]
+                : [
+                    { op: "local.get", index: argLocals[i]! } as Instr,
+                    ...(unwrapForWasmIdx === undefined ? [] : ([{ op: "call", funcIdx: unwrapForWasmIdx }] as Instr[])),
+                    { op: "call", funcIdx: vecMaterializerIdx } as Instr,
+                  ];
+            })(),
+          });
+        } else {
+          const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+          if (unwrapForWasmIdx !== undefined) callBody.push({ op: "call", funcIdx: unwrapForWasmIdx });
+          if (vecMaterializerIdx !== undefined) {
+            callBody.push({ op: "call", funcIdx: vecMaterializerIdx });
+          } else {
+            callBody.push({ op: "any.convert_extern" });
+            callBody.push({ op: "ref.cast_null", typeIdx: pType.typeIdx });
+          }
+        }
       }
     }
 
@@ -7477,8 +7626,33 @@ function compileCallExpression(
       // Case 1: identifier.call(thisArg, args...) — standalone function
       if (ts.isIdentifier(innerExpr)) {
         const funcName = innerExpr.text;
-        let closureInfo = ctx.closureMap.get(funcName);
-        const funcIdx = ctx.funcMap.get(funcName);
+        const innerFact = ctx.oracle.typeFactOf(innerExpr);
+        const innerCanBeHostCallable =
+          ctx.oracle.signatureOf(innerExpr) !== undefined ||
+          innerFact.kind === "function" ||
+          innerFact.kind === "any" ||
+          innerFact.kind === "unknown";
+        const valueDeclaration = ctx.oracle.valueDeclarationOf(innerExpr);
+        const aliasedImportTarget =
+          valueDeclaration && (ts.isImportClause(valueDeclaration) || ts.isImportSpecifier(valueDeclaration))
+            ? ctx.importBindingTargets?.get(valueDeclaration)
+            : undefined;
+        // The graph-wide name registries may also contain an unrelated
+        // same-named function from another module. A real variable/binding
+        // element backed by a module cell owns this identifier read, so it must
+        // not be reinterpreted as that colliding function for `.call/.apply`.
+        const moduleValueOwnsName =
+          (ctx.moduleGlobals.has(funcName) &&
+            valueDeclaration !== undefined &&
+            !ts.isFunctionDeclaration(valueDeclaration) &&
+            !ts.isFunctionExpression(valueDeclaration) &&
+            !ts.isArrowFunction(valueDeclaration)) ||
+          (aliasedImportTarget !== undefined &&
+            !ts.isFunctionDeclaration(aliasedImportTarget) &&
+            !ts.isFunctionExpression(aliasedImportTarget) &&
+            !ts.isArrowFunction(aliasedImportTarget));
+        let closureInfo = moduleValueOwnsName ? undefined : ctx.closureMap.get(funcName);
+        const funcIdx = moduleValueOwnsName ? undefined : ctx.funcMap.get(funcName);
 
         if (!closureInfo && funcIdx === undefined) {
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
@@ -7812,6 +7986,37 @@ function compileCallExpression(
             if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
             return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;
           }
+        }
+
+        // A declared identifier can hold a genuine host callable without a
+        // Wasm function/closure identity (for example
+        // `const { toString } = Object.prototype; toString.call(value)`). The
+        // legacy identifier `.call` tail only handled compiler-owned
+        // callables; for a host function it evaluated the receiver and then
+        // returned the graceful undefined fallback. Preserve the real
+        // Function.prototype.call/apply semantics through the existing dynamic
+        // host method boundary. Undeclared identifiers remain on the ordinary
+        // ReferenceError path, and standalone/WASI retain their native lanes.
+        if (
+          !ctx.standalone &&
+          !ctx.wasi &&
+          !noJsHost(ctx) &&
+          closureInfo === undefined &&
+          funcIdx === undefined &&
+          innerCanBeHostCallable &&
+          (ctx.oracle.valueDeclarationOf(innerExpr) !== undefined ||
+            fctx.localMap.has(funcName) ||
+            (fctx.boxedCaptures?.has(funcName) ?? false) ||
+            ctx.moduleGlobals.has(funcName))
+        ) {
+          const hostReflectiveCall = emitFnctorSubclassDynamicMethodCall(
+            ctx,
+            fctx,
+            expr,
+            propAccess,
+            propAccess.name.text,
+          );
+          if (hostReflectiveCall !== undefined) return hostReflectiveCall;
         }
       }
 
@@ -8723,25 +8928,6 @@ export function compileConditionalCallee(
 
   fctx.body = savedBody;
 
-  if (process.env.DEBUG_MARKED_CODEGEN === "1" && fctx.name.includes("closure")) {
-    console.error(
-      "[marked-cond-callee]",
-      fctx.name,
-      "condition",
-      condExpr.condition.getText?.(),
-      "true",
-      condExpr.whenTrue.getText?.(),
-      "false",
-      condExpr.whenFalse.getText?.(),
-      "thenType",
-      thenType,
-      "elseType",
-      elseType,
-      "callRet",
-      callRetType,
-    );
-  }
-
   // Determine result type
   if (thenType === VOID_RESULT && elseType === VOID_RESULT) {
     fctx.body.push({
@@ -8877,26 +9063,6 @@ function compileExpressionCallee(
     });
     const matchedClosureInfo: ClosureInfo | undefined = sigMatched?.info;
     const matchedStructTypeIdx: number | undefined = sigMatched?.structTypeIdx;
-    if (
-      process.env.DEBUG_MARKED_CODEGEN === "1" &&
-      ts.isIdentifier(calleeExpr) &&
-      (calleeExpr.text === "lexer" || calleeExpr.text === "parser" || calleeExpr.text === "fn")
-    ) {
-      console.error(
-        "[marked-closure-call]",
-        fctx.name,
-        calleeExpr.text,
-        "params",
-        sigParamWasmTypes,
-        "ret",
-        sigRetWasm,
-        "matched",
-        matchedClosureInfo?.paramTypes,
-        matchedClosureInfo?.returnType,
-        "struct",
-        matchedStructTypeIdx,
-      );
-    }
 
     if (matchedClosureInfo && matchedStructTypeIdx !== undefined) {
       // Compile the callee expression to get the closure on the stack
@@ -9202,12 +9368,25 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     }
   } else {
     // Concise arrow body — expression is the return value
-    const exprType = compileExpression(ctx, liftedFctx, body);
+    const exprType = compileExpression(ctx, liftedFctx, body, returnType ?? undefined);
     if (exprType === null && returnType) {
       // Push default return value
       if (returnType.kind === "f64") liftedFctx.body.push({ op: "f64.const", value: 0 });
       else if (returnType.kind === "i32") liftedFctx.body.push({ op: "i32.const", value: 0 });
       else if (returnType.kind === "externref") liftedFctx.body.push({ op: "ref.null.extern" });
+    }
+    if (returnType) {
+      // The concise expression itself is the function result. Terminate the
+      // lifted IIFE here so the generic fallthrough-default guard below does
+      // not append a second value above it. In particular, `() => dispatch()`
+      // returns the Promise produced by dispatch; appending ref.null.extern
+      // launched that Promise but made the callback return null, so an outer
+      // await resumed early while the real continuation ran unhandled.
+      liftedFctx.body.push({ op: "return" });
+    } else if (exprType !== null) {
+      // A contextually-void concise callback still evaluates its expression
+      // for side effects, but its value is not part of the Wasm ABI.
+      liftedFctx.body.push({ op: "drop" });
     }
   }
 

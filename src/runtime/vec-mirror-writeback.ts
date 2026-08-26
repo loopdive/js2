@@ -31,21 +31,18 @@
 //
 // `registerVecMirror` records mirror → vec when `__make_iterable` builds one.
 // The host-call bridges then BRACKET their dispatch with
-// `snapshotVecMirrors` / `reconcileVecMirrors`: if the callee changed a
-// mirror's LENGTH, the change is replayed onto the vec using only the
-// unconditionally-emitted `__vec_pop` / `__vec_push` exports — pop back to the
-// longest common prefix, then push the mirror's tail. That is exact for
-// `push` / `pop` / `shift` / `unshift` / `splice`, i.e. every mutator that
-// changes length.
+// `snapshotVecMirrors` / `reconcileVecMirrors`: length changes are replayed
+// using `__vec_pop` / `__vec_push`, while same-length element changes use the
+// gated `__vec_set_elem` export. Both paths are transactional: a rejected
+// write rolls the vec back and leaves the mirror dirty for a later retry.
 //
 // ── Deliberate limitations (not oversights) ────────────────────────────────
 //
-//  * A LENGTH-PRESERVING in-place mutation (`sort` / `reverse` / `fill` /
-//    `copyWithin`, or a bare `arr[i] = x`) is NOT reconciled. Detecting one
-//    requires an element-by-element compare on EVERY host crossing (O(n) even
-//    when nothing changed), and replaying it requires an element-setter export
-//    (`__vec_set_elem`) that is only emitted when a module imports
-//    `Object.defineProperty`. Those stay silent no-ops exactly as before.
+//  * A mirror-bearing host crossing performs an O(n) element comparison. The
+//    overwhelmingly common no-mirror path still allocates nothing and only
+//    performs the existing WeakMap probes. `__vec_set_elem` is emitted when
+//    dynamic mirror→Wasm unwrapping is reachable; unsupported element carriers
+//    remain dirty rather than being reported as synchronized.
 //  * If the vec's OWN length also moved during the call (the callee re-entered
 //    Wasm and mutated the same vec), the two edits cannot be ordered, so
 //    reconciliation is SKIPPED rather than guessed at — Wasm-side state wins,
@@ -75,9 +72,11 @@
 const _apply = Reflect.apply;
 const _wmGet = WeakMap.prototype.get;
 const _wmSet = WeakMap.prototype.set;
+const _objectIs = Object.is;
 
 /** mirror JS array → the WasmGC vec struct it was materialised from. */
 const _vecMirrorSource = new WeakMap<object, unknown>();
+const _vecMirrorElements = new WeakMap<object, unknown[]>();
 
 /** `map.get(key)` that cannot be broken by a test deleting `WeakMap.prototype.get`. */
 function _mirrorGet(key: object): unknown {
@@ -89,11 +88,21 @@ function _mirrorSet(key: object, value: unknown): void {
   _apply(_wmSet, _vecMirrorSource, [key, value]);
 }
 
+function _mirrorElementsGet(key: object): unknown[] | undefined {
+  return _apply(_wmGet, _vecMirrorElements, [key]) as unknown[] | undefined;
+}
+
+function _mirrorElementsSet(key: object, value: unknown[]): void {
+  _apply(_wmSet, _vecMirrorElements, [key, value]);
+}
+
 export type VecMirrorSnapshot = {
   mirror: unknown[];
   vec: unknown;
   mirrorLen: number;
   vecLen: number;
+  /** Last contents known to match `vec`, captured before the host call. */
+  mirrorElements: readonly unknown[] | undefined;
 };
 
 type Exports = Record<string, Function> | undefined;
@@ -111,6 +120,30 @@ export function registerVecMirror(mirror: unknown[], vec: unknown): void {
 export function vecForMirror(v: unknown): unknown {
   if (v == null || typeof v !== "object") return undefined;
   return _mirrorGet(v as object);
+}
+
+/** Save the mirror contents last known to match its Wasm vec. */
+export function recordVecMirrorElements(v: unknown): void {
+  if (v == null || typeof v !== "object") return;
+  const value = v as { length?: unknown; [index: number]: unknown };
+  if (typeof value.length !== "number" || value.length < 0) return;
+  const length = value.length >>> 0;
+  if (length !== value.length) return;
+  const snapshot = new Array<unknown>(length);
+  for (let i = 0; i < length; i++) snapshot[i] = value[i];
+  _mirrorElementsSet(v, snapshot);
+}
+
+/** Whether host code changed a registered mirror since its last vec sync. */
+export function vecMirrorElementsChanged(v: unknown): boolean {
+  if (v == null || typeof v !== "object") return false;
+  const value = v as { length?: unknown; [index: number]: unknown };
+  const snapshot = _mirrorElementsGet(v);
+  if (snapshot === undefined || typeof value.length !== "number" || value.length !== snapshot.length) return true;
+  for (let i = 0; i < snapshot.length; i++) {
+    if (!_objectIs(value[i], snapshot[i])) return true;
+  }
+  return false;
 }
 
 /** Shared no-mirrors result — `__extern_method_call` / `__call_function` are HOT paths; the common case must not allocate. */
@@ -152,14 +185,20 @@ export function snapshotVecMirrors(
     // Index assignment, not `.push()` — see the intrinsic-capture note above:
     // a test262 file may have deleted `Array.prototype.push` by now.
     const list = (snaps ??= []);
-    list[list.length] = { mirror, vec, mirrorLen: mirror.length, vecLen };
+    list[list.length] = {
+      mirror,
+      vec,
+      mirrorLen: mirror.length,
+      vecLen,
+      mirrorElements: _mirrorElementsGet(v as object),
+    };
   }
   return snaps ?? NO_MIRRORS;
 }
 
 /**
- * Replay length-changing host mutations of the snapshotted mirrors back onto
- * their vecs, AFTER the host call returns.
+ * Replay host mutations of the snapshotted mirrors back onto their vecs,
+ * AFTER the host call returns.
  *
  * `unwrap` reverses a host value to the raw wasm handle the vec should store
  * (runtime.ts passes `_unwrapForHost`); nested mirrors are reversed here first.
@@ -174,19 +213,22 @@ export function reconcileVecMirrors(
   const getFn = exports.__vec_get as ((v: unknown, i: number) => unknown) | undefined;
   const pushFn = exports.__vec_push as ((v: unknown, x: unknown) => number) | undefined;
   const popFn = exports.__vec_pop as ((v: unknown) => unknown) | undefined;
+  const setFn = exports.__vec_set_elem as ((v: unknown, i: number, x: unknown) => number) | undefined;
   const mutSupFn = exports.__vec_mut_supported as ((v: unknown) => number) | undefined;
-  if (
-    typeof lenFn !== "function" ||
-    typeof getFn !== "function" ||
-    typeof pushFn !== "function" ||
-    typeof popFn !== "function"
-  ) {
-    return;
-  }
+  if (typeof lenFn !== "function" || typeof getFn !== "function") return;
   for (const snap of snaps) {
-    const { mirror, vec, mirrorLen, vecLen } = snap;
-    // Untouched by the callee, or a length-preserving edit (out of scope).
-    if (mirror.length === mirrorLen) continue;
+    const { mirror, vec, mirrorLen, vecLen, mirrorElements } = snap;
+    const lengthChanged = mirror.length !== mirrorLen;
+    let elementsChanged = lengthChanged;
+    if (!elementsChanged && mirrorElements !== undefined && mirror.length === mirrorElements.length) {
+      for (let i = 0; i < mirrorElements.length; i++) {
+        if (!_objectIs(mirror[i], mirrorElements[i])) {
+          elementsChanged = true;
+          break;
+        }
+      }
+    }
+    if (!elementsChanged) continue;
     let liveVecLen: number;
     try {
       liveVecLen = lenFn(vec);
@@ -195,6 +237,60 @@ export function reconcileVecMirrors(
     }
     // The vec moved on its own (callee re-entered Wasm) — ambiguous, skip.
     if (liveVecLen !== vecLen) continue;
+    if (!lengthChanged) {
+      // A prior clean baseline is required both to identify the changed slots
+      // and to detect same-length re-entrant Wasm mutation. If the vec no
+      // longer matches that baseline, ordering is ambiguous and Wasm wins.
+      if (mirrorElements === undefined || mirrorElements.length !== vecLen || typeof setFn !== "function") continue;
+      const changed: Array<{ index: number; oldValue: unknown; newValue: unknown }> = [];
+      let inspectFailed = false;
+      for (let i = 0; i < vecLen; i++) {
+        let liveValue: unknown;
+        try {
+          liveValue = getFn(vec, i);
+        } catch {
+          inspectFailed = true;
+          break;
+        }
+        const baselineValue = mirrorElements[i];
+        if (!_objectIs(baselineValue, liveValue) && vecForMirror(baselineValue) !== liveValue) {
+          inspectFailed = true;
+          break;
+        }
+        if (!_objectIs(mirror[i], baselineValue)) {
+          changed[changed.length] = {
+            index: i,
+            oldValue: liveValue,
+            newValue: vecForMirror(mirror[i]) ?? unwrap(mirror[i]),
+          };
+        }
+      }
+      if (inspectFailed || changed.length === 0) continue;
+
+      let applied = 0;
+      try {
+        for (; applied < changed.length; applied++) {
+          const write = changed[applied]!;
+          if (setFn(vec, write.index, write.newValue) !== 1) throw new Error("vec element set rejected");
+        }
+      } catch {
+        // Restore every slot written before the rejection. Do not record a
+        // clean snapshot: even a failed rollback must remain visibly dirty.
+        for (let i = applied - 1; i >= 0; i--) {
+          const write = changed[i]!;
+          try {
+            setFn(vec, write.index, write.oldValue);
+          } catch {
+            /* leave dirty; a later crossing may retry */
+          }
+        }
+        continue;
+      }
+      recordVecMirrorElements(mirror);
+      continue;
+    }
+
+    if (typeof pushFn !== "function" || typeof popFn !== "function") continue;
     try {
       if (typeof mutSupFn !== "function" || mutSupFn(vec) !== 1) continue;
     } catch {
@@ -227,6 +323,7 @@ export function reconcileVecMirrors(
     // live data, which is strictly worse than the no-op we are replacing.
     // All-or-nothing is the only safe contract here.
     const popped: unknown[] = [];
+    let reconciled = false;
     try {
       for (let i = vecLen; i > keep; i--) popped[popped.length] = popFn(vec);
       for (let i = keep; i < mirror.length; i++) {
@@ -234,6 +331,7 @@ export function reconcileVecMirrors(
         const raw = vecForMirror(m) ?? unwrap(m);
         if (pushFn(vec, raw) < 0) throw new Error("vec push rejected");
       }
+      reconciled = true;
     } catch {
       // Roll back to the pre-reconcile contents: drop whatever we managed to
       // push, then restore the popped suffix in its original order. Never let
@@ -245,5 +343,6 @@ export function reconcileVecMirrors(
         /* nothing further we can do without making it worse */
       }
     }
+    if (reconciled) recordVecMirrorElements(mirror);
   }
 }
