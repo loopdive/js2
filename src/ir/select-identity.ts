@@ -13,7 +13,11 @@ import {
 import type { IrFnctorAdmission, IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
-import { retainIrFnctorArgumentProjections, type IrFnctorArgumentProjection } from "./fnctor-argument-projection.js";
+import {
+  retainIrFnctorArgumentProjections,
+  type IrFnctorArgumentProjection,
+  type IrFnctorArgumentProjectionAuthority,
+} from "./fnctor-argument-projection.js";
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
 import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
@@ -145,6 +149,8 @@ export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveType
   readonly isPreparedInjectedTimerShim?: (declaration: ts.FunctionDeclaration) => boolean;
   /** Precomputed dormant fnctor argument edges; structural planning revalidates every identity join. */
   readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
+  /** Exact checker/reservation authority used to re-resolve every retained fnctor AST edge. */
+  readonly fnctorArgumentProjectionAuthority?: IrFnctorArgumentProjectionAuthority;
 };
 
 export interface IrLegacySelectionProjection {
@@ -770,6 +776,7 @@ function selectionFunctionPopulation(
     sourceFile,
     sourceId,
     identityContext,
+    options.fnctorArgumentProjectionAuthority,
     options.fnctorArgumentProjections,
   );
   const functionsByName = new Map<string, IndexedFunction[]>();

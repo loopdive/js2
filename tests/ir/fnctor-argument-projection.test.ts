@@ -3,7 +3,10 @@
 import { describe, expect, it } from "vitest";
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
+  irFnctorArgumentProjectionRouteIsActive,
+  makeIrFnctorArgumentProjectionAuthority,
   makeIrFnctorAdmissionResolver,
+  type IrFnctorArgumentProjectionRoute,
 } from "../../src/codegen/ir-fnctor-admission.js";
 import type { CodegenContext } from "../../src/codegen/context/types.js";
 import {
@@ -174,17 +177,37 @@ function contextFor(data: Fixture, options: ContextOptions = {}): CodegenContext
     },
     fnctorReservedTypeIdx: new Map([["Parser", reservedTypeIdx]]),
     structMap: new Map([["__fnctor_Parser", structTypeIdx]]),
+    standalone: true,
+    nativeStrings: true,
+    wasi: false,
+    fast: false,
+    targetProfile: { semanticProviders: "native-first" },
   } as unknown as CodegenContext;
 }
 
-function projections(data: Fixture, context: CodegenContext = contextFor(data)): readonly IrFnctorArgumentProjection[] {
+const EXACT_ROUTE: IrFnctorArgumentProjectionRoute = Object.freeze({
+  experimentalIR: true,
+  postLegacyPhysicalReservation: true,
+  irFirstEnvironment: "0",
+});
+
+function projections(
+  data: Fixture,
+  context: CodegenContext = contextFor(data),
+  route: IrFnctorArgumentProjectionRoute = EXACT_ROUTE,
+): readonly IrFnctorArgumentProjection[] {
   return collectIrFnctorArgumentProjectionsForPlanning(
     context,
     data.checker,
     data.identity,
     data.entry,
     data.unitTypeMap,
+    route,
   );
+}
+
+function authorityFor(data: Fixture, context: CodegenContext = contextFor(data)) {
+  return makeIrFnctorArgumentProjectionAuthority(context, data.checker);
 }
 
 function terminalId(data: Fixture, name: string) {
@@ -206,6 +229,17 @@ function firstCallIn(declaration: ts.FunctionDeclaration): ts.CallExpression {
   };
   visit(declaration);
   if (!found) throw new Error("expected a call expression");
+  return found;
+}
+
+function firstNewIn(declaration: ts.FunctionDeclaration): ts.NewExpression {
+  let found: ts.NewExpression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (!found && ts.isNewExpression(node)) found = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration);
+  if (!found) throw new Error("expected a new expression");
   return found;
 }
 
@@ -254,6 +288,43 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
     expect(makeIrFnctorAdmissionResolver(contextFor(data), data.checker, data.identity)(data.site)).toBeUndefined();
   });
 
+  it("enforces the exact standalone post-legacy route and fails closed in every other mode", () => {
+    const data = fixture();
+    const exactContext = contextFor(data);
+    expect(irFnctorArgumentProjectionRouteIsActive(exactContext, EXACT_ROUTE)).toBe(true);
+    expect(projections(data, exactContext, EXACT_ROUTE)).toHaveLength(1);
+
+    const routeMutations: readonly [string, IrFnctorArgumentProjectionRoute][] = [
+      ["experimental IR off", { ...EXACT_ROUTE, experimentalIR: false }],
+      ["pre-legacy planning", { ...EXACT_ROUTE, postLegacyPhysicalReservation: false }],
+      ["IR-first unset", { ...EXACT_ROUTE, irFirstEnvironment: undefined }],
+      ["IR-first enabled", { ...EXACT_ROUTE, irFirstEnvironment: "1" }],
+      ["non-literal disable", { ...EXACT_ROUTE, irFirstEnvironment: "false" }],
+    ];
+    for (const [label, route] of routeMutations) {
+      expect(irFnctorArgumentProjectionRouteIsActive(exactContext, route), label).toBe(false);
+      expect(projections(data, exactContext, route), label).toEqual([]);
+    }
+
+    const contextMutations: readonly [string, CodegenContext][] = [
+      ["host target", { ...exactContext, standalone: false }],
+      ["host strings", { ...exactContext, nativeStrings: false }],
+      ["WASI target", { ...exactContext, wasi: true }],
+      ["fast mode", { ...exactContext, fast: true }],
+      [
+        "non-native semantic provider",
+        {
+          ...exactContext,
+          targetProfile: { ...exactContext.targetProfile, semanticProviders: "host-assisted" },
+        },
+      ],
+    ];
+    for (const [label, context] of contextMutations) {
+      expect(irFnctorArgumentProjectionRouteIsActive(context, EXACT_ROUTE), label).toBe(false);
+      expect(projections(data, context, EXACT_ROUTE), label).toEqual([]);
+    }
+  });
+
   it("retains evidence from the complete population while leaving propagation and selection unchanged", () => {
     const data = fixture();
     const result = projections(data);
@@ -266,6 +337,17 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
     const withProjection = planIrCompilationByIdentity(
       data.entry,
       data.identity,
+      {
+        experimentalIR: true,
+        trackFallbacks: true,
+        fnctorArgumentProjections: result,
+        fnctorArgumentProjectionAuthority: authorityFor(data),
+      },
+      data.unitTypeMap,
+    );
+    const withoutAuthority = planIrCompilationByIdentity(
+      data.entry,
+      data.identity,
       { experimentalIR: true, trackFallbacks: true, fnctorArgumentProjections: result },
       data.unitTypeMap,
     );
@@ -275,8 +357,137 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
     expect([...withProjection.fallbacks!.entries()]).toEqual([...withoutProjection.fallbacks!.entries()]);
     expect(withProjection.fnctorAdmissions).toBeUndefined();
     expect(withProjection.fnctorArgumentProjections).toHaveLength(1);
+    expect(withoutAuthority.fnctorArgumentProjections).toBeUndefined();
     expect(withProjection.units.has(result[0]!.callerUnitId)).toBe(true);
     expect(withProjection.funcs.has(result[0]!.callerUnitId)).toBe(false);
+  });
+
+  it("keeps a top-level candidate when unrelated nested, class-member, and module-init syntax is inventoried", () => {
+    const data = fixture({
+      entryText: `${BASE_SOURCE}
+        function outer() { function nested() { return 1; } return nested(); }
+        class Holder { method() { return 2; } }
+        const unrelated = outer();
+      `,
+    });
+    expect(projections(data)).toHaveLength(1);
+  });
+
+  it.each([
+    ["module init", `${BASE_SOURCE}\nreadNumber(new Parser("module"));`],
+    [
+      "a nested function",
+      `${BASE_SOURCE}\nfunction outer() { function nested() { return readNumber(new Parser("nested")); } return nested(); }`,
+    ],
+    ["a class member", `${BASE_SOURCE}\nclass Holder { method() { return readNumber(new Parser("member")); } }`],
+    ["transparent wrappers", `${BASE_SOURCE}\nfunction wrapped() { return (readNumber)((new Parser("wrapped"))); }`],
+    [
+      "local aliases",
+      `${BASE_SOURCE}\nconst P = Parser; const read = readNumber; function aliased() { return read(new P("alias")); }`,
+    ],
+    [
+      "compound alias uncertainty",
+      `${BASE_SOURCE}\nfunction aliased() { const P = Parser.bind(null); const read = readNumber.bind(null); return read(new P("alias")); }`,
+    ],
+  ])("rejects a second exact constructor/callee use from %s", (_label, entryText) => {
+    const data = fixture({ entryText });
+    expect(projections(data)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "constructor and callee values",
+      `${BASE_SOURCE}
+        function invoke(C, F) { return F(new C("forwarded")); }
+        export function forwarded() { return invoke(Parser, readNumber); }
+      `,
+    ],
+    [
+      "a constructor value",
+      `${BASE_SOURCE}
+        function allocate(C) { return new C("forwarded"); }
+        export function forwarded() { return allocate(Parser); }
+      `,
+    ],
+    [
+      "a callee value",
+      `${BASE_SOURCE}
+        function invoke(F) { return F({ input: "forwarded" }); }
+        export function forwarded() { return invoke(readNumber); }
+      `,
+    ],
+  ])("rejects dynamic wrapper forwarding of %s", (_label, entryText) => {
+    const data = fixture({ entryText });
+    expect(projections(data)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "default parameter values",
+      `${BASE_SOURCE}
+        function invoke(C = Parser, F = readNumber) { return F(new C("defaulted")); }
+        export function forwarded() { return invoke(); }
+      `,
+    ],
+    [
+      "assignments",
+      `${BASE_SOURCE}
+        let C;
+        let F;
+        C = Parser;
+        F = readNumber;
+        export function forwarded() { return F(new C("assigned")); }
+      `,
+    ],
+    [
+      "factory returns",
+      `${BASE_SOURCE}
+        function constructorFactory() { return Parser; }
+        function calleeFactory() { return readNumber; }
+        export function forwarded() {
+          const C = constructorFactory();
+          const F = calleeFactory();
+          return F(new C("factory"));
+        }
+      `,
+    ],
+    [
+      "class fields",
+      `${BASE_SOURCE}
+        class Forwarder {
+          C = Parser;
+          F = readNumber;
+          run() { return this.F(new this.C("field")); }
+        }
+      `,
+    ],
+  ])("rejects target values forwarded through %s", (_label, entryText) => {
+    const data = fixture({ entryText });
+    expect(projections(data)).toEqual([]);
+  });
+
+  it("keeps the projection when an unrelated exact function is used through a compound call", () => {
+    const data = fixture({
+      entryText: `${BASE_SOURCE}
+        function other(value) { return value; }
+        export function unrelated() { return other.call(null, 1); }
+      `,
+    });
+    expect(projections(data)).toHaveLength(1);
+  });
+
+  it("rejects checker-resolved imported uses of the exact constructor and callee in another source", () => {
+    const data = fixture({
+      entryText: BASE_SOURCE.replace("function Parser", "export function Parser").replace(
+        "function readNumber",
+        "export function readNumber",
+      ),
+      otherText: `
+        import { Parser, readNumber } from "./entry.mjs";
+        export function foreign() { return readNumber(new Parser("foreign")); }
+      `,
+    });
+    expect(projections(data)).toEqual([]);
   });
 
   it.each([
@@ -385,6 +596,7 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
         importedConstructor.identity,
         importedConstructor.entry,
         importedConstructor.unitTypeMap,
+        EXACT_ROUTE,
       ),
     ).toEqual([]);
 
@@ -426,6 +638,79 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
       reservedTypeIdx: projection.physicalReservation.reservedTypeIdx,
     });
     expect(summarize(projections(reverse)[0]!)).toEqual(summarize(projections(forward)[0]!));
+  });
+
+  it("rejects coherent substitute declaration, UnitId, parameter, AST, and reservation records", () => {
+    const data = fixture({
+      entryText: `${BASE_SOURCE}
+        function OtherParser(input) { this.input = input; }
+        function otherReadNumber(value) { return value.input; }
+        function otherRun() { return otherReadNumber(new OtherParser("9")); }
+      `,
+    });
+    const projection = projections(data)[0]!;
+    const sourceId = data.identity.sourceIdBySourceFile.get(data.entry)!;
+    const otherConstructor = terminalId(data, "OtherParser");
+    const otherCallee = terminalId(data, "otherReadNumber");
+    const otherCaller = terminalId(data, "otherRun");
+    const otherSyntax = proveIrFnctorInputConstructorSyntax(data.checker, data.identity, otherConstructor.declaration)!;
+    const otherCall = firstCallIn(otherCaller.declaration);
+    const otherSite = firstNewIn(otherCaller.declaration);
+    const substitute: IrFnctorArgumentProjection = {
+      ...projection,
+      callerUnitId: otherCaller.unitId,
+      callerDeclaration: otherCaller.declaration,
+      directCall: otherCall,
+      calleeUnitId: otherCallee.unitId,
+      calleeDeclaration: otherCallee.declaration,
+      calleeParameterDeclaration: otherCallee.declaration.parameters[0]!,
+      constructorUnitId: otherConstructor.unitId,
+      constructorDeclaration: otherConstructor.declaration,
+      constructorParameterDeclaration: otherConstructor.declaration.parameters[0]!,
+      constructorSite: otherSite,
+      allocationArgument: otherSite.arguments![0]!,
+      constructorSyntax: otherSyntax,
+      physicalReservation: {
+        ...projection.physicalReservation,
+        constructorUnitId: otherConstructor.unitId,
+        constructorDeclaration: otherConstructor.declaration,
+        constructorSite: otherSite,
+        reservationKey: "__fnctor_OtherParser",
+      },
+    };
+    expect(
+      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [substitute]),
+    ).toBeUndefined();
+
+    const coherentCalleeRecords: IrFnctorArgumentProjection = {
+      ...projection,
+      calleeUnitId: otherCallee.unitId,
+      calleeDeclaration: otherCallee.declaration,
+      calleeParameterDeclaration: otherCallee.declaration.parameters[0]!,
+    };
+    expect(
+      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [
+        coherentCalleeRecords,
+      ]),
+    ).toBeUndefined();
+
+    const coherentConstructorRecords: IrFnctorArgumentProjection = {
+      ...projection,
+      constructorUnitId: otherConstructor.unitId,
+      constructorDeclaration: otherConstructor.declaration,
+      constructorParameterDeclaration: otherConstructor.declaration.parameters[0]!,
+      constructorSyntax: otherSyntax,
+      physicalReservation: {
+        ...projection.physicalReservation,
+        constructorUnitId: otherConstructor.unitId,
+        constructorDeclaration: otherConstructor.declaration,
+      },
+    };
+    expect(
+      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [
+        coherentConstructorRecords,
+      ]),
+    ).toBeUndefined();
   });
 
   it("fails closed when any retained identity, AST, reservation, or logical-shape join changes", () => {
@@ -589,7 +874,9 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
     const sourceId = data.identity.sourceIdBySourceFile.get(data.entry)!;
     for (const [label, mutate] of mutations) {
       expect(
-        retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, [mutate(projection)]),
+        retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [
+          mutate(projection),
+        ]),
         label,
       ).toBeUndefined();
     }
@@ -605,29 +892,93 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
         ...projection,
         constructorSyntax: { ...projection.constructorSyntax, proof },
       } as unknown as IrFnctorArgumentProjection;
-      expect(retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, [candidate]), key).toBeUndefined();
+      expect(
+        retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [candidate]),
+        key,
+      ).toBeUndefined();
     }
     for (const key of Object.keys(projection.proof)) {
       const candidate = {
         ...projection,
         proof: { ...projection.proof, [key]: false },
       } as unknown as IrFnctorArgumentProjection;
-      expect(retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, [candidate]), key).toBeUndefined();
+      expect(
+        retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [candidate]),
+        key,
+      ).toBeUndefined();
     }
     const forged = {
       ...projection,
       proof: { ...projection.proof, noEscape: true },
     } as unknown as IrFnctorArgumentProjection;
-    expect(retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, [forged])).toBeUndefined();
+    expect(
+      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [forged]),
+    ).toBeUndefined();
+  });
+
+  it("retains a fresh deeply frozen canonical row instead of a caller-owned mutable clone", () => {
+    const data = fixture();
+    const projection = projections(data)[0]!;
+    const sourceId = data.identity.sourceIdBySourceFile.get(data.entry)!;
+    const mutable = {
+      ...projection,
+      constructorSyntax: {
+        ...projection.constructorSyntax,
+        proof: { ...projection.constructorSyntax.proof },
+      },
+      physicalReservation: { ...projection.physicalReservation },
+      logicalShape: { ...projection.logicalShape },
+      proof: { ...projection.proof },
+      callerOwnedExtra: true,
+    } as IrFnctorArgumentProjection & { callerOwnedExtra: boolean };
+    const retained = retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [
+      mutable,
+    ]);
+    expect(retained).toHaveLength(1);
+    const canonical = retained![0]!;
+    expect(canonical).not.toBe(mutable);
+    expect(canonical.constructorSyntax).not.toBe(mutable.constructorSyntax);
+    expect(canonical.constructorSyntax.proof).not.toBe(mutable.constructorSyntax.proof);
+    expect(canonical.physicalReservation).not.toBe(mutable.physicalReservation);
+    expect(canonical.logicalShape).not.toBe(mutable.logicalShape);
+    expect(canonical.proof).not.toBe(mutable.proof);
+    expect("callerOwnedExtra" in canonical).toBe(false);
+    expect(Object.isFrozen(retained)).toBe(true);
+    expect(Object.isFrozen(canonical)).toBe(true);
+    expect(Object.isFrozen(canonical.constructorSyntax)).toBe(true);
+    expect(Object.isFrozen(canonical.constructorSyntax.proof)).toBe(true);
+    expect(Object.isFrozen(canonical.physicalReservation)).toBe(true);
+    expect(Object.isFrozen(canonical.logicalShape)).toBe(true);
+    expect(Object.isFrozen(canonical.proof)).toBe(true);
+
+    const writable = mutable as unknown as {
+      constructorSyntax: { proof: { sameSource: boolean } };
+      physicalReservation: { reservedTypeIdx: number };
+      logicalShape: { fieldName: string };
+      proof: { noAlias: boolean };
+    };
+    writable.constructorSyntax.proof.sameSource = false;
+    writable.physicalReservation.reservedTypeIdx = -1;
+    writable.logicalShape.fieldName = "other";
+    writable.proof.noAlias = false;
+    expect(canonical.constructorSyntax.proof.sameSource).toBe(true);
+    expect(canonical.physicalReservation.reservedTypeIdx).toBe(7);
+    expect(canonical.logicalShape.fieldName).toBe("input");
+    expect(canonical.proof.noAlias).toBe(true);
   });
 
   it("rejects missing and duplicate retained rows", () => {
     const data = fixture();
     const projection = projections(data)[0]!;
     const sourceId = data.identity.sourceIdBySourceFile.get(data.entry)!;
-    expect(retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, [])).toBeUndefined();
     expect(
-      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, [projection, projection]),
+      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), []),
+    ).toBeUndefined();
+    expect(
+      retainIrFnctorArgumentProjections(data.entry, sourceId, data.identity, authorityFor(data), [
+        projection,
+        projection,
+      ]),
     ).toBeUndefined();
   });
 });

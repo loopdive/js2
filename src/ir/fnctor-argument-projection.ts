@@ -50,6 +50,12 @@ export type IrFnctorPhysicalReservationResolver = (
   constructorProof: IrFnctorInputConstructorSyntaxProof,
 ) => IrFnctorPhysicalReservationProof | undefined;
 
+/** Live authority needed to re-resolve retained AST and physical-reservation joins. */
+export interface IrFnctorArgumentProjectionAuthority {
+  readonly checker: ts.TypeChecker;
+  readonly resolvePhysicalReservation: IrFnctorPhysicalReservationResolver;
+}
+
 /**
  * Frozen evidence retained on the structural identity plan. This is not an
  * {@link IrFnctorAdmission}: the instance crosses one certified call edge, so
@@ -132,14 +138,152 @@ function aliasedSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | unde
 function symbolOwnsDeclaration(checker: ts.TypeChecker, node: ts.Identifier, declaration: ts.Node): boolean {
   const symbol = aliasedSymbol(checker, node);
   if (!symbol) return false;
-  for (const candidate of symbol.getDeclarations() ?? []) {
+  return (symbol.getDeclarations() ?? []).some((candidate) => {
     if (candidate === declaration) return true;
-    if (!ts.isVariableDeclaration(candidate) || !candidate.initializer) continue;
-    let initializer = candidate.initializer;
-    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
-    if (initializer === declaration) return true;
+    return (
+      ts.isVariableDeclaration(candidate) &&
+      candidate.initializer !== undefined &&
+      unwrapTransparentExpression(candidate.initializer) === declaration
+    );
+  });
+}
+
+function unwrapTransparentExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
   }
-  return false;
+  return current;
+}
+
+interface FunctionDeclarationResolution {
+  readonly declarations: ReadonlySet<IrFnctorConstructorDeclaration>;
+  readonly uncertain: boolean;
+}
+
+function isConstVariableDeclaration(declaration: ts.VariableDeclaration): boolean {
+  return ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Const) !== 0;
+}
+
+/**
+ * Resolve one callable expression through checker aliases and transparent
+ * local const aliases. Mutable/compound aliases retain every visible target
+ * but are marked uncertain so a relevant use closes the projection.
+ */
+function resolveFunctionDeclarations(
+  checker: ts.TypeChecker,
+  expression: ts.Expression,
+  seenSymbols: ReadonlySet<ts.Symbol> = new Set(),
+): FunctionDeclarationResolution {
+  const bare = unwrapTransparentExpression(expression);
+  const location = ts.isPropertyAccessExpression(bare) ? bare.name : bare;
+  let symbol = checker.getSymbolAtLocation(location);
+  if (!symbol) {
+    const declarations = new Set<IrFnctorConstructorDeclaration>();
+    if (!ts.isIdentifier(bare)) {
+      const visit = (node: ts.Node): void => {
+        if (ts.isIdentifier(node)) {
+          const nested = resolveFunctionDeclarations(checker, node, seenSymbols);
+          for (const candidate of nested.declarations) declarations.add(candidate);
+          return;
+        }
+        forEachChild(node, visit);
+      };
+      visit(bare);
+    }
+    return { declarations, uncertain: declarations.size > 0 };
+  }
+  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+    try {
+      symbol = checker.getAliasedSymbol(symbol);
+    } catch {
+      return { declarations: new Set(), uncertain: true };
+    }
+  }
+  if (seenSymbols.has(symbol)) return { declarations: new Set(), uncertain: true };
+  const nextSeen = new Set(seenSymbols).add(symbol);
+  const declarations = new Set<IrFnctorConstructorDeclaration>();
+  let uncertain = false;
+  for (const declaration of symbol.getDeclarations() ?? []) {
+    if ((ts.isFunctionDeclaration(declaration) || ts.isFunctionExpression(declaration)) && declaration.body) {
+      declarations.add(declaration);
+      continue;
+    }
+    if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) continue;
+    const initializer = unwrapTransparentExpression(declaration.initializer);
+    if (ts.isFunctionExpression(initializer) && initializer.body) {
+      declarations.add(initializer);
+      continue;
+    }
+    const nested = resolveFunctionDeclarations(checker, initializer, nextSeen);
+    for (const candidate of nested.declarations) declarations.add(candidate);
+    if (nested.declarations.size > 0 && !isConstVariableDeclaration(declaration)) uncertain = true;
+    uncertain ||= nested.uncertain;
+  }
+  if (!ts.isIdentifier(bare)) {
+    // A compound callable (`Parser.bind(...)`, `cond ? Parser : Other`,
+    // `readNumber.call`, …) is never exact. Still trace every checker-resolved
+    // identifier it contains so a relevant target cannot disappear behind the
+    // wrapper merely because the compound expression itself has no symbol.
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && node !== location) {
+        const nested = resolveFunctionDeclarations(checker, node, nextSeen);
+        if (nested.declarations.size > 0) {
+          for (const candidate of nested.declarations) declarations.add(candidate);
+          uncertain = true;
+        }
+        return;
+      }
+      forEachChild(node, visit);
+    };
+    visit(bare);
+  }
+  return { declarations, uncertain };
+}
+
+function exactResolvedFunctionDeclaration(
+  checker: ts.TypeChecker,
+  expression: ts.Expression,
+): IrFnctorConstructorDeclaration | undefined {
+  const resolution = resolveFunctionDeclarations(checker, expression);
+  return !resolution.uncertain && resolution.declarations.size === 1 ? [...resolution.declarations][0] : undefined;
+}
+
+type ExactTargetResolution = "exact" | "uncertain" | "other";
+
+function expressionResolutionAgainstTarget(
+  checker: ts.TypeChecker,
+  expression: ts.Expression,
+  target: IrFnctorConstructorDeclaration,
+): ExactTargetResolution {
+  const resolution = resolveFunctionDeclarations(checker, expression);
+  if (resolution.declarations.has(target)) {
+    return !resolution.uncertain && resolution.declarations.size === 1 ? "exact" : "uncertain";
+  }
+
+  // Compound aliases such as `cond ? Parser : Other` have no symbol at the
+  // expression root. Seeing the exact target anywhere inside is relevant but
+  // not exact enough to authorize, so fail closed rather than miss the use.
+  let referencesTarget = false;
+  const visit = (node: ts.Node): void => {
+    if (referencesTarget) return;
+    if (ts.isIdentifier(node)) {
+      const symbol = aliasedSymbol(checker, node);
+      if ((symbol?.getDeclarations() ?? []).some((declaration) => declaration === target)) {
+        referencesTarget = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(expression);
+  return referencesTarget ? "uncertain" : "other";
 }
 
 function exactUnitForDeclaration(
@@ -252,21 +396,8 @@ function constructorDeclarationFor(
   sourceId: IrSourceId,
   identifier: ts.Identifier,
 ): IrFnctorConstructorDeclaration | undefined {
-  const symbol = aliasedSymbol(checker, identifier);
-  if (!symbol) return undefined;
-  const candidates = new Set<IrFnctorConstructorDeclaration>();
-  for (const declaration of symbol.getDeclarations() ?? []) {
-    if ((ts.isFunctionDeclaration(declaration) || ts.isFunctionExpression(declaration)) && declaration.body) {
-      candidates.add(declaration);
-      continue;
-    }
-    if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) continue;
-    let initializer = declaration.initializer;
-    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
-    if (ts.isFunctionExpression(initializer) && initializer.body) candidates.add(initializer);
-  }
-  if (candidates.size !== 1) return undefined;
-  const candidate = [...candidates][0]!;
+  const candidate = exactResolvedFunctionDeclaration(checker, identifier);
+  if (!candidate || !symbolOwnsDeclaration(checker, identifier, candidate)) return undefined;
   return exactUnitForDeclaration(identity, sourceId, candidate) === undefined ? undefined : candidate;
 }
 
@@ -277,20 +408,15 @@ function topLevelFunctionFor(
   sourceId: IrSourceId,
   identifier: ts.Identifier,
 ): ts.FunctionDeclaration | undefined {
-  const symbol = aliasedSymbol(checker, identifier);
-  if (!symbol) return undefined;
-  const candidates = new Set<ts.FunctionDeclaration>();
-  for (const declaration of symbol.getDeclarations() ?? []) {
-    if (
-      ts.isFunctionDeclaration(declaration) &&
-      declaration.body &&
-      declaration.parent === sourceFile &&
-      exactFunctionUnit(identity, sourceId, declaration) !== undefined
-    ) {
-      candidates.add(declaration);
-    }
-  }
-  return candidates.size === 1 ? [...candidates][0] : undefined;
+  const declaration = exactResolvedFunctionDeclaration(checker, identifier);
+  return declaration &&
+    symbolOwnsDeclaration(checker, identifier, declaration) &&
+    ts.isFunctionDeclaration(declaration) &&
+    declaration.body &&
+    declaration.parent === sourceFile &&
+    exactFunctionUnit(identity, sourceId, declaration) !== undefined
+    ? declaration
+    : undefined;
 }
 
 function enclosingTopLevelFunction(site: ts.Node, sourceFile: ts.SourceFile): ts.FunctionDeclaration | undefined {
@@ -310,15 +436,9 @@ function collectTopLevelFunctions(
   for (const terminal of identity.inventory.terminalUnits) {
     if (terminal.sourceId !== sourceId || terminal.observedKind !== "function") continue;
     const declaration = identity.declarationByUnitId.get(terminal.id);
-    if (
-      !declaration ||
-      !ts.isFunctionDeclaration(declaration) ||
-      declaration.parent !== sourceFile ||
-      !declaration.body ||
-      exactFunctionUnit(identity, sourceId, declaration) !== terminal.id
-    ) {
-      return undefined;
-    }
+    if (!declaration) return undefined;
+    if (!ts.isFunctionDeclaration(declaration) || declaration.parent !== sourceFile || !declaration.body) continue;
+    if (exactFunctionUnit(identity, sourceId, declaration) !== terminal.id) return undefined;
     functions.push(declaration);
   }
   return functions;
@@ -327,21 +447,118 @@ function collectTopLevelFunctions(
 interface SourceSyntaxPopulation {
   readonly allocations: readonly ts.NewExpression[];
   readonly calls: readonly ts.CallExpression[];
+  readonly identifiers: readonly ts.Identifier[];
 }
 
 function collectSourceSyntax(functions: readonly ts.FunctionDeclaration[]): SourceSyntaxPopulation {
   const allocations: ts.NewExpression[] = [];
   const calls: ts.CallExpression[] = [];
+  const identifiers: ts.Identifier[] = [];
   for (const declaration of functions) {
     const visit = (node: ts.Node): void => {
       if (node !== declaration.body && ts.isFunctionLike(node)) return;
       if (ts.isNewExpression(node)) allocations.push(node);
       if (ts.isCallExpression(node)) calls.push(node);
+      if (ts.isIdentifier(node)) identifiers.push(node);
       forEachChild(node, visit);
     };
     visit(declaration.body!);
   }
-  return { allocations, calls };
+  return { allocations, calls, identifiers };
+}
+
+/** Exact complete active source population, including module init, nested bodies, and class members. */
+function collectActiveSyntaxPopulation(identity: IrPlanningIdentityContext): SourceSyntaxPopulation | undefined {
+  if (
+    identity.inventory.sources.length !== identity.sourceFileBySourceId.size ||
+    identity.inventory.sources.length !== identity.sourceIdBySourceFile.size
+  ) {
+    return undefined;
+  }
+  const allocations: ts.NewExpression[] = [];
+  const calls: ts.CallExpression[] = [];
+  const identifiers: ts.Identifier[] = [];
+  for (const source of identity.inventory.sources) {
+    const sourceFile = identity.sourceFileBySourceId.get(source.id);
+    if (!sourceFile || identity.sourceIdBySourceFile.get(sourceFile) !== source.id) return undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isNewExpression(node)) allocations.push(node);
+      if (ts.isCallExpression(node)) calls.push(node);
+      if (ts.isIdentifier(node)) identifiers.push(node);
+      forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return { allocations, calls, identifiers };
+}
+
+function identifierDefinesTarget(identifier: ts.Identifier, target: IrFnctorConstructorDeclaration): boolean {
+  if (target.name === identifier) return true;
+  const parent = identifier.parent;
+  return (
+    ts.isVariableDeclaration(parent) &&
+    parent.name === identifier &&
+    parent.initializer !== undefined &&
+    unwrapTransparentExpression(parent.initializer) === target
+  );
+}
+
+function exactTargetUseCensusIsExact(
+  checker: ts.TypeChecker,
+  identifiers: readonly ts.Identifier[],
+  target: IrFnctorConstructorDeclaration,
+  certifiedUse: ts.Identifier,
+): boolean {
+  let uses = 0;
+  for (const identifier of identifiers) {
+    if (identifierDefinesTarget(identifier, target) || !symbolOwnsDeclaration(checker, identifier, target)) continue;
+    uses++;
+    if (identifier !== certifiedUse) return false;
+  }
+  return uses === 1;
+}
+
+function completePopulationCensusIsExact(
+  checker: ts.TypeChecker,
+  population: SourceSyntaxPopulation,
+  projection: IrFnctorArgumentProjection,
+): boolean {
+  const constructorAllocations: ts.NewExpression[] = [];
+  for (const site of population.allocations) {
+    const resolution = expressionResolutionAgainstTarget(checker, site.expression, projection.constructorDeclaration);
+    if (resolution === "uncertain") return false;
+    if (resolution === "exact") constructorAllocations.push(site);
+  }
+  const calleeCalls: ts.CallExpression[] = [];
+  for (const call of population.calls) {
+    const resolution = expressionResolutionAgainstTarget(checker, call.expression, projection.calleeDeclaration);
+    if (resolution === "uncertain") return false;
+    if (resolution === "exact") calleeCalls.push(call);
+  }
+  if (
+    !ts.isIdentifier(projection.constructorSite.expression) ||
+    !ts.isIdentifier(projection.directCall.expression) ||
+    !exactTargetUseCensusIsExact(
+      checker,
+      population.identifiers,
+      projection.constructorDeclaration,
+      projection.constructorSite.expression,
+    ) ||
+    !exactTargetUseCensusIsExact(
+      checker,
+      population.identifiers,
+      projection.calleeDeclaration,
+      projection.directCall.expression,
+    )
+  ) {
+    return false;
+  }
+  return (
+    constructorAllocations.length === 1 &&
+    constructorAllocations[0] === projection.constructorSite &&
+    calleeCalls.length === 1 &&
+    calleeCalls[0] === projection.directCall
+  );
 }
 
 function exactCallTargetResolver(
@@ -449,6 +666,8 @@ export function collectIrFnctorArgumentProjections(
   const functions = collectTopLevelFunctions(input.sourceFile, sourceId, input.identityContext);
   if (!functions) return Object.freeze([]);
   const syntaxPopulation = collectSourceSyntax(functions);
+  const activePopulation = collectActiveSyntaxPopulation(input.identityContext);
+  if (!activePopulation) return Object.freeze([]);
   const resolveCallTarget = exactCallTargetResolver(input.checker, input.identityContext, input.sourceFile, sourceId);
   const candidates: IrFnctorArgumentProjection[] = [];
 
@@ -560,26 +779,7 @@ export function collectIrFnctorArgumentProjections(
 
   if (candidates.length !== 1) return Object.freeze([]);
   const projection = candidates[0]!;
-  const sameConstructorAllocations = syntaxPopulation.allocations.filter(
-    (site) =>
-      ts.isIdentifier(site.expression) &&
-      constructorDeclarationFor(input.checker, input.identityContext, sourceId, site.expression) ===
-        projection.constructorDeclaration,
-  );
-  const sameCalleeCalls = syntaxPopulation.calls.filter(
-    (call) =>
-      ts.isIdentifier(call.expression) &&
-      topLevelFunctionFor(input.checker, input.identityContext, input.sourceFile, sourceId, call.expression) ===
-        projection.calleeDeclaration,
-  );
-  if (
-    sameConstructorAllocations.length !== 1 ||
-    sameConstructorAllocations[0] !== projection.constructorSite ||
-    sameCalleeCalls.length !== 1 ||
-    sameCalleeCalls[0] !== projection.directCall
-  ) {
-    return Object.freeze([]);
-  }
+  if (!completePopulationCensusIsExact(input.checker, activePopulation, projection)) return Object.freeze([]);
   return Object.freeze([projection]);
 }
 
@@ -605,6 +805,7 @@ function exactConstructorSyntaxRecord(
   projection: IrFnctorArgumentProjection,
   sourceFile: ts.SourceFile,
   sourceId: IrSourceId,
+  checker: ts.TypeChecker,
 ): boolean {
   const declaration = projection.constructorDeclaration;
   const statement = declaration.body?.statements[0];
@@ -632,6 +833,7 @@ function exactConstructorSyntaxRecord(
     assignment.left.expression.kind === ts.SyntaxKind.ThisKeyword &&
     assignment.left.name.text === "input" &&
     ts.isIdentifier(assignment.right) &&
+    symbolOwnsDeclaration(checker, assignment.right, syntax.parameterDeclaration) &&
     exactConstructorProofObject(syntax.proof)
   );
 }
@@ -641,7 +843,9 @@ function projectionIsExact(
   sourceFile: ts.SourceFile,
   sourceId: IrSourceId,
   identity: IrPlanningIdentityContext,
+  authority: IrFnctorArgumentProjectionAuthority,
 ): boolean {
+  const { checker } = authority;
   const callerUnitId = exactFunctionUnit(identity, sourceId, projection.callerDeclaration);
   const calleeUnitId = exactFunctionUnit(identity, sourceId, projection.calleeDeclaration);
   const constructorUnitId = exactUnitForDeclaration(identity, sourceId, projection.constructorDeclaration);
@@ -649,6 +853,14 @@ function projectionIsExact(
   const site = projection.constructorSite;
   const syntax = projection.constructorSyntax;
   const reservation = projection.physicalReservation;
+  const currentSyntax = proveIrFnctorInputConstructorSyntax(checker, identity, projection.constructorDeclaration);
+  const currentReservationCandidate = currentSyntax
+    ? authority.resolvePhysicalReservation(site, currentSyntax)
+    : undefined;
+  const currentReservation =
+    currentSyntax && currentReservationCandidate
+      ? normalizeReservation(currentReservationCandidate, site, currentSyntax)
+      : undefined;
   return (
     projection.kind === "fnctor-argument-projection" &&
     projection.sourceId === sourceId &&
@@ -668,8 +880,12 @@ function projectionIsExact(
     call.questionDotToken === undefined &&
     (call.typeArguments?.length ?? 0) === 0 &&
     ts.isIdentifier(call.expression) &&
+    exactResolvedFunctionDeclaration(checker, call.expression) === projection.calleeDeclaration &&
+    symbolOwnsDeclaration(checker, call.expression, projection.calleeDeclaration) &&
     site.getSourceFile() === sourceFile &&
     ts.isIdentifier(site.expression) &&
+    exactResolvedFunctionDeclaration(checker, site.expression) === projection.constructorDeclaration &&
+    symbolOwnsDeclaration(checker, site.expression, projection.constructorDeclaration) &&
     (site.typeArguments?.length ?? 0) === 0 &&
     site.arguments?.length === 1 &&
     site.arguments[0] === projection.allocationArgument &&
@@ -683,7 +899,11 @@ function projectionIsExact(
     projection.constructorDeclaration.parameters[0] === projection.constructorParameterDeclaration &&
     projection.constructorParameterDeclaration.parent === projection.constructorDeclaration &&
     projection.constructorParameterIndex === 0 &&
-    exactConstructorSyntaxRecord(syntax, projection, sourceFile, sourceId) &&
+    exactConstructorSyntaxRecord(syntax, projection, sourceFile, sourceId, checker) &&
+    currentSyntax?.constructorDeclaration === syntax.constructorDeclaration &&
+    currentSyntax.parameterDeclaration === syntax.parameterDeclaration &&
+    currentSyntax.assignmentStatement === syntax.assignmentStatement &&
+    currentSyntax.inputAssignment === syntax.inputAssignment &&
     reservation.kind === "fnctor-physical-reservation" &&
     reservation.sourceId === sourceId &&
     reservation.constructorUnitId === projection.constructorUnitId &&
@@ -692,10 +912,85 @@ function projectionIsExact(
     reservation.reservationKey === `__fnctor_${site.expression.text}` &&
     Number.isSafeInteger(reservation.reservedTypeIdx) &&
     reservation.reservedTypeIdx >= 0 &&
+    currentReservation?.sourceId === reservation.sourceId &&
+    currentReservation.constructorUnitId === reservation.constructorUnitId &&
+    currentReservation.constructorDeclaration === reservation.constructorDeclaration &&
+    currentReservation.constructorSite === reservation.constructorSite &&
+    currentReservation.reservationKey === reservation.reservationKey &&
+    currentReservation.reservedTypeIdx === reservation.reservedTypeIdx &&
     projection.logicalShape.fieldName === "input" &&
     projection.logicalShape.fieldType === "string" &&
-    exactProofObject(projection.proof)
+    exactProofObject(projection.proof) &&
+    ((): boolean => {
+      const population = collectActiveSyntaxPopulation(identity);
+      return population !== undefined && completePopulationCensusIsExact(checker, population, projection);
+    })()
   );
+}
+
+function canonicalizeIrFnctorArgumentProjection(projection: IrFnctorArgumentProjection): IrFnctorArgumentProjection {
+  const constructorSyntax: IrFnctorInputConstructorSyntaxProof = Object.freeze({
+    kind: "fnctor-input-constructor-syntax",
+    sourceId: projection.constructorSyntax.sourceId,
+    sourceFile: projection.constructorSyntax.sourceFile,
+    constructorUnitId: projection.constructorSyntax.constructorUnitId,
+    constructorDeclaration: projection.constructorSyntax.constructorDeclaration,
+    parameterDeclaration: projection.constructorSyntax.parameterDeclaration,
+    parameterIndex: 0,
+    assignmentStatement: projection.constructorSyntax.assignmentStatement,
+    inputAssignment: projection.constructorSyntax.inputAssignment,
+    proof: Object.freeze({
+      sameSource: true,
+      exactDeclarationIdentity: true,
+      oneRequiredParameter: true,
+      fixedUnconditionalInput: true,
+    }),
+  });
+  const physicalReservation: IrFnctorPhysicalReservationProof = Object.freeze({
+    kind: "fnctor-physical-reservation",
+    sourceId: projection.physicalReservation.sourceId,
+    constructorUnitId: projection.physicalReservation.constructorUnitId,
+    constructorDeclaration: projection.physicalReservation.constructorDeclaration,
+    constructorSite: projection.physicalReservation.constructorSite,
+    reservationKey: projection.physicalReservation.reservationKey,
+    reservedTypeIdx: projection.physicalReservation.reservedTypeIdx,
+  });
+  return Object.freeze({
+    kind: "fnctor-argument-projection",
+    sourceId: projection.sourceId,
+    sourceFile: projection.sourceFile,
+    callerUnitId: projection.callerUnitId,
+    callerDeclaration: projection.callerDeclaration,
+    directCall: projection.directCall,
+    calleeUnitId: projection.calleeUnitId,
+    calleeDeclaration: projection.calleeDeclaration,
+    calleeParameterDeclaration: projection.calleeParameterDeclaration,
+    calleeParameterIndex: 0,
+    constructorUnitId: projection.constructorUnitId,
+    constructorDeclaration: projection.constructorDeclaration,
+    constructorParameterDeclaration: projection.constructorParameterDeclaration,
+    constructorParameterIndex: 0,
+    constructorSite: projection.constructorSite,
+    allocationArgument: projection.allocationArgument,
+    constructorSyntax,
+    physicalReservation,
+    logicalShape: Object.freeze({ fieldName: "input", fieldType: "string" }),
+    proof: Object.freeze({
+      sameSource: true,
+      exactIdentityJoins: true,
+      logicalStringArgument: true,
+      directConstructor: true,
+      directCallArgument: true,
+      uniqueAllocation: true,
+      uniqueCallEdge: true,
+      noAlias: true,
+      noAssignment: true,
+      noCapture: true,
+      noReturn: true,
+      noPropertyWrite: true,
+      noSecondUse: true,
+    }),
+  });
 }
 
 /** Revalidate precomputed evidence at the structural identity seam and return one canonical frozen row. */
@@ -703,10 +998,13 @@ export function retainIrFnctorArgumentProjections(
   sourceFile: ts.SourceFile,
   sourceId: IrSourceId,
   identity: IrPlanningIdentityContext,
+  authority: IrFnctorArgumentProjectionAuthority | undefined,
   candidates: readonly IrFnctorArgumentProjection[] | undefined,
 ): readonly IrFnctorArgumentProjection[] | undefined {
-  if (!candidates || candidates.length !== 1) return undefined;
-  const valid = candidates.filter((candidate) => projectionIsExact(candidate, sourceFile, sourceId, identity));
+  if (!authority || !candidates || candidates.length !== 1) return undefined;
+  const valid = candidates.filter((candidate) =>
+    projectionIsExact(candidate, sourceFile, sourceId, identity, authority),
+  );
   if (valid.length !== 1) return undefined;
-  return Object.freeze([valid[0]!]);
+  return Object.freeze([canonicalizeIrFnctorArgumentProjection(valid[0]!)]);
 }

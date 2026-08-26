@@ -23,10 +23,36 @@ import {
   collectIrFnctorArgumentProjections,
   proveIrFnctorInputConstructorSyntax,
   type IrFnctorArgumentProjection,
+  type IrFnctorArgumentProjectionAuthority,
   type IrFnctorInputConstructorSyntaxProof,
 } from "../ir/fnctor-argument-projection.js";
 import type { IrUnitTypeMap } from "../ir/propagate.js";
 import type { CodegenContext } from "./context/types.js";
+
+export interface IrFnctorArgumentProjectionRoute {
+  readonly experimentalIR: boolean;
+  /** True only after legacy bodies have materialized the physical reservation. */
+  readonly postLegacyPhysicalReservation: boolean;
+  /** Exact environment snapshot; L1 is intentionally limited to the literal escape hatch. */
+  readonly irFirstEnvironment: string | undefined;
+}
+
+/** Normative route authority for the dormant L1 evidence. */
+export function irFnctorArgumentProjectionRouteIsActive(
+  ctx: CodegenContext,
+  route: IrFnctorArgumentProjectionRoute,
+): boolean {
+  return (
+    route.experimentalIR &&
+    route.postLegacyPhysicalReservation &&
+    route.irFirstEnvironment === "0" &&
+    ctx.standalone === true &&
+    ctx.nativeStrings === true &&
+    ctx.wasi === false &&
+    ctx.fast === false &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  );
+}
 
 function aliasedSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined {
   const symbol = checker.getSymbolAtLocation(node);
@@ -228,6 +254,18 @@ function resolveArgumentProjectionReservation(
   };
 }
 
+/** Bind retained L1 evidence back to the live checker and reservation registry. */
+export function makeIrFnctorArgumentProjectionAuthority(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+): IrFnctorArgumentProjectionAuthority {
+  return Object.freeze({
+    checker,
+    resolvePhysicalReservation: (site: ts.NewExpression, constructorProof: IrFnctorInputConstructorSyntaxProof) =>
+      resolveArgumentProjectionReservation(ctx, checker, site, constructorProof),
+  });
+}
+
 /** Collect evidence for structural retention only; L1 has no selector or lowering consumer. */
 export function collectIrFnctorArgumentProjectionsForPlanning(
   ctx: CodegenContext,
@@ -235,13 +273,15 @@ export function collectIrFnctorArgumentProjectionsForPlanning(
   identityContext: IrPlanningIdentityContext,
   sourceFile: ts.SourceFile,
   unitTypeMap: IrUnitTypeMap,
+  route: IrFnctorArgumentProjectionRoute,
 ): readonly IrFnctorArgumentProjection[] {
+  if (!irFnctorArgumentProjectionRouteIsActive(ctx, route)) return Object.freeze([]);
+  const authority = makeIrFnctorArgumentProjectionAuthority(ctx, checker);
   return collectIrFnctorArgumentProjections({
     sourceFile,
     checker,
     identityContext,
     unitTypeMap,
-    resolvePhysicalReservation: (site, constructorProof) =>
-      resolveArgumentProjectionReservation(ctx, checker, site, constructorProof),
+    resolvePhysicalReservation: authority.resolvePhysicalReservation,
   });
 }
