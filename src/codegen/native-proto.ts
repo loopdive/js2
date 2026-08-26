@@ -560,38 +560,6 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     if (member.length === 0) continue;
     if (member.startsWith("@@")) continue; // symbol keys do not participate (see doc)
     const kind = glue.memberKind(member);
-    // ACCESSORS ARE DELIBERATELY NOT SEEDED IN THIS SLICE.
-    //
-    // WHAT IS MEASURED. Seeding getters as accessor entries (via
-    // `__defineProperty_accessor`, flags `(1<<4)|(1<<5)|(1<<2)` = §17
-    // `{enumerable:false, configurable:true}`) flips `tests/issue-2885.test.ts`
-    // "plain read RegExp.prototype.global is undefined (Site 3 invokes the
-    // getter)" from pass to FAIL. That test passes on unmodified
-    // `origin/main` @ 9e17d34f3, so this is a genuine regression, not a
-    // pre-existing failure. §22.2.6 requires the legacy accessor read with
-    // `SameValue(this, %RegExp.prototype%)` to answer `undefined`.
-    //
-    // WHAT IS NOT KNOWN — do not repeat my first guess. I initially wrote that
-    // the cause was `__extern_get`'s accessor branch binding the wrong `this`,
-    // and that is NOT established: with seeding ON, the same read bound through
-    // a local (`const g: any = (RegExp.prototype as any).global; g === undefined`)
-    // still answers `undefined` correctly, while the INLINE form the test uses
-    // does not. So the divergence is between the inline and materialized read
-    // paths — the same CLASS of defect as the #2984 path-dependent `typeof`
-    // that V2-S1 fixed — but the mechanism is unidentified. Whoever takes the
-    // accessor tier should start from that inline/bound split, not from a
-    // receiver-binding theory.
-    //
-    // Data methods, which are the entire measured win here (121 TypedArray
-    // reflection files, all `find`/`map`/`of`/… members), have no §22.2.6-style
-    // identity rule and are unaffected.
-    //
-    // Gate for the accessor tier when it lands: the four
-    // `%TypedArray%.prototype.{buffer,byteLength,byteOffset,length}/prop-desc.js`
-    // files, which fail identically before and after this slice — so nothing is
-    // lost by deferring.
-    if (kind === "getter") continue;
-
     // Annex B requires Date.prototype.toGMTString and toUTCString to be the
     // same function object. Seed the alias key with the canonical closure
     // singleton instead of minting a second per-member wrapper.
@@ -608,7 +576,10 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       refusalBodyFallback: true,
     });
     if (!closure) continue;
-    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    const defineIdx =
+      kind === "getter"
+        ? (ctx.funcMap.get("__defineProperty_accessor") ?? defineAccessorIdx)
+        : (ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx);
     // Preserve the historical data-method seeder even in a defensive partial
     // object-runtime build that has no accessor helper.
     if (defineIdx === undefined) continue;
@@ -620,10 +591,16 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
 
     for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, closure)) body.push(instr);
     body.push({ op: "extern.convert_any" });
-    // [obj, key, value, flags] → §17 data entry. Getter members were skipped
-    // above until their inline/materialized receiver behavior is unified.
-    body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
-    body.push({ op: "call", funcIdx: defineIdx });
+    if (kind === "getter") {
+      // [obj, key, getter, null-setter, flags] → §17 accessor entry.
+      body.push({ op: "ref.null.extern" });
+      body.push({ op: "f64.const", value: PROTO_ACCESSOR_DEFINE_FLAGS });
+      body.push({ op: "call", funcIdx: defineIdx });
+    } else {
+      // [obj, key, value, flags] → §17 data entry.
+      body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+      body.push({ op: "call", funcIdx: defineIdx });
+    }
     body.push({ op: "drop" }); // the helper returns the target
     installed++;
   }

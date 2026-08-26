@@ -9483,6 +9483,18 @@ function _sandboxConstructorValue(value: any, key: any, globalSandbox?: Record<s
   return value;
 }
 
+/**
+ * Preserve callable bindings read from the supplied realm global object.
+ *
+ * A standalone `Function` body runs in a child module and resolves parent-realm
+ * globals through this object. Unwrapping a compiled callable facade there
+ * would expose the parent module's raw WasmGC closure, which the child module
+ * cannot invoke. Ordinary host-object reads still restore raw Wasm values.
+ */
+function _externGetValue(obj: any, value: any, globalSandbox?: Record<string, any>): any {
+  return obj === globalSandbox && typeof value === "function" ? value : _unwrapForHost(value);
+}
+
 function _wrapRawCallableHostValue(
   value: any,
   exports: Record<string, Function> | undefined,
@@ -11029,7 +11041,7 @@ assert._isSameValue = isSameValue;
                 // code must restore the raw Wasm value, otherwise private-field
                 // dispatch cannot ref.cast the proxy to its declaring class and
                 // reads such as `child.#methods` collapse to null.
-                return _unwrapForHost(v);
+                return _externGetValue(obj, v, globalSandbox);
               }
             } catch (e) {
               // #2180/#2617 — a revoked-proxy TypeError, OR any exception from a
@@ -11040,7 +11052,7 @@ assert._isSameValue = isSameValue;
             }
           }
           const val = _safeGet(obj, key, callbackState);
-          if (val !== undefined) return _unwrapForHost(val);
+          if (val !== undefined) return _externGetValue(obj, val, globalSandbox);
           // (#4618) A property read off a BARE closure bridge (the plain host
           // function `_wrapWasmClosureUnknownArity` mints): the bridge drops
           // the closure's sidecar surface, so `console.log.mock` /
@@ -17046,7 +17058,7 @@ assert._isSameValue = isSameValue;
                 const rawVec = _abHostBufferReverse.get(v);
                 if (rawVec !== undefined) return rawVec;
               }
-              return _sandboxConstructorValue(_unwrapForHost(v), key, globalSandbox);
+              return _sandboxConstructorValue(_externGetValue(obj, v, globalSandbox), key, globalSandbox);
             }
           } catch {
             /* fall through to the generic path */
@@ -17060,7 +17072,7 @@ assert._isSameValue = isSameValue;
           // `sandbox.Array`, but `obj.constructor` for host JS arrays
           // returns `globalThis.Array`. Substitute the sandbox version so
           // `arr.constructor === Array` holds. No-op without a sandbox.
-          return _sandboxConstructorValue(_unwrapForHost(val), key, globalSandbox);
+          return _sandboxConstructorValue(_externGetValue(obj, val, globalSandbox), key, globalSandbox);
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {
