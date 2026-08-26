@@ -63,7 +63,7 @@ benchmark artifacts are supporting evidence only; they cannot close this issue.
    paths and verify positive-control paths exist before running. The nearby
    `TEST262_PATH_FILTER_FILE` comment saying paths are `test/`-relative is
    stale; unprefixed edition-map keys register zero shard tests.
-3. Run the maintained runner with two workers and `--official-scope-only` for
+3. Run the maintained runner with five workers and `--official-scope-only` for
    the host (`TEST262_TARGET=gc`) and standalone (`TEST262_TARGET=standalone`,
    default QuickJS eval provider) lanes. Preserve both timestamped JSONL files
    and reports. Record pass/fail/compile-error/skip denominators separately.
@@ -83,8 +83,9 @@ Use the repository's configured Node/pnpm path, then create a temporary filter
 outside the repository. The run environment must include:
 
 ```text
-TEST262_WORKERS=2
-COMPILER_POOL_SIZE=2
+TEST262_WORKERS=5
+COMPILER_POOL_SIZE=5
+VITEST_FORK_MAX_OLD_SPACE_SIZE=3072
 TEST262_PATH_FILTER_FILE=<absolute path to the verified 11,704-row filter>
 TEST262_TARGET=gc               # first lane
 TEST262_TARGET=standalone       # second lane
@@ -184,3 +185,37 @@ diagnostic checkpoint only and must not be treated as the current baseline.
 The immediate next measurement must start from `16dd8ad48` or the newer
 successor PR head, regenerate and validate the 11,704-row `test/`-prefixed
 filter, and complete all rows without interruption.
+
+### Complete host baseline — 2026-08-26
+
+The first uninterrupted exact-bucket host measurement completed at successor
+draft PR head `39f279650` (run `20260826-180615`). The filter
+`/private/tmp/js2-es2015-11704-pr5008.txt` contained 11,704 distinct
+`test/`-prefixed paths, all of which existed, and all 16 maintained-runner
+shards completed. The exact report summary is:
+
+```text
+9,435 pass
+2,163 fail
+59 compile_error
+46 compile_timeout
+1 skip
+11,704 total
+```
+
+This is the complete current host baseline, not acceptance evidence: 2,269
+rows remain non-passing and every one must be rerun alone before attribution.
+The lone skip is the runner's unsupported compiler-hang classification and is
+also a required close-out item. Artifacts are preserved at:
+
+```text
+/private/tmp/js2-es6-authoritative-measure3/benchmarks/results/test262-report-20260826-180615.json
+/private/tmp/js2-es6-authoritative-measure3/benchmarks/results/test262-results-20260826-180615.jsonl
+```
+
+The measurement used `TEST262_WORKERS=5`, `COMPILER_POOL_SIZE=5`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, `TEST262_TARGET=gc`,
+`TEST262_REPORTER=dot`, and `TEST262_PUBLISH_HISTORY=0`. The next action is to
+commit and push this checkpoint, run the complete standalone lane from the
+successor PR, then solo-confirm and cluster both inventories for issue-backed
+Luna/max worktrees.
