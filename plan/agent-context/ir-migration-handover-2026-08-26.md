@@ -36,7 +36,7 @@ first.
 | Tracker | PR | State at handover | Exact implementation head before this handover |
 | --- | --- | --- | --- |
 | #3521 | [#5000](https://github.com/loopdive/js2/pull/5000) | draft, in flight | `9f9d978c743b054d05b01702639a914f268e3c6a` |
-| #1719 | [#4999](https://github.com/loopdive/js2/pull/4999) | ready, merge queue position 1 at the last snapshot | `c8ca8466d18cf9f483a44f5ef5fa38cc2673f93f` |
+| #1719 | [#4999](https://github.com/loopdive/js2/pull/4999) | merged through the queue | `c8ca8466d18cf9f483a44f5ef5fa38cc2673f93f` |
 | #4755 | [#4997](https://github.com/loopdive/js2/pull/4997) | ready, requeued normally at exact head | `06f80c1fe69a05b88a65d89783edee3dc43758f8` |
 | #4260 | [#4996](https://github.com/loopdive/js2/pull/4996) | draft, waiting for #4755 and B.7 | `493ad47d316d69b16c0db802bb7bbe8eba6d269e` |
 
@@ -107,16 +107,17 @@ filter; if present, it must be the exact paired cascade diagnostic. The caller
 `irOutcomes` row remains mandatory in either case. Do not weaken that semantic
 oracle while wiring the production route.
 
-## #1719 standalone CPR iterator — claim-gated continuation
+## #1719 standalone CPR iterator — ready to claim from merged plan
 
-PR #4999 contains the root-authored reopened plan and is the only publication
-for this lane. At the stop point it was at the front of the merge queue, but it
-was not yet on `origin/main`. The normal claim command therefore correctly
-returned exit 4 because main still described #1719 as done. No claim was
-forced, and no implementation branch, compiler edit, commit, push, or
-implementation PR exists.
+PR #4999 contains the root-authored reopened plan and merged through the queue
+at 2026-08-26T11:44:05Z. Its exact PR head is
+`c8ca8466d18cf9f483a44f5ef5fa38cc2673f93f`, and the main merge commit is
+`9d87ffa4b557242f30afc6d09db1c24e387315dc`. All merge-group workflows were
+genuine successes. The earlier normal claim attempt correctly returned exit 4
+while main still described #1719 as done; it was not forced. No implementation
+branch, compiler edit, commit, push, or implementation PR exists yet.
 
-After #4999 actually lands:
+Start the implementation with these steps:
 
 1. fetch live `main`, claim #1719 normally, and create an isolated
    `codex/1719-standalone-cpr-iterator-contract-impl` worktree;
@@ -159,14 +160,12 @@ edits; never use it as the implementation source or delete it as cleanup.
 
 ## Queue and CI handoff
 
-At the final queue snapshot, #4999 had advanced to position 1 with merge-group
-head `9d87ffa4b557242f30afc6d09db1c24e387315dc`; its Test262 and CLA checks were
-green while CI and differential testing were still running. #4997 had been
-normally requeued at position 5 after recovery from one Test262 js-host shard
-that remained in its run step for more than 30 minutes. The recovery cancelled
-only workflow run `32961095426`, dequeued the stale entry, verified the exact
-unchanged PR head, and performed a normal requeue. Do not rebase or manually
-merge either PR.
+#4999 subsequently merged through its genuine green merge group as recorded
+above. #4997 remains normally queued at exact head
+`06f80c1fe69a05b88a65d89783edee3dc43758f8`; it had no new merge-group head at
+the final snapshot. Its earlier recovery cancelled only stalled workflow run
+`32961095426`, dequeued the stale entry, verified the exact unchanged PR head,
+and performed a normal requeue. Do not rebase or manually merge #4997.
 
 Draft PR #5000 has one real GitHub `quality` failure in run `32964133636`, job
 `98162790425`. `pnpm run check:dead-exports` reports all eight top-level
@@ -236,7 +235,8 @@ current.
 3. Preserve #4982's hold and inspect #5000's exact CI failure before editing.
 4. Continue #3521 from draft PR #5000 in the bounded order above, with one
    signed checkpoint per coherent authority/lowering slice.
-5. Start #1719 only after #4999 is on main and the normal claim succeeds.
+5. Fetch merge commit `9d87ffa4b557242f30afc6d09db1c24e387315dc`,
+   claim #1719 normally, and only then create its implementation worktree.
 6. Refresh #4260 only after #4997 lands, then add the B.7 proof before changing
    production.
 7. Keep the global migration goal open. R3 through R10 and final direct
