@@ -9,7 +9,7 @@
  * cycle while still making the artifact content-addressed.
  */
 
-import { createHash } from "node:crypto";
+import * as nodeCrypto from "node:crypto";
 import type { LinkedProviderMetadata } from "./index.js";
 import { WasmEncoder } from "./emit/encoder.js";
 
@@ -350,7 +350,7 @@ export function appendProviderManifest(binary: Uint8Array, manifest: ProviderMan
 
 /** Content hash of the finalized provider bytes. */
 export function providerArtifactHash(binary: Uint8Array, manifest: ProviderManifestV1): string {
-  const hash = createHash("sha256");
+  const hash = nodeCrypto.createHash("sha256");
   hash.update(binary);
   // Keep the manifest argument in the API so callers must pass the decoded
   // finalized artifact rather than accidentally hashing pre-manifest bytes.
