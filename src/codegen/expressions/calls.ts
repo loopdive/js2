@@ -181,6 +181,114 @@ export function emitBareCallReceiverReset(
   ];
 }
 
+/**
+ * Compile a reflective call of a user-class STATIC method.
+ *
+ * Static methods have no Wasm receiver parameter, but JavaScript still lets
+ * callers supply one through `C.m.call(value)` / `C.m.apply(value, args)`.
+ * The static-method body therefore reads the ambient `__current_this` slot
+ * when this source contains a receiver-passing call.  Keep that slot scoped
+ * to the direct call, preserving the enclosing receiver and restoring it when
+ * the method throws a tagged exception as well as on normal return.
+ *
+ * `undefined` is intentionally represented by the existing null marker here;
+ * the static-private-setter family only needs the non-null receiver arm. The
+ * ordinary direct static-call path remains unchanged and continues to use the
+ * class singleton fallback in `ThisKeyword`.
+ */
+function compileClassStaticReflectiveCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  className: string,
+  methodName: string,
+  isCall: boolean,
+): InnerResult | undefined {
+  const fullName = `${className}_${methodName}`;
+  if (!ctx.staticMethodSet.has(fullName)) return undefined;
+  const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
+  if (methodIdx === undefined || expr.arguments.length === 0) return undefined;
+  // A dynamic `.apply` array cannot be represented by this direct path. Keep
+  // it on the generic lowering rather than silently dropping its elements.
+  if (!isCall && expr.arguments.length >= 2 && !ts.isArrayLiteralExpression(expr.arguments[1]!)) return undefined;
+
+  // The first argument is the explicit this value. Evaluate it before the
+  // method's arguments, then keep the value in a local while those arguments
+  // are compiled so their own `this` remains the caller's `this`.
+  const receiverType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+  if (receiverType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  const receiverLocal = allocLocal(fctx, `__static_call_receiver_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: receiverLocal });
+
+  const paramTypes = getFuncParamTypes(ctx, methodIdx);
+  const callArgs: readonly ts.Expression[] = isCall
+    ? Array.from(expr.arguments).slice(1)
+    : expr.arguments.length >= 2 && ts.isArrayLiteralExpression(expr.arguments[1]!)
+      ? Array.from(expr.arguments[1]!.elements)
+      : [];
+
+  const paramCount = paramTypes?.length ?? callArgs.length;
+  const provided = Math.min(callArgs.length, paramCount);
+  for (let i = 0; i < provided; i++) {
+    compileInternalCallArgument(ctx, fctx, callArgs[i]!, paramTypes?.[i]);
+  }
+  for (let i = provided; i < callArgs.length; i++) {
+    const extraType = compileExpression(ctx, fctx, callArgs[i]!);
+    if (extraType !== null) fctx.body.push({ op: "drop" });
+  }
+  if (paramTypes) {
+    for (let i = provided; i < paramTypes.length; i++) pushDefaultValue(fctx, paramTypes[i]!, ctx);
+  }
+  maybeSetArgcForKnownCall(ctx, fctx, fullName, callArgs.length, paramCount);
+
+  // Argument compilation can register helpers/imports. Re-resolve all indices
+  // after that work, exactly as the ordinary static-call path does.
+  const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? methodIdx;
+  const currentThisIdx = ensureCurrentThisGlobal(ctx);
+  const previousLocal = allocLocal(fctx, `__static_call_previous_this_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const resultType = wasmFuncReturnsVoid(ctx, finalMethodIdx) ? undefined : getWasmFuncReturnType(ctx, finalMethodIdx);
+  const resultLocal =
+    resultType === undefined ? undefined : allocLocal(fctx, `__static_call_result_${fctx.locals.length}`, resultType);
+  const callBody: Instr[] = [
+    { op: "global.get", index: currentThisIdx },
+    { op: "local.set", index: previousLocal },
+    { op: "local.get", index: receiverLocal },
+    { op: "global.set", index: currentThisIdx },
+    { op: "call", funcIdx: finalMethodIdx },
+  ];
+  if (resultLocal !== undefined) callBody.push({ op: "local.set", index: resultLocal });
+  callBody.push({ op: "local.get", index: previousLocal }, { op: "global.set", index: currentThisIdx });
+
+  // The TypeError emitted by a private brand check is a tagged exception. A
+  // local try_table restores the ambient receiver before rethrowing it so a
+  // surrounding assert.throws (or any user catch) sees the original payload
+  // without a leaked receiver in the caller.
+  const exceptionLocal = allocLocal(fctx, `__static_call_exception_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push(
+    buildStandardTryTable({ kind: "empty" }, callBody, [
+      {
+        kind: "catch",
+        tagIdx: ensureExnTag(ctx),
+        payloadType: { kind: "externref" },
+        body: [
+          { op: "local.set", index: exceptionLocal },
+          { op: "local.get", index: previousLocal },
+          { op: "global.set", index: currentThisIdx },
+          { op: "local.get", index: exceptionLocal },
+          { op: "throw", tagIdx: ensureExnTag(ctx) },
+        ],
+      },
+    ]),
+  );
+  if (resultLocal !== undefined) fctx.body.push({ op: "local.get", index: resultLocal });
+  return resultType ?? VOID_RESULT;
+}
+
 function emitDynamicCallDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -8682,6 +8790,18 @@ function compileCallExpression(
         // Also try struct name
         if (!className || !ctx.classSet.has(className)) {
           className = resolveStructName(ctx, objType) ?? undefined;
+        }
+
+        // A class static method has no hidden self parameter, so the generic
+        // class-member `.call` arm below cannot carry the explicit receiver
+        // without either leaving it on the stack or silently dropping it.
+        // Scope the receiver through `__current_this` instead; the static
+        // method's `this` lowering consumes that slot and its private brand
+        // access then produces the required catchable TypeError for a foreign
+        // object. Instance methods stay on the existing brand-checked path.
+        if (className) {
+          const staticReflective = compileClassStaticReflectiveCall(ctx, fctx, expr, className, methodName, isCall);
+          if (staticReflective !== undefined) return staticReflective;
         }
 
         if (className && (ctx.classSet.has(className) || ctx.funcMap.has(`${className}_${methodName}`))) {

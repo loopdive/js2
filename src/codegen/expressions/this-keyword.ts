@@ -16,7 +16,7 @@ import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { buildCurrentThisNonNullArm } from "../explicit-null-receiver.js"; // (#4203)
+import { buildCurrentThisNonNullArm, sourceBindsReceiver } from "../explicit-null-receiver.js"; // (#4203)
 import {
   emitUnboundThis,
   thisBelongsToInlinedIifeBody,
@@ -69,6 +69,34 @@ export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, e
   // is needed — the arrow's body re-emits the load and gets the
   // exact same externref each time.
   if (fctx.isStaticContext && fctx.enclosingClassName && ctx.classObjectGlobals?.has(fctx.enclosingClassName)) {
+    // A static method has no Wasm `this` parameter, but a host call through
+    // `Function.prototype.call`/`apply`/`bind` can still supply one.  The
+    // receiver-aware trampoline installs that value in `__current_this` for
+    // the duration of the call.  The old static fallback unconditionally
+    // returned the class singleton, so `C.m.call({})` observed C and private
+    // brand checks incorrectly succeeded (the static-private-setter family).
+    // Only opt into the ambient slot in a source file that actually contains
+    // a receiver-passing call site; ordinary direct `C.m()` calls retain the
+    // class singleton arm and cannot observe a stale slot.
+    if (ctx.currentThisGlobalIdx >= 0 && sourceBindsReceiver(expr.getSourceFile())) {
+      const thisTmp = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
+      fctx.body.push({ op: "local.tee", index: thisTmp });
+      fctx.body.push({ op: "ref.is_null" });
+      const savedBody = fctx.body;
+      const classBody: Instr[] = [];
+      fctx.body = classBody;
+      emitLazyClassObjectGet(ctx, fctx, fctx.enclosingClassName);
+      fctx.body = savedBody;
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: classBody,
+        else: [{ op: "local.get", index: thisTmp }],
+      });
+      releaseTempLocal(fctx, thisTmp);
+      return { kind: "externref" };
+    }
     if (emitLazyClassObjectGet(ctx, fctx, fctx.enclosingClassName)) {
       return { kind: "externref" };
     }
