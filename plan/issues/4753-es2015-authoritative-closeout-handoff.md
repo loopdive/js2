@@ -32,7 +32,8 @@ benchmark artifacts are supporting evidence only; they cannot close this issue.
 
 - PR #4974 merged into `loopdive/js2:main` on 2026-08-26. Continued close-out
   work uses `codex/es6-conformance-closeout` on the `ttraenkler/js2` fork and a
-  successor upstream draft PR so checkpoints remain reviewable.
+  successor upstream draft PR #5008 so checkpoints remain reviewable:
+  <https://github.com/loopdive/js2/pull/5008>.
 - Handoff head before this issue commit: `df70faa5e`.
 - The first combined CI run found one integration-only dead helper. Issue
   #4752 deleted it; the dead-export gate now reports 23 known entries and 0
@@ -161,6 +162,8 @@ upstream `main` (`16dd8ad48`), so the old branch has no diff and cannot back a
 new PR. A successor integration worktree was created at
 `/private/tmp/js2-es6-conformance-closeout` on branch
 `codex/es6-conformance-closeout`, based on that current upstream head.
+Draft PR #5008 carries this branch against `loopdive/js2:main`; all further
+measurement and implementation checkpoints are pushed there.
 
 A current-branch host measurement had started at `dc5619b62` before the newer
 upstream head was discovered. It was stopped gracefully because completing an
