@@ -1722,6 +1722,33 @@ function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
   return dense;
 }
 
+// Host callback dispatch must not use `fn(...args)` for its ABI arrays. A
+// Test262 body is allowed to delete Array.prototype[Symbol.iterator], while
+// these calls happen before the worker's realm cleanup restores it. Native
+// spread would then throw before the callback enters its own try/catch (the
+// #4758 destructuring cluster). Build the argument list by index and enter
+// through the captured Reflect.apply instead.
+function _applyWithPrefix(fn: Function, thisArg: any, prefix: ArrayLike<any>, suffix: ArrayLike<any>): any {
+  const args = new _IntrinsicArray<any>(prefix.length + suffix.length);
+  for (let i = 0; i < prefix.length; i++) {
+    _intrinsicReflectDefineProperty(args, i, {
+      value: prefix[i],
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  for (let i = 0; i < suffix.length; i++) {
+    _intrinsicReflectDefineProperty(args, prefix.length + i, {
+      value: suffix[i],
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return _intrinsicReflectApply(fn, thisArg, args);
+}
+
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
     return _wasmClosureWrapperTargets.get(v as Function) ?? v;
@@ -1891,14 +1918,14 @@ function _wrapWasmClosure(
         const argcCallFn = exports![`__\0js2_call_fn_method_argc_${methodArity}`];
         const ret =
           typeof argcCallFn === "function"
-            ? argcCallFn(methodArity, receiver, closure, ...methodPadded)
-            : methodCallFn(receiver, closure, ...methodPadded);
+            ? _applyWithPrefix(argcCallFn, undefined, [methodArity, receiver, closure], methodPadded)
+            : _applyWithPrefix(methodCallFn, undefined, [receiver, closure], methodPadded);
         return _wasmAccessorGetterReturnWrappers.has(wrapped)
           ? _maybeWrapAccessorGetterCallable(ret, callbackState)
           : ret;
       }
     }
-    const ret = callFn(closure, ...padded);
+    const ret = _applyWithPrefix(callFn, undefined, [closure], padded);
     return _wasmAccessorGetterReturnWrappers.has(wrapped) ? _maybeWrapAccessorGetterCallable(ret, callbackState) : ret;
   };
   const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
@@ -2047,8 +2074,8 @@ function _wrapWasmClosureUnknownArity(
         const argcCallFn = exports[`__\0js2_call_fn_method_argc_${dispatchArity}`];
         return marshalNew(
           typeof argcCallFn === "function"
-            ? argcCallFn(args.length, receiver, closure, ...padded)
-            : methodCallFn(receiver, closure, ...padded),
+            ? _applyWithPrefix(argcCallFn, undefined, [args.length, receiver, closure], padded)
+            : _applyWithPrefix(methodCallFn, undefined, [receiver, closure], padded),
         );
       }
     }
@@ -2060,7 +2087,7 @@ function _wrapWasmClosureUnknownArity(
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
     const padded = _denseOwnWasmArgs(args, arity);
-    return marshalNew(callFn(closure, ...padded));
+    return marshalNew(_applyWithPrefix(callFn, undefined, [closure], padded));
   };
   const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
     try {
@@ -4498,19 +4525,19 @@ function _invokeJsonCallable(
     const methodCallFn = exports[`__call_fn_method_${arity}`];
     if (typeof methodCallFn === "function") {
       const rawThis = typeof thisVal === "object" ? _unwrapForHost(thisVal) : thisVal;
-      return methodCallFn(_isWasmStruct(rawThis) ? rawThis : thisVal, fn, ...args);
+      return _applyWithPrefix(methodCallFn, undefined, [_isWasmStruct(rawThis) ? rawThis : thisVal, fn], args);
     }
   }
   const callFn = exports[`__call_fn_${arity}`];
   if (typeof callFn === "function") {
-    return callFn(fn, ...args);
+    return _applyWithPrefix(callFn, undefined, [fn], args);
   }
   // Fall back to the highest-arity dispatcher available, padding extras.
   for (let a = 4; a >= 0; a--) {
     const cf = exports[`__call_fn_${a}`];
     if (typeof cf === "function") {
       const padded = _denseOwnArgs(args, a);
-      return cf(fn, ...padded);
+      return _applyWithPrefix(cf, undefined, [fn], padded);
     }
   }
   return undefined;
@@ -14185,9 +14212,9 @@ assert._isSameValue = isSameValue;
               const padded = _denseOwnArgs(args, n);
               if (viaMethod) {
                 const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
-                return callFn(_isWasmStruct(rawThis) ? rawThis : this, captured, ...padded);
+                return _applyWithPrefix(callFn, undefined, [_isWasmStruct(rawThis) ? rawThis : this, captured], padded);
               }
-              return callFn(captured, ...padded);
+              return _applyWithPrefix(callFn, undefined, [captured], padded);
             };
             callable = boundBridge;
             // Stamp hints onto the wrapper so the bound function inherits

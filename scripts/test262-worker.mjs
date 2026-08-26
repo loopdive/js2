@@ -735,7 +735,16 @@ const _recycleSentinelOrig = _RECYCLE_SENTINELS.map(([label, obj, key]) => [labe
 
 function detectRecycleSentinelMutation() {
   for (let i = 0; i < _recycleSentinelOrig.length; i++) {
-    const [label, obj, key, orig] = _recycleSentinelOrig[i];
+    // Do not destructure the sentinel tuple here. A Test262 test is allowed to
+    // delete Array.prototype[Symbol.iterator], and this check runs before
+    // restoreBuiltins() puts that intrinsic back. Array destructuring would
+    // therefore invoke the just-deleted iterator and strand the worker before
+    // it can report the test result (#4758).
+    const sentinel = _recycleSentinelOrig[i];
+    const label = sentinel[0];
+    const obj = sentinel[1];
+    const key = sentinel[2];
+    const orig = sentinel[3];
     let cur;
     try {
       cur = obj[key];
@@ -812,13 +821,29 @@ function restoreBuiltins() {
   // the first argument, items[Symbol.iterator], when exists, be a function"
   // — which surfaces as an L1:0 Codegen error during the next test's
   // compilation (#1160).
-  if (Array.prototype[Symbol.iterator] !== _origArrayIterator) {
+  const currentArrayIteratorDesc = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+  const iteratorDescriptorChanged =
+    !currentArrayIteratorDesc ||
+    currentArrayIteratorDesc.value !== _origArrayIterator ||
+    currentArrayIteratorDesc.writable !== _origArrayIteratorDesc?.writable ||
+    currentArrayIteratorDesc.enumerable !== _origArrayIteratorDesc?.enumerable ||
+    currentArrayIteratorDesc.configurable !== _origArrayIteratorDesc?.configurable;
+  if (iteratorDescriptorChanged) {
     try {
       Array.prototype[Symbol.iterator] = _origArrayIterator;
     } catch {}
-    // If = silently failed (defineProperty-poisoned descriptor), re-apply
-    // the original descriptor so the property is a function again.
-    if (Array.prototype[Symbol.iterator] !== _origArrayIterator && _origArrayIteratorDesc) {
+    // Re-apply the original descriptor after a deletion as well as after
+    // defineProperty poison. Assignment recreates a deleted property with
+    // enumerable:true, which leaves the realm canary dirty even though its
+    // value is back (#4758).
+    const restoredArrayIteratorDesc = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+    const descriptorStillChanged =
+      !restoredArrayIteratorDesc ||
+      restoredArrayIteratorDesc.value !== _origArrayIterator ||
+      restoredArrayIteratorDesc.writable !== _origArrayIteratorDesc?.writable ||
+      restoredArrayIteratorDesc.enumerable !== _origArrayIteratorDesc?.enumerable ||
+      restoredArrayIteratorDesc.configurable !== _origArrayIteratorDesc?.configurable;
+    if (descriptorStillChanged && _origArrayIteratorDesc) {
       try {
         Object.defineProperty(Array.prototype, Symbol.iterator, _origArrayIteratorDesc);
       } catch {}
@@ -1047,7 +1072,17 @@ function summarizeImportName(desc) {
 
 function summarizeImports(imports) {
   if (!Array.isArray(imports)) return [];
-  return [...new Set(imports.map(summarizeImportName).filter(Boolean))].sort();
+  // The test body may delete Array.prototype[Symbol.iterator]. This helper is
+  // called while constructing the result payload, before sendResult() gets a
+  // chance to restore builtins, so Set's iterable constructor/spread would
+  // throw and mask the test as a compile error (#4758). Keep this diagnostic
+  // summary index-based until cleanup has repaired the host realm.
+  const names = [];
+  for (let i = 0; i < imports.length; i++) {
+    const name = summarizeImportName(imports[i]);
+    if (name && names.indexOf(name) < 0) names.push(name);
+  }
+  return names.sort();
 }
 
 function classifyHostImportLeak(importNames) {
