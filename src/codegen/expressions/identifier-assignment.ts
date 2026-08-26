@@ -7,42 +7,26 @@ import { getLocalType } from "../context/locals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { coerceType, valTypesMatch } from "../shared.js";
 import { emitTdzCheck } from "../statements/tdz.js";
-import {
-  analyzeIdentifierTdzAccess,
-  emitStaticTdzThrow,
-  identifierValueSymbol,
-  moduleGoalIdentifierIsUndeclared,
-} from "./identifiers.js";
-
-/** Exact same-source runtime top-level lexical identity. */
-function identifierResolvesToCurrentTopLevelLexical(ctx: CodegenContext, id: ts.Identifier): boolean {
-  const sourceFile = id.getSourceFile();
-  if (!ctx.sourceIsModule || sourceFile.isDeclarationFile || moduleGoalIdentifierIsUndeclared(ctx, id)) return false;
-  const declaration = identifierValueSymbol(ctx, id)?.valueDeclaration;
-  if (!declaration || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return false;
-  const declarationList = declaration.parent;
-  const statement = declarationList.parent;
-  const lexicalFlags = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
-  return (
-    ts.isVariableDeclarationList(declarationList) &&
-    (declarationList.flags & lexicalFlags) !== 0 &&
-    ts.isVariableStatement(statement) &&
-    declaration.getSourceFile() === sourceFile &&
-    statement.parent === sourceFile
-  );
-}
+import { analyzeIdentifierTdzAccess, emitStaticTdzThrow } from "./identifiers.js";
+import { identifierResolvesToCurrentTopLevelLexical } from "./identifier-module-storage.js";
 
 function moduleLexicalAssignmentTdzDecision(
   ctx: CodegenContext,
   id: ts.Identifier,
+  allowUnresolvedTopLevelVariable: boolean,
 ): "skip" | "throw" | "check" | undefined {
   if (!ctx.moduleGlobals.has(id.text) || !ctx.tdzGlobals.has(id.text)) return undefined;
-  if (!identifierResolvesToCurrentTopLevelLexical(ctx, id)) return undefined;
+  if (!identifierResolvesToCurrentTopLevelLexical(ctx, id, allowUnresolvedTopLevelVariable)) return undefined;
   return analyzeIdentifierTdzAccess(ctx, id);
 }
 
-function emitModuleLexicalAssignmentTdzGuard(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): void {
-  const decision = moduleLexicalAssignmentTdzDecision(ctx, id);
+function emitModuleLexicalAssignmentTdzGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  allowUnresolvedTopLevelVariable: boolean,
+): void {
+  const decision = moduleLexicalAssignmentTdzDecision(ctx, id, allowUnresolvedTopLevelVariable);
   if (decision === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
   else if (decision === "check") emitTdzCheck(ctx, fctx, id.text, true);
 }
@@ -55,6 +39,7 @@ export function emitResolvedIdentifierWriteFromStack(
   valueType: ValType,
   localIdx: number | undefined,
   moduleGlobalIdx: number | undefined,
+  allowUnresolvedTopLevelVariable = false,
 ): boolean {
   // A provider or string constant settled while evaluating the value may have
   // inserted an import global. Treat the caller's index as target identity
@@ -72,7 +57,7 @@ export function emitResolvedIdentifierWriteFromStack(
     fctx.body.push({ op: "local.set", index: localIdx });
     return true;
   }
-  emitModuleLexicalAssignmentTdzGuard(ctx, fctx, id);
+  emitModuleLexicalAssignmentTdzGuard(ctx, fctx, id, allowUnresolvedTopLevelVariable);
   // Re-read after coercion/guard helpers: either can settle imports/globals.
   fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(id.text)! });
   return true;

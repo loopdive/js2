@@ -120,6 +120,7 @@ import { emitMappedArgParamSync, emitMappedArgReverseSync } from "./logical-ops.
 import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
 import { emitResolvedIdentifierWriteFromStack } from "./identifier-assignment.js";
+import { currentSourceModuleGlobalIndex, identifierHasOnlyAmbientDeclarations } from "./identifier-module-storage.js";
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
 import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
 import { tryEmitErrorInstanceFieldWrite } from "../error-instance-field-write.js";
@@ -201,12 +202,28 @@ function emitExternrefAssignDestructureGuard(ctx: CodegenContext, fctx: Function
   }
 }
 
-function buildDetachedAssignmentBody(fctx: FunctionContext, emit: () => void): Instr[] {
+function attachDetachedAssignmentBodies<T>(
+  fctx: FunctionContext,
+  build: (body: (emit: () => void) => Instr[]) => T,
+  attach: (bodies: T) => void,
+): void {
   const saved = pushBody(fctx);
-  try {
+  const bodies: Instr[][] = [];
+  const body = (emit: () => void): Instr[] => {
+    const detached = bodies.length === 0 ? fctx.body : [];
+    bodies.push(detached);
+    // A later sibling can add an import/global and repoint earlier code.
+    fctx.savedBodies.push(detached);
+    fctx.body = detached;
     emit();
-    return fctx.body;
+    return detached;
+  };
+  try {
+    const built = build(body);
+    fctx.body = saved;
+    attach(built);
   } finally {
+    for (let i = bodies.length; i > 0; i--) fctx.savedBodies.pop();
     popBody(fctx, saved);
   }
 }
@@ -328,7 +345,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     // RHS exactly once either through its stable value cell or through the
     // compiler's ordinary static target on a miss. Truly unresolvable names
     // keep the stricter GlobalEnvironmentRecord route below.
-    if (!isUnresolvableIdent(ctx, fctx, expr.left)) {
+    if (!isUnresolvableIdent(ctx, fctx, expr.left) || identifierHasOnlyAmbientDeclarations(ctx, expr.left)) {
       const runtimeBinding = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
       if (runtimeBinding) {
         const wrapRuntimeEvalCallable = isStaticallyCallableExpression(ctx, expr.right);
@@ -698,7 +715,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       return resultType;
     }
     // Check module-level globals
-    const moduleIdx = ctx.moduleGlobals.get(name);
+    const moduleIdx = currentSourceModuleGlobalIndex(ctx, expr.left);
     if (moduleIdx !== undefined) {
       const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
       const globalType = globalDef?.type;
@@ -878,7 +895,7 @@ export function emitDynamicWithIdentifierWrite(
     fctx.body.push({ op: "struct.set", typeIdx: b.scope.structTypeIdx, fieldIdx: b.fieldIdx });
     return;
   }
-  emitIdentifierWriteFromLocal(ctx, fctx, id, rhsLocalIdx);
+  emitIdentifierWriteFromLocal(ctx, fctx, id, rhsLocalIdx, true);
 }
 
 /**
@@ -897,6 +914,7 @@ export function emitIdentifierWriteFromLocal(
   fctx: FunctionContext,
   id: ts.Identifier,
   rhsLocalIdx: number,
+  allowUnresolvedTopLevelVariable = false,
 ): void {
   const name = id.text;
 
@@ -964,10 +982,18 @@ export function emitIdentifierWriteFromLocal(
     return;
   }
 
-  const moduleIdx = ctx.moduleGlobals.get(name);
+  const moduleIdx = currentSourceModuleGlobalIndex(ctx, id, allowUnresolvedTopLevelVariable);
   if (moduleIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: rhsLocalIdx });
-    emitResolvedIdentifierWriteFromStack(ctx, fctx, id, { kind: "externref" }, undefined, moduleIdx);
+    emitResolvedIdentifierWriteFromStack(
+      ctx,
+      fctx,
+      id,
+      { kind: "externref" },
+      undefined,
+      moduleIdx,
+      allowUnresolvedTopLevelVariable,
+    );
     return;
   }
 
@@ -1017,10 +1043,7 @@ function tryEmitAmbientIdentifierGlobalWriteFromLocal(
   id: ts.Identifier,
   rhsLocalIdx: number,
 ): boolean {
-  const declarations = ctx.oracle.declarationsOf(id);
-  if (declarations.length === 0 || !declarations.every((decl) => decl.getSourceFile().isDeclarationFile)) {
-    return false;
-  }
+  if (!identifierHasOnlyAmbientDeclarations(ctx, id)) return false;
   if (!emitGlobalEnvironmentObject(ctx, fctx)) return false;
   const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
   if (setIdx === undefined) {
@@ -1282,7 +1305,8 @@ function compileDestructuringAssignment(
           // Resolve write target: local first, then module global. Allocate
           // a local only if neither exists.
           let localIdx = fctx.localMap.get(name);
-          const moduleGlobalIdx = ctx.moduleGlobals.get(name);
+          const moduleGlobalIdx =
+            localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, targetIdentifier) : undefined;
           let targetType: ValType;
           if (localIdx !== undefined) {
             targetType = getLocalType(fctx, localIdx) ?? { kind: "externref" as const };
@@ -1306,25 +1330,6 @@ function compileDestructuringAssignment(
           fctx.body.push({ op: "call", funcIdx: getIdx });
           fctx.body.push({ op: "local.set", index: tmpVal });
 
-          // Helper: emit `<value-on-stack> -> coerce -> set target`.
-          const emitSetTarget = (instrs: Instr[]): void => {
-            // The value is currently on the Wasm stack as externref. Coerce
-            // and then set. We append into `instrs` so the caller can splice
-            // it into a then/else branch.
-            instrs.push(
-              ...buildDetachedAssignmentBody(fctx, () => {
-                emitResolvedIdentifierWriteFromStack(
-                  ctx,
-                  fctx,
-                  targetIdentifier,
-                  { kind: "externref" },
-                  localIdx,
-                  moduleGlobalIdx,
-                );
-              }),
-            );
-          };
-
           if (propDefault) {
             // Per spec: defaults fire ONLY on undefined. Use
             // __extern_is_undefined (not ref.is_null) so JS null falls
@@ -1332,31 +1337,48 @@ function compileDestructuringAssignment(
             fctx.body.push({ op: "local.get", index: tmpVal });
             fctx.body.push({ op: "call", funcIdx: undefIdx });
 
-            // then-branch: compile default into target
-            const trueInstrs = buildDetachedAssignmentBody(fctx, () => {
-              const initType = compileExpression(ctx, fctx, propDefault, targetType);
-              if (initType) {
-                emitResolvedIdentifierWriteFromStack(ctx, fctx, targetIdentifier, initType, localIdx, moduleGlobalIdx);
-              }
-            });
-
-            // else-branch: forward the read value (with optional coerce)
-            const elseInstrs: Instr[] = [{ op: "local.get", index: tmpVal }];
-            emitSetTarget(elseInstrs);
-
-            fctx.body.push({
-              op: "if",
-              blockType: { kind: "empty" },
-              then: trueInstrs,
-              else: elseInstrs,
-            });
+            attachDetachedAssignmentBodies(
+              fctx,
+              (body) => ({
+                then: body(() => {
+                  const initType = compileExpression(ctx, fctx, propDefault, targetType);
+                  if (initType) {
+                    emitResolvedIdentifierWriteFromStack(
+                      ctx,
+                      fctx,
+                      targetIdentifier,
+                      initType,
+                      localIdx,
+                      moduleGlobalIdx,
+                    );
+                  }
+                }),
+                else: body(() => {
+                  fctx.body.push({ op: "local.get", index: tmpVal });
+                  emitResolvedIdentifierWriteFromStack(
+                    ctx,
+                    fctx,
+                    targetIdentifier,
+                    { kind: "externref" },
+                    localIdx,
+                    moduleGlobalIdx,
+                  );
+                }),
+              }),
+              (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+            );
           } else {
             // No default: just assign whatever __extern_get returned (which
             // is `undefined` if missing — JS-equivalent behaviour).
             fctx.body.push({ op: "local.get", index: tmpVal });
-            const tail: Instr[] = [];
-            emitSetTarget(tail);
-            fctx.body.push(...tail);
+            emitResolvedIdentifierWriteFromStack(
+              ctx,
+              fctx,
+              targetIdentifier,
+              { kind: "externref" },
+              localIdx,
+              moduleGlobalIdx,
+            );
           }
         }
       } else {
@@ -1433,7 +1455,7 @@ function compileDestructuringAssignment(
       // { width } = ... → prop.name is "width"
       const propName = prop.name.text;
       let localIdx = fctx.localMap.get(propName);
-      const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(propName) : undefined;
+      const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, prop.name) : undefined;
 
       const fieldIdx = fields.findIndex((f) => f.name === propName);
 
@@ -1509,13 +1531,10 @@ function compileDestructuringAssignment(
             // could not be registered (e.g. standalone mode).
             fctx.body.push({ op: "ref.is_null" });
           }
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              ...(() => {
-                const saved = fctx.body;
-                fctx.body = [];
+          attachDetachedAssignmentBodies(
+            fctx,
+            (body) => ({
+              then: body(() => {
                 const initType = compileExpression(
                   ctx,
                   fctx,
@@ -1525,27 +1544,12 @@ function compileDestructuringAssignment(
                 if (initType) {
                   emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, initType, localIdx, moduleGlobalIdx);
                 }
-                const instrs = fctx.body;
-                fctx.body = saved;
-                return instrs;
-              })(),
-            ],
-            else: [
-              { op: "local.get", index: tmpField },
-              ...(() => {
+              }),
+              else: body(() => {
+                fctx.body.push({ op: "local.get", index: tmpField });
                 if (targetType && !valTypesMatch(fieldType, targetType)) {
-                  const saved = fctx.body;
-                  fctx.body = [];
                   coerceType(ctx, fctx, fieldType, targetType);
-                  const instrs = fctx.body;
-                  fctx.body = saved;
-                  return instrs;
                 }
-                return [];
-              })(),
-              ...(() => {
-                const saved = fctx.body;
-                fctx.body = [];
                 emitResolvedIdentifierWriteFromStack(
                   ctx,
                   fctx,
@@ -1554,12 +1558,10 @@ function compileDestructuringAssignment(
                   localIdx,
                   moduleGlobalIdx,
                 );
-                const instrs = fctx.body;
-                fctx.body = saved;
-                return instrs;
-              })(),
-            ],
-          });
+              }),
+            }),
+            (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+          );
         } else {
           emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, fieldType, localIdx, moduleGlobalIdx);
         }
@@ -1605,7 +1607,7 @@ function compileDestructuringAssignment(
         if (defaultExpr && ts.isIdentifier(targetExpr)) {
           const localName = targetExpr.text;
           let localIdx = fctx.localMap.get(localName);
-          const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+          const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, targetExpr) : undefined;
           if (localIdx === undefined && moduleGlobalIdx === undefined) {
             localIdx = allocLocal(fctx, localName, { kind: "externref" });
           }
@@ -1628,7 +1630,7 @@ function compileDestructuringAssignment(
         // { prop: ident } or { prop: ident = default }
         const localName = targetExpr.text;
         let localIdx = fctx.localMap.get(localName);
-        const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+        const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, targetExpr) : undefined;
 
         // Auto-allocate local if not declared
         if (localIdx === undefined && moduleGlobalIdx === undefined) {
@@ -1670,34 +1672,22 @@ function compileDestructuringAssignment(
             } else {
               fctx.body.push({ op: "ref.is_null" });
             }
-            fctx.body.push({
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...(() => {
-                  const saved = fctx.body;
-                  fctx.body = [];
+            attachDetachedAssignmentBodies(
+              fctx,
+              (body) => ({
+                then: body(() => {
                   const initType = compileExpression(ctx, fctx, defaultExpr!, targetType ?? fieldType);
                   if (initType) {
                     emitResolvedIdentifierWriteFromStack(ctx, fctx, targetExpr, initType, localIdx, moduleGlobalIdx);
                   }
-                  const instrs = fctx.body;
-                  fctx.body = saved;
-                  return instrs;
-                })(),
-              ],
-              else: [
-                { op: "local.get", index: tmpField },
-                ...(() => {
-                  const saved = fctx.body;
-                  fctx.body = [];
+                }),
+                else: body(() => {
+                  fctx.body.push({ op: "local.get", index: tmpField });
                   emitResolvedIdentifierWriteFromStack(ctx, fctx, targetExpr, fieldType, localIdx, moduleGlobalIdx);
-                  const instrs = fctx.body;
-                  fctx.body = saved;
-                  return instrs;
-                })(),
-              ],
-            });
+                }),
+              }),
+              (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+            );
           } else {
             // Numeric field — just set the value (no undefined check needed for primitives)
             emitResolvedIdentifierWriteFromStack(ctx, fctx, targetExpr, fieldType, localIdx, moduleGlobalIdx);
@@ -1878,7 +1868,7 @@ function tryEmitArrayProtoIteratorAssignDrive(
       // function locals or module globals; reuse the same resolution the
       // identifier-assignment path uses.
       const localIdx = fctx.localMap.get(name);
-      const globalIdx = ctx.moduleGlobals.get(name);
+      const globalIdx = currentSourceModuleGlobalIndex(ctx, el);
       // When done (iterator exhausted), the spec value is `undefined`; leave the
       // local untouched (the targets already exist / hold their prior value) —
       // the 71 assignment tests yield concrete values, never short.
@@ -2211,7 +2201,7 @@ function compileArrayDestructuringAssignment(
     if (ts.isIdentifier(element)) {
       const localName = element.text;
       let localIdx = fctx.localMap.get(localName);
-      const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+      const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, element) : undefined;
       if (localIdx === undefined && moduleGlobalIdx === undefined) {
         localIdx = allocLocal(fctx, localName, elemType);
       }
@@ -2243,7 +2233,7 @@ function compileArrayDestructuringAssignment(
       if (ts.isIdentifier(assignTarget)) {
         const localName = assignTarget.text;
         let localIdx = fctx.localMap.get(localName);
-        const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+        const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, assignTarget) : undefined;
         if (localIdx === undefined && moduleGlobalIdx === undefined) {
           localIdx = allocLocal(fctx, localName, elemType);
         }
@@ -2327,33 +2317,23 @@ function compileArrayDestructuringAssignment(
           fctx.body.push({ op: "local.set", index: absentLocal });
         }
 
-        const thenInit: Instr[] = (() => {
-          const saved = fctx.body;
-          fctx.body = [];
-          const initType = compileExpression(ctx, fctx, defaultExpr, targetType ?? elemType);
-          if (initType) {
-            emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, initType, localIdx, moduleGlobalIdx);
-          }
-          const instrs = fctx.body;
-          fctx.body = saved;
-          return instrs;
-        })();
-        const elseAssign: Instr[] = (() => {
-          const saved = fctx.body;
-          fctx.body = [];
-          fctx.body.push({ op: "local.get", index: tmpElem });
-          emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, elemValType, localIdx, moduleGlobalIdx);
-          const instrs = fctx.body;
-          fctx.body = saved;
-          return instrs;
-        })();
         fctx.body.push({ op: "local.get", index: absentLocal });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: thenInit,
-          else: elseAssign,
-        });
+        attachDetachedAssignmentBodies(
+          fctx,
+          (body) => ({
+            then: body(() => {
+              const initType = compileExpression(ctx, fctx, defaultExpr, targetType ?? elemType);
+              if (initType) {
+                emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, initType, localIdx, moduleGlobalIdx);
+              }
+            }),
+            else: body(() => {
+              fctx.body.push({ op: "local.get", index: tmpElem });
+              emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, elemValType, localIdx, moduleGlobalIdx);
+            }),
+          }),
+          (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+        );
       } else if (ts.isPropertyAccessExpression(assignTarget) || ts.isElementAccessExpression(assignTarget)) {
         // (#2869) Member-expression target WITH a default: `[x.y = d] = vals`.
         // Mirror the identifier-default machinery above (read element →
@@ -2589,7 +2569,7 @@ function compileExternrefArrayDestructuringAssignment(
     if (ts.isIdentifier(element)) {
       const localName = element.text;
       let localIdx = fctx.localMap.get(localName);
-      const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+      const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, element) : undefined;
       if (localIdx === undefined && moduleGlobalIdx === undefined) {
         localIdx = allocLocal(fctx, localName, elemType);
       }
@@ -2613,7 +2593,7 @@ function compileExternrefArrayDestructuringAssignment(
       if (ts.isIdentifier(assignTarget)) {
         const localName = assignTarget.text;
         let localIdx = fctx.localMap.get(localName);
-        const moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+        const moduleGlobalIdx = localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, assignTarget) : undefined;
         if (localIdx === undefined && moduleGlobalIdx === undefined) {
           localIdx = allocLocal(fctx, localName, elemType);
         }
@@ -2635,22 +2615,22 @@ function compileExternrefArrayDestructuringAssignment(
           localIdx !== undefined
             ? getLocalType(fctx, localIdx)
             : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildDetachedAssignmentBody(fctx, () => {
-            const initType = compileExpression(ctx, fctx, defaultExpr, targetType ?? elemType);
-            if (initType) {
-              emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, initType, localIdx, moduleGlobalIdx);
-            }
-          }),
-          else: [
-            { op: "local.get", index: tmpElem },
-            ...buildDetachedAssignmentBody(fctx, () => {
+        attachDetachedAssignmentBodies(
+          fctx,
+          (body) => ({
+            then: body(() => {
+              const initType = compileExpression(ctx, fctx, defaultExpr, targetType ?? elemType);
+              if (initType) {
+                emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, initType, localIdx, moduleGlobalIdx);
+              }
+            }),
+            else: body(() => {
+              fctx.body.push({ op: "local.get", index: tmpElem });
               emitResolvedIdentifierWriteFromStack(ctx, fctx, assignTarget, elemType, localIdx, moduleGlobalIdx);
             }),
-          ],
-        });
+          }),
+          (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+        );
       }
     } else if (ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element)) {
       // Nested destructuring: [[x]] = arr or [{x}] = arr

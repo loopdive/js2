@@ -77,6 +77,7 @@ import {
   resolvePromiseSubclassIdentifier,
   tryEmitPromiseSubclassValue,
 } from "./promise-subclass.js";
+import { emitLiveIdentifierGlobalRead, tryEmitAmbientRegistryCollisionRead } from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -1243,6 +1244,8 @@ function compileIdentifierCore(
     ? compileExactAmbientShadowedModuleBinding(ctx, fctx, id)
     : undefined;
   if (ambientShadowType) return ambientShadowType;
+  const ambientCollisionType = tryEmitAmbientRegistryCollisionRead(ctx, fctx, id, skipRuntimeEvalState);
+  if (ambientCollisionType) return ambientCollisionType;
 
   // (#4618) A class declaration is already represented by its canonical,
   // identity-stable class-object singleton, so it never needs a value-copy
@@ -1302,9 +1305,7 @@ function compileIdentifierCore(
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
-    fctx.body.push({ op: "global.get", index: capturedIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
-    const gType = globalDef?.type ?? { kind: "f64" };
+    const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
     // Globals widened from ref to ref_null for null init — narrow back
     if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
       fctx.body.push({ op: "ref.as_non_null" });
@@ -1324,9 +1325,7 @@ function compileIdentifierCore(
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
-    fctx.body.push({ op: "global.get", index: moduleIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
-    const mType = globalDef?.type ?? { kind: "f64" };
+    const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
       fctx.body.push({ op: "ref.as_non_null" });

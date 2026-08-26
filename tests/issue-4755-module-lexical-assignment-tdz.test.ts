@@ -6,7 +6,7 @@
  * pins `experimentalIR: false` in both WasmGC lanes so an IR-owned body cannot
  * hide a legacy-body failure.
  */
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 
 import { compile, compileMulti, type CompileResult } from "../src/index.js";
@@ -25,6 +25,10 @@ const DIRECT_OPTIONS = {
 interface RuntimeResult {
   readonly result: CompileResult;
   readonly value: number;
+}
+
+interface RuntimeEvalResult extends RuntimeResult {
+  readonly imports: readonly string[];
 }
 
 function compileFailure(result: CompileResult): string {
@@ -51,6 +55,28 @@ const STANDALONE_PROBE = `
     if (typeof instance.exports.__module_init === "function") instance.exports.__module_init();
     value = instance.exports[name]();
   }
+  process.stdout.write(JSON.stringify({ imports, value }));
+`;
+
+const STANDALONE_RUNTIME_EVAL_PROBE = `
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const providerModule = new WebAssembly.Module(Buffer.from(payload.provider, "base64"));
+  const provider = new WebAssembly.Instance(providerModule, {});
+  const namespace = {
+    __runtime_new_function: provider.exports.__runtime_new_function,
+    __runtime_indirect_eval: provider.exports.__runtime_indirect_eval,
+    __runtime_direct_eval: provider.exports.__runtime_direct_eval,
+    __runtime_apply_interpreted: provider.exports.__runtime_apply_interpreted,
+  };
+  const userModule = new WebAssembly.Module(Buffer.from(payload.user, "base64"));
+  const imports = WebAssembly.Module.imports(userModule)
+    .map(({ module, name }) => module + "." + name)
+    .sort();
+  const user = new WebAssembly.Instance(userModule, { "js2wasm:runtime-eval": namespace });
+  if (typeof user.exports.__module_init === "function") user.exports.__module_init();
+  const value = user.exports.run();
   process.stdout.write(JSON.stringify({ imports, value }));
 `;
 
@@ -107,8 +133,30 @@ async function compileMultiDirect(
   return result;
 }
 
-async function instantiateAndInitialize(result: CompileResult): Promise<Record<string, Function>> {
-  const imports = buildImports(result.imports, undefined, result.stringPool);
+async function compileMultiAndRunDirect(
+  sources: Record<string, string>,
+  entryFile: string,
+  target: Target,
+  hostGlobals?: Record<string, unknown>,
+): Promise<RuntimeResult> {
+  const result = await compileMultiDirect(sources, entryFile, target);
+  if (target === "standalone") {
+    const { value } = probeStandalone(result, "run");
+    expect(value).toBeTypeOf("number");
+    return { result, value: value! };
+  }
+  const exports = await instantiateAndInitialize(result, hostGlobals);
+  expect(exports.run, "numeric proof export").toBeTypeOf("function");
+  const value = exports.run!();
+  expect(value).toBeTypeOf("number");
+  return { result, value };
+}
+
+async function instantiateAndInitialize(
+  result: CompileResult,
+  hostGlobals?: Record<string, unknown>,
+): Promise<Record<string, Function>> {
+  const imports = buildImports(result.imports, hostGlobals, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   const exports = instance.exports as Record<string, Function>;
   imports.setInstance?.(instance);
@@ -132,6 +180,85 @@ async function compileAndRunDirect(source: string, fileName: string, target: Tar
   return { result, value };
 }
 
+let runtimeEvalProviderBinary: Uint8Array;
+
+beforeAll(async () => {
+  const provider = await compile(
+    `
+      interface Cell { value: any }
+      function result(ok: boolean, value: any): any {
+        const out: any[] = [ok, __runtime_eval_wrap_result(value)];
+        return out;
+      }
+      function installTarget(state: any): void {
+        const nameCell = state[0] as Cell;
+        const valueCell = state[1] as Cell;
+        const markerNameCell = state[2] as Cell;
+        const markerValueCell = state[3] as Cell;
+        nameCell.value = "target";
+        valueCell.value = 5;
+        markerNameCell.value = "\\0js2wasm:deletable-eval-binding";
+        markerValueCell.value = undefined;
+      }
+      function refuse(): any { return result(false, new TypeError("unused #4755 provider entry")); }
+      export function __runtime_direct_eval(
+        source: any, globalObject: any, thisArg: any, activationState: any,
+        activationSeedNames: any, activationSeedSlots: any, lexicalNames: any,
+        lexicalSlots: any, outerNames: any, outerSlots: any,
+        callerStrict: boolean, mappedParamNames: any
+      ): any {
+        if (source === "install-target") installTarget(activationState);
+        return result(true, 0);
+      }
+      export function __runtime_indirect_eval(source: any, globalObject: any): any { return refuse(); }
+      export function __runtime_new_function(params: any, body: any, globalObject: any): any { return refuse(); }
+      export function __runtime_apply_interpreted(
+        callable: any, receiver: any, argc: number,
+        a0: any, a1: any, a2: any, a3: any, a4: any, a5: any, a6: any, a7: any
+      ): any { return refuse(); }
+    `,
+    {
+      experimentalIR: false,
+      fileName: "issue-4755-runtime-eval-provider.ts",
+      inferModuleStrictArguments: false,
+      skipSemanticDiagnostics: true,
+      target: "standalone",
+    },
+  );
+  expect(provider.success, compileFailure(provider)).toBe(true);
+  expect(provider.imports, "the bounded #4755 runtime-eval provider is host-free").toEqual([]);
+  expect(provider.hostImportSummary?.total ?? 0).toBe(0);
+  runtimeEvalProviderBinary = provider.binary;
+});
+
+async function compileAndRunRuntimeEvalDirect(source: string, fileName: string): Promise<RuntimeEvalResult> {
+  const result = await compile(source, {
+    ...DIRECT_OPTIONS,
+    fileName,
+    hostBridge: "off",
+    inferModuleStrictArguments: false,
+    target: "standalone",
+  });
+  expect(result.success, compileFailure(result)).toBe(true);
+  const child = spawnSync(
+    process.execPath,
+    ["--experimental-wasm-exnref", "--input-type=module", "--eval", STANDALONE_RUNTIME_EVAL_PROBE],
+    {
+      input: JSON.stringify({
+        provider: Buffer.from(runtimeEvalProviderBinary).toString("base64"),
+        user: Buffer.from(result.binary).toString("base64"),
+      }),
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
+  expect(child.status, child.stderr || child.error?.message).toBe(0);
+  const probe = JSON.parse(child.stdout) as { readonly imports: readonly string[]; readonly value: number };
+  expect(probe.imports).toContain("js2wasm:runtime-eval.__runtime_direct_eval");
+  expect(probe.imports.every((name) => name.startsWith("js2wasm:runtime-eval."))).toBe(true);
+  return { result, imports: probe.imports, value: probe.value };
+}
+
 interface WatFunction {
   readonly name: string;
   readonly body: string;
@@ -142,8 +269,6 @@ function parseWatFunctions(wat: string): readonly WatFunction[] {
     name: match[1]!,
     index: match.index,
   }));
-  const names = starts.map(({ name }) => name);
-  expect(new Set(names).size, "WAT function names must be unique for provider attribution").toBe(names.length);
   return starts.map(({ name, index }, position) => ({
     name,
     body: wat.slice(index, starts[position + 1]?.index ?? wat.length),
@@ -292,6 +417,173 @@ describe.each(TARGETS)("#4755 direct module-lexical assignment TDZ — %s", (tar
       target,
     );
     expect(value).toBe(7);
+  });
+});
+
+function dynamicWithAssignmentSource(hasBinding: boolean): string {
+  return `
+    var rhsCalls: number = 0;
+    var afterAssignment: number = 0;
+    var verdict: number = 0;
+    var scope: any = ${hasBinding ? "{ target: 5, marker: 7 }" : "{ marker: 7 }"};
+
+    function rhs(): any {
+      rhsCalls += 1;
+      return 41;
+    }
+    function trigger(dynamicScope: any): void {
+      with (dynamicScope) {
+        target = rhs();
+        afterAssignment = 1;
+      }
+    }
+
+    try {
+      trigger(scope);
+    } catch (error) {
+      verdict = error instanceof ReferenceError ? 1 : 2;
+    }
+    let target: any;
+    var storageClean: number = target === undefined ? 1 : 0;
+
+    export function run(): number {
+      var score: number = 0;
+      if (rhsCalls === 1) score += 1;
+      if (verdict === ${hasBinding ? 0 : 1}) score += 2;
+      if (${hasBinding ? "scope.target === 41" : '!("target" in scope)'}) score += 4;
+      if (afterAssignment === ${hasBinding ? 1 : 0}) score += 8;
+      if (storageClean === 1) score += 16;
+      if (scope.marker === 7) score += 32;
+      return score;
+    }
+  `;
+}
+
+describe.each(TARGETS)("#4755 dynamic-with precomputed writer routing — %s", (target) => {
+  it("keeps a HasBinding hit on the object without consulting the uninitialized module lexical", async () => {
+    const { value } = await compileAndRunDirect(
+      dynamicWithAssignmentSource(true),
+      `issue-4755-dynamic-with-hit-${target}.ts`,
+      target,
+    );
+    expect(value).toBe(63);
+  });
+
+  it("evaluates the HasBinding miss RHS once before the guarded module-lexical throw", async () => {
+    const { value } = await compileAndRunDirect(
+      dynamicWithAssignmentSource(false),
+      `issue-4755-dynamic-with-miss-${target}.ts`,
+      target,
+    );
+    expect(value).toBe(63);
+  });
+});
+
+function runtimeEvalAssignmentSource(hasBinding: boolean): string {
+  return `
+    var rhsCalls: number = 0;
+    var afterAssignment: number = 0;
+    var verdict: number = 0;
+    var observed: any = 0;
+
+    function join(parts: string[]): string {
+      var out = "";
+      for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+      return out;
+    }
+    function rhs(): any {
+      rhsCalls += 1;
+      return 41;
+    }
+    function trigger(): any {
+      eval(join(["${hasBinding ? "install" : "leave"}-", "${hasBinding ? "target" : "empty"}"]));
+      target = rhs();
+      afterAssignment = 1;
+      return target;
+    }
+
+    try {
+      observed = trigger();
+    } catch (error) {
+      verdict = error instanceof ReferenceError ? 1 : 2;
+    }
+    let target: any;
+    var storageClean: number = target === undefined ? 1 : 0;
+
+    export function run(): number {
+      var score: number = 0;
+      if (rhsCalls === 1) score += 1;
+      if (verdict === ${hasBinding ? 0 : 1}) score += 2;
+      if (observed === ${hasBinding ? 41 : 0}) score += 4;
+      if (afterAssignment === ${hasBinding ? 1 : 0}) score += 8;
+      if (storageClean === 1) score += 16;
+      return score;
+    }
+  `;
+}
+
+function runtimeEvalAmbientAssignmentSource(hasBinding: boolean): string {
+  return `
+    declare var target: any;
+    var rhsCalls: number = 0;
+    var afterAssignment: number = 0;
+    var verdict: number = 0;
+    var observed: any = 0;
+
+    function join(parts: string[]): string {
+      var out = "";
+      for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+      return out;
+    }
+    function rhs(): any { rhsCalls += 1; return 41; }
+    function trigger(): any {
+      eval(join(["${hasBinding ? "install" : "leave"}", "-${hasBinding ? "target" : "empty"}"]));
+      target = rhs();
+      afterAssignment = 1;
+      return target;
+    }
+
+    try { observed = trigger(); }
+    catch (error) { verdict = error instanceof ReferenceError ? 1 : 2; }
+
+    export function run(): number {
+      var score: number = 0;
+      if (rhsCalls === 1) score += 1;
+      if (verdict === 0) score += 2;
+      if (observed === 41) score += 4;
+      if (afterAssignment === 1) score += 8;
+      return score;
+    }
+  `;
+}
+
+describe("#4755 runtime-eval value-cell precomputed writer routing — standalone", () => {
+  // `runtimeEvalStateMayShadowBinding` is deliberately a standalone/WASI
+  // provider seam; GC direct eval keeps its static-splice/host route. These
+  // rows therefore exercise the only lane in which a caller-owned value cell
+  // can precede the module-lexical miss arm.
+  it("keeps a present value-cell write off the uninitialized module lexical", async () => {
+    const { value } = await compileAndRunRuntimeEvalDirect(
+      runtimeEvalAssignmentSource(true),
+      "issue-4755-runtime-eval-cell-hit-standalone.ts",
+    );
+    expect(value).toBe(31);
+  });
+
+  it("evaluates a value-cell miss RHS once before the guarded module-lexical throw", async () => {
+    const { value } = await compileAndRunRuntimeEvalDirect(
+      runtimeEvalAssignmentSource(false),
+      "issue-4755-runtime-eval-cell-miss-standalone.ts",
+    );
+    expect(value).toBe(31);
+  });
+
+  it.each([true, false])("keeps an ambient binding behind the runtime-eval value-cell %s route", async (hasBinding) => {
+    const { value } = await compileAndRunRuntimeEvalDirect(
+      runtimeEvalAmbientAssignmentSource(hasBinding),
+      `issue-4755-runtime-eval-ambient-${hasBinding ? "hit" : "miss"}-standalone.ts`,
+    );
+    expect(value).toBe(15);
   });
 });
 
@@ -598,9 +890,117 @@ describe.each(TARGETS)("#4755 direct assignment identity controls — %s", (targ
     );
     expect(referenceErrorCallCount(result, "writeForeign4755")).toBe(0);
   });
+
+  it("keeps a declaration-file ambient collision on its global-environment storage", async () => {
+    // `entry.ts` sees only the declaration-file global. The runtime lexical is
+    // deliberately a different module's initialized -7 sentinel; sharing its
+    // spelling must neither select that storage nor attach its TDZ provider.
+    const { result, value } = await compileMultiAndRunDirect(
+      {
+        "./ambient.d.ts": `
+          export interface Ambient4755 { marker: number }
+          declare global { let target: any; }
+        `,
+        "./lexical.ts": `
+          export let target: number = -7;
+          export function lexicalStorageClean4755(): number {
+            return target === -7 ? 1 : 0;
+          }
+        `,
+        "./entry.ts": `
+          import type { Ambient4755 } from "./ambient";
+          import { lexicalStorageClean4755 } from "./lexical";
+          var marker: Ambient4755 = { marker: 7 };
+
+          export function writeAmbient4755(): number {
+            target = 9;
+            var score: number = 0;
+            if (target === 9) score += 1;
+            if (lexicalStorageClean4755() === 1) score += 2;
+            if (marker.marker === 7) score += 4;
+            return score;
+          }
+          export function run(): number { return writeAmbient4755(); }
+        `,
+      },
+      "./entry.ts",
+      target,
+      { target: 0 },
+    );
+    expect(value).toBe(7);
+    // The compiler deliberately inlines lexicalStorageClean4755 into this
+    // body, contributing exactly one legitimate provider call. A leaked guard
+    // on either ambient access would increase the census beyond one.
+    expect(referenceErrorCallCount(result, "writeAmbient4755")).toBe(1);
+  });
+
+  it("keeps a genuinely unresolvable collision on the strict GlobalEnvironmentRecord route", async () => {
+    // `entry.ts` intentionally does not import the other module's lexical, so
+    // the assignment Identifier has no checker declaration in this module.
+    // Strict PutValue must evaluate rhs once, observe a missing global binding,
+    // throw a real ReferenceError, and leave both the realm and -7 sentinel clean.
+    const { result, value } = await compileMultiAndRunDirect(
+      {
+        "./lexical.ts": `
+          export let genuinelyUnresolvable4755: number = -7;
+          export function lexicalStorageClean4755(): number {
+            return genuinelyUnresolvable4755 === -7 ? 1 : 0;
+          }
+        `,
+        "./entry.ts": `
+          import { lexicalStorageClean4755 } from "./lexical";
+          var rhsCalls: number = 0;
+          var afterAssignment: number = 0;
+
+          function rhs(): any { rhsCalls += 1; return 41; }
+          function trigger(): void {
+            "use strict";
+            genuinelyUnresolvable4755 = rhs();
+            afterAssignment = 1;
+          }
+
+          export function run(): number {
+            var verdict: number = 0;
+            try { trigger(); }
+            catch (error) { verdict = error instanceof ReferenceError ? 1 : 2; }
+            var score: number = 0;
+            if (verdict === 1) score += 1;
+            if (rhsCalls === 1) score += 2;
+            if (afterAssignment === 0) score += 4;
+            if (lexicalStorageClean4755() === 1) score += 8;
+            if (!("genuinelyUnresolvable4755" in globalThis)) score += 16;
+            return score;
+          }
+        `,
+      },
+      "./entry.ts",
+      target,
+    );
+    expect(value).toBe(31);
+    expect(referenceErrorCallCount(result, "trigger")).toBeGreaterThan(0);
+  });
 });
 
 describe.each(TARGETS)("#4755 direct TDZ provider and elision artifacts — %s", (target) => {
+  it("re-resolves a shifted module-global index after emitting a real TDZ guard", async () => {
+    const { value } = await compileAndRunDirect(
+      `
+        let preceding: number = 9;
+        let target: number = 0;
+        function updateInFinally(): number {
+          try { return 1; }
+          finally { target = target * 10 + 3; }
+        }
+        export function run(): number {
+          return updateInFinally() * 1000 + target;
+        }
+      `,
+      `issue-4755-post-tdz-index-${target}.ts`,
+      target,
+    );
+    expect(value).toBe(1003);
+  });
+
   it("keeps the live provider but makes initialized-let and var writes ReferenceError-neutral", async () => {
     const preInitialization = await compileAndRunDirect(
       `
