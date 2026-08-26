@@ -41,6 +41,35 @@ The authoritative JSONL is
 No timeout increase, skip-list expansion, or reclassification can close these
 rows.
 
+## Bounded probe handoff (2026-08-26)
+
+Each probe used a fresh host or standalone process, the harness-flip controls
+(must-pass and must-fail), a 15-second per-file ceiling, and a 45-second outer
+process alarm. The controls reported both directions in every run.
+
+- `byteOffset/detached-buffer.js`: host `1/1 fail` in
+  `.tmp/4761-byteOffset-host-checkpoint.jsonl`; standalone `1/1 fail` in
+  `.tmp/4761-byteOffset-standalone-checkpoint.jsonl`. Both rows report
+  `sample.byteOffset === 8` where the test requires `0` (the earlier standalone
+  attempt was a bounded `RangeError`, not a pass).
+- `for-of/body-put-error.js`: with the exemption temporarily bypassed, host
+  `1/1 pass` in `.tmp/4761-forof-host-resume.jsonl` and standalone `1/1 pass`
+  in `.tmp/4761-forof-standalone-resume.jsonl`. This is not #3122 acceptance:
+  the focused setter-throw and IteratorClose assertions have not been proven,
+  so the `HANGING_TESTS` entry is restored and #3122 remains in progress.
+- `Symbol.toStringTag/detached-buffer.js`: the solo disposition is `1/1 pass`
+  in both lanes (`.tmp/4761-host-after.jsonl` and
+  `.tmp/4761-standalone-after.jsonl`); no fix obligation remains for that row.
+
+The attempted source changes did not flip the owned byteOffset row and were
+rolled back rather than retained as an unproven shared workaround. The issue
+therefore stays `in_progress`; the next implementation handoff is the dynamic
+TypedArray buffer/view identity path, not a timeout or denominator change.
+
+The authoritative standalone denominator remains `11,704` rows:
+`8,402` pass, `2,728` fail, `571` compile errors, `2` compile timeouts, and
+`1` skip in run `20260826-194014`.
+
 ## Implementation plan
 
 1. Run each exact path as a fresh solo process in host and standalone modes,
