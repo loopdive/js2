@@ -148,6 +148,17 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
       ) {
         rhs = rhs.expression;
       }
+      // Element writes were added to this pre-pass after the direct-property
+      // path. Test262's synthetic harness installs many computed methods as
+      // `obj[key] = function () {}`; asking the checker for the contextual
+      // type of those detached function nodes can enter TypeScript's
+      // late-bound-symbol path before their parent symbol exists and throw.
+      // The pre-element-write behavior was to leave these callable carriers to
+      // the dynamic element-write lowering, so retain that proven fallback.
+      if (ts.isElementAccessExpression(node.left) && (ts.isFunctionExpression(rhs) || ts.isArrowFunction(rhs))) {
+        forEachChild(node, visit);
+        return;
+      }
       const rhsType = getTypeAtLocationBounded(ctx.checker, rhs);
       const mayCarryObject =
         ts.isObjectLiteralExpression(rhs) ||
