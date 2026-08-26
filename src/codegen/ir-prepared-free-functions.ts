@@ -1589,6 +1589,11 @@ export function prepareIrBodies(input: {
     classShapes: input.classShapes,
     classShapesById: input.classShapesById,
   });
+  // Inherited class compatibility keys are observed by the legacy class pass
+  // before this combined body build. Reserve their structural aliases before
+  // any prepared component can seal; lowering then only resolves an existing
+  // canonical class ABI contract.
+  input.ctx.programAbiClassCallables?.planInheritedAliases();
   if (!classPopulation && freeFunctionNames.size > 0) {
     prepareClassConstructorSupports(input.ctx, input.classShapes);
   }

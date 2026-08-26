@@ -9,6 +9,7 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
 import {
+  planProgramAbiSupportCallableAlias,
   planProgramAbiSupportCallable,
   planProgramAbiUnitCallable,
   PROGRAM_ABI_CALLABLE_ROLE,
@@ -40,6 +41,46 @@ interface ProgramAbiInheritedClassCallableObservation {
   readonly childClassId: IrClassId;
   readonly canonicalUnitId: IrUnitId;
   readonly displayName: string;
+}
+
+function inheritedClassCallableRole(
+  identityContext: IrPlanningIdentityContext,
+  canonicalUnitId: IrUnitId,
+): { readonly role: string; readonly derivedOrdinal: number } {
+  const terminal = identityContext.terminalByUnitId.get(canonicalUnitId);
+  const ownerId = terminal?.lexicalOwnerId;
+  const classRecord =
+    ownerId === null || ownerId === undefined
+      ? undefined
+      : identityContext.inventory.classes.find((record) => record.id === ownerId);
+  const prefix = classRecord ? `${classRecord.displayName}_` : undefined;
+  const legacyName = terminal?.legacyMatchName;
+  if (!terminal || !prefix || !legacyName?.startsWith(prefix)) {
+    throw new ProgramAbiInvariantError(
+      "missing-source-unit",
+      `inherited class callable ${canonicalUnitId} has no exact legacy class-member identity`,
+    );
+  }
+  const suffix = legacyName.slice(prefix.length);
+  const property = suffix.startsWith("get_") || suffix.startsWith("set_") ? suffix.slice(4) : suffix;
+  const role =
+    terminal.kind === "class-instance-method"
+      ? `class-method-adapter:instance:${suffix}`
+      : terminal.kind === "class-static-method"
+        ? `class-member-adapter:static:${suffix}`
+        : terminal.kind === "class-instance-getter" || terminal.kind === "class-static-getter"
+          ? `class-member-adapter:getter:${property}`
+          : terminal.kind === "class-instance-setter" || terminal.kind === "class-static-setter"
+            ? `class-member-adapter:setter:${property}`
+            : undefined;
+  const derivedOrdinal = identityContext.inventory.allUnits.findIndex((unit) => unit.id === canonicalUnitId);
+  if (!role || derivedOrdinal < 0) {
+    throw new ProgramAbiInvariantError(
+      "missing-source-unit",
+      `inherited class callable ${canonicalUnitId} has no supported class-member role or structural order`,
+    );
+  }
+  return { role, derivedOrdinal };
 }
 
 /** Push and structurally observe one class-owned allocation atomically. */
@@ -381,6 +422,73 @@ export class ProgramAbiClassCallableRegistry {
     }
 
     for (const bindingId of this.supports.keys()) this.planSupport(bindingId, false);
+    this.planInheritedAliases();
+  }
+
+  /**
+   * Reserve every observed inherited compatibility alias before a prepared
+   * component can seal. The legacy class pass creates these aliases while it
+   * is still collecting class bodies, whereas IR lowering may encounter the
+   * inherited target only after the component transaction has started. Plan
+   * the alias from the same exact canonical unit and allocator object up front
+   * so lowering only resolves an existing ABI contract.
+   */
+  planInheritedAliases(): void {
+    for (const aliasesByUnit of this.inheritedAliases.values()) {
+      for (const [canonicalUnitId, observations] of aliasesByUnit) {
+        const alias = observations.at(-1);
+        const func = this.functionForUnit(canonicalUnitId);
+        if (!alias || !func) continue;
+
+        const canonicalObservation = this.units
+          .get(canonicalUnitId)
+          ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
+          .at(-1);
+        if (!canonicalObservation) continue;
+        this.planUnit(canonicalUnitId, canonicalObservation.displayName, func);
+
+        const { role, derivedOrdinal } = inheritedClassCallableRole(this.identityContext, canonicalUnitId);
+        const ref = irSupportFuncRef(alias.childClassId, role, alias.displayName, derivedOrdinal);
+        const aliasBindingId = ref.binding.kind === "support" ? ref.binding.bindingId : undefined;
+        if (!aliasBindingId) {
+          throw new ProgramAbiInvariantError(
+            "invalid-binding-reference",
+            `inherited class callable ${alias.displayName} did not produce a support binding`,
+          );
+        }
+        const existing = this.session.getDraft(aliasBindingId);
+        if (existing) {
+          if (
+            existing.slotPolicy !== "alias" ||
+            existing.aliasOf !== irUnitCallableBindingId(canonicalUnitId) ||
+            existing.intent.kind !== "callable" ||
+            existing.intent.origin !== "support" ||
+            existing.intent.classId !== alias.childClassId
+          ) {
+            throw new ProgramAbiInvariantError(
+              "session-draft-mismatch",
+              `inherited class callable ${alias.displayName} has an incompatible existing ABI alias plan`,
+            );
+          }
+          continue;
+        }
+        const bindingId = planProgramAbiSupportCallableAlias(this.ctx, {
+          ref,
+          anchor: { kind: "class", classId: alias.childClassId },
+          role,
+          roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classMethodAdapter,
+          derivedOrdinal,
+          aliasOf: irUnitCallableBindingId(canonicalUnitId),
+          signature: functionSignature(this.ctx, func),
+        });
+        if (bindingId !== aliasBindingId) {
+          throw new ProgramAbiInvariantError(
+            "invalid-binding-reference",
+            `inherited class callable ${alias.displayName} was not accepted as a Program ABI alias`,
+          );
+        }
+      }
+    }
   }
 
   /** Plan one observed support callable before dependency-complete IR sealing. */
@@ -520,6 +628,30 @@ export class ProgramAbiClassCallableRegistry {
       throw new ProgramAbiInvariantError(
         "invalid-binding-reference",
         `retained class support callable ${canonical.displayName} was not accepted for ${bindingId}`,
+      );
+    }
+  }
+
+  private planUnit(unitId: IrUnitId, displayName: string, func: WasmFunction): void {
+    const expectedBindingId = irUnitCallableBindingId(unitId);
+    if (this.session.hasPlan(expectedBindingId)) {
+      if (!this.session.hasLocator(expectedBindingId, func)) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `class callable ${displayName} is not the exact allocator owned by ${expectedBindingId}`,
+        );
+      }
+      return;
+    }
+    const bindingId = planProgramAbiUnitCallable(this.ctx, {
+      ref: irUnitFuncRef({ unitId, name: displayName }),
+      signature: functionSignature(this.ctx, func),
+      func,
+    });
+    if (bindingId !== expectedBindingId) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `class callable ${displayName} was not accepted for exact unit ${unitId}`,
       );
     }
   }

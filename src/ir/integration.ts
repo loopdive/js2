@@ -7146,12 +7146,21 @@ class ClassRegistry {
   }
 
   /** Rebind a dependency-sealed symbolic member target into this lowering pass. */
-  private preparedMemberTarget(target?: IrFuncRef): IrFuncRef | null {
+  private preparedMemberTarget(target: IrFuncRef | undefined, classId: IrClassId): IrFuncRef | null {
     if (
       target?.binding.kind !== "unit" ||
       !this.ctx.programAbiSession?.hasPlan(irUnitCallableBindingId(target.binding.unitId))
     ) {
       return null;
+    }
+    // An inherited descriptor carries the ancestor's canonical target. The
+    // current class still needs its own compatibility alias, so only reuse a
+    // prepared target when its exact terminal owner is this class. This also
+    // keeps `super.member()` on the parent shape's direct target while routing
+    // `child.member()` through the inherited alias planner.
+    if (this.identityContext) {
+      const terminal = this.identityContext.terminalByUnitId.get(target.binding.unitId);
+      if (terminal?.lexicalOwnerId !== classId) return null;
     }
     const funcIdx = this.unitFuncIdx(target.binding.unitId, target.name);
     if (funcIdx === undefined) {
@@ -7369,20 +7378,35 @@ class ClassRegistry {
         );
       }
 
-      const bindingId = planProgramAbiSupportCallableAlias(this.ctx, {
-        ref,
-        anchor: { kind: "class", classId },
-        role,
-        roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classMethodAdapter,
-        derivedOrdinal,
-        aliasOf,
-        signature,
-      });
-      if (bindingId !== ref.binding.bindingId) {
+      const plannedAlias = session.getDraft(ref.binding.bindingId);
+      if (!plannedAlias) {
+        const bindingId = planProgramAbiSupportCallableAlias(this.ctx, {
+          ref,
+          anchor: { kind: "class", classId },
+          role,
+          roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classMethodAdapter,
+          derivedOrdinal,
+          aliasOf,
+          signature,
+        });
+        if (bindingId !== ref.binding.bindingId) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "resolve",
+            `ir/integration: inherited class ${memberKind} ${classId} / ${memberName} was not accepted as a Program ABI alias`,
+          );
+        }
+      } else if (
+        plannedAlias.slotPolicy !== "alias" ||
+        plannedAlias.aliasOf !== aliasOf ||
+        plannedAlias.intent.kind !== "callable" ||
+        plannedAlias.intent.origin !== "support" ||
+        plannedAlias.intent.classId !== classId
+      ) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "resolve",
-          `ir/integration: inherited class ${memberKind} ${classId} / ${memberName} was not accepted as a Program ABI alias`,
+          `ir/integration: inherited class ${memberKind} ${classId} / ${memberName} has an incompatible preplanned ABI alias`,
         );
       }
       return ref;
@@ -7526,7 +7550,7 @@ class ClassRegistry {
       initFunc,
       instanceOfTags,
       memberFunc: (memberKind: IrClassMemberKind, name: string, target?: IrFuncRef): IrFuncRef => {
-        const preparedTarget = this.preparedMemberTarget(target);
+        const preparedTarget = this.preparedMemberTarget(target, classId);
         if (preparedTarget) return preparedTarget;
         const suffix = memberKind === "getter" ? `get_${name}` : memberKind === "setter" ? `set_${name}` : name;
         const legacyName = `${shape.className}_${suffix}`;
