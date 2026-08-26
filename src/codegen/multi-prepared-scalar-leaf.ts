@@ -13,13 +13,11 @@ import type { FuncHandle, GlobalDef, Instr, WasmFunction } from "../ir/types.js"
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
-import { compileDeclarations } from "./audited-declarations.js";
-import type { ModuleInitMode } from "./declarations.js";
 import { definedFuncAt } from "./func-space.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 import { prepareIrBodies, type PreparedIrFreeFunctionBodies } from "./ir-prepared-free-functions.js";
-import { correlateIrSkippedFunctionNames, type IrExactFunctionClaim } from "./ir-overlay-safety.js";
+import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
 import {
   multiPreparedFunctionValueUseIsCurrent,
   resolveMultiPreparedFunctionValueImportTarget,
@@ -1244,27 +1242,8 @@ export interface EarlyMultiPreparedScalarLeafState<Plan extends MultiPreparedSca
   skippedFunctionUnitIds: ReadonlySet<IrUnitId>;
 }
 
-export function compileMultiPreparedScalarLeafDeclarations<Plan extends MultiPreparedScalarLeafPlan>(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  state: EarlyMultiPreparedScalarLeafState<Plan> | undefined,
-  moduleInitMode: ModuleInitMode,
-): void {
-  const skippedNames = compileDeclarations(
-    ctx,
-    sourceFile,
-    state?.route?.preparedFreeFunctions.skipBodies,
-    state?.route?.preparedFreeFunctions.preserveBodies,
-    undefined,
-    moduleInitMode,
-  );
-  if (state?.route) {
-    state.skippedFunctionUnitIds = correlateIrSkippedFunctionNames(
-      state.route.preparedFreeFunctions.requestedSkipProjection,
-      skippedNames ?? [],
-    ).unitIds;
-  }
-}
+/** Additional name-keyed body skips owned by a whole-program component. */
+export { compileMultiPreparedScalarLeafDeclarations } from "./multi-prepared-body-skips.js";
 
 /**
  * Plan every candidate-bearing source at the shared pre-body seam, prove that

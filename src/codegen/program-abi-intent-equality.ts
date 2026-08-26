@@ -13,6 +13,8 @@ export function programAbiIntentsEqual(a: ProgramAbiIntent, b: ProgramAbiIntent)
       a.unitId === b.unitId &&
       a.classId === b.classId &&
       a.sourceId === b.sourceId &&
+      a.aliasKind === b.aliasKind &&
+      a.targetUnitId === b.targetUnitId &&
       a.capabilityId === b.capabilityId &&
       a.providerId === b.providerId &&
       a.signature.params.length === b.signature.params.length &&

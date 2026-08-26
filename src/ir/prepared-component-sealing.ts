@@ -327,7 +327,14 @@ function assertOverlaidComponent(
 function includePreparedDependencies(
   scope: PreparedProgramAbiScopeTransaction,
   component: PreparedComponentDependencyEvidence,
+  explicitBindingIds: Iterable<IrBindingId> = [],
 ): void {
+  const includedBindingIds = new Set<IrBindingId>();
+  const includeBinding = (bindingId: IrBindingId): void => {
+    if (includedBindingIds.has(bindingId)) return;
+    scope.includeBinding(bindingId);
+    includedBindingIds.add(bindingId);
+  };
   const requestedDependencies = new Map<IrBindingId, typeof component.abiDependencies>();
   for (const dependency of component.abiDependencies) {
     if (
@@ -344,7 +351,7 @@ function includePreparedDependencies(
   for (const [bindingId, dependencies] of requestedDependencies) {
     const borrowed = dependencies.filter((dependency) => dependency.borrowing !== undefined);
     if (borrowed.length === 0) {
-      scope.includeBinding(bindingId);
+      includeBinding(bindingId);
       continue;
     }
     if (borrowed.length !== dependencies.length) {
@@ -402,7 +409,9 @@ function includePreparedDependencies(
         valueGlobalBindingId: first.valueGlobalBindingId,
       });
     }
+    includedBindingIds.add(bindingId);
   }
+  for (const bindingId of explicitBindingIds) includeBinding(bindingId);
 }
 
 export function sealDependencyCompletePreparedComponents(
@@ -411,6 +420,7 @@ export function sealDependencyCompletePreparedComponents(
     readonly entries: readonly PreparedComponentArtifactEntry[];
     readonly inventory: IrUnitInventory;
     readonly callableImports: ReadonlyMap<string, Import>;
+    readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
     readonly onSealFailure: PreparedComponentSealFailureHandler;
   },
 ): ReadonlyMap<IrUnitId, string> {
@@ -540,7 +550,13 @@ export function sealDependencyCompletePreparedComponents(
             component.failures,
           );
         }
-        includePreparedDependencies(scope, sealedComponent);
+        includePreparedDependencies(
+          scope,
+          sealedComponent,
+          component.terminalUnitIds.flatMap((terminalUnitId) => [
+            ...(input.preparedBindingIdsByTerminalUnitId?.get(terminalUnitId) ?? []),
+          ]),
+        );
         if (injectedComponentIds.has(component.id)) {
           throw new InjectedPreparedComponentSealFailure(component.id);
         }
