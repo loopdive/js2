@@ -63,11 +63,13 @@ runner's own `wrapTest` and reports the runner's own verdict.
 `src/codegen/array-includes-search-value.ts` (leaf module — `array-methods.ts`
 is at its god-file cap) owns the operand:
 
-- **absent argument** → emit `undefined` when the element vec is `externref`
-  (where SameValueZero can genuinely match a hole read as `undefined`);
-  otherwise force the scan comparison to a constant `0`. Leaving `valTmp` at its
-  zero default would compare against f64 `0` and make `[0].includes()` wrongly
-  answer `true`.
+- **absent argument** → emit whatever an explicit `undefined` would produce for
+  this element type, so the two spellings cannot disagree: a real `undefined` in
+  an `externref` vec, `f64` NaN in a numeric vec (a hole reads as NaN there, and
+  the both-NaN arm of the comparison is what makes `[, , , 42, , ].includes()`
+  answer `true`). Any other element type forces the scan comparison to a
+  constant `0`; leaving `valTmp` at its zero default would compare against `0`
+  and make `[0].includes()` wrongly answer `true`.
 - **argument whose static `typeof` tag cannot be a number**, against an
   `i32`/`f64` element vec → evaluate it for side effects, drop it, and force the
   comparison to `0`. §7.2.12 compares `Type(x)` before value, so no such value
@@ -87,11 +89,44 @@ compile_error to a genuine wrong answer.
 
 ## Acceptance criteria
 
+Measured by running the ES2016 feature set (147 files tagged
+`Array.prototype.includes` / `exponentiation` / `u180e`) through the runner's own
+`runTest262File`: **103 → 104 pass, no regressions.**
+
 - [x] `built-ins/Array/prototype/includes/no-arg.js` passes
 - [x] `built-ins/Array/prototype/includes/samevaluezero.js` passes
 - [x] `built-ins/Array/prototype/includes/search-not-found-returns-false.js` passes
-- [x] `tests/equivalence/array-includes-no-arg.test.ts` — 9 cases, incl. the
-      coercion traps (`"42"`, `true`/`false`, `null`) and argument side effects
+- [x] `built-ins/Array/prototype/includes/sparse.js` still passes — it briefly
+      did NOT (see below)
+- [x] `tests/equivalence/array-includes-no-arg.test.ts` — 10 cases, incl. the
+      coercion traps (`"42"`, `true`/`false`, `null`), argument side effects, and
+      the sparse-hole guard
+
+`length-zero-returns-false.js` does **not** pass. Its no-arg assertion is fixed,
+but a later assertion in the same file ("length is checked before
+ToInteger(fromIndex)") exercises the array-like `.call` path and still fails —
+it belongs to the bucket below, not here. An earlier draft of this issue and its
+commit message claimed the row passed; that came from judging the row by whether
+it compiled rather than by running it, which is precisely the mistake
+`run-test262-row.mts` now guards against (its verdict was corrected to mirror the
+runner: an error-severity diagnostic is a compile_error even when a binary came
+out).
+
+## A regression this change introduced, and the fix
+
+The first cut listed `"undefined"` in `NEVER_A_NUMBER`, forcing
+`includes(undefined)` false against a numeric vec. That flipped
+`built-ins/Array/prototype/includes/sparse.js` from **pass to fail**: per
+§23.1.3.16 step 7a holes are read with `Get`, which returns `undefined`, so
+`[, , , 42, , ].includes(undefined)` is `true`. In an f64 vec a hole reads as NaN
+and `undefined` coerces to NaN, so the pre-existing both-NaN arm of the
+SameValueZero comparison was already producing the right answer — and the new
+predicate overrode it.
+
+Caught only by running the edition set before and after against `origin/main`,
+not by the targeted rows. The encoding stays imprecise in the other direction
+(`[NaN].includes(undefined)` wrongly answers `true`); that is pre-existing and
+out of scope here.
 
 ## Known limitations
 

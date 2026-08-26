@@ -11,8 +11,18 @@ import { emitUndefined } from "./expressions/late-imports.js";
  *
  * "number" and "mixed" are absent deliberately: both may match, so they take the
  * ordinary compile-into-`valTmp` path.
+ *
+ * **"undefined" is absent, and that is load-bearing.** A HOLE in an f64 vec
+ * reads as NaN, and `undefined` coerces to f64 NaN too, so the existing
+ * both-NaN arm of the SameValueZero comparison is what makes
+ * `[, , , 42, , ].includes(undefined)` answer true (test262 `includes/sparse.js`,
+ * §23.1.3.16 step 7a — holes are read with Get, which returns undefined).
+ * Listing "undefined" here forces that comparison false and breaks the row.
+ * The encoding is imprecise in the other direction — `[NaN].includes(undefined)`
+ * wrongly answers true — but that is pre-existing, orthogonal, and not what this
+ * predicate is for.
  */
-const NEVER_A_NUMBER = new Set(["string", "boolean", "bigint", "symbol", "undefined", "object", "function"]);
+const NEVER_A_NUMBER = new Set(["string", "boolean", "bigint", "symbol", "object", "function"]);
 
 /**
  * Emit the `searchElement` operand for `Array.prototype.includes` into `valTmp`.
@@ -23,12 +33,14 @@ const NEVER_A_NUMBER = new Set(["string", "boolean", "bigint", "symbol", "undefi
  * test262's `includes/no-arg.js` and `includes/length-zero-returns-false.js`
  * report as "Expected SameValue(«undefined», «false»)".
  *
- * `undefined` is representable only in an externref element vec, where
- * SameValueZero can genuinely match a hole read as undefined (`[,].includes()` is
- * true). In a numeric or ref element vec no stored element can BE undefined, so
- * the caller must force the comparison false — this returns `true` to say so.
- * That is load-bearing: leaving `valTmp` at its zero default would compare
- * against f64 `0` and make `[0].includes()` wrongly answer true.
+ * The absent argument is emitted as whatever an explicit `undefined` would
+ * produce for this element type, so the two spellings cannot disagree: the
+ * externref vec gets a real `undefined` (SameValueZero matches a hole read as
+ * undefined), and the f64 vec gets NaN (which matches a hole, per the note on
+ * NEVER_A_NUMBER above). Any other element type can hold no value that is
+ * `undefined`, so the caller must force the comparison false — this returns
+ * `true` to say so. That is load-bearing: leaving `valTmp` at its zero default
+ * would compare against `0` and make `[0].includes()` wrongly answer true.
  *
  * @returns true when the scan comparison must be replaced by a constant 0.
  */
@@ -58,8 +70,13 @@ export function emitIncludesSearchValue(
     fctx.body.push({ op: "local.set", index: valTmp });
     return false;
   }
-  if (valType.kind !== "externref") return true;
-  emitUndefined(ctx, fctx);
+  if (valType.kind === "externref") {
+    emitUndefined(ctx, fctx);
+  } else if (valType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: Number.NaN });
+  } else {
+    return true;
+  }
   fctx.body.push({ op: "local.set", index: valTmp });
   return false;
 }

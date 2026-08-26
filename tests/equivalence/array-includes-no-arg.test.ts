@@ -53,6 +53,25 @@ describe("Array.prototype.includes with no argument (ES2016)", () => {
     );
   });
 
+  // §23.1.3.16 step 7a reads each index with Get, which returns `undefined` for
+  // a hole — so a sparse array containing only holes and numbers still includes
+  // `undefined`. In an f64 vec a hole reads as NaN and `undefined` coerces to
+  // NaN, so the both-NaN arm of the SameValueZero comparison is what carries
+  // this. Forcing the comparison false for a statically-`undefined` search value
+  // broke it (test262 `includes/sparse.js` regressed from pass to fail); this
+  // pins both spellings — explicit `undefined` and the absent argument.
+  it("is true for a hole in a numeric sparse array", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        // No annotation: \`number[]\` would make the holes a hard TS2322, and
+        // test262 is plain JS with no annotation to begin with.
+        var arr = [, , , 42, , ];
+        return (arr.includes(undefined) ? 2 : 0) + (arr.includes() ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
   it("leaves the one-argument form unchanged", async () => {
     await assertEquivalent(
       `export function test(): number {
