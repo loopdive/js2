@@ -4,7 +4,7 @@ title: "Prepared callable-provider plans leak across an aborted component seal"
 status: in-progress
 sprint: Backlog
 created: 2026-08-09
-updated: 2026-08-26
+updated: 2026-08-27
 priority: medium
 horizon: m
 feasibility: hard
@@ -574,3 +574,32 @@ The detached `/private/tmp/js2-4260-baseline-debug` worktree contains deliberate
 diagnostic edits and is not an implementation source. The cross-lane stop
 point and resume order are also recorded in
 `plan/agent-context/ir-migration-handover-2026-08-26.md` on draft PR #5000.
+
+## 2026-08-27 dispatch update — B.7 atomic fallback proof
+
+Keep this tracker in progress until the #4755 direct-TDZ prerequisite is
+verified on live `upstream/main`. Then dispatch the B.7 behavioral checkpoint
+against the descriptor contract above; do not reopen the descriptor design or
+add an issue-specific provider cleanup path.
+
+The implementation task is narrowly defined:
+
+1. Use one sole `__new_ReferenceError` requester in a prepared class-setter
+   component. Inject the failure immediately before component seal and prove
+   typed Unsupported plus exactly one direct emission in both GC and
+   standalone. The uninjected/direct controls must retain their established
+   outcomes.
+2. Compare the aborted artifacts with their direct controls: no unused host
+   error import, no orphan standalone constructor, no stale provider/import
+   registry row, and no post-claim error. Keep the healthy two-component
+   shared-provider control sealed with one canonical provider.
+3. Re-run the provider/import planning, scoped dependency, transaction, direct
+   fallback, TypeScript 7/5, layering, fallback/oracle/coercion/optimization,
+   dead-export, LOC, function-growth, and ordinary hook gates. Reject empty
+   receipts and value-only success; the counters and public outcomes are part
+   of the proof.
+
+The worker must not touch #3521's linked-Parser selector, #1719's CPR route,
+global baselines, or the shared issue-plan files outside this tracker. Land
+the behavioral checkpoint only after its descriptor predecessor is on live
+main and the exact injection matrix is green.
