@@ -15011,16 +15011,11 @@ assert._isSameValue = isSameValue;
       //     to a real JS array so native can iterate it.
       //   - Other primitives (number, boolean, symbol) → pass through; native
       //     rejects with TypeError per spec.
-      // (#2671/#4736) A USER THENABLE value — a wasm object-literal `{ then:
-      // function (onFulfilled, onRejected) {…} }` — must cross into native
-      // Promise consumers with a host-visible callable `then`. A RAW WasmGC
-      // struct exposes no `.then`, so native PromiseResolve/PerformPromiseAll
-      // cannot invoke it. Wrap ONLY structs whose own `then` resolves to a
-      // callable (host fn or wasm closure) in the `_wrapForHost` live-mirror
-      // proxy — its `get` bridges the closure field to a host-callable, and the
-      // #2015 receiver-unwrap in the method bridge restores the raw struct as
-      // wasm-side `this`. Everything else passes through RAW, preserving
-      // fulfilled-value identity for non-thenable objects.
+      // (#2671/#4736) Wasm object-literal thenables need a host-callable `then` at
+      // native Promise boundaries; raw structs expose none. Wrap only structs whose
+      // own `then` is callable in the live mirror: its get bridges the closure and
+      // #2015 receiver unwrapping restores raw `this`. Non-thenables stay raw to
+      // preserve fulfilled-value identity.
       const _wrapThenable = (v: any): any => {
         if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
         const exports = callbackState?.getExports();
