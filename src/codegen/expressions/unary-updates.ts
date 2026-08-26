@@ -247,7 +247,7 @@ function compileImplicitGlobalIncDec(
   arithOp: "f64.add" | "f64.sub",
   mode: "prefix" | "postfix",
 ): ValType | null | undefined {
-  if (!ctx.sloppyImplicitGlobals?.has(id.text)) return undefined;
+  if (!isSloppyImplicitGlobalBinding(ctx, fctx, id.text)) return undefined;
 
   if (!emitImplicitGlobalRead(ctx, fctx, id.text)) {
     reportError(ctx, id, `Failed to read implicit global ${id.text} for update`);
@@ -1074,7 +1074,7 @@ function compilePrefixUpdate(
   // already exists on the realm global object and is handled by the dedicated
   // read-modify-write arm below.
   const updateOperand = unwrapParens(expr.operand);
-  if (!(ts.isIdentifier(updateOperand) && ctx.sloppyImplicitGlobals?.has(updateOperand.text))) {
+  if (!(ts.isIdentifier(updateOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, updateOperand.text))) {
     const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, updateOperand);
     if (unresolvablePre !== undefined) return unresolvablePre;
   }
@@ -1462,7 +1462,7 @@ function compilePostfixUnary(
     const w = compileWithUpdateExpression(ctx, fctx, postOperand, isIncrement, /*prefix*/ false);
     if (w !== undefined) return w;
   }
-  if (!(ts.isIdentifier(postOperand) && ctx.sloppyImplicitGlobals?.has(postOperand.text))) {
+  if (!(ts.isIdentifier(postOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, postOperand.text))) {
     const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
     if (unresolvablePost !== undefined) return unresolvablePost;
   }
