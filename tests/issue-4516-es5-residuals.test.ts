@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { selectCachedRuntimeEvalProvider } from "../scripts/runtime-eval-provider.mjs";
 import { compile } from "../src/index.js";
 import { runTest262File } from "./test262-runner.js";
 
@@ -13,14 +14,24 @@ const TEST262_ROOT = "test262";
 const TEST262 = join(TEST262_ROOT, "test");
 const TEST262_READY = existsSync(join(TEST262_ROOT, "harness", "assert.js"));
 
-const EXACT_ROWS = [
-  "language/statements/with/S12.10_A1.5_T1.js",
+const EXACT_HOST_FREE_ROWS = [
   "language/statements/function/S13.2.2_A11.js",
   "built-ins/Object/S9.9_A6.js",
   "built-ins/Function/15.3.5.4_2-95gs.js",
+] as const;
+
+const EXACT_RUNTIME_EVAL_ROWS = [
+  "language/statements/with/S12.10_A1.5_T1.js",
   "annexB/language/eval-code/direct/func-switch-case-eval-func-init.js",
   "annexB/language/eval-code/direct/func-switch-case-eval-func-existing-var-no-init.js",
 ] as const;
+
+let liveQuickjsAvailable = false;
+try {
+  liveQuickjsAvailable = selectCachedRuntimeEvalProvider().engine === "quickjs";
+} catch {
+  liveQuickjsAvailable = false;
+}
 
 async function runStandaloneModule(source: string): Promise<Record<string, any>> {
   const result = await compile(source, {
@@ -50,9 +61,16 @@ async function runStandaloneScript(source: string): Promise<void> {
 }
 
 describe.skipIf(!TEST262_READY)("ES5 standalone residual cluster", () => {
-  it.each(EXACT_ROWS)("passes the exact residual row %s", async (file) => {
+  it.each(EXACT_HOST_FREE_ROWS)("passes the exact residual row %s", async (file) => {
     const result = await runTest262File(join(TEST262, file), "issue-4516-es5-residuals", 120_000, "standalone");
     expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
+  });
+
+  describe.skipIf(!liveQuickjsAvailable)("runtime-eval exact rows", () => {
+    it.each(EXACT_RUNTIME_EVAL_ROWS)("passes %s", async (file) => {
+      const result = await runTest262File(join(TEST262, file), "issue-4516-es5-residuals", 120_000, "standalone");
+      expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
+    });
   });
 
   it("keeps a closed object for-in on its static path", async () => {
