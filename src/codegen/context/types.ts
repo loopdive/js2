@@ -1808,6 +1808,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   holeTypeIdx: number;
   holeGlobalIdx: number | undefined;
+  /** True only when native Array.prototype.concat requested the hole carrier. */
+  usesNativeConcatHoleSubstrate: boolean;
   /**
    * (#2970) `import.meta` per-module object identity. One shared zero-field
    * `$ImportMeta` struct type, plus a DISTINCT immutable global instance per

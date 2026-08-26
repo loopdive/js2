@@ -333,6 +333,7 @@ export function compileArrayConcatNativeSpec(
   const externref: ValType = { kind: "externref" };
   const deps = prepareConcatSpec(ctx, fctx);
   if (deps === undefined) return undefined;
+  ctx.usesNativeConcatHoleSubstrate = true;
   const locals = allocateConcatLocals(fctx);
   emitConcatOutputInit(ctx, fctx, deps, locals);
 

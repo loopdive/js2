@@ -8079,7 +8079,7 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  * output byte-neutral.
  */
 export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.holeGlobalIdx === undefined) return;
+  if (!ctx.standalone || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;
 

@@ -188,6 +188,7 @@ export function createCodegenContext(
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
+    usesNativeConcatHoleSubstrate: false, // (#4922) finalizer demand, narrower than general array holes
     importMetaTypeIdx: undefined, // (#2970) shared $ImportMeta struct type
     importMetaGlobals: new Map(), // (#2970) per-source-file import.meta object globals
     inModuleInitFlagReads: undefined, // (#2800) recorded __in_module_init flag reads
