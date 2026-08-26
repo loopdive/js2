@@ -12,10 +12,15 @@ import type {
   IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
-import type { IrProgramCallableBindingGraph, IrProgramCallableUse } from "../ir/program-callable-bindings.js";
+import type {
+  IrProgramCallableBindingGraph,
+  IrProgramCallableBindingRecord,
+  IrProgramCallableUse,
+} from "../ir/program-callable-bindings.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import { buildIrLegacyUnitProjection, type IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrClosureSignature, IrFuncRef, IrType } from "../ir/nodes.js";
+import { planProgramAbiModuleCallableAlias } from "./program-abi-planning.js";
 import type { IrSelection } from "../ir/select.js";
 import { ts } from "../ts-api.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
@@ -55,6 +60,101 @@ export interface MultiPreparedCallableComponentPlanningInput {
     originalNameBySyntheticName: ReadonlyMap<string, string>,
   ) => void;
   readonly rewriteAggregateCallableRef: (ref: IrFuncRef, namesByUnitId: ReadonlyMap<IrUnitId, string>) => IrFuncRef;
+}
+
+function planAggregateModuleCallableAliases(
+  ctx: CodegenContext,
+  group: readonly MultiPreparedCallableCandidate[],
+  graph: IrProgramCallableBindingGraph,
+  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingRecord>,
+): ReadonlySet<IrBindingId> {
+  const sourceCallables = ctx.programAbiSourceCallables;
+  if (!sourceCallables) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "cross-source callable component requires the canonical source callable registry",
+    );
+  }
+  const groupUnitIds = new Set(group.map((candidate) => candidate.unitId));
+  sourceCallables.planUnits([...groupUnitIds]);
+
+  const aliasesById = new Map<IrBindingId, IrProgramCallableBindingRecord>();
+  for (const use of graph.uses) {
+    if (!groupUnitIds.has(use.ownerUnitId) || !groupUnitIds.has(use.targetUnitId)) continue;
+    let record = recordsByBindingId.get(use.bindingId);
+    const visited = new Set<IrBindingId>();
+    while (record && record.kind !== "source") {
+      if (visited.has(record.bindingId)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `callable component encountered an alias cycle at ${record.bindingId}`,
+        );
+      }
+      visited.add(record.bindingId);
+      if (record.targetUnitId !== use.targetUnitId) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `callable alias ${record.bindingId} changed canonical target from ${use.targetUnitId} to ${record.targetUnitId}`,
+        );
+      }
+      aliasesById.set(record.bindingId, record);
+      record = recordsByBindingId.get(record.targetBindingId);
+    }
+    if (!record || record.kind !== "source" || record.targetUnitId !== use.targetUnitId) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable alias ${use.bindingId} has no exact source target for ${use.targetUnitId}`,
+      );
+    }
+  }
+
+  const signatureForUnit = (unitId: IrUnitId) => {
+    const func = sourceCallables.functionForUnit(unitId);
+    const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
+    if (!func || !signature || signature.kind !== "func") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable alias target ${unitId} has no exact source callable signature`,
+      );
+    }
+    return signature;
+  };
+  const planned = new Set<IrBindingId>();
+  const visiting = new Set<IrBindingId>();
+  const planAlias = (record: IrProgramCallableBindingRecord): void => {
+    if (planned.has(record.bindingId)) return;
+    if (visiting.has(record.bindingId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable component encountered an alias cycle at ${record.bindingId}`,
+      );
+    }
+    visiting.add(record.bindingId);
+    const target = recordsByBindingId.get(record.targetBindingId);
+    if (!target) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable alias ${record.bindingId} targets missing graph binding ${record.targetBindingId}`,
+      );
+    }
+    if (target.kind !== "source") planAlias(target);
+    planProgramAbiModuleCallableAlias(ctx, {
+      record,
+      aliasOf: record.targetBindingId,
+      signature: signatureForUnit(record.targetUnitId),
+    });
+    visiting.delete(record.bindingId);
+    planned.add(record.bindingId);
+  };
+  for (const record of aliasesById.values()) planAlias(record);
+  return new Set(planned);
 }
 
 export function prepareMultiPreparedCallableGroup(
@@ -178,6 +278,10 @@ export function prepareMultiPreparedCallableGroup(
     const integrationSourceFiles = input.multiAst.sourceFiles.filter((sourceFile) =>
       group.some((candidate) => candidate.sourceFile === sourceFile),
     );
+    const moduleAliasBindingIds = planAggregateModuleCallableAliases(input.ctx, group, graph, recordsByBindingId);
+    const preparedBindingIdsByTerminalUnitId = new Map<IrUnitId, ReadonlySet<IrBindingId>>([
+      [group[0]!.unitId, moduleAliasBindingIds],
+    ]);
     for (const candidate of group) attempted.add(candidate.unitId);
     input.ctx.irProgramCallableAttemptedUnitIds = attempted;
 
@@ -188,7 +292,12 @@ export function prepareMultiPreparedCallableGroup(
       overrides,
       undefined,
       loweringPlans,
-      { sealPreparedComponents: true, integrationSourceFiles, atomicComponent: true },
+      {
+        sealPreparedComponents: true,
+        integrationSourceFiles,
+        atomicComponent: true,
+        preparedBindingIdsByTerminalUnitId,
+      },
     );
     if (report.errors.length > 0) {
       if ((report.compiledArtifactEvidence?.length ?? 0) !== 0 || report.compiled.length !== 0) {

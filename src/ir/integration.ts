@@ -528,6 +528,12 @@ export interface IrIntegrationOptions {
    * in any terminal owner withdraws the whole integration before patching.
    */
   readonly atomicComponent?: boolean;
+  /**
+   * Exact non-source bindings staged by a whole-program component producer.
+   * The sealing transaction includes these aliases with the component's
+   * source-callable closure; they never become an unrelated global dependency.
+   */
+  readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
 }
 
 interface BuiltFn {
@@ -704,6 +710,7 @@ function prepareClosureTransaction(input: {
   readonly inventory: IrUnitInventory;
   readonly callableImports: ReadonlyMap<string, Import>;
   readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
+  readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
 }): PreparedClosureTransaction {
   const refCells = new RefCellRegistry(input.ctx);
   let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
@@ -724,6 +731,9 @@ function prepareClosureTransaction(input: {
     closureSupport,
     classAccessorWritebacks,
     callableImports: input.callableImports,
+    ...(input.preparedBindingIdsByTerminalUnitId
+      ? { preparedBindingIdsByTerminalUnitId: input.preparedBindingIdsByTerminalUnitId }
+      : {}),
     onSealFailure: input.onSealFailure,
   });
   return {
@@ -2806,6 +2816,9 @@ export function compileIrPathFunctions(
         originalArtifactUnitIds,
         inventory: moduleBindingIdentityContext.inventory,
         callableImports: importedCallableCatalog,
+        ...(options.preparedBindingIdsByTerminalUnitId
+          ? { preparedBindingIdsByTerminalUnitId: options.preparedBindingIdsByTerminalUnitId }
+          : {}),
         onSealFailure: (terminalUnitId, error) => {
           const owner = activeOwnerProjection.requireUnit(terminalUnitId);
           markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve");

@@ -5,7 +5,7 @@ import type { CodegenContext, FunctionContext } from "../codegen/context/types.j
 import { definedFuncAt, funcSignatureOf, isImportFuncIdx } from "../codegen/func-space.js";
 import { prepareStandaloneExternrefToNumberProviders } from "../codegen/tonumber-fast-paths.js";
 import { irCallableBindingKey, irImportFuncRef, irRuntimeFuncRef, irUnitFuncRef } from "./callable-bindings.js";
-import type { IrUnitId, IrUnitInventory } from "./identity.js";
+import type { IrBindingId, IrUnitId, IrUnitInventory } from "./identity.js";
 import {
   asVal,
   forEachInstrDeep,
@@ -298,6 +298,7 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
   readonly closureSupport: PreparedComponentClosureSupportEvidence;
   readonly classAccessorWritebacks: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
   readonly callableImports: ReadonlyMap<string, Import>;
+  readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
   readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
 }): CompilerTimerShimLateSealTransaction {
   const timerTerminalUnitIds = compilerTimerShimTerminalUnitIds(input.inventory);

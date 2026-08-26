@@ -180,6 +180,7 @@ export function sealDependencyCompletePreparedComponents(
     readonly entries: readonly PreparedComponentArtifactEntry[];
     readonly inventory: IrUnitInventory;
     readonly callableImports: ReadonlyMap<string, Import>;
+    readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
     readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
   },
 ): ReadonlyMap<IrUnitId, string> {
@@ -355,6 +356,12 @@ export function sealDependencyCompletePreparedComponents(
       const scope = session.beginPreparedComponentScope(component.id, component.terminalUnitIds);
       let sealStarted = false;
       try {
+        const includedBindingIds = new Set<IrBindingId>();
+        const includeBinding = (bindingId: IrBindingId): void => {
+          if (includedBindingIds.has(bindingId)) return;
+          scope.includeBinding(bindingId);
+          includedBindingIds.add(bindingId);
+        };
         const requestedDependencies = new Map<IrBindingId, typeof component.abiDependencies>();
         for (const dependency of component.abiDependencies) {
           if (
@@ -371,7 +378,7 @@ export function sealDependencyCompletePreparedComponents(
         for (const [bindingId, dependencies] of requestedDependencies) {
           const borrowed = dependencies.filter((dependency) => dependency.borrowing !== undefined);
           if (borrowed.length === 0) {
-            scope.includeBinding(bindingId);
+            includeBinding(bindingId);
             continue;
           }
           if (borrowed.length !== dependencies.length) {
@@ -428,6 +435,12 @@ export function sealDependencyCompletePreparedComponents(
               consumerUnitIds,
               valueGlobalBindingId: first.valueGlobalBindingId,
             });
+          }
+          includedBindingIds.add(bindingId);
+        }
+        for (const terminalUnitId of component.terminalUnitIds) {
+          for (const bindingId of input.preparedBindingIdsByTerminalUnitId?.get(terminalUnitId) ?? []) {
+            includeBinding(bindingId);
           }
         }
         if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE === "1") {

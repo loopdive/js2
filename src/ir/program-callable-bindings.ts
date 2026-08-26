@@ -19,6 +19,8 @@ export interface IrProgramCallableBindingRecord {
   readonly bindingId: IrBindingId;
   readonly sourceId: IrSourceId;
   readonly declarationOrdinal: number;
+  /** Stable ordinal among the source's callable bindings of this graph kind. */
+  readonly bindingOrdinal: number;
   readonly kind: IrProgramCallableBindingKind;
   readonly localName: string;
   readonly targetBindingId: IrBindingId;
@@ -92,6 +94,7 @@ interface AliasDraft {
   readonly targetModuleFile?: ts.SourceFile;
   readonly targetModuleExportName?: string;
   readonly fromExportStar: boolean;
+  bindingOrdinal?: number;
   bindingId?: IrBindingId;
 }
 
@@ -345,6 +348,7 @@ function collectCallableGraphPopulation(
         bindingId,
         sourceId: source.id,
         declarationOrdinal: statementIndex,
+        bindingOrdinal: statementIndex,
         kind: "source" as const,
         localName,
         targetBindingId: bindingId,
@@ -665,6 +669,7 @@ function resolveCallableAliasDrafts(
     });
     const role = drafts[0]?.kind === "import-alias" ? "module-import-callable" : "module-export-callable";
     drafts.forEach((draft, ordinal) => {
+      draft.bindingOrdinal = ordinal;
       draft.bindingId = createIrBindingId({
         ownerId: draft.sourceId,
         domain: "callable",
@@ -684,6 +689,7 @@ function resolveCallableAliasDrafts(
       bindingId: draft.bindingId!,
       sourceId: draft.sourceId,
       declarationOrdinal: draft.declarationOrdinal,
+      bindingOrdinal: draft.bindingOrdinal!,
       kind: draft.kind,
       localName: draft.localName,
       targetBindingId,
