@@ -57,7 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import type { IrClassId, IrUnitId } from "./identity.js";
+import { irTopLevelFunctionLegacyName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
   isUnpreparedAsyncCallee,
@@ -724,12 +724,12 @@ export function planIrCompilation(
     for (const stmt of sourceFile.statements) {
       if (
         ts.isFunctionDeclaration(stmt) &&
-        stmt.name &&
         stmt.body &&
         !stmt.asteriskToken &&
         stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
       ) {
-        asyncNames.add(stmt.name.text);
+        const legacyName = irTopLevelFunctionLegacyName(stmt);
+        if (legacyName !== undefined) asyncNames.add(legacyName);
       }
     }
     currentAsyncDeclNames = asyncNames;
@@ -761,7 +761,9 @@ export function planIrCompilation(
   // below fills `declByName` incrementally, which would miss later-declared
   // callees). Module-level for the usual isPhase1* threading reason.
   for (const stmt of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) declByName.set(stmt.name.text, stmt);
+    if (!ts.isFunctionDeclaration(stmt) || !stmt.body) continue;
+    const legacyName = irTopLevelFunctionLegacyName(stmt);
+    if (legacyName !== undefined) declByName.set(legacyName, stmt);
   }
   configureDynamicScanSource(sourceFile, declByName);
   for (const stmt of sourceFile.statements) {
@@ -769,12 +771,13 @@ export function planIrCompilation(
     // Ambient declarations and overload signatures have no executable body
     // and no direct-codegen slot. Only the implementation joins selection.
     if (!stmt.body) continue;
-    if (!stmt.name) {
+    const legacyName = irTopLevelFunctionLegacyName(stmt);
+    if (legacyName === undefined) {
       if (trackFallbacks) unnamedCount++;
       continue;
     }
-    declByName.set(stmt.name.text, stmt);
-    const recursiveDecision = options?.recursiveTypeEvidence?.decisions.get(stmt.name.text);
+    declByName.set(legacyName, stmt);
+    const recursiveDecision = options?.recursiveTypeEvidence?.decisions.get(legacyName);
     const reason =
       recursiveDecision?.accepted === false
         ? "recursive-type-evidence"
@@ -784,13 +787,13 @@ export function planIrCompilation(
             ? null
             : "param-shape-rejected"; // sentinel — not used when trackFallbacks=false
     if (reason === null) {
-      individuallyClaimed.add(stmt.name.text);
+      individuallyClaimed.add(legacyName);
     } else if (trackFallbacks) {
-      fallbackReasons.set(stmt.name.text, reason);
+      fallbackReasons.set(legacyName, reason);
       if (reason === "recursive-type-evidence" && recursiveDecision?.detail) {
-        fallbackDetails.set(stmt.name.text, recursiveDecision.detail);
+        fallbackDetails.set(legacyName, recursiveDecision.detail);
       } else {
-        captureShapeDetail(stmt.name.text, reason);
+        captureShapeDetail(legacyName, reason);
       }
     }
   }
@@ -1647,7 +1650,8 @@ function prepareDynamicEqualitySubject(fn: IrClaimableSubject, isMethod: boolean
   currentStableFunctionCallSubject = null;
   currentStableDynamicRootNames = new Set<string>();
   currentNumericParamNames = new Set<string>();
-  currentSubjectFunctionName = !isMethod && ts.isFunctionDeclaration(fn) && fn.name !== undefined ? fn.name.text : null;
+  currentSubjectFunctionName =
+    !isMethod && ts.isFunctionDeclaration(fn) ? (irTopLevelFunctionLegacyName(fn) ?? null) : null;
   currentSubjectReturnsBoolean =
     currentSubjectFunctionName !== null &&
     fn.body !== undefined &&
@@ -1769,11 +1773,11 @@ function whyNotIrClaimable(
   // (#2856 Step-1) Clear any stale reject detail from a prior subject; the body
   // walk below repopulates it via `shapeNo` when SHAPE_DIAG_ON.
   if (SHAPE_DIAG_ON) shapeRejectDetail = null;
-  // Top-level FunctionDeclaration must be named; constructor declarations
+  // Top-level FunctionDeclaration must have a canonical legacy slot; constructor declarations
   // never carry a `name`; a MethodDeclaration with an undefined / computed
   // name is rejected as a Phase-A method-shape failure.
   if (!isMethod) {
-    if (!ts.isFunctionDeclaration(fn) || !fn.name) return "unnamed";
+    if (!ts.isFunctionDeclaration(fn) || irTopLevelFunctionLegacyName(fn) === undefined) return "unnamed";
   }
   if (fn.typeParameters && fn.typeParameters.length > 0) return "type-parameters";
   // Modifier surface differs between FunctionDeclaration and class members:
@@ -1802,7 +1806,14 @@ function whyNotIrClaimable(
         if (!isAsyncIrReady(currentSelectionOptions, fn)) return "async-function";
         isAsyncFn = true;
       }
-      if (fn.modifiers.some((m) => m.kind !== ts.SyntaxKind.ExportKeyword && m.kind !== ts.SyntaxKind.AsyncKeyword))
+      if (
+        fn.modifiers.some(
+          (m) =>
+            m.kind !== ts.SyntaxKind.ExportKeyword &&
+            m.kind !== ts.SyntaxKind.DefaultKeyword &&
+            m.kind !== ts.SyntaxKind.AsyncKeyword,
+        )
+      )
         return "non-export-modifier";
     }
   } else {
@@ -1836,7 +1847,13 @@ function whyNotIrClaimable(
   // simply skips the propagation lookup for class members; resolveReturnType
   // / resolveParamType still fall back to the AST annotation, which is
   // sufficient for the explicit-typed-method shape the spec targets.
-  const entry = !isMethod && ts.isFunctionDeclaration(fn) && fn.name ? typeMap?.get(fn.name.text) : undefined;
+  const entry =
+    !isMethod && ts.isFunctionDeclaration(fn)
+      ? (() => {
+          const legacyName = irTopLevelFunctionLegacyName(fn);
+          return legacyName === undefined ? undefined : typeMap?.get(legacyName);
+        })()
+      : undefined;
   if (preAbiEvidence && preAbiEvidence.params.length !== fn.parameters.length) {
     return "param-type-not-resolvable";
   }
