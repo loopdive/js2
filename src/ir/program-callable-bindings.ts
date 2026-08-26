@@ -184,54 +184,85 @@ function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
   return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 }
 
-/** Build a structural, immutable callable graph for one exact source census. */
-export function buildIrProgramCallableBindingGraph(
+interface CallableGraphSourceMaps {
+  readonly sourceFileBySourceId: Map<IrSourceId, ts.SourceFile>;
+  readonly sourceIdBySourceFile: Map<ts.SourceFile, IrSourceId>;
+}
+
+interface CallableGraphPopulation {
+  readonly sourceRecordsByUnitId: Map<IrUnitId, IrProgramCallableBindingRecord>;
+  readonly callableByDeclaration: Map<ts.FunctionDeclaration, SourceCallable>;
+  readonly callableByUnitId: Map<IrUnitId, SourceCallable>;
+  readonly sourceFunctionSymbols: Map<ts.Symbol, SourceCallable>;
+}
+
+interface CallableGraphAliasCollection {
+  readonly aliasDrafts: AliasDraft[];
+  readonly namespaceImports: Map<ts.NamespaceImport, NamespaceImportInfo>;
+}
+
+interface CallableGraphAliasIndex {
+  readonly finalRecords: IrProgramCallableBindingRecord[];
+  readonly finalChooseExportAlias: (
+    sourceId: IrSourceId | undefined,
+    name: string | undefined,
+  ) => ResolvedAlias | undefined;
+  readonly finalImportRecordByDeclaration: Map<ts.Declaration, IrProgramCallableBindingRecord>;
+  readonly finalImportRecordByLocalNode: Map<ts.Identifier, IrProgramCallableBindingRecord>;
+}
+
+interface CallableGraphUseIndex {
+  readonly uses: IrProgramCallableUse[];
+  readonly useByOwner: Map<IrUnitId, WeakMap<ts.CallExpression, IrProgramCallableUse>>;
+}
+
+function buildCallableGraphSourceMaps(
   input: BuildIrProgramCallableBindingGraphInput,
-): IrProgramCallableBindingGraph {
-  const { checker, identityContext } = input;
-  const sourceFiles = new Set(input.sourceFiles);
-  const inventorySources = identityContext.inventory.sources;
+  sourceFiles: ReadonlySet<ts.SourceFile>,
+): CallableGraphSourceMaps {
+  const inventorySources = input.identityContext.inventory.sources;
   if (sourceFiles.size !== input.sourceFiles.length || sourceFiles.size !== inventorySources.length) {
     return invariant(
       "source-set-mismatch",
-      `callable graph received ${input.sourceFiles.length} source files for ${inventorySources.length} inventory sources`,
+      "callable graph received " +
+        input.sourceFiles.length +
+        " source files for " +
+        inventorySources.length +
+        " inventory sources",
     );
   }
 
   const sourceFileBySourceId = new Map<IrSourceId, ts.SourceFile>();
   const sourceIdBySourceFile = new Map<ts.SourceFile, IrSourceId>();
   for (const source of inventorySources) {
-    const sourceFile = identityContext.sourceFileBySourceId.get(source.id);
+    const sourceFile = input.identityContext.sourceFileBySourceId.get(source.id);
     if (
       !sourceFile ||
       !sourceFiles.has(sourceFile) ||
-      identityContext.sourceIdBySourceFile.get(sourceFile) !== source.id
+      input.identityContext.sourceIdBySourceFile.get(sourceFile) !== source.id
     ) {
       return invariant(
         "source-record-mismatch",
-        `callable graph source ${source.id} does not join to the exact active SourceFile`,
+        "callable graph source " + source.id + " does not join to the exact active SourceFile",
       );
     }
     sourceFileBySourceId.set(source.id, sourceFile);
     sourceIdBySourceFile.set(sourceFile, source.id);
   }
   for (const sourceFile of input.sourceFiles) {
-    const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
+    const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile);
     if (!sourceId || sourceFileBySourceId.get(sourceId) !== sourceFile) {
       return invariant(
         "source-set-mismatch",
-        `callable graph SourceFile ${sourceFile.fileName} is outside the authoritative source set`,
+        "callable graph SourceFile " + sourceFile.fileName + " is outside the authoritative source set",
       );
     }
   }
+  return { sourceFileBySourceId, sourceIdBySourceFile };
+}
 
-  const sourceRecordsByUnitId = new Map<IrUnitId, IrProgramCallableBindingRecord>();
-  const callableByDeclaration = new Map<ts.FunctionDeclaration, SourceCallable>();
-  const callableByUnitId = new Map<IrUnitId, SourceCallable>();
-  const sourceFunctionSymbols = new Map<ts.Symbol, SourceCallable>();
-
-  let deAlias: (symbol: ts.Symbol | undefined) => ts.Symbol | undefined;
-  deAlias = (symbol) => {
+function makeCallableGraphDeAlias(checker: ts.TypeChecker): (symbol: ts.Symbol | undefined) => ts.Symbol | undefined {
+  return (symbol) => {
     if (!symbol) return undefined;
     let current = symbol;
     const seen = new Set<ts.Symbol>();
@@ -252,11 +283,21 @@ export function buildIrProgramCallableBindingGraph(
     }
     return current;
   };
+}
 
-  // The source callable population is authored by the inventory.  No display
-  // name or source text is consulted for this join.
-  for (const source of inventorySources) {
-    const sourceFile = sourceFileBySourceId.get(source.id)!;
+function collectCallableGraphPopulation(
+  input: BuildIrProgramCallableBindingGraphInput,
+  maps: CallableGraphSourceMaps,
+  deAlias: (symbol: ts.Symbol | undefined) => ts.Symbol | undefined,
+): CallableGraphPopulation {
+  const { checker, identityContext } = input;
+  const sourceRecordsByUnitId = new Map<IrUnitId, IrProgramCallableBindingRecord>();
+  const callableByDeclaration = new Map<ts.FunctionDeclaration, SourceCallable>();
+  const callableByUnitId = new Map<IrUnitId, SourceCallable>();
+  const sourceFunctionSymbols = new Map<ts.Symbol, SourceCallable>();
+
+  for (const source of identityContext.inventory.sources) {
+    const sourceFile = maps.sourceFileBySourceId.get(source.id)!;
     for (let statementIndex = 0; statementIndex < sourceFile.statements.length; statementIndex++) {
       const statement = sourceFile.statements[statementIndex]!;
       if (!ts.isFunctionDeclaration(statement) || !statement.body) continue;
@@ -264,7 +305,11 @@ export function buildIrProgramCallableBindingGraph(
       if (unitId === undefined) {
         return invariant(
           "unit-record-mismatch",
-          `top-level function at ${sourceFile.fileName}:${statement.getStart(sourceFile)} has no inventory unit`,
+          "top-level function at " +
+            sourceFile.fileName +
+            ":" +
+            statement.getStart(sourceFile) +
+            " has no inventory unit",
         );
       }
       const unit = identityContext.unitByUnitId.get(unitId);
@@ -279,21 +324,22 @@ export function buildIrProgramCallableBindingGraph(
         unit.terminalOwnerId !== unitId ||
         terminal !== unit
       ) {
-        // Compiler-owned top-level support functions are still inventoried,
-        // but they are not source-callable components. They must nevertheless
-        // remain an exact join if they appear in the source census.
         if (unit && unit.sourceId === source.id && identityContext.declarationByUnitId.get(unitId) === statement)
           continue;
         return invariant(
           "unit-record-mismatch",
-          `top-level function at ${sourceFile.fileName}:${statement.getStart(sourceFile)} has a wrong unit join`,
+          "top-level function at " +
+            sourceFile.fileName +
+            ":" +
+            statement.getStart(sourceFile) +
+            " has a wrong unit join",
         );
       }
       const localName =
         statement.name?.text ?? (hasModifier(statement, ts.SyntaxKind.DefaultKeyword) ? "default" : "<anonymous>");
       const bindingId = irUnitCallableBindingId(unitId);
       if (sourceRecordsByUnitId.has(unitId)) {
-        return invariant("duplicate-binding", `source callable unit ${unitId} was recorded more than once`);
+        return invariant("duplicate-binding", "source callable unit " + unitId + " was recorded more than once");
       }
       const record = Object.freeze({
         bindingId,
@@ -321,7 +367,15 @@ export function buildIrProgramCallableBindingGraph(
       if (deAliasedDeclarationSymbol) sourceFunctionSymbols.set(deAliasedDeclarationSymbol, callable);
     }
   }
+  return { sourceRecordsByUnitId, callableByDeclaration, callableByUnitId, sourceFunctionSymbols };
+}
 
+function collectMutableCallableSymbols(
+  checker: ts.TypeChecker,
+  sourceFiles: readonly ts.SourceFile[],
+  sourceFunctionSymbols: ReadonlyMap<ts.Symbol, SourceCallable>,
+  deAlias: (symbol: ts.Symbol | undefined) => ts.Symbol | undefined,
+): Set<ts.Symbol> {
   const mutableFunctionSymbols = new Set<ts.Symbol>();
   const noteSymbolWrite = (node: ts.Identifier): void => {
     const target = deAlias(symbolAt(checker, node));
@@ -397,9 +451,17 @@ export function buildIrProgramCallableBindingGraph(
     }
     ts.forEachChild(node, scanWrites);
   };
-  for (const sourceFile of input.sourceFiles) scanWrites(sourceFile);
+  for (const sourceFile of sourceFiles) scanWrites(sourceFile);
+  return mutableFunctionSymbols;
+}
 
-  const callableForSymbol = (symbol: ts.Symbol | undefined): SourceCallable | undefined => {
+function makeCallableForSymbol(
+  deAlias: (symbol: ts.Symbol | undefined) => ts.Symbol | undefined,
+  callableByDeclaration: ReadonlyMap<ts.FunctionDeclaration, SourceCallable>,
+  sourceFileBySourceId: ReadonlyMap<IrSourceId, ts.SourceFile>,
+  mutableFunctionSymbols: ReadonlySet<ts.Symbol>,
+): (symbol: ts.Symbol | undefined) => SourceCallable | undefined {
+  return (symbol) => {
     const targetSymbol = deAlias(symbol);
     if (!targetSymbol) return undefined;
     const declarations = (targetSymbol.declarations ?? []).filter(ts.isFunctionDeclaration);
@@ -413,15 +475,23 @@ export function buildIrProgramCallableBindingGraph(
     if (mutableFunctionSymbols.has(targetSymbol)) return undefined;
     return callable;
   };
+}
 
+function collectCallableAliasDrafts(
+  input: BuildIrProgramCallableBindingGraphInput,
+  maps: CallableGraphSourceMaps,
+  checker: ts.TypeChecker,
+  callableByDeclaration: ReadonlyMap<ts.FunctionDeclaration, SourceCallable>,
+): CallableGraphAliasCollection {
+  const sourceFiles = new Set(input.sourceFiles);
   const aliasDrafts: AliasDraft[] = [];
   const namespaceImports = new Map<ts.NamespaceImport, NamespaceImportInfo>();
   const addAliasDraft = (draft: AliasDraft): void => {
     aliasDrafts.push(draft);
   };
 
-  for (const source of inventorySources) {
-    const sourceFile = sourceFileBySourceId.get(source.id)!;
+  for (const source of input.identityContext.inventory.sources) {
+    const sourceFile = maps.sourceFileBySourceId.get(source.id)!;
     for (let statementIndex = 0; statementIndex < sourceFile.statements.length; statementIndex++) {
       const statement = sourceFile.statements[statementIndex]!;
 
@@ -438,7 +508,7 @@ export function buildIrProgramCallableBindingGraph(
             localName: clause.name.text,
             declarationOrdinal: statementIndex,
             syntaxStart: clause.name.getStart(sourceFile),
-            tieBreak: `import-default:${clause.name.text}`,
+            tieBreak: "import-default:" + clause.name.text,
             targetSymbol: symbolAt(checker, clause.name),
             targetModuleFile: moduleFile,
             targetModuleExportName: "default",
@@ -462,7 +532,7 @@ export function buildIrProgramCallableBindingGraph(
               localName: specifier.name.text,
               declarationOrdinal: statementIndex,
               syntaxStart: specifier.getStart(sourceFile),
-              tieBreak: `import-named:${importedName}:${specifier.name.text}`,
+              tieBreak: "import-named:" + importedName + ":" + specifier.name.text,
               targetSymbol: symbolAt(checker, specifier.name),
               targetModuleFile: moduleFile,
               targetModuleExportName: importedName,
@@ -474,7 +544,7 @@ export function buildIrProgramCallableBindingGraph(
           namespaceImports.set(clause.namedBindings, {
             declaration: clause.namedBindings,
             sourceFile: moduleFile,
-            sourceId: moduleFile ? sourceIdBySourceFile.get(moduleFile) : undefined,
+            sourceId: moduleFile ? maps.sourceIdBySourceFile.get(moduleFile) : undefined,
           });
         }
       }
@@ -495,7 +565,7 @@ export function buildIrProgramCallableBindingGraph(
             localName: exportedName,
             declarationOrdinal: statementIndex,
             syntaxStart: statement.getStart(sourceFile),
-            tieBreak: `export-function:${exportedName}`,
+            tieBreak: "export-function:" + exportedName,
             targetSymbol: symbolAt(checker, statement.name ?? statement),
             targetModuleExportName: undefined,
             fromExportStar: false,
@@ -516,7 +586,7 @@ export function buildIrProgramCallableBindingGraph(
               localName: exportedName,
               declarationOrdinal: statementIndex,
               syntaxStart: specifier.getStart(sourceFile),
-              tieBreak: `export-named:${exportedName}:${localName}`,
+              tieBreak: "export-named:" + exportedName + ":" + localName,
               targetSymbol: symbolAt(checker, specifier.propertyName ?? specifier.name),
               targetModuleFile: statement.moduleSpecifier
                 ? activeSourceFileForModule(checker, statement.moduleSpecifier, sourceFiles)
@@ -533,7 +603,7 @@ export function buildIrProgramCallableBindingGraph(
         !statement.exportClause
       ) {
         const moduleFile = activeSourceFileForModule(checker, statement.moduleSpecifier, sourceFiles);
-        const moduleSourceId = moduleFile ? sourceIdBySourceFile.get(moduleFile) : undefined;
+        const moduleSourceId = moduleFile ? maps.sourceIdBySourceFile.get(moduleFile) : undefined;
         const exports = moduleExports(checker, statement.moduleSpecifier)
           .filter((exported) => exported.name !== "default")
           .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -546,7 +616,7 @@ export function buildIrProgramCallableBindingGraph(
             localName: exported.name,
             declarationOrdinal: statementIndex,
             syntaxStart: statement.getStart(sourceFile),
-            tieBreak: `export-star:${exported.name}`,
+            tieBreak: "export-star:" + exported.name,
             targetSymbol: exported,
             targetModuleFile: moduleFile,
             targetModuleExportName: moduleSourceId ? exported.name : undefined,
@@ -571,12 +641,16 @@ export function buildIrProgramCallableBindingGraph(
       }
     }
   }
+  return { aliasDrafts, namespaceImports };
+}
 
-  const resolvedAliases: ResolvedAlias[] = [];
+function resolveCallableAliasDrafts(
+  aliasDrafts: readonly AliasDraft[],
+  callableForSymbol: (symbol: ts.Symbol | undefined) => SourceCallable | undefined,
+): ResolvedAlias[] {
   const draftsBySourceAndKind = new Map<string, AliasDraft[]>();
-
   for (const draft of aliasDrafts) {
-    const key = `${draft.sourceId}\u0000${draft.kind}`;
+    const key = draft.sourceId + "\u0000" + draft.kind;
     const entries = draftsBySourceAndKind.get(key) ?? [];
     entries.push(draft);
     draftsBySourceAndKind.set(key, entries);
@@ -600,6 +674,7 @@ export function buildIrProgramCallableBindingGraph(
     });
   }
 
+  const resolvedAliases: ResolvedAlias[] = [];
   for (const draft of aliasDrafts) {
     const target = callableForSymbol(draft.targetSymbol);
     if (!target) continue;
@@ -615,21 +690,23 @@ export function buildIrProgramCallableBindingGraph(
       canonicalBindingId,
       targetUnitId: target.unitId,
     });
-    const resolved: ResolvedAlias = {
+    resolvedAliases.push({
       draft,
       target,
       targetBindingId,
       canonicalBindingId,
       targetUnitId: target.unitId,
       record,
-    };
-    resolvedAliases.push(resolved);
+    });
   }
+  return resolvedAliases;
+}
 
-  // Build the public module-export view from all callable aliases before
-  // choosing targetBindingId values. This lets imports and re-exports point at
-  // the upstream alias record while canonicalBindingId still points directly
-  // at the source body.
+function buildCallableAliasIndex(
+  resolvedAliases: readonly ResolvedAlias[],
+  sourceRecordsByUnitId: ReadonlyMap<IrUnitId, IrProgramCallableBindingRecord>,
+  sourceIdBySourceFile: ReadonlyMap<ts.SourceFile, IrSourceId>,
+): CallableGraphAliasIndex {
   const finalModuleExportsBySourceId = new Map<IrSourceId, Map<string, ResolvedAlias[]>>();
   for (const resolved of resolvedAliases) {
     if (resolved.draft.kind !== "export-alias") continue;
@@ -670,26 +747,36 @@ export function buildIrProgramCallableBindingGraph(
       if (resolved.draft.localNode) finalImportRecordByLocalNode.set(resolved.draft.localNode, finalRecord);
     }
   }
+  return {
+    finalRecords,
+    finalChooseExportAlias,
+    finalImportRecordByDeclaration,
+    finalImportRecordByLocalNode,
+  };
+}
 
+function collectCallableGraphUses(
+  input: BuildIrProgramCallableBindingGraphInput,
+  maps: CallableGraphSourceMaps,
+  callableByUnitId: ReadonlyMap<IrUnitId, SourceCallable>,
+  callableForSymbol: (symbol: ts.Symbol | undefined) => SourceCallable | undefined,
+  aliasIndex: CallableGraphAliasIndex,
+  namespaceImports: ReadonlyMap<ts.NamespaceImport, NamespaceImportInfo>,
+): CallableGraphUseIndex {
+  const { checker, identityContext } = input;
   const namespaceInfoByDeclaration = new Map<ts.NamespaceImport, NamespaceImportInfo>(namespaceImports);
   const namespaceInfoForIdentifier = (identifier: ts.Identifier): NamespaceImportInfo | undefined => {
     const symbol = symbolAt(checker, identifier);
     const declaration = symbol?.declarations?.find(ts.isNamespaceImport);
     return declaration ? namespaceInfoByDeclaration.get(declaration) : undefined;
   };
-
   const directImportRecordForIdentifier = (identifier: ts.Identifier): IrProgramCallableBindingRecord | undefined => {
-    const direct = finalImportRecordByLocalNode.get(identifier);
+    const direct = aliasIndex.finalImportRecordByLocalNode.get(identifier);
     if (direct) return direct;
     const symbol = symbolAt(checker, identifier);
     const declaration = symbol?.declarations?.find((candidate) => isValueImportDeclaration(candidate));
-    return declaration ? finalImportRecordByDeclaration.get(declaration) : undefined;
+    return declaration ? aliasIndex.finalImportRecordByDeclaration.get(declaration) : undefined;
   };
-
-  const uses: IrProgramCallableUse[] = [];
-  const useByOwner = new Map<IrUnitId, WeakMap<ts.CallExpression, IrProgramCallableUse>>();
-  const sourceOrder = new Map<IrSourceId, number>(inventorySources.map((source, index) => [source.id, index]));
-
   const bindingForCall = (call: ts.CallExpression): IrProgramCallableBindingRecord | undefined => {
     if (call.questionDotToken) return undefined;
     const callee = call.expression;
@@ -707,9 +794,14 @@ export function buildIrProgramCallableBindingGraph(
     if (!ts.isIdentifier(callee.expression)) return undefined;
     const namespace = namespaceInfoForIdentifier(callee.expression);
     if (!namespace?.sourceId) return undefined;
-    return finalChooseExportAlias(namespace.sourceId, callee.name.text)?.record;
+    return aliasIndex.finalChooseExportAlias(namespace.sourceId, callee.name.text)?.record;
   };
 
+  const uses: IrProgramCallableUse[] = [];
+  const useByOwner = new Map<IrUnitId, WeakMap<ts.CallExpression, IrProgramCallableUse>>();
+  const sourceOrder = new Map<IrSourceId, number>(
+    identityContext.inventory.sources.map((source, index) => [source.id, index]),
+  );
   const visitCalls = (root: SourceCallable): void => {
     const visit = (node: ts.Node): void => {
       if (node !== root.declaration && ts.isFunctionLike(node)) return;
@@ -734,13 +826,14 @@ export function buildIrProgramCallableBindingGraph(
     };
     visit(root.declaration);
   };
-  for (const source of inventorySources) {
+
+  for (const source of identityContext.inventory.sources) {
     const callables = [...callableByUnitId.values()]
       .filter((callable) => callable.sourceId === source.id)
       .sort(
         (a, b) =>
-          a.declaration.getStart(sourceFileBySourceId.get(source.id)!) -
-          b.declaration.getStart(sourceFileBySourceId.get(source.id)!),
+          a.declaration.getStart(maps.sourceFileBySourceId.get(source.id)!) -
+          b.declaration.getStart(maps.sourceFileBySourceId.get(source.id)!),
       );
     for (const callable of callables) visitCalls(callable);
   }
@@ -751,12 +844,22 @@ export function buildIrProgramCallableBindingGraph(
     if (ownerDelta !== 0) return ownerDelta;
     return a.node.getStart() - b.node.getStart();
   });
+  return { uses, useByOwner };
+}
 
-  const recordOrder = new Map<IrBindingId, number>();
+function finalizeCallableGraph(
+  input: BuildIrProgramCallableBindingGraphInput,
+  finalRecords: readonly IrProgramCallableBindingRecord[],
+  useIndex: CallableGraphUseIndex,
+): IrProgramCallableBindingGraph {
+  const sourceOrder = new Map<IrSourceId, number>(
+    input.identityContext.inventory.sources.map((source, index) => [source.id, index]),
+  );
+  const recordOrder = new Set<IrBindingId>();
   const orderedRecords = finalRecords
-    .filter((record, index, all) => {
+    .filter((record) => {
       if (recordOrder.has(record.bindingId)) return false;
-      recordOrder.set(record.bindingId, index);
+      recordOrder.add(record.bindingId);
       return true;
     })
     .sort((a, b) => {
@@ -766,18 +869,54 @@ export function buildIrProgramCallableBindingGraph(
       if (a.declarationOrdinal !== b.declarationOrdinal) return a.declarationOrdinal - b.declarationOrdinal;
       return a.bindingId < b.bindingId ? -1 : a.bindingId > b.bindingId ? 1 : 0;
     });
-
   const frozenRecords = Object.freeze(orderedRecords.map((record) => Object.freeze(record)));
-  const frozenUses = Object.freeze(uses.map((use) => Object.freeze(use)));
-  const sourceIds = Object.freeze(inventorySources.map((source) => source.id));
-  const graph: IrProgramCallableBindingGraph = {
+  const frozenUses = Object.freeze(useIndex.uses.map((use) => Object.freeze(use)));
+  const sourceIds = Object.freeze(input.identityContext.inventory.sources.map((source) => source.id));
+  return Object.freeze({
     schema: "ir-program-callable-binding-graph-v1",
     sourceIds,
     records: frozenRecords,
     uses: frozenUses,
-    resolveCall(call, ownerUnitId) {
-      return useByOwner.get(ownerUnitId)?.get(call);
+    resolveCall(call: ts.CallExpression, ownerUnitId: IrUnitId): IrProgramCallableUse | undefined {
+      return useIndex.useByOwner.get(ownerUnitId)?.get(call);
     },
-  };
-  return Object.freeze(graph);
+  });
+}
+
+/** Build a structural, immutable callable graph for one exact source census. */
+export function buildIrProgramCallableBindingGraph(
+  input: BuildIrProgramCallableBindingGraphInput,
+): IrProgramCallableBindingGraph {
+  const sourceFiles = new Set(input.sourceFiles);
+  const maps = buildCallableGraphSourceMaps(input, sourceFiles);
+  const deAlias = makeCallableGraphDeAlias(input.checker);
+  const population = collectCallableGraphPopulation(input, maps, deAlias);
+  const mutableFunctionSymbols = collectMutableCallableSymbols(
+    input.checker,
+    input.sourceFiles,
+    population.sourceFunctionSymbols,
+    deAlias,
+  );
+  const callableForSymbol = makeCallableForSymbol(
+    deAlias,
+    population.callableByDeclaration,
+    maps.sourceFileBySourceId,
+    mutableFunctionSymbols,
+  );
+  const aliasCollection = collectCallableAliasDrafts(input, maps, input.checker, population.callableByDeclaration);
+  const resolvedAliases = resolveCallableAliasDrafts(aliasCollection.aliasDrafts, callableForSymbol);
+  const aliasIndex = buildCallableAliasIndex(
+    resolvedAliases,
+    population.sourceRecordsByUnitId,
+    maps.sourceIdBySourceFile,
+  );
+  const useIndex = collectCallableGraphUses(
+    input,
+    maps,
+    population.callableByUnitId,
+    callableForSymbol,
+    aliasIndex,
+    aliasCollection.namespaceImports,
+  );
+  return finalizeCallableGraph(input, aliasIndex.finalRecords, useIndex);
 }

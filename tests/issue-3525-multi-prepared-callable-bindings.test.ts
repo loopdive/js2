@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeMultiSource } from "../src/checker/index.js";
+import { compileMulti } from "../src/index.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
 import {
   buildIrProgramCallableBindingGraph,
@@ -10,6 +11,7 @@ import {
 } from "../src/ir/program-callable-bindings.js";
 import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { ts } from "../src/ts-api.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 interface GraphFixture {
   readonly ast: ReturnType<typeof analyzeMultiSource>;
@@ -79,6 +81,32 @@ const ALIAS_FILES = {
 } as const;
 
 describe("#3525 whole-program callable binding graph", () => {
+  it("prepares one exact cross-source component before direct bodies", async () => {
+    const files = {
+      "./dep.ts": `
+        export function add(left: number, right: number): number {
+          return left + right;
+        }
+      `,
+      "./entry.ts": `
+        import { add as plus } from "./dep";
+        export function run(value: number): number {
+          return plus(value, 2);
+        }
+      `,
+    };
+    const ir = await compileMulti(files, "./entry.ts", { experimentalIR: true, target: "standalone" });
+    const legacy = await compileMulti(files, "./entry.ts", { experimentalIR: false, target: "standalone" });
+    expect(ir.success, ir.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(legacy.success, legacy.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(new Set(ir.irCompiledFuncs ?? [])).toEqual(new Set(["add", "run"]));
+    expect(ir.irPostClaimErrors ?? []).toEqual([]);
+    const irExports = (await instantiateWithRuntime(ir)).exports as unknown as { run(value: number): number };
+    const legacyExports = (await instantiateWithRuntime(legacy)).exports as unknown as { run(value: number): number };
+    expect(irExports.run(5)).toBe(legacyExports.run(5));
+    expect(irExports.run(5)).toBe(7);
+  }, 120_000);
+
   it("resolves renamed/default/namespace/re-export calls to exact units", () => {
     const fixture = makeGraph(ALIAS_FILES, "./entry.ts");
     const aSame = functionUnitId(fixture, "/a.ts", "same");

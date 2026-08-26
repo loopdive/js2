@@ -47,7 +47,12 @@ export type MultiPreparedProgramState =
   | "complete"
   | "failed";
 
-export type MultiPreparedProgramRouteKind = "scalar" | "array" | "function-value" | "fibonacci-pair";
+export type MultiPreparedProgramRouteKind =
+  | "scalar"
+  | "array"
+  | "function-value"
+  | "fibonacci-pair"
+  | "cross-source-callable";
 
 export interface MultiPreparedProgramSourceCensus {
   readonly sourceId: IrSourceId;
@@ -179,6 +184,24 @@ export type MultiPreparedProgramInvariantError = IrInvariantError & {
 
 type SourceFile = import("../ts-api.js").ts.SourceFile;
 type RouteState<Plan extends MultiPreparedScalarLeafPlan> = EarlyMultiPreparedScalarLeafState<Plan>;
+
+/**
+ * Exact aggregate callable component prepared before any source body pass.
+ * Names are local compatibility labels; unit/declaration/source joins are the
+ * authoritative identity used by the owner.
+ */
+export interface MultiPreparedProgramCallableComponent {
+  readonly preparedComponentId: string;
+  readonly units: readonly {
+    readonly sourceFile: SourceFile;
+    readonly sourceId: IrSourceId;
+    readonly unitId: IrUnitId;
+    readonly legacyName: string;
+    readonly declaration: import("../ts-api.js").ts.FunctionDeclaration;
+  }[];
+  /** Optional post-integration freshness assertion owned by the planner. */
+  readonly assertCurrent?: () => void;
+}
 
 interface RouteSlot {
   readonly declaration: import("../ts-api.js").ts.FunctionDeclaration;
@@ -341,6 +364,11 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   readonly #terminalMap: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>;
   readonly #unitMap: ReadonlyMap<IrUnitId, IrUnitInventory["allUnits"][number]>;
   readonly #states = new Map<SourceFile, RouteState<Plan>>();
+  readonly #callableComponents: MultiPreparedProgramCallableComponent[] = [];
+  readonly #callableComponentByUnitId = new Map<IrUnitId, MultiPreparedProgramCallableComponent>();
+  readonly #callableComponentsBySourceFile = new Map<SourceFile, MultiPreparedProgramCallableComponent[]>();
+  readonly #callableSkippedUnitIds = new Set<IrUnitId>();
+  readonly #callableSkippedNamesBySourceFile = new Map<SourceFile, Set<string>>();
   readonly #routeSnapshots: RouteSnapshot<Plan>[] = [];
   readonly #bodySourceIds: IrSourceId[] = [];
   readonly #overlaySourceIds: IrSourceId[] = [];
@@ -448,6 +476,113 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     }
   }
 
+  /**
+   * Register cross-source callable components after the legacy route planners
+   * have produced their source states, but before the body boundary is sealed.
+   */
+  registerCallableComponents(components: readonly MultiPreparedProgramCallableComponent[]): void {
+    this.#requireState("collecting");
+    if (!this.#routesPlanned)
+      this.#fail("completion-order", "callable components were registered before route planning");
+    if (this.#callableComponents.length > 0) {
+      this.#fail("duplicate-reservation-component", "callable components were registered more than once");
+    }
+    const componentIds = new Set<string>();
+    const componentUnitIds = new Set<IrUnitId>();
+    const sourceNames = new Map<SourceFile, Set<string>>();
+    try {
+      for (const component of components) {
+        if (!component.preparedComponentId || component.units.length === 0) {
+          this.#fail("route-plan-mismatch", "callable component has no prepared ID or terminal units");
+        }
+        if (componentIds.has(component.preparedComponentId)) {
+          this.#fail(
+            "duplicate-reservation-component",
+            `callable component ${component.preparedComponentId} occurs twice`,
+          );
+        }
+        componentIds.add(component.preparedComponentId);
+        const localUnitIds = new Set<IrUnitId>();
+        for (const unit of component.units) {
+          const sourceId = this.#sourceId(unit.sourceFile);
+          const terminal = this.#terminalMap.get(unit.unitId);
+          const declaration = this.#identityContext.declarationByUnitId.get(unit.unitId);
+          const routeState = this.#states.get(unit.sourceFile);
+          const routeUnits = routeState?.route ? slotsForRoute(routeState.route).map((slot) => slot.unitId) : [];
+          const names = sourceNames.get(unit.sourceFile) ?? new Set<string>();
+          if (
+            unit.sourceId !== sourceId ||
+            localUnitIds.has(unit.unitId) ||
+            componentUnitIds.has(unit.unitId) ||
+            this.#callableComponentByUnitId.has(unit.unitId) ||
+            routeUnits.includes(unit.unitId) ||
+            !terminal ||
+            terminal.sourceId !== sourceId ||
+            terminal.kind !== "top-level-function" ||
+            terminal.observedKind !== "function" ||
+            terminal.terminalOwnerId !== unit.unitId ||
+            !declaration ||
+            !ts.isFunctionDeclaration(declaration) ||
+            declaration !== unit.declaration ||
+            declaration.parent !== unit.sourceFile ||
+            declaration.name?.text !== unit.legacyName ||
+            terminal.legacyMatchName !== unit.legacyName ||
+            !declaration.body ||
+            names.has(unit.legacyName)
+          ) {
+            this.#fail(
+              "route-unit-mismatch",
+              `callable component ${component.preparedComponentId} has a non-exact terminal ${unit.unitId}`,
+            );
+          }
+          // compileDeclarations receives local names, so a component name may
+          // not collide with any other source function in the same invocation.
+          for (const statement of unit.sourceFile.statements) {
+            if (
+              ts.isFunctionDeclaration(statement) &&
+              statement.body &&
+              statement.name?.text === unit.legacyName &&
+              statement !== unit.declaration
+            ) {
+              this.#fail(
+                "route-unit-mismatch",
+                `callable component ${component.preparedComponentId} shares local name ${unit.legacyName}`,
+              );
+            }
+          }
+          names.add(unit.legacyName);
+          sourceNames.set(unit.sourceFile, names);
+          localUnitIds.add(unit.unitId);
+          componentUnitIds.add(unit.unitId);
+        }
+        this.#callableComponents.push(component);
+        for (const unit of component.units) {
+          this.#callableComponentByUnitId.set(unit.unitId, component);
+          const sourceComponents = this.#callableComponentsBySourceFile.get(unit.sourceFile) ?? [];
+          if (!sourceComponents.includes(component)) sourceComponents.push(component);
+          this.#callableComponentsBySourceFile.set(unit.sourceFile, sourceComponents);
+        }
+      }
+    } catch (error) {
+      this.#callableComponents.length = 0;
+      this.#callableComponentByUnitId.clear();
+      this.#callableComponentsBySourceFile.clear();
+      throw error;
+    }
+  }
+
+  get callableComponentUnitIds(): ReadonlySet<IrUnitId> {
+    return new Set(this.#callableComponentByUnitId.keys());
+  }
+
+  get existingRouteUnitIds(): ReadonlySet<IrUnitId> {
+    return new Set(
+      [...this.#states.values()].flatMap((state) =>
+        state.route ? slotsForRoute(state.route).map((slot) => slot.unitId) : [],
+      ),
+    );
+  }
+
   /** Freeze the exact denominator and the reservations made before bodies. */
   sealBodyBoundary(): MultiPreparedProgramBodyPlan {
     if (this.#state === "body-boundary-sealed" || this.#state === "routes-complete" || this.#state === "complete") {
@@ -483,6 +618,22 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             sourceId: snapshot.sourceId,
             routeKind: snapshot.route.routeKind,
             preparedComponentId: snapshot.componentId,
+            preparedBeforeDirectBodies: true,
+          });
+        }
+      }
+      for (const component of this.#callableComponents) {
+        component.assertCurrent?.();
+        for (const unit of component.units) {
+          if (reservedUnits.has(unit.unitId)) {
+            this.#fail("duplicate-reservation-unit", `terminal ${unit.unitId} was reserved twice`);
+          }
+          reservedUnits.add(unit.unitId);
+          reservations.push({
+            unitId: unit.unitId,
+            sourceId: unit.sourceId,
+            routeKind: "cross-source-callable",
+            preparedComponentId: component.preparedComponentId,
             preparedBeforeDirectBodies: true,
           });
         }
@@ -532,8 +683,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   compileBodySource(sourceFile: SourceFile, moduleInitMode: ModuleInitMode): void {
     const state = this.#stateForBodySource(sourceFile);
     try {
-      compileMultiPreparedScalarLeafDeclarations(this.#ctx, sourceFile, state, moduleInitMode);
+      compileMultiPreparedScalarLeafDeclarations(this.#ctx, sourceFile, state, moduleInitMode, {
+        skipBodies: this.#callableSkipNames(sourceFile),
+        preserveBodies: this.#callableSkipNames(sourceFile),
+        onSkippedNames: (names) => this.#recordCallableSkippedNames(sourceFile, names),
+      });
       this.#assertBodySkip(sourceFile, state);
+      this.#assertCallableBodySkip(sourceFile);
     } catch (error) {
       this.#state = "failed";
       throw error;
@@ -550,6 +706,10 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     try {
       consumer(state);
       this.#assertBodySkip(sourceFile, state);
+      this.#assertCallableBodySkip(sourceFile);
+      for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
+        component.assertCurrent?.();
+      }
       if (state?.route) {
         const snapshot = this.#routeSnapshots.find((candidate) => candidate.state === state);
         if (!snapshot) this.#fail("route-plan-mismatch", `overlay source ${sourceFile.fileName} lost its sealed route`);
@@ -579,6 +739,8 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       }
       this.#assertBodyPlan();
       this.#assertAllBodySkips();
+      this.#assertAllCallableBodySkips();
+      for (const component of this.#callableComponents) component.assertCurrent?.();
       for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
       this.#state = "routes-complete";
     } catch (error) {
@@ -922,6 +1084,54 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     }
   }
 
+  #callableSkipNames(sourceFile: SourceFile): ReadonlySet<string> {
+    const names = new Set<string>();
+    for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
+      for (const unit of component.units) {
+        if (unit.sourceFile === sourceFile) names.add(unit.legacyName);
+      }
+    }
+    return names;
+  }
+
+  #recordCallableSkippedNames(sourceFile: SourceFile, names: readonly string[]): void {
+    const expected = this.#callableSkipNames(sourceFile);
+    if (expected.size === 0) {
+      this.#callableSkippedNamesBySourceFile.set(sourceFile, new Set());
+      return;
+    }
+    const observed = new Set(names);
+    for (const name of expected) {
+      if (!observed.has(name)) {
+        this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} did not skip callable component ${name}`);
+      }
+    }
+    for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
+      for (const unit of component.units) {
+        if (unit.sourceFile === sourceFile && observed.has(unit.legacyName)) {
+          this.#callableSkippedUnitIds.add(unit.unitId);
+        }
+      }
+    }
+    this.#callableSkippedNamesBySourceFile.set(sourceFile, new Set([...expected].filter((name) => observed.has(name))));
+  }
+
+  #assertCallableBodySkip(sourceFile: SourceFile): void {
+    const expected = this.#callableSkipNames(sourceFile);
+    const observed = this.#callableSkippedNamesBySourceFile.get(sourceFile) ?? new Set<string>();
+    if (expected.size !== observed.size || [...expected].some((name) => !observed.has(name))) {
+      this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} has an incomplete callable component skip set`);
+    }
+  }
+
+  #assertAllCallableBodySkips(): void {
+    for (const sourceFile of this.#sourceFiles) this.#assertCallableBodySkip(sourceFile);
+    const expected = new Set(this.#callableComponentByUnitId.keys());
+    if (!sameSet(this.#callableSkippedUnitIds, [...expected])) {
+      this.#fail("body-skip-mismatch", "callable component body skips do not cover the reserved unit population");
+    }
+  }
+
   #assertAllBodySkips(): void {
     for (const [sourceFile, state] of this.#states) this.#assertBodySkip(sourceFile, state);
   }
@@ -953,17 +1163,30 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     const canonical = this.#sources.map((source) => source.id);
     const semantic = this.#sourceFiles.map((sourceFile) => this.#sourceId(sourceFile));
     const terminals = this.#terminalUnits.map((unit) => unit.id);
-    const expectedReservations = this.#routeSnapshots
-      .flatMap((snapshot) =>
-        snapshot.slots.map((slot) => ({
-          unitId: slot.unitId,
-          sourceId: snapshot.sourceId,
-          routeKind: snapshot.route.routeKind,
-          preparedComponentId: snapshot.componentId,
-          preparedBeforeDirectBodies: true as const,
-        })),
-      )
-      .sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
+    const expectedReservations: MultiPreparedProgramReservation[] = [
+      ...this.#routeSnapshots.flatMap((snapshot) =>
+        snapshot.slots.map(
+          (slot): MultiPreparedProgramReservation => ({
+            unitId: slot.unitId,
+            sourceId: snapshot.sourceId,
+            routeKind: snapshot.route.routeKind,
+            preparedComponentId: snapshot.componentId,
+            preparedBeforeDirectBodies: true,
+          }),
+        ),
+      ),
+      ...this.#callableComponents.flatMap((component) =>
+        component.units.map(
+          (unit): MultiPreparedProgramReservation => ({
+            unitId: unit.unitId,
+            sourceId: unit.sourceId,
+            routeKind: "cross-source-callable",
+            preparedComponentId: component.preparedComponentId,
+            preparedBeforeDirectBodies: true,
+          }),
+        ),
+      ),
+    ].sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
     const reserved = new Set(expectedReservations.map((reservation) => reservation.unitId));
     if (
       plan!.entrySourceId !== this.#entrySourceId() ||

@@ -517,6 +517,17 @@ export interface IrIntegrationOptions {
    * support retain the established transitional route.
    */
   readonly sealPreparedComponents?: boolean;
+  /**
+   * Source files whose top-level functions participate in one aggregate IR
+   * integration. The legacy `sourceFile` parameter remains the representative
+   * file for diagnostics and backend capability probing.
+   */
+  readonly integrationSourceFiles?: readonly ts.SourceFile[];
+  /**
+   * The selected population is one atomic cross-source component. A failure
+   * in any terminal owner withdraws the whole integration before patching.
+   */
+  readonly atomicComponent?: boolean;
 }
 
 interface BuiltFn {
@@ -938,6 +949,14 @@ export function compileIrPathFunctions(
   loweringPlans?: IrIntegrationLoweringPlans,
   options?: IrIntegrationOptions,
 ): IrIntegrationReport {
+  const integrationSourceFiles = options?.integrationSourceFiles ?? [sourceFile];
+  if (integrationSourceFiles.length === 0 || !integrationSourceFiles.includes(sourceFile)) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "ir/integration: representative source file is not part of the integration source population",
+    );
+  }
   const inlineOptions = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
   const fuseNativeNumberFormatCarriers =
     inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
@@ -1081,33 +1100,45 @@ export function compileIrPathFunctions(
   const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
     if (parameter.type || !overrides) return false;
     const declaration = parameter.parent;
-    if (!ts.isFunctionDeclaration(declaration) || !declaration.name) return false;
+    if (!ts.isFunctionDeclaration(declaration)) return false;
     const index = declaration.parameters.indexOf(parameter);
-    const expected = index < 0 ? undefined : overrides.get(declaration.name.text)?.params[index];
+    const declarationUnitId = moduleBindingIdentityContext.unitIdByDeclaration.get(declaration);
+    const projectedName = declarationUnitId
+      ? activeOwnerProjection?.getByUnitId(declarationUnitId)?.legacyName
+      : declaration.name?.text;
+    const expected = index < 0 || !projectedName ? undefined : overrides.get(projectedName)?.params[index];
     const valueType = expected ? asVal(expected) : null;
     if (valueType?.kind !== "ref" && valueType?.kind !== "ref_null") return false;
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
   };
   const declarationsByName = new Map<string, ts.FunctionDeclaration>();
-  for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name) declarationsByName.set(statement.name.text, statement);
+  for (const integrationSourceFile of integrationSourceFiles) {
+    for (const statement of integrationSourceFile.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name) {
+        declarationsByName.set(statement.name.text, statement);
+      }
+    }
   }
   const effectiveOverride = (
     name: string,
   ): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined => {
     const override = overrides?.get(name);
-    const declaration = declarationsByName.get(name);
+    const projectedOwner = activeOwnerProjection?.getByLegacyName(name);
+    const declaration = projectedOwner
+      ? moduleBindingIdentityContext.declarationByUnitId.get(projectedOwner.unitId)
+      : declarationsByName.get(name);
+    const functionDeclaration = declaration && ts.isFunctionDeclaration(declaration) ? declaration : undefined;
     const legacyFuncIdx = ctx.funcMap.get(name);
     const legacyFunction = legacyFuncIdx === undefined ? undefined : definedFuncAt(ctx, legacyFuncIdx);
     const legacySignature = legacyFunction === undefined ? undefined : ctx.mod.types[legacyFunction.typeIdx];
     const legacySecondParam = legacySignature?.kind === "func" ? legacySignature.params[1] : undefined;
     if (
       !override ||
-      !declaration ||
+      !functionDeclaration ||
       override.params[1]?.kind !== "dynamic" ||
       legacySecondParam?.kind !== "i32" ||
       legacySecondParam.boolean !== true ||
-      !isExactDynamicStringReplaceNumberParser(declaration)
+      !isExactDynamicStringReplaceNumberParser(functionDeclaration)
     ) {
       return override;
     }
@@ -1145,9 +1176,10 @@ export function compileIrPathFunctions(
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
     });
-  const integrationPopulation = loweringPlans
-    ? validateIrIntegrationPopulation(sourceFile, selected, loweringPlans)
-    : undefined;
+  const integrationPopulation =
+    loweringPlans && !options?.atomicComponent
+      ? validateIrIntegrationPopulation(sourceFile, selected, loweringPlans)
+      : undefined;
   // Compatibility-only direct callers (principally focused integration
   // tests) do not supply the production planning context. Build the same
   // structural source inventory locally so internal bookkeeping remains
@@ -1413,6 +1445,7 @@ export function compileIrPathFunctions(
   const requireArtifactUnitId = (declaration: ts.Node, displayName: string) => {
     const unitId =
       integrationPopulation?.ownerUnitIdByDeclaration.get(declaration) ??
+      (options?.atomicComponent ? moduleBindingIdentityContext.unitIdByDeclaration.get(declaration) : undefined) ??
       compatibilityUnitIdByDeclaration?.get(declaration);
     if (!unitId) {
       throw new IrInvariantError(
@@ -1438,105 +1471,115 @@ export function compileIrPathFunctions(
     };
     return verifyIrFunction(malformed);
   };
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isFunctionDeclaration(stmt)) continue;
-    if (!stmt.body) continue;
-    if (!stmt.name) continue;
-    const name = stmt.name.text;
-    if (!selected.funcs.has(name)) continue;
-    const owner = requireTerminalOwner(name);
-    if (unsupportedHostDateOwners.has(owner.unitId)) continue;
+  for (const integrationSourceFile of integrationSourceFiles) {
+    for (const stmt of integrationSourceFile.statements) {
+      if (!ts.isFunctionDeclaration(stmt)) continue;
+      if (!stmt.body) continue;
+      const declarationUnitId = moduleBindingIdentityContext.unitIdByDeclaration.get(stmt);
+      const name = declarationUnitId
+        ? activeOwnerProjection?.getByUnitId(declarationUnitId)?.legacyName
+        : stmt.name?.text;
+      if (!name || !selected.funcs.has(name)) continue;
+      const owner = requireTerminalOwner(name);
+      if (unsupportedHostDateOwners.has(owner.unitId)) continue;
 
-    try {
-      // #1923 — test-only seam: simulate a build-time demotion on a CLAIMED
-      // function so the post-claim metering + gate can be exercised without a
-      // real compiler regression in the corpus. Off in every normal build.
-      if (process.env.JS2WASM_TEST_INJECT_IR_BUILD_THROW) {
-        throw new Error(`ir/from-ast: injected test build failure (${name})`);
-      }
-      const ownerUnitId = requireArtifactUnitId(stmt, name);
-      if (ownerUnitId !== owner.unitId) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "build",
-          `ir/integration: ${name} artifact ${ownerUnitId} does not match terminal owner ${owner.unitId}`,
-        );
-      }
-      const o = effectiveOverride(name);
-      const lowered = lowerFunctionAstToIr(stmt, {
-        exported: hasExportModifier(stmt),
-        ownerUnitId,
-        directCalls: directCallsFor(stmt, ownerUnitId),
-        paramTypeOverrides: o?.params,
-        returnTypeOverride: o?.returnType,
-        calleeTypes,
-        importedCalls: loweringPlans?.importedCalls,
-        topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
-        hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
-        hostDateSnapshots: loweringPlans?.hostDateSnapshots,
-        hostDateGetters: loweringPlans?.hostDateGetters,
-        promiseDelays: loweringPlans?.promiseDelays,
-        countedStringAppends: loweringPlans?.countedStringAppends,
-        identityContext: moduleBindingIdentityContext,
-        classShapes,
-        // Slice 6 part 4 refactor (#1185): thread the from-ast subset
-        // of the IR resolver. Replaces the per-feature `nativeStrings:
-        // boolean` + `anyStrTypeIdx: number` shortcuts that #1183 added.
-        resolver: fromAstResolver,
-        allocRegistry,
-        // #2780 (hybrid Row 6): thread the TS checker so `lowerArrayLiteral`
-        // can discharge the widening-escape proof via `getContextualType`.
-        checker: ctx.checker,
-        oracle: ctx.oracle,
-        // #3765: share direct-codegen's grounded numeric-local oracle with IR.
-        numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-        hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
-      });
-      const result = prepareSuspendingAsyncLowering(lowered, ownerUnitId, name, loweringPlans?.suspendingAsyncUnitIds);
-      if (result.main.unitId !== ownerUnitId) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "build",
-          `ir/integration: ${name} lowered as artifact ${result.main.unitId}, expected ${ownerUnitId}`,
-        );
-      }
-      const liftedAbiRecords = liftedProgramAbiRecords(result, ownerUnitId, owner.unitId);
-      const mainErrors = verifyBuiltArtifact(result.main, name, false);
-      if (mainErrors.length > 0) {
-        failures.recordVerifierDetails(owner, mainErrors);
-        continue;
-      }
-      // Slice 3 (#1169c): verify each lifted function before pushing.
-      const anyLiftedFailed = failures.recordVerifierGroups(
-        owner,
-        result.lifted.map((lifted) => ({
-          details: verifyBuiltArtifact(lifted, name, true),
-          detailPrefix: `synthetic artifact ${lifted.name}: `,
-        })),
-      );
-      if (anyLiftedFailed) continue;
-
-      built.push({
-        artifactUnitId: result.main.unitId,
-        terminalOwnerUnitId: owner.unitId,
-        name,
-        ownerName: owner.legacyName,
-        fn: result.main,
-        ...(result.countedStringAppendPlans ? { countedStringAppendPlans: result.countedStringAppendPlans } : {}),
-      });
-      for (const lifted of result.lifted) {
-        built.push({
-          artifactUnitId: lifted.unitId,
-          terminalOwnerUnitId: owner.unitId,
-          name: lifted.name,
-          ownerName: owner.legacyName,
-          fn: lifted,
-          derivedUnit: liftedAbiRecords.get(lifted.unitId),
-          synthesized: true,
+      try {
+        // #1923 — test-only seam: simulate a build-time demotion on a CLAIMED
+        // function so the post-claim metering + gate can be exercised without a
+        // real compiler regression in the corpus. Off in every normal build.
+        if (process.env.JS2WASM_TEST_INJECT_IR_BUILD_THROW) {
+          throw new Error(`ir/from-ast: injected test build failure (${name})`);
+        }
+        const ownerUnitId = requireArtifactUnitId(stmt, name);
+        if (ownerUnitId !== owner.unitId) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "build",
+            `ir/integration: ${name} artifact ${ownerUnitId} does not match terminal owner ${owner.unitId}`,
+          );
+        }
+        const o = effectiveOverride(name);
+        const lowered = lowerFunctionAstToIr(stmt, {
+          exported: hasExportModifier(stmt),
+          funcName: name,
+          ownerUnitId,
+          directCalls: directCallsFor(stmt, ownerUnitId),
+          paramTypeOverrides: o?.params,
+          returnTypeOverride: o?.returnType,
+          calleeTypes,
+          importedCalls: loweringPlans?.importedCalls,
+          topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
+          hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+          hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+          hostDateGetters: loweringPlans?.hostDateGetters,
+          promiseDelays: loweringPlans?.promiseDelays,
+          countedStringAppends: loweringPlans?.countedStringAppends,
+          identityContext: moduleBindingIdentityContext,
+          classShapes,
+          // Slice 6 part 4 refactor (#1185): thread the from-ast subset
+          // of the IR resolver. Replaces the per-feature `nativeStrings:
+          // boolean` + `anyStrTypeIdx: number` shortcuts that #1183 added.
+          resolver: fromAstResolver,
+          allocRegistry,
+          // #2780 (hybrid Row 6): thread the TS checker so `lowerArrayLiteral`
+          // can discharge the widening-escape proof via `getContextualType`.
+          checker: ctx.checker,
+          oracle: ctx.oracle,
+          // #3765: share direct-codegen's grounded numeric-local oracle with IR.
+          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
+          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
         });
+        const result = prepareSuspendingAsyncLowering(
+          lowered,
+          ownerUnitId,
+          name,
+          loweringPlans?.suspendingAsyncUnitIds,
+        );
+        if (result.main.unitId !== ownerUnitId) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "build",
+            `ir/integration: ${name} lowered as artifact ${result.main.unitId}, expected ${ownerUnitId}`,
+          );
+        }
+        const liftedAbiRecords = liftedProgramAbiRecords(result, ownerUnitId, owner.unitId);
+        const mainErrors = verifyBuiltArtifact(result.main, name, false);
+        if (mainErrors.length > 0) {
+          failures.recordVerifierDetails(owner, mainErrors);
+          continue;
+        }
+        // Slice 3 (#1169c): verify each lifted function before pushing.
+        const anyLiftedFailed = failures.recordVerifierGroups(
+          owner,
+          result.lifted.map((lifted) => ({
+            details: verifyBuiltArtifact(lifted, name, true),
+            detailPrefix: `synthetic artifact ${lifted.name}: `,
+          })),
+        );
+        if (anyLiftedFailed) continue;
+
+        built.push({
+          artifactUnitId: result.main.unitId,
+          terminalOwnerUnitId: owner.unitId,
+          name,
+          ownerName: owner.legacyName,
+          fn: result.main,
+          ...(result.countedStringAppendPlans ? { countedStringAppendPlans: result.countedStringAppendPlans } : {}),
+        });
+        for (const lifted of result.lifted) {
+          built.push({
+            artifactUnitId: lifted.unitId,
+            terminalOwnerUnitId: owner.unitId,
+            name: lifted.name,
+            ownerName: owner.legacyName,
+            fn: lifted,
+            derivedUnit: liftedAbiRecords.get(lifted.unitId),
+            synthesized: true,
+          });
+        }
+      } catch (e) {
+        failures.record(owner, caughtIntegrationFailure(owner.legacyName, e, "build"));
       }
-    } catch (e) {
-      failures.record(owner, caughtIntegrationFailure(owner.legacyName, e, "build"));
     }
   }
 
@@ -2109,6 +2152,9 @@ export function compileIrPathFunctions(
     }
   }
 
+  // Aggregate components are staged as one unit. A build-time failure must not
+  // leave an earlier source member eligible for a partial patch.
+  if (options?.atomicComponent && errors.length > 0) return finishReport();
   if (built.length === 0) return finishReport();
 
   // -------------------------------------------------------------------------
@@ -2168,7 +2214,9 @@ export function compileIrPathFunctions(
     }
   };
   const retainHealthyOwners = (entries: readonly BuiltFn[]): BuiltFn[] =>
-    entries.filter((entry) => !failedOwners.has(entry.terminalOwnerUnitId));
+    options?.atomicComponent && failedOwners.size > 0
+      ? []
+      : entries.filter((entry) => !failedOwners.has(entry.terminalOwnerUnitId));
 
   const hygieneCandidates: BuiltFn[] = [];
   for (const entry of built) {
@@ -3433,7 +3481,14 @@ export function compileIrPathFunctions(
     }
   }
 
-  const successfulPatches = pendingPatches.filter((patch) => !failedOwners.has(patch.entry.terminalOwnerUnitId));
+  // A cross-source component has one commit boundary. Once any terminal owner
+  // fails after preparation, discard every pending patch from this invocation;
+  // otherwise a healthy sibling could be installed against an ABI whose
+  // component peer retained its legacy body.
+  const atomicAborted = options?.atomicComponent === true && failedOwners.size > 0;
+  const successfulPatches = atomicAborted
+    ? []
+    : pendingPatches.filter((patch) => !failedOwners.has(patch.entry.terminalOwnerUnitId));
   const authoritativeCountedPlans = [...(loweringPlans?.countedStringAppends?.values() ?? [])];
   for (const patch of successfulPatches) {
     if (
@@ -3472,7 +3527,7 @@ export function compileIrPathFunctions(
   // main artifact, so the ledger can never report emitted+fatal for one row.
   const installedArtifactUnitIds = new Set<IrUnitId>();
   for (const patch of pendingPatches) {
-    if (failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
+    if (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
     const replacement = {
       name: patch.existing.name,
       typeIdx: patch.wasmFunc.typeIdx,
@@ -3539,12 +3594,12 @@ export function compileIrPathFunctions(
     });
   };
   for (const slot of freshSlots) {
-    if (failedOwners.has(slot.terminalOwnerUnitId)) {
+    if (atomicAborted || failedOwners.has(slot.terminalOwnerUnitId)) {
       stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
     }
   }
   for (const patch of pendingPatches) {
-    if (failedOwners.has(patch.entry.terminalOwnerUnitId)) {
+    if (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId)) {
       stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
     }
   }

@@ -58,6 +58,7 @@ import {
   isDynamic,
   irVal,
   irVec,
+  type IrClosureSignature,
   type IrClassMethodDescriptor,
   type IrFuncRef,
   type IrType,
@@ -80,10 +81,12 @@ import {
   type IrSelection,
 } from "../ir/select.js";
 import type {
+  IrDirectCallLoweringPlan,
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
+  IrIntegrationLoweringPlans,
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
 import { makeIrAmbientClassCallResolver, makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856/#3214/#3657)
@@ -114,6 +117,7 @@ import {
 } from "../ir/identity.js";
 import {
   buildIrPlanningIdentityContext,
+  buildIrLegacyUnitProjection,
   requireIrPlanningSourceId,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
@@ -139,6 +143,11 @@ import {
   registerIrAsyncPromiseDelayResolver,
 } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
+import {
+  buildIrProgramCallableBindingGraph,
+  type IrProgramCallableBindingGraph,
+  type IrProgramCallableUse,
+} from "../ir/program-callable-bindings.js";
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
@@ -220,6 +229,7 @@ import {
   createMultiPreparedProgramOwner,
   MultiPreparedProgramOwner,
   publishMultiPreparedProgram,
+  type MultiPreparedProgramCallableComponent,
   type MultiPreparedProgramAudit,
 } from "./multi-prepared-program.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
@@ -2574,6 +2584,33 @@ function planIrOverlay(
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  const programCallableGraph = ctx.irProgramCallableCutoverEnabled ? ctx.irProgramCallableBindingGraph : undefined;
+  const programCallableRecordByBindingId = programCallableGraph
+    ? new Map(programCallableGraph.records.map((record) => [record.bindingId, record] as const))
+    : undefined;
+  const sourceId = identityContext.sourceIdBySourceFile.get(ast.sourceFile);
+  const programCallableUseByCall =
+    programCallableGraph && sourceId
+      ? new Map(
+          programCallableGraph.uses.filter((use) => use.sourceId === sourceId).map((use) => [use.node, use] as const),
+        )
+      : undefined;
+  const resolveProgramCallableUse =
+    programCallableGraph && sourceId && programCallableUseByCall && programCallableRecordByBindingId
+      ? (call: ts.CallExpression) => {
+          const use = programCallableUseByCall.get(call);
+          if (!use) return undefined;
+          const record = programCallableRecordByBindingId.get(use.bindingId);
+          const targetUnit = identityContext.unitByUnitId.get(use.targetUnitId);
+          if (!record || !targetUnit) return undefined;
+          // Source bindings are represented by the ordinary local selector
+          // graph. Only explicit alias bindings cross the M1A boundary; this
+          // keeps global-script calls on the legacy path until their route is
+          // migrated separately.
+          if (record.kind === "source") return undefined;
+          return use;
+        }
+      : undefined;
   const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
@@ -2858,6 +2895,7 @@ function planIrOverlay(
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
       ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
+      ...(resolveProgramCallableUse ? { resolveProgramCallableUse } : {}),
       // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
@@ -3382,6 +3420,33 @@ function requireMultiIrOwnerClaim(
   return claim;
 }
 
+function isMultiIrProgramCallableCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+  callPlan: IrImportedCallLoweringPlan,
+): boolean {
+  return (
+    ctx.irProgramCallableCutoverEnabled === true &&
+    callPlan.source === "module-import" &&
+    ctx.irProgramCallableBindingGraph?.resolveCall(call, callPlan.ownerUnitId) !== undefined
+  );
+}
+
+function hasMultiIrProgramCallableBoundary(
+  ctx: CodegenContext,
+  identityContext: IrPlanningIdentityContext,
+  unitId: IrUnitId,
+): boolean {
+  const graph = ctx.irProgramCallableCutoverEnabled ? ctx.irProgramCallableBindingGraph : undefined;
+  if (!graph) return false;
+  const ownerSourceId = identityContext.unitByUnitId.get(unitId)?.sourceId;
+  return graph.uses.some((use) => {
+    if (use.ownerUnitId === unitId) return true;
+    if (use.targetUnitId !== unitId) return false;
+    return ownerSourceId !== undefined && use.sourceId !== ownerSourceId;
+  });
+}
+
 function makeMultiIrSafeSelection(
   ctx: CodegenContext,
   plan: IrOverlayPlan,
@@ -3397,9 +3462,12 @@ function makeMultiIrSafeSelection(
   if (moduleInitUnitId) blocked.add(moduleInitUnitId);
   const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
 
-  for (const callPlan of plan.importedCalls.values()) {
+  for (const [call, callPlan] of plan.importedCalls) {
     requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
-    if (!multiIrTargetHasExactRegistryEntry(ctx, callPlan.target, plan.identityPlan.identityContext, safety)) {
+    if (
+      !isMultiIrProgramCallableCall(ctx, call, callPlan) &&
+      !multiIrTargetHasExactRegistryEntry(ctx, callPlan.target, plan.identityPlan.identityContext, safety)
+    ) {
       blocked.add(callPlan.ownerUnitId);
     }
   }
@@ -3411,20 +3479,26 @@ function makeMultiIrSafeSelection(
   }
   for (const unitId of retained) {
     const { legacyName: name, declaration } = requireMultiIrOwnerClaim(plan, unitId);
+    const hasProgramCallableBoundary =
+      hasMultiIrProgramCallableBoundary(ctx, plan.identityPlan.identityContext, unitId) ||
+      [...plan.importedCalls].some(
+        ([call, callPlan]) => callPlan.ownerUnitId === unitId && isMultiIrProgramCallableCall(ctx, call, callPlan),
+      );
     const crossFileTarget = safety.crossFileFunctionNames.has(name);
     const hasCallableBoundary = crossFileTarget && functionHasCallableBoundary(ctx, declaration);
     const registeredIdx = ctx.funcMap.get(name);
     const registeredFunction = registeredIdx === undefined ? undefined : definedFuncAt(ctx, registeredIdx);
     if (
-      safety.collisions.has(name) ||
+      (!hasProgramCallableBoundary &&
+        (safety.collisions.has(name) ||
+          safety.importAliasNames.has(name) ||
+          safety.occupiedFunctionNameCounts.get(name) !== 1 ||
+          registeredFunction?.name !== name ||
+          safety.occupiedFunctionKeys.some((key) => key.startsWith(`${name}$`)) ||
+          (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary)))) ||
       functionBodyHasUnsupportedImportUse(declaration, plan) ||
       functionBodyContainsNestedRuntimeDeclaration(declaration, plan) ||
-      (declaration.typeParameters?.length ?? 0) > 0 ||
-      safety.importAliasNames.has(name) ||
-      safety.occupiedFunctionNameCounts.get(name) !== 1 ||
-      registeredFunction?.name !== name ||
-      safety.occupiedFunctionKeys.some((key) => key.startsWith(`${name}$`)) ||
-      (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary))
+      (declaration.typeParameters?.length ?? 0) > 0
     ) {
       blocked.add(unitId);
     }
@@ -3596,6 +3670,507 @@ function collectMultiIrLateProviderOwnerUnitIds(
   ]);
 }
 
+interface MultiPreparedCallableCandidate {
+  readonly sourceFile: ts.SourceFile;
+  readonly sourceId: IrSourceId;
+  readonly unitId: IrUnitId;
+  readonly legacyName: string;
+  readonly declaration: ts.FunctionDeclaration;
+  readonly plan: IrOverlayPlan;
+}
+
+function aggregateProgramCallableUse(
+  graph: IrProgramCallableBindingGraph,
+  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
+  call: ts.CallExpression,
+  ownerUnitId: IrUnitId,
+  callPlan: IrImportedCallLoweringPlan,
+): IrProgramCallableUse | undefined {
+  const use = graph.resolveCall(call, ownerUnitId);
+  const record = use ? recordsByBindingId.get(use.bindingId) : undefined;
+  return callPlan.source === "module-import" &&
+    use !== undefined &&
+    record !== undefined &&
+    record.kind !== "source" &&
+    callPlan.target.binding.kind === "unit" &&
+    callPlan.target.binding.unitId === use.targetUnitId
+    ? use
+    : undefined;
+}
+
+function multiPreparedCallableOwnerIsEligible(
+  ctx: CodegenContext,
+  identityContext: IrPlanningIdentityContext,
+  graph: IrProgramCallableBindingGraph,
+  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  plan: IrOverlayPlan,
+  unitId: IrUnitId,
+  declaration: ts.FunctionDeclaration,
+): boolean {
+  if (
+    !declaration.body ||
+    declaration.parent !== sourceFile ||
+    declaration.name === undefined ||
+    declaration.asteriskToken !== undefined ||
+    hasAsyncModifier(declaration) ||
+    (declaration.typeParameters?.length ?? 0) > 0 ||
+    declaration.parameters.some(
+      (parameter) =>
+        !ts.isIdentifier(parameter.name) ||
+        parameter.questionToken !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        parameter.initializer !== undefined,
+    ) ||
+    functionHasCallableBoundary(ctx, declaration)
+  ) {
+    return false;
+  }
+
+  // Module initialization and classes retain source-owned ABI/layout state;
+  // they join a later component slice rather than this scalar callable lane.
+  if (
+    identityContext.moduleInitUnitIdBySourceId.has(sourceId) ||
+    identityContext.inventory.classes.some((record) => record.sourceId === sourceId)
+  ) {
+    return false;
+  }
+
+  if (
+    plan.identityPlan.identitySelection.countedStringAppendPlans?.has(unitId) ||
+    plan.identityPlan.identitySelection.fnctorAdmissions?.has(unitId) ||
+    plan.identityPlan.identitySelection.fnctorArgumentProjections?.some(
+      (projection) =>
+        projection.callerUnitId === unitId ||
+        projection.calleeUnitId === unitId ||
+        projection.constructorUnitId === unitId,
+    ) ||
+    plan.suspendingAsyncUnitIds.has(unitId) ||
+    [...plan.topLevelFunctionValues.values()].some((candidate) => candidate.ownerUnitId === unitId)
+  ) {
+    return false;
+  }
+
+  if (
+    collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
+    collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
+    irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds.has(unitId)
+  ) {
+    return false;
+  }
+
+  if (
+    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.hostDateSnapshots.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.hostDateGetters.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.promiseDelays.constructions.values()].some((candidate) => candidate.ownerUnitId === unitId)
+  ) {
+    return false;
+  }
+
+  for (const [call, callPlan] of plan.importedCalls) {
+    if (callPlan.ownerUnitId !== unitId) continue;
+    if (!aggregateProgramCallableUse(graph, recordsByBindingId, call, unitId, callPlan)) return false;
+  }
+
+  const override = plan.overrideMapByUnitId.get(unitId);
+  return override !== undefined && override.params.length === declaration.parameters.length;
+}
+
+function recordMultiPreparedCallableAggregateFailure(
+  ctx: CodegenContext,
+  report: IrIntegrationReport,
+  originalNameBySyntheticName: ReadonlyMap<string, string>,
+): void {
+  for (const error of report.errors) {
+    const originalName = originalNameBySyntheticName.get(error.func) ?? error.func;
+    const adjusted = originalName === error.func ? error : { ...error, func: originalName };
+    (ctx.irPostClaimErrors ??= []).push({
+      kind: adjusted.kind,
+      func: originalName,
+      message: adjusted.message,
+    });
+    const diagnostic = formatIrPathFallbackDiagnostic(adjusted, ctx);
+    ctx.errors.push({
+      message: diagnostic.message,
+      line: 0,
+      column: 0,
+      severity: diagnostic.severity,
+    });
+  }
+}
+
+function rewriteAggregateCallableRef(ref: IrFuncRef, namesByUnitId: ReadonlyMap<IrUnitId, string>): IrFuncRef {
+  if (ref.binding.kind !== "unit") return ref;
+  const name = namesByUnitId.get(ref.binding.unitId);
+  return name === undefined ? ref : irUnitFuncRef({ unitId: ref.binding.unitId, name });
+}
+
+interface MultiPreparedCallablePlanningInput {
+  readonly owner: MultiPreparedProgramOwner<IrOverlayPlan>;
+  readonly multiAst: MultiTypedAST;
+  readonly ctx: CodegenContext;
+  readonly identityContext: IrPlanningIdentityContext;
+  readonly safety: MultiIrGraphSafety;
+  readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
+}
+
+function prepareMultiPreparedCallableGroup(
+  input: MultiPreparedCallablePlanningInput,
+  group: readonly MultiPreparedCallableCandidate[],
+  groupIndex: number,
+  candidatePlans: ReadonlyMap<ts.SourceFile, IrOverlayPlan>,
+  graph: IrProgramCallableBindingGraph,
+  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
+  attempted: Set<IrUnitId>,
+): MultiPreparedProgramCallableComponent | undefined {
+  let preparedComponent: MultiPreparedProgramCallableComponent | undefined;
+  for (const candidateGroup of [group]) {
+    const group = candidateGroup;
+    const groupUnitIds = new Set(group.map((candidate) => candidate.unitId));
+    let valid = true;
+    for (const candidate of group) {
+      for (const targetUnitId of candidate.plan.identityPlan.identitySelection.localCallees?.get(candidate.unitId) ??
+        []) {
+        if (!groupUnitIds.has(targetUnitId)) valid = false;
+      }
+      for (const [call, callPlan] of candidate.plan.importedCalls) {
+        if (callPlan.ownerUnitId !== candidate.unitId) continue;
+        const use = aggregateProgramCallableUse(graph, recordsByBindingId, call, candidate.unitId, callPlan);
+        if (!use || !groupUnitIds.has(use.targetUnitId)) valid = false;
+      }
+    }
+    if (!valid) continue;
+
+    const namesByUnitId = new Map<IrUnitId, string>();
+    const originalNameBySyntheticName = new Map<string, string>();
+    for (const [unitIndex, candidate] of group.entries()) {
+      const syntheticName = `__ir_m1a_${groupIndex}_${unitIndex}_${candidate.legacyName}`;
+      if (input.ctx.funcMap.has(syntheticName) || originalNameBySyntheticName.has(syntheticName)) {
+        valid = false;
+        break;
+      }
+      namesByUnitId.set(candidate.unitId, syntheticName);
+      originalNameBySyntheticName.set(syntheticName, candidate.legacyName);
+    }
+    if (!valid) continue;
+
+    const signaturesByUnitId = new Map<IrUnitId, IrClosureSignature>();
+    const overrides = new Map<string, { params: IrType[]; returnType: IrType | null }>();
+    const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
+    const importedCalls = new Map<ts.CallExpression, IrImportedCallLoweringPlan>();
+    const sourceSelections = new Map<ts.SourceFile, IrSelection>();
+    for (const candidate of group) {
+      const override = candidate.plan.overrideMapByUnitId.get(candidate.unitId);
+      const syntheticName = namesByUnitId.get(candidate.unitId);
+      if (!override || !syntheticName) {
+        valid = false;
+        break;
+      }
+      signaturesByUnitId.set(candidate.unitId, override);
+      overrides.set(syntheticName, override);
+      const sourceSelection = sourceSelections.get(candidate.sourceFile) ?? { funcs: new Set<string>() };
+      (sourceSelection.funcs as Set<string>).add(candidate.legacyName);
+      sourceSelections.set(candidate.sourceFile, sourceSelection);
+    }
+    if (!valid) continue;
+
+    for (const [sourceFile, sourceSelection] of sourceSelections) {
+      const plan = candidatePlans.get(sourceFile);
+      if (!plan) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          "callable component lost its source plan",
+        );
+      }
+      const projected = irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, sourceSelection);
+      for (const [call, callPlan] of projected.directCalls) {
+        if (!groupUnitIds.has(callPlan.ownerUnitId)) continue;
+        if (callPlan.target.binding.kind === "unit" && !groupUnitIds.has(callPlan.target.binding.unitId)) {
+          valid = false;
+          break;
+        }
+        directCalls.set(call, {
+          ...callPlan,
+          target: rewriteAggregateCallableRef(callPlan.target, namesByUnitId),
+        });
+      }
+      if (!valid) break;
+      for (const [call, callPlan] of projected.importedCalls) {
+        if (!groupUnitIds.has(callPlan.ownerUnitId)) continue;
+        const use = aggregateProgramCallableUse(graph, recordsByBindingId, call, callPlan.ownerUnitId, callPlan);
+        if (!use || !groupUnitIds.has(use.targetUnitId)) {
+          valid = false;
+          break;
+        }
+        const ownerName = namesByUnitId.get(callPlan.ownerUnitId);
+        if (!ownerName) {
+          valid = false;
+          break;
+        }
+        importedCalls.set(call, {
+          ...callPlan,
+          ownerName,
+          target: rewriteAggregateCallableRef(callPlan.target, namesByUnitId),
+        });
+      }
+      if (!valid) break;
+    }
+    if (!valid) continue;
+
+    const ownerProjection = buildIrLegacyUnitProjection(
+      group.map((candidate) => ({ unitId: candidate.unitId, legacyName: namesByUnitId.get(candidate.unitId)! })),
+    );
+    const loweringPlans: IrIntegrationLoweringPlans = {
+      identityContext: input.identityContext,
+      ownerProjection,
+      ownerUnitIdByLegacyName: new Map(ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId])),
+      signaturesByUnitId,
+      directCalls,
+      importedCalls,
+      topLevelFunctionValues: new Map(),
+      hostVoidCallbacks: new Map(),
+      hostDateSnapshots: new Map(),
+      hostDateGetters: new Map(),
+      promiseDelays: { constructions: new Map(), timers: new Map(), resolves: new Map() },
+      suspendingAsyncUnitIds: new Set(),
+    };
+    const aggregateSelection: IrSelection = { funcs: new Set(namesByUnitId.values()) };
+    const integrationSourceFiles = input.multiAst.sourceFiles.filter((sourceFile) =>
+      group.some((candidate) => candidate.sourceFile === sourceFile),
+    );
+    for (const candidate of group) attempted.add(candidate.unitId);
+    input.ctx.irProgramCallableAttemptedUnitIds = attempted;
+
+    const report = compileIrPathFunctions(
+      input.ctx,
+      group[0]!.sourceFile,
+      aggregateSelection,
+      overrides,
+      undefined,
+      loweringPlans,
+      { sealPreparedComponents: true, integrationSourceFiles, atomicComponent: true },
+    );
+    if (report.errors.length > 0) {
+      if ((report.compiledArtifactEvidence?.length ?? 0) !== 0 || report.compiled.length !== 0) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          "atomic callable component reported both a failure and an installed artifact",
+        );
+      }
+      recordMultiPreparedCallableAggregateFailure(input.ctx, report, originalNameBySyntheticName);
+      continue;
+    }
+
+    const artifacts = report.compiledArtifactEvidence ?? [];
+    const terminalEvidence = report.terminalEvidence ?? [];
+    const componentId = artifacts[0]?.preparedComponentId;
+    const expectedSyntheticNames = new Set(namesByUnitId.values());
+    const reportIsExact =
+      componentId !== undefined &&
+      report.compiled.length === group.length &&
+      new Set(report.compiled).size === group.length &&
+      [...expectedSyntheticNames].every((name) => report.compiled.includes(name)) &&
+      report.terminalCompiledOwners?.length === group.length &&
+      new Set(report.terminalCompiledOwners).size === group.length &&
+      [...expectedSyntheticNames].every((name) => report.terminalCompiledOwners?.includes(name)) &&
+      report.errors.length === 0 &&
+      artifacts.length === group.length &&
+      artifacts.every(
+        (artifact) =>
+          artifact.artifactUnitId === artifact.terminalOwnerUnitId &&
+          groupUnitIds.has(artifact.artifactUnitId) &&
+          artifact.name === namesByUnitId.get(artifact.artifactUnitId) &&
+          artifact.preparedComponentId === componentId,
+      ) &&
+      terminalEvidence.length === group.length &&
+      terminalEvidence.every(
+        (evidence) =>
+          evidence.kind === "patched" &&
+          groupUnitIds.has(evidence.unitId) &&
+          evidence.legacyName === namesByUnitId.get(evidence.unitId) &&
+          evidence.preparedComponentId === componentId,
+      );
+    if (!reportIsExact) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        "atomic callable component did not return exact terminal and artifact evidence",
+      );
+    }
+
+    const preparedComponentId = componentId;
+    preparedComponent = {
+      preparedComponentId,
+      units: group.map((candidate) => ({
+        sourceFile: candidate.sourceFile,
+        sourceId: candidate.sourceId,
+        unitId: candidate.unitId,
+        legacyName: candidate.legacyName,
+        declaration: candidate.declaration,
+      })),
+      assertCurrent: () => {
+        const sourceCallables = input.ctx.programAbiSourceCallables;
+        if (!sourceCallables) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "patch",
+            `prepared callable component ${preparedComponentId} lost its source callable registry`,
+          );
+        }
+        for (const candidate of group) {
+          const current = input.ctx.irUnitFuncMap.get(candidate.unitId);
+          const observed = sourceCallables.functionForUnit(candidate.unitId);
+          if (!current || observed !== current || current.name !== candidate.legacyName || current.body.length === 0) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "patch",
+              `prepared callable component ${preparedComponentId} lost exact unit ${candidate.unitId}`,
+            );
+          }
+        }
+      },
+    };
+  }
+  return preparedComponent;
+}
+
+function planMultiPreparedCallableComponents(input: MultiPreparedCallablePlanningInput): void {
+  const graph = input.ctx.irProgramCallableBindingGraph;
+  if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
+
+  const recordsByBindingId = new Map(graph.records.map((record) => [record.bindingId, record] as const));
+  const existingRouteUnitIds = input.owner.existingRouteUnitIds;
+  const candidateByUnitId = new Map<IrUnitId, MultiPreparedCallableCandidate>();
+  const candidatePlans = new Map<ts.SourceFile, IrOverlayPlan>();
+
+  for (const sourceFile of input.multiAst.sourceFiles) {
+    const sourceId = requireIrPlanningSourceId(input.identityContext, sourceFile);
+    const plan = input.planSource(sourceFile);
+    candidatePlans.set(sourceFile, plan);
+    const safeSelection = makeMultiIrSafeSelection(input.ctx, plan, sourceFile, input.safety);
+    for (const [unitId, claim] of plan.functionClaimsByUnitId) {
+      const terminal = input.identityContext.terminalByUnitId.get(unitId);
+      if (
+        existingRouteUnitIds.has(unitId) ||
+        !plan.identityPlan.safeFunctionUnitIds.has(unitId) ||
+        !safeSelection.funcs.has(claim.legacyName) ||
+        !terminal ||
+        terminal.sourceId !== sourceId ||
+        terminal.kind !== "top-level-function" ||
+        terminal.observedKind !== "function" ||
+        terminal.terminalOwnerId !== unitId ||
+        !multiPreparedCallableOwnerIsEligible(
+          input.ctx,
+          input.identityContext,
+          graph,
+          recordsByBindingId,
+          sourceFile,
+          sourceId,
+          plan,
+          unitId,
+          claim.declaration,
+        )
+      ) {
+        continue;
+      }
+      candidateByUnitId.set(unitId, {
+        sourceFile,
+        sourceId,
+        unitId,
+        legacyName: claim.legacyName,
+        declaration: claim.declaration,
+        plan,
+      });
+    }
+  }
+
+  if (candidateByUnitId.size < 2) return;
+
+  const parent = new Map<IrUnitId, IrUnitId>([...candidateByUnitId.keys()].map((unitId) => [unitId, unitId]));
+  const find = (unitId: IrUnitId): IrUnitId => {
+    const parentId = parent.get(unitId);
+    if (parentId === undefined) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "callable component union lost a candidate",
+      );
+    }
+    if (parentId === unitId) return unitId;
+    const root = find(parentId);
+    parent.set(unitId, root);
+    return root;
+  };
+  const union = (left: IrUnitId, right: IrUnitId): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot < rightRoot ? leftRoot : rightRoot);
+  };
+
+  for (const candidate of candidateByUnitId.values()) {
+    for (const targetUnitId of candidate.plan.identityPlan.identitySelection.localCallees?.get(candidate.unitId) ??
+      []) {
+      if (candidateByUnitId.has(targetUnitId)) union(candidate.unitId, targetUnitId);
+    }
+  }
+  const crossSourceEdges: Array<readonly [IrUnitId, IrUnitId]> = [];
+  for (const use of graph.uses) {
+    const owner = candidateByUnitId.get(use.ownerUnitId);
+    const target = candidateByUnitId.get(use.targetUnitId);
+    if (!owner || !target) continue;
+    union(owner.unitId, target.unitId);
+    if (owner.sourceId !== target.sourceId) crossSourceEdges.push([owner.unitId, target.unitId]);
+  }
+
+  const groupsByRoot = new Map<IrUnitId, MultiPreparedCallableCandidate[]>();
+  for (const candidate of candidateByUnitId.values()) {
+    const root = find(candidate.unitId);
+    const group = groupsByRoot.get(root) ?? [];
+    group.push(candidate);
+    groupsByRoot.set(root, group);
+  }
+  const terminalOrder = new Map(
+    input.identityContext.inventory.terminalUnits.map((unit, index) => [unit.id, index] as const),
+  );
+  const compareCandidates = (left: MultiPreparedCallableCandidate, right: MultiPreparedCallableCandidate): number => {
+    const leftOrder = terminalOrder.get(left.unitId) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = terminalOrder.get(right.unitId) ?? Number.MAX_SAFE_INTEGER;
+    return leftOrder - rightOrder || (left.unitId < right.unitId ? -1 : left.unitId > right.unitId ? 1 : 0);
+  };
+  const groups = [...groupsByRoot.values()]
+    .map((group) => [...group].sort(compareCandidates))
+    .filter((group) => {
+      const unitIds = new Set(group.map((candidate) => candidate.unitId));
+      return (
+        new Set(group.map((candidate) => candidate.sourceId)).size > 1 &&
+        crossSourceEdges.some(([ownerUnitId, targetUnitId]) => unitIds.has(ownerUnitId) && unitIds.has(targetUnitId))
+      );
+    })
+    .sort((left, right) => compareCandidates(left[0]!, right[0]!));
+
+  const preparedComponents: MultiPreparedProgramCallableComponent[] = [];
+  const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
+
+  for (const [groupIndex, group] of groups.entries()) {
+    const preparedComponent = prepareMultiPreparedCallableGroup(
+      input,
+      group,
+      groupIndex,
+      candidatePlans,
+      graph,
+      recordsByBindingId,
+      attempted,
+    );
+    if (preparedComponent) preparedComponents.push(preparedComponent);
+  }
+
+  if (preparedComponents.length > 0) input.owner.registerCallableComponents(preparedComponents);
+}
+
 function multiIrFunctionValueLeafHasForeignLateProvider(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -3618,6 +4193,30 @@ function multiIrFunctionValueLeafHasForeignLateProvider(
   );
 }
 
+/** Remove terminals already owned by the pre-body aggregate component lane. */
+function removeMultiIrAttemptedCallableUnits(
+  ctx: CodegenContext,
+  plan: IrOverlayPlan,
+  selection: IrSelection,
+): IrSelection {
+  const attempted = ctx.irProgramCallableAttemptedUnitIds;
+  if (!attempted || attempted.size === 0) return selection;
+  const funcs = new Set(
+    [...selection.funcs].filter((name) => {
+      const unitId = plan.identityPlan.functionUnitIdByLegacyName.get(name);
+      return unitId === undefined || !attempted.has(unitId);
+    }),
+  );
+  if (funcs.size === selection.funcs.size) return selection;
+  return {
+    ...selection,
+    funcs,
+    classMembers: new Set(),
+    classMemberUnitIds: new Set(),
+    moduleInit: undefined,
+  };
+}
+
 function compileMultiIrOverlaySource(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
@@ -3635,8 +4234,9 @@ function compileMultiIrOverlaySource(
       irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
     });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
-  safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
+  safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
+  safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = applyIrFinalContextFunctionUnitIds(
     plan,
     safeSelection,
@@ -8724,6 +9324,19 @@ function planMultiPreparedProgramEarlyRoutes(
   ctx: CodegenContext,
 ): void {
   if (!owner || !identityContext) return;
+  const planCache = new Map<ts.SourceFile, IrOverlayPlan>();
+  const planSource = (sourceFile: ts.SourceFile): IrOverlayPlan => {
+    const cached = planCache.get(sourceFile);
+    if (cached) return cached;
+    const plan = planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined);
+    planCache.set(sourceFile, plan);
+    return plan;
+  };
+  let cachedSafety: MultiIrGraphSafety | undefined;
+  const safety = (): MultiIrGraphSafety => {
+    cachedSafety ??= buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
+    return cachedSafety;
+  };
   owner.planExistingRoutes({
     active:
       !!options?.experimentalIR &&
@@ -8740,8 +9353,8 @@ function planMultiPreparedProgramEarlyRoutes(
     ctx,
     sourceFiles: multiAst.sourceFiles,
     entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    safety,
+    planSource,
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
     hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
@@ -8750,6 +9363,16 @@ function planMultiPreparedProgramEarlyRoutes(
       prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
   });
+  if (ctx.irProgramCallableCutoverEnabled === true) {
+    planMultiPreparedCallableComponents({
+      owner,
+      multiAst,
+      ctx,
+      identityContext,
+      safety: safety(),
+      planSource,
+    });
+  }
   owner.sealBodyBoundary();
 }
 
@@ -8882,6 +9505,14 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.irProgramCallableCutoverEnabled =
+    !!options?.experimentalIR &&
+    multiAst.sourceFiles.length > 1 &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    !ctx.fast &&
+    ctx.nativeStrings &&
+    !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
   const multiPreparedProgram = createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
@@ -8918,6 +9549,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // fnctor NAME collisions, which are refused and COUNTED).
   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
   try {
+    // M1A: construct the checker-owned callable graph exactly once, before
+    // declaration/body emission can observe a partial program. All later
+    // source overlays consume this immutable identity projection.
+    if (irPlanningIdentityContext) {
+      ctx.irProgramCallableBindingGraph = buildIrProgramCallableBindingGraph({
+        checker: multiAst.checker,
+        sourceFiles: multiAst.sourceFiles,
+        identityContext: irPlanningIdentityContext,
+      });
+    }
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
       registerWasiImports(ctx, multiAst.entryFile);

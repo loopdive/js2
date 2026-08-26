@@ -1353,6 +1353,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
+  /** Exact whole-program callable binding graph built before body emission. */
+  irProgramCallableBindingGraph?: import("../../ir/program-callable-bindings.js").IrProgramCallableBindingGraph;
+  /** M1A rollout gate; the graph remains available for disabled-lane census. */
+  irProgramCallableCutoverEnabled?: boolean;
+  /** Exact terminal units attempted by the aggregate callable lane. */
+  irProgramCallableAttemptedUnitIds?: ReadonlySet<import("../../ir/identity.js").IrUnitId>;
   /** Exact prepared class-body routing retained while nested bodies compile in scope. */
   irClassBodyRouting?: import("../class-bodies.js").ClassBodyCompileRouting;
   checker: ts.TypeChecker;

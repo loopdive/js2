@@ -78,6 +78,7 @@ import { selectWithEnvironmentClosures } from "./with-environment.js";
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
+import type { IrProgramCallableUse } from "./program-callable-bindings.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
@@ -472,6 +473,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * write-side representation before the selector claims the function.
    */
   readonly resolveModuleBinding?: IrModuleBindingResolver | IrLegacyModuleBindingResolver;
+  /** Exact whole-program fixed-target call evidence for M1A. */
+  readonly resolveProgramCallableUse?: (call: ts.CallExpression) => IrProgramCallableUse | undefined;
   /**
    * (#3797) True only after receiver-aware named `.call` lowering and ambient
    * `__current_this` AST-to-IR binding consume the exact
@@ -8565,6 +8568,17 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isCallExpression(expr)) {
     if (!phase1CallPreambleIsBuildable(expr)) return false;
+    const programCallableUse = currentSelectionOptions?.resolveProgramCallableUse?.(expr);
+    if (programCallableUse) {
+      if (expr.questionDotToken || expr.typeArguments?.length) {
+        return capabilityNo("call-resolution-unsupported", "expr-program-callable-dynamic-shape", expr);
+      }
+      for (const arg of expr.arguments) {
+        if (ts.isSpreadElement(arg)) return shapeNo("expr-program-callable-spread", arg);
+        if (!isPhase1Expr(arg, scope, localClasses)) return false;
+      }
+      return true;
+    }
     const indirectEvalStatement = exactIndirectEvalStatement(expr);
     if (indirectEvalStatement) {
       const certified = certifiedHostIndirectEval(expr, scope);
@@ -9762,6 +9776,15 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        const programCallableUse = currentSelectionOptions?.resolveProgramCallableUse?.(node);
+        if (programCallableUse) {
+          if (node.questionDotToken || node.typeArguments?.length || node.arguments.some(ts.isSpreadElement)) {
+            hasExternalCall.add(callerName);
+            return;
+          }
+          for (const argument of node.arguments) visit(argument);
+          return;
+        }
         const indirectEval = certifiedHostIndirectEval(node);
         if (indirectEval) {
           visit(indirectEval.source);
