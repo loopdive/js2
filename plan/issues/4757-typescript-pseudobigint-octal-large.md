@@ -88,4 +88,3 @@ it with a harness implementation or expected-value table.
       precomputed answer and no upstream callback/expectation rewrite is used.
 - [ ] The 1,750 unavailable TypeScript registrations and the full package-entry
       timeout remain reported separately rather than being inferred fixed.
-

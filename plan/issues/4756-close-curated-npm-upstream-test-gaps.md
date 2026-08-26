@@ -183,4 +183,3 @@ is not a merge gate.
       non-vacuous zero-withdrawal controls.
 - [ ] The merge-only npm-compat workflow publishes the fresh per-package rows;
       performance measurements are informational, never a correctness gate.
-
