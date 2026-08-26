@@ -13,7 +13,7 @@ language_feature: n/a
 goal: dogfood
 sprint: Backlog
 horizon: m
-related: [1058, 3587, 3672, 3958, 3982, 3997, 3999, 4000, 4287, 4299, 4301, 4302, 4303]
+related: [1058, 3587, 3672, 3958, 3982, 3997, 3999, 4000, 4287, 4299, 4301, 4302, 4303, 4756]
 oracle-ratchet-allow:
   # The Hono fix compares the actual registered Wasm carriers for two inferred
   # anonymous object literals. TypeOracle deliberately exposes only
@@ -1490,3 +1490,20 @@ registrations fail natively and are not admitted. Of 20 selected modules,
 `src/middleware/trailing-slash/index.test.ts` module itself compiles, validates,
 and passes **36/36**. Separately, **2,031 registrations in 100 deferred files**
 remain unavailable infrastructure; they are not counted as scored failures.
+
+## 2026-08-26 successor implementation plan
+
+The merged integration checkpoint advances Hono to **180/322** admitted
+upstream callbacks, with Node at **322/322** on the same admitted denominator.
+All 20 selected modules are attempted: **17/20 compile** and **16/20 validate**.
+The unchanged inventory still records **2,031 registrations in 100 files** as
+deferred infrastructure. The npm-compat artifact generated earlier that day is
+a partial refresh with stale package rows, so these post-merge row-level results
+remain the authoritative Hono checkpoint until the next complete refresh.
+
+The package-wide remaining-test census and ordered implementation lanes now live
+in [`#4756`](4756-close-curated-npm-upstream-test-gaps.md). Continue this issue
+as the shared upstream-source/admission contract; file correctness fixes in the
+package-specific child issues named there. Exact denominators, unavailable
+infrastructure, native-oracle exclusions, compile failures, validation failures,
+and scored Wasm failures must remain separate at every checkpoint.

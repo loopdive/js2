@@ -3,6 +3,7 @@ id: 3801
 title: "Run React's own upstream unit tests against compiled React, and make them pass"
 status: ready
 created: 2026-07-31
+updated: 2026-08-26
 priority: high
 horizon: xl
 feasibility: hard
@@ -91,9 +92,16 @@ streams, and the Node stream capability used by the Fizz lanes. This removes
 the previous production/dev renderer peer mismatch and lets all admitted tests
 reach either the native oracle or the compiled call.
 
-The current exact run admits and executes **272/273** tests, has zero
-compile-quarantined batches, and scores **92/178** against compiled Wasm. The
-remaining 94 native-oracle-incompatible tests are recorded rather than
-silently omitted; they are dominated by production warning expectations,
-renderer semantics, and opaque compiled component closures at the
-Wasm/host boundary. Making those tests green is still open work.
+The current exact run admits and executes **272/273** discovered tests, has zero
+compile-quarantined batches, and scores **133/180** against compiled Wasm. The
+remaining **92** tests are explicitly classified as harness-incompatible; they
+are not counted as passes or failures. The **47** scored failures are dominated
+by host-instantiated class/instance behavior, `instance.props`, children/JSX
+identity, symbol/context identity, and async `act` capture/unwrapping.
+
+Implementation continues in
+[`#4618`](4618-react-upstream-async-act-lanes.md). Start with the class/instance
+bridge and props sidecar because that unblocks several files without changing
+the test adapter. Keep children/JSX/symbol identity and async `act` as a second,
+independently measurable slice. Every checkpoint must rerun the unchanged full
+React suite and report passed/scored/admitted/discovered separately.
