@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-27
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -2567,3 +2567,37 @@ retained before semantic assertions. Its strict gate remains finite,
 non-negative one-minute load strictly below `logical cores - 2` (10 cores means
 `< 8`). C36/C37 stay scheduled for the final aggregate rerun, and the unchanged
 #4035 size ceiling is not reported as a new regression.
+
+## 2026-08-27 dispatch update — execute the linked-Parser L3 edge
+
+This tracker remains the owner of the linked-Parser pre-claim gap. The next
+checkpoint is production wiring on the existing PR #5000 branch, not a new
+issue and not a dead-export baseline waiver. The planner module is intentionally
+dormant until its exact authority is consumed by the late-overlay route.
+
+Implementation order:
+
+1. Revalidate the current late-overlay route and retain the immutable
+   `planIrFnctorParameterPreselection` result only after the legacy constructor,
+   `input`, `$constructor`, and `$bag` records exist. Keep default IR-first and
+   every non-candidate tuple Unsupported.
+2. Carry the plan copy-on-write through `planIrOverlay`, the implicit-parameter
+   resolver, identity selection, and `IrIntegrationLoweringPlans`; never mutate
+   shared name-keyed signatures, `funcMap`, or cross-source state.
+3. Make the exact `fnctor.get input` field read and the semantic-string to
+   physical-nullable-carrier refinement consume that plan. Revalidate the
+   current handle, function object, type, locator, index, source, owner, and AST
+   site immediately before lowering, parity, and patching.
+4. Join the same owner-qualified effective signature and the two authenticated
+   parser builtin boundary plans to the existing `readNumber` → `stringToNumber`
+   direct-call plan. Any stale or missing fact withdraws the caller to typed
+   Unsupported; no selector bypass or generic dynamic exception is allowed.
+5. Prove the route with the existing focused static/runtime matrix, then run the
+   normal type, layering, fallback, optimization, LOC, function, and hook gates.
+   Preserve the asymmetric `direct=1, IR=1` late-overlay accounting; this slice
+   does not claim compile-once or final R2 completion.
+
+The dead-export check is a stop condition, not a ratchet to widen: the eight
+planner helpers must become survivor-reachable through production consumption.
+The implementation worker owns only the bounded L3 source/tests listed in the
+preceding sections and must leave the adjacent #1719 and #4260 plans untouched.
