@@ -9,7 +9,7 @@ import { compileMulti } from "../src/index.js";
 import { buildImports, compileAndInstantiate } from "../src/runtime.js";
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { assembleOriginalHarness } from "./test262-original-harness.js";
-import { createTestSandbox, parseMeta } from "./test262-runner.js";
+import { createTestSandbox, parseMeta, runTest262File } from "./test262-runner.js";
 
 async function runMulti(files: Record<string, string>, entry: string): Promise<number> {
   const r: any = await compileMulti(files, entry);
@@ -29,6 +29,18 @@ async function runStr(src: string): Promise<string> {
 }
 
 describe("#2970 import.meta per-module identity", () => {
+  it.each([
+    "language/expressions/import.meta/same-object-returned.js",
+    "language/expressions/dynamic-import/assignment-expression/import-meta.js",
+  ])(
+    "preserves the host Test262 row %s",
+    async (file) => {
+      const result = await runTest262File(new URL(`../test262/test/${file}`, import.meta.url).pathname, "issue-4922");
+      expect(result.status, result.reason ?? result.error).toBe("pass");
+    },
+    60_000,
+  );
+
   it("distinct across modules, stable within (distinct-for-each-module)", async () => {
     const files = {
       "fixture.ts": `
