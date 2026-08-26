@@ -128,13 +128,6 @@ export function overlayFilterAccess(
   if (!overlayRouteActive(ctx)) return null;
   const anyValueElem = isAnyValue(elemType, ctx);
   if (elemType.kind !== "f64" && elemType.kind !== "externref" && !anyValueElem) return null;
-  // (#2001) A module with array-literal elisions keeps the `$Hole` dense route:
-  // `__extern_has_idx`'s vec arm answers on `i < length` alone, so it would
-  // report a `$Hole` slot as PRESENT and leak the sentinel through
-  // `__extern_get_idx`. Holes and accessor descriptors together are rare; the
-  // dense route is the conservative answer for that intersection.
-  if (ctx.usesArrayHoles && (elemType.kind === "externref" || anyValueElem)) return null;
-
   const hasIdxFn = ensureLateImport(
     ctx,
     "__extern_has_idx",
