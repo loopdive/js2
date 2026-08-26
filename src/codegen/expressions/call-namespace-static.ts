@@ -2923,8 +2923,13 @@ export function compileNamespaceStaticCall(
         for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
           const sourceParam =
             memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
-          const forceArrayLiteralVec = sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], forceArrayLiteralVec);
+          const forceArrayLiteralVec =
+            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          if (forceArrayLiteralVec) {
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
+          } else {
+            compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          }
         }
         if (expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {
