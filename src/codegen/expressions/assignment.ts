@@ -152,6 +152,7 @@ import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
+  emitRealmGlobalPrimitiveMethodWriteback,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
@@ -3786,11 +3787,16 @@ function compilePropertyAssignment(
       if (!rhsType) return null;
       if (globalType && rhsType.kind !== globalType.kind) coerceType(ctx, fctx, rhsType, globalType);
       const resultLocal = allocLocal(fctx, `__realm_global_write_${fctx.locals.length}`, globalType ?? rhsType);
-      fctx.body.push({ op: "local.tee", index: resultLocal });
-      fctx.body.push({ op: "global.set", index: globalIdx });
+      const storedType = globalType ?? rhsType;
+      fctx.body.push({ op: "local.set", index: resultLocal });
+      emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, resultLocal, storedType);
+      // The writeback may add a string global, so resolve the module-global
+      // index again before storing the binding value.
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? globalIdx });
       // An assignment expression evaluates to the assigned value.
       fctx.body.push({ op: "local.get", index: resultLocal });
-      return globalType ?? rhsType;
+      return storedType;
     }
   }
 

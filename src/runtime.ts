@@ -9490,11 +9490,8 @@ function resolveImport(
       // we must NOT coerce the first arg to a primitive: wrap WasmGC structs
       // with `_wrapForHost` so the Proxy translates `arg[Symbol.replace]` →
       // `arg["@@replace"]` and invokes any user-defined method (#1443).
-      // (#3903) Everything that depends only on `method` is decided ONCE here,
-      // at import-resolution time, instead of on every crossing. A string
-      // benchmark makes 10k-50k crossings per `run()`, so anything left in the
-      // per-call body is multiplied by that. See the per-crossing breakdown in
-      // plan/issues/3903-host-call-lane-string-boundary.md.
+      // (#3903) Everything depending only on `method` is decided once here,
+      // rather than on every crossing; see plan/issues/3903-host-call-lane-string-boundary.md.
       const isSymbolDispatch = isHostStringSymbolDispatch(method);
       const usesNaNOmitSentinel = method === "includes" || method === "startsWith" || method === "endsWith";
       const isSplit = method === "split";
@@ -9517,15 +9514,20 @@ function resolveImport(
       };
       const fixedPredicate = makeHostStringPredicateAdapter(method, coerce);
       if (fixedPredicate) return fixedPredicate;
-      // Also hoisted (#3903): was re-allocated per call as the `.map` callback
-      // of the Symbol-dispatch branch below.
+      // Also hoisted (#3903): was re-allocated per call as the `.map` callback below.
       const deferDataArg = (value: any): any => _deferStringDataArg(value, callbackState, coerce);
+      const deferReplacementArg = wsh.makeStringReplacementArg(
+        method,
+        callbackState,
+        deferDataArg,
+        _isWasmStruct,
+        _maybeWrapCallableUnknownArity,
+      );
       return (s: any, ...a: any[]) => {
         const recv = coerce(s);
         let args: any[];
         if (isSymbolDispatch && a.length > 0) {
-          // Wrap (don't coerce) the first arg so JS's String.prototype.<method>
-          // can dispatch on Symbol.<method> via the wasm-struct proxy (#1443).
+          // Wrap (don't coerce) the first arg so String.prototype.<method> can dispatch via the wasm-struct proxy (#1443).
           const first = a[0];
           let wrapped: any;
           const primReroute = _rerouteStringSymbolMethodPrimitive(method, first);
@@ -9550,20 +9552,16 @@ function resolveImport(
           } else {
             wrapped = first;
           }
-          // (#3903) Same result as `[wrapped, ...a.slice(1).map(…)]`, without
-          // the three intermediate arrays (slice + map + spread target).
+          // (#3903) Same result as `[wrapped, ...a.slice(1).map(…)]`, without three intermediate arrays.
           const n = a.length;
           args = new Array(n);
           args[0] = wrapped;
-          for (let i = 1; i < n; i++) args[i] = deferDataArg(a[i]);
+          for (let i = 1; i < n; i++) args[i] = i === 1 ? deferReplacementArg(a[i]) : deferDataArg(a[i]);
         } else {
-          // (#3903) `a.map(coerce)` allocates an extra array and goes through
-          // Array.prototype.map's generic element visit; a plain loop over the
-          // rest array is the same observable behaviour (coerce never throws
-          // for holes — a rest array has none).
+          // (#3903) A plain loop avoids `a.map(coerce)`'s extra array and generic visit; rest arrays have no holes.
           const n = a.length;
           args = new Array(n);
-          for (let i = 0; i < n; i++) args[i] = coerce(a[i]);
+          for (let i = 0; i < n; i++) args[i] = i === 1 ? deferReplacementArg(a[i]) : coerce(a[i]);
         }
         // #3761 — split uses -1 for omission/2^32 - 1; explicit NaN remains ToUint32(NaN) = 0.
         // #2002 — includes/startsWith/endsWith use NaN as the "position not

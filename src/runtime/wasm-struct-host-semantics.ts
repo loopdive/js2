@@ -92,3 +92,37 @@ export function tryPrimitiveStringMethod(
   const value = apply(fn, receiver, args);
   return value === undefined ? PRIMITIVE_STRING_UNDEFINED : value;
 }
+
+/** Preserve IsCallable for WasmGC replacement callbacks before ToString. */
+export function deferStringReplacementArg(
+  value: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+  fallback: (value: any) => any,
+  isWasmStruct: (value: any) => boolean,
+  wrapCallable: (value: any, callbackState?: { getExports: () => Record<string, Function> | undefined }) => any,
+): any {
+  if (!isWasmStruct(value)) return fallback(value);
+  const exports = callbackState?.getExports();
+  const isClosure = exports?.__is_closure as ((candidate: any) => number) | undefined;
+  if (typeof isClosure === "function") {
+    try {
+      if (isClosure(value) === 1) return wrapCallable(value, callbackState);
+    } catch {
+      // Keep the ordinary ToPrimitive path when the classifier cannot inspect this value.
+    }
+  }
+  return fallback(value);
+}
+
+export function makeStringReplacementArg(
+  method: string,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+  fallback: (value: any) => any,
+  isWasmStruct: (value: any) => boolean,
+  wrapCallable: (value: any, callbackState?: { getExports: () => Record<string, Function> | undefined }) => any,
+): (value: any) => any {
+  return (value: any): any =>
+    method === "replace" || method === "replaceAll"
+      ? deferStringReplacementArg(value, callbackState, fallback, isWasmStruct, wrapCallable)
+      : fallback(value);
+}

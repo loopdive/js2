@@ -47,6 +47,15 @@ function createAccessorObjectState() {
   };
 }
 
+function createObjectShapeAssignmentState() {
+  return {
+    objectLiteralAssignedPropertyNames: new Set<string>(),
+    objectLiteralAssignedPropertyTypes: new Map<string, ts.Type[]>(),
+    objectLiteralIndexedAssignedPropertyNames: new Set<string>(),
+    objectLiteralIndexedAssignedPropertyTypes: new Map<string, ts.Type[]>(),
+  };
+}
+
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
@@ -276,8 +285,7 @@ export function createCodegenContext(
     weakRefTypeIdx: -1,
     mapHelpers: new Map(),
     mapHelpersEmitted: false,
-    objectLiteralAssignedPropertyNames: new Set(),
-    objectLiteralAssignedPropertyTypes: new Map(),
+    ...createObjectShapeAssignmentState(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
     anyHelpers: new Map(),

@@ -130,6 +130,7 @@ import {
 } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
+import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
@@ -10467,6 +10468,25 @@ function typeMayCarryObjectValue(type: ts.Type): boolean {
   return false;
 }
 
+function widenObjectLiteralFieldType(
+  wasmType: ValType,
+  receivesIndexedCarrier: boolean,
+  receivesObjectCarrier: boolean,
+  nullishScalarSeed: boolean,
+): ValType {
+  if (
+    receivesIndexedCarrier ||
+    (receivesObjectCarrier &&
+      (wasmType.kind === "ref" ||
+        wasmType.kind === "ref_null" ||
+        (wasmType.kind === "i32" && wasmType.boolean === true) ||
+        nullishScalarSeed))
+  ) {
+    return { kind: "externref" };
+  }
+  return wasmType;
+}
+
 /**
  * Ensure a ts.Type that's an object type is registered as a struct.
  * For named types already in structMap, this is a no-op.
@@ -10642,20 +10662,18 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         if (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return false;
         return typeMayCarryObjectValue(rhsType) && !ctx.checker.isTypeAssignableTo(rhsType, propType);
       }) ?? false;
+    const assignedIndexedWrites = ctx.objectLiteralIndexedAssignedPropertyTypes.get(prop.name);
+    const hasIncompatibleIndexedWrite =
+      assignedIndexedWrites?.some((rhsType) => !ctx.checker.isTypeAssignableTo(rhsType, propType)) ?? false;
     const receivesObjectCarrier =
       ctx.objectLiteralAssignedPropertyNames.has(prop.name) &&
       ((propType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
         hasIncompatibleObjectWrite ||
         nullishScalarSeed);
-    if (
-      receivesObjectCarrier &&
-      (wasmType.kind === "ref" ||
-        wasmType.kind === "ref_null" ||
-        (wasmType.kind === "i32" && wasmType.boolean === true) ||
-        nullishScalarSeed)
-    ) {
-      wasmType = { kind: "externref" };
-    }
+    const receivesIndexedCarrier =
+      ctx.objectLiteralIndexedAssignedPropertyNames.has(prop.name) && hasIncompatibleIndexedWrite;
+    if (receivesIndexedCarrier) markIndexedPropertyStale(ctx, prop.name);
+    wasmType = widenObjectLiteralFieldType(wasmType, receivesIndexedCarrier, receivesObjectCarrier, nullishScalarSeed);
     // (#1468) `{ k: undefined }` makes TS infer the property's type as the
     // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for
     // function return types `undefined`/`void` indicate "no result". For a

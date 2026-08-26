@@ -962,7 +962,14 @@ export function inferImplicitAnyParamType(
   ) {
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
   }
-  if (callSites.sawCallSite) return null;
+  // A function value passed to a host/API boundary is a first-class callable
+  // even when this source file contains no direct call to it. Body inference
+  // is not an ABI proof for that case: a replacer such as
+  // `function (a, b, c) { return a + b + c; }` receives strings and numbers
+  // from the host, so narrowing its implicit-any parameters to f64 makes the
+  // callback coerce those string arguments to NaN. Keep the dynamic carrier
+  // whenever the function escapes, just as for an inconclusive call site.
+  if (callSites.sawCallSite || callSites.escapesAsValue) return null;
   // (#743) Truly-uncalled exported entrypoint: the shipped `.d.ts` claim is the
   // only signal and its export boundary is guarded (ToNumber for f64; a typed
   // ref that traps a violating external call for native strings). Declared

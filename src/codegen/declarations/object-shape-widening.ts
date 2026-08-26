@@ -78,28 +78,66 @@ function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValTy
 export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
   // Avoid an AST walk for files that cannot contain a direct property write.
   // The scanner skips comments and strings, so this is a conservative lexical
-  // preflight: every `PropertyAccessExpression = ...` has the token sequence
-  // `. <property-name> =`, including keyword-named properties.
+  // preflight: every direct property write has either `. <property-name> =` or
+  // `[<key>] =`. The latter is admitted because a numeric/string literal key
+  // is still a fixed struct field at codegen time.
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, sourceFile.text);
   let token = scanner.scan();
   let hasPropertyAssignment = false;
   while (token !== ts.SyntaxKind.EndOfFileToken) {
     if (token === ts.SyntaxKind.DotToken) {
       scanner.scan();
-      if (scanner.scan() === ts.SyntaxKind.EqualsToken) {
+      const next = scanner.scan();
+      if (next === ts.SyntaxKind.EqualsToken) {
         hasPropertyAssignment = true;
         break;
       }
+      token = next;
+      continue;
+    }
+    if (token === ts.SyntaxKind.OpenBracketToken) {
+      let depth = 1;
+      let next = scanner.scan();
+      while (next !== ts.SyntaxKind.EndOfFileToken && depth > 0) {
+        if (next === ts.SyntaxKind.OpenBracketToken) depth++;
+        else if (next === ts.SyntaxKind.CloseBracketToken) depth--;
+        next = scanner.scan();
+      }
+      if (depth === 0 && next === ts.SyntaxKind.EqualsToken) {
+        hasPropertyAssignment = true;
+        break;
+      }
+      token = next;
+      continue;
     }
     token = scanner.scan();
   }
   if (!hasPropertyAssignment) return;
 
+  const staticElementKey = (expr: ts.Expression | undefined): string | undefined => {
+    if (!expr) return undefined;
+    while (
+      ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isSatisfiesExpression(expr) ||
+      ts.isTypeAssertionExpression(expr) ||
+      ts.isNonNullExpression(expr)
+    ) {
+      expr = expr.expression;
+    }
+    if (ts.isStringLiteralLike(expr)) return expr.text;
+    if (ts.isNumericLiteral(expr)) {
+      const value = Number(expr.text);
+      return Number.isFinite(value) ? String(value) : undefined;
+    }
+    return undefined;
+  };
+
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left)
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
     ) {
       let rhs: ts.Expression = node.right;
       while (
@@ -120,7 +158,21 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         (rhsType.flags &
           (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !==
           0;
-      if (mayCarryObject) {
+      const indexedName = ts.isElementAccessExpression(node.left)
+        ? staticElementKey(node.left.argumentExpression)
+        : undefined;
+      if (indexedName !== undefined) {
+        // Indexed writes are the narrow dynamic-carrier case: a closed field
+        // may start as a string/number and receive a different primitive on a
+        // later `obj["key"] = rhs`. Record every concrete RHS type so the
+        // field-registration pass can widen the slot before any body emits.
+        if ((rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
+          ctx.objectLiteralIndexedAssignedPropertyNames.add(indexedName);
+          const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedName) ?? [];
+          writes.push(rhsType);
+          ctx.objectLiteralIndexedAssignedPropertyTypes.set(indexedName, writes);
+        }
+      } else if (mayCarryObject && ts.isPropertyAccessExpression(node.left)) {
         const name = node.left.name.text;
         ctx.objectLiteralAssignedPropertyNames.add(name);
         const writes = ctx.objectLiteralAssignedPropertyTypes.get(name) ?? [];

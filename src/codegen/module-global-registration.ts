@@ -55,7 +55,15 @@ export function registerModuleGlobal(
   // entry as a user function leaves those variables as module-init locals,
   // making them invisible to nested/exported functions.
   const fnIdx = ctx.funcMap.get(name);
-  if (fnIdx !== undefined && fnIdx >= ctx.numImportFuncs) return;
+  // Native standalone exposes the inherited Object.prototype conversion
+  // hooks as defined functions, so their funcMap entries are not proof that a
+  // same-named script `var` is a function binding. A script declaration of
+  // either hook must still receive a mutable global cell: OrdinaryToPrimitive
+  // observes it through the realm object, and the module initializer mirrors
+  // the value into that carrier. Other defined functions retain the original
+  // collision guard.
+  const shadowsConversionHook = declaration !== undefined && (name === "toString" || name === "valueOf");
+  if (fnIdx !== undefined && fnIdx >= ctx.numImportFuncs && !shadowsConversionHook) return;
   const existingGlobalIdx = ctx.moduleGlobals.get(name);
   if (existingGlobalIdx !== undefined) {
     if (declaration) {

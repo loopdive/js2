@@ -62,6 +62,7 @@ import { tryCompileSingleUnitSplitLengthBinding } from "../derived-split-scalar.
 import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-ascii-case.js";
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
+import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
@@ -1519,16 +1520,24 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             // Box on store: precise closure struct → externref (A2).
             fctx.body.push({ op: "extern.convert_any" });
           }
-          fctx.body.push({ op: "local.tee", index: localIdx });
-          fctx.body.push({ op: "global.set", index: modGlobalIdx });
+          fctx.body.push({ op: "local.set", index: localIdx });
+          emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, localIdx, { kind: "externref" });
+          fctx.body.push(
+            { op: "local.get", index: localIdx },
+            { op: "global.set", index: ctx.moduleGlobals.get(name) ?? modGlobalIdx },
+          );
           (fctx.moduleBindingShadowLocals ??= new Map()).set(name, localIdx);
         } else {
           // Legacy non-externref pre-decl arm (closure globals never take
           // this): duplicate value on stack — one for the global, one for the
           // (precise) local.
           const localIdx = allocLocal(fctx, name, closureType);
-          fctx.body.push({ op: "local.tee", index: localIdx });
-          fctx.body.push({ op: "global.set", index: modGlobalIdx });
+          fctx.body.push({ op: "local.set", index: localIdx });
+          emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, localIdx, closureType);
+          fctx.body.push(
+            { op: "local.get", index: localIdx },
+            { op: "global.set", index: ctx.moduleGlobals.get(name) ?? modGlobalIdx },
+          );
         }
         // Set TDZ flag to 1 (initialized)
         emitTdzInit(ctx, fctx, name);
@@ -1584,6 +1593,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           if (slot && slot.type.kind !== "externref") slot.type = closureType;
         }
         emitCoercedLocalSet(ctx, fctx, localIdx, closureType);
+        // Builtin-named script bindings such as `var toString = fn` are
+        // intentionally kept out of `moduleGlobals`; they still become own
+        // properties of the script realm object, which OrdinaryToPrimitive
+        // must observe through `globalThis`. Mirror the initializer after the
+        // local store just like the module-global arm above.
+        emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, localIdx, closureType);
         emitLocalTdzInit(fctx, name);
       }
       continue;
@@ -1659,9 +1674,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         compileExpression(ctx, fctx, decl.initializer, wasmType);
+        const initLocal = allocLocal(fctx, `__module_global_init_${fctx.locals.length}`, wasmType);
+        fctx.body.push({ op: "local.set", index: initLocal });
+        emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, initLocal, wasmType);
         // Re-read index: compileExpression may shift globals via addStringConstantGlobal
         const moduleGlobalIdxPost = ctx.moduleGlobals.get(name)!;
-        fctx.body.push({ op: "global.set", index: moduleGlobalIdxPost });
+        fctx.body.push({ op: "local.get", index: initLocal }, { op: "global.set", index: moduleGlobalIdxPost });
       } else {
         // No initializer: `let x;` at module level — in JS, uninitialized
         // variables are `undefined`. For externref globals, emit __get_undefined()

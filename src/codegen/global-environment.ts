@@ -28,6 +28,7 @@ import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
+import { coerceType } from "./shared.js";
 
 const RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL = "__runtime_eval_claim_activation_state_value_cell";
 
@@ -65,6 +66,39 @@ export function ensureGlobalEnvironmentOperation(
   const idx = ensureLateImport(ctx, name, signature.params, signature.results);
   flushLateImportShifts(ctx, fctx);
   return idx;
+}
+
+/**
+ * Mirror a script binding's primitive-conversion method onto the realm object.
+ * Script `var` bindings are backed by module globals for compiled identifier
+ * reads, while ordinary ToPrimitive on `globalThis` consults the realm object.
+ * Keep this writeback narrow to the two conversion hooks and script init.
+ */
+export function emitRealmGlobalPrimitiveMethodWriteback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  valueLocal: number,
+  valueType: ValType,
+): boolean {
+  if (ctx.sourceIsModule || fctx.name !== "__module_init" || (name !== "toString" && name !== "valueOf")) {
+    return false;
+  }
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return false;
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    return false;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  if (valueType.kind !== "externref") {
+    // Import through the shared delegate to preserve the compiler's established
+    // boxing/coercion rules for closure and primitive carriers.
+    coerceType(ctx, fctx, valueType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "call", funcIdx: setIdx });
+  return true;
 }
 
 /** Decode the provider's canonical primitive/reference carrier after reading
