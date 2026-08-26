@@ -523,9 +523,20 @@ const PROVIDER_EXPORT_WRAPPER = `
 export function buildRuntimeEvalProviderSource() {
   const { entryModulePath } = setupAcorn();
   const acorn = stripModuleSyntax(readFileSync(entryModulePath, "utf8"));
-  const interpreter = INTERP_FILES.map((name) =>
-    stripModuleSyntax(readFileSync(join(REPO_ROOT, "src", "interp", name), "utf8")),
-  );
+  // The provider is one closed, self-compiled module, so bind its Acorn entry
+  // statically. Rename the injected-parser parameters only in this assembled
+  // source; every remaining `parse` reference then resolves directly to
+  // Acorn's top-level function. An extra parser trampoline is not equivalent:
+  // its large WasmGC result crosses an externref tail-call boundary that
+  // Wasmtime 47 misexecutes in the unoptimized module. The public interpreter
+  // sources keep their injectable parser API.
+  const interpreter = INTERP_FILES.map((name) => {
+    let source = readFileSync(join(REPO_ROOT, "src", "interp", name), "utf8");
+    if (name === "dynamic-function.ts") {
+      source = source.replace(/\bparse(?=\s*:\s*DynamicParser)/g, "__runtime_eval_provider_injected_parse");
+    }
+    return stripModuleSyntax(source);
+  });
   return [acorn, ...interpreter, PROVIDER_EXPORT_WRAPPER].join("\n");
 }
 

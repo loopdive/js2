@@ -2328,7 +2328,8 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     if (registered.has(importName)) return;
     registered.add(importName);
     const t = addFuncType(ctx, params, results);
-    addImport(ctx, "env", importName, { kind: "func", typeIdx: t });
+    const linked = ctx.linkedPackageBindings.get(importName);
+    addImport(ctx, linked?.module ?? "env", linked?.field ?? importName, { kind: "func", typeIdx: t });
   }
 
   function visit(node: ts.Node) {

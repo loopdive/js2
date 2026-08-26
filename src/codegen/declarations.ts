@@ -139,6 +139,7 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
+import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "./analysis/proxy-binding-escape.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -1493,6 +1494,10 @@ function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Ex
 }
 
 export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile, isEntryFile = true): void {
+  // (#4754) Snapshot once for this declaration collector. The exact token `0`
+  // restores #4931's unconditional module-Proxy widening for same-tree A/B.
+  const proxyModuleEscapeGateEnabled = process.env.JS2WASM_PROXY_MODULE_ESCAPE_GATE !== "0";
+
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
 
@@ -2259,34 +2264,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 
   /**
-   * Keep the existing Proxy escape gate for module globals. Proxy values that
-   * cross a call/new boundary need the target-shaped representation used by
-   * native generic operations; only non-escaping proxies may use externref
-   * storage for dynamic member/iterator dispatch.
-   */
-  function moduleProxyResultEscapesToCall(decl: ts.VariableDeclaration): boolean {
-    if (!ts.isIdentifier(decl.name)) return false;
-    const name = decl.name.text;
-    let escapes = false;
-    const visit = (node: ts.Node): void => {
-      if (escapes) return;
-      if (ts.isIdentifier(node) && node.text === name && ctx.oracle.valueDeclarationOf(node) === decl) {
-        const parent = node.parent;
-        if (
-          (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
-          parent.arguments?.some((arg) => arg === node)
-        ) {
-          escapes = true;
-          return;
-        }
-      }
-      node.forEachChild(visit);
-    };
-    sourceFile.forEachChild(visit);
-    return escapes;
-  }
-
-  /**
    * (#2011) True when a module-level variable's initializer is an object
    * literal carrying get/set accessor declarations (or a `[Symbol.dispose]`
    * / `[Symbol.asyncDispose]` computed method). Such literals compile through
@@ -2301,34 +2278,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
-    // (#4721) `new Proxy(target, handler)` is an externref carrier even though
-    // TypeScript gives the expression the target's structural type.  Top-level
-    // `var`/`let`/`const` bindings are module globals and bypass the function-local
-    // Proxy slot override in variables.ts; retaining the inferred target struct
-    // here would guarded-cast the host/native Proxy to null before `p[key]` can
-    // reach the Proxy MOP.  The revocable result is likewise a dynamic handle.
-    let proxyInit = decl.initializer;
-    while (
-      ts.isParenthesizedExpression(proxyInit) ||
-      ts.isAsExpression(proxyInit) ||
-      ts.isTypeAssertionExpression(proxyInit) ||
-      ts.isNonNullExpression(proxyInit) ||
-      ts.isSatisfiesExpression(proxyInit)
-    ) {
-      proxyInit = proxyInit.expression;
-    }
-    if (
-      (ts.isNewExpression(proxyInit) &&
-        ts.isIdentifier(proxyInit.expression) &&
-        proxyInit.expression.text === "Proxy") ||
-      (ts.isCallExpression(proxyInit) &&
-        ts.isPropertyAccessExpression(proxyInit.expression) &&
-        ts.isIdentifier(proxyInit.expression.expression) &&
-        proxyInit.expression.expression.text === "Proxy" &&
-        proxyInit.expression.name.text === "revocable")
-    ) {
-      if (moduleProxyResultEscapesToCall(decl)) return false;
-      return true;
+    // (#4707/#4754) `new Proxy` returns an externref carrier even though
+    // TypeScript gives it the target's structural type. Keep a member-only
+    // module binding dynamic, but preserve the structural slot when that exact
+    // binding is handed to a typed/generic consumer: widening it would make the
+    // consumer cast a host Proxy externref back to the target struct and trap.
+    // The default-on gate is the sole attribution seam; `=0` restores #4931.
+    if (isDirectProxyConstruction(decl.initializer)) {
+      return !proxyModuleEscapeGateEnabled || !proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but

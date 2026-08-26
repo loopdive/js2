@@ -2276,6 +2276,12 @@ function _maybeWrapCallableUnknownArity(
   return _wrapWasmClosureUnknownArity(val, callbackState) ?? val;
 }
 
+export function wrapLinkedProviderValue(value: any, providerExports: Record<string, Function>): any {
+  if (value == null || (typeof value !== "object" && typeof value !== "function")) return value;
+  const callable = _maybeWrapCallableUnknownArity(value, { getExports: () => providerExports });
+  return callable !== value ? callable : _wrapForHost(value, providerExports);
+}
+
 function _maybeWrapAccessorGetterCallable(
   val: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },

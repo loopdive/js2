@@ -4,6 +4,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import * as ts from "typescript";
+import { readWorkerCompileDuration, stripWorkerProtocol } from "./upstream-suite-worker-protocol.mjs";
 
 // The assertions are intentionally small, deterministic JavaScript. They are
 // runner infrastructure; the registered callback bodies remain the exact
@@ -1014,12 +1015,37 @@ function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEn
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let stage = "compile";
+    let compileDurationMs = null;
+    let timer;
     const started = performance.now();
     const finish = (value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve(value);
+    };
+    const armTimeout = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        const detail = stripWorkerProtocol(stderr);
+        const timeoutLabel = stage === "compile" ? "compile" : "worker execution";
+        finish({
+          compile: {
+            success: false,
+            validates: false,
+            durationMs: stage === "execution" && compileDurationMs !== null ? compileDurationMs : timeoutMs,
+            workerDurationMs: Math.round(performance.now() - started),
+            binaryBytes: 0,
+            timedOut: true,
+            timeoutStage: stage,
+            errors: [{ message: `${timeoutLabel} timeout after ${timeoutMs}ms${detail ? `; worker: ${detail}` : ""}` }],
+          },
+          wasm: null,
+        });
+      }, timeoutMs);
+      timer.unref?.();
     };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -1028,6 +1054,14 @@ function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEn
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
+      if (stage === "compile") {
+        const duration = readWorkerCompileDuration(stderr);
+        if (duration !== null) {
+          compileDurationMs = duration;
+          stage = "execution";
+          armTimeout();
+        }
+      }
     });
     child.on("error", (error) => {
       finish({
@@ -1060,21 +1094,7 @@ function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEn
         });
       }
     });
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish({
-        compile: {
-          success: false,
-          validates: false,
-          durationMs: timeoutMs,
-          binaryBytes: 0,
-          timedOut: true,
-          errors: [{ message: `compile timeout after ${timeoutMs}ms${stderr ? `; worker: ${stderr.trim()}` : ""}` }],
-        },
-        wasm: null,
-      });
-    }, timeoutMs);
-    timer.unref?.();
+    armTimeout();
   });
 }
 
