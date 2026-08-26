@@ -875,6 +875,7 @@ async function runServerHarness({
           DOGFOOD_PACKAGE_CACHE_DIR: PROVIDER_CACHE_DIR,
           DOGFOOD_INSTALL_JSDOM: "1",
           DOGFOOD_NAMED_TEST_EXPORTS: "1",
+          DOGFOOD_UPSTREAM_TEST_TIMEOUT_MS: String(testTimeoutMs()),
           ...(fizzPlatform === "node" ? { DOGFOOD_PLATFORM: "node", DOGFOOD_NODE_HOST_DEPS: "1" } : {}),
         },
       });
@@ -1184,6 +1185,7 @@ async function runProjectHarness({
               DOGFOOD_PACKAGE_CACHE_DIR: PROVIDER_CACHE_DIR,
               DOGFOOD_INSTALL_JSDOM: "1",
               DOGFOOD_NAMED_TEST_EXPORTS: "1",
+              DOGFOOD_UPSTREAM_TEST_TIMEOUT_MS: String(testTimeoutMs()),
               DOGFOOD_REACT_DOM_ACT: "1",
             },
           });
