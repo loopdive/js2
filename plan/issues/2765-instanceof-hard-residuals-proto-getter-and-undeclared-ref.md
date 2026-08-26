@@ -8,8 +8,8 @@ updated: 2026-08-26
 priority: low
 horizon: l
 feasibility: hard
-model: fable
-reasoning_effort: high
+model: gpt-5.6-luna
+reasoning_effort: max
 task_type: bugfix
 area: codegen
 language_feature: instanceof
@@ -109,3 +109,20 @@ Cluster 4 is therefore reopened. Its next checkpoint must pin getter count,
 abrupt propagation, and the Array prototype-chain result in both lanes; it may
 not restore the old cleanup timeout or treat a canary recycle as semantic
 success.
+
+## ES2015 cluster-4 implementation plan
+
+1. Rerun the exact object, throwing-object, and primitive Test262 siblings in
+   isolated host and standalone processes on the combined PR head. Record all
+   six lane/path outcomes before changing code.
+2. Reduce getter invocation, returned-prototype traversal, and abrupt
+   propagation independently. Treat host cleanup/recycling as a control, not
+   proof that compiled `instanceof` semantics passed.
+3. Fix the shared OrdinaryHasInstance/prototype-chain path without a host
+   oracle, fixture rewrite, skip, or special-case expected value. Do not touch
+   cluster 5's undeclared-global behavior in this checkpoint.
+4. Add permanent focused regressions requiring exactly one getter invocation,
+   `true` for the Array-prototype object case, the original thrown object for
+   the abrupt case, and `false` for the primitive control in both lanes.
+5. Rerun the exact 3/3 rows in host and standalone and record the measured
+   denominator in this issue before handing the commit to draft PR #5010.
