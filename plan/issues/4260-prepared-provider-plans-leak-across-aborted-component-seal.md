@@ -4,7 +4,7 @@ title: "Prepared callable-provider plans leak across an aborted component seal"
 status: ready
 sprint: Backlog
 created: 2026-08-09
-updated: 2026-08-25
+updated: 2026-08-26
 priority: medium
 horizon: m
 feasibility: hard
@@ -201,15 +201,152 @@ Limit the behavioral PR initially to:
 - `src/codegen/program-abi-session.ts`;
 - the two descriptor registries above;
 - `src/codegen/program-abi-type-planning.ts` for provisional class layouts;
+- `src/codegen/program-abi-export-planning.ts` for provisional public aliases
+  of exact provider targets under B1;
 - `src/ir/prepared-component-sealing.ts`;
+- `src/ir/integration-report.ts` and the one callback consumer in
+  `src/ir/integration.ts` under the reporting exception below;
+- `src/codegen/ir-overlay-outcomes.ts` only for the matching terminal-evidence
+  audit rule below;
 - a new `tests/issue-4260-prepared-provider-transaction.test.ts`; and
 - only the existing focused Program-ABI/session/provider/import/type tests
-  required by a shared API change.
+  required by a shared API change, plus the exact #4588 **Prepare the compiler
+  timer shim through exact IR ownership** exported-provider control.
 
 Do not move provider allocation or observation in `src/ir/integration.ts`.
 Those allocator objects may be created before component sealing; the bug is
 premature ABI publication, not materialization. Keeping `integration.ts`
-untouched also keeps this issue disjoint from #3518 and the linked-parser work.
+free of provider-planning changes keeps this issue disjoint from #3518 and the
+linked-parser work. The sole authorized edit there is the typed reporting
+consumer below.
+
+#### B0. Exact pre-publication injection reporting seam (2026-08-26)
+
+The original “keep `integration.ts` untouched” lock conflicts with the literal
+GC/standalone acceptance above. `sealDependencyCompletePreparedComponents`
+currently sends every aborted terminal through one `onSealFailure` callback;
+that callback calls `markOwnerFailure`, whose `IrIntegrationFailureLog.record`
+necessarily adds a public `report.errors` row. `consumeIrOverlayReport` then
+copies that row into `CompileResult.irPostClaimErrors`. The exact injected
+pre-seal control can therefore produce the required typed Unsupported outcome
+or zero public post-claim rows, but not both, without a narrow reporting seam.
+
+Keep the zero-row requirement literal and add that seam as follows:
+
+1. Extend the prepared-component failure callback/result with a typed
+   diagnostic-visibility discriminator. It is `"outcome-only"` **only** for a
+   component selected by the already parsed, uniquely matched
+   `JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE` selector and aborted before
+   descriptor publication begins. Every real dependency, descriptor,
+   currentness, overlay, validation, or ordinary seal failure remains
+   `"report"`.
+2. Derive the discriminator from the validated selector/component identity at
+   the injection site. Never infer it from an error message, code, provider
+   name, terminal display name, or catch-site type. Invalid, unmatched, or
+   multiply matched selectors remain invariants and cannot request silence.
+3. Add `IrIntegrationFailureLog.recordOutcomeOnly` (or the repository-equivalent
+   exact method). Give each terminal failure event and its projected failed
+   terminal evidence an explicit `diagnosticVisibility: "report" |
+   "outcome-only"`; never infer visibility from an empty `errors` array. The
+   new method records one `"outcome-only"` event with the same typed
+   `IrIntegrationError` representative used by normal reporting, but with an
+   empty public-detail list and without inserting into `errors`. Normal
+   `record` and verifier groups remain `"report"`. This retains exact failed
+   terminal evidence for outcome reconciliation while leaving
+   `IrIntegrationReport.errors` and `CompileResult.irPostClaimErrors` empty.
+   Both paths must reject a mismatched owner/label exactly as `record` does.
+4. The narrow `integration.ts` callback branches only on that discriminator:
+   both arms add the terminal to the same failed-owner set, normal reporting
+   calls `record`, and outcome-only reporting calls `recordOutcomeOnly`.
+   Selection, body construction, provider allocation/observation, dependency
+   derivation, slot ownership, direct fallback, and lowering are unchanged.
+5. Teach `auditIrIntegrationTerminalEvidence` the same exact discriminator.
+   An `errors: []` event is valid only when it is explicitly
+   `"outcome-only"` and its representative is
+   `unsupported/late-preparation-unsupported@resolve`; the owner pair and all
+   remaining terminal-evidence invariants still apply. A `"report"` event with
+   no public error, an `"outcome-only"` event with any public error, a wrong
+   representative kind/code/stage, or an unknown/malformed visibility is an
+   invariant. Do not weaken public-error object coverage for ordinary failures
+   or let a forged empty array request silence. This is the only authorized
+   `ir-overlay-outcomes.ts` change.
+6. The outcome-only event remains
+   `unsupported/late-preparation-unsupported@resolve`, carries no
+   `preparedComponentId`, and must reconcile to `direct=1, IR=0`. It is not an
+   emitted/Prepared success and it is not omitted evidence merely because its
+   public diagnostic list is empty.
+
+Add paired controls. The exact injected selector must produce the typed
+terminal Unsupported evidence and zero `report.errors`/
+`irPostClaimErrors` in GC and standalone. A genuine non-injected descriptor,
+dependency, overlay, or seal validation failure must still produce its existing
+public diagnostic row. Mutate the visibility value, selector identity, terminal
+owner, representative label, representative outcome code/stage, and empty vs
+nonempty event-detail list; each mismatch must fail closed without publishing a
+provider batch or silently dropping an ordinary failure. Keep #4259's existing
+injection behavior compatible, but do not weaken its outcome, compile-once, or
+runtime assertions.
+
+#### B1. Export aliases join the same provisional provider batch (2026-08-26)
+
+The broader #4588 **Prepare the compiler timer shim through exact IR ownership**
+control exposes one more member of the same atomic publication boundary. Its
+exported numeric helper can be first materialized by a provisional callable
+provider. Before that provider commits, `planPreparedNumericPromiseAliases`
+cannot find a committed locator owner and silently plans no alias. After the
+provider scope seals, final `ProgramAbiExportRegistry.planRetained()` can find
+the owner, but correctly rejects adding the export alias because that draft
+would mutate the sealed prepared scope. Do not permit that late alias and do not
+weaken `preparedScopeAffectedByDraft`; the alias belongs in the provider's
+original transaction.
+
+1. Add a registry-authenticated, side-effect-free prepared export-alias
+   descriptor. It captures each selected value export's exact module row,
+   ordinal, external name, `func`/`global` kind and index, resolved allocator
+   object, expected target intent, entry-source structural order, projected
+   export binding ID, and immutable module-export denominator. Description may
+   select an exact allocator that has no committed Program-ABI locator yet; it
+   must not create a draft, locator, alias, registry flag, or prepared-scope
+   row. Forged, foreign-session, stale, reused, or mutable descriptors reject.
+2. Carry that descriptor in the one-shot
+   `PreparedProgramAbiComponentBatchInput`. Preflight import, provider, and
+   class-layout provisional bindings first, then resolve every export target by
+   exact allocator-object identity against the combined overlay. The resulting
+   target must be a required callable/global draft of the expected intent and a
+   dependency owned or legitimately borrowed by this exact component. Build the
+   canonical `module-value-export` alias draft and add it to the same temporary
+   session write set, closure audit, sealed-scope binding set, and final ABI.
+   No export draft is visible before the batch's infallible commit section.
+3. Reject before any write when the target is missing/foreign, is absent from
+   the exact combined overlay, has the wrong intent or slot policy, is unrelated
+   to the component, or when external name, export
+   object, kind/index, ordinal, entry source, projected ID/order, or module
+   denominator drift. Duplicate external names, descriptor entries, IDs,
+   structural orders, and double-stage/reuse all fail closed. Multiple distinct
+   public exports of one exact target remain distinct ordinal-owned aliases, not
+   a deduplication by target.
+4. Replace the mutating post-overlay prepared alias call with descriptor
+   collection before `scope.stagePreparedComponentBatch`. Keep
+   `planAliasesForTargets` only as a compatibility path for already committed
+   targets outside this provisional transaction. Final `planRetained()` must
+   prove any preplanned alias byte-equivalent and plan only genuinely unrelated
+   retained exports; it may never use a late finalization call to repair an
+   alias omitted from a sealed provider scope.
+5. Abort consumes the descriptor and publishes neither provider nor export
+   alias. A healthy component commits both atomically. When a failed and a
+   healthy component request the same exported provider, the failed component
+   cannot retract or duplicate the healthy component's single provider plan or
+   its exact export alias. Registry/session snapshots before description,
+   staging failure, injected abort, and stale-currentness failure must remain
+   byte- and identity-equal.
+
+Extend the focused transaction suite with positive and one-fact mutation
+controls for every row above. The #4588 timer-shim suite must prove the exported
+numeric helper seals with its exact alias, executes unchanged in standalone,
+and reaches final `planRetained()` without a late sealed-scope mutation. Inject
+the pre-seal abort over the same target and prove both provider and alias are
+absent while direct fallback remains available. Preserve all B0 diagnostic
+visibility assertions independently of export planning.
 
 1. **Scope-owned provisional state.** Add a side-effect-free prepared
    class-layout descriptor over the exact inventory class, final observation, type
@@ -223,8 +360,9 @@ untouched also keeps this issue disjoint from #3518 and the linked-parser work.
    reference/locator slots remain absent or byte-identical committed reuse.
    Then extend `PreparedProgramAbiScopeTransaction` with one combined
    one-shot `stagePreparedComponentBatch` operation carrying the exact import,
-   provider, and class-layout descriptors together with the transaction's
-   scope ID, terminal denominator, and requested structural keys. Do not expose
+   provider, class-layout, and prepared export-alias descriptors together with
+   the transaction's scope ID, terminal denominator, and requested structural
+   keys. Do not expose
    sequential public staging calls that can leave a cross-component or half
    batch. Registry-owned `WeakMap` payloads and a separate nominal lifecycle
    (`fresh -> claimed(exact scope) -> consumed`) authenticate every descriptor;
@@ -259,7 +397,8 @@ untouched also keeps this issue disjoint from #3518 and the linked-parser work.
      type-cell locator;
    - the import denominator and `plannedByImport` rows;
    - the provider denominator/append state and `plannedByKey` rows;
-   - the prepared-scope record and its unit/class/binding reverse indexes.
+   - the prepared export-alias drafts and the prepared-scope record with its
+     unit/class/binding reverse indexes.
 
    Session sidecars publish before registry mappings; the prepared-scope record
    and reverse indexes are the final visibility boundary. After the first
