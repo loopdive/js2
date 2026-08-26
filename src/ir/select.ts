@@ -8981,6 +8981,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
+      // An uncertified EventTarget callback must not fall through to the
+      // generic property-call arm: that arm can accept a closure literal even
+      // though the host method ABI requires an externref callback. Keep the
+      // whole owner on the direct path until the exact B2 resolver accepts it.
+      if (expr.expression.name.text === "addEventListener" && currentSelectionOptions?.hostVoidCallbacks) {
+        return shapeNo("expr-host-void-callback-unsupported", expr);
+      }
       for (const arg of expr.arguments) {
         // Slice 8a (#1169g): spread args restricted to method calls is
         // out of scope — methods on classes have known signatures and
