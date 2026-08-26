@@ -69,7 +69,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { seededNativeProtoDataMembersByBrand } from "./native-proto.js";
+import { seededNativeProtoOwnMembersByBrand } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 
@@ -106,7 +106,7 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return undefined;
-  const seededDataMembers = seededNativeProtoDataMembersByBrand(ctx);
+  const seededOwnMembers = seededNativeProtoOwnMembersByBrand(ctx);
   const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
   const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
 
@@ -173,17 +173,15 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: natStr, fieldIdx: STR_LEN },
     { op: "local.set", index: L_KLEN },
-    // A seeded DATA method is no longer an immutable CSV fact: its companion
+    // A seeded data method or accessor is no longer an immutable CSV fact: its companion
     // entry is the real own property and can be replaced or deleted. Resolve
     // those keys through the companion before the historical CSV shortcut.
-    // Accessors deliberately fall through — they are not seeded, and their
-    // existing synthesized path remains authoritative. (#4491 T9) `constructor`
-    // is in this ladder for a brand whose seeder installed it (one with an
-    // identity-stable carrier); a brand with no carrier seeds none and keeps the
-    // unconditional ES5 arm below.
+    // (#4491 T9) `constructor` is in this ladder for a brand whose seeder
+    // installed it (one with an identity-stable carrier); a brand with no
+    // carrier seeds none and keeps the unconditional ES5 arm below.
     ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined
       ? []
-      : [...seededDataMembers.entries()].flatMap(([brand, members]) => [
+      : [...seededOwnMembers.entries()].flatMap(([brand, members]) => [
           { op: "local.get", index: L_ANY } as Instr,
           { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
           { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,

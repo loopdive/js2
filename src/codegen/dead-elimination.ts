@@ -280,6 +280,15 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
   const usedF = new Set<number>();
   const usedT = new Set<number>();
 
+  // #2527: group identity is an ABI property. A module using one member must
+  // retain the complete frozen group, otherwise separately compiled provider
+  // and consumer modules declare different recursive groups and GC values can
+  // no longer cross the link boundary.
+  const canonicalGroup = mod.canonicalRuntimeRecGroup;
+  if (canonicalGroup) {
+    for (let i = canonicalGroup.start; i <= canonicalGroup.end; i++) usedT.add(i);
+  }
+
   // All local (non-import) functions are always reachable
   for (let i = 0; i < mod.functions.length; i++) {
     usedF.add(numImpF + i);
@@ -423,6 +432,14 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
   // Replace types array
   if (rem > 0) {
     mod.types = nextTypes;
+    if (canonicalGroup) {
+      const start = targetsByOldIndex[canonicalGroup.start];
+      const end = targetsByOldIndex[canonicalGroup.end];
+      if (start === null || end === null) {
+        throw new Error("canonical runtime rec-group was removed during type compaction (#2527)");
+      }
+      mod.canonicalRuntimeRecGroup = { ...canonicalGroup, start, end };
+    }
   }
 
   // Remap function bodies

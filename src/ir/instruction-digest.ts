@@ -10,7 +10,7 @@ import type { IrInstr } from "./nodes.js";
  * including provider identity, allocation provenance, and producer evidence,
  * participates in the digest.
  */
-function canonicalDigestValue(value: unknown): string {
+function canonicalDigestValue(value: unknown, references = new Map<object, number>()): string {
   if (value === undefined) return "undefined";
   if (typeof value === "bigint") return `bigint:${value.toString()}`;
   if (typeof value === "number") {
@@ -23,12 +23,22 @@ function canonicalDigestValue(value: unknown): string {
   if (typeof value === "string") return `string:${JSON.stringify(value)}`;
   if (typeof value === "boolean") return value ? "boolean:true" : "boolean:false";
   if (value === null) return "null";
-  if (Array.isArray(value)) return `[${value.map(canonicalDigestValue).join(",")}]`;
+  if (Array.isArray(value)) {
+    const existingReference = references.get(value);
+    if (existingReference !== undefined) return `reference:${existingReference}`;
+    const reference = references.size;
+    references.set(value, reference);
+    return `array:${reference}[${value.map((entry) => canonicalDigestValue(entry, references)).join(",")}]`;
+  }
   if (typeof value === "object") {
     const object = value as Record<string, unknown>;
-    return `{${Object.keys(object)
+    const existingReference = references.get(object);
+    if (existingReference !== undefined) return `reference:${existingReference}`;
+    const reference = references.size;
+    references.set(object, reference);
+    return `object:${reference}{${Object.keys(object)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalDigestValue(object[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonicalDigestValue(object[key], references)}`)
       .join(",")}}`;
   }
   throw new TypeError(`unsupported IR digest value: ${typeof value}`);

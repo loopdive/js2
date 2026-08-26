@@ -269,6 +269,59 @@ function inferExplicitClosureReturnType(
 }
 
 /**
+ * A host-object binding has an externref representation even when the checker
+ * gives it a closed structural type. Keep that representation across a
+ * closure return boundary; otherwise `return value` emits a guarded cast to
+ * the checker type and turns a Proxy (or another host carrier) into null.
+ */
+function closureReturnsExternrefBinding(
+  ctx: CodegenContext,
+  fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+): boolean {
+  const isDynamicBinding = (expr: ts.Expression): boolean => {
+    let current = expr;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isSatisfiesExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return ts.isIdentifier(current) && ctx.externrefAccessorVars.has(current.text);
+  };
+
+  const body = fn.body;
+  if (body === undefined) return false;
+  if (!ts.isBlock(body)) return isDynamicBinding(body);
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      node !== fn &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression && isDynamicBinding(node.expression)) {
+      found = true;
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  body.forEachChild(visit);
+  return found;
+}
+
+/**
  * (#3096) Collect free-variable references that appear in a parameter list's
  * default initializers — both top-level param defaults (`param.initializer`,
  * e.g. `(a, b = outer) => ...`) and defaults / computed keys nested inside a
@@ -1658,6 +1711,9 @@ export function computeClosureWrapperSig(
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
       closureReturnType = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
+      // (#4707) Proxy/host-object bindings retain their externref carrier when
+      // returned from a closure, despite TypeScript's structural return type.
+      if (closureReturnsExternrefBinding(ctx, arrow)) closureReturnType = { kind: "externref" };
     }
   }
   if (closureReturnType === null && !ts.isFunctionDeclaration(arrow) && isAssignedToSymbolIterator(arrow)) {

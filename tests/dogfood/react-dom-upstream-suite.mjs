@@ -43,6 +43,7 @@ import { compileProjectInWorker } from "./upstream-suite-runner.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
 const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
+const PROVIDER_CACHE_DIR = join(PROJECT_ROOT, ".provider-cache");
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
 
@@ -468,6 +469,19 @@ function buildProjectModuleSource({ exportName, moduleName, imports, bindings = 
   return `${imports}\nconst ${carrier} = {};\n${bindings}\n${moduleRequire}\n${wiredSource}\nexport { ${carrier} as ${exportName} };\n`;
 }
 
+function providerPackageFiles(packageName, source) {
+  const root = `node_modules/${packageName}`;
+  return {
+    [`${root}/package.json`]: JSON.stringify({
+      name: packageName,
+      private: true,
+      type: "module",
+      exports: "./index.ts",
+    }),
+    [`${root}/index.ts`]: source,
+  };
+}
+
 // Keep each published CJS implementation file in its own project module.
 // Concatenating the 560 KB client graph into every test batch both repeats
 // compilation work and makes a single compiler watchdog unable to distinguish
@@ -477,10 +491,10 @@ function buildProjectModuleSource({ exportName, moduleName, imports, bindings = 
 // without running the 3-4 hour suite.
 export function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
   const entry = [
-    'import { __reactExports } from "./react.ts";',
-    'import { __sharedExports } from "./shared.ts";',
-    'import { __clientExports } from "./client.ts";',
-    'import { __schedulerExports } from "./scheduler.ts";',
+    'import { __reactExports } from "react";',
+    'import { __sharedExports } from "react-dom-shared";',
+    'import { __clientExports } from "react-dom-client";',
+    'import { __schedulerExports } from "scheduler";',
     "const __REACT__ = __reactExports;",
     "const __REACTDOM_SHARED__ = __sharedExports;",
     "const __REACTDOM__ = __clientExports;",
@@ -494,38 +508,45 @@ export function buildProjectFiles({ reactSource, sharedSource, clientSource, tes
     `export function upstreamTestCount() { return ${tests.length}; }`,
   ].join("\n");
   return {
-    "react.ts": buildProjectModuleSource({
-      exportName: "__reactExports",
-      moduleName: "react",
-      imports: "",
-      source: reactSource,
-    }),
-    "scheduler.ts": buildProjectModuleSource({
-      exportName: "__schedulerExports",
-      moduleName: "scheduler",
-      imports: "",
-      source: REACT_DOM_SCHEDULER_SHIM,
-    }),
-    "shared.ts": buildProjectModuleSource({
-      exportName: "__sharedExports",
-      moduleName: "shared",
-      imports: 'import { __reactExports } from "./react.ts";',
-      bindings: "var __REACT__ = __reactExports;",
-      source: wireRequires(sharedSource),
-    }),
-    "client.ts": buildProjectModuleSource({
-      exportName: "__clientExports",
-      moduleName: "client",
-      imports:
-        'import { __reactExports } from "./react.ts";\n' +
-        'import { __sharedExports } from "./shared.ts";\n' +
-        'import { __schedulerExports } from "./scheduler.ts";',
-      bindings:
-        "var __REACT__ = __reactExports;\n" +
-        "var __REACTDOM_SHARED__ = __sharedExports;\n" +
-        "var __SCHEDULER__ = __schedulerExports;",
-      source: wireRequires(clientSource),
-    }),
+    ...providerPackageFiles(
+      "react",
+      buildProjectModuleSource({ exportName: "__reactExports", moduleName: "react", imports: "", source: reactSource }),
+    ),
+    ...providerPackageFiles(
+      "scheduler",
+      buildProjectModuleSource({
+        exportName: "__schedulerExports",
+        moduleName: "scheduler",
+        imports: "",
+        source: REACT_DOM_SCHEDULER_SHIM,
+      }),
+    ),
+    ...providerPackageFiles(
+      "react-dom-shared",
+      buildProjectModuleSource({
+        exportName: "__sharedExports",
+        moduleName: "shared",
+        imports: 'import { __reactExports } from "react";',
+        bindings: "var __REACT__ = __reactExports;",
+        source: wireRequires(sharedSource),
+      }),
+    ),
+    ...providerPackageFiles(
+      "react-dom-client",
+      buildProjectModuleSource({
+        exportName: "__clientExports",
+        moduleName: "client",
+        imports:
+          'import { __reactExports } from "react";\n' +
+          'import { __sharedExports } from "react-dom-shared";\n' +
+          'import { __schedulerExports } from "scheduler";',
+        bindings:
+          "var __REACT__ = __reactExports;\n" +
+          "var __REACTDOM_SHARED__ = __sharedExports;\n" +
+          "var __SCHEDULER__ = __schedulerExports;",
+        source: wireRequires(clientSource),
+      }),
+    ),
     "entry.ts": entry,
   };
 }
@@ -549,11 +570,12 @@ export function buildServerProjectFiles({
   const rendererExport = isFizz ? "__fizzExports" : "__serverExports";
   const rendererBinding = isFizz ? "__REACTDOM_FIZZ__" : "__REACTDOM_SERVER__";
   const rendererImport = isFizz ? "__fizzExports" : "__serverExports";
+  const rendererPackage = isFizz ? "react-dom-fizz" : "react-dom-server";
   const entry = [
-    'import { __reactExports } from "./react.ts";',
-    'import { __sharedExports } from "./shared.ts";',
-    `import { ${rendererImport} } from "./${rendererName}.ts";`,
-    'import { __schedulerExports } from "./scheduler.ts";',
+    'import { __reactExports } from "react";',
+    'import { __sharedExports } from "react-dom-shared";',
+    `import { ${rendererImport} } from ${JSON.stringify(rendererPackage)};`,
+    'import { __schedulerExports } from "scheduler";',
     "const __REACT__ = __reactExports;",
     "const __REACTDOM_SHARED__ = __sharedExports;",
     "const __REACTDOM__ = __sharedExports;",
@@ -576,42 +598,48 @@ export function buildServerProjectFiles({
     `export function upstreamTestCount() { return ${tests.length}; }`,
   ].join("\n");
   return {
-    "react.ts": buildProjectModuleSource({
-      exportName: "__reactExports",
-      moduleName: "react",
-      imports: "",
-      source: reactSource,
-    }),
-    "scheduler.ts": buildProjectModuleSource({
-      exportName: "__schedulerExports",
-      moduleName: "scheduler",
-      imports: "",
-      source: REACT_DOM_SCHEDULER_SHIM,
-    }),
-    "shared.ts": buildProjectModuleSource({
-      exportName: "__sharedExports",
-      moduleName: "shared",
-      imports:
-        'import { __reactExports } from "./react.ts";\n' + 'import { __schedulerExports } from "./scheduler.ts";',
-      bindings:
-        "var __REACT__ = __reactExports;\n" +
-        "var __SCHEDULER__ = __schedulerExports;\n" +
-        "var __REACTDOM_SHARED__ = __sharedExports;",
-      source: wireRequires(sharedSource),
-    }),
-    [`${rendererName}.ts`]: buildProjectModuleSource({
-      exportName: rendererExport,
-      moduleName: rendererName,
-      imports:
-        'import { __reactExports } from "./react.ts";\n' +
-        'import { __sharedExports } from "./shared.ts";\n' +
-        'import { __schedulerExports } from "./scheduler.ts";',
-      bindings:
-        "var __REACT__ = __reactExports;\n" +
-        "var __REACTDOM_SHARED__ = __sharedExports;\n" +
-        "var __SCHEDULER__ = __schedulerExports;",
-      source: wireRequires(rendererSource),
-    }),
+    ...providerPackageFiles(
+      "react",
+      buildProjectModuleSource({ exportName: "__reactExports", moduleName: "react", imports: "", source: reactSource }),
+    ),
+    ...providerPackageFiles(
+      "scheduler",
+      buildProjectModuleSource({
+        exportName: "__schedulerExports",
+        moduleName: "scheduler",
+        imports: "",
+        source: REACT_DOM_SCHEDULER_SHIM,
+      }),
+    ),
+    ...providerPackageFiles(
+      "react-dom-shared",
+      buildProjectModuleSource({
+        exportName: "__sharedExports",
+        moduleName: "shared",
+        imports: 'import { __reactExports } from "react";\n' + 'import { __schedulerExports } from "scheduler";',
+        bindings:
+          "var __REACT__ = __reactExports;\n" +
+          "var __SCHEDULER__ = __schedulerExports;\n" +
+          "var __REACTDOM_SHARED__ = __sharedExports;",
+        source: wireRequires(sharedSource),
+      }),
+    ),
+    ...providerPackageFiles(
+      rendererPackage,
+      buildProjectModuleSource({
+        exportName: rendererExport,
+        moduleName: rendererName,
+        imports:
+          'import { __reactExports } from "react";\n' +
+          'import { __sharedExports } from "react-dom-shared";\n' +
+          'import { __schedulerExports } from "scheduler";',
+        bindings:
+          "var __REACT__ = __reactExports;\n" +
+          "var __REACTDOM_SHARED__ = __sharedExports;\n" +
+          "var __SCHEDULER__ = __schedulerExports;",
+        source: wireRequires(rendererSource),
+      }),
+    ),
     "entry.ts": entry,
   };
 }
@@ -844,8 +872,10 @@ async function runServerHarness({
         }),
         timeoutMs: compileTimeoutMs,
         workerEnv: {
+          DOGFOOD_PACKAGE_CACHE_DIR: PROVIDER_CACHE_DIR,
           DOGFOOD_INSTALL_JSDOM: "1",
           DOGFOOD_NAMED_TEST_EXPORTS: "1",
+          DOGFOOD_UPSTREAM_TEST_TIMEOUT_MS: String(testTimeoutMs()),
           ...(fizzPlatform === "node" ? { DOGFOOD_PLATFORM: "node", DOGFOOD_NODE_HOST_DEPS: "1" } : {}),
         },
       });
@@ -1088,7 +1118,7 @@ async function compileImplementationOnly({ reactSource, sharedSource, clientSour
     entryFile: "entry.ts",
     files: buildProjectFiles({ reactSource, sharedSource, clientSource, tests: [] }),
     timeoutMs,
-    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1" },
+    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1", DOGFOOD_PACKAGE_CACHE_DIR: PROVIDER_CACHE_DIR },
   });
   const compile = result?.compile;
   if (!compile) return { validates: false, compileMs: 0, error: "compile worker returned no result" };
@@ -1152,8 +1182,10 @@ async function runProjectHarness({
             files,
             timeoutMs,
             workerEnv: {
+              DOGFOOD_PACKAGE_CACHE_DIR: PROVIDER_CACHE_DIR,
               DOGFOOD_INSTALL_JSDOM: "1",
               DOGFOOD_NAMED_TEST_EXPORTS: "1",
+              DOGFOOD_UPSTREAM_TEST_TIMEOUT_MS: String(testTimeoutMs()),
               DOGFOOD_REACT_DOM_ACT: "1",
             },
           });

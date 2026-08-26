@@ -114,6 +114,26 @@ function emitGlobalSyncWritebackByName(
   emitGlobalSyncWriteback(ctx, fctx, targetLocal, ctx.moduleGlobals.get(targetName));
 }
 
+/** Enforce GetIterator for an empty ArrayAssignmentPattern (#4714). */
+function emitEmptyForOfArrayPatternRequirement(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemLocal: number,
+  elemType: ValType,
+): void {
+  if (elemType.kind !== "externref") {
+    emitThrowTypeError(ctx, fctx, "value is not iterable");
+    return;
+  }
+  const iteratorIdx = ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (iteratorIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: elemLocal });
+    fctx.body.push({ op: "call", funcIdx: iteratorIdx });
+    fctx.body.push({ op: "drop" });
+  }
+}
+
 export function compileForOfDestructuring(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1100,14 +1120,13 @@ export function compileForOfAssignDestructuring(
   } else if (ts.isArrayLiteralExpression(expr)) {
     // for ([x, y] of arr) — elem is a vec struct or tuple struct, extract by index
     if (elemType.kind !== "ref" && elemType.kind !== "ref_null") {
-      // Externref elements: use __extern_get to extract indexed properties
+      if (expr.elements.length === 0) {
+        emitEmptyForOfArrayPatternRequirement(ctx, fctx, elemLocal, elemType);
+        return;
+      }
       if (elemType.kind === "externref") {
-        // Per ECMA-262 §13.15.5.2 / §8.4.2 GetIterator(null/undefined) throws
-        // TypeError. Required for nested patterns like `for ([[x]] of [[null]])`
-        // (#1225). Skip for empty `[] of …` patterns to match existing behavior.
-        if (expr.elements.length > 0) {
-          emitExternrefDestructureGuard(ctx, fctx, elemLocal);
-        }
+        // Guard null/undefined before the nested externref readers (#1225).
+        emitExternrefDestructureGuard(ctx, fctx, elemLocal);
         compileForOfAssignDestructuringExternref(ctx, fctx, expr, elemLocal, stmt);
       }
       return;
