@@ -23,11 +23,6 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
-import {
-  collectIntegrationFunctionDeclarations,
-  makeMultiSourceOverrideResolvers,
-  resolveIntegrationSourceFiles,
-} from "./multi-source-integration.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
@@ -328,10 +323,13 @@ import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
 import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType, WasmFunction } from "./types.js";
 import {
+  collectIntegrationFunctionDeclarations,
   definedFuncAt,
   definedFuncHandleOf,
+  makeMultiSourceOverrideResolvers,
   nativeStrHelperHandle,
   replaceDefinedFuncAt,
+  resolveIntegrationSourceFiles,
 } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
 // (#4467) per-lane §7.1.17 Number::toString provider (host import / native thunk)
 import {
@@ -1038,6 +1036,7 @@ export function compileIrPathFunctions(
     identityContext: moduleBindingIdentityContext,
     ownerProjection: activeOwnerProjection,
     declarationsByName,
+    definedFunctionAt: (funcIdx) => definedFuncAt(ctx, funcIdx),
   });
   const selected =
     selection ??

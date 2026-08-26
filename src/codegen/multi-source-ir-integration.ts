@@ -1,16 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { IrBindingId, IrUnitId } from "../ir/identity.js";
+import type { IrTypeOverrideMap } from "../ir/integration.js";
+import { asVal, irVal, type IrType } from "../ir/nodes.js";
+import { IrInvariantError } from "../ir/outcomes.js";
+import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
+import { isExactDynamicStringReplaceNumberParser } from "../ir/dynamic-string-parser-shape.js";
 import { ts } from "../ts-api.js";
-import { definedFuncAt } from "../codegen/func-space.js";
-import type { CodegenContext } from "../codegen/context/types.js";
-import type { IrBindingId, IrUnitId } from "./identity.js";
-import type { IrTypeOverrideMap } from "./integration.js";
-import { asVal, irVal, type IrType } from "./nodes.js";
-import { IrInvariantError } from "./outcomes.js";
-import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
-import { isExactDynamicStringReplaceNumberParser } from "./dynamic-string-parser-shape.js";
+import type { CodegenContext } from "./context/types.js";
 
-declare module "./integration.js" {
+declare module "../ir/integration.js" {
   interface IrIntegrationOptions {
     /** Source files participating in one aggregate IR integration. */
     readonly integrationSourceFiles?: readonly ts.SourceFile[];
@@ -54,6 +53,7 @@ export function makeMultiSourceOverrideResolvers(input: {
   readonly identityContext: IrPlanningIdentityContext;
   readonly ownerProjection: IrLegacyUnitProjection;
   readonly declarationsByName: ReadonlyMap<string, ts.FunctionDeclaration>;
+  readonly definedFunctionAt: (funcIdx: number) => { readonly typeIdx: number } | undefined;
 }): {
   readonly implicitParamUsesNumericVecAbi: (parameter: ts.ParameterDeclaration) => boolean;
   readonly effectiveOverride: (
@@ -81,7 +81,7 @@ export function makeMultiSourceOverrideResolvers(input: {
       : input.declarationsByName.get(name);
     const functionDeclaration = declaration && ts.isFunctionDeclaration(declaration) ? declaration : undefined;
     const legacyFuncIdx = input.ctx.funcMap.get(name);
-    const legacyFunction = legacyFuncIdx === undefined ? undefined : definedFuncAt(input.ctx, legacyFuncIdx);
+    const legacyFunction = legacyFuncIdx === undefined ? undefined : input.definedFunctionAt(legacyFuncIdx);
     const legacySignature = legacyFunction === undefined ? undefined : input.ctx.mod.types[legacyFunction.typeIdx];
     const legacySecondParam = legacySignature?.kind === "func" ? legacySignature.params[1] : undefined;
     if (
