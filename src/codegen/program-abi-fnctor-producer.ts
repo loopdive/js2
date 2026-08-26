@@ -6,11 +6,10 @@
  * This module records no IR instruction and does not alter the legacy
  * constructor body or call site.  It only observes a constructor after the
  * existing AST compiler has built its reserved struct/function pair.  The
- * deliberately small physical lane here is the one for which the current
- * observation contract has no logical-to-physical field map: one unconditional
- * `input: string` field, no captures/TDZ cells, and no standalone/WASI
- * internal fields or widened foreign result.  The producer is host-only in
- * this checkpoint; other target lanes remain on the legacy path.
+ * The host lane observes one unconditional `input: string` field with no
+ * captures/TDZ cells. The bounded standalone lane observes only the exact
+ * post-legacy `input/$constructor/$bag` layout certified by the shared
+ * logical-to-physical contract; unsupported layouts remain legacy-owned.
  */
 
 import { irFnctorLayoutTypeRef } from "../ir/abi-bindings.js";
@@ -19,12 +18,14 @@ import { validateIrFnctorShape, type IrFnctorShape } from "../ir/fnctor-abi.js";
 import type { IrFnctorAdmission } from "../ir/propagate.js";
 import type { FieldDef, FuncHandle, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { makeIrFnctorAdmissionResolver } from "./ir-fnctor-admission.js";
+import { makeIrFnctorAdmissionResolver, makeIrFnctorArgumentProjectionAuthority } from "./ir-fnctor-admission.js";
 import type { FnctorCaptureLayout } from "./fnctor-constructor-identity.js";
 import type { ProgramAbiFnctorObservation } from "./program-abi-fnctor-planning.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import { fnctorConstructorField } from "./fnctor-identity-fields.js";
 import { closureBagField } from "./closures/closure-header-layout.js";
+import { proveIrFnctorInputConstructorSyntax } from "../ir/fnctor-argument-projection.js";
+import { ts } from "../ts-api.js";
 
 export interface ObserveIrFnctorProducerInput {
   readonly ctx: CodegenContext;
@@ -255,6 +256,52 @@ export function observeApprovedIrFnctor(input: ObserveIrFnctorProducerInput): bo
   const registry = ctx.programAbiFnctors;
   const identityContext = ctx.irPlanningIdentityContext;
   if (!registry || !ctx.programAbiTypes || !identityContext) return false;
+
+  if (
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    !ctx.fast &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  ) {
+    const syntax = proveIrFnctorInputConstructorSyntax(ctx.checker, identityContext, input.declaration);
+    const argument = input.site.arguments?.[0];
+    const reservation = syntax
+      ? makeIrFnctorArgumentProjectionAuthority(ctx, ctx.checker).resolvePhysicalReservation(input.site, syntax)
+      : undefined;
+    if (
+      !syntax ||
+      syntax.constructorDeclaration !== input.declaration ||
+      syntax.sourceFile !== input.site.getSourceFile() ||
+      syntax.constructorUnitId !== identityContext.unitIdByDeclaration.get(input.declaration) ||
+      !reservation ||
+      reservation.reservationKey !== input.structName ||
+      reservation.reservedTypeIdx !== input.structTypeIdx ||
+      input.site.arguments?.length !== 1 ||
+      !argument ||
+      !ts.isStringLiteralLike(argument)
+    ) {
+      return false;
+    }
+    const shape: IrFnctorShape = {
+      kind: "fnctor-shape",
+      sourceId: syntax.sourceId,
+      constructorUnitId: syntax.constructorUnitId,
+      constructorName: input.functionName,
+      constructorTarget: irFnctorConstructorFuncRef(syntax.constructorUnitId, `${input.structName}_new`),
+      reservedLayout: irFnctorLayoutTypeRef(syntax.constructorUnitId, input.structName),
+      fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
+      captures: [],
+      userParamTypes: [{ kind: "string" }],
+      hiddenIdentity: true,
+      constructorIdentity: { unitId: syntax.constructorUnitId, paramIndex: 1 },
+    };
+    const observation = buildStandaloneIrFnctorObservation(input, shape);
+    if (!observation) return false;
+    registry.observe(observation);
+    return true;
+  }
+
   if (!supportsBoundedPhysicalLane(input)) return false;
 
   const admission = makeIrFnctorAdmissionResolver(ctx, ctx.checker, identityContext)(input.site);

@@ -74,6 +74,7 @@ function makeContext(
     approved: new Set([data.site]),
     approvedNames: new Set(["Parser"]),
     ctorDeclByName: new Map([["Parser", data.declaration]]),
+    siteCtorName: new Map([[data.site, "Parser"]]),
     provenance: { refusedNames: [] },
   } as unknown as CodegenContext["fnctorEscapeGate"];
   return {
@@ -255,6 +256,30 @@ describe("#3521 Program-ABI fnctor producer", () => {
       ],
     });
     expect(validateProgramAbiFnctorPhysicalContract(ctx, observation!)).toBeNull();
+  });
+
+  it("observes the exact get-only standalone Parser after its legacy constructor is finalized", () => {
+    const data = fixture();
+    const observed: { value?: ProgramAbiFnctorObservation } = {};
+    const { ctx, input } = standalonePhysicalFixture(data);
+    ctx.programAbiFnctors = {
+      observe(value: ProgramAbiFnctorObservation) {
+        observed.value = value;
+      },
+    } as unknown as CodegenContext["programAbiFnctors"];
+
+    expect(observeApprovedIrFnctor(input)).toBe(true);
+    expect(observed.value).toMatchObject({
+      sourceId: data.identity.sourceIdBySourceFile.get(data.file),
+      constructorUnitId: data.identity.unitIdByDeclaration.get(data.declaration),
+      supportsConstruction: false,
+      supportsFieldGet: true,
+      instanceCarrierType: { kind: "ref_null", typeIdx: 7 },
+      shape: {
+        fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
+        userParamTypes: [{ kind: "string" }],
+      },
+    });
   });
 
   it.each([
