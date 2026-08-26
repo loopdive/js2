@@ -198,6 +198,15 @@ Track at least:
   private callback brand. Forged, copied, relabeled, donor, or incomplete
   manifests cannot grant capability authority. This keeps declarative
   observability separate from bearer credentials.
+- The npm compatibility bridge checkpoint classifies `__unwrap_for_wasm` as a
+  `js-value-bridge` adapter: it reconciles an admitted typed-array facade with
+  its canonical Wasm vector before a compiled callable consumes the value; it
+  does not implement an ECMAScript operation. The live ratchet remains **33**
+  probes / **394** imports / **0 legacy-semantic** / **0 unknown**, with the
+  compatibility control at **23** legacy imports. The exact runtime ceilings
+  are **18,275** `runtime.ts` lines and **7,602** `resolveImport` lines / **15**
+  cases after the generic scalar and typed-array callable bridges; owned
+  adapters remain **792** lines and explicit capabilities **1,194** lines.
 
 Still open: product/Test262/npm denominators, binary/startup/performance
 budgets, and the final default-policy evidence gate.

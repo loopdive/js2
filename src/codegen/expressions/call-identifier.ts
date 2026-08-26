@@ -10,6 +10,7 @@
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -882,7 +883,7 @@ export function compileIdentifierCall(
       }
 
       const arg0 = expr.arguments[0]!;
-      const hostBigIntArg = !ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(arg0) === "bigint";
+      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(arg0) === "bigint";
       const argType = compileExpression(ctx, fctx, arg0, hostBigIntArg ? { kind: "externref" } : undefined);
       // Native-string ref (WasmGC AnyString/NativeString) → §7.1.4.1
       // StringToNumber. The generic ToNumber engine (coerceType "number") has no
@@ -955,7 +956,7 @@ export function compileIdentifierCall(
       }
 
       const bigintArg = expr.arguments[0]!;
-      const hostBigIntArg = !ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(bigintArg) === "bigint";
+      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(bigintArg) === "bigint";
       const argType = compileExpression(ctx, fctx, bigintArg, hostBigIntArg ? { kind: "externref" } : undefined);
       if (argType?.kind === "i32") {
         fctx.body.push({ op: "i64.extend_i32_s" });
@@ -972,7 +973,7 @@ export function compileIdentifierCall(
       if (argType && argType.kind !== "externref") {
         coerceType(ctx, fctx, argType, { kind: "externref" }, "default");
       }
-      if (!ctx.standalone && !ctx.wasi) {
+      if (usesHostBigIntCarrier(ctx)) {
         const ctorRefIdx = ctx.funcMap.get("__bigint_ctor_ref");
         if (ctorRefIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: ctorRefIdx });
@@ -1093,7 +1094,7 @@ export function compileIdentifierCall(
         if (reToStr !== undefined && reToStr !== null) return reToStr;
       }
 
-      const hostBigIntArg = !ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(strArg0) === "bigint";
+      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(strArg0) === "bigint";
       const argType = compileExpression(ctx, fctx, strArg0, hostBigIntArg ? { kind: "externref" } : undefined);
 
       if (argType === null) {
@@ -1192,7 +1193,7 @@ export function compileIdentifierCall(
         return { kind: "i32" };
       }
       const boolArg = expr.arguments[0]!;
-      const hostBigIntArg = !ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(boolArg) === "bigint";
+      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(boolArg) === "bigint";
       const argType = compileExpression(ctx, fctx, boolArg, hostBigIntArg ? { kind: "externref" } : undefined);
       // void / undefined → always false
       if (argType === null) {

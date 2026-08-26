@@ -1709,7 +1709,7 @@ function tryCompileHostBigIntCompoundAssignment(
   right: ts.Expression,
   op: ts.SyntaxKind,
 ): ValType | null | undefined {
-  if (ctx.standalone || ctx.wasi || ctx.oracle.staticJsTypeOf(left) !== "bigint") return undefined;
+  if (!isHostBigIntUpdate(ctx, left)) return undefined;
   const binaryOp = compoundBinaryOperator(op);
   if (binaryOp === undefined) return undefined;
   const value = ts.factory.createBinaryExpression(left, binaryOp, right);

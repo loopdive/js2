@@ -21,6 +21,7 @@ import {
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { evaluateConstantCondition } from "../statements/control-flow.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
@@ -32,7 +33,7 @@ function compileConditionalExpression(
   expectedType?: ValType,
 ): ValType | null {
   const hostBigIntExpected = (branch: ts.Expression): ValType | undefined => {
-    if (ctx.standalone || ctx.wasi) return undefined;
+    if (!usesHostBigIntCarrier(ctx)) return undefined;
     return ctx.oracle.staticJsTypeOf(branch) === "bigint" ? { kind: "externref" } : undefined;
   };
 

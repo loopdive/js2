@@ -12,12 +12,13 @@ import { ensureI32Condition } from "../index.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 type MappedArgsInfo = NonNullable<FunctionContext["mappedArgsInfo"]>;
 
 /** Host BigInts must stay in the externref plane through short-circuiting. */
 function hostBigIntExpected(ctx: CodegenContext, expr: ts.Expression): ValType | undefined {
-  if (ctx.standalone || ctx.wasi) return undefined;
+  if (!usesHostBigIntCarrier(ctx)) return undefined;
   return ctx.oracle.staticJsTypeOf(expr) === "bigint" ? { kind: "externref" } : undefined;
 }
 

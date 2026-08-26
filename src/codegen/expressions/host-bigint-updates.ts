@@ -12,10 +12,11 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitIdentifierWriteFromLocal } from "./assignment.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 /** Host BigInts must remain externref-backed in the JS-host lanes. */
 export function isHostBigIntUpdate(ctx: CodegenContext, operand: ts.Expression): boolean {
-  return !ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(operand) === "bigint";
+  return usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(operand) === "bigint";
 }
 
 /**

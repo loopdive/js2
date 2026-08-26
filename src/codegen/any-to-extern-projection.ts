@@ -2,6 +2,7 @@
 /** Tag-5 projection for the `$AnyValue` → externref boundary helper. */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 
 const readExternValue = (anyTypeIdx: number): Instr[] => [
   { op: "local.get", index: 0 },
@@ -10,7 +11,7 @@ const readExternValue = (anyTypeIdx: number): Instr[] => [
 ];
 
 export function buildAnyTag5ExternProjection(ctx: CodegenContext, anyTypeIdx: number): Instr[] {
-  const host = !ctx.standalone && !ctx.wasi;
+  const host = usesHostBigIntCarrier(ctx);
   if (!host && ctx.anyStrTypeIdx < 0) return [];
 
   const then: Instr[] = host

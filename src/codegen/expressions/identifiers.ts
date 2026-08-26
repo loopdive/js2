@@ -86,6 +86,7 @@ import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -560,7 +561,7 @@ function emitNullablePrimitiveUnbox(
     // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
     // through __to_bigint would collapse it to the compiler's host-free i64
     // carrier and discard every bit above 63.
-    if (!ctx.standalone && !ctx.wasi) return null;
+    if (usesHostBigIntCarrier(ctx)) return null;
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -2074,7 +2075,7 @@ function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedT
     // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
     // host BigInts. A checker narrowing changes the logical type, not that
     // physical representation, so leave the externref on the stack.
-    if (!ctx.standalone && !ctx.wasi) return null;
+    if (usesHostBigIntCarrier(ctx)) return null;
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {

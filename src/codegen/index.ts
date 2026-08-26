@@ -9,6 +9,7 @@ import {
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
@@ -10200,7 +10201,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // the existing i64 carrier until they have a native arbitrary-precision
   // implementation. Explicit native `i64` annotations returned above remain
   // i64 on every target.
-  if (!ctx.standalone && !ctx.wasi && isBigIntType(tsType)) {
+  if (usesHostBigIntCarrier(ctx) && isBigIntType(tsType)) {
     return { kind: "externref" };
   }
   const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);

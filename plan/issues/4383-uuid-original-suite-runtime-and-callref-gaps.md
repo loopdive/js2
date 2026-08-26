@@ -191,13 +191,21 @@ The final generic fixes cover:
 - Web Crypto global/method dispatch over compiled byte vectors;
 - lossless scalar ABI bridges for imported compiled callables;
 - lexical callable capture when a local shadows a same-named module function;
-- arbitrary-width JS-host BigInt locals, parameters, returns, operators,
+- arbitrary-width host-assisted BigInt locals, parameters, returns, operators,
   comparisons, unary operations, compound assignments, literals, and methods.
 
 The last v7 failure was a genuine 128-bit semantic gap: the UUID bit-flip test
 reduced sixteen bytes into a BigInt, while the compiler narrowed every BigInt
-to i64. JS-host mode now keeps real arbitrary-width host BigInts; standalone
-and WASI retain their existing i64 carrier. Focused BigInt coverage is **90/90**
-after the representation change. One separate WASI `BigInt(1.5)` validation
-test still fails identically on clean current `origin/main`; it is not a
-withdrawal from this work.
+to i64. Host-assisted compatibility mode now keeps real arbitrary-width host
+BigInts. Native-first JS, standalone, and WASI retain their signed-i64 Wasm
+carrier; arbitrary-width native-first support still needs a native bignum
+representation. The focused native-first test covers parameters, locals,
+returns, fields, arrays, updates, comparisons, unary operations, conversions,
+and control flow with zero legacy or unknown imports.
+
+The final callable-boundary fix was checked against the exact original suite,
+not a reduction or cached result. Without externref reconciliation it measured
+**69/75** overall and **15/21** in `v35`; with the generic typed-array mirror
+replay it measures **75/75** and **21/21** respectively. One separate WASI
+`BigInt(1.5)` validation test still fails identically on clean current
+`origin/main`; it is not a withdrawal from this work.

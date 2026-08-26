@@ -48,6 +48,7 @@ import {
 } from "./shared.js";
 import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
 import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
@@ -987,8 +988,7 @@ function compileBigIntLiteral(
 ): ValType | null {
   const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
   const hostBigIntRef =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    usesHostBigIntCarrier(ctx) &&
     (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
   if (hostBigIntRef) {
     const stringType = compileHostBigIntLiteralText(ctx, fctx, text);

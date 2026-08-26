@@ -183,6 +183,14 @@ retaining only the JS value adapter and explicit platform capabilities.
   bases 2 through 36. Coverage includes zero and both i64 extrema; native-first
   no longer imports `bigint_toString` or `bigint_toString_radix`, while the
   compatibility provider remains unchanged.
+- Native-first BigInt selection now follows the target profile's semantic
+  provider instead of treating every JavaScript environment as host-assisted.
+  Locals, parameters, returns, fields, arrays, updates, comparisons, unary
+  operations, conversions, and branch joins stay on the signed-i64 Wasm
+  carrier with zero legacy or unknown imports. Host-assisted compatibility
+  retains arbitrary-width JavaScript BigInts. Native arbitrary-width BigInt and
+  native `Object(BigInt).valueOf()` remain separate representation/dispatch
+  work rather than silently importing host semantics.
 - Native-first now selects the existing Wasm providers for RegExp-backed string
   split, extern-array join, and ordinary `String.raw` calls. Typed inline raw
   templates are adapted to the open in-module object representation, so these

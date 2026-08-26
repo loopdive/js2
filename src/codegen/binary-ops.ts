@@ -69,6 +69,7 @@ import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -1516,7 +1517,7 @@ export function compileBinaryExpression(
     // the standalone i64 lowering. This is also necessary for accumulators:
     // computing a wide host result and then storing it in an i64 local would
     // otherwise lose the high bits before the next iteration.
-    if (leftIsBigInt && rightIsBigInt && !ctx.standalone && !ctx.wasi) {
+    if (leftIsBigInt && rightIsBigInt && usesHostBigIntCarrier(ctx)) {
       const isEq =
         op === ts.SyntaxKind.EqualsEqualsToken ||
         op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
@@ -1608,7 +1609,7 @@ export function compileBinaryExpression(
       // and its f64 conversion also loses integer precision. Let JavaScript
       // perform the exact abstract equality / relational algorithm whenever a
       // host is available.
-      if (!ctx.standalone && !ctx.wasi && (isLooseEq || isLooseNeq || isComparison)) {
+      if (usesHostBigIntCarrier(ctx) && (isLooseEq || isLooseNeq || isComparison)) {
         if (isComparison) {
           return emitAnyRelational(ctx, fctx, expr, op);
         }
@@ -1793,7 +1794,7 @@ export function compileBinaryExpression(
       // (`anyValueTypeIdx < 0`), mirroring emitAnyAdd's host-import ABI rule.
       // Standalone/WASI has no JS host, so it keeps the throw (existing
       // limitation — a native ToNumeric reduction is the follow-up slice).
-      const noJsHost3481 = ctx.standalone === true || ctx.wasi === true;
+      const noJsHost3481 = !usesHostBigIntCarrier(ctx);
       const nonBigIntTsType = leftIsBigInt ? rightTsType : leftTsType;
       const nonBigIntIsObjectish =
         (nonBigIntTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0;
@@ -1804,7 +1805,7 @@ export function compileBinaryExpression(
         // wide literal through i64 here wraps it modulo 2^64 before
         // __host_bigint_binop sees it. Keep the historical i64 hint for the
         // standalone/WASI lanes, whose BigInt carrier is intentionally i64.
-        const hostBigIntCarrier = !ctx.standalone && !ctx.wasi;
+        const hostBigIntCarrier = usesHostBigIntCarrier(ctx);
         const lHint: ValType = leftIsBigInt
           ? hostBigIntCarrier
             ? { kind: "externref" }

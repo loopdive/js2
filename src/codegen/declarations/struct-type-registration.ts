@@ -10,6 +10,7 @@ import { fieldsHashKey, resolveWasmType } from "../index.js";
 import { registerStructType } from "../registry/types.js";
 import type { FieldDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDef["type"] {
   // `mapTsTypeToWasm` intentionally models BigInt as the host-free i64
@@ -18,7 +19,7 @@ function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDe
   // value is truncated when struct.get/struct.set crosses the field.
   const nullable = getNullablePrimitiveInfo(memberType);
   const isBigIntField =
-    !ctx.standalone && !ctx.wasi && (isBigIntType(memberType) || nullable?.primitiveKind === "bigint");
+    usesHostBigIntCarrier(ctx) && (isBigIntType(memberType) || nullable?.primitiveKind === "bigint");
   return isBigIntField ? resolveWasmType(ctx, memberType) : mapTsTypeToWasm(memberType, ctx.checker);
 }
 
@@ -59,7 +60,7 @@ export function resolveStructFieldTypes(ctx: CodegenContext, sourceFile: ts.Sour
     let changed = false;
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i]!;
-      const mayBeHostBigInt = !ctx.standalone && !ctx.wasi && field.type.kind === "i64" && field.type.bigint === true;
+      const mayBeHostBigInt = usesHostBigIntCarrier(ctx) && field.type.kind === "i64" && field.type.bigint === true;
       if (field.type.kind !== "externref" && !mayBeHostBigInt) continue;
 
       // Try to re-resolve using resolveWasmType which knows about structs

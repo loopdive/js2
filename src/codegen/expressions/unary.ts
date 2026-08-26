@@ -20,6 +20,7 @@ import { emitThrowTypeError } from "./helpers.js";
 import { tryStaticToNumber } from "./misc.js";
 import { compileMemberIncDec, compilePostfixUnary, compilePrefixUpdate } from "./unary-updates.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 function compileHostBigIntUnary(
   ctx: CodegenContext,
@@ -81,8 +82,13 @@ function compilePrefixUnary(
       if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
         return { kind: "f64" };
       }
-      if (!ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
-        const operandType = compileExpression(ctx, fctx, expr.operand, { kind: "externref" });
+      if (ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
+        const operandType = compileExpression(
+          ctx,
+          fctx,
+          expr.operand,
+          usesHostBigIntCarrier(ctx) ? { kind: "externref" } : { kind: "i64", bigint: true },
+        );
         if (operandType) fctx.body.push({ op: "drop" });
         emitThrowTypeError(ctx, fctx, "Cannot convert a BigInt value to a number");
         return { kind: "f64" };
@@ -129,7 +135,7 @@ function compilePrefixUnary(
       if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
         return { kind: "f64" };
       }
-      if (!ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
+      if (usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
         return compileHostBigIntUnary(ctx, fctx, expr.operand, 1);
       }
       // Try static resolution first (handles strings, null, undefined, booleans, etc.)
@@ -198,7 +204,7 @@ function compilePrefixUnary(
       if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
-      if (!ctx.standalone && !ctx.wasi && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
+      if (usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(expr.operand) === "bigint") {
         return compileHostBigIntUnary(ctx, fctx, expr.operand, 8);
       }
       const operandType = compileExpression(ctx, fctx, expr.operand);
