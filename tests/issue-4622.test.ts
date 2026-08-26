@@ -15,20 +15,29 @@
 // `.message` is `undefined`, which is why it read as a compiler crash rather
 // than a wrong answer).
 //
-// `__vec_gopd` cannot be fixed here: it is shared with real arrays and there is
-// no runtime brand separating an arguments vec from one (#4620 family B). So
-// the arm is SYNTACTIC — the compiler-materialized `arguments` local of this
-// function, a static `length` key — and DECLINES whenever the object is
-// reachable as a value (`Object.defineProperty(arguments, …)`, `Object.seal`,
-// `var esc = arguments`, `with`, direct `eval`), because those can legitimately
-// make `length` non-configurable and a wrong `true` is worse than no fold.
+// `__vec_gopd` is shared with real arrays, so the arguments-vs-array distinction
+// lives in a WasmGC subtype brand. The syntactic delete arm still declines when
+// the object can be reconfigured (`Object.defineProperty`, `Object.seal`, `with`,
+// direct `eval`); the generic runtime path then consults the branded descriptor.
+// That distinction matters for escaped and dynamic receivers: a fresh arguments
+// object's `length` remains configurable, so those deletes must return `true`.
 //
 // Every case runs in a MODULE, so the code is STRICT — which is the half where
 // the defect threw. The sloppy half (`false` instead of `true`) is covered by
 // the test262 rows themselves; `language/arguments-object/S10.6_A5_T3` runs in
 // both goals and flipped FAIL → PASS with this change.
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { runTest262File } from "./test262-runner.js";
+
+const TEST262_ROOT = join(__dirname, "..", "test262", "test");
+const EXACT_ARGUMENTS_ROWS = [
+  "language/arguments-object/10.6-6-2.js",
+  "language/arguments-object/10.6-7-1.js",
+] as const;
+const TEST262 = existsSync(join(TEST262_ROOT, EXACT_ARGUMENTS_ROWS[0]));
 
 async function runModule(src: string): Promise<number | string> {
   const r = await compile(src, {
@@ -65,6 +74,15 @@ ${body}
 /** `1` when the delete succeeded, `2` when it was refused, `9` on TypeError. */
 const deleteResult = (expr: string): string => fn(`      return (${expr}) ? 1 : 2;`);
 
+describe.skipIf(!TEST262)("§10.6 exact arguments-object residual rows", () => {
+  for (const file of EXACT_ARGUMENTS_ROWS) {
+    it(`passes the literal Test262 row ${file}`, async () => {
+      const result = await runTest262File(join(TEST262_ROOT, file), "language/arguments-object", 120_000, "standalone");
+      expect(result.status, result.error ?? file).toBe("pass");
+    }, 180_000);
+  }
+});
+
 describe("#4622 delete arguments.length no longer throws", () => {
   it("evaluates to true instead of throwing a TypeError (§10.4.4: length is configurable)", async () => {
     expect(await runModule(deleteResult("delete arguments.length"))).toBe(1);
@@ -92,13 +110,11 @@ describe("#4622 delete arguments.length no longer throws", () => {
   });
 });
 
-describe("#4622 the arm declines rather than answering wrongly", () => {
-  // Object.defineProperty / Object.seal can make `length` non-configurable, at
-  // which point §10.4.4's fresh-object attribute table no longer describes this
-  // object. Each of these passes `arguments` as a VALUE, which is the signal the
-  // guard keys on; the generic `__delete_property` path then keeps its own
-  // answer (a strict refusal ⇒ TypeError). The first two are also the
-  // SPEC-CORRECT answers, not merely conservative ones.
+describe("#4622 dynamic descriptor paths preserve the real arguments semantics", () => {
+  // Object.defineProperty / Object.seal can make `length` non-configurable. Each
+  // passes `arguments` as a VALUE, which is the signal the guard keys on; the
+  // generic `__delete_property` path then consults the descriptor and keeps the
+  // strict refusal (a TypeError).
   it("declines after Object.defineProperty(arguments, 'length', {configurable:false})", async () => {
     expect(
       await runModule(
@@ -117,22 +133,22 @@ describe("#4622 the arm declines rather than answering wrongly", () => {
     ).toBe(9);
   });
 
-  it("declines once the arguments object escapes into a variable", async () => {
+  it("allows delete after the arguments object escapes into a variable", async () => {
     expect(
       await runModule(
         fn(`      var esc = arguments;
       return (delete arguments.length) ? 1 : 2;`),
       ),
-    ).toBe(9);
+    ).toBe(1);
   });
 
-  it("declines for a dynamic key", async () => {
+  it("allows delete through a dynamic key while length is configurable", async () => {
     expect(
       await runModule(
         fn(`      var k = "length";
       return (delete arguments[k]) ? 1 : 2;`),
       ),
-    ).toBe(9);
+    ).toBe(1);
   });
 });
 
@@ -160,7 +176,28 @@ describe("#4622 neighbouring delete shapes are unchanged", () => {
   });
 });
 
-describe("#4622 measured residuals — the $Vec representation cannot express these", () => {
+describe("#4622 arguments length write controls", () => {
+  it("updates an escaped arguments object through the dynamic length path", async () => {
+    expect(
+      await runModule(
+        fn(`      var alias = arguments;
+      alias.length = 1;
+      return alias.length;`),
+      ),
+    ).toBe(1);
+  });
+
+  it("does not apply the arguments override to a real array", async () => {
+    expect(
+      await runModule(`
+    var arr = [1, 2];
+    arr.length = 1;
+    export function test() { return arr.length; }`),
+    ).toBe(1);
+  });
+});
+
+describe("#4622 remaining measured residual", () => {
   // The delete now REPORTS success, but the property SURVIVES: `arguments.length`
   // folds to the vec's length field and `hasOwnProperty` / `in` / the descriptor
   // all go through the shared vec helpers, none of which has anywhere to record
@@ -171,13 +208,9 @@ describe("#4622 measured residuals — the $Vec representation cannot express th
     expect(await runModule(fn(`      delete arguments.length;\n      return arguments.length;`))).toBe(-1);
   });
 
-  // `Object.getOwnPropertyDescriptor(arguments, "length").configurable` is
-  // `false` because `__vec_gopd` (vec-overlay.ts) answers with Array rules. This
-  // is what `language/arguments-object/10.6-6-2` and `10.6-7-1` assert, and both
-  // still fail. Splitting it needs a runtime brand distinguishing the arguments
-  // vec from an array — #4620's family-B finding. Owner: #4620 family B /
-  // the vec-overlay + gOPD lane.
-  it.fails("(#4620 family B) the length descriptor still reports configurable:false", async () => {
+  // The runtime brand now supplies the §10.4.4 default, while an existing
+  // companion entry preserves an explicit configurable:false override.
+  it("(#4620 family B) the fresh length descriptor reports configurable:true", async () => {
     expect(
       await runModule(
         fn(`      var d = Object.getOwnPropertyDescriptor(arguments, "length");
@@ -186,11 +219,11 @@ describe("#4622 measured residuals — the $Vec representation cannot express th
     ).toBe(1);
   });
 
-  // An ESCAPED arguments object (`var a = arguments; delete a.length`) is
-  // declined by the guard above — deliberately, since a syntactic arm cannot
-  // follow the value. #4620 recorded the same wall for `Array.isArray(arguments)`:
-  // it needs the runtime brand, not a wider syntactic net. Owner: #4620 family B.
-  it.fails("(#4620 family B) delete through an escaped alias is still refused", async () => {
+  // An ESCAPED arguments object (`var a = arguments; delete a.length`) uses the
+  // generic runtime path. Its fresh length is configurable, so the delete
+  // succeeds; the runtime brand makes this safe without widening the syntactic
+  // fast path. Owner: #4620 family B.
+  it("(#4620 family B) delete through an escaped alias succeeds", async () => {
     expect(
       await runModule(`
     function f() { return arguments; }
