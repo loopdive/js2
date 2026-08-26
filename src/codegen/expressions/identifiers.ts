@@ -234,7 +234,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 }
 
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
-function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
+export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
   if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
     const shorthand = (
       ctx.checker as typeof ctx.checker & {
@@ -369,7 +369,7 @@ function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node
  * legitimately resolve cross-file and stay untouched, as do synthetic
  * compiler-minted identifiers (no parent / no source position).
  */
-function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
+export function moduleGoalIdentifierIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
   if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
   const valSym = identifierValueSymbol(ctx, id);
   if (valSym === undefined) return true;
@@ -389,7 +389,7 @@ function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boo
  * - 'throw': access is before declaration in straight-line code — guaranteed TDZ error
  * - 'check': can't determine statically — keep runtime flag check
  */
-export function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
+export function analyzeIdentifierTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
   // A shorthand property name (`{ value }`) has two symbols in TypeScript:
   // the property being declared and the lexical binding whose value is read.
   // `getSymbolAtLocation(id)` answers the former, whose declaration range is
@@ -582,7 +582,7 @@ function emitNullablePrimitiveUnbox(
  * Returns the subset of `candidates` for which TDZ tracking can be statically
  * compiled away — i.e. every identifier reference in the source file that
  * resolves to the candidate's declaration is provably after initialization
- * (analyzeTdzAccess returns "skip"). For these names, the caller can skip
+ * (analyzeIdentifierTdzAccess returns "skip"). For these names, the caller can skip
  * emitting the `__tdz_<name>` global, the `global.set __tdz_<name>` writes
  * in the module init body, and the runtime check at every read.
  *
@@ -628,7 +628,7 @@ export function computeElidableTopLevelTdzNames(
         const symbol = ctx.checker.getSymbolAtLocation(node);
         const decl = symbol?.valueDeclaration;
         if (decl === declByName.get(node.text)) {
-          const result = analyzeTdzAccess(ctx, node);
+          const result = analyzeIdentifierTdzAccess(ctx, node);
           if (result !== "skip") {
             elidable.delete(node.text);
           }
@@ -1035,7 +1035,7 @@ function compileIdentifierCore(
     materializeHoistedFunctionValueBinding(ctx, fctx, name);
     const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagIdx !== undefined) {
-      const tdzResult = analyzeTdzAccess(ctx, id);
+      const tdzResult = analyzeIdentifierTdzAccess(ctx, id);
       if (tdzResult === "check") {
         emitLocalTdzCheck(ctx, fctx, name, tdzFlagIdx);
       } else if (tdzResult === "throw") {
@@ -1275,7 +1275,7 @@ function compileIdentifierCore(
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
   const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeIdentifierTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
       emitTdzCheck(ctx, fctx, name);
     } else if (tdzResult === "throw") {
@@ -1295,8 +1295,8 @@ function compileIdentifierCore(
   if (capturedIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis — captured globals are often accessed from closures,
-    // but analyzeTdzAccess handles the cross-function case correctly (returns "check")
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+    // but analyzeIdentifierTdzAccess handles the cross-function case correctly (returns "check")
+    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeIdentifierTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
       emitTdzCheck(ctx, fctx, name);
     } else if (tdzResult === "throw") {
@@ -1318,7 +1318,7 @@ function compileIdentifierCore(
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeIdentifierTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
       emitTdzCheck(ctx, fctx, name);
     } else if (tdzResult === "throw") {

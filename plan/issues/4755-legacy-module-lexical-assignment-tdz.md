@@ -243,6 +243,21 @@ body cannot hide a direct-body failure.
    property/default/iterator work, the TDZ throw before storage mutation, and
    no later binding write after abrupt completion. Rest and nested-pattern
    support remain outside this issue and are not acceptance substitutes.
+
+   Measured boundary correction (2026-08-26): do not make this transitional
+   writer repair absorb the existing iterator backends. The GC generator used
+   by the issue-1719 CPR shape eagerly buffers past the first yield (#2566,
+   architectural owner #2662), while its standalone CPR carrier still traps in
+   `__iterator_next` (the residual producer/consumer contract described by
+   #2038/#3164). The GC row therefore must not pretend to prove per-yield
+   suspension; it must prove the override runs and the first target throws
+   before either target is written. The standalone row must compile the exact
+   guarded CPR route with
+   zero host imports and structural `__drive_proto_iterator`,
+   `__iterator_next`, and live ReferenceError-provider evidence. All eight
+   ordinary typed/externref plain/default sinks remain runtime-required in both
+   lanes. Reopen/update #1719 for its untested standalone-clean promise. This is
+   not an iterator-semantics waiver or a substitute for those owners.
 4. **Static/elided control.** An assignment provably after initialization must
    execute without a throw and must not manufacture a TDZ provider/import or
    in-module error-constructor call solely for that write. A `var` twin remains
