@@ -272,64 +272,6 @@ function readResultField(local: number, resultTypeIdx: number, fieldIdx: number)
   ];
 }
 
-// GeneratorResumeAbrupt uses mode 1 for a `.return()` completion. Keep this
-// local to the native for-of consumer; the frame core exposes the throw mode
-// because other frame users do not currently need to manufacture returns.
-const MODE_RETURN = 1;
-
-/**
- * Emit GeneratorResumeAbrupt(undefined) for a native generator consumed by a
- * direct-call for-of loop. The generic iterator loop has an externref
- * `__iterator_return` hook, but a native generator is a nominal WasmGC state
- * struct and bypasses that protocol. A fresh or completed generator is
- * already closed; a suspended one receives mode=return so its resume machine
- * runs yielding-finally handlers before transitioning to done.
- */
-function nativeGeneratorCloseInstrs(
-  info: NativeGeneratorInfo,
-  iterLocal: number,
-  resumeIdx: number,
-  closeValue: readonly Instr[],
-): Instr[] {
-  const resumeAbrupt: Instr[] = [
-    { op: "local.get", index: iterLocal },
-    ...closeValue,
-    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx },
-    { op: "local.get", index: iterLocal },
-    { op: "i32.const", value: MODE_RETURN },
-    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
-    { op: "local.get", index: iterLocal },
-    { op: "call", funcIdx: resumeIdx },
-    { op: "drop" },
-  ];
-  return [
-    { op: "local.get", index: iterLocal },
-    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
-    { op: "i32.const", value: 0 },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...setStateI32FromConst(info, iterLocal, STATE_FIELD, info.doneState),
-        ...setStateI32FromConst(info, iterLocal, info.modeFieldIdx, 0),
-      ],
-      else: [
-        { op: "local.get", index: iterLocal },
-        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
-        { op: "i32.const", value: info.doneState },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [],
-          else: resumeAbrupt,
-        },
-      ],
-    },
-  ];
-}
-
 function buildNativeGeneratorDispatch(
   ctx: CodegenContext,
   anyLocal: number,
