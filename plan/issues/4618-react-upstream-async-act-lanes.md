@@ -16,6 +16,7 @@ related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/closure-exports.ts
+  - src/codegen/property-access.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/function-body.ts
   - src/codegen/registry/imports.ts
@@ -51,6 +52,7 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
   - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/statements.ts::compileStatementInner
 ---
@@ -1116,3 +1118,70 @@ quarantined, and a module that compiles and validates. The two-test completion
 filter is **2/2**, and the generic same-layout class regression file is
 **10/10**. No upstream test body was changed and all temporary diagnostics
 were removed.
+
+## 2026-08-26 dynamic class-instance props sidecar read guard
+
+The first bounded follow-up slice is implemented on `codex/4618-react-upstream-next`.
+It addresses the remaining host-instantiated dynamic-parent seam without
+touching children/JSX identity, symbols, or async `act()` scheduling.
+
+The generic cause was confirmed with a minimal host bridge: a dynamic-parent
+`class Test extends React.Component` declares no `props` field, while an
+unrelated `Sibling` class has the same WasmGC field-kind layout and owns
+`props`. WasmGC canonicalizes those layouts, so the `__get_member_props`
+candidate for `Sibling` passed `ref.test` on a `Test` instance and read the
+wrong physical slot before `__extern_get` could consult the host sidecar. The
+observed result was `undefined`/a null-property failure even though the host
+proxy contained `{value: "host"}`.
+
+Implementation:
+
+- alternate-field candidates now retain class-tag metadata only for
+  structurally colliding class layouts, including all descendant tags needed
+  by inherited fields;
+- the deferred generic member getter and typed f64 twin compare `__tag` after
+  `ref.test` and continue to the next candidate/fallback on mismatch;
+- the optional call-site inline cache carries the same guard and does not reuse
+  a bare leader for nominally guarded class candidates;
+- no upstream expectations, unavailable rows, or cache answers were changed.
+
+Focused evidence:
+
+- new same-layout host-props/lifecycle regression: **1/1 pass** with inline
+  cache default, `JS2WASM_INLINE_PROP_IC=0`, and `=8`;
+- existing host constructor bridge: **3/3 pass**;
+- existing assignment-position/ReactDOM bridge matrix: **12/12 pass**;
+- TypeScript typecheck and Prettier checks: pass.
+
+Exact unchanged full-suite evidence, directly from `origin/main` control and
+the patched branch (React v19.2.6, 273 upstream rows discovered, one upstream
+skip):
+
+| run | discovered | admitted | executed | scored | passed | failed | harness-incompatible | compile/validate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| clean `origin/main` | 273 | 272 | 272 | 146 | 120 | 26 | 126 | yes / yes |
+| patched branch | 273 | 272 | 272 | 146 | 120 | 26 | 126 | yes / yes |
+
+Both runs use 44 batches and zero compile-quarantined rows. The current direct
+runner's 126 harness-incompatible rows are not denominator-equivalent to the
+committed npm artifact's historical **133/180** checkpoint (92 incompatible,
+47 failing); the difference is the available React upstream harness/runtime
+dependencies, not a score claim. The patched run is therefore functionally
+improving at the focused regression boundary but score-neutral under this
+current direct-run denominator.
+
+The patched full-run failures remain outside this slice: ReactChildren (2),
+ReactContextValidator (2), ReactCreateElement (2), ReactElementClone (5),
+ReactJSXRuntime (4), ReactJSXTransformIntegration (2), ReactPureComponent (2),
+and ReactStrictMode (7). Their row-level mechanisms are iterable/children
+marshalling, context identity, default-prop/NaN handling, ref/key identity,
+and symbol/strict-mode lifecycle accounting. They should stay separate from
+this class sidecar guard.
+
+Implementation handoff: retain the tag guard as the generic nominal boundary
+for host-mutated dynamic-parent class instances. The next non-overlapping
+slice should instrument or fix the remaining React default-prop/NaN/element
+record representation path; async `act()` lanes and symbol identity remain
+separate follow-ups. Re-run the exact suite after the missing harness
+dependencies are restored and report discovered/admitted/executed/scored/
+passed/unavailable independently.

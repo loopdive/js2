@@ -79,6 +79,35 @@ function dispatcherName(propName: string): string {
   return `__get_member_${propName}`;
 }
 
+/**
+ * (#4618) Build the nominal guard for a class field candidate whose layout is
+ * shared by another struct. WasmGC `ref.test` is structural, so the candidate
+ * must compare its hidden class tag before reading a field slot. The returned
+ * instructions leave one i32 condition on the stack and are intended to be
+ * wrapped by a value-producing `if` whose else arm continues dispatch.
+ */
+export function memberGetClassTagCondition(
+  candidate: {
+    structTypeIdx: number;
+    classTags?: number[];
+    classTagFieldIdx?: number;
+  },
+  anyLocal: number,
+): Instr[] | undefined {
+  const tags = candidate.classTags;
+  if (!tags || tags.length === 0 || candidate.classTagFieldIdx === undefined) return undefined;
+  const readTag: Instr[] = [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.cast", typeIdx: candidate.structTypeIdx },
+    { op: "struct.get", typeIdx: candidate.structTypeIdx, fieldIdx: candidate.classTagFieldIdx },
+  ];
+  const condition: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
+  for (const tag of tags.slice(1)) {
+    condition.push(...readTag, { op: "i32.const", value: tag }, { op: "i32.eq" }, { op: "i32.or" });
+  }
+  return condition;
+}
+
 /** (#3673) Mangle a property name into the TYPED f64 dispatcher name. */
 function typedF64DispatcherName(propName: string): string {
   return `__get_member_${propName}__f64`;
@@ -756,13 +785,26 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
               },
             ]
           : readInstrs;
+      const classTagCondition = memberGetClassTagCondition(cand, 1);
+      const classTagGuardedReadInstrs: Instr[] =
+        classTagCondition !== undefined
+          ? [
+              ...classTagCondition,
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } as ValType },
+                then: shapeGuardedReadInstrs,
+                else: next,
+              },
+            ]
+          : shapeGuardedReadInstrs;
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: shapeGuardedReadInstrs,
+          then: classTagGuardedReadInstrs,
           else: next,
         },
       ];
@@ -994,13 +1036,26 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
               },
             ]
           : armBody;
+      const classTagCondition = memberGetClassTagCondition(cand, 1);
+      const classTagGuardedArmBody: Instr[] =
+        classTagCondition !== undefined
+          ? [
+              ...classTagCondition,
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } as ValType },
+                then: shapeGuardedArmBody,
+                else: next,
+              },
+            ]
+          : shapeGuardedArmBody;
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "f64" } as ValType },
-          then: shapeGuardedArmBody,
+          then: classTagGuardedArmBody,
           else: next,
         },
       ];

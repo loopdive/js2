@@ -124,7 +124,7 @@ import {
   resetGuardReuseStats,
 } from "./ic-guard-reuse.js";
 import { isNativeGeneratorResultStruct } from "./generators-native.js";
-import { classAccessorCandidatesForProp } from "./member-get-dispatch.js";
+import { classAccessorCandidatesForProp, memberGetClassTagCondition } from "./member-get-dispatch.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { coercionInstrs } from "./type-coercion.js";
 
@@ -137,6 +137,8 @@ interface IcPlan {
   fieldIdx: number;
   /** Instructions after `struct.get` — the arm's box/widen tail. */
   armTail: Instr[];
+  classTags?: number[];
+  classTagFieldIdx?: number;
 }
 
 /** The ceiling `JS2WASM_INLINE_PROP_IC` selects when unset — entry (29)'s optimum. */
@@ -261,6 +263,7 @@ function planGeneric(ctx: CodegenContext, propName: string, max: number): { plan
       structTypeIdx: c0.structTypeIdx,
       fieldIdx: c0.fieldIdx,
       armTail,
+      ...(c0.classTags !== undefined ? { classTags: c0.classTags, classTagFieldIdx: c0.classTagFieldIdx } : {}),
     },
   };
 }
@@ -291,6 +294,7 @@ function planTypedF64(ctx: CodegenContext, propName: string, max: number): { pla
       structTypeIdx: c0.structTypeIdx,
       fieldIdx: c0.fieldIdx,
       armTail: c0.fieldType.kind === "i32" ? [{ op: "f64.convert_i32_s" }] : [],
+      ...(c0.classTags !== undefined ? { classTags: c0.classTags, classTagFieldIdx: c0.classTagFieldIdx } : {}),
     },
   };
 }
@@ -372,6 +376,13 @@ function rewriteInstrs(
       // Recorded with the tee as the LAST entry of `out`, which is what the
       // relocation probe re-verifies at every reuse.
       recordLeader(reuse!, instr, lead.entry, lead.guardTee, out);
+    }
+    const classTagCondition = memberGetClassTagCondition(plan, scratchIdx);
+    if (classTagCondition !== undefined) {
+      // `ref.test` (and an optional reuse tee above) leaves its condition on
+      // the stack. Combine it with the nominal class-tag predicate before the
+      // hit arm, so a same-layout sibling falls through to the dispatcher.
+      out.push(...classTagCondition, { op: "i32.and" });
     }
     out.push({
       op: "if",
@@ -478,7 +489,11 @@ export function inlineMemberGetCallSites(ctx: CodegenContext): void {
       (index) => localTypeOf(ctx, fn, index)?.kind,
       (i) => {
         const c = i as { op: string; funcIdx?: number };
-        return c.op === "call" && c.funcIdx !== undefined ? plans.get(c.funcIdx)?.structTypeIdx : undefined;
+        if (c.op !== "call" || c.funcIdx === undefined) return undefined;
+        const plan = plans.get(c.funcIdx);
+        // A nominally guarded class plan cannot reuse a sibling's bare
+        // `ref.test` leader; each site must evaluate its own tag predicate.
+        return plan && plan.classTags === undefined ? plan.structTypeIdx : undefined;
       },
     );
     rewriteInstrs(ctx, fn, fn.body, plans, scratch, stats, reuse);

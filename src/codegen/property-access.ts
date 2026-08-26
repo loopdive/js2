@@ -1404,6 +1404,52 @@ export function emitAlternateStructSetDispatch(
  * When excludeTypeIdx is -1, no type is excluded (useful for the externref path
  * where there is no primary struct type).
  */
+
+/**
+ * (#4618) Build the nominal guard metadata for a dynamic field candidate.
+ * WasmGC canonicalizes structurally identical class layouts, so `ref.test`
+ * alone can select a sibling class's field slot. Only colliding layouts need
+ * the extra guard; inherited fields accept the tags of all descendants.
+ */
+function alternateFieldClassTagInfo(
+  ctx: CodegenContext,
+  typeName: string,
+  fields: FieldDef[],
+): { classTags?: number[]; classTagFieldIdx?: number } {
+  const classTag = ctx.classTagMap.get(typeName);
+  if (classTag === undefined) return {};
+  const classTagFieldIdx = fields.findIndex((field) => field.name === "__tag");
+  if (classTagFieldIdx < 0) return {};
+  const layoutSig = (name: string): string | undefined => {
+    const candidateFields = ctx.structFields.get(name);
+    return candidateFields
+      ?.map((field) => `${field.type.kind}:${(field.type as { typeIdx?: number }).typeIdx ?? ""}`)
+      .join(",");
+  };
+  const ownLayout = layoutSig(typeName);
+  if (ownLayout === undefined) return {};
+  const hasLayoutConflict = [...ctx.structFields.keys()].some(
+    (name) => name !== typeName && layoutSig(name) === ownLayout,
+  );
+  if (!hasLayoutConflict) return {};
+
+  const classTags = [classTag];
+  for (const [childName, childTag] of ctx.classTagMap) {
+    if (childName === typeName) continue;
+    let parent = ctx.classParentMap.get(childName);
+    const seen = new Set<string>();
+    while (parent !== undefined && !seen.has(parent)) {
+      if (parent === typeName) {
+        if (!classTags.includes(childTag)) classTags.push(childTag);
+        break;
+      }
+      seen.add(parent);
+      parent = ctx.classParentMap.get(parent);
+    }
+  }
+  return { classTags, classTagFieldIdx };
+}
+
 export function findAlternateStructsForField(
   ctx: CodegenContext,
   propName: string,
@@ -1416,6 +1462,14 @@ export function findAlternateStructsForField(
   presenceSlot?: PresenceSlot;
   shapeId?: number;
   shapeFieldIdx?: number;
+  /**
+   * (#4618) A class arm needs nominal discrimination when its layout is
+   * structurally shared with another class. WasmGC `ref.test` is structural,
+   * so the field slot is not safe to read until the receiver's class tag is
+   * checked. Descendant tags are included for inherited fields.
+   */
+  classTags?: number[];
+  classTagFieldIdx?: number;
 }[] {
   const result: {
     structTypeIdx: number;
@@ -1425,6 +1479,8 @@ export function findAlternateStructsForField(
     presenceSlot?: PresenceSlot;
     shapeId?: number;
     shapeFieldIdx?: number;
+    classTags?: number[];
+    classTagFieldIdx?: number;
   }[] = [];
   for (const [typeName, fields] of ctx.structFields) {
     const sIdx = ctx.structMap.get(typeName);
@@ -1450,6 +1506,7 @@ export function findAlternateStructsForField(
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);
       const shapeFieldIdx = shapeId !== undefined ? fields.findIndex((f) => f.name === "$shape") : -1;
+      const classTagInfo = alternateFieldClassTagInfo(ctx, typeName, fields);
       result.push({
         structTypeIdx: sIdx,
         fieldIdx: fIdx,
@@ -1457,6 +1514,7 @@ export function findAlternateStructsForField(
         mutable: fields[fIdx]!.mutable,
         ...(presenceSlotOf(fields, propName) ? { presenceSlot: presenceSlotOf(fields, propName)! } : {}),
         ...(shapeId !== undefined && shapeFieldIdx >= 0 ? { shapeId, shapeFieldIdx } : {}),
+        ...classTagInfo,
       });
     }
   }
