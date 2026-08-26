@@ -1680,13 +1680,8 @@ const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
 _test262ErrorConstructors.add(test262Host.HostTest262Error);
-
-// (#3369) Callback bridges must remain usable while the evaluated program has
-// installed non-writable numeric properties on Array.prototype. `[].push(x)`
-// and direct indexed assignment perform [[Set]] and can be rejected by such an
-// inherited property. Define dense own argument slots explicitly instead.
-// Capture the intrinsics before user code runs so the helper is also immune to
-// later rebinding of Array/Reflect properties.
+// (#3369) Define callback argument slots explicitly to bypass mutated Array prototypes;
+// capture Array/Reflect before evaluated code can rebind them.
 const _IntrinsicArray = Array;
 const _intrinsicReflectApply = Reflect.apply;
 const _intrinsicReflectConstruct = Reflect.construct;
@@ -1703,12 +1698,8 @@ function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
   }
   return dense;
 }
-
-// Arguments crossing from a host callback back into a compiled closure may be
-// live `_wrapForHost` proxies for WasmGC structs. The closure dispatch exports
-// accept the underlying typed structs, not their JS-facing proxy views. Build
-// the same prototype-safe dense argument list as `_denseOwnArgs`, while
-// restoring each proxy to its canonical Wasm value at this boundary.
+// Restore host proxies to canonical Wasm values in the same prototype-safe list.
+// Compiled closure dispatch exports accept typed structs, not JS-facing views.
 function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
   const dense = _denseOwnArgs(args, length);
   for (let i = 0; i < length; i++) {
@@ -1722,30 +1713,12 @@ function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
   return dense;
 }
 
-// Host callback dispatch must not use `fn(...args)` for its ABI arrays. A
-// Test262 body is allowed to delete Array.prototype[Symbol.iterator], while
-// these calls happen before the worker's realm cleanup restores it. Native
-// spread would then throw before the callback enters its own try/catch (the
-// #4758 destructuring cluster). Build the argument list by index and enter
-// through the captured Reflect.apply instead.
+// Build callback ABI arguments without Array iteration, then use captured Reflect.apply (#4758).
 function _applyWithPrefix(fn: Function, thisArg: any, prefix: ArrayLike<any>, suffix: ArrayLike<any>): any {
   const args = new _IntrinsicArray<any>(prefix.length + suffix.length);
-  for (let i = 0; i < prefix.length; i++) {
-    _intrinsicReflectDefineProperty(args, i, {
-      value: prefix[i],
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
-  for (let i = 0; i < suffix.length; i++) {
-    _intrinsicReflectDefineProperty(args, prefix.length + i, {
-      value: suffix[i],
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
+  for (let i = 0; i < prefix.length; i++) _intrinsicReflectDefineProperty(args, i, { value: prefix[i] });
+  for (let i = 0; i < suffix.length; i++)
+    _intrinsicReflectDefineProperty(args, prefix.length + i, { value: suffix[i] });
   return _intrinsicReflectApply(fn, thisArg, args);
 }
 

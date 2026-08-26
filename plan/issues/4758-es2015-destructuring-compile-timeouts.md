@@ -252,3 +252,13 @@ measured and fixed before the next exact pin rerun.
 **Handoff:** Standalone measurements and gates are complete. The clean branch
 tip is intended for integration into successor combined draft PR #5010. No
 individual PR or upstream merge is being opened from this lane.
+
+### Combined-PR CI follow-up
+
+Integration into #5010 initially exceeded the guarded `src/runtime.ts` source
+budget by 11 lines. The callback bridge comments and `_applyWithPrefix` argument
+descriptor construction were compacted without changing its captured-intrinsic,
+iterator-free dispatch behavior. `check:host-import-policy` now passes at
+18,275/18,275 lines, and the focused regression file passes 4/4 cases (host and
+standalone destructive/control pairs) after rebuilding the worktree-local
+compiler and runtime bundles.
