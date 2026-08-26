@@ -1,8 +1,11 @@
 {
   "id": "3305",
   "assignee": "ttraenkler/fable-3305",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-3305-selfhost-tofixed",
   "claimed_at": "2026-07-16T11:59:19Z",
-  "updated_at": "2026-07-16T11:59:19Z"
+  "updated_at": "2026-08-26T04:47:04Z",
+  "write_id": "47475-gg5g7zer",
+  "released_at": "2026-08-26T04:47:04Z"
 }
