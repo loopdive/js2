@@ -2291,7 +2291,33 @@ const REALM_CANARY_IGNORE = [
 ];
 
 function realmCanaryIgnored(label) {
-  return REALM_CANARY_IGNORE.some((p) => label.startsWith(p));
+  return typeof label === "string" && REALM_CANARY_IGNORE.some((p) => label.startsWith(p));
+}
+
+// Reading `constructor.prototype` is normally harmless, but optional
+// intrinsics such as Proxy inherit that property from Function.prototype.
+// A test is allowed to install an accessor there, so the canary must inspect
+// own data descriptors instead of invoking user code while it re-baselines.
+function ownPrototypeValue(ctor) {
+  if (!ctor || (typeof ctor !== "object" && typeof ctor !== "function")) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(ctor, "prototype");
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Array.prototype can itself be poisoned by a test (for example with a
+// non-configurable index setter). Define drift entries as own properties so
+// collecting canary evidence does not route writes through that setter.
+function appendCanaryDrift(drift, value) {
+  Object.defineProperty(drift, drift.length, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 function collectIntrinsicSurface() {
@@ -2310,7 +2336,7 @@ function collectIntrinsicSurface() {
   ];
   for (const c of ctors) {
     add(c.name, c);
-    add(`${c.name}.prototype`, c.prototype);
+    add(`${c.name}.prototype`, ownPrototypeValue(c));
   }
   // Keep newer/optional intrinsics behind globalThis lookups so the worker
   // remains compatible with every supported Node version. In particular,
@@ -2333,7 +2359,7 @@ function collectIntrinsicSurface() {
   for (const name of optionalCtorNames) {
     const c = globalThis[name];
     add(name, c);
-    add(`${name}.prototype`, c?.prototype);
+    add(`${name}.prototype`, ownPrototypeValue(c));
   }
   add("Math", Math);
   add("JSON", JSON);
@@ -2433,11 +2459,11 @@ function appendFunctionMetadataDrift(drift, label, expected, current) {
   if (!expected || !current) return;
   for (const [key, sig] of expected) {
     const cur = current.get(key);
-    if (!cur) drift.push(`${label}.${key}:deleted`);
-    else if (!sameDescriptor(sig, cur)) drift.push(`${label}.${key}:changed`);
+    if (!cur) appendCanaryDrift(drift, `${label}.${key}:deleted`);
+    else if (!sameDescriptor(sig, cur)) appendCanaryDrift(drift, `${label}.${key}:changed`);
   }
   for (const key of current.keys()) {
-    if (!expected.has(key)) drift.push(`${label}.${key}:added`);
+    if (!expected.has(key)) appendCanaryDrift(drift, `${label}.${key}:added`);
   }
 }
 
@@ -2509,20 +2535,20 @@ function diffRealmSurface(snap) {
     let curProps;
     try {
       curProps = describeOwnSurface(obj);
-      if (Object.isExtensible(obj) !== ext) drift.push(`${label}:[[Extensible]]`);
-      if (Object.getPrototypeOf(obj) !== proto) drift.push(`${label}:[[Prototype]]`);
+      if (Object.isExtensible(obj) !== ext) appendCanaryDrift(drift, `${label}:[[Extensible]]`);
+      if (Object.getPrototypeOf(obj) !== proto) appendCanaryDrift(drift, `${label}:[[Prototype]]`);
     } catch {
-      drift.push(`${label}:unreadable`);
+      appendCanaryDrift(drift, `${label}:unreadable`);
       continue;
     }
     for (const [key, sig] of props) {
       const cur = curProps.get(key);
       if (!cur) {
-        drift.push(`${label}.${String(key)}:deleted`);
+        appendCanaryDrift(drift, `${label}.${String(key)}:deleted`);
         continue;
       }
       if (!sameDescriptor(sig, cur)) {
-        drift.push(`${label}.${String(key)}:changed`);
+        appendCanaryDrift(drift, `${label}.${String(key)}:changed`);
       }
       // Only inspect nested metadata while the same function remains in the
       // same descriptor slot. A replaced method/getter/setter is already a
@@ -2539,7 +2565,7 @@ function diffRealmSurface(snap) {
       }
     }
     for (const key of curProps.keys()) {
-      if (!props.has(key)) drift.push(`${label}.${String(key)}:added`);
+      if (!props.has(key)) appendCanaryDrift(drift, `${label}.${String(key)}:added`);
     }
   }
   return drift;
@@ -2552,10 +2578,15 @@ let realmCanaryCheckMsTotal = 0;
 function realmDriftRecycleReason(payload) {
   if (!realmCanarySnapshot && !runtimeIntrinsicCanarySnapshot) return undefined;
   const t0 = performance.now();
-  const drift = [
-    ...(realmCanarySnapshot ? diffRealmSurface(realmCanarySnapshot) : []),
-    ...(runtimeIntrinsicCanarySnapshot ? diffRealmSurface(runtimeIntrinsicCanarySnapshot) : []),
-  ].filter((d) => !realmCanaryIgnored(d));
+  const drift = [];
+  const appendVisibleDrift = (surface) => {
+    for (let i = 0; i < surface.length; i++) {
+      const entry = surface[i];
+      if (!realmCanaryIgnored(entry)) appendCanaryDrift(drift, entry);
+    }
+  };
+  if (realmCanarySnapshot) appendVisibleDrift(diffRealmSurface(realmCanarySnapshot));
+  if (runtimeIntrinsicCanarySnapshot) appendVisibleDrift(diffRealmSurface(runtimeIntrinsicCanarySnapshot));
   runtimeIntrinsicCanarySnapshot = null;
   realmCanaryCheckMsTotal += performance.now() - t0;
   realmCanaryChecks++;
