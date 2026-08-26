@@ -13,6 +13,12 @@ reasoning_effort: max
 sprint: current
 horizon: l
 related: [3370, 3188, 3417]
+loc-budget-allow:
+  - src/codegen/declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/destructuring-params.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # #3423 — top-level module-global bindings read as undefined under the literal harness
@@ -109,3 +115,35 @@ not the full historical ~600-row umbrella:
 
 Acceptance for this milestone is 82/82 pass in both lanes with no timeout,
 compile error, skip, filter, fixture rewrite, or oracle-only workaround.
+
+## 2026-08-26 first-milestone checkpoint — reduced array slice
+
+The exact-path extraction remains 82 host rows, 82 standalone rows, and an
+identical 82-path intersection (82/82). I stopped before the requested full
+82-row solo sweep as directed after the representative reduction.
+
+Fresh bounded-process representative results are:
+
+| path | host | standalone |
+| --- | --- | --- |
+| `language/statements/variable/dstr/ary-ptrn-rest-obj-prop-id.js` | pass (`cb0700bc3aa4`) | pass (`5ce0187eef9e`) |
+| `language/statements/variable/dstr/obj-ptrn-prop-obj.js` | fail: `SameValue(NaN, undefined)` (`ac476ff4e548`) | fail: `SameValue(NaN, undefined)` (`701bb611de5b`) |
+
+The retained checkpoint is the smallest proven array-rest slice. It widens
+no-default scalar f64 destructuring slots to `externref` consistently across
+the checker binding resolver, module-global registration, and `var` hoisting;
+the array-like object-rest extraction also brands its f64 source as
+undefined-capable before coercing it into the widened slot. This preserves the
+dedicated f64 undefined sentinel while ordinary NaN remains a number. The
+checkpoint touches only `src/checker/type-mapper.ts`,
+`src/codegen/declarations.ts`, `src/codegen/index.ts`, and
+`src/codegen/destructuring-params.ts`.
+
+The object representative is not counted as fixed. Its module globals are now
+`externref`, but the nested object source still crosses a closed-struct
+f64-field/externref boundary (`y` is materialized as NaN before the binding
+read), so the remaining fix belongs to source-shape/property loading rather
+than this proven array-rest storage path. Do not expand the denominator until
+that path is isolated and separately verified. The interrupted dependency
+provisioning left no artifact in the worktree; the linked dependency and
+pinned QuickJS artifact were used for this checkpoint.

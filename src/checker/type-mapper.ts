@@ -251,29 +251,24 @@ export function resolveBindingElementType(
   if (element.initializer && isVoidType(tsType)) {
     return { kind: "externref" };
   }
-  // (#3315) PARAMETER array-pattern element WITHOUT a default: the runtime
-  // source can always be shorter than the pattern, carry a hole, or carry an
-  // explicit `undefined` — regardless of the checker-inferred element type.
-  // For parameters the inferred type is FICTION: it derives from the pattern's
-  // own default (`{ w: [x, y, z] = [4, 5, 6] }` infers `number` for all
-  // three), not from any actual argument, and JS corpus callers routinely
-  // violate it (`{ w: [7, undefined, ] }`). Binding such an element into an
-  // f64 local silently degrades `undefined` to NaN — the #3315
-  // "sibling-destructured-binding corruption" signature (wrong value, no
-  // crash; `y === undefined` reads false where the spec says true).
+  // (#3315/#3423) A scalar destructuring binding WITHOUT a default can always
+  // receive `undefined`: an object property may be absent, an array/iterator
+  // may be shorter than the pattern, or the source may explicitly contain an
+  // `undefined`. The checker frequently reports `number` here because it
+  // infers from a contextual/default type rather than from every runtime value
+  // which BindingInitialization can produce. Storing such a binding in an f64
+  // local (or module global) silently degrades `undefined` to the numeric NaN
+  // sentinel — the #3423 `Expected SameValue(«NaN», «undefined»)` signature.
   //
-  // Widen the local to externref so undefined identity survives; numeric use
-  // sites unbox (ToNumber(undefined) = NaN, matching JS coercion semantics).
-  // Scoped deliberately:
-  //   - parameters only — a VariableDeclaration's initializer types come from
-  //     the ACTUAL value expression, so `var [a, b] = [7, undefined, ]`
-  //     already infers `undefined` into the element type and lands on a
-  //     ref-capable rep; for-of/decl destructuring keeps its numeric reps
-  //     (perf-sensitive idioms like `for (const [k, v] of entries)`).
-  //   - f64 only — native `i32`/`bool` annotations are an explicit opt-in to
-  //     native semantics, and non-numeric reps have their own carriers.
-  //   - no per-element default — with a default, `undefined` triggers the
-  //     initializer and never survives into the binding, so f64 is sound.
+  // Widen the binding slot to externref so undefined identity survives; numeric
+  // use sites unbox (ToNumber(undefined) = NaN, matching JS coercion semantics).
+  // This applies uniformly to parameters, declarations, and for-of heads. The
+  // distinction matters because declarations and loop heads also publish their
+  // slots as module globals, and widening only the parameter lane leaves the
+  // local/global pair inconsistent. It is deliberately limited to f64 scalar
+  // bindings without a per-element default: native i32/bool annotations are an
+  // explicit representation choice, and a default consumes `undefined` before
+  // it reaches the binding.
   if (isUndefWidenedBindingElement(element, resolved)) {
     return { kind: "externref" };
   }
@@ -281,39 +276,30 @@ export function resolveBindingElementType(
 }
 
 /**
- * (#3315) True when the binding element falls under the undefined-preserving
- * widening rule above (parameter array-pattern element, no default, scalar
- * f64 checker rep). Exported so allocation sites can ALSO register the name
- * in `fctx.undefWidenedLocals`, which tells the identifier read path to skip
- * the checker-type unbox narrowing for these locals.
+ * (#3315/#3423) True when the binding element falls under the
+ * undefined-preserving widening rule above (any destructuring pattern,
+ * no default, scalar f64 checker rep). Exported so allocation sites can ALSO
+ * register the name in `fctx.undefWidenedLocals`, which tells the identifier
+ * read path to skip checker-type unbox narrowing for these locals.
  */
 export function isUndefWidenedBindingElement(element: ts.BindingElement, resolved: ValType): boolean {
-  return (
-    !element.initializer &&
-    !element.dotDotDotToken &&
-    ts.isArrayBindingPattern(element.parent) &&
-    resolved.kind === "f64" &&
-    bindingElementOriginIsParameter(element)
-  );
+  return !element.initializer && !element.dotDotDotToken && resolved.kind === "f64";
 }
 
 /**
- * (#3315) Walk from a BindingElement up through nested binding patterns to
- * the node that OWNS the whole destructuring target. Returns true when that
- * owner is a function parameter (including nested patterns like
- * `{ w: [x, y, z] } ` inside a parameter's object pattern).
+ * Brand a f64 value read for an undefined-capable binding before it is boxed.
+ *
+ * Numeric Wasm arrays/struct fields use `UNDEF_F64_BITS` for a missing or
+ * explicit-undefined value. The ordinary f64→externref coercion quite
+ * correctly boxes arbitrary numeric NaN as a Number; a destructuring binding
+ * is the exception because this particular f64 slot is known to carry the
+ * language-level undefined sentinel. Keeping that fact on the source type
+ * lets the shared coercion engine map only this read back to real undefined.
  */
-function bindingElementOriginIsParameter(element: ts.BindingElement): boolean {
-  let n: ts.Node | undefined = element.parent;
-  while (n) {
-    if (ts.isParameter(n)) return true;
-    if (ts.isBindingElement(n) || ts.isObjectBindingPattern(n) || ts.isArrayBindingPattern(n)) {
-      n = n.parent;
-      continue;
-    }
-    return false;
-  }
-  return false;
+export function undefinedPreservingBindingSourceType(element: ts.BindingElement, source: ValType): ValType {
+  if (source.kind !== "f64") return source;
+  if (!isUndefWidenedBindingElement(element, source)) return source;
+  return source.undefSentinel === true ? source : { kind: "f64", undefSentinel: true };
 }
 
 /** Check if a ts.Type represents bigint */

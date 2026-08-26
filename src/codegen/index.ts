@@ -43,7 +43,9 @@ import {
   isStringType,
   isStringWrapperType,
   isVoidType,
+  isUndefWidenedBindingElement,
   mapTsTypeToWasm,
+  resolveBindingElementType,
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
@@ -11585,8 +11587,12 @@ function hoistBindingPattern(ctx: CodegenContext, fctx: FunctionContext, pattern
       // identifier resolver falling through to `global.get/set $__mod_<name>`,
       // so the inner destructured var aliased the module global.
       const elemType = ctx.checker.getTypeAtLocation(element);
-      const wasmType = resolveWasmType(ctx, elemType);
+      const resolvedWasmType = resolveWasmType(ctx, elemType);
+      const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
       const localIdx = allocLocal(fctx, name, wasmType);
+      if (isUndefWidenedBindingElement(element, resolvedWasmType)) {
+        (fctx.undefWidenedLocals ??= new Set()).add(name);
+      }
       // Hoisted vars should be `undefined`, not `null` (#737)
       if (wasmType.kind === "externref") {
         emitUndefined(ctx, fctx);

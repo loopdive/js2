@@ -17,7 +17,11 @@ import {
   ensureStructForType,
   resolveWasmType,
 } from "./index.js";
-import { isUndefWidenedBindingElement, resolveBindingElementType } from "../checker/type-mapper.js";
+import {
+  isUndefWidenedBindingElement,
+  resolveBindingElementType,
+  undefinedPreservingBindingSourceType,
+} from "../checker/type-mapper.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
@@ -469,7 +473,7 @@ export function emitObjectPatternRestFromVec(
       fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
       fctx.body.push({ op: "i32.const", value: numKey });
       emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemWasmType);
-      coerceType(ctx, fctx, elemWasmType, localType);
+      coerceType(ctx, fctx, undefinedPreservingBindingSourceType(nested, elemWasmType), localType);
       fctx.body.push({ op: "local.set", index: localIdx });
       if (isDecl) emitLocalTdzInit(fctx, localName);
     }

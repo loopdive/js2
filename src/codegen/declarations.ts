@@ -16,6 +16,7 @@ import {
   isStringType,
   isVoidType,
   mapTsTypeToWasm,
+  resolveBindingElementType,
   unwrapPromiseType,
 } from "../checker/type-mapper.js";
 import type { FieldDef, FuncHandle, GlobalDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
@@ -2378,7 +2379,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (ts.isOmittedExpression(element)) continue;
       if (ts.isIdentifier(element.name)) {
         const elemType = ctx.checker.getTypeAtLocation(element);
-        const wasmType = resolveWasmType(ctx, elemType);
+        // (#3423) A no-default scalar destructuring binding can receive
+        // `undefined` from an absent object property, a short iterator, or an
+        // explicit undefined element even when TypeScript infers `number`.
+        // Module globals must use the same undefined-preserving externref
+        // representation as the local allocation in ensureBindingLocals;
+        // otherwise local→global sync either loses identity or emits a
+        // mismatched global.set.
+        const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
         registerModuleGlobal(ctx, element.name.text, wasmType);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerBindingNames(element.name);
