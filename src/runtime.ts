@@ -514,17 +514,11 @@ const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
 
 /**
  * Concrete TypedArray identity for compiler-created native vec carriers.
- *
- * Plain arrays and numeric TypedArrays intentionally share the same WasmGC vec
- * representation, so the host cannot recover the TypedArray brand from the
- * opaque struct alone. Codegen registers only values constructed by a
- * TypedArray constructor. Dynamic `.buffer` reads can then materialize one
- * identity-stable host ArrayBuffer without teaching ordinary vecs a fake
- * `.buffer` property.
- *
- * Like the compiled-ArrayBuffer bridge above, this is a one-time copy. Writes
- * made after the first `.buffer` read cannot alias both representations until
- * the shared backing-store work in #2773 lands.
+ * Plain arrays and numeric TypedArrays share the same WasmGC vec representation,
+ * so codegen records only values constructed by a TypedArray constructor.
+ * Dynamic `.buffer` reads materialize one identity-stable host ArrayBuffer
+ * without teaching ordinary vecs a fake property. This remains a one-time copy:
+ * post-read writes cannot alias both representations until #2773 lands.
  */
 const _compiledTypedArrayKinds = new WeakMap<object, number>();
 const _compiledTypedArrayMirrors = new WeakMap<object, ArrayBufferView>();
