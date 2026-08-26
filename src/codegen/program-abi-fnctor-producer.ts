@@ -42,6 +42,36 @@ export interface ObserveIrFnctorProducerInput {
   readonly constructorFunction: WasmFunction;
 }
 
+export interface StandaloneIrFnctorShapeInput {
+  readonly sourceId: import("../ir/identity.js").IrSourceId;
+  readonly constructorUnitId: import("../ir/identity.js").IrUnitId;
+  /** Diagnostic source label only; identity comes from sourceId/unitId. */
+  readonly constructorName: string;
+  readonly reservedLayoutName: string;
+}
+
+/**
+ * Build the one nominal shape shared by standalone observation and its later
+ * preselection consumer. Keeping this construction single-sourced prevents a
+ * selector plan from silently describing a different support binding/layout
+ * than the post-legacy observation it resolves.
+ */
+export function buildStandaloneIrFnctorShape(input: StandaloneIrFnctorShapeInput): IrFnctorShape {
+  return {
+    kind: "fnctor-shape",
+    sourceId: input.sourceId,
+    constructorUnitId: input.constructorUnitId,
+    constructorName: input.constructorName,
+    constructorTarget: irFnctorConstructorFuncRef(input.constructorUnitId, `${input.reservedLayoutName}_new`),
+    reservedLayout: irFnctorLayoutTypeRef(input.constructorUnitId, input.reservedLayoutName),
+    fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
+    captures: [],
+    userParamTypes: [{ kind: "string" }],
+    hiddenIdentity: true,
+    constructorIdentity: { unitId: input.constructorUnitId, paramIndex: 1 },
+  };
+}
+
 function supportsBoundedPhysicalLane(input: ObserveIrFnctorProducerInput): boolean {
   const { ctx } = input;
   // Standalone reserves `$bag`/presence/constructor fields and may use a
@@ -283,19 +313,12 @@ export function observeApprovedIrFnctor(input: ObserveIrFnctorProducerInput): bo
     ) {
       return false;
     }
-    const shape: IrFnctorShape = {
-      kind: "fnctor-shape",
+    const shape = buildStandaloneIrFnctorShape({
       sourceId: syntax.sourceId,
       constructorUnitId: syntax.constructorUnitId,
       constructorName: input.functionName,
-      constructorTarget: irFnctorConstructorFuncRef(syntax.constructorUnitId, `${input.structName}_new`),
-      reservedLayout: irFnctorLayoutTypeRef(syntax.constructorUnitId, input.structName),
-      fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
-      captures: [],
-      userParamTypes: [{ kind: "string" }],
-      hiddenIdentity: true,
-      constructorIdentity: { unitId: syntax.constructorUnitId, paramIndex: 1 },
-    };
+      reservedLayoutName: input.structName,
+    });
     const observation = buildStandaloneIrFnctorObservation(input, shape);
     if (!observation) return false;
     registry.observe(observation);
