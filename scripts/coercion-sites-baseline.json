@@ -65,7 +65,7 @@
   "codegen/object-ops.ts": 4,
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 5,
-  "codegen/object-runtime-proxy.ts": 4,
+  "codegen/object-runtime-proxy.ts": 5,
   "codegen/object-runtime.ts": 34,
   "codegen/parse-number-native.ts": 4,
   "codegen/promise-combinators.ts": 1,

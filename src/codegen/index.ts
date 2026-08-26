@@ -10950,6 +10950,29 @@ export function undefinedTypedMemberReadProducesExternref(ctx: CodegenContext, e
   return undefinedTypedMemberReadProducesExternref(ctx, e.expression);
 }
 
+export function nativeGeneratorBindingType(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): ValType | null {
+  let expr = initializer;
+  while (
+    expr &&
+    (ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isTypeAssertionExpression(expr) ||
+      ts.isNonNullExpression(expr) ||
+      ts.isSatisfiesExpression(expr))
+  )
+    expr = expr.expression;
+  if (!expr || !ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) return null;
+  const decl = ctx.oracle.declarationsOf(expr.expression).find((d) => ts.isFunctionDeclaration(d) && !!d.asteriskToken);
+  if (!decl) return null;
+  for (const info of ctx.nativeGenerators.values()) {
+    if (info.decl === decl) return { kind: "ref_null", typeIdx: info.stateTypeIdx };
+  }
+  return null;
+}
+
 export function hoistVarDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -11093,6 +11116,13 @@ function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.Variabl
 function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.VariableDeclaration): void {
   if (ts.isIdentifier(decl.name)) {
     const name = decl.name.text;
+    // A folded Script-level eval executes in the module initializer's
+    // VariableEnvironment. If its var name already has a registered module
+    // global, leave the name out of the private eval-local hoist so the normal
+    // declaration lowering emits the live global store. This matters when the
+    // eval is in a loop head: ForIn/OfHeadEvaluation creates no environment
+    // when the head names are not referenced by the receiver expression.
+    if (fctx.name === "__module_init" && ctx.moduleGlobals.has(name)) return;
     if (fctx.localMap.has(name)) return;
     // #1690b: do NOT skip allocation when the name collides with a module
     // global. This hoister only runs for nested function bodies; per JS var

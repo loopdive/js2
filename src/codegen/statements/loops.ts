@@ -12,6 +12,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
 import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
+import { emitAssignToTarget } from "../expressions/assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -85,6 +86,33 @@ import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
+
+/** Strip the transparent parentheses used by CoverParenthesizedExpression in a
+ * for-of assignment head. The declaration/destructuring paths intentionally
+ * stay outside this helper; this is only the assignment-target dispatch. */
+function unwrapForOfAssignmentTarget(target: ts.Expression): ts.Expression {
+  let unwrapped = target;
+  while (ts.isParenthesizedExpression(unwrapped)) unwrapped = unwrapped.expression;
+  return unwrapped;
+}
+
+/** Write one already-evaluated for-of value to a member/call assignment head.
+ * Identifier targets reuse the selected loop local, while call targets retain
+ * Annex-B's evaluate-then-ReferenceError behavior. */
+function emitForOfAssignmentTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.Expression,
+  valueLocal: number,
+  valueType: ValType,
+): void {
+  const unwrapped = unwrapForOfAssignmentTarget(target);
+  if (ts.isPropertyAccessExpression(unwrapped) || ts.isElementAccessExpression(unwrapped)) {
+    emitAssignToTarget(ctx, fctx, unwrapped, valueLocal, valueType);
+    return;
+  }
+  emitWebCompatCallAssignmentTarget(ctx, fctx, target);
+}
 
 /**
  * Compile a loop body, saving/restoring block-scoped shadows (#817) so that
@@ -1061,6 +1089,14 @@ function compileForOfNativeCollection(
   // `.keys()/.values()/.entries()` call overrides.
   const kind: "keys" | "values" | "entries" = explicitKind ?? (isMap ? "entries" : "values");
 
+  // A bare native Set iterator is live: deleting a pending entry must skip it
+  // and additions must extend the cursor's high-water mark. Keep the eager
+  // vec producer for `.values()` and every other collection consumer; this
+  // narrow path owns only the simple binding used by the standalone Set rows.
+  if (isSet && kind === "values" && explicitKind === undefined) {
+    if (compileForOfNativeSetValues(ctx, fctx, stmt, receiver)) return true;
+  }
+
   // `entries` with a `[k, v]` destructuring binding is driven by a dedicated
   // native walk that binds the stored key/value directly per live entry — no
   // intermediate `$ObjVec` pair (whose generic destructuring would route through
@@ -1096,6 +1132,99 @@ function compileForOfNativeCollection(
   const vecLocal = allocLocal(fctx, `__cof_vec_${fctx.locals.length}`, vecType);
   fctx.body.push({ op: "local.set", index: vecLocal });
   compileForOfArrayFromLocal(ctx, fctx, stmt, vecLocal, vecType);
+  return true;
+}
+
+/** Drive a bare native Set's simple `for-of` binding over its live entry list. */
+function compileForOfNativeSetValues(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  receiver: ts.Expression,
+): boolean {
+  if (!ts.isVariableDeclarationList(stmt.initializer) || stmt.initializer.declarations.length !== 1) return false;
+  const decl = stmt.initializer.declarations[0]!;
+  if (!ts.isIdentifier(decl.name)) return false;
+  ensureMapHelpers(ctx);
+  if (ctx.mapTypeIdx < 0) return false;
+
+  // The native path is tentative because a statically-typed Set can still be
+  // supplied by a host value. Do not leave its probe's locals or instructions.
+  const probe = snapshotSpeculative(ctx, fctx);
+  const recvProbe = compileExpression(ctx, fctx, receiver);
+  rollbackSpeculative(ctx, fctx, probe);
+  if (!recvProbe || (recvProbe.kind !== "ref" && recvProbe.kind !== "ref_null")) return false;
+  if (recvProbe.typeIdx !== ctx.mapTypeIdx) return false;
+
+  const { M_ENTRIES, M_ENTRYCOUNT, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
+  const recvType = compileExpression(ctx, fctx, receiver);
+  if (!recvType) return false;
+  const mapLocal = allocLocal(fctx, `__setof_map_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: mapLocal });
+
+  const valueType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl.name));
+  const valueLocal = allocLocal(fctx, decl.name.text, valueType);
+  if (stmt.initializer.flags & ts.NodeFlags.Const) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    fctx.constBindings.add(decl.name.text);
+  }
+  const indexLocal = allocLocal(fctx, `__setof_i_${fctx.locals.length}`, { kind: "i32" });
+  const entryLocal = allocLocal(fctx, `__setof_entry_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapEntryTypeIdx,
+  });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+
+  const savedBody = pushBody(fctx);
+  shiftLoopDepths(fctx, 3);
+  fctx.breakStack.push(2);
+  fctx.continueStack.push(0);
+
+  // Re-read both entryCount and entries on every step so growth reallocations
+  // and appends performed by the loop body remain observable.
+  fctx.body.push({ op: "local.get", index: indexLocal });
+  fctx.body.push({ op: "local.get", index: mapLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRYCOUNT });
+  fctx.body.push({ op: "i32.ge_s" });
+  fctx.body.push({ op: "br_if", depth: 1 });
+  fctx.body.push({ op: "local.get", index: mapLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRIES });
+  fctx.body.push({ op: "local.get", index: indexLocal });
+  fctx.body.push({ op: "array.get", typeIdx: ctx.mapEntriesTypeIdx });
+  fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapEntryTypeIdx });
+  fctx.body.push({ op: "local.set", index: entryLocal });
+  fctx.body.push({ op: "local.get", index: indexLocal });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+  fctx.body.push({ op: "local.get", index: entryLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_HASH });
+  fctx.body.push({ op: "i32.const", value: TOMBSTONE_BIT });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "br_if", depth: 0 });
+  fctx.body.push({ op: "local.get", index: entryLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_VALUE });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...coercionInstrs(ctx, { kind: "externref" }, valueType, fctx));
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  const savedLoopBody = pushBody(fctx);
+  compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
+  const bodyInstrs = fctx.body;
+  popBody(fctx, savedLoopBody);
+  fctx.body.push({ op: "block", blockType: { kind: "empty" }, body: bodyInstrs });
+  fctx.body.push({ op: "br", depth: 0 });
+
+  const loopBody = fctx.body;
+  fctx.breakStack.pop();
+  fctx.continueStack.pop();
+  shiftLoopDepths(fctx, -3);
+  popBody(fctx, savedBody);
+  fctx.body.push(blockLoop(loopBody));
   return true;
 }
 
@@ -1414,6 +1543,9 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   const elemType = strType;
 
   // Declare the loop variable
+  const assignmentTarget = ts.isVariableDeclarationList(stmt.initializer)
+    ? undefined
+    : unwrapForOfAssignmentTarget(stmt.initializer);
   let elemLocal: number;
   if (ts.isVariableDeclarationList(stmt.initializer)) {
     const decl = stmt.initializer.declarations[0]!;
@@ -1424,9 +1556,9 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(decl.name.text);
     }
-  } else if (ts.isIdentifier(stmt.initializer)) {
+  } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     // Expression form: for (x of str) — x is already declared
-    const varName = stmt.initializer.text;
+    const varName = assignmentTarget.text;
     elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, elemType);
   } else {
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
@@ -1504,7 +1636,7 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   fctx.body.push({ op: "call", funcIdx: substringIdx });
   fctx.body.push({ op: "local.set", index: elemLocal });
   if (!ts.isVariableDeclarationList(stmt.initializer)) {
-    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+    emitForOfAssignmentTarget(ctx, fctx, stmt.initializer, elemLocal, elemType);
   }
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
@@ -1599,6 +1731,42 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
+/** #4700 — outer descriptors shadowed by a simple lexical for-of head. */
+interface ForOfHeadSaved {
+  name: string;
+  localMap: number | undefined;
+  tdz: number | undefined;
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  boxedTdz: { localIdx: number; refCellTypeIdx: number } | undefined;
+  isConst: boolean;
+}
+
+/** Restore the binding descriptors that surround a bounded lexical for-of. */
+function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
+  fctx.localMap.delete(saved.name);
+  fctx.tdzFlagLocals?.delete(saved.name);
+  fctx.boxedCaptures?.delete(saved.name);
+  fctx.boxedTdzFlags?.delete(saved.name);
+  fctx.constBindings?.delete(saved.name);
+  if (saved.localMap !== undefined) fctx.localMap.set(saved.name, saved.localMap);
+  if (saved.tdz !== undefined) {
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(saved.name, saved.tdz);
+  }
+  if (saved.boxed !== undefined) {
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    fctx.boxedCaptures.set(saved.name, saved.boxed);
+  }
+  if (saved.boxedTdz !== undefined) {
+    if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+    fctx.boxedTdzFlags.set(saved.name, saved.boxedTdz);
+  }
+  if (saved.isConst) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    fctx.constBindings.add(saved.name);
+  }
+}
+
 // (#2769) Does this for-of need the in-bounds undefined/hole sentinel preserved
 // through the OUTER array-literal construction? True ONLY when the subject is a
 // *direct array literal* AND the for-of binding pattern has an element default
@@ -1624,6 +1792,47 @@ function compileForOfArray(
   // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
   // before reporting. With `preVec` no compile happens, so rollback is a no-op.
   const snap = snapshotSpeculative(ctx, fctx);
+  // #4700 — a simple lexical ForDeclaration shadows the outer binding while
+  // the receiver is evaluated. Keep this reconstruction limited to the direct
+  // array/vec path; destructuring, collection materialization, and iterator
+  // paths remain outside the bounded TDZ slice.
+  const headDecl =
+    !preVec &&
+    !iterableOverride &&
+    ts.isVariableDeclarationList(stmt.initializer) &&
+    stmt.initializer.declarations.length === 1
+      ? stmt.initializer.declarations[0]!
+      : undefined;
+  const isLexicalIdentifierHead =
+    headDecl !== undefined &&
+    ts.isIdentifier(headDecl.name) &&
+    !!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+  const headName = isLexicalIdentifierHead ? (headDecl!.name as ts.Identifier).text : undefined;
+  const savedHead: ForOfHeadSaved | undefined =
+    headName === undefined
+      ? undefined
+      : {
+          name: headName,
+          localMap: fctx.localMap.get(headName),
+          tdz: fctx.tdzFlagLocals?.get(headName),
+          boxed: fctx.boxedCaptures?.get(headName),
+          boxedTdz: fctx.boxedTdzFlags?.get(headName),
+          isConst: fctx.constBindings?.has(headName) ?? false,
+        };
+  if (headName !== undefined) {
+    // The value slot only keeps identifier lowering well-typed; every receiver
+    // read checks the zero-initialized flag before that value can matter.
+    const headValueLocal = allocLocal(fctx, `__forof_hbind_${headName}_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    const headTdzLocal = allocLocal(fctx, `__forof_hflag_${headName}_${fctx.locals.length}`, { kind: "i32" });
+    fctx.localMap.set(headName, headValueLocal);
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(headName, headTdzLocal);
+    fctx.boxedCaptures?.delete(headName);
+    fctx.boxedTdzFlags?.delete(headName);
+    fctx.constBindings?.delete(headName);
+  }
   // (#2769) Preserve in-bounds undefined/hole identity through the OUTER
   // array-literal construction for the spec'd for-of-dstr template family. The
   // flag is scoped tightly to the subject compile (set→compile→restore) so it
@@ -1636,6 +1845,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1645,6 +1855,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1653,10 +1864,16 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
+  // HeadEvaluation step 4: the receiver TDZ environment ends before the
+  // loop's per-iteration binding is installed. The emitted receiver reads
+  // retain the temporary locals/flag; only the compiler's active descriptors
+  // are restored here.
+  if (savedHead) restoreForOfHead(fctx, savedHead);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -1674,6 +1891,10 @@ function compileForOfArray(
   const readElemType =
     elemType.kind === "f64" ? { kind: "f64" as const, undefSentinel: true as const } : unpackedElemType(elemType);
   const elemReadOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, iterableOverride ?? stmt.expression));
+
+  const assignmentTarget = ts.isVariableDeclarationList(stmt.initializer)
+    ? undefined
+    : unwrapForOfAssignmentTarget(stmt.initializer);
 
   // Save vec ref to temp local. With `preVec` the vec is already in `vecLocal`.
   const vecLocal = preVec ? preVec.vecLocal : allocLocal(fctx, `__forof_vec_${fctx.locals.length}`, vecType);
@@ -1751,9 +1972,9 @@ function compileForOfArray(
     // These assign to already-declared variables
     assignDestructExpr = stmt.initializer;
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, readElemType);
-  } else if (ts.isIdentifier(stmt.initializer)) {
+  } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     // Expression form: for (x of arr) — x is already declared
-    const varName = stmt.initializer.text;
+    const varName = assignmentTarget.text;
     elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, readElemType);
   } else {
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, readElemType);
@@ -1843,7 +2064,7 @@ function compileForOfArray(
   }
   emitCoercedLocalSet(ctx, fctx, elemLocal, readElemType);
   if (!ts.isVariableDeclarationList(stmt.initializer)) {
-    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+    emitForOfAssignmentTarget(ctx, fctx, stmt.initializer, elemLocal, readElemType);
   }
 
   // If destructuring pattern (binding form), destructure from the element
@@ -1932,6 +2153,9 @@ function compileForOfArray(
       });
     }
   }
+  // #4700 — lexical head bindings end with the loop and must not leak into
+  // later code in the surrounding function.
+  if (savedHead) restoreForOfHead(fctx, savedHead);
 }
 
 /**
@@ -2357,6 +2581,9 @@ function compileForOfDirectIterator(
 
   // Declare the loop variable
   const elemType: ValType = valueFieldType;
+  const assignmentTarget = ts.isVariableDeclarationList(stmt.initializer)
+    ? undefined
+    : unwrapForOfAssignmentTarget(stmt.initializer);
   let elemLocal: number;
   let destructPatternIter: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null = null;
   let assignDestructExprIter: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression | null = null;
@@ -2383,8 +2610,8 @@ function compileForOfDirectIterator(
   } else if (ts.isObjectLiteralExpression(stmt.initializer) || ts.isArrayLiteralExpression(stmt.initializer)) {
     assignDestructExprIter = stmt.initializer;
     elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
-  } else if (ts.isIdentifier(stmt.initializer)) {
-    const varName = stmt.initializer.text;
+  } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
+    const varName = assignmentTarget.text;
     elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, elemType);
   } else {
     elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
@@ -2507,7 +2734,7 @@ function compileForOfDirectIterator(
   }
   fctx.body.push({ op: "local.set", index: elemLocal });
   if (!ts.isVariableDeclarationList(stmt.initializer)) {
-    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+    emitForOfAssignmentTarget(ctx, fctx, stmt.initializer, elemLocal, valueFieldType);
   }
 
   // If destructuring, handle it
@@ -2809,6 +3036,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   // Declare the loop variable (element type is externref for iterator protocol)
   const elemType: ValType = { kind: "externref" };
+  const assignmentTarget = ts.isVariableDeclarationList(stmt.initializer)
+    ? undefined
+    : unwrapForOfAssignmentTarget(stmt.initializer);
   let elemLocal: number;
   let destructPatternIter: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null = null;
   let assignDestructExprIter: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression | null = null;
@@ -2836,9 +3066,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     // Expression form with destructuring: for ({a, b} of arr) or for ([x, y] of arr)
     assignDestructExprIter = stmt.initializer;
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
-  } else if (ts.isIdentifier(stmt.initializer)) {
+  } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     // Expression form: for (x of arr) — x is already declared
-    const varName = stmt.initializer.text;
+    const varName = assignmentTarget.text;
     elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, elemType);
   } else {
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
@@ -2961,7 +3191,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   fctx.body.push({ op: "local.get", index: resultLocal });
   fctx.body.push({ op: "local.set", index: elemLocal });
   if (!ts.isVariableDeclarationList(stmt.initializer)) {
-    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+    emitForOfAssignmentTarget(ctx, fctx, stmt.initializer, elemLocal, elemType);
   }
 
   // If destructuring pattern, destructure from the element

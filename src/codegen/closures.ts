@@ -161,6 +161,7 @@ import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
@@ -265,6 +266,59 @@ function inferExplicitClosureReturnType(
   };
   visit(fn.body);
   return inferred;
+}
+
+/**
+ * A host-object binding has an externref representation even when the checker
+ * gives it a closed structural type. Keep that representation across a
+ * closure return boundary; otherwise `return value` emits a guarded cast to
+ * the checker type and turns a Proxy (or another host carrier) into null.
+ */
+function closureReturnsExternrefBinding(
+  ctx: CodegenContext,
+  fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+): boolean {
+  const isDynamicBinding = (expr: ts.Expression): boolean => {
+    let current = expr;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isSatisfiesExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return ts.isIdentifier(current) && ctx.externrefAccessorVars.has(current.text);
+  };
+
+  const body = fn.body;
+  if (body === undefined) return false;
+  if (!ts.isBlock(body)) return isDynamicBinding(body);
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      node !== fn &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression && isDynamicBinding(node.expression)) {
+      found = true;
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  body.forEachChild(visit);
+  return found;
 }
 
 /**
@@ -1558,7 +1612,9 @@ export function computeClosureWrapperSig(
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
   const arrowParams: ValType[] = [];
-  for (const p of runtimeParameters(arrow)) {
+  const runtimeParams = runtimeParameters(arrow);
+  for (let runtimeIndex = 0; runtimeIndex < runtimeParams.length; runtimeIndex++) {
+    const p = runtimeParams[runtimeIndex]!;
     const paramType = ctx.checker.getTypeAtLocation(p);
     let wasmType =
       !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
@@ -1622,6 +1678,16 @@ export function computeClosureWrapperSig(
     ) {
       wasmType = { kind: "externref" };
     }
+    // #4701: preserve a nonnumeric value written back through a mapped
+    // arguments slot, but leave ordinary numeric closure ABIs untouched.
+    if (
+      p.type === undefined &&
+      ts.getJSDocType(p) === undefined &&
+      (wasmType.kind === "f64" || wasmType.kind === "i32") &&
+      mappedFormalNeedsExternref(ctx, arrow, runtimeIndex)
+    ) {
+      wasmType = { kind: "externref" };
+    }
     arrowParams.push(wasmType);
   }
 
@@ -1645,6 +1711,9 @@ export function computeClosureWrapperSig(
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
       closureReturnType = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
+      // (#4707) Proxy/host-object bindings retain their externref carrier when
+      // returned from a closure, despite TypeScript's structural return type.
+      if (closureReturnsExternrefBinding(ctx, arrow)) closureReturnType = { kind: "externref" };
     }
   }
   if (closureReturnType === null && !ts.isFunctionDeclaration(arrow) && isAssignedToSymbolIterator(arrow)) {
