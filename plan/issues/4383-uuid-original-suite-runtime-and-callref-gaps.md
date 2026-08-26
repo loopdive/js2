@@ -67,6 +67,8 @@ func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
 coercion-sites-allow:
   - src/codegen/closure-exports.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/expressions/call-identifier.ts
 ---
 
 # UUID original suite exposes vector, crypto, exception, and callback ABI gaps
@@ -209,3 +211,8 @@ not a reduction or cached result. Without externref reconciliation it measured
 replay it measures **75/75** and **21/21** respectively. One separate WASI
 `BigInt(1.5)` validation test still fails identically on clean current
 `origin/main`; it is not a withdrawal from this work.
+
+The change-scoped coercion allowance covers the reviewed host-assisted BigInt
+equality calls in `binary-ops.ts` and the shared scalar-bridge provider lookup
+in `call-identifier.ts`. It does not change the repository-wide coercion
+baseline; native-first continues to reject semantic host imports.
