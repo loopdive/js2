@@ -15208,30 +15208,27 @@ assert._isSameValue = isSameValue;
         }
         return [arr]; // Fallback: wrap single value
       };
-      // Promise combinators delegate spec iteration/capabilities to the host;
-      // only opaque Wasm vecs and callable thenables need boundary views.
-      // (#2671/#4736) Wasm object-literal thenables need a host-callable `then` at
-      // native Promise boundaries; raw structs expose none. Wrap only structs whose
-      // own `then` is callable in the live mirror: its get bridges the closure and
-      // #2015 receiver unwrapping restores raw `this`. Non-thenables stay raw to
-      // preserve fulfilled-value identity.
+      // Native Promise boundaries mirror opaque WasmGC thenables; ordinary structs stay raw (#2671/#4736).
       const _wrapThenable = (v: any): any => {
         if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
         const exports = callbackState?.getExports();
         if (!exports) return v;
         try {
-          // A struct-SHAPE `then` field is read via the compiled `__sget_then`
-          // getter — `_safeGet` reads only the sidecar/accessor/proto layers by
-          // design, so it alone misses the literal `{ then: function … }` shape.
-          // A sidecar-assigned `obj.then = fn` falls back to `_safeGet`.
+          const hasThen = _structHasOwnFieldName(v, "then", exports) || !!_wasmStructProps.get(v)?.__get_then;
           let t: any;
           try {
             const sget = (exports as Record<string, Function>).__sget_then;
             if (typeof sget === "function") t = sget(v);
           } catch {
-            t = undefined;
+            if (hasThen) return _wrapForHost(v, exports);
           }
-          if (t == null) t = _safeGet(v, "then", callbackState);
+          if (t == null) {
+            try {
+              t = _safeGet(v, "then", callbackState);
+            } catch {
+              if (hasThen) return _wrapForHost(v, exports);
+            }
+          }
           if (t != null && (typeof t === "function" || _isWasmClosureValue(t, callbackState))) {
             return _wrapForHost(v, exports);
           }
@@ -15239,6 +15236,10 @@ assert._isSameValue = isSameValue;
           /* not a thenable — pass through raw */
         }
         return v;
+      };
+      const _wrapPromiseReaction = (cb: any): any => {
+        const wrapped = _maybeWrapCallable(cb, 1, callbackState);
+        return typeof wrapped === "function" ? (...args: any[]) => _wrapThenable(wrapped(...args)) : wrapped;
       };
       const _toIterable = (iter: any): any => {
         // null/undefined: per spec, GetIterator throws TypeError. Native does
@@ -15521,10 +15522,9 @@ assert._isSameValue = isSameValue;
       // (#1382) `executor` is called as `executor(resolve, reject)` — arity 2.
       if (name === "Promise_new") return (executor: any) => new Promise(_maybeWrapCallable(executor, 2, callbackState));
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
-      if (name === "Promise_then") return (p: any, cb: any) => p.then(_maybeWrapCallable(cb, 1, callbackState));
+      if (name === "Promise_then") return (p: any, cb: any) => p.then(_wrapPromiseReaction(cb));
       if (name === "Promise_then2")
-        return (p: any, cb1: any, cb2: any) =>
-          p.then(_maybeWrapCallable(cb1, 1, callbackState), _maybeWrapCallable(cb2, 1, callbackState));
+        return (p: any, cb1: any, cb2: any) => p.then(_wrapPromiseReaction(cb1), _wrapPromiseReaction(cb2));
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));

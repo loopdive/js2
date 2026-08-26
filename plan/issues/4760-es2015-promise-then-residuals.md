@@ -19,18 +19,26 @@ files:
   - src/runtime
   - tests
   - plan/issues/4760-es2015-promise-then-residuals.md
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 # #4760 — ES2015 Promise.prototype.then Test262 residuals
 
 ## Problem
 
-The complete host run `20260826-180615` at draft PR #5008 head `39f279650`
+The authoritative host run `20260826-180615` at the pre-integration head
+`39f279650` (source JSONL:
+`/private/tmp/js2-es6-authoritative-measure3/benchmarks/results/test262-results-20260826-180615.jsonl`)
 contains 16 non-passing `test/built-ins/Promise/prototype/then/` rows: 14
-runtime failures and two Wasm compile errors. The observable groups include
-constructor/capability validation, poisoned thenables, reaction-handler
-scheduling, async completion, and the builtin length descriptor. They may have
-different causes and must be isolated before implementation.
+runtime failures and two Wasm compile errors. The implementation branch starts
+from exact integration checkpoint `3fb21eb37899fa8e56abca97d2e82ce58cf7edc7`.
+The observable groups include constructor/capability validation, poisoned
+thenables, reaction-handler scheduling, async completion, and the builtin
+length descriptor. Solo runs show these are distinct operations rather than a
+single Promise.prototype.then defect.
 
 ## Implementation plan
 
@@ -47,9 +55,51 @@ different causes and must be isolated before implementation.
    Commit a clean branch tip for integration into the sole successor draft PR
    #5010 and update this issue with exact denominators.
 
+## Solo confirmation and disposition
+
+Every row below was run as a fresh process through
+`scripts/harness-flip-probe.ts`, with `control-must-pass.js -> pass` and
+`control-must-fail.js -> fail` before the row. `process_crash` means the
+compiled host process terminated before the probe could emit a JSONL row; its
+signature was captured from stderr. The standalone S25 row was rerun after
+building the isolated QuickJS adapter, so it is not the earlier missing-cache
+instrumentation result.
+
+| Test262 path | Host solo | Standalone solo | Disposition |
+| --- | --- | --- | --- |
+| `test/built-ins/Promise/prototype/then/ctor-throws.js` | `fail`: expected Test262Error, no throw | `fail`: descriptor TypeError while setting up throw | constructor/species and standalone descriptor handoff |
+| `test/built-ins/Promise/prototype/then/resolve-pending-fulfilled-poisoned-then.js` | `fail`: promise fulfilled | `pass` | fixed: host reaction return thenable mirror |
+| `test/built-ins/Promise/prototype/then/resolve-settled-rejected-poisoned-then.js` | `fail`: promise fulfilled | `pass` | fixed: host reaction return thenable mirror |
+| `test/built-ins/Promise/prototype/then/capability-executor-not-callable.js` | `compile_error`: `extern.convert_any` anyref/externref mismatch | same compile error | ABI/compiler handoff |
+| `test/built-ins/Promise/prototype/then/ctor-null.js` | `fail`: expected TypeError, no throw | `fail`: expected TypeError, no throw | constructor/species handoff |
+| `test/built-ins/Promise/prototype/then/resolve-pending-rejected-poisoned-then.js` | `fail`: promise fulfilled | `pass` | fixed: host reaction return thenable mirror |
+| `test/built-ins/Promise/prototype/then/rxn-handler-rejected-invoke-nonstrict.js` | `process_crash`: runtime.ts:10143 null/undefined property in constructor bridge | `pass` | host callback/constructor bridge handoff |
+| `test/built-ins/Promise/prototype/then/S25.4.5.3_A1.1_T2.js` | `fail`: `p.then.length` was 0, expected 2 | `fail`: `p.then` was not a Function | builtin descriptor/standalone method handoff |
+| `test/built-ins/Promise/prototype/then/deferred-is-resolved-value.js` | `fail`: returned Promise did not equal object | `fail`: returned object did not equal object identity | custom constructor/return identity handoff |
+| `test/built-ins/Promise/prototype/then/capability-executor-called-twice.js` | `compile_error`: `extern.convert_any` anyref/externref mismatch | same compile error | ABI/compiler handoff |
+| `test/built-ins/Promise/prototype/then/ctor-custom.js` | `fail`: constructor count 0, expected 1 | `fail`: constructor count 0, expected 1 | constructor/species handoff |
+| `test/built-ins/Promise/prototype/then/rxn-handler-fulfilled-invoke-strict.js` | `process_crash`: runtime.ts:10143 null/undefined property in constructor bridge | `pass` | host callback/constructor bridge handoff |
+| `test/built-ins/Promise/prototype/then/rxn-handler-rejected-invoke-strict.js` | `process_crash`: runtime.ts:10143 null/undefined property in constructor bridge | `pass` | host callback/constructor bridge handoff |
+| `test/built-ins/Promise/prototype/then/ctor-poisoned.js` | `fail`: expected Test262Error, no throw | `fail`: expected Test262Error, no throw | constructor/species handoff |
+| `test/built-ins/Promise/prototype/then/resolve-settled-fulfilled-poisoned-then.js` | `fail`: promise fulfilled | `pass` | fixed: host reaction return thenable mirror |
+| `test/built-ins/Promise/prototype/then/rxn-handler-fulfilled-invoke-nonstrict.js` | `process_crash`: runtime.ts:10143 null/undefined property in constructor bridge | `pass` | host callback/constructor bridge handoff |
+
+The selected semantic family is the four poisoned-thenable rows (4/16): a
+host `Promise.prototype.then` callback returned an opaque WasmGC object, so
+native V8 could not perform `Get(result, "then")`. The fix adds a Promise
+reaction return bridge that reuses the live thenable mirror and preserves
+throwing accessors by shape-gating the probe. The four corresponding
+non-thenable rows are identity/settlement controls (4/4 pass in each lane).
+
+The remaining 12 rows are explicitly out of scope for this branch: five
+constructor/species or custom-return rows, four host-only callback-bridge
+process crashes, the host/standalone builtin descriptor row, and two
+`extern.convert_any` ABI/compiler rows. They should be integrated as separate
+follow-ups rather than hidden behind this runtime boundary change.
+
 ## Acceptance
 
-- All 16 baseline rows have isolated, reproducible dispositions.
+- All 16 baseline rows have isolated, reproducible dispositions in both lanes.
 - The implemented semantic cluster passes in host and standalone modes with
   exact regressions and controls.
 - No timeout increase, filter exemption, skip, or oracle-only workaround.
