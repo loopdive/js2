@@ -1159,3 +1159,584 @@ Source artifacts:
 5. Rerun all 297 standalone rows and their 297 host controls, record exact
    pass/fail/compile-error counts, and integrate the checkpoint into the sole
    upstream draft PR #5010.
+
+## ES2015 exact 297-row classification checkpoint (2026-08-26)
+
+This is the first closeout checkpoint from the authoritative ES2015 run. It is classification-only: no candidate gate was widened and no standalone result was credited without a host control. The next implementation checkpoint must start from the reduced groups below.
+
+**Inputs**: standalone `/private/tmp/js2-es6-authoritative-measure4/benchmarks/results/test262-standalone-results-20260826-194014.jsonl` and host `/private/tmp/js2-es6-authoritative-measure3/benchmarks/results/test262-results-20260826-180615.jsonl`; each contains exactly 11,704 unique rows. Selection is an exact text predicate over `error`/`error_signature`: the sequential-numeric native-generator refusal, or a `__create_generator`/`__gen_*` token. It selects 297 rows, all `compile_error`.
+
+| population | standalone rows | host pass | host fail | accounting |
+| --- | ---: | ---: | ---: | --- |
+| native-plan refusal | 104 | 21 | 83 | 102 rows with the canonical refusal plus 2 rows with a second/combined refusal signature |
+| carrier/import family | 193 | 122 | 71 | 192 explicit `host_import_leak` rows plus 1 `wasm_compile` row whose exact signature names `__gen_resume_g` |
+| **total** | **297** | **143** | **154** | **297/11,704 standalone compile errors** |
+
+The 143/154 host split is a control denominator, not a standalone oracle: host success proves that a source shape can execute in the host model, while host failure identifies a shape that needs separate semantic triage. The one `__gen_resume_g` row is retained in the authoritative 193-row carrier family so the 297 denominator is conserved, but it is explicitly not called an emitted host import.
+
+### Reduced exact-signature groups
+
+Groups are keyed by the full `error_signature` string from the JSONL. Representatives are reduction points, not claims that every path in a group has the same root cause; the route text is a handoff hypothesis to validate against source and a focused semantic pin. The visible `␠` in C14 marks one trailing U+0020 in the source signature so the manifest remains whitespace-clean.
+
+#### C01 — 102 rows (21 host pass, 81 host fail)
+
+Exact signature:
+
+```text
+other:L#:## Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (##). Recompile with a JS host target for complex generator shapes.
+```
+
+Representative: `test/built-ins/GeneratorPrototype/return/try-finally-set-property-within-try.js`
+
+Route: Mixed positional/generic `yield*`, destructuring, arguments, and computed-yield cases. The signature is not a bucket; route each path to #2173 (delegation), the frame-arguments follow-up, or the native CFG/yield-position slice.
+
+#### C02 — 57 rows (54 host pass, 3 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next (##)
+```
+
+Representative: `test/language/arguments-object/cls-decl-gen-meth-args-trailing-comma-multiple.js`
+
+Route: Largest import cluster (54/57 host-pass controls): arguments-object, parameter/default, and self-name/method shapes. Do not blanket-admit it; hand off to the frame-arguments and named-expression follow-ups after per-path controls.
+
+#### C03 — 40 rows (19 host pass, 21 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_f64, env::__gen_push_ref, env::__gen_result_done, env::__gen_result_value, env::__gen_return (##)
+```
+
+Representative: `test/language/expressions/arrow-function/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js`
+
+Route: Destructuring against `Array.prototype` across generator and non-generator fixtures; route the representation/reflective receiver portion to #2175 and keep iterator/destructuring checks separate.
+
+#### C04 — 29 rows (15 host pass, 14 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value (##)
+```
+
+Representative: `test/language/expressions/assignment/dstr/array-elem-nested-array-yield-expr.js`
+
+Route: Mixed dstr and nested-yield expression positions; route yield-position control flow to the #2906 planner convergence and reflective method cases to #2175.
+
+#### C05 — 28 rows (26 host pass, 2 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return (##)
+```
+
+Representative: `test/language/expressions/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-class.js`
+
+Route: Named generator method/function expression binding shapes; route self-name and method-factory gates, not the result-reader signature.
+
+#### C06 — 16 rows (0 host pass, 16 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_ref, env::__gen_result_done, env::__gen_result_value (##)
+```
+
+Representative: `test/language/expressions/assignment/dstr/array-elem-init-yield-expr.js`
+
+Route: Destructuring / for-of yield expressions with boxed pushes; route through the native CFG/planner and preserve a clean refusal until each shape has a semantic pin.
+
+#### C07 — 4 rows (0 host pass, 4 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_yield_star (##)
+```
+
+Representative: `test/language/statements/for-of/yield-star-from-catch.js`
+
+Route: Delegation inside try/catch/finally; route to #2173 delegation-region work (not a blanket candidate-gate widening).
+
+#### C08 — 4 rows (3 host pass, 1 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_value, env::__gen_set_return (##)
+```
+
+Representative: `test/language/expressions/generators/named-no-strict-reassign-fn-name-in-body-in-arrow.js`
+
+Route: Named non-strict function-expression self-name reassignment; self-name follow-up, with host controls only.
+
+#### C09 — 3 rows (2 host pass, 1 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer (##)
+```
+
+Representative: `test/language/computed-property-names/class/static/generator-constructor.js`
+
+Route: Named strict function-expression self-name reassignment; self-name follow-up, with host controls only.
+
+#### C10 — 3 rows (0 host pass, 3 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_set_return (##)
+```
+
+Representative: `test/language/expressions/generators/named-strict-error-reassign-fn-name-in-body-in-arrow.js`
+
+Route: Computed class/method generator construction/name shapes; route method-factory/computed-name representation work.
+
+#### C11 — 2 rows (0 host pass, 2 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_f64, env::__gen_result_done, env::__gen_result_value (##)
+```
+
+Representative: `test/language/expressions/object/method-definition/yield-as-expression-with-rhs.js`
+
+Route: Computed object/class generator methods carrying a f64 push; route method factory and computed-name representation work.
+
+#### C12 — 2 rows (0 host pass, 2 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_f64, env::__gen_result_done, env::__gen_result_value_f64 (##)
+```
+
+Representative: `test/language/expressions/object/method-definition/yield-as-generator-method-binding-identifier.js`
+
+Route: Method `yield` used as an expression with a result; route nested-yield position planner.
+
+#### C13 — 2 rows (1 host pass, 1 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_push_f64 (##)
+```
+
+Representative: `test/language/computed-property-names/class/method/generator.js`
+
+Route: Method `yield` used as a generator-method binding identifier; route nested-yield position planner.
+
+#### C14 — 2 rows (0 host pass, 2 host fail)
+
+Exact signature:
+
+```text
+other:L#:## Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (##). Recompile with a JS host target for complex generator shapes.; L#:## Codegen error: native generator lowering␠
+```
+
+Representative: `test/language/expressions/yield/rhs-omitted.js`
+
+Route: Operand-less/primitive yield expression refusal variant; route the yield-position/value-representation slice.
+
+#### C15 — 1 rows (1 host pass, 0 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_ref, env::__gen_result_done, env::__gen_result_value, env::__gen_return (##)
+```
+
+Representative: `test/built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js`
+
+Route: Concise object-literal generator method; route object-literal method factory wiring.
+
+#### C16 — 1 rows (0 host pass, 1 host fail)
+
+Exact signature:
+
+```text
+host_import_leak:standalone target emitted host imports: env::__gen_next, env::__gen_result_value (##)
+```
+
+Representative: `test/language/expressions/object/concise-generator.js`
+
+Route: Native resume function type mismatch in `__gen_resume_g`; this is a carrier codegen defect, not an explicit host-import row. Keep it as a hard negative control until fixed.
+
+#### C17 — 1 rows (1 host pass, 0 host fail)
+
+Exact signature:
+
+```text
+wasm_compile:L#:## invalid Wasm binary (WebAssembly.Module(): Compiling function ##:"__gen_resume_g" failed: local.tee[#] expected type (ref null #), found ref.as_non_null of type (ref eq) @+#) [in __gen_resume_g()] [@+#] [wat: (func $__gen_resume_g (pa
+```
+
+Representative: `test/language/statements/generators/yield-star-before-newline.js`
+
+Route: Proxy receiver/apply reflection fixture; route builtin-prototype/receiver representation to #2175.
+
+### Exact path manifest
+
+Every selected path appears exactly once below; counts in parentheses are the group counts above.
+
+#### C01 (102)
+
+- test/built-ins/GeneratorPrototype/return/try-finally-set-property-within-try.js
+- test/language/arguments-object/gen-func-decl-args-trailing-comma-multiple.js
+- test/language/arguments-object/gen-func-decl-args-trailing-comma-null.js
+- test/language/arguments-object/gen-func-decl-args-trailing-comma-single-args.js
+- test/language/arguments-object/gen-func-decl-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/gen-func-decl-args-trailing-comma-undefined.js
+- test/language/expressions/assignment/dstr/array-elem-iter-rtrn-close-err.js
+- test/language/expressions/assignment/dstr/array-elem-iter-rtrn-close-null.js
+- test/language/expressions/assignment/dstr/array-elem-iter-rtrn-close.js
+- test/language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close-err.js
+- test/language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close-null.js
+- test/language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close.js
+- test/language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js
+- test/language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js
+- test/language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close.js
+- test/language/expressions/assignment/dstr/array-rest-iter-rtrn-close-err.js
+- test/language/expressions/assignment/dstr/array-rest-iter-rtrn-close-null.js
+- test/language/expressions/assignment/dstr/array-rest-iter-rtrn-close.js
+- test/language/expressions/class/accessor-name-inst-computed-yield-expr.js
+- test/language/expressions/class/accessor-name-static-computed-yield-expr.js
+- test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-yield-expression.js
+- test/language/expressions/class/cpn-class-expr-computed-property-name-from-yield-expression.js
+- test/language/expressions/object/accessor-name-computed-yield-expr.js
+- test/language/expressions/object/cpn-obj-lit-computed-property-name-from-yield-expression.js
+- test/language/expressions/object/method-definition/computed-property-name-yield-expression.js
+- test/language/expressions/yield/arguments-object-attributes.js
+- test/language/expressions/yield/formal-parameters-after-reassignment-non-strict.js
+- test/language/expressions/yield/formal-parameters-after-reassignment-strict.js
+- test/language/expressions/yield/from-with.js
+- test/language/expressions/yield/in-rltn-expr.js
+- test/language/expressions/yield/iter-value-specified.js
+- test/language/expressions/yield/iter-value-unspecified.js
+- test/language/expressions/yield/rhs-regexp.js
+- test/language/expressions/yield/rhs-template-middle.js
+- test/language/expressions/yield/star-in-rltn-expr.js
+- test/language/expressions/yield/star-iterable.js
+- test/language/expressions/yield/star-return-is-null.js
+- test/language/expressions/yield/star-rhs-iter-get-call-err.js
+- test/language/expressions/yield/star-rhs-iter-get-call-non-obj.js
+- test/language/expressions/yield/star-rhs-iter-get-get-err.js
+- test/language/expressions/yield/star-rhs-iter-nrml-next-call-err.js
+- test/language/expressions/yield/star-rhs-iter-nrml-next-call-non-obj.js
+- test/language/expressions/yield/star-rhs-iter-nrml-next-get-err.js
+- test/language/expressions/yield/star-rhs-iter-nrml-next-invoke.js
+- test/language/expressions/yield/star-rhs-iter-nrml-res-done-err.js
+- test/language/expressions/yield/star-rhs-iter-nrml-res-done-no-value.js
+- test/language/expressions/yield/star-rhs-iter-nrml-res-value-err.js
+- test/language/expressions/yield/star-rhs-iter-nrml-res-value-final.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-no-rtrn.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-res-done-err.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-res-done-no-value.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-res-value-err.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-res-value-final.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-rtrn-call-err.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-rtrn-call-non-obj.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-rtrn-get-err.js
+- test/language/expressions/yield/star-rhs-iter-rtrn-rtrn-invoke.js
+- test/language/expressions/yield/star-rhs-iter-thrw-res-done-err.js
+- test/language/expressions/yield/star-rhs-iter-thrw-res-done-no-value.js
+- test/language/expressions/yield/star-rhs-iter-thrw-res-value-err.js
+- test/language/expressions/yield/star-rhs-iter-thrw-res-value-final.js
+- test/language/expressions/yield/star-rhs-iter-thrw-thrw-call-err.js
+- test/language/expressions/yield/star-rhs-iter-thrw-thrw-call-non-obj.js
+- test/language/expressions/yield/star-rhs-iter-thrw-thrw-get-err.js
+- test/language/expressions/yield/star-rhs-iter-thrw-thrw-invoke.js
+- test/language/expressions/yield/star-rhs-iter-thrw-violation-no-rtrn.js
+- test/language/expressions/yield/star-rhs-iter-thrw-violation-rtrn-call-err.js
+- test/language/expressions/yield/star-rhs-iter-thrw-violation-rtrn-call-non-obj.js
+- test/language/expressions/yield/star-rhs-iter-thrw-violation-rtrn-get-err.js
+- test/language/expressions/yield/star-rhs-iter-thrw-violation-rtrn-invoke.js
+- test/language/expressions/yield/star-rhs-unresolvable.js
+- test/language/expressions/yield/star-throw-is-null.js
+- test/language/module-code/eval-export-dflt-gen-anon-semi.js
+- test/language/module-code/instn-named-bndng-dflt-gen-anon.js
+- test/language/statements/class/accessor-name-inst-computed-yield-expr.js
+- test/language/statements/class/accessor-name-static-computed-yield-expr.js
+- test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-yield-expression.js
+- test/language/statements/class/cpn-class-decl-computed-property-name-from-yield-expression.js
+- test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js
+- test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-null.js
+- test/language/statements/for-of/dstr/array-elem-iter-rtrn-close.js
+- test/language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close-err.js
+- test/language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close-null.js
+- test/language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close.js
+- test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js
+- test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js
+- test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js
+- test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js
+- test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js
+- test/language/statements/for-of/dstr/array-rest-iter-rtrn-close.js
+- test/language/statements/generators/dstr/ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/statements/generators/dstr/ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/statements/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/statements/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/statements/generators/dstr/dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/statements/generators/dstr/dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/statements/generators/dstr/obj-ptrn-id-init-fn-name-class.js
+- test/language/statements/generators/dstr/obj-ptrn-id-init-fn-name-gen.js
+- test/language/statements/generators/params-dflt-args-unmapped.js
+- test/language/statements/generators/scope-param-rest-elem-var-close.js
+- test/language/statements/generators/scope-param-rest-elem-var-open.js
+- test/language/statements/generators/yield-as-literal-property-name.js
+
+#### C02 (57)
+
+- test/language/arguments-object/cls-decl-gen-meth-args-trailing-comma-multiple.js
+- test/language/arguments-object/cls-decl-gen-meth-args-trailing-comma-null.js
+- test/language/arguments-object/cls-decl-gen-meth-args-trailing-comma-single-args.js
+- test/language/arguments-object/cls-decl-gen-meth-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/cls-decl-gen-meth-args-trailing-comma-undefined.js
+- test/language/arguments-object/cls-decl-gen-meth-static-args-trailing-comma-multiple.js
+- test/language/arguments-object/cls-decl-gen-meth-static-args-trailing-comma-null.js
+- test/language/arguments-object/cls-decl-gen-meth-static-args-trailing-comma-single-args.js
+- test/language/arguments-object/cls-decl-gen-meth-static-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/cls-decl-gen-meth-static-args-trailing-comma-undefined.js
+- test/language/arguments-object/cls-expr-gen-meth-args-trailing-comma-multiple.js
+- test/language/arguments-object/cls-expr-gen-meth-args-trailing-comma-null.js
+- test/language/arguments-object/cls-expr-gen-meth-args-trailing-comma-single-args.js
+- test/language/arguments-object/cls-expr-gen-meth-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/cls-expr-gen-meth-args-trailing-comma-undefined.js
+- test/language/arguments-object/cls-expr-gen-meth-static-args-trailing-comma-multiple.js
+- test/language/arguments-object/cls-expr-gen-meth-static-args-trailing-comma-null.js
+- test/language/arguments-object/cls-expr-gen-meth-static-args-trailing-comma-single-args.js
+- test/language/arguments-object/cls-expr-gen-meth-static-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/cls-expr-gen-meth-static-args-trailing-comma-undefined.js
+- test/language/arguments-object/gen-func-expr-args-trailing-comma-multiple.js
+- test/language/arguments-object/gen-func-expr-args-trailing-comma-null.js
+- test/language/arguments-object/gen-func-expr-args-trailing-comma-single-args.js
+- test/language/arguments-object/gen-func-expr-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/gen-func-expr-args-trailing-comma-undefined.js
+- test/language/arguments-object/gen-meth-args-trailing-comma-multiple.js
+- test/language/arguments-object/gen-meth-args-trailing-comma-null.js
+- test/language/arguments-object/gen-meth-args-trailing-comma-single-args.js
+- test/language/arguments-object/gen-meth-args-trailing-comma-spread-operator.js
+- test/language/arguments-object/gen-meth-args-trailing-comma-undefined.js
+- test/language/expressions/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/class/params-dflt-gen-meth-args-unmapped.js
+- test/language/expressions/class/params-dflt-gen-meth-static-args-unmapped.js
+- test/language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-arrow.js
+- test/language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-fn.js
+- test/language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-arrow.js
+- test/language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-fn.js
+- test/language/expressions/generators/params-dflt-args-unmapped.js
+- test/language/expressions/generators/scope-name-var-close.js
+- test/language/expressions/generators/scope-name-var-open-non-strict.js
+- test/language/expressions/generators/scope-name-var-open-strict.js
+- test/language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/object/dstr/gen-meth-obj-ptrn-id-init-fn-name-class.js
+- test/language/expressions/object/method-definition/params-dflt-gen-meth-args-unmapped.js
+- test/language/expressions/object/scope-gen-meth-param-rest-elem-var-close.js
+- test/language/expressions/object/scope-gen-meth-param-rest-elem-var-open.js
+- test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-class.js
+- test/language/statements/class/params-dflt-gen-meth-args-unmapped.js
+- test/language/statements/class/params-dflt-gen-meth-static-args-unmapped.js
+
+#### C03 (40)
+
+- test/language/expressions/arrow-function/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/arrow-function/dstr/dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/gen-meth-static-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/meth-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/meth-static-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/class/dstr/meth-static-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/function/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/function/dstr/dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/generators/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/object/dstr/gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/object/dstr/meth-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/expressions/object/dstr/meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/meth-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/meth-static-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/class/dstr/meth-static-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/const/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/for-of/dstr/const-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/for-of/dstr/let-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/for-of/dstr/var-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/for/dstr/const-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/for/dstr/let-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/for/dstr/var-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/function/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/function/dstr/dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/generators/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/generators/dstr/dflt-ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/let/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/try/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+- test/language/statements/variable/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js
+
+#### C04 (29)
+
+- test/language/expressions/assignment/dstr/array-elem-nested-array-yield-expr.js
+- test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-expr.js
+- test/language/expressions/assignment/dstr/array-elem-target-yield-expr.js
+- test/language/expressions/assignment/dstr/array-rest-nested-array-yield-expr.js
+- test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-expr.js
+- test/language/expressions/assignment/dstr/array-rest-yield-expr.js
+- test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-expr.js
+- test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-expr.js
+- test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-expr.js
+- test/language/expressions/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/generators/yield-as-literal-property-name.js
+- test/language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/object/dstr/gen-meth-obj-ptrn-id-init-fn-name-gen.js
+- test/language/expressions/object/method-definition/yield-as-literal-property-name.js
+- test/language/statements/class/definition/methods-gen-yield-as-literal-property-name.js
+- test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-gen.js
+- test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js
+- test/language/statements/for-of/dstr/array-elem-target-yield-expr.js
+- test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js
+- test/language/statements/for-of/dstr/array-rest-yield-expr.js
+- test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js
+
+#### C05 (28)
+
+- test/language/expressions/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/class/dstr/gen-meth-static-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-static-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-arrow.js
+- test/language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-fn.js
+- test/language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-arrow.js
+- test/language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-fn.js
+- test/language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/object/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/object/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-id-init-fn-name-gen.js
+- test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-class.js
+- test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-gen.js
+
+#### C06 (16)
+
+- test/language/expressions/assignment/dstr/array-elem-init-yield-expr.js
+- test/language/expressions/assignment/dstr/obj-id-init-yield-expr.js
+- test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-expr.js
+- test/language/expressions/object/method-definition/yield-as-expression-without-rhs.js
+- test/language/statements/class/definition/methods-gen-yield-as-expression-without-rhs.js
+- test/language/statements/for-of/dstr/array-elem-init-yield-expr.js
+- test/language/statements/for-of/dstr/array-elem-nested-obj-yield-expr.js
+- test/language/statements/for-of/dstr/array-rest-nested-obj-yield-expr.js
+- test/language/statements/for-of/dstr/obj-id-init-yield-expr.js
+- test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js
+- test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js
+- test/language/statements/for-of/dstr/obj-prop-nested-obj-yield-expr.js
+- test/language/statements/for-of/yield-from-catch.js
+- test/language/statements/for-of/yield-from-finally.js
+- test/language/statements/for-of/yield-from-try.js
+- test/language/statements/for-of/yield.js
+
+#### C07 (4)
+
+- test/language/statements/for-of/yield-star-from-catch.js
+- test/language/statements/for-of/yield-star-from-finally.js
+- test/language/statements/for-of/yield-star-from-try.js
+- test/language/statements/for-of/yield-star.js
+
+#### C08 (4)
+
+- test/language/expressions/generators/named-no-strict-reassign-fn-name-in-body-in-arrow.js
+- test/language/expressions/generators/named-no-strict-reassign-fn-name-in-body-in-eval.js
+- test/language/expressions/generators/named-no-strict-reassign-fn-name-in-body.js
+- test/language/expressions/object/method-definition/generator-super-prop-body.js
+
+#### C09 (3)
+
+- test/language/computed-property-names/class/static/generator-constructor.js
+- test/language/statements/class/definition/fn-name-gen-method.js
+- test/language/statements/class/syntax/class-declaration-computed-method-generator-definition.js
+
+#### C10 (3)
+
+- test/language/expressions/generators/named-strict-error-reassign-fn-name-in-body-in-arrow.js
+- test/language/expressions/generators/named-strict-error-reassign-fn-name-in-body-in-eval.js
+- test/language/expressions/generators/named-strict-error-reassign-fn-name-in-body.js
+
+#### C11 (2)
+
+- test/language/expressions/object/method-definition/yield-as-expression-with-rhs.js
+- test/language/statements/class/definition/methods-gen-yield-as-expression-with-rhs.js
+
+#### C12 (2)
+
+- test/language/expressions/object/method-definition/yield-as-generator-method-binding-identifier.js
+- test/language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js
+
+#### C13 (2)
+
+- test/language/computed-property-names/class/method/generator.js
+- test/language/computed-property-names/object/method/generator.js
+
+#### C14 (2)
+
+- test/language/expressions/yield/rhs-omitted.js
+- test/language/expressions/yield/rhs-primitive.js
+
+#### C15 (1)
+
+- test/built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js
+
+#### C16 (1)
+
+- test/language/expressions/object/concise-generator.js
+
+#### C17 (1)
+
+- test/language/statements/generators/yield-star-before-newline.js
+
+### Checkpoint handoff
+
+- The largest measured candidate is **C02: 57 rows, 54/57 host-pass controls**. Its paths are not one proven gate: 30 are under `arguments-object`, with the remainder split across dstr/default/self-name/method shapes. The existing arguments bail is correctness-preserving; implementing frame-carried `arguments` is the next standalone-capable slice.
+- The largest native-refusal group is **C01: 102 rows**, but only 21/102 host-pass controls. It mixes delegation, dstr iterator-close, nested-yield position, computed-name, and arguments shapes. It must not be widened as one bucket.
+- Child routing is explicit: delegation/iterator-close → #2173; reflective/prototype receiver shapes → #2175; new control-flow/yield-position shapes → #2906; frame arguments and named-expression self-binding remain #2864 follow-ups.
+- No host import, skip, fixture, or oracle workaround was introduced in this checkpoint. A subsequent implementation must add standalone semantic pins and rerun all 297 rows plus all 297 host controls before claiming a delta.
