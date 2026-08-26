@@ -77,6 +77,7 @@ import {
   resolvePromiseSubclassIdentifier,
   tryEmitPromiseSubclassValue,
 } from "./promise-subclass.js";
+import { emitLiveIdentifierGlobalRead, tryEmitAmbientRegistryCollisionRead } from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -234,7 +235,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 }
 
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
-function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
+export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
   if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
     const shorthand = (
       ctx.checker as typeof ctx.checker & {
@@ -369,7 +370,7 @@ function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node
  * legitimately resolve cross-file and stay untouched, as do synthetic
  * compiler-minted identifiers (no parent / no source position).
  */
-function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
+export function moduleGoalIdentifierIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
   if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
   const valSym = identifierValueSymbol(ctx, id);
   if (valSym === undefined) return true;
@@ -1243,6 +1244,8 @@ function compileIdentifierCore(
     ? compileExactAmbientShadowedModuleBinding(ctx, fctx, id)
     : undefined;
   if (ambientShadowType) return ambientShadowType;
+  const ambientCollisionType = tryEmitAmbientRegistryCollisionRead(ctx, fctx, id, skipRuntimeEvalState);
+  if (ambientCollisionType) return ambientCollisionType;
 
   // (#4618) A class declaration is already represented by its canonical,
   // identity-stable class-object singleton, so it never needs a value-copy
@@ -1286,8 +1289,8 @@ function compileIdentifierCore(
 
   // (#3505) Graph-wide name-keyed registries (capturedGlobals, moduleGlobals,
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
-  // for THIS module's environment record — see moduleGoalReadIsUndeclared.
-  const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, id);
+  // for THIS module's environment record — see moduleGoalIdentifierIsUndeclared.
+  const unresolvedInModuleGoal = moduleGoalIdentifierIsUndeclared(ctx, id);
   const graphNameRegistryUnavailable = unresolvedInModuleGoal || readsAmbientDeclaration;
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
@@ -1302,9 +1305,7 @@ function compileIdentifierCore(
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
-    fctx.body.push({ op: "global.get", index: capturedIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
-    const gType = globalDef?.type ?? { kind: "f64" };
+    const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
     // Globals widened from ref to ref_null for null init — narrow back
     if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
       fctx.body.push({ op: "ref.as_non_null" });
@@ -1324,9 +1325,7 @@ function compileIdentifierCore(
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
-    fctx.body.push({ op: "global.get", index: moduleIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
-    const mType = globalDef?.type ?? { kind: "f64" };
+    const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
       fctx.body.push({ op: "ref.as_non_null" });
