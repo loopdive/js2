@@ -1,11 +1,10 @@
 {
   "id": "3305",
-  "assignee": "ttraenkler/fable-3305",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
-  "branch": "issue-3305-selfhost-tofixed",
-  "claimed_at": "2026-07-16T11:59:19Z",
-  "updated_at": "2026-08-26T04:47:04Z",
-  "write_id": "47475-gg5g7zer",
-  "released_at": "2026-08-26T04:47:04Z"
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/3305-parsefloat-plan",
+  "claimed_at": "2026-08-26T05:09:34Z",
+  "updated_at": "2026-08-26T05:09:34Z",
+  "write_id": "63599-tav0i6k8"
 }
