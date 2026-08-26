@@ -331,6 +331,8 @@ interface ObjCarrierDeps {
   isTruthyIdx: number;
   /** `$Object` struct typeIdx — discriminates the step-result read path. */
   objectTypeIdx: number;
+  /** `$Proxy` struct typeIdx — Proxy iterators use the same property path. */
+  proxyTypeIdx?: number;
   /** `__sget_value(externref) -> externref` — closed-struct `{value,done}` step
    *  results (an object-literal `next()` result often pre-shapes into a closed
    *  struct, which `__extern_get` cannot read). Optional: absent when the
@@ -354,6 +356,18 @@ interface ObjCarrierDeps {
   keyInstrs: (name: string) => Instr[];
   /** Fresh instrs pushing the miss/undefined externref (matches `__extern_get`). */
   missInstrs: () => Instr[];
+}
+
+/** Build a fresh `$Object`/`$Proxy` carrier test for dynamic property reads. */
+function objCarrierTest(deps: ObjCarrierDeps, load: () => Instr[]): Instr[] {
+  const objectTest = { op: "ref.test", typeIdx: deps.objectTypeIdx } satisfies Instr;
+  return [
+    ...load(),
+    objectTest,
+    ...(deps.proxyTypeIdx === undefined
+      ? []
+      : [...load(), { op: "ref.test", typeIdx: deps.proxyTypeIdx } satisfies Instr, { op: "i32.or" } satisfies Instr]),
+  ];
 }
 
 /**
@@ -1266,6 +1280,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         externGetIdx,
         boxSymbolIdx,
         objectTypeIdx,
+        proxyTypeIdx: ctx.objectRuntimeTypes?.proxyTypeIdx,
         isTruthyIdx,
         applyClosureIdx: reserveApplyClosure(ctx),
         sgetValueIdx: ctx.funcMap.get("__sget_value"),
@@ -2048,9 +2063,7 @@ function buildIteratorBody(
         // USER kind (closed-struct type-switch dispatch).
         ...((objDeps
           ? [
-              { op: "local.get", index: 2 },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: objDeps.objectTypeIdx },
+              ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }]),
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } },
@@ -2083,9 +2096,7 @@ function buildIteratorBody(
             else: [{ op: "local.get", index: 2 }],
           },
           { op: "local.set", index: 2 },
-          { op: "local.get", index: 2 },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: objDeps.objectTypeIdx },
+          ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }]),
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -2507,10 +2518,11 @@ function buildIteratorNextBody(
           // `$Object` iterator reads through the dynamic reader; a closed-
           // struct iterator literal (`{ next: function () {…} }`, field-stored
           // closure) reads through the `__sget_next` field getter.
-          { op: "local.get", index: 1 },
-          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: od.objectTypeIdx },
+          ...objCarrierTest(od, () => [
+            { op: "local.get", index: 1 },
+            { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+            { op: "any.convert_extern" },
+          ]),
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
@@ -2550,9 +2562,7 @@ function buildIteratorNextBody(
               { op: "local.set", index: 5 },
             ],
             else: [
-              { op: "local.get", index: 6 },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: od.objectTypeIdx },
+              ...objCarrierTest(od, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
               { op: "if", blockType: { kind: "empty" }, then: readObjArm, else: readStructArm },
             ],
           },
@@ -2867,9 +2877,7 @@ function buildIteratorNextBody(
     { op: "local.set", index: 6 },
     ...((objDeps
       ? [
-          { op: "local.get", index: 6 },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: objDeps.objectTypeIdx },
+          ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
           { op: "if", blockType: { kind: "empty" }, then: userReadObjArm, else: userReadStructArm },
         ]
       : userReadStructArm) satisfies Instr[]),
