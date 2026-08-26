@@ -10,6 +10,7 @@ import {
 } from "../src/codegen-linear/string-repeat.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 import { forEachInstrDeep, type IrInstr } from "../src/ir/nodes.js";
+import { parseIrCountedStringAppendSiteId } from "../src/ir/counted-string-append-provenance.js";
 import { IR_STRING_REPEAT_FN } from "../src/ir/string-runtime.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { compile } from "../src/index.js";
@@ -47,6 +48,13 @@ async function compileCounted(tripCount: number) {
   expect(report?.compiled).toContain("run");
   expect(report?.preparedCountedStringAppendReceipts).toHaveLength(1);
   expect(report?.preparedCountedStringAppendReceipts[0]?.plan.syntaxPlan.tripCount).toBe(tripCount);
+  expect(report?.preparedCountedStringAppendReceipts[0]?.siteId).toBe(
+    report?.preparedCountedStringAppendReceipts[0]?.plan.siteId,
+  );
+  expect(parseIrCountedStringAppendSiteId(report?.preparedCountedStringAppendReceipts[0]?.siteId ?? "")).toMatchObject({
+    ownerUnitId: report?.preparedCountedStringAppendReceipts[0]?.plan.ownerUnitId,
+    sourceId: report?.preparedCountedStringAppendReceipts[0]?.plan.sourceId,
+  });
   return { result, report: report! };
 }
 
@@ -54,9 +62,11 @@ describe("#3518 linear counted-string repeat reservation", () => {
   it("does not reserve repeat for exact N=0/N=1 Prepared plans", async () => {
     const zero = await compileCounted(0);
     expect(zero.result.wat).not.toContain("$__str_repeat");
+    expect(zero.report.preparedCountedStringAppendReceipts[0]?.siteId).toBeDefined();
 
     const one = await compileCounted(1);
     expect(one.result.wat).not.toContain("$__str_repeat");
+    expect(one.report.preparedCountedStringAppendReceipts[0]?.siteId).toBeDefined();
   });
 
   it("reserves and authenticates repeat before slots for an exact N>=2 Prepared plan", async () => {
@@ -71,6 +81,7 @@ describe("#3518 linear counted-string repeat reservation", () => {
     }
     expect(repeats).toHaveLength(1);
     expect(repeats[0]?.provider?.binding).toEqual({ kind: "intrinsic", symbol: IR_STRING_REPEAT_FN });
+    expect(repeats[0]?.countedStringAppendSite).toBe(report.preparedCountedStringAppendReceipts[0]?.siteId);
 
     const { instance } = await WebAssembly.instantiate(result.binary);
     const pointer = (instance.exports.run as () => number)();

@@ -72,7 +72,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import {
   ensureStandaloneNativeMethodClosure,
   getBuiltinBrand,
-  seededNativeProtoDataMembersByBrand,
+  seededNativeProtoOwnMembersByBrand,
 } from "./native-proto.js";
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -100,6 +100,15 @@ function registerNativeProtoHasInstanceGopd(
 ): void {
   const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
   if (createDescriptorIdx === undefined || symbolType === undefined || functionBrand === undefined) return;
+  // This splice runs during finalize, after reflective call exports have
+  // already captured their receiver-aware native-closure inventory. Do not
+  // mint the Function @@hasInstance closure here: doing so late adds a new
+  // closure family after those exports and can make an unrelated accessor
+  // getter (notably RegExp.prototype.global) miss its original receiver.
+  // Exact Function.prototype[Symbol.hasInstance] value reads reserve this
+  // closure during body compilation; descriptor synthesis may safely reuse it.
+  const funcName = `__proto_method_${functionBrand}_@@hasInstance`;
+  if (!ctx.funcMap.has(funcName)) return;
   const brand = ensureFunctionNativeProtoGlue(ctx);
   const closure =
     brand === undefined
@@ -211,7 +220,7 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return undefined;
-  const seededDataMembers = seededNativeProtoDataMembersByBrand(ctx);
+  const seededOwnMembers = seededNativeProtoOwnMembersByBrand(ctx);
   const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
   const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
   const functionBrand = getBuiltinBrand(ctx, "Function");
@@ -282,17 +291,15 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: natStr, fieldIdx: STR_LEN },
     { op: "local.set", index: L_KLEN },
-    // A seeded DATA method is no longer an immutable CSV fact: its companion
+    // A seeded data method or accessor is no longer an immutable CSV fact: its companion
     // entry is the real own property and can be replaced or deleted. Resolve
     // those keys through the companion before the historical CSV shortcut.
-    // Accessors deliberately fall through — they are not seeded, and their
-    // existing synthesized path remains authoritative. (#4491 T9) `constructor`
-    // is in this ladder for a brand whose seeder installed it (one with an
-    // identity-stable carrier); a brand with no carrier seeds none and keeps the
-    // unconditional ES5 arm below.
+    // (#4491 T9) `constructor` is in this ladder for a brand whose seeder
+    // installed it (one with an identity-stable carrier); a brand with no
+    // carrier seeds none and keeps the unconditional ES5 arm below.
     ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined
       ? []
-      : [...seededDataMembers.entries()].flatMap(([brand, members]) => [
+      : [...seededOwnMembers.entries()].flatMap(([brand, members]) => [
           { op: "local.get", index: L_ANY } as Instr,
           { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
           { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,

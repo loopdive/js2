@@ -581,6 +581,24 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
           } else {
             compileStringLiteral(ctx, fctx, className);
           }
+          // arg 5 — whether the source has the spec-synthesized derived
+          // constructor `constructor(...args) { super(...args); }` and the
+          // parent is a runtime value (for example React.Component). The
+          // Wasm struct constructor cannot call that host parent directly;
+          // the class mirror uses this bit to apply the parent initializer to
+          // the freshly allocated proxy exactly once. Explicit constructors
+          // keep owning their own `super(...)` call.
+          const classDecl = ctx.classDeclarationMap.get(className);
+          const hasRuntimeHeritage =
+            classDecl?.heritageClauses?.some(
+              (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0,
+            ) === true &&
+            !ctx.classParentMap.has(className) &&
+            !ctx.classBuiltinParentMap.has(className);
+          const hasOwnCtor =
+            classDecl?.members.some((member) => ts.isConstructorDeclaration(member) && member.body !== undefined) ===
+            true;
+          fctx.body.push({ op: "i32.const", value: hasRuntimeHeritage && !hasOwnCtor ? 1 : 0 });
           // Re-resolve at push time: emitLazyProtoGet above late-adds
           // `__new_plain_object`, shifting every func index after the value
           // captured at block entry (measured: the stale call index sent the
@@ -829,6 +847,7 @@ function compileSpreadCallArgs(
   expr: ts.CallExpression,
   funcIdx: number,
   restInfo: RestParamInfo | undefined,
+  paramOffset = 0,
 ): void {
   const paramTypes = getFuncParamTypes(ctx, funcIdx);
 
@@ -889,13 +908,46 @@ function compileSpreadCallArgs(
   }
 
   // Collect all arguments, resolving spreads
-  let paramIdx = 0;
+  // A direct instance-method call has already pushed its receiver into formal
+  // slot 0 before expanding the user-visible spread arguments. Identifier and
+  // constructor calls keep the default offset of zero.
+  let paramIdx = paramOffset;
   for (let argPos = 0; argPos < args.length; argPos++) {
     const arg = args[argPos]!;
     if (ts.isSpreadElement(arg)) {
       // Compile the spread source (vec struct)
       const vecType = compileExpression(ctx, fctx, arg.expression);
-      if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) continue;
+      if (!vecType) continue;
+
+      // An indexed read from an evolving / class-field array can preserve the
+      // nested route tuple only as externref even though the runtime value is a
+      // real vec. Expand it through the generic index bridge instead of
+      // treating the whole tuple as formal 0 and padding the remaining
+      // parameters. Hono's SmartRouter uses exactly this shape:
+      // `router.add(...this.#routes[i])`.
+      if (vecType.kind === "externref" && !ctx.standalone && !ctx.wasi) {
+        ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        const getIdx = ctx.funcMap.get("__extern_get_idx");
+        if (getIdx === undefined) continue;
+        const vecLocal = allocLocal(fctx, `__spread_extern_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: vecLocal });
+        const reservedForTrailing = trailingPositionalAfter[argPos] ?? 0;
+        const remainingParams = Math.max(0, paramTypes.length - paramIdx - reservedForTrailing);
+        for (let i = 0; i < remainingParams; i++) {
+          fctx.body.push({ op: "local.get", index: vecLocal });
+          fctx.body.push({ op: "f64.const", value: i });
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          const expectedParamType = paramTypes[paramIdx];
+          if (expectedParamType && expectedParamType.kind !== "externref") {
+            coerceType(ctx, fctx, { kind: "externref" }, expectedParamType);
+          }
+          paramIdx++;
+        }
+        continue;
+      }
+
+      if (vecType.kind !== "ref" && vecType.kind !== "ref_null") continue;
 
       const vecTypeDef = ctx.mod.types[vecType.typeIdx];
       if (!vecTypeDef || vecTypeDef.kind !== "struct") continue;

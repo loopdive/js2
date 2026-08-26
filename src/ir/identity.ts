@@ -1137,10 +1137,7 @@ class SourceInventoryBuilder {
       );
     }
 
-    const instanceTerminalOwner =
-      topLevelDeclaration || promoteNestedImplicitInitializer
-        ? (explicitConstructor?.id ?? null)
-        : inheritedTerminalOwnerId;
+    const instanceTerminalOwner = explicitConstructor?.terminal ? explicitConstructor.id : inheritedTerminalOwnerId;
     for (const field of instanceInitializers) {
       const fieldCompilerOrigin = this.compilerOrigin(field) ?? compilerOrigin;
       const unit = this.addSupportUnit(

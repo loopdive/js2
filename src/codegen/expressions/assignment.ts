@@ -105,6 +105,7 @@ import {
   emitThrowTypeError,
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
+  resolvePrivateThisFieldCarrier,
   updateLocalType,
   widenLocalToNullable,
 } from "./helpers.js";
@@ -129,8 +130,7 @@ import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import {
   elementAccessTypedArrayName,
-  emitNonIndexVecElementSet,
-  nonArrayIndexNumericKey,
+  emitVecNamedOrDynamicElementSet,
   compileElementIndexI32,
 } from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
 import {
@@ -881,7 +881,7 @@ export function emitDynamicWithIdentifierWrite(
  * coercing externref → the target's declared type. Boxed ref-cell captures and
  * const/read-only bindings are handled by re-reading them here too.
  */
-function emitIdentifierWriteFromLocal(
+export function emitIdentifierWriteFromLocal(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
@@ -4332,7 +4332,10 @@ function compilePropertyAssignment(
     if (dynSet !== undefined) return dynSet;
   }
 
-  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  let typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  if (ts.isPrivateIdentifier(target.name)) {
+    typeName = resolvePrivateThisFieldCarrier(ctx, fctx, target.name, target.expression) ?? typeName;
+  }
   if (!typeName) {
     // No struct type resolved. Mirror the compound/logical assignment fallback:
     // treat the receiver as a host/dynamic object and route the write through
@@ -4461,11 +4464,18 @@ function compilePropertyAssignment(
   // below casts `this` to `$A` and TRAPS at construction. Route the write
   // through the `$props` backing field (fieldIdx 5) instead: lazily allocate an
   // open `$Object` on first write, then `__extern_set(props, key, box(value))`.
-  // Standalone only — host mode keeps the host-object machinery.
-  if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
-    const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
-    if (ownWrite !== undefined) return ownWrite;
-    // undefined → not applicable (e.g. helper unavailable); fall through.
+  // In standalone the backing is a native Wasm object and needs the dedicated
+  // side-slot path. In JS-host mode the backing is the actual host instance
+  // returned by `super(...)`; use ordinary [[Set]] instead of casting it to the
+  // vestigial bookkeeping struct registered for the user class.
+  if (ctx.classExternrefBackedSet.has(typeName)) {
+    if (ctx.standalone) {
+      const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
+      if (ownWrite !== undefined) return ownWrite;
+      // undefined → not applicable (e.g. helper unavailable); fall through.
+    } else if (!ctx.wasi) {
+      return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName, true);
+    }
   }
 
   const structTypeIdx = ctx.structMap.get(typeName);
@@ -4590,6 +4600,12 @@ function compilePropertyAssignmentExternSet(
   forceRuntimeSet = false,
   wrapRuntimeEvalCallable = false,
 ): InnerResult {
+  // The erased host [[Set]] can still receive a compiled class instance at
+  // runtime. Record the property name in the existing dynamic class-member
+  // demand set so finalize can publish an exact accessor-setter bridge when a
+  // class in this module owns one. Unrelated host-object writes add no code:
+  // the bridge collector emits only a positively matched class accessor.
+  if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(propName);
   // Compile object expression and convert to externref
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;
@@ -5284,25 +5300,8 @@ function compileElementAssignment(
       return null;
     }
     const holeyCarrier = isHoleyArrayType(ctx, typeIdx) && arrDef.element.kind === "externref";
-    // (#4247) §10.4.2.2 — a constant numeric key that is NOT an array index
-    // (`4294967295`, `4294967296`, `-1`, `1.1`, `NaN`, `Infinity`) is an
-    // ordinary NAMED property: it goes to the #3537 expando bag and must leave
-    // `length` alone. The vec grow sequence below would instead saturate the
-    // key to `i32.max` and TRAP the module trying to allocate the backing
-    // array. TypedArray views and `arguments` are NOT array exotics, so they
-    // keep their own lowering.
-    if (
-      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
-      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
-    ) {
-      const namedKey = nonArrayIndexNumericKey(ctx, fctx, target.argumentExpression);
-      if (namedKey !== undefined) {
-        const named = emitNonIndexVecElementSet(ctx, fctx, arrType, namedKey, value, (e, h) =>
-          compileExpression(ctx, fctx, e, h),
-        );
-        if (named) return named;
-      }
-    }
+    const namedOrDynamicKey = emitVecNamedOrDynamicElementSet(ctx, fctx, arrType, target, value);
+    if (namedOrDynamicKey) return namedOrDynamicKey;
     // (#4159 S5) Overlay-aware routed WRITE — twin of the S3 read routing;
     // rationale + exclusions in typed-lane-overlay-route.ts. `arguments` keeps
     // the legacy path (mapped-args reverse sync #849); TA views keep theirs.

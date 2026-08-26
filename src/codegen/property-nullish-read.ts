@@ -30,8 +30,14 @@ export function compilePropertyAccessForNullishObservation(
   expr: ts.PropertyAccessExpression,
 ): ValType | null {
   if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
+  // Private fields cannot be deleted, inherited, or supplied by a host object.
+  // Keep their typed struct read so an uninitialized optional numeric field's
+  // exact f64 `undefined` sentinel reaches the comparison. Boxing it through
+  // the generic host observation path turns that sentinel into ordinary NaN,
+  // after which `#field === undefined` can never succeed.
+  if (ts.isPrivateIdentifier(expr.name)) return compilePropertyAccess(ctx, fctx, expr);
   const externref: ValType = { kind: "externref" };
-  const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+  const propName = expr.name.text;
   // (#4500 Slice A) `this.p` / `globalThis.p` for a `var`-declared global has ONE
   // source of truth: the wasm module global (see `compilePropertyAccess`). This
   // path otherwise answers from the global OBJECT via a dynamic `__extern_get`,

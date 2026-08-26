@@ -40,8 +40,11 @@ describe("uuid v14.0.1 upstream suite", () => {
     expect(report.extraction.rejected).toBe(0);
     expect(report.results.nativePassed).toBe(75);
     expect(report.results.scored).toBe(75);
-    expect(report.results.passed).toBeGreaterThanOrEqual(3);
+    expect(report.results.passed).toBe(75);
+    expect(report.results.failed).toBe(0);
     expect(report.results.passed + report.results.failed).toBe(report.results.scored);
     expect(report.compile.files).toHaveLength(10);
+    expect(report.compile.files.every((file: { compiled: boolean; validated: boolean }) => file.compiled)).toBe(true);
+    expect(report.compile.files.every((file: { compiled: boolean; validated: boolean }) => file.validated)).toBe(true);
   });
 });

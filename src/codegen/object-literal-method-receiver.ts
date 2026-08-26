@@ -181,9 +181,31 @@ export function objectLiteralMethodNeedsCallReceiver(ctx: CodegenContext, expr: 
 }
 
 /**
+ * Class fields can install a separately declared ordinary function as their
+ * callable value (`match = match`). Such a value still receives the owning
+ * instance when called as `router.match()`. Resolve that immutable declaration
+ * so the same receiver install used for object-literal function properties can
+ * preserve the method-call Reference semantics.
+ */
+function isThisReadingFunctionDeclarationReference(ctx: CodegenContext, initializer: ts.Expression): boolean {
+  if (!ts.isIdentifier(initializer)) return false;
+  let declaration = ctx.oracle.valueDeclarationOf(initializer);
+  if (declaration && (ts.isImportClause(declaration) || ts.isImportSpecifier(declaration))) {
+    declaration = ctx.importBindingTargets?.get(declaration);
+  }
+  if (!declaration || !ts.isFunctionDeclaration(declaration) || declaration.body === undefined) return false;
+  if (declaration.asteriskToken !== undefined) return false;
+  if (declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true) return false;
+  const first = declaration.parameters[0];
+  if (first && ts.isIdentifier(first.name) && first.name.text === "this") return false;
+  return bodyReferencesOwnThis(declaration.body);
+}
+
+/**
  * Does the member named by `nameNode` resolve — in every one of its
- * declarations — to an object-literal property holding a `this`-reading function
- * expression? See the module header for why each clause is a refusal.
+ * declarations — to either an object-literal property holding a `this`-reading
+ * function expression or a class field holding a reference to a `this`-reading
+ * function declaration? See the module header for why each clause is a refusal.
  */
 export function objectLiteralMethodNeedsReceiver(ctx: CodegenContext, nameNode: ts.Node): boolean {
   const decls = ctx.oracle.declarationsOf(nameNode);
@@ -198,6 +220,10 @@ export function objectLiteralMethodNeedsReceiver(ctx: CodegenContext, nameNode: 
     // this-reading function expression. Ordinary closed-literal shorthand
     // methods retain their established static path and remain byte-identical.
     if (ts.isMethodDeclaration(d) && shorthandMethodNeedsReceiver(ctx, d)) continue;
+    if (ts.isPropertyDeclaration(d) && d.initializer) {
+      if (!isThisReadingFunctionDeclarationReference(ctx, d.initializer)) return false;
+      continue;
+    }
     return false;
   }
   return true;

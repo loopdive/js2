@@ -53,6 +53,8 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
+import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
+import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
 import { ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { buildTargetTaggedTry } from "../../ir/try-table.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js"; // (#4642) fall-off completion value
@@ -243,6 +245,15 @@ export function compileNestedClassDeclaration(
         if (entry.widened) ctx.capturedGlobalsWidened.add(name);
         else ctx.capturedGlobalsWidened.delete(name);
         (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
+        if (entry.boxed) {
+          (ctx.capturedBoxGlobals ??= new Map()).set(name, {
+            globalIdx: entry.globalIdx,
+            refCellTypeIdx: entry.boxed.refCellTypeIdx,
+            valType: entry.boxed.valType,
+          });
+        } else {
+          ctx.capturedBoxGlobals?.delete(name);
+        }
         const localIdx = fctx.localMap.get(name);
         if (localIdx !== undefined) {
           // Sync only when the fresh local's type matches the recorded
@@ -284,7 +295,10 @@ export function compileNestedClassDeclaration(
     // variables from the enclosing function scope. Also scan parameter-default
     // initializers so e.g. `method([x] = iter)` can resolve `iter` against the
     // enclosing function scope (#1161).
-    const promotedRecord = new Map<string, { globalIdx: number; widened: boolean }>();
+    const promotedRecord = new Map<
+      string,
+      { globalIdx: number; widened: boolean; boxed?: { refCellTypeIdx: number; valType: ValType } }
+    >();
     for (const member of decl.members) {
       if (ts.isMethodDeclaration(member) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
@@ -611,6 +625,22 @@ export function compileNestedFunctionDeclaration(
   }
 }
 
+/**
+ * Narrow activation decision shared by Phase-0 sibling reservation and the
+ * real lifted-body compile. Keeping this in one helper is ABI-critical: if the
+ * reservation unwraps `Promise<T>` while the body later emits the frame engine,
+ * recursive/forward calls retain a stale `T` result type.
+ */
+function planNestedConditionalAsyncActivation(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+): ReturnType<typeof planAsyncClosureActivation> {
+  const isAsync = stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+  if (!isAsync || stmt.asteriskToken !== undefined) return null;
+  const candidate = planAsyncClosureActivation(ctx, stmt, /* isAsync */ true);
+  return candidate !== null && asyncBodyHasConditionalSuspension(stmt, candidate.plan) ? candidate : null;
+}
+
 function compileNestedFunctionDeclarationInScope(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -700,6 +730,16 @@ function compileNestedFunctionDeclarationInScope(
   if (isAsync && !isGenerator) {
     ctx.asyncFunctions.add(funcName);
   }
+  // Nested FunctionDeclarations have their own lifted-body lowering path and
+  // therefore do not pass through function-body.ts::maybeActivateAsync. Plan
+  // their activation here, before the lifted function type is registered, so
+  // a driven declaration exposes the real Promise carrier (`externref`) to
+  // recursive and forward calls instead of the legacy unwrapped result type.
+  // Keep the historical nested-declaration population unchanged except for
+  // the branch-aware shape this slice makes drivable. In particular, merely
+  // having a synchronous guard elsewhere in a linear async body is not enough:
+  // the `if` arm itself must own one of this declaration's await points.
+  const asyncDecision = planNestedConditionalAsyncActivation(ctx, stmt);
 
   // (#2923) Foreign eval declarations have no checker signature; use dynamic
   // externref params and returns without attempting either lazy checker query.
@@ -733,6 +773,9 @@ function compileNestedFunctionDeclarationInScope(
     if (!isVoidType(retType)) {
       returnType = resolveWasmType(ctx, retType);
     }
+  }
+  if (asyncDecision !== null) {
+    returnType = { kind: "externref" };
   }
   // Analyze captured variables from the enclosing scope. Use scope-aware
   // collection so nested `var` declarations and parameter bindings inside the
@@ -1188,6 +1231,8 @@ function compileNestedFunctionDeclarationInScope(
       liftedFctx.body.push({ op: "local.get", index: bufferLocal });
       liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });
       liftedFctx.body.push({ op: "call", funcIdx: createGenIdx });
+    } else if (asyncDecision !== null) {
+      emitAsyncClosureBody(ctx, liftedFctx, stmt, asyncDecision);
     } else {
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
@@ -1662,6 +1707,8 @@ function compileNestedFunctionDeclarationInScope(
       liftedFctx.body.push({ op: "local.get", index: bufferLocal });
       liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });
       liftedFctx.body.push({ op: "call", funcIdx: createGenIdx });
+    } else if (asyncDecision !== null) {
+      emitAsyncClosureBody(ctx, liftedFctx, stmt, asyncDecision);
     } else {
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
@@ -2159,15 +2206,42 @@ export function hoistFunctionDeclarations(
   // no-op.
   if (isTopLevelHoist) {
     for (const stmt of stmts) {
-      if (ts.isClassDeclaration(stmt) && stmt.name && !ctx.structMap.has(stmt.name.text)) {
-        try {
-          collectClassDeclaration(ctx, stmt);
-          // Bodies are NOT compiled here — mark deferred so the statement-
-          // position compileNestedClassDeclaration still fills ctor/method
-          // bodies (its structMap-membership early-return honors this flag).
-          ctx.deferredClassBodies.add(stmt.name.text);
-        } catch {
-          /* leave the statement-position compile to surface any real error */
+      if (ts.isClassDeclaration(stmt) && stmt.name) {
+        const sourceName = stmt.name.text;
+        const existingOwner = ctx.classDeclarationMap.get(sourceName);
+        let classIdentity = sourceName;
+        // (#4618) The graph-wide class tables are name-keyed, but a callback
+        // body is discovered after the enclosing source-level collection pass.
+        // If that earlier pass already registered a same-named class from a
+        // different scope, the old `structMap.has(name)` guard silently skipped
+        // THIS declaration and its statement later reused the other class's
+        // methods. Give the late-discovered owner the same per-site synthetic
+        // identity used by the main declaration collector.
+        if (existingOwner !== undefined && existingOwner !== stmt) {
+          let synthetic = ctx.anonClassExprNames.get(stmt);
+          if (synthetic === undefined) {
+            synthetic = `__anonClass_${sourceName}_${ctx.anonTypeCounter++}`;
+            ctx.anonClassExprNames.set(stmt, synthetic);
+          }
+          classIdentity = synthetic;
+        }
+        if (!ctx.structMap.has(classIdentity)) {
+          try {
+            collectClassDeclaration(ctx, stmt, classIdentity === sourceName ? undefined : classIdentity);
+            if (classIdentity !== sourceName) {
+              // collectClassDeclaration publishes the source symbol globally;
+              // this late callback-local identity is selected by the declaration
+              // node/local binding instead and must not hijack other scopes.
+              if (ctx.classExprNameMap.get(sourceName) === classIdentity) ctx.classExprNameMap.delete(sourceName);
+              ctx.functionNameMap.set(classIdentity, sourceName);
+            }
+            // Bodies are NOT compiled here — mark deferred so the statement-
+            // position compileNestedClassDeclaration still fills ctor/method
+            // bodies (its structMap-membership early-return honors this flag).
+            ctx.deferredClassBodies.add(classIdentity);
+          } catch {
+            /* leave the statement-position compile to surface any real error */
+          }
         }
       }
     }
@@ -2222,8 +2296,11 @@ export function hoistFunctionDeclarations(
       if (preRegisterCapturingSibling(ctx, fctx, stmt, siblingFuncNames)) continue;
 
       // Compute the real signature (mirror the slice in
-      // compileNestedFunctionDeclaration). Generators return externref; async
-      // unwraps Promise<T>.
+      // compileNestedFunctionDeclaration). Generators and driven async
+      // declarations return externref; parked async declarations preserve the
+      // legacy Promise<T> unwrapping. The activation decision MUST be shared
+      // with the real body compile so sibling/recursive calls never retain a
+      // stale result ABI.
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
@@ -2235,6 +2312,7 @@ export function hoistFunctionDeclarations(
       });
       const isGen = stmt.asteriskToken !== undefined;
       const isAsync = stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const asyncDecision = planNestedConditionalAsyncActivation(ctx, stmt);
       // (#2923/#3633) Match compileNestedFunctionDeclaration's externref fallback.
       let sig: ts.Signature | undefined;
       let foreignNoSig = foreignEvalDeclaration;
@@ -2247,6 +2325,8 @@ export function hoistFunctionDeclarations(
       }
       let resultType: ValType | undefined;
       if (isGen) {
+        resultType = { kind: "externref" };
+      } else if (asyncDecision !== null) {
         resultType = { kind: "externref" };
       } else if (foreignNoSig) {
         resultType = { kind: "externref" };

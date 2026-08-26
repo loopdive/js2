@@ -65,11 +65,16 @@ import { ensureSetHelpers } from "../set-runtime.js";
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import { compileObjectLiteralAsExternref, resolveComputedKeyExpression } from "../literals.js";
+import {
+  compileObjectLiteralAsExternref,
+  materializeStructAsDynamicObject,
+  resolveComputedKeyExpression,
+} from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
@@ -89,13 +94,17 @@ import {
   registerCompileSuperPropertyAccess,
   resolveEnclosingClassName,
 } from "../shared.js";
-import { hoistFunctionDeclarations, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
+import {
+  compileNestedClassDeclaration,
+  hoistFunctionDeclarations,
+  maybeSetArgcForKnownCall,
+} from "../statements/nested-declarations.js";
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "../nested-function-name-scope.js"; // (#4456/#2071)
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
-import { compileSpreadCallArgs } from "./extern.js";
+import { compileSpreadCallArgs, emitLazyClassObjectGet, emitRegisterDynamicClassParent } from "./extern.js";
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitThrowReferenceError,
@@ -112,6 +121,10 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { SUPER_HOME_OBJECT_CAPTURE_NAME } from "../closures.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
+import {
+  emitHostTypedArrayCarrierRegistration,
+  typedArrayCtorArgIsArithmeticPrimitive,
+} from "./typed-array-host-carrier.js";
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
@@ -692,8 +705,22 @@ export function emitHostTaBufferConstruct(
 export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Expression[]): string | undefined {
   if (noJsHost(ctx)) return undefined;
   if (args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return undefined;
+  // (#4383) An arithmetic expression may inherit `any` from an operand, but
+  // evaluation has already reduced it to a primitive. It cannot be the dynamic
+  // ArrayBuffer/array-like carrier this host-constructor escape is for.
+  if (typedArrayCtorArgIsArithmeticPrimitive(args[0]!)) return undefined;
   const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
   if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return argSymName;
+  // An unannotated JavaScript parameter can carry either a numeric element
+  // count, an ArrayBuffer, or an array-like value at runtime.  The native host
+  // TypedArray constructor already implements that full overload set; forcing
+  // the value through the compiled numeric-count path instead applies
+  // ToNumber to an ArrayBuffer (`NaN -> 0`) and silently creates an empty view.
+  // Route only the genuinely dynamic carrier through the same host construct
+  // bridge as a statically-known ArrayBuffer.  `inferTaViewType` mirrors this
+  // gate so the receiving local remains externref-backed.
+  const argFact = ctx.oracle.typeFactOf(args[0]!);
+  if (argFact.kind === "any" || argFact.kind === "unknown") return "dynamic";
   return undefined;
 }
 
@@ -2578,6 +2605,25 @@ function stampClassExprName(
   releaseTempLocal(fctx, tmp);
 }
 
+function assignmentContainingClassExpression(expr: ts.ClassExpression): ts.BinaryExpression | undefined {
+  let value: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(value.parent) ||
+    ts.isAsExpression(value.parent) ||
+    ts.isTypeAssertionExpression(value.parent) ||
+    ts.isSatisfiesExpression(value.parent) ||
+    ts.isNonNullExpression(value.parent)
+  ) {
+    value = value.parent;
+  }
+  const assignment = value.parent;
+  return ts.isBinaryExpression(assignment) &&
+    assignment.right === value &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ? assignment
+    : undefined;
+}
+
 function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.ClassExpression): ValType | null {
   // §15.7.1: the class-expression name is in TDZ during its own `extends`
   // evaluation. `(class x extends x {})` must throw ReferenceError (#1594B).
@@ -2590,12 +2636,45 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   // Look up the synthetic name assigned during the collection phase
   const syntheticName = ctx.anonClassExprNames.get(expr);
   const classNameForCheck = syntheticName ?? expr.name?.text;
+  const assignment = assignmentContainingClassExpression(expr);
+  const needsInScopeBody =
+    syntheticName !== undefined &&
+    assignment !== undefined &&
+    (ctx.deferredClassBodies.has(syntheticName) || ctx.classMemberCaptureGlobals?.has(expr) === true);
+
+  // (#4618) Assignment-position class expressions inside a function are
+  // collected globally for shape identity but their bodies must be compiled
+  // here, while the enclosing locals exist. Re-enter on a later module-init /
+  // function recompilation when the first pass recorded captures, so
+  // compileNestedClassDeclaration can rebind the exact same capture globals.
+  if (needsInScopeBody) {
+    compileNestedClassDeclaration(ctx, fctx, expr, syntheticName);
+  }
 
   // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
   if (classNameForCheck && ctx.classThrowsOnEval.has(classNameForCheck)) {
     emitThrowTypeError(ctx, fctx, "Classes may not have a static property named 'prototype'");
     fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
+  }
+
+  // (#4618) An assignment-position class expression is a stable class VALUE,
+  // not merely a callable constructor closure. React's upstream setup uses
+  // `let Inner; Inner = class extends React.Component { ... }` and later hands
+  // `Inner` to host ReactDOM. The generic closure bridge is constructible, but
+  // it has neither the registered class prototype nor the dynamic `extends`
+  // parent, so React does not recognize it as a class component. Materialize
+  // the same canonical class-object singleton used by `const C = class {}` at
+  // this exact `=` RHS site. Keeping the gate here avoids changing inline class
+  // expressions used as Proxy targets or call arguments, which require the
+  // ordinary callable-closure representation.
+  if (syntheticName !== undefined && assignment !== undefined && ctx.classObjectGlobals?.has(syntheticName)) {
+    // Heritage evaluation belongs at ClassDefinitionEvaluation, before the
+    // class value is produced. The singleton registration deliberately keeps
+    // dynamic parents lazy, so registering it here remains valid even when a
+    // mirror was cached while initializing the singleton.
+    if (!needsInScopeBody) emitRegisterDynamicClassParent(ctx, fctx, expr, syntheticName);
+    if (emitLazyClassObjectGet(ctx, fctx, syntheticName)) return { kind: "externref" };
   }
 
   if (syntheticName) {
@@ -2896,7 +2975,7 @@ function emitDynamicNewFallback(
   // deepCyclicCopy) constructing a dynamic ctor value skips the tag dispatch
   // entirely (the tag stays -1) and lands directly on the bridge. Computed
   // up-front so the zero-candidate refusal below can consult it.
-  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  const useConstructClosureBase = usesHostConstructClosureBase(ctx, calleeExpr);
   if (candidates.length === 0 && !useConstructClosureBase) return false;
 
   const rawArgs = expr.arguments ?? [];
@@ -3709,6 +3788,16 @@ function emitCoerceElemToAnyrefInto(ctx: CodegenContext, fctx: FunctionContext, 
   for (const instr of scratch) out.push(instr);
 }
 
+function isDefaultExpressionImport(ctx: CodegenContext, expression: ts.Expression): expression is ts.Identifier {
+  return ts.isIdentifier(expression) && resolveDefaultExpressionImportGlobal(ctx, expression) !== undefined;
+}
+
+function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expression): boolean {
+  return (
+    !noJsHost(ctx) && (isDefaultExpressionImport(ctx, expression) || resolvesToDynamicAnyCtorValue(ctx, expression))
+  );
+}
+
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
   // (#3927 per-type layouts) Publish the allocation-label hint when this `new`
   // is a recorded label site of a split family. BEFORE the arguments compile —
@@ -3756,6 +3845,23 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   }
   if (ts.isFunctionExpression(unwrappedLiteralCtor)) {
     return compileNewFunctionExpression(ctx, fctx, expr, unwrappedLiteralCtor);
+  }
+
+  // A default-import expression cell is a runtime snapshot, not a static alias
+  // to whichever declaration currently shares its spelling. Resolve it before
+  // class/fnctor name dispatch. The JS-host lane performs ordinary dynamic
+  // [[Construct]] through the established bridge; host-free builds refuse
+  // explicitly until their dynamic construct carrier accepts this exact cell.
+  if (isDefaultExpressionImport(ctx, unwrappedLiteralCtor)) {
+    if (noJsHost(ctx)) {
+      reportError(ctx, expr, "Constructing an imported default-expression snapshot is not available without a host");
+      return null;
+    }
+    if (emitDynamicNewFallback(ctx, fctx, expr, unwrappedLiteralCtor, unwrappedLiteralCtor.text)) {
+      return { kind: "externref" };
+    }
+    reportError(ctx, expr, "Could not construct imported default-expression snapshot");
+    return null;
   }
 
   // TextEncoder/TextDecoder are standard Web/Node classes, but standalone and
@@ -5242,7 +5348,61 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({ op: "local.get", index: outer });
     } else {
       for (let i = 0; i < args.length; i++) {
-        compileExpression(ctx, fctx, args[i]!, externInfo.constructorParams[i]);
+        const arg = args[i]!;
+        const expected = externInfo.constructorParams[i];
+        const actual = compileExpression(ctx, fctx, arg);
+        if (actual === null) {
+          if (expected) pushDefaultValue(fctx, expected, ctx);
+          continue;
+        }
+
+        // Request/Response consume their second argument as a Web IDL
+        // dictionary. A closed WasmGC data struct coerced to externref is opaque
+        // to the host, so reify that exact init bag as an ordinary JS object.
+        // Do not apply this to arbitrary extern constructors: identity consumers
+        // such as WeakRef must receive the original WasmGC reference so a value
+        // returned by the host can still be cast to its original struct type.
+        const consumesWebInitDictionary = (className === "Request" || className === "Response") && i === 1;
+        if (
+          consumesWebInitDictionary &&
+          expected?.kind === "externref" &&
+          (actual.kind === "ref" || actual.kind === "ref_null")
+        ) {
+          const structName = ctx.typeIdxToStructName.get(actual.typeIdx);
+          const isPlainDataStruct =
+            structName !== undefined && !ctx.classSet.has(structName) && !!ctx.structFields.get(structName)?.length;
+          if (isPlainDataStruct) {
+            if (actual.kind === "ref") {
+              if (materializeStructAsDynamicObject(ctx, fctx, actual.typeIdx, { skipInternalFields: true })) {
+                continue;
+              }
+            } else {
+              const valueLocal = allocLocal(fctx, `__extern_ctor_obj_${fctx.locals.length}`, actual);
+              fctx.body.push({ op: "local.set", index: valueLocal });
+              const materializedStart = fctx.body.length;
+              fctx.body.push({ op: "local.get", index: valueLocal });
+              if (materializeStructAsDynamicObject(ctx, fctx, actual.typeIdx, { skipInternalFields: true })) {
+                const materializedBody = fctx.body.splice(materializedStart);
+                fctx.body.push(
+                  { op: "local.get", index: valueLocal },
+                  { op: "ref.is_null" },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "externref" } },
+                    then: [{ op: "ref.null.extern" }],
+                    else: materializedBody,
+                  },
+                );
+                continue;
+              }
+              fctx.body.splice(materializedStart);
+              fctx.body.push({ op: "local.get", index: valueLocal });
+            }
+          }
+        }
+        if (expected && !valTypeMatches(actual, expected)) {
+          coerceType(ctx, fctx, actual, expected);
+        }
       }
     }
     // Pad missing optional args with default values
@@ -5291,6 +5451,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
+      const resultType: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
 
       // (#3097) JS-host lane buffer-arg construction — see the matching gate
       // in the identifier-keyed TypedArray branch above.
@@ -5339,7 +5500,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
         fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
       }
-      return { kind: "ref_null", typeIdx: vecTypeIdx };
+      emitHostTypedArrayCarrierRegistration(ctx, fctx, className, resultType);
+      return resultType;
     }
   }
 

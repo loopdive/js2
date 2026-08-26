@@ -22,6 +22,7 @@ import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
+import { thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
@@ -637,7 +638,9 @@ export function isGlobalObjectExpr(ctx: CodegenContext, fctx: FunctionContext, e
   ) {
     cur = cur.expression;
   }
-  if (cur.kind === ts.SyntaxKind.ThisKeyword) return fctx.name === "__module_init" && !ctx.sourceIsModule;
+  if (cur.kind === ts.SyntaxKind.ThisKeyword) {
+    return fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(cur);
+  }
   return ts.isIdentifier(cur) && cur.text === "globalThis" && !ctx.moduleGlobals.has("globalThis");
 }
 

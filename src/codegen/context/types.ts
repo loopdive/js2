@@ -10,7 +10,16 @@ import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { UsageInference } from "../../checker/usage-inference.js";
 import type { IrUnitId } from "../../ir/identity.js";
-import type { FieldDef, Instr, LocalDef, SourcePos, ValType, WasmFunction, WasmModule } from "../../ir/types.js";
+import type {
+  FieldDef,
+  GlobalDef,
+  Instr,
+  LocalDef,
+  SourcePos,
+  ValType,
+  WasmFunction,
+  WasmModule,
+} from "../../ir/types.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
@@ -699,6 +708,14 @@ export interface FunctionContext {
    * assignment never reaches (`p2 = (function(){ return () => p2; })()`).
    */
   inlinedIifeNodes?: Set<ts.Node>;
+  /**
+   * Resume-delivered values for bounded awaits nested in a containing
+   * expression. The async planner records the original AwaitExpression node;
+   * the resume emitter scopes that node to its delivered local while compiling
+   * the continuation expression, so the legacy await passthrough is never
+   * re-evaluated after suspension.
+   */
+  asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
   /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
@@ -1474,6 +1491,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   funcSourceText: Map<string, string>;
   /** Map from string literal value → global import index */
   stringGlobalMap: Map<string, number>;
+  /** Host-string globals needed beside native-string literals at JS boundaries. */
+  hostStringGlobalMap: Map<string, number>;
   /** Number of imported globals (string constants) */
   numImportGlobals: number;
   /** Whether wasm:js-string imports have been registered */
@@ -2348,6 +2367,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   forceExternrefCallbackParams?: boolean;
   /**
+   * Transient runtime carrier for the first parameter of an inline `Array.map`
+   * callback. It keeps the closure ABI aligned with the receiver's actual vec
+   * element representation when stale JavaScript JSDoc disagrees.
+   */
+  arrayMapCallbackFirstParamOverride?: ValType;
+  /**
    * (#3137) True while compiling a native `.then`/`.catch` callback closure
    * (`compileStandalonePromiseThenCallback` window). TUPLE-typed callback
    * params widen to externref in `computeClosureWrapperSig`: the native
@@ -2689,6 +2714,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   liveFuncBindingGlobals?: Set<string>;
   /**
+   * Exact declarations represented by {@link liveFuncBindingGlobals}. The
+   * name-keyed set remains the legacy storage/read routing table, while this
+   * identity set lets cross-module source-callable resolution distinguish an
+   * immutable declaration from an unrelated same-named reassigned function.
+   */
+  reassignedFunctionDeclarations?: WeakSet<ts.FunctionDeclaration>;
+  /**
    * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
    * block/`if`/`switch`-nested `function f` whose enclosing var scope is the
    * SourceFile). Subset discipline: every member is also in
@@ -2715,13 +2747,27 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
-  /** Synthetic globals for entry-file `export default <expression>` exports.
-   *  The module-global indices are resolved after late imports are complete. */
-  deferredDefaultExpressionExports?: Set<string>;
+  /** Synthetic cells for entry-file `export default <expression>` exports.
+   *  Final indices are resolved from allocator identity after late imports. */
+  deferredDefaultExpressionExports?: Set<GlobalDef>;
   /** Runtime storage for `export default <expression>` in linked modules.
-   * Identifier/function defaults use their existing binding; expression
-   * defaults need a stable cell that default imports can alias. */
-  defaultExpressionGlobals?: WeakMap<ts.ExportAssignment, { bindingName: string; type: ValType }>;
+   * Each expression owns a stable snapshot cell plus an exact initialization
+   * flag so import cycles retain normal TDZ behavior. */
+  defaultExpressionGlobals?: WeakMap<ts.ExportAssignment, { value: GlobalDef; initialized: GlobalDef; type: ValType }>;
+  /**
+   * Exact target declaration for each linked import binding. Populated once by
+   * the import-alias registration pass, which is the existing checker-owned
+   * module-resolution boundary. Expression lowering consumes this map through
+   * `ctx.oracle` binding identities instead of resolving aliases with the raw
+   * checker at each use site.
+   */
+  importBindingTargets?: WeakMap<ts.Declaration, ts.Declaration>;
+  /**
+   * JavaScript signature array types whose JSDoc element carrier conflicts
+   * with the value actually returned by the closure body. The body carrier is
+   * representation-safe and must also be used at typed call-result sites.
+   */
+  jsBodyArrayReturnOverrides?: WeakMap<ts.Type, ValType>;
   /** Module-level variable initializers (compiled into __module_init) */
   moduleInitStatements: ts.Statement[];
   /**
@@ -2819,7 +2865,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * share one store. Keyed by resolved class name → captured name →
    * the pass-1 global index (+ widened flag).
    */
-  classMemberCaptureGlobals?: Map<ts.Node, Map<string, { globalIdx: number; widened: boolean }>>;
+  classMemberCaptureGlobals?: Map<
+    ts.Node,
+    Map<
+      string,
+      {
+        globalIdx: number;
+        widened: boolean;
+        boxed?: { refCellTypeIdx: number; valType: ValType };
+      }
+    >
+  >;
   /**
    * (#4618) Which FunctionContext value-promoted each `capturedGlobals` name.
    * `capturedGlobals` is name-keyed and not cleared between sibling callback
@@ -3603,6 +3659,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `.prototype`-as-value read demands a native proto object under
    *  `--target standalone`. Undefined until then. */
   nativeProtoTypeIdx?: number;
+  /**
+   * (#4664) Builtin brand -> absolute module-global index for the lazily
+   * materialized `$NativeProto` singleton. Kept on the shared context (rather
+   * than a module-private cache) so late import-global insertion can shift the
+   * recorded indices together with every emitted `global.get`.
+   */
+  nativeProtoGlobals?: Map<number, number>;
   /** (#2175 S0) Builtin-brand id table — a reserved high-negative i32 band
    *  disjoint from `classTagMap`'s range, so a `$NativeProto.$brand` (or the
    *  `$ClassMeta.$parentTag` externref-backed-subclass slot from #2101) is a
@@ -3684,6 +3747,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  dispatch in expressions/calls.ts consults this set to decide. Populated by
    *  `ensureStandaloneNativeMethodClosure`. */
   nativeProtoReceiverClosureStructTypes?: Set<number>;
+  /** (#4664) Exact metadata struct-type indices of seeded `$NativeProto`
+   * GETTER closures.
+   * Accessor dispatch treats their hidden first parameter as `this` only in
+   * the zero-argument `__call_accessor_get` bridge. A legacy direct call such
+   * as `const g = RegExp.prototype.global; g(re)` must keep passing `re` as the
+   * first ordinary argument, so these cannot share the all-arities method set
+   * above. `.call(thisArg)` still consults both sets. */
+  nativeProtoAccessorGetterClosureStructTypes?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */

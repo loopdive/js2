@@ -162,17 +162,44 @@ describe("#3520 identity-keyed IR-first local-call edges", () => {
           instance = target();
           nested = class { value = target(); };
         }
+        function outer() {
+          class UnsupportedNestedExplicit {
+            value = target();
+            constructor() {}
+            read() { return this.value; }
+          }
+          return 0;
+        }
       `,
     );
     const context = contextFor([fixture]);
     const declaration = fixture.statements.find(ts.isClassDeclaration)!;
     const constructorId = unitId(context, declaration);
+    const outerId = unitId(context, topLevelFunction(fixture, "outer"));
+    const unsupported = firstNode(
+      topLevelFunction(fixture, "outer"),
+      (node): node is ts.ClassDeclaration =>
+        ts.isClassDeclaration(node) && node.name?.text === "UnsupportedNestedExplicit",
+    );
+    const unsupportedConstructor = unsupported.members.find(ts.isConstructorDeclaration)!;
+    const unsupportedConstructorId = unitId(context, unsupportedConstructor);
+    const unsupportedField = unsupported.members.find(ts.isPropertyDeclaration)!;
     const moduleInitId = context.moduleInitUnitIdBySourceFile.get(fixture)!;
     const targetId = unitId(context, topLevelFunction(fixture, "target"));
     const edges = collectLocalCallEdgesByIdentity(fixture, context);
 
     expect(targets(edges, moduleInitId)).toEqual([targetId]);
     expect(targets(edges, constructorId)).toEqual([targetId]);
+    expect(targets(edges, outerId)).toEqual([targetId]);
+    expect(context.unitByUnitId.get(unsupportedConstructorId)).toMatchObject({
+      terminal: false,
+      terminalOwnerId: outerId,
+    });
+    expect(context.unitByUnitId.get(unitId(context, unsupportedField))).toMatchObject({
+      terminal: false,
+      terminalOwnerId: outerId,
+    });
+    expect(edges.callees.has(unsupportedConstructorId)).toBe(false);
     expect([...edges.calleesFromUnownedCallers]).toEqual([]);
   });
 

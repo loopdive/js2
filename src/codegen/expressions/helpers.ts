@@ -102,8 +102,18 @@ export function resolveDeclaringClassForPrivateName(
         // was skipped → a wrong-brand receiver (`C.B.fieldAccess(C)`) read the
         // field instead of throwing TypeError (#3045). Same-named `#m` on a
         // nested class now each resolve to their own synthetic struct.
-        const className =
-          current.name?.text ?? (ts.isClassExpression(current) ? ctx.anonClassExprNames.get(current) : undefined);
+        // A NAMED class expression has two source spellings: its lexical
+        // self-name (`class _Node`) and the outer binding (`var Node = ...`).
+        // The registered Wasm class identity is still the per-declaration
+        // synthetic name. Prefer that exact identity for every class
+        // expression, named or anonymous; falling back to `_Node` makes a
+        // widened receiver such as `let cur = this; cur = cur.#children[key]`
+        // miss the private-field arm and incorrectly reach the host property
+        // bridge, where private slots are intentionally invisible. Hono's
+        // recursive TrieRouter then observes `cur.#methods` as null.
+        const className = ts.isClassExpression(current)
+          ? (ctx.anonClassExprNames.get(current) ?? current.name?.text)
+          : current.name?.text;
         // Guard: the field must exist in the resolved struct (own private
         // *fields* live in structFields; a private method/getter is handled by
         // the accessor path in property-access, so require the field slot here).
@@ -118,6 +128,59 @@ export function resolveDeclaringClassForPrivateName(
     current = current.parent;
   }
   return undefined;
+}
+
+/**
+ * Resolve the physical struct that carries a private field on `this`.
+ *
+ * A variable-bound class expression is collected under both its visible
+ * binding and a declaration-identity synthetic name. Both registrations point
+ * at the same class-expression node, but a method compiled for the visible
+ * binding receives that binding's struct while the private-name resolver
+ * correctly returns the synthetic lexical identity. Coercing the former to
+ * the latter before a `struct.set` materializes a field-by-field projection --
+ * a fresh object -- so the write never reaches the original `this`.
+ *
+ * Preserve the method's actual self carrier only when both registrations are
+ * proven to describe the exact same class declaration and the physical struct
+ * owns the private slot. Declaration identity keeps same-named private fields
+ * in unrelated classes distinct.
+ */
+export function resolvePrivateThisFieldCarrier(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: ts.PrivateIdentifier,
+  receiver: ts.Expression,
+): string | undefined {
+  let bare = receiver;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isSatisfiesExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (bare.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+
+  const declared = resolveDeclaringClassForPrivateName(ctx, name);
+  if (declared === undefined) return undefined;
+  const selfLocal = fctx.localMap.get("this");
+  const selfType = selfLocal === undefined ? undefined : getLocalType(fctx, selfLocal);
+  if (selfType?.kind !== "ref" && selfType?.kind !== "ref_null") return undefined;
+
+  const physicalClassName = ctx.typeIdxToStructName.get(selfType.typeIdx);
+  if (physicalClassName === undefined || physicalClassName === declared.className) return undefined;
+  const lexicalDeclaration = ctx.classDeclarationMap.get(declared.className);
+  if (
+    lexicalDeclaration === undefined ||
+    ctx.classDeclarationMap.get(physicalClassName) !== lexicalDeclaration ||
+    !ctx.structFields.get(physicalClassName)?.some((field) => field.name === declared.fieldName)
+  ) {
+    return undefined;
+  }
+  return physicalClassName;
 }
 
 function collectClassAndDescendantTags(ctx: CodegenContext, className: string): number[] {

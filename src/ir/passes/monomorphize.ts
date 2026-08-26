@@ -56,6 +56,7 @@
 
 import {
   asBlockId,
+  forEachInstrDeep,
   type IrBlock,
   type IrFuncRef,
   type IrFunction,
@@ -451,6 +452,19 @@ function buildLocalTypeOf(fn: IrFunction): (v: IrValueId) => IrType | null {
  *     terminator shape)
  */
 function isMonomorphizable(fn: IrFunction): boolean {
+  for (const buffer of [
+    ...fn.blocks.map((block) => block.instrs),
+    ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ...(fn.asyncRuntime?.states.map((state) => state.body) ?? []),
+  ]) {
+    for (const instr of buffer) {
+      let hasCountedSite = false;
+      forEachInstrDeep(instr, (nested) => {
+        hasCountedSite ||= nested.kind === "string.repeat" && nested.countedStringAppendSite !== undefined;
+      });
+      if (hasCountedSite) return false;
+    }
+  }
   if (fn.blocks.length !== 1) return false;
   const block = fn.blocks[0]!;
   if (block.instrs.length > MAX_CALLEE_SIZE) return false;

@@ -93,7 +93,11 @@ export async function runHarness({ quiet = false } = {}) {
   let result;
   let threw = null;
   try {
-    result = await compile(markedSource, { fileName: "marked.esm.js" });
+    // Marked is published plain JavaScript, not strict-mode TypeScript. Keep
+    // the compatibility harness aligned with the Acorn dogfood lane: retain
+    // syntax/spec diagnostics while ignoring checker-only JS noise such as
+    // evolving-array inference (`[]` remaining `never[]`).
+    result = await compile(markedSource, { fileName: "marked.esm.js", skipSemanticDiagnostics: true });
   } catch (e) {
     threw = e instanceof Error ? `${e.message}` : String(e);
   }

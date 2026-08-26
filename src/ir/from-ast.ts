@@ -86,6 +86,7 @@ import {
   sameIrCallableBinding,
 } from "./callable-bindings.js";
 import { IR_NUMBER_TO_FIXED_FN, IR_NUMBER_TO_STRING_FN, IR_STRING_REPEAT_FN } from "./string-runtime.js";
+import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
@@ -9575,6 +9576,12 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
     loweringPlan.sourceFile !== stmt.getSourceFile() ||
     loweringPlan.sourceId !== requireIrPlanningSourceId(cx.identityContext, loweringPlan.sourceFile) ||
     plan.loop !== stmt ||
+    !irCountedStringAppendSiteIdIsCurrent(loweringPlan.siteId, {
+      sourceId: loweringPlan.sourceId,
+      ownerUnitId: loweringPlan.ownerUnitId,
+      loopStart: plan.loop.getStart(loweringPlan.sourceFile),
+      loopEnd: plan.loop.getEnd(),
+    }) ||
     loweringPlan.provider.binding.kind !== "intrinsic" ||
     loweringPlan.provider.binding.symbol !== IR_STRING_REPEAT_FN ||
     !countedStringAppendPlanIsCurrent({ checker: cx.checker, oracle: cx.oracle }, plan) ||
@@ -9623,6 +9630,7 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
             fragment,
             cx.builder.emitConst({ kind: "f64", value: plan.tripCount }, irVal({ kind: "f64" })),
             fragmentEncoding,
+            loweringPlan.siteId,
           );
     const proof = proveTypedStringAppend(
       typedValueEvidence(plan.accumulatorRead, logicalType, binding.stringEncoding ?? "wtf16", cx, logicalType),

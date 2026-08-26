@@ -3,6 +3,7 @@
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrClassShape, IrClosureSignature, IrFuncRef, IrGlobalRef, IrType } from "./nodes.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
+import type { IrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
 import { ts } from "../ts-api.js";
@@ -132,6 +133,7 @@ export interface IrHostDateGetterLoweringPlan extends IrHostDateSnapshotLowering
 export interface IrCountedStringAppendLoweringPlan {
   readonly ownerUnitId: IrUnitId;
   readonly sourceId: IrSourceId;
+  readonly siteId: IrCountedStringAppendSiteId;
   readonly sourceFile: ts.SourceFile;
   readonly syntaxPlan: IrCountedStringAppendPlan;
   readonly provider: IrFuncRef;
@@ -139,6 +141,7 @@ export interface IrCountedStringAppendLoweringPlan {
 
 /** Final preparation receipt; its digest includes provider-bound IR. */
 export interface PreparedCountedStringAppendReceipt {
+  readonly siteId: IrCountedStringAppendSiteId;
   readonly plan: IrCountedStringAppendLoweringPlan;
   readonly finalInstructionDigest: string;
 }

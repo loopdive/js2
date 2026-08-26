@@ -43,6 +43,44 @@ function buildPlan(
 }
 
 describe("#3523 source-ordered module-init planning", () => {
+  it("keeps declaration bindings independent from the population-wide evaluation order", () => {
+    const { ast, plan } = buildPlan(`let total: number = 0; total = total + 1;`);
+    const bindingId = plan.bindings[0]?.globalBindingId;
+    expect(bindingId).toEqual(expect.stringContaining("ir-binding:v1:global:"));
+    expect(plan.bindings).toEqual([
+      expect.objectContaining({
+        declarationOrdinal: 0,
+        names: ["total"],
+        declarationKind: "let",
+        mutable: true,
+        initialization: "tdz",
+        globalBindingId: bindingId,
+        tdzBindingId: expect.stringContaining("ir-binding:v1:global:"),
+      }),
+    ]);
+    expect(plan.evaluations).toEqual([
+      expect.objectContaining({
+        kind: "variable-initializer",
+        sourceOrdinal: 0,
+        statementOrdinal: 0,
+        bindingIds: [bindingId],
+      }),
+      expect.objectContaining({
+        kind: "statement",
+        sourceOrdinal: 1,
+        statementOrdinal: 1,
+        bindingIds: [],
+      }),
+    ]);
+    expect(
+      reconcileIrModuleInitPlan(plan, ast.sourceFile, {
+        liveFunctionNames: [],
+        staticEntries: [],
+        moduleStatements: [...ast.sourceFile.statements],
+      }),
+    ).toMatchObject({ aligned: true, plannedEntryCount: 2, legacyEntryCount: 2 });
+  });
+
   it("builds exact binding, live-seed, export, static, and invocation intents", () => {
     const { plan } = buildPlan(
       `
@@ -376,6 +414,235 @@ export function get(): string { return greeting + "!"; }
       expect(control.success).toBe(true);
     } finally {
       if (previous === undefined) delete process.env[seam];
+      else process.env[seam] = previous;
+    }
+  });
+});
+
+describe("#3523 exact scalar assignment stays inside the prepared module-init transaction", () => {
+  const SOURCE = `let total: number = 0;
+total = total + 1;
+export function read(): number { return total; }
+`;
+  const lanes = [
+    { name: "host-start", target: "gc" as const, deferTopLevelInit: false },
+    { name: "host-deferred", target: "gc" as const, deferTopLevelInit: true },
+    { name: "standalone-start", target: "standalone" as const, deferTopLevelInit: false },
+    { name: "standalone-deferred", target: "standalone" as const, deferTopLevelInit: true },
+  ];
+
+  function compileLane(
+    source: string,
+    lane: (typeof lanes)[number],
+    skipSemanticDiagnostics = false,
+    optimize: false | undefined = undefined,
+  ): Promise<CompileResult> {
+    return compile(source, {
+      fileName: `issue-3523-scalar-${lane.name}.ts`,
+      target: lane.target,
+      deferTopLevelInit: lane.deferTopLevelInit,
+      experimentalIR: true,
+      trackFallbacks: true,
+      trackIrOutcomes: true,
+      emitWat: false,
+      ...(skipSemanticDiagnostics ? { skipSemanticDiagnostics: true } : {}),
+      ...(optimize === false ? { optimize: false } : {}),
+    });
+  }
+
+  function scalarModuleInitOutcome(result: CompileResult): IrObservedOutcome {
+    const rows = (result.irOutcomes ?? []).filter((outcome) => outcome.unitKind === "module-init");
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  async function instantiateLane(
+    result: CompileResult,
+    lane: (typeof lanes)[number],
+  ): Promise<Record<string, unknown>> {
+    if (lane.target === "standalone") {
+      const { instance } = await WebAssembly.instantiate(result.binary, {});
+      return instance.exports as Record<string, unknown>;
+    }
+    const imports = buildImports(result.imports, {}, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+    imports.setInstance?.(instance);
+    return instance.exports as Record<string, unknown>;
+  }
+
+  async function directPoisonEvidence(source: string, target: "gc" | "wasi" = "gc"): Promise<string> {
+    try {
+      const result = await compile(source, {
+        fileName: `issue-3523-scalar-control-${target}.ts`,
+        target,
+        experimentalIR: true,
+        trackFallbacks: true,
+        trackIrOutcomes: true,
+        emitWat: false,
+        skipSemanticDiagnostics: true,
+      });
+      expect(result.success).toBe(false);
+      return result.errors.map((error) => error.message).join("\n");
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  it("routes all four host/standalone adapters through one genuine IR component", async () => {
+    for (const lane of lanes) {
+      const result = await compileLane(SOURCE, lane);
+      expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      expect(scalarModuleInitOutcome(result)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(new Set(result.irCompiledFuncs ?? [])).toContain("<module-init>");
+      expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+
+      const exports = await instantiateLane(result, lane);
+      const read = exports.read as () => number;
+      if (lane.deferTopLevelInit) {
+        expect(typeof exports.__module_init).toBe("function");
+        expect(read).toThrow();
+        (exports.__module_init as () => void)();
+      } else {
+        expect(exports.__module_init).toBeUndefined();
+      }
+      // The value, not merely an outcome row, proves that the later statement
+      // was lowered. Initializer-only execution would return zero.
+      expect(read()).toBe(1);
+      expect(read()).toBe(1);
+    }
+  });
+
+  it("is structural rather than allowlisted to one name, literal, or assignment count", async () => {
+    const variants = [
+      {
+        name: "renamed binding and different literal",
+        source: `let score = 10; score = score + 7; export function read(): number { return score; }`,
+        expected: 17,
+      },
+      {
+        name: "two independently assigned declarations",
+        source: `let left = 1; let right = 2; left = left + 3; right = right + 4;
+export function read(): number { return left * 10 + right; }`,
+        expected: 46,
+      },
+      {
+        name: "unrelated const before the assigned let",
+        source: `const offset = 4; let total = 1; total = total + 2;
+export function read(): number { return offset * 10 + total; }`,
+        expected: 43,
+      },
+      {
+        name: "multiple sequential assignments",
+        source: `let value = 0; value = value + 2; value = value + 3;
+export function read(): number { return value; }`,
+        expected: 5,
+      },
+    ] as const;
+    for (const variant of variants) {
+      const result = await compileLane(variant.source, lanes[2]!);
+      expect(result.success, variant.name).toBe(true);
+      expect(scalarModuleInitOutcome(result)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      const exports = await instantiateLane(result, lanes[2]!);
+      expect((exports.read as () => number)(), variant.name).toBe(variant.expected);
+    }
+  });
+
+  it("keeps the exact standalone candidate prepared without Binaryen optimization", async () => {
+    const lane = lanes[2]!;
+    const result = await compileLane(SOURCE, lane, false, false);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(scalarModuleInitOutcome(result)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    const exports = await instantiateLane(result, lane);
+    expect((exports.read as () => number)()).toBe(1);
+  });
+
+  it("never reaches the direct emitter in any admitted lane", async () => {
+    const poison = "JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY";
+    const previous = process.env[poison];
+    process.env[poison] = "1";
+    try {
+      for (const lane of lanes) {
+        const result = await compileLane(SOURCE, lane);
+        expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+        expect(scalarModuleInitOutcome(result)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
+      }
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, poison);
+      else process.env[poison] = previous;
+    }
+  });
+
+  it("fails closed for every near-miss grammar and binding-identity mutation", async () => {
+    const controls = [
+      ["const target", `const total: number = 0; total = total + 1;`],
+      ["compound assignment", `let total: number = 0; total += 1;`],
+      ["postfix increment", `let total: number = 0; total++;`],
+      ["different operator", `let total: number = 0; total = total - 1;`],
+      ["parenthesized RHS", `let total: number = 0; total = (total + 1);`],
+      ["nonnumeric literal", `let total: number = 0; total = total + "1";`],
+      ["forward target", `total = total + 1; let total: number = 0;`],
+      ["unknown target", `missing = missing + 1;`],
+      ["missing initializer", `let total: number; total = total + 1;`],
+      ["different binding RHS", `let total: number = 0; let other: number = 0; total = other + 1;`],
+      ["property LHS", `const box = { value: 0 }; box.value = box.value + 1;`],
+      [
+        "local call RHS",
+        `function bump(value: number): number { return value + 1; } let total = 0; total = bump(total);`,
+      ],
+      ["var declaration", `var total: number = 0; total = total + 1;`],
+      ["destructuring", `let [total] = [0]; total = total + 1;`],
+      ["multiple declarations", `let total: number = 0, other: number = 1; total = total + 1;`],
+      ["declaration after assignment", `let total = 0; total = total + 1; let later = 2;`],
+    ] as const;
+    const poison = "JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY";
+    const previous = process.env[poison];
+    process.env[poison] = "1";
+    try {
+      for (const [name, source] of controls) {
+        expect(await directPoisonEvidence(source), name).toContain("injected direct module-init body poison");
+      }
+      expect(await directPoisonEvidence(SOURCE, "wasi"), "WASI").toContain("injected direct module-init body poison");
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, poison);
+      else process.env[poison] = previous;
+    }
+  });
+
+  it("fails fatally if the prepared statement component is wired to two startup adapters", async () => {
+    const seam = "JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER";
+    const previous = process.env[seam];
+    process.env[seam] = "1";
+    try {
+      for (const lane of lanes) {
+        const violated = await compileLane(SOURCE, lane);
+        expect(violated.success, lane.name).toBe(false);
+        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(/exactly one startup adapter/);
+        expect(violated.binary.length).toBe(0);
+      }
+      const control = await compileLane(`let total = 0; total += 1;`, lanes[1]!);
+      expect(control.success).toBe(true);
+      expect(scalarModuleInitOutcome(control).legacyBodyEmitted).toBe(true);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, seam);
       else process.env[seam] = previous;
     }
   });

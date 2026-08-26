@@ -18,10 +18,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  asAllocSiteId,
+  asAsyncStateId,
   asBlockId,
   asValueId,
   createDerivedIrUnitId,
   irDynamic,
+  irIntrinsicFuncRef,
   irUnitFuncRef,
   irVal,
   lowerIrFunctionToWasm,
@@ -29,12 +32,15 @@ import {
   type IrFunction,
   type IrInstr,
   type IrLowerResolver,
+  type IrType,
   type IrUnionLowering,
   type IrValueId,
 } from "../../src/ir/index.js";
+import { createIrCountedStringAppendSiteId } from "../../src/ir/counted-string-append-provenance.js";
 import { monomorphize } from "../../src/ir/passes/monomorphize.js";
 import { runTaggedUnions, taggedUnions } from "../../src/ir/passes/tagged-unions.js";
 import { UnionStructRegistry } from "../../src/ir/passes/tagged-union-types.js";
+import { IR_STRING_REPEAT_FN } from "../../src/ir/string-runtime.js";
 import type { StructTypeDef, ValType } from "../../src/ir/types.js";
 import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
@@ -51,6 +57,8 @@ function id(n: number): IrValueId {
 const F64 = irVal({ kind: "f64" });
 const EXTERNREF = irVal({ kind: "externref" });
 const I32 = irVal({ kind: "i32" });
+const BOOL = irVal({ kind: "i32" });
+const STRING: IrType = { kind: "string" };
 
 /** Build a simple identity callee whose body is empty (return param). */
 function makeIdentity(name: string, paramType = F64): IrFunction {
@@ -108,11 +116,149 @@ function makeCallerPassingParam(
   };
 }
 
+function makeRepeatMonomorphizeTarget(name: string, counted: boolean, nested = false): IrFunction {
+  const identity = irIdentities.next(name);
+  const countedStringAppendSite = counted
+    ? createIrCountedStringAppendSiteId({
+        sourceId: irIdentities.sourceId,
+        ownerUnitId: identity.unitId,
+        loopStart: 17,
+        loopEnd: 43,
+      })
+    : undefined;
+  const repeat: Extract<IrInstr, { kind: "string.repeat" }> = {
+    kind: "string.repeat",
+    value: id(1),
+    count: id(2),
+    encodingEvidence: "ascii",
+    provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
+    ...(countedStringAppendSite ? { countedStringAppendSite } : {}),
+    result: id(4),
+    resultType: STRING,
+    alloc: asAllocSiteId(1),
+  };
+  const prefix: IrInstr[] = [
+    { kind: "string.const", value: "x", result: id(1), resultType: STRING, alloc: asAllocSiteId(0) },
+    { kind: "const", value: { kind: "f64", value: 3 }, result: id(2), resultType: F64 },
+  ];
+  const instrs: IrInstr[] = nested
+    ? [
+        ...prefix,
+        { kind: "const", value: { kind: "bool", value: true }, result: id(3), resultType: BOOL },
+        {
+          kind: "if.stmt",
+          cond: id(3),
+          then: [repeat],
+          else: [],
+          result: null,
+          resultType: null,
+        },
+      ]
+    : [...prefix, repeat];
+  return {
+    ...identity,
+    params: [{ value: id(0), type: F64, name: "value" }],
+    resultTypes: [F64],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs,
+        terminator: { kind: "return", values: [id(0)] },
+      },
+    ],
+    exported: false,
+    valueCount: 5,
+  };
+}
+
+function makeMonomorphizeSizePad(name: string): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [F64],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [{ kind: "const", value: { kind: "f64", value: 0 }, result: id(0), resultType: F64 }],
+        terminator: { kind: "return", values: [id(0)] },
+      },
+    ],
+    exported: false,
+    valueCount: 1,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // monomorphize — core behavior
 // ---------------------------------------------------------------------------
 
 describe("#1167c — monomorphize (unit)", () => {
+  it("clones a generic repeat owner but rejects flat and nested counted provenance", () => {
+    const generic = makeRepeatMonomorphizeTarget("generic-repeat-target", false);
+    const genericNum = makeCallerPassingParam("generic-repeat-num", generic, F64);
+    const genericExtern = makeCallerPassingParam("generic-repeat-extern", generic, EXTERNREF);
+    const genericResult = monomorphize({
+      functions: [generic, genericNum, genericExtern, makeMonomorphizeSizePad("generic-repeat-pad")],
+    });
+    expect(genericResult.cloneSignatures.size).toBe(1);
+
+    for (const [name, nested] of [
+      ["flat", false],
+      ["nested", true],
+    ] as const) {
+      const counted = makeRepeatMonomorphizeTarget(`${name}-counted-repeat-target`, true, nested);
+      const countedNum = makeCallerPassingParam(`${name}-counted-repeat-num`, counted, F64);
+      const countedExtern = makeCallerPassingParam(`${name}-counted-repeat-extern`, counted, EXTERNREF);
+      const mod = {
+        functions: [counted, countedNum, countedExtern, makeMonomorphizeSizePad(`${name}-counted-repeat-pad`)],
+      };
+      const countedResult = monomorphize(mod);
+      expect(countedResult.module, name).toBe(mod);
+      expect(countedResult.cloneSignatures.size, name).toBe(0);
+    }
+
+    const runtimeTargetBase = makeRepeatMonomorphizeTarget("runtime-counted-repeat-target", false);
+    const runtimeRepeat = runtimeTargetBase.blocks[0]!.instrs.find((instr) => instr.kind === "string.repeat");
+    if (!runtimeRepeat || runtimeRepeat.kind !== "string.repeat")
+      throw new Error("fixture lost generic runtime repeat");
+    const runtimeTarget: IrFunction = {
+      ...runtimeTargetBase,
+      asyncRuntime: {
+        kind: "standalone-native-wasmgc",
+        adapters: [],
+        states: [
+          {
+            id: asAsyncStateId(0),
+            body: [
+              {
+                ...runtimeRepeat,
+                countedStringAppendSite: createIrCountedStringAppendSiteId({
+                  sourceId: irIdentities.sourceId,
+                  ownerUnitId: runtimeTargetBase.unitId,
+                  loopStart: 91,
+                  loopEnd: 117,
+                }),
+              },
+            ],
+            terminator: { kind: "complete" },
+          },
+        ],
+      },
+    };
+    const runtimeNum = makeCallerPassingParam("runtime-counted-repeat-num", runtimeTarget, F64);
+    const runtimeExtern = makeCallerPassingParam("runtime-counted-repeat-extern", runtimeTarget, EXTERNREF);
+    const runtimeMod = {
+      functions: [runtimeTarget, runtimeNum, runtimeExtern, makeMonomorphizeSizePad("runtime-counted-repeat-pad")],
+    };
+    const runtimeResult = monomorphize(runtimeMod);
+    expect(runtimeResult.module).toBe(runtimeMod);
+    expect(runtimeResult.cloneSignatures.size).toBe(0);
+  });
+
   it("clones a callee invoked with two distinct arg-type tuples", () => {
     // identity called from a f64 caller AND an externref caller — two tuples.
     const identity = makeIdentity("identity", F64);
