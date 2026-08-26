@@ -233,7 +233,7 @@ export function asyncFnNeedsHostDrive(
   // function-like captures mutably is FORCE-BOXED into a cell-typed frame
   // field (buildAsyncFrameInfo `spillCellInfo`) — no pattern-shape decline
   // remains.
-  const linear = planLinearAwaits(fn, plan);
+  const linear = planLinearAwaits(fn, plan, { checker: ctx.checker });
   if (linear === null) {
     // (#3587) try/catch-across-await — the #2906 3c CFG machine (catch regions
     // as states + routed dispatcher) drives this shape on the HOST settle
@@ -724,9 +724,9 @@ export function asyncGenStem(decl: ts.FunctionLikeDeclaration): string {
  */
 function resumeBindingValType(
   ctx: CodegenContext,
-  rb: { name: string; type: ts.TypeNode | undefined; target?: ts.Identifier },
+  rb: { name: string; type: ts.TypeNode | undefined; target?: ts.Identifier; awaitTarget?: ts.AwaitExpression },
 ): ValType {
-  const typeSite = rb.type ?? rb.target;
+  const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;
   return typeSite ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(typeSite)) : { kind: "externref" };
 }
 
@@ -922,7 +922,7 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   if (!anyRealSuspension) return false; // fully await-elidable → sync + resolved promise
   // (#2906 3c-ii) The native gate admits return-in-try (return-through-finally
   // via the return hook's finalizer replay); the host gate does not.
-  const linear = planLinearAwaits(fn, plan, { allowReturnInTry: true });
+  const linear = planLinearAwaits(fn, plan, { allowReturnInTry: true, checker: ctx.checker });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop shape (native drive lane only).
     // Eligible when every widened loop spill local has a spill-safe type — a
@@ -1155,7 +1155,7 @@ function computeAsyncSpills(
     }
     return { spillNames, spillTypes };
   }
-  const linear = planLinearAwaits(decl, plan, { allowReturnInTry });
+  const linear = planLinearAwaits(decl, plan, { allowReturnInTry, checker: ctx.checker });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop: widened spill set (all loop
     // own-locals). (#2906 slice 3b) for-await drive: loop own-locals + the
@@ -1958,12 +1958,18 @@ export function ensureAsyncResumeFunction(
     // (#2906 3c) The routed dispatcher wraps the chain in an in-loop `try`,
     // adding one block level — the single depth-accounting site.
     const loopDepth = st.id + (routedDispatch ? 3 : 2);
+    const awaitTarget = st.resumeFrom?.binding?.awaitTarget;
+    const delivered = st.resumeFrom?.binding ? bindingLocal.get(st.resumeFrom.binding.name) : undefined;
+    const previousAwaitLocal = awaitTarget ? resumeFctx.asyncAwaitValueLocals?.get(awaitTarget) : undefined;
     try {
       // Reset the handler region at arm entry, including fast re-dispatch.
       let curHandler = 0;
       if (hasHandlers) out.push(...setHandler(0));
       out.push(...restoreSpills(info, resumeFctx, frameLocal, st.restoreSpillNames ?? []));
       if (st.resumeFrom) emitDeliver(out, st.resumeFrom);
+      if (awaitTarget !== undefined && delivered !== undefined) {
+        (resumeFctx.asyncAwaitValueLocals ??= new Map()).set(awaitTarget, delivered.local);
+      }
       // (#3228) Destructuring for-await head: bind the settled element carrier
       // into the head's pattern AFTER delivery, BEFORE the leads read the bound
       // names. `undefined` (no hook) for every other plan and identifier heads.
@@ -2297,6 +2303,11 @@ export function ensureAsyncResumeFunction(
         }
       }
     } finally {
+      const awaitTarget = st.resumeFrom?.binding?.awaitTarget;
+      if (awaitTarget !== undefined) {
+        if (previousAwaitLocal === undefined) resumeFctx.asyncAwaitValueLocals?.delete(awaitTarget);
+        else resumeFctx.asyncAwaitValueLocals?.set(awaitTarget, previousAwaitLocal);
+      }
       for (const { sourceName, local } of previousAliases ?? []) {
         if (local === undefined) resumeFctx.localMap.delete(sourceName);
         else resumeFctx.localMap.set(sourceName, local);
@@ -2713,6 +2724,7 @@ function emitAsyncFrameEntry(
     fctx.body.push({ op: "call", funcIdx: hostImports!.newPendingIdx });
   } else {
     fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+    fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
@@ -3214,6 +3226,7 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 
@@ -3253,6 +3266,7 @@ function emitAsyncGenNextHelper(ctx: CodegenContext, info: AsyncFrameInfo, promi
     { op: "local.set", index: fLocal },
     // fresh pending result promise
     { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: promiseTypeIdx },
@@ -3321,6 +3335,7 @@ function emitAsyncGenReturnThrowHelpers(ctx: CodegenContext, info: AsyncFrameInf
     { op: "ref.cast", typeIdx: info.stateTypeIdx },
     { op: "local.set", index: fLocal },
     { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: promiseTypeIdx },

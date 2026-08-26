@@ -761,6 +761,7 @@ export function buildVecFromExternref(
   vecTypeIdx: number,
   vecInfo: { arrTypeIdx: number; elemType: ValType },
   strictIterator = false,
+  materializingVecTypes: ReadonlySet<number> = new Set([vecTypeIdx]),
 ): Instr[] {
   // #1472 Phase B Blocker B Slice 2 — standalone enumeration consumer.
   //
@@ -916,6 +917,31 @@ export function buildVecFromExternref(
     if (et.kind === "externref") return [];
     if (et.kind === "ref" || et.kind === "ref_null") {
       const elemTypeIdx = (et as { typeIdx: number }).typeIdx;
+      const nestedVecInfo = getVecInfo(ctx, elemTypeIdx);
+      if (nestedVecInfo && !materializingVecTypes.has(elemTypeIdx)) {
+        // A host array crossing into a nested vec (T[][] and deeper) needs the
+        // same element materialization as its outer array. A bare ref.cast only
+        // accepts an already-compiled inner vec; it traps when the outer value
+        // was materialized from a host-owned array whose rows are ordinary JS
+        // arrays. Keep the conversion in this FunctionContext so any imports
+        // and index shifts are applied to the caller's body, and stop only on a
+        // genuinely recursive vec type.
+        const nestedExtern = allocLocal(fctx, `__nested_vec_src_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        return [
+          { op: "local.set", index: nestedExtern },
+          ...buildVecFromExternref(
+            ctx,
+            fctx,
+            nestedExtern,
+            elemTypeIdx,
+            nestedVecInfo,
+            strictIterator,
+            new Set([...materializingVecTypes, elemTypeIdx]),
+          ),
+        ];
+      }
       // Check if the target is a tuple struct — if so, build the tuple from
       // the externref array element (e.g. [key, value] from Object.entries)
       // instead of trying ref.cast which would fail for JS arrays.
@@ -2277,7 +2303,7 @@ export function coerceType(
       }
     }
     if (to.kind === "externref") {
-      if (ctx.standalone || ctx.wasi) {
+      if (isAnyValue(from, ctx)) {
         addUnionImports(ctx);
         const anyToExternIdx = ensureAnyToExternHelper(ctx);
         if (anyToExternIdx !== undefined) {
@@ -2702,6 +2728,23 @@ export function coerceType(
   //   breaking `typeof obj === "object"`, downstream `obj + n`, `obj != 0`, and
   //   any host method that runs its own ToPrimitive on the wasmGC arg.
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "externref") {
+    // (#4741) A missing native-string description is represented internally by
+    // a null `$AnyString` reference, but its public value is `undefined`, not
+    // JavaScript `null`. Keep the nullable native string on the stack long
+    // enough to distinguish that sentinel before crossing into externref.
+    if (ctx.nativeStrings && from.kind === "ref_null" && ctx.anyStrTypeIdx >= 0 && from.typeIdx === ctx.anyStrTypeIdx) {
+      const nativeString = allocTempLocal(fctx, from);
+      fctx.body.push({ op: "local.tee", index: nativeString });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: canonicalUndefinedExternInstrs(ctx),
+        else: [{ op: "local.get", index: nativeString }, { op: "extern.convert_any" }],
+      });
+      releaseTempLocal(fctx, nativeString);
+      return;
+    }
     const typeIdx = (from as { typeIdx: number }).typeIdx;
     const name = ctx.typeIdxToStructName.get(typeIdx);
     if (name !== undefined && toPrimitiveHint !== undefined) {
@@ -4247,7 +4290,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
   }
   // ref/ref_null → externref: extern.convert_any
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "externref") {
-    if ((ctx.standalone || ctx.wasi) && isAnyValue(from, ctx)) {
+    if (isAnyValue(from, ctx)) {
       addUnionImports(ctx);
       const anyToExternIdx = ensureAnyToExternHelper(ctx);
       if (anyToExternIdx !== undefined) {

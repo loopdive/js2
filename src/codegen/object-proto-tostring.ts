@@ -743,6 +743,20 @@ export function resolveObjectToStringTag(
   if (symName === "ArrayBuffer") return "ArrayBuffer";
   if (symName === "SharedArrayBuffer") return "SharedArrayBuffer";
 
+  // ES2015 §23.1.5.2.2: an ArrayIterator has the intrinsic
+  // `@@toStringTag` value "Array Iterator". Its standalone carrier is
+  // represented as a native `$Vec`/`$IterRec` shape, so the generic array
+  // classifier below would incorrectly select "Array". Keep host mode on the
+  // real dynamic classifier so user mutations remain observable there.
+  if (symName === "ArrayIterator") return deferOrStandalone("Array Iterator");
+
+  // (#4747) String iterator carriers are opaque native records in standalone,
+  // so their intrinsic prototype tag cannot be discovered through the generic
+  // externref classifier. The checker-proven type is narrow enough to avoid
+  // reclassifying arbitrary iterator-like objects; host mode keeps the dynamic
+  // native path through deferOrStandalone().
+  if (symName === "StringIterator") return deferOrStandalone("String Iterator");
+
   // Array (real `__vec_`/`__arr_` arrays, via the established resolver) — the
   // host sees an opaque GC vec and mis-tags it [object Object].
   if (resolveArrayInfo(ctx, nn)) return "Array";

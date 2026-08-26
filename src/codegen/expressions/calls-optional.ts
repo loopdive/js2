@@ -14,7 +14,6 @@ import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, ensureLateImport, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileNativeStringMethodCall } from "../string-ops.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
-import { undefinedSingletonActive } from "../any-helpers.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { compileCallablePropertyCall } from "./calls-closures.js";
@@ -71,9 +70,11 @@ export function compileOptionalCallExpression(
   const tmp = allocLocal(fctx, `__optcall_${fctx.locals.length}`, objType);
   fctx.body.push({ op: "local.tee", index: tmp });
   fctx.body.push({ op: "ref.is_null" });
-  // (#2106 S1) Under the `undefinedSingleton` regime standalone `undefined` is
-  // a NON-null externref, so the short-circuit must also test the singleton.
-  if (undefinedSingletonActive(ctx) && objType.kind === "externref") {
+  // An externref can carry host JavaScript `undefined` as a non-null reference
+  // even when the standalone undefined-singleton regime is inactive (for
+  // example an omitted argument supplied by the generic call wrapper).
+  // Optional chaining must short-circuit both representations.
+  if (objType.kind === "externref") {
     const isUndefIdx = ensureExternIsUndefinedImport(ctx);
     if (isUndefIdx !== undefined) {
       flushLateImportShifts(ctx, fctx);
@@ -265,6 +266,28 @@ export function compileOptionalCallExpression(
     }
   }
 
+  // (#4435) A non-repeatable dynamic element receiver still needs ordinary
+  // method dispatch in the live arm. `match[3]?.trim()` is the real Marked
+  // shape: the element access has already been evaluated into `tmp` for the
+  // nullish test, but the repeatable-receiver delegation above deliberately
+  // refuses to evaluate it again. In the JS-host lane, invoke any no-spread
+  // method call with that captured receiver instead. This preserves both
+  // single evaluation and the receiver as `this`; standalone and spread calls
+  // remain on their existing paths.
+  if (
+    !methodResolved &&
+    (tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
+    ts.isElementAccessExpression(propAccess.expression) &&
+    !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
+    ctx.targetProfile.semanticProviders !== "native-first"
+  ) {
+    const delegated = compileCapturedDynamicOptionalReceiverMethodCall(ctx, fctx, expr, methodName, tmp, objType);
+    if (delegated !== null) {
+      resultType = delegated;
+      methodResolved = true;
+    }
+  }
+
   // Closure-field / function-typed-property callee (e.g. `o?.f(x)` where `f`
   // holds a closure on an object/struct, not a named method). None of the
   // method-resolution branches above match these, so without this fallback the
@@ -395,6 +418,45 @@ function isRepeatableDynamicOptionalReceiver(expr: ts.Expression): boolean {
   let cur = expr;
   while (ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
   return ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword;
+}
+
+/** JS-host dynamic method call using an already-evaluated optional receiver. */
+function compileCapturedDynamicOptionalReceiverMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  methodName: string,
+  receiverLocal: number,
+  receiverType: ValType,
+): ValType | null {
+  const externref: ValType = { kind: "externref" };
+  const arrayNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externref]);
+  const arrayPushIdx = ensureLateImport(ctx, "__js_array_push", [externref, externref], []);
+  const methodCallIdx = ensureLateImport(ctx, "__extern_method_call", [externref, externref, externref], [externref]);
+  addStringConstantGlobal(ctx, methodName);
+  flushLateImportShifts(ctx, fctx);
+  const resolvedNewIdx = ctx.funcMap.get("__js_array_new") ?? arrayNewIdx;
+  const resolvedPushIdx = ctx.funcMap.get("__js_array_push") ?? arrayPushIdx;
+  const resolvedMethodCallIdx = ctx.funcMap.get("__extern_method_call") ?? methodCallIdx;
+  if (resolvedNewIdx === undefined || resolvedPushIdx === undefined || resolvedMethodCallIdx === undefined) return null;
+
+  fctx.body.push({ op: "call", funcIdx: resolvedNewIdx });
+  const argsLocal = allocLocal(fctx, `__optrecv_args_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  for (const argument of expr.arguments) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    const argType = compileExpression(ctx, fctx, ts.isSpreadElement(argument) ? argument.expression : argument);
+    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
+    fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
+  }
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, externref);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: resolvedMethodCallIdx });
+  return externref;
 }
 
 /**

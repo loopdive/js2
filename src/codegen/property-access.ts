@@ -32,7 +32,12 @@ import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-ov
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getOrCreateFuncRefWrapperTypes } from "./closures.js";
+import {
+  emitCachedFuncClosureAccess,
+  emitCachedMethodClosureAccess,
+  emitFuncRefAsClosure,
+  getOrCreateFuncRefWrapperTypes,
+} from "./closures.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
   ensureBuiltinFnMetaType,
@@ -208,12 +213,14 @@ import {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryCompileStandaloneBuiltinProtoMemberMeta,
   tryCompileStandaloneBuiltinProtoMemberRead,
+  tryCompileStandaloneBuiltinProtoIteratorRead,
   tryEmitBuiltinNamespaceConstantValue,
   tryEnsureNativeProtoBrand,
   typedArrayViewSignedness,
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
 import {
   elementAccessTypedArrayName,
+  emitDynamicStringVecElementGet,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
@@ -231,6 +238,66 @@ export {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
+
+const PROTOTYPE_MUTATION_CACHE = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+const isAssignmentOperator = (kind: ts.SyntaxKind): boolean =>
+  kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+
+function prototypeMutationNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = PROTOTYPE_MUTATION_CACHE.get(sourceFile);
+  if (cached !== undefined) return cached;
+  const names = new Set<string>();
+  const isPrototypeAccess = (expr: ts.Expression): boolean => {
+    const inner = skipTransparentExpressions(expr);
+    return (
+      (ts.isPropertyAccessExpression(inner) && inner.name.text === "prototype") ||
+      (ts.isElementAccessExpression(inner) &&
+        ts.isStringLiteral(inner.argumentExpression) &&
+        inner.argumentExpression.text === "prototype")
+    );
+  };
+  const prototypeBaseName = (expr: ts.Expression): string | undefined => {
+    const inner = skipTransparentExpressions(expr);
+    const prototype = isPrototypeAccess(inner)
+      ? inner
+      : (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) &&
+          isPrototypeAccess(inner.expression)
+        ? inner.expression
+        : undefined;
+    const base =
+      prototype && (ts.isPropertyAccessExpression(prototype) || ts.isElementAccessExpression(prototype))
+        ? prototype.expression
+        : undefined;
+    return base && ts.isIdentifier(base) ? base.text : undefined;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && prototypeBaseName(node.left)) {
+      names.add(prototypeBaseName(node.left)!);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      prototypeBaseName(node.operand)
+    ) {
+      names.add(prototypeBaseName(node.operand)!);
+    } else if (ts.isDeleteExpression(node) && prototypeBaseName(node.expression)) {
+      names.add(prototypeBaseName(node.expression)!);
+    }
+    if (ts.isCallExpression(node) && node.arguments.length > 0 && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression;
+      if (
+        ts.isIdentifier(callee.expression) &&
+        (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+        (callee.name.text === "defineProperty" || callee.name.text === "defineProperties") &&
+        prototypeBaseName(node.arguments[0]!)
+      ) {
+        names.add(prototypeBaseName(node.arguments[0]!)!);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  PROTOTYPE_MUTATION_CACHE.set(sourceFile, names);
+  return names;
+}
 
 /**
  * Standalone computed-read arm for the inherited Function @@hasInstance
@@ -262,18 +329,10 @@ function tryCompileStandaloneFunctionHasInstanceRead(
     return undefined;
   }
 
-  // An own `prototype` write/getter is observable by OrdinaryHasInstance and
-  // must remain on the existing generic path until the native closure edge can
-  // model that own property. The conservative source gate covers both direct
-  // assignments and Object.defineProperty/defineProperties forms while keeping
-  // the common ordinary-function path native.
-  const sourceText = expr.getSourceFile().text;
-  if (
-    sourceText.includes("prototype") &&
-    (sourceText.includes("defineProperty") || /\.prototype\s*=/.test(sourceText))
-  ) {
-    return undefined;
-  }
+  // Syntax-aware guard: Test262 helper defineProperty text must not mask an
+  // untouched Function.prototype intrinsic read.
+  const mutationName = directFunctionProto ? "Function" : ts.isIdentifier(receiver) ? receiver.text : undefined;
+  if (mutationName !== undefined && prototypeMutationNames(expr.getSourceFile()).has(mutationName)) return undefined;
 
   // `__closure_proto_of` is filled from the compile-time fnctor/prototype
   // registry. A method-only read does not otherwise touch `F.prototype`, so
@@ -297,6 +356,40 @@ function tryCompileStandaloneFunctionHasInstanceRead(
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };
 }
+
+/** Fallback when no proto-index companion is demanded by the module. */
+function tryCompileStandaloneArrayIteratorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone || ctx.funcMap.has("__protoidx_get_k") || fctx.localMap.has("Symbol")) return undefined;
+  if (resolveComputedKeyExpression(ctx, expr.argumentExpression) !== "@@iterator") return undefined;
+  const receiver = skipTransparentExpressions(expr.expression);
+  if (
+    !ts.isPropertyAccessExpression(receiver) ||
+    receiver.name.text !== "prototype" ||
+    !ts.isIdentifier(receiver.expression) ||
+    receiver.expression.text !== "Array" ||
+    fctx.localMap.has("Array") ||
+    (fctx.boxedCaptures?.has("Array") ?? false)
+  ) {
+    return undefined;
+  }
+  const receiverType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+  if (!receiverType) return undefined;
+  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  fctx.body.push({ op: "drop" });
+  const brand = ensureArrayNativeProtoGlue(ctx);
+  if (brand === undefined) return undefined;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, "values", "method", {
+    refusalBodyFallback: true,
+  });
+  if (!closure) return undefined;
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" });
+  return { kind: "externref" };
+}
+
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
@@ -913,6 +1006,7 @@ export function resolveStructNameForExpr(
   // checked WasmGC private dispatch — the host MOP can never see it), so the L5
   // `__anon`-`this` override is suppressed for private accesses.
   accessedMember?: ts.MemberName,
+  resolvedCarrier?: ValType,
 ): string | undefined {
   // (#1239) Variables initialised by an object literal containing get/set
   // accessor declarations are stored as externref plain JS objects. The
@@ -995,6 +1089,9 @@ export function resolveStructNameForExpr(
   }
   if (!typeName && expression.kind === ts.SyntaxKind.ThisKeyword) {
     typeName = resolveThisStructName(ctx, fctx);
+  }
+  if (!typeName && (resolvedCarrier?.kind === "ref" || resolvedCarrier?.kind === "ref_null")) {
+    typeName = ctx.typeIdxToStructName.get(resolvedCarrier.typeIdx);
   }
   return typeName;
 }
@@ -1196,7 +1293,7 @@ export function isProvablyNonNull(expr: ts.Expression, checker?: ts.TypeChecker)
   return false;
 }
 
-export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node): Instr[] {
+export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node, flush?: FunctionContext): Instr[] {
   const line = node ? getLine(node) : 0;
   const col = node ? getCol(node) : 0;
   const detail =
@@ -1228,11 +1325,16 @@ export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node): Instr
   // or undefined at L:C" and the runner's signature classification is stable.
   // Hence the "TypeError: " prefix moves OUT of the message here.
   //
-  // JS-host mode keeps the string throw (its `__new_TypeError` is an `env`
-  // import, which cannot be registered from here) — the gc lane is
-  // byte-identical.
+  // JS-host callers that can provide their FunctionContext also get a real
+  // host TypeError. The flush is required because registering __new_TypeError
+  // can shift already-emitted function indices. Legacy detached-template
+  // callers omit it and retain the string fallback; their instruction arrays
+  // are assembled before a body exists to relocate.
   if (noJsHost(ctx)) {
     return buildThrowJsErrorInstrs(ctx, "TypeError", detail, { forceInModuleCtor: true });
+  }
+  if (flush) {
+    return buildThrowJsErrorInstrs(ctx, "TypeError", detail, { flush });
   }
   const message = `TypeError: ${detail}`;
   // Register the literal: in legacy mode this adds a `string_constants` global
@@ -1268,6 +1370,7 @@ export function emitNullCheckThrow(
   const tmp = allocTempLocal(fctx, refType);
   fctx.body.push({ op: "local.tee", index: tmp });
   fctx.body.push({ op: "ref.is_null" });
+  const nullThrowInstrs = typeErrorThrowInstrs(ctx, node, fctx);
 
   if (backupLocal !== undefined) {
     // A guarded cast backup exists: the null might be from a failed ref.cast
@@ -1298,7 +1401,7 @@ export function emitNullCheckThrow(
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: typeErrorThrowInstrs(ctx, node),
+          then: [...nullThrowInstrs],
           else: [], // wrong struct type — don't throw
         },
       ],
@@ -1311,7 +1414,7 @@ export function emitNullCheckThrow(
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: typeErrorThrowInstrs(ctx, node),
+      then: [...nullThrowInstrs],
       else: [],
     });
   }
@@ -1525,7 +1628,7 @@ export function emitNullGuardedStructGet(
       fctx.body.push({
         op: "if",
         blockType: { kind: "val" as const, type: resultType },
-        then: typeErrorThrowInstrs(ctx),
+        then: typeErrorThrowInstrs(ctx, undefined, fctx),
         else: readInstrs,
       });
       return;
@@ -1648,7 +1751,7 @@ export function emitNullGuardedStructGet(
                   op: "if",
                   blockType: { kind: "empty" },
                   // Backup is also null → genuinely null, throw TypeError
-                  then: typeErrorThrowInstrs(ctx),
+                  then: typeErrorThrowInstrs(ctx, undefined, fctx),
                   // Backup is non-null → wrong struct type, try primary + alternates on backup
                   else: [
                     { op: "local.get", index: backupLocal },
@@ -1685,7 +1788,7 @@ export function emitNullGuardedStructGet(
                   ],
                 },
               ] satisfies Instr[])
-            : typeErrorThrowInstrs(ctx),
+            : typeErrorThrowInstrs(ctx, undefined, fctx),
         else: [],
       });
     }
@@ -1732,7 +1835,7 @@ export function emitNullGuardedStructGet(
   fctx.body.push({ op: "ref.is_null" });
   // When throwOnNull is true, throw TypeError for null/undefined property access (#728).
   // When false (ref cells), return a default value for uninitialized captures.
-  const nullBranch = throwOnNull ? typeErrorThrowInstrs(ctx) : defaultValueInstrs(resultType);
+  const nullBranch = throwOnNull ? typeErrorThrowInstrs(ctx, undefined, fctx) : defaultValueInstrs(resultType);
   fctx.body.push({
     op: "if",
     blockType: { kind: "val" as const, type: resultType },
@@ -3413,7 +3516,7 @@ function emitExternRecvNullGuard(
     fctx,
     recvTmp,
     { site, compiled: recvType, expr: recvExpr, syntacticNonNull: isProvablyNonNull(recvExpr, ctx.checker) },
-    () => typeErrorThrowInstrs(ctx, throwNode),
+    () => typeErrorThrowInstrs(ctx, throwNode, fctx),
     // (#4519) The same §7.3.2 widening as the `dispatch:extern-get-recv` guard —
     // both callers of `emitReceiverNullGuard` are member-access receiver checks,
     // and both hold the receiver in an externref local.
@@ -3488,6 +3591,53 @@ function tryEmitRealmGlobalModuleGlobalElementRead(
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
 
+/**
+ * Materialize a function exported through a compiled sibling namespace import.
+ *
+ * Direct `ns.fn()` calls already resolve statically in calls.ts, but reading the
+ * same member as a value (`createStore(ns.reducer)`) used to compile the
+ * namespace identifier as null and then perform a runtime property read on it.
+ * Keep this exact and fail-closed: only immutable, top-level function exports
+ * with a Program-ABI-owned body qualify. Namespace objects and mutable exports
+ * continue through the ordinary runtime lane.
+ */
+function tryEmitNamespaceImportFunctionValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const namespaceDeclaration = ctx.oracle.valueDeclarationOf(expr.expression);
+  if (namespaceDeclaration === undefined || !ts.isNamespaceImport(namespaceDeclaration)) return undefined;
+  const declaration = ctx.oracle.valueDeclarationOf(expr.name);
+  if (
+    declaration === undefined ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.name === undefined ||
+    declaration.body === undefined ||
+    declaration.parent !== declaration.getSourceFile() ||
+    ctx.reassignedFunctionDeclarations?.has(declaration)
+  ) {
+    return undefined;
+  }
+  const registry = ctx.programAbiSourceCallables;
+  const identity = registry?.identityContext;
+  const unitId = identity?.unitIdByDeclaration.get(declaration);
+  if (
+    unitId === undefined ||
+    identity?.declarationByUnitId.get(unitId) !== declaration ||
+    registry?.functionForUnit(unitId) === undefined
+  ) {
+    return undefined;
+  }
+  const funcIdx = registry.handleForUnit(unitId);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) !== registry.functionForUnit(unitId)) return undefined;
+  const constructible =
+    declaration.asteriskToken === undefined &&
+    !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+  return emitCachedFuncClosureAccess(ctx, fctx, declaration.name.text, funcIdx, constructible) ?? undefined;
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3497,6 +3647,9 @@ export function compilePropertyAccess(
   if (expr.questionDotToken) {
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
+
+  const namespaceFunctionValue = tryEmitNamespaceImportFunctionValue(ctx, fctx, expr);
+  if (namespaceFunctionValue !== undefined) return namespaceFunctionValue;
 
   // #1886 Slice B: linear-backed Uint8Array `buf.length` → the len i32 local
   // (widened to f64). Only fires for a registered linear-safe buffer; any other
@@ -4532,6 +4685,15 @@ export function compileElementAccess(
   const functionHasInstanceRead = tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr);
   if (functionHasInstanceRead !== undefined) return functionHasInstanceRead;
 
+  // (#4731) Resolve the static Set/Map prototype iterator alias before the
+  // generic computed read materializes a `$NativeProto` and asks `__extern_get`
+  // for a symbol key (which has no standalone symbol-key arm).
+  const builtinProtoIteratorRead = tryCompileStandaloneBuiltinProtoIteratorRead(ctx, fctx, expr);
+  if (builtinProtoIteratorRead !== undefined) return builtinProtoIteratorRead;
+
+  const arrayIteratorRead = tryCompileStandaloneArrayIteratorRead(ctx, fctx, expr);
+  if (arrayIteratorRead !== undefined) return arrayIteratorRead;
+
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;
   // every other receiver falls through to the GC element-access path unchanged.
@@ -4927,6 +5089,27 @@ function isArgumentsRootedExpression(fctx: FunctionContext, node: ts.Expression)
     break;
   }
   return ts.isIdentifier(cur) && cur.text === "arguments" && fctx.localMap.has("arguments");
+}
+
+/**
+ * True when an array element is consumed immediately as another member's
+ * receiver (`rows[i][0]` / `rows[i].name`). Keeping a reference element in its
+ * native nullable carrier makes an in-bounds tuple/object directly readable;
+ * on a miss, the outer access still emits its ordinary JS TypeError guard.
+ */
+function elementAccessIsImmediateMemberReceiver(expr: ts.ElementAccessExpression): boolean {
+  const parent = expr.parent;
+  return (ts.isElementAccessExpression(parent) || ts.isPropertyAccessExpression(parent)) && parent.expression === expr;
+}
+
+function shouldWidenReferenceArrayOob(
+  oobUndefined: boolean,
+  expr: ts.ElementAccessExpression,
+  elem: ValType,
+): elem is { kind: "ref"; typeIdx: number } | { kind: "ref_null"; typeIdx: number } {
+  return (
+    oobUndefined && !elementAccessIsImmediateMemberReceiver(expr) && (elem.kind === "ref" || elem.kind === "ref_null")
+  );
 }
 
 /** Inner element access logic — assumes objType is on the stack and non-null */
@@ -5733,6 +5916,37 @@ export function compileElementAccessBody(
       return null;
     }
 
+    if (
+      fctx.mappedArgsInfo?.accessorIndices &&
+      ts.isIdentifier(expr.expression) &&
+      expr.expression.text === "arguments"
+    ) {
+      const idxArg = expr.argumentExpression;
+      const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
+      const argIndex = idxText !== undefined ? Number(idxText) : NaN;
+      if (Number.isInteger(argIndex) && fctx.mappedArgsInfo.accessorIndices.has(argIndex)) {
+        fctx.body.push({ op: "extern.convert_any" });
+        const keyType = compileExpression(ctx, fctx, idxArg, { kind: "externref" });
+        if (!keyType) {
+          fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+        const getIdx = ensureLateImport(
+          ctx,
+          "__extern_get",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (getIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          return { kind: "externref" };
+        }
+        fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+    }
+
     // (#4247) READ twin of the element-write routing in assignment.ts: a
     // constant key that is NOT an array index per §10.4.2.2 names an ordinary
     // property in the #3537 expando bag, not an element. Without this the
@@ -5751,8 +5965,7 @@ export function compileElementAccessBody(
     ) {
       const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression);
       if (namedKey !== undefined) {
-        const named = emitNonIndexVecElementGet(ctx, fctx, namedKey);
-        if (named) return named;
+        if (emitNonIndexVecElementGet(ctx, fctx, namedKey)) return { kind: "externref" };
       }
     }
 
@@ -5779,6 +5992,7 @@ export function compileElementAccessBody(
       }
       return { kind: "externref" };
     }
+    if (emitDynamicStringVecElementGet(ctx, fctx, expr.argumentExpression)) return { kind: "externref" };
     // (#2593) Signedness of a packed i8/i16 typed-array element is driven by the
     // VIEW NAME (Int8/Int16 → sign-extend; Uint8/Uint8Clamped/Uint16 →
     // zero-extend), NOT the storage kind — a signed Int8Array and an unsigned
@@ -5905,7 +6119,7 @@ export function compileElementAccessBody(
       // elements use the dedicated reference-array widen immediately below.
       emitPlainArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, f1BoxType, vecLenBoundInstrs);
       return { kind: "externref" };
-    } else if (oobUndefined && (arrDef.element.kind === "ref" || arrDef.element.kind === "ref_null")) {
+    } else if (shouldWidenReferenceArrayOob(oobUndefined, expr, arrDef.element)) {
       emitReferenceArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (oobUndefinedTypedArray) {
@@ -6014,7 +6228,7 @@ export function compileElementAccessBody(
     // immediately below. See the full note at the vec-struct call site above.
     emitPlainArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element, f1BoxTypeArr);
     return { kind: "externref" };
-  } else if (oobUndefinedArr && (typeDef.element.kind === "ref" || typeDef.element.kind === "ref_null")) {
+  } else if (shouldWidenReferenceArrayOob(oobUndefinedArr, expr, typeDef.element)) {
     emitReferenceArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element);
     return { kind: "externref" };
   } else if (oobUndefinedTypedArrayArr) {

@@ -82,9 +82,12 @@
  *    receiver is byte-identical to before.
  *  - **Not a generator, not `async`, no explicit `this` parameter** — those
  *    carry their own receiver conventions.
- *  - **A `MethodDeclaration` (`{ m() {…} }`) is NOT admitted.** It is already
- *    correct today via the static object-method path (measured), so admitting it
- *    would be blast radius bought for nothing.
+ *  - **A shorthand `MethodDeclaration` is admitted when its own body contains
+ *    `super`, or when it reads its own `this` in an object literal promoted to
+ *    the standalone dynamic-prototype representation.** The latter narrow
+ *    gate keeps mixed literals' ordinary methods on the same call-time
+ *    receiver path as their `super` sibling; ordinary closed literals remain
+ *    on the established static path.
  *  - **Every declaration must qualify.** A symbol declared by two literals, one
  *    of them arrow-valued, is refused rather than half-bound.
  *
@@ -134,16 +137,94 @@ function isThisReadingFunctionExpression(initializer: ts.Expression): boolean {
 }
 
 /**
+ * Does a shorthand object-literal method's own body contain `super`?  Unlike
+ * ordinary function-valued properties, these methods are the standalone
+ * #4688 shape whose direct call must install the receiver into
+ * `__current_this`; the helper intentionally stops at nested non-arrow
+ * function boundaries because those have their own `super` binding rules.
+ */
+function methodBodyReferencesSuper(body: ts.Node): boolean {
+  if (body.kind === ts.SyntaxKind.SuperKeyword) return true;
+  if (ts.isFunctionExpression(body) || ts.isFunctionDeclaration(body) || ts.isMethodDeclaration(body)) return false;
+  let found = false;
+  body.forEachChild((child) => {
+    if (!found && methodBodyReferencesSuper(child)) found = true;
+  });
+  return found;
+}
+
+/**
+ * True when a shorthand object-literal method must receive the call-time
+ * receiver. Dynamic-prototype literals use the open object representation, so
+ * an own-`this` method in the same literal as a `super` method must not use the
+ * static `__anon_*_method` stub (it has no current-this install).
+ */
+function shorthandMethodNeedsReceiver(ctx: CodegenContext, declaration: ts.MethodDeclaration): boolean {
+  if (!declaration.body || !ts.isObjectLiteralExpression(declaration.parent)) return false;
+  return (
+    methodBodyReferencesSuper(declaration.body) ||
+    (ctx.dynamicProtoLiteralNodes.has(declaration.parent) && bodyReferencesOwnThis(declaration.body))
+  );
+}
+
+/** True when an object-literal shorthand call needs the call-time receiver. */
+export function objectLiteralMethodNeedsCallReceiver(ctx: CodegenContext, expr: ts.CallExpression): boolean {
+  const callee = expr.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const declarations = ctx.oracle.declarationsOf(callee.name);
+  return (
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) => ts.isMethodDeclaration(declaration) && shorthandMethodNeedsReceiver(ctx, declaration),
+    )
+  );
+}
+
+/**
+ * Class fields can install a separately declared ordinary function as their
+ * callable value (`match = match`). Such a value still receives the owning
+ * instance when called as `router.match()`. Resolve that immutable declaration
+ * so the same receiver install used for object-literal function properties can
+ * preserve the method-call Reference semantics.
+ */
+function isThisReadingFunctionDeclarationReference(ctx: CodegenContext, initializer: ts.Expression): boolean {
+  if (!ts.isIdentifier(initializer)) return false;
+  let declaration = ctx.oracle.valueDeclarationOf(initializer);
+  if (declaration && (ts.isImportClause(declaration) || ts.isImportSpecifier(declaration))) {
+    declaration = ctx.importBindingTargets?.get(declaration);
+  }
+  if (!declaration || !ts.isFunctionDeclaration(declaration) || declaration.body === undefined) return false;
+  if (declaration.asteriskToken !== undefined) return false;
+  if (declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true) return false;
+  const first = declaration.parameters[0];
+  if (first && ts.isIdentifier(first.name) && first.name.text === "this") return false;
+  return bodyReferencesOwnThis(declaration.body);
+}
+
+/**
  * Does the member named by `nameNode` resolve — in every one of its
- * declarations — to an object-literal property holding a `this`-reading function
- * expression? See the module header for why each clause is a refusal.
+ * declarations — to either an object-literal property holding a `this`-reading
+ * function expression or a class field holding a reference to a `this`-reading
+ * function declaration? See the module header for why each clause is a refusal.
  */
 export function objectLiteralMethodNeedsReceiver(ctx: CodegenContext, nameNode: ts.Node): boolean {
   const decls = ctx.oracle.declarationsOf(nameNode);
   if (decls.length === 0) return false;
   for (const d of decls) {
-    if (!ts.isPropertyAssignment(d)) return false;
-    if (!isThisReadingFunctionExpression(d.initializer)) return false;
+    if (ts.isPropertyAssignment(d)) {
+      if (!isThisReadingFunctionExpression(d.initializer)) return false;
+      continue;
+    }
+    // A shorthand method carrying `super`, or own `this` in an open dynamic-
+    // prototype literal, needs the same call-time receiver install as a
+    // this-reading function expression. Ordinary closed-literal shorthand
+    // methods retain their established static path and remain byte-identical.
+    if (ts.isMethodDeclaration(d) && shorthandMethodNeedsReceiver(ctx, d)) continue;
+    if (ts.isPropertyDeclaration(d) && d.initializer) {
+      if (!isThisReadingFunctionDeclarationReference(ctx, d.initializer)) return false;
+      continue;
+    }
+    return false;
   }
   return true;
 }

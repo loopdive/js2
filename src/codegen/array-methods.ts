@@ -79,6 +79,7 @@ import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRe
 import { ensureTimsortHelper } from "./timsort.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
 import {
+  buildVecFromExternMaterializer,
   buildVecFromExternref,
   coerceType,
   coercionInstrs,
@@ -1839,6 +1840,17 @@ export function compileArrayMethodCall(
         : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
+      result = tryCompileArrayPushDynamicSpread(
+        ctx,
+        fctx,
+        methodAccess,
+        callExpr,
+        receiverIsExternref,
+        vecTypeIdx,
+        arrTypeIdx,
+        elemType,
+      );
+      if (result !== undefined) break;
       // (#4531) An externref-shaped receiver (a class FIELD holding what may
       // be a `__make_iterable` host mirror — prettier's `this.stack`) must not
       // take the native inline push, whose receiver coercion `ref.cast`s to
@@ -1921,7 +1933,9 @@ export function compileArrayMethodCall(
       result = compileArraySplice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "at":
-      result = compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
+        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "at")
+        : compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "fill":
       result = compileArrayFill(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -3698,6 +3712,293 @@ function compileArrayPush(
 }
 
 /**
+ * JS-host `vec.push(...source)` for a runtime-sized array source.
+ *
+ * The receiver remains a native Wasm vec. The spread source crosses as an
+ * externref so the existing generic length/index bridge can read either a
+ * native vec mirror or an ordinary host array. Capture the source length before
+ * growing so `a.push(...a)` appends exactly the original prefix.
+ */
+function compileArrayPushDynamicSpread(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  spreadExpression: ts.Expression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | undefined {
+  const sourceInfo = resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, spreadExpression));
+  if (sourceInfo) {
+    return compileArrayPushDynamicSpreadNative(
+      ctx,
+      fctx,
+      propAccess,
+      spreadExpression,
+      vecTypeIdx,
+      arrTypeIdx,
+      elemType,
+      sourceInfo.vecTypeIdx,
+      sourceInfo.arrTypeIdx,
+      sourceInfo.elemType,
+    );
+  }
+
+  return compileArrayPushDynamicSpreadHost(ctx, fctx, propAccess, spreadExpression, vecTypeIdx, arrTypeIdx, elemType);
+}
+
+/**
+ * A single dynamic spread contributes its runtime element count, not one
+ * nested array value. This is Hono's `routes.push(...ownRoute)` shape: the
+ * fixed unrolled push sees one AST argument and would append the whole source
+ * vec as one row, so a later `route[0]` would read another array.
+ */
+function tryCompileArrayPushDynamicSpread(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  receiverIsExternref: boolean,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | undefined {
+  if (
+    receiverIsExternref ||
+    ctx.standalone ||
+    ctx.wasi ||
+    callExpr.arguments.length !== 1 ||
+    !ts.isSpreadElement(callExpr.arguments[0]!)
+  ) {
+    return undefined;
+  }
+  return compileArrayPushDynamicSpread(
+    ctx,
+    fctx,
+    propAccess,
+    callExpr.arguments[0]!.expression,
+    vecTypeIdx,
+    arrTypeIdx,
+    elemType,
+  );
+}
+
+/** Copy a runtime-sized native vec spread without losing typed elements at the host boundary. */
+function compileArrayPushDynamicSpreadNative(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  spreadExpression: ts.Expression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+  sourceVecTypeIdx: number,
+  sourceArrTypeIdx: number,
+  sourceStorageElemType: ValType,
+): ValType {
+  const receiverLocal = allocLocal(fctx, `__arr_spr_recv_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: vecTypeIdx,
+  });
+  const sourceLocal = allocLocal(fctx, `__arr_spr_native_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: sourceVecTypeIdx,
+  });
+  const sourceDataLocal = allocLocal(fctx, `__arr_spr_sdata_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: sourceArrTypeIdx,
+  });
+  const sourceLengthLocal = allocLocal(fctx, `__arr_spr_slen_${fctx.locals.length}`, { kind: "i32" });
+  const oldLengthLocal = allocLocal(fctx, `__arr_spr_olen_${fctx.locals.length}`, { kind: "i32" });
+  const neededLengthLocal = allocLocal(fctx, `__arr_spr_need_${fctx.locals.length}`, { kind: "i32" });
+  const dataLocal = allocLocal(fctx, `__arr_spr_data_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+  const indexLocal = allocLocal(fctx, `__arr_spr_i_${fctx.locals.length}`, { kind: "i32" });
+
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: receiverLocal });
+  emitReceiverNullGuard(ctx, fctx, receiverLocal, propAccess.expression);
+  fctx.body.push({ op: "drop" });
+
+  const sourceExpected: ValType = { kind: "ref_null", typeIdx: sourceVecTypeIdx };
+  const sourceType = compileExpression(ctx, fctx, spreadExpression, sourceExpected);
+  if (sourceType) coerceType(ctx, fctx, sourceType, sourceExpected);
+  else fctx.body.push({ op: "ref.null", typeIdx: sourceVecTypeIdx });
+  fctx.body.push({ op: "local.tee", index: sourceLocal });
+  emitReceiverNullGuard(ctx, fctx, sourceLocal, spreadExpression);
+  fctx.body.push({ op: "struct.get", typeIdx: sourceVecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: sourceLengthLocal });
+  fctx.body.push({ op: "local.get", index: sourceLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: sourceVecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: sourceDataLocal });
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.tee", index: oldLengthLocal });
+  fctx.body.push({ op: "local.get", index: sourceLengthLocal });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: neededLengthLocal });
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  emitEnsureBackingCapacity(fctx, receiverLocal, dataLocal, vecTypeIdx, arrTypeIdx, neededLengthLocal);
+
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+  const sourceValueType = unpackedElemType(sourceStorageElemType);
+  const loopBody: Instr[] = [
+    { op: "local.get", index: indexLocal },
+    { op: "local.get", index: sourceLengthLocal },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: dataLocal },
+    { op: "local.get", index: oldLengthLocal },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.add" },
+    { op: "local.get", index: sourceDataLocal },
+    { op: "local.get", index: indexLocal },
+    { op: elemGetOp(sourceStorageElemType, undefined), typeIdx: sourceArrTypeIdx },
+    ...coercionInstrs(ctx, sourceValueType, elemType, fctx),
+    { op: "array.set", typeIdx: arrTypeIdx },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+    { op: "br", depth: 0 },
+  ];
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "local.get", index: neededLengthLocal });
+  fctx.body.push({ op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.get", index: neededLengthLocal });
+  if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+function compileArrayPushDynamicSpreadHost(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  spreadExpression: ts.Expression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | undefined {
+  // A spread row can itself be a vec with a different concrete carrier than
+  // the destination element type (Hono's route-table arrays are this shape).
+  // Reserve the shared host/cross-representation materializer before the
+  // late-import flush; the generic externref coercion otherwise guarded-casts
+  // the row to the destination carrier and silently stores null on a mismatch.
+  const elementVecMaterializer =
+    elemType.kind === "ref" || elemType.kind === "ref_null"
+      ? buildVecFromExternMaterializer(ctx, elemType.typeIdx)
+      : undefined;
+  const lengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (lengthIdx === undefined || getIdx === undefined) return undefined;
+
+  const receiverLocal = allocLocal(fctx, `__arr_spr_recv_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: vecTypeIdx,
+  });
+  const sourceLocal = allocLocal(fctx, `__arr_spr_src_${fctx.locals.length}`, { kind: "externref" });
+  const sourceLengthLocal = allocLocal(fctx, `__arr_spr_slen_${fctx.locals.length}`, { kind: "i32" });
+  const oldLengthLocal = allocLocal(fctx, `__arr_spr_olen_${fctx.locals.length}`, { kind: "i32" });
+  const neededLengthLocal = allocLocal(fctx, `__arr_spr_need_${fctx.locals.length}`, { kind: "i32" });
+  const dataLocal = allocLocal(fctx, `__arr_spr_data_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+  const indexLocal = allocLocal(fctx, `__arr_spr_i_${fctx.locals.length}`, { kind: "i32" });
+
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: receiverLocal });
+  emitReceiverNullGuard(ctx, fctx, receiverLocal, propAccess.expression);
+  fctx.body.push({ op: "drop" });
+
+  const sourceType = compileExpression(ctx, fctx, spreadExpression, { kind: "externref" });
+  if (sourceType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (sourceType.kind !== "externref") {
+    coerceType(ctx, fctx, sourceType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+
+  fctx.body.push({ op: "local.get", index: sourceLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lengthIdx });
+  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  fctx.body.push({ op: "local.set", index: sourceLengthLocal });
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.tee", index: oldLengthLocal });
+  fctx.body.push({ op: "local.get", index: sourceLengthLocal });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: neededLengthLocal });
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  emitEnsureBackingCapacity(fctx, receiverLocal, dataLocal, vecTypeIdx, arrTypeIdx, neededLengthLocal);
+
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+  const materializeElement: Instr[] = elementVecMaterializer
+    ? [
+        { op: "call", funcIdx: ctx.funcMap.get(elementVecMaterializer)! },
+        ...(elemType.kind === "ref" ? ([{ op: "ref.as_non_null" }] satisfies Instr[]) : []),
+      ]
+    : coercionInstrs(ctx, { kind: "externref" }, elemType, fctx);
+  const loopBody: Instr[] = [
+    { op: "local.get", index: indexLocal },
+    { op: "local.get", index: sourceLengthLocal },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: dataLocal },
+    { op: "local.get", index: oldLengthLocal },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.add" },
+    { op: "local.get", index: sourceLocal },
+    { op: "local.get", index: indexLocal },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? getIdx },
+    ...materializeElement,
+    { op: "array.set", typeIdx: arrTypeIdx },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+    { op: "br", depth: 0 },
+  ];
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "local.get", index: neededLengthLocal });
+  fctx.body.push({ op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.get", index: neededLengthLocal });
+  if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+/**
  * arr.pop() -> O(1), decrement length and return last element.
  */
 function compileArrayPop(
@@ -5423,6 +5724,10 @@ interface ArrayCallbackSetup {
   closureTmp?: number;
   callBridgeIdx?: number;
   cbTmp?: number;
+  /** Argument carrier expected by the host callback bridge. */
+  bridgeArgType?: ValType;
+  /** Result carrier produced by the host callback bridge. */
+  bridgeResultType?: ValType;
   /**
    * #2152 — externref local holding the `thisArg` to bind as the callback's
    * `this` (spec §23.1.3.* `Call(callbackfn, thisArg, …)`). Undefined when the
@@ -5605,12 +5910,27 @@ function setupArrayCallback(
 
   let callBridgeIdx: number | undefined;
   let cbTmp: number | undefined;
+  let bridgeArgType: ValType | undefined;
+  let bridgeResultType: ValType | undefined;
   if (!closureInfo) {
     const bridge = bridgeName ?? (ctx.fast ? "__call_1_i32" : "__call_1_f64");
-    callBridgeIdx = ctx.funcMap.get(bridge);
+    const referenceBridge = bridge === "__call_dyn_1";
+    if (referenceBridge) {
+      const externref: ValType = { kind: "externref" };
+      bridgeArgType = externref;
+      bridgeResultType = externref;
+      callBridgeIdx = ctx.funcMap.get(bridge);
+    } else {
+      bridgeArgType = ctx.fast ? { kind: "i32" } : { kind: "f64" };
+      bridgeResultType = bridgeArgType;
+      callBridgeIdx = ctx.funcMap.get(bridge);
+    }
     if (callBridgeIdx === undefined) {
       reportError(ctx, callExpr, `Missing ${bridge} import for ${methodName}`);
       return null;
+    }
+    if (referenceBridge && cbResult && cbResult.kind !== "externref") {
+      coerceType(ctx, fctx, cbResult, { kind: "externref" });
     }
     cbTmp = allocLocal(fctx, `__arr_${tag}_cb_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: cbTmp });
@@ -5625,6 +5945,8 @@ function setupArrayCallback(
     closureTmp,
     callBridgeIdx,
     cbTmp,
+    bridgeArgType,
+    bridgeResultType,
     thisArgTmp: thisArgSlots?.thisArgTmp,
     prevThisTmp: thisArgSlots?.prevThisTmp,
   };
@@ -6033,7 +6355,10 @@ function buildBridgeCallInstrs(
   loop: ArrayLoopLocals,
   elemSource: { kind: "local"; index: number } | { kind: "inline" },
 ): Instr[] {
-  const conv = bridgeElemConvertInstrs(ctx, elemType);
+  const conv =
+    setup.bridgeArgType?.kind === "externref"
+      ? emitElemBoxToExternref(ctx, arrTypeIdx, loop.getOp)
+      : bridgeElemConvertInstrs(ctx, elemType);
   return [
     { op: "local.get", index: setup.cbTmp! },
     ...(elemSource.kind === "local"
@@ -6440,7 +6765,31 @@ function compileArrayMap(
     }
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "map", "map", undefined, 1);
+  // #4527 — an unresolved callback over reference-valued elements must retain
+  // those values across the JS-host boundary. The legacy `__call_1_f64`
+  // bridge applies ToNumber, turning Axios's string type names into NaN before
+  // `kindOfTest(type)` can call `type.toLowerCase()`. Use the existing dynamic
+  // externref bridge for this exact fallback shape; resolved closures stay on
+  // call_ref and numeric-element maps keep their compact numeric bridge.
+  const referenceElementBridge =
+    !noJsHost(ctx) &&
+    ctx.funcMap.has("__call_dyn_1") &&
+    (elemType.kind === "externref" ||
+      elemType.kind === "ref_extern" ||
+      elemType.kind === "ref" ||
+      elemType.kind === "ref_null");
+  const savedMapCallbackFirstParamOverride = ctx.arrayMapCallbackFirstParamOverride;
+  ctx.arrayMapCallbackFirstParamOverride = elemType;
+  const setup = setupArrayCallback(
+    ctx,
+    fctx,
+    callExpr,
+    "map",
+    "map",
+    referenceElementBridge ? "__call_dyn_1" : undefined,
+    1,
+  );
+  ctx.arrayMapCallbackFirstParamOverride = savedMapCallbackFirstParamOverride;
   if (!setup) return null;
 
   // Update map result type from the closure's ACTUAL compiled return type — the
@@ -6449,6 +6798,14 @@ function compileArrayMap(
   // (not just a differing kind).
   if (setup.closureInfo?.returnType && !valTypesMatch(setup.closureInfo.returnType, mapResultElemType)) {
     mapResultElemType = setup.closureInfo.returnType;
+    mapArrTypeIdx = getOrRegisterArrayType(ctx, mapResultElemType.kind, mapResultElemType);
+    mapVecTypeIdx = getOrRegisterVecType(ctx, mapResultElemType.kind, mapResultElemType);
+  }
+  // The dynamic bridge's callback result is intentionally opaque. Preserve it
+  // as externref rather than forcing it back into the source element type; in
+  // the Axios shape the mapped values are closures, not strings.
+  if (setup.bridgeResultType?.kind === "externref" && mapResultElemType.kind !== "externref") {
+    mapResultElemType = setup.bridgeResultType;
     mapArrTypeIdx = getOrRegisterArrayType(ctx, mapResultElemType.kind, mapResultElemType);
     mapVecTypeIdx = getOrRegisterVecType(ctx, mapResultElemType.kind, mapResultElemType);
   }
@@ -6495,13 +6852,15 @@ function compileArrayMap(
           : []),
     ];
   } else {
+    const bridgeResultType = setup.bridgeResultType ?? (ctx.fast ? ({ kind: "i32" } as ValType) : { kind: "f64" });
     callInstrs = [
       ...buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
-      // The host bridge returns f64. Coerce it to the result element type so the
-      // downstream `array.set` validates — notably f64 → externref must box via
-      // __box_number when the source array is untyped (`new Array(n)`). Without
-      // this, `array.set` sees f64 where it expects externref. (#1601)
-      ...(!ctx.fast ? coercionInstrs(ctx, { kind: "f64" }, mapResultElemType, fctx) : []),
+      // Coerce the bridge's declared result carrier to the result element type
+      // so the downstream `array.set` validates. Numeric bridges retain the
+      // #1601 f64→externref boxing; the #4527 dynamic bridge is already exact.
+      ...(!valTypesMatch(bridgeResultType, mapResultElemType)
+        ? coercionInstrs(ctx, bridgeResultType, mapResultElemType, fctx)
+        : []),
     ];
   }
 

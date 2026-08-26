@@ -64,6 +64,20 @@ export const NEVER_CALLABLE_FACT_KINDS = new Set([
 ]);
 
 /**
+ * A JS array whose Wasm storage is externref can receive a callable after
+ * TypeScript has fixed its element fact to `undefined` (the #4702 shape:
+ * `let f = [undefined]; f[0] = () => 1; f[0]()`).  The element-call tail has a
+ * dynamic closure dispatcher for this representation; do not turn its stale
+ * primitive fact into an unconditional TypeError before that dispatcher runs.
+ * Numeric/typed arrays and non-array structs stay on the static guard.
+ */
+function isDynamicallyCallableExternrefArrayElement(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (!ts.isElementAccessExpression(callee)) return false;
+  const receiverFact = ctx.oracle.typeFactOf(callee.expression);
+  return receiverFact.kind === "array" && receiverFact.element.kind === "undefined";
+}
+
+/**
  * Standalone runtime-eval global pull-sync can replace an AOT binding after
  * the checker has classified its initializer. In particular, Annex B B.3.3.3
  * turns `var f = 123` into a callable when global eval executes a block-level
@@ -144,6 +158,12 @@ export function tryNonCallableValueCall(
   // of baking the initializer's primitive fact into an unconditional throw.
   if (runtimeEvalMayReplaceCallee(ctx, fctx, callee)) return undefined;
   if (annexBBlockFunctionBinding(ctx, fctx, callee)) return undefined;
+
+  // #4702 — an externref array element may have been populated with a closure
+  // after the checker recorded the initial `undefined` element fact. Let the
+  // element-call dispatcher inspect the runtime value before applying the
+  // primitive non-callable guard.
+  if (isDynamicallyCallableExternrefArrayElement(ctx, callee)) return undefined;
 
   const fact = ctx.oracle.typeFactOf(callee);
   if (!NEVER_CALLABLE_FACT_KINDS.has(fact.kind) && !isFreshlyConstructedNonCallable(ctx, callee, fact.kind)) {
@@ -695,10 +715,14 @@ export function emitObjectCoercion(
     }
   } else if (isBigIntType(argTsType)) {
     // (#1568) Object(bigint) → BigInt wrapper object (§7.1.18 Table 13).
-    // BigInt is i64-represented; `__new_BigInt` boxes via the spec's literal
-    // `Object(v)` — `BigInt` is not a constructor, so `new BigInt(v)` throws.
-    compileExpression(ctx, fctx, args[0]!, { kind: "i64" });
-    const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [{ kind: "i64" }], [{ kind: "externref" }]);
+    // A JS-host BigInt must stay an externref here: forcing a wide value through
+    // the standalone i64 carrier truncates it before Object(v) can preserve the
+    // primitive in the wrapper's [[BigIntData]] slot. Native-first/host-free
+    // targets keep the established i64 ABI and native `$BigInt` wrapper.
+    const hostBigInt = !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first";
+    const bigIntCarrier: ValType = hostBigInt ? { kind: "externref" } : { kind: "i64", bigint: true };
+    compileExpression(ctx, fctx, args[0]!, bigIntCarrier);
+    const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [bigIntCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalBigIntIdx = ctx.funcMap.get("__new_BigInt") ?? newBigIntIdx;
     if (finalBigIntIdx !== undefined) {

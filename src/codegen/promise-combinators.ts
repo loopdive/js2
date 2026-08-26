@@ -79,7 +79,7 @@ import { emitNullCheckThrow } from "./property-access.js";
 // interned native-string constants. All lazily pulled ONLY when a module
 // actually compiles a native allSettled/any (see ensureSettledAnyCombinators) so
 // all/race-only modules stay byte-identical.
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { BUILTIN_TYPE_TAGS } from "./builtin-tags.js";
@@ -252,6 +252,14 @@ export function emitStandalonePromiseCustomCapabilityCheck(
   constructorSelfTypeIdx: number,
 ): boolean {
   if (!isStandalonePromiseActive(ctx)) return false;
+  if (
+    constructorInfo.returnType !== null &&
+    constructorInfo.returnType.kind !== "externref" &&
+    constructorInfo.returnType.kind !== "ref" &&
+    constructorInfo.returnType.kind !== "ref_null"
+  ) {
+    return false;
+  }
   const runtime = ensureCustomCapabilityRuntime(ctx);
   const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx);
   if (!runtime || wrapperRoot === undefined) return false;
@@ -321,12 +329,102 @@ export function emitStandalonePromiseCustomCapabilityCheck(
     { op: "ref.test", typeIdx: wrapperRoot } as Instr,
   ];
   fctx.body.push(...resolveCallable, ...rejectCallable, { op: "i32.and" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: customCapabilityTypeError(ctx) });
+  return true;
+}
+
+/** (#4727) Invoke C with a native capability, then call its resolve slot. */
+export function emitStandalonePromiseCustomResolve(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  constructorLocal: number,
+  constructorInfo: ClosureInfo,
+  constructorSelfTypeIdx: number,
+  valueInstrs: Instr[],
+): boolean {
+  if (!isStandalonePromiseActive(ctx)) return false;
+  const runtime = ensureCustomCapabilityRuntime(ctx);
+  const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx);
+  const vec = ensureObjVecBuilders(ctx);
+  const applyIdx = reserveApplyClosure(ctx);
+  if (!runtime || wrapperRoot === undefined || vec.newIdx === undefined || vec.pushIdx === undefined) return false;
+  const resultLocal = allocLocal(fctx, `__promise_resolve_result_${fctx.locals.length}`, { kind: "externref" });
+  const valueLocal = allocLocal(fctx, `__promise_resolve_value_${fctx.locals.length}`, { kind: "externref" });
+  const argsLocal = allocLocal(fctx, `__promise_resolve_args_${fctx.locals.length}`, { kind: "externref" });
+  const stateLocal = allocLocal(fctx, `__promise_capability_state_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: runtime.stateTypeIdx,
+  });
+  const executorLocal = allocLocal(fctx, `__promise_capability_executor_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: runtime.executorTypeIdx,
+  });
+  fctx.body.push(...valueInstrs, { op: "local.set", index: valueLocal });
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: runtime.stateTypeIdx },
+    { op: "local.set", index: stateLocal },
+    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
+    { op: "i32.const", value: 2 },
+    closureBagInitInstr(),
+    { op: "local.get", index: stateLocal },
+    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
+    { op: "local.set", index: executorLocal },
+  );
+  fctx.body.push({ op: "local.get", index: constructorLocal });
+  for (let i = 0; i < constructorInfo.paramTypes.length; i++) {
+    const p = constructorInfo.paramTypes[i]!;
+    if (i === 0) fctx.body.push({ op: "local.get", index: executorLocal }, { op: "extern.convert_any" });
+    else if (p.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+    else if (p.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
+    else if (p.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
+    else fctx.body.push({ op: "ref.null", typeIdx: (p as { typeIdx: number }).typeIdx });
+  }
+  const constructorSelf = getClosureFuncSelfTypeIdx(ctx, constructorInfo.funcTypeIdx) ?? constructorSelfTypeIdx;
+  fctx.body.push(
+    { op: "local.get", index: constructorLocal },
+    { op: "struct.get", typeIdx: constructorSelf, fieldIdx: 0 },
+  );
+  emitGuardedFuncRefCast(fctx, constructorInfo.funcTypeIdx);
+  emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: constructorInfo.funcTypeIdx });
+  fctx.body.push({ op: "call_ref", typeIdx: constructorInfo.funcTypeIdx });
+  if (constructorInfo.returnType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (constructorInfo.returnType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.set", index: resultLocal });
+  const resolveCallable = [
+    { op: "local.get", index: stateLocal } as Instr,
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 0 } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: wrapperRoot } as Instr,
+  ];
+  const rejectCallable = [
+    { op: "local.get", index: stateLocal } as Instr,
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 1 } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: wrapperRoot } as Instr,
+  ];
+  fctx.body.push(...resolveCallable, ...rejectCallable, { op: "i32.and" });
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
     then: [],
     else: customCapabilityTypeError(ctx),
   });
+  fctx.body.push(
+    { op: "call", funcIdx: vec.newIdx },
+    { op: "local.set", index: argsLocal },
+    { op: "local.get", index: argsLocal },
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: vec.pushIdx },
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 0 },
+    { op: "ref.null.extern" },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: applyIdx },
+    { op: "drop" },
+    { op: "local.get", index: resultLocal },
+  );
   return true;
 }
 
@@ -663,6 +761,7 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Ins
       else: [
         { op: "i32.const", value: PROMISE_STATE_FULFILLED },
         { op: "local.get", index: INPUT },
+        { op: "ref.null.extern" },
         { op: "ref.null.extern" },
         { op: "struct.new", typeIdx: ids.promiseTypeIdx },
         { op: "local.set", index: P },
@@ -1093,6 +1192,7 @@ export function emitStandalonePromiseCombinator(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: resultLocal });
 
@@ -1246,6 +1346,7 @@ export function emitStandalonePromiseCombinatorRuntime(
 
   // Pending result promise.
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });

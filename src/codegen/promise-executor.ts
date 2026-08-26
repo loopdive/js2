@@ -125,6 +125,7 @@ export function emitStandalonePromiseFromExecutor(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
 
@@ -263,6 +264,7 @@ export function emitStandalonePromiseFromExecutorValue(
   // 2. Allocate the pending $Promise.
   const pLocal = allocLocal(fctx, `__pexecv_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });

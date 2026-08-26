@@ -53,6 +53,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # gh workflow run deploy-pages.yml
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -511,16 +512,14 @@ jobs:
       # unconditional promote. Either way it never compares against a baseline.
       - name: Promote merged report to baseline
         run: |
-          mkdir -p benchmarks/results website/public/benchmarks/results public/benchmarks/results
+          mkdir -p benchmarks/results public/benchmarks/results
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
             benchmarks/results/test262-results.jsonl
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
           cp merged-reports/test262-report-merged.json benchmarks/results/test262-current.json
-          cp merged-reports/test262-report-merged.json benchmarks/results/test262-report.json
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-results.jsonl
-          cp merged-reports/test262-report-merged.json website/public/benchmarks/results/test262-report.json
           cp merged-reports/test262-results-merged.jsonl website/public/benchmarks/results/test262-results.jsonl
           # #3381 — promote the STANDALONE report alongside host, mirroring
           # test262-sharded.yml's promote-baseline. public/benchmarks/results/
@@ -533,17 +532,8 @@ jobs:
             benchmarks/results/test262-standalone-results.jsonl
           cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-current.jsonl
           cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-current.json
-          cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-report.json
           cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-results.jsonl
-          cp merged-reports/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
-          # …and the SERVED copy under website/public (the vite publicDir since
-          # #1656), mirroring the host line above. The landing page reads this
-          # path FIRST for its standalone donut — the default lane now — so a
-          # committed copy that never refreshes is a stale-headline trap
-          # whenever a deploy's baselines fetch fails.
-          mkdir -p website/public/benchmarks/results
-          cp merged-reports/test262-standalone-report-merged.json \
-            website/public/benchmarks/results/test262-standalone-report.json
+          node scripts/sync-test262-report-mirrors.mjs
 
       - name: Raise standalone pass-count high-water mark (#2097)
         run: |
@@ -833,9 +823,11 @@ jobs:
           # Stage only the small JSON files and generated edition buckets (JSONL lives in baselines repo, not main).
           # Editions live under website/public/ (the vite publicDir) since #1656; the old public/ path no longer receives them.
           git add -f benchmarks/results/test262-current.json \
+            benchmarks/results/test262-standalone-current.json \
             benchmarks/results/test262-report.json \
             public/benchmarks/results/test262-report.json \
             public/benchmarks/results/test262-standalone-report.json \
+            website/public/benchmarks/results/test262-report.json \
             website/public/benchmarks/results/test262-editions.json \
             website/public/benchmarks/results/test262-category-editions.json
           # The SERVED standalone report (website/public, copied above) — the

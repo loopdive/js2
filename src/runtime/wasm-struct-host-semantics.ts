@@ -3,6 +3,7 @@
 
 export const NO_GENERATED_FIELD = Symbol("no-generated-field");
 export const PRIMITIVE_STRING_UNDEFINED = Symbol("primitive-string-undefined");
+const CONFIGURABLE_FLAG = 4;
 const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({
   charAt: String.prototype.charAt,
   charCodeAt: String.prototype.charCodeAt,
@@ -55,6 +56,46 @@ export function readField(
 
 export function ordinaryFields(fields: readonly string[] | null): boolean {
   return fields !== null && !fields.includes("__tag");
+}
+
+interface StructDeleteState {
+  hasOwn: (obj: object, key: PropertyKey, exports: Record<string, Function> | undefined) => boolean;
+  sidecarDelete: (obj: object, key: PropertyKey) => boolean;
+  propDescs: WeakMap<object, Map<PropertyKey, number>>;
+  accessors: WeakMap<object, Map<PropertyKey, { get?: Function; set?: Function }>>;
+  deletedKeys: WeakMap<object, Set<PropertyKey>>;
+  integrity: readonly [WeakSet<object>, WeakSet<object>];
+}
+
+/** Apply host-proxy deletion semantics to a fixed-shape WasmGC struct. */
+export function deleteStructProperty(
+  obj: object,
+  key: PropertyKey,
+  exports: Record<string, Function> | undefined,
+  state: StructDeleteState,
+): boolean {
+  const normalizedKey = typeof key === "symbol" ? key : String(key);
+  const hasOwn = state.hasOwn(obj, normalizedKey, exports);
+  const descs = state.propDescs.get(obj);
+  const flags = descs?.get(normalizedKey);
+  if (
+    ((hasOwn || exports === undefined) && state.integrity.some((objects) => objects.has(obj))) ||
+    (flags !== undefined && !(flags & CONFIGURABLE_FLAG))
+  ) {
+    return false;
+  }
+  state.sidecarDelete(obj, key);
+  descs?.delete(normalizedKey);
+  if (typeof key === "symbol") state.accessors.get(obj)?.delete(key);
+  if (hasOwn || exports === undefined) {
+    let tombstones = state.deletedKeys.get(obj);
+    if (!tombstones) {
+      tombstones = new Set<PropertyKey>();
+      state.deletedKeys.set(obj, tombstones);
+    }
+    tombstones.add(normalizedKey);
+  }
+  return true;
 }
 
 export function unboxSymbol(cache: Map<number, symbol>, value: unknown): number {

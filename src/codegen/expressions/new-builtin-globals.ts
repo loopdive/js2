@@ -47,6 +47,7 @@ import {
 import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
+import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
 import {
   emitHostTaBufferConstruct,
   hostTaBufferArgSymName,
@@ -1154,6 +1155,7 @@ export function tryCompileBuiltinGlobalNew(
   // byte-oriented i8_byte vec; other typed arrays stay on the legacy f64
   // representation for now.
   if (ts.isIdentifier(expr.expression)) {
+    const typedArrayName = expr.expression.text;
     const TYPED_ARRAY_NAMES = new Set([
       "Int8Array",
       "Uint8Array",
@@ -1177,8 +1179,8 @@ export function tryCompileBuiltinGlobalNew(
     // Numeric views ride native f64/packed vecs in js-host and DO pass Atomics
     // because the bridge handles those element kinds; extending it to i64 is the
     // follow-up. Mirrors the dual-mode principle (host lane → host paths).
-    const isBigIntView838 = expr.expression.text === "BigInt64Array" || expr.expression.text === "BigUint64Array";
-    if (TYPED_ARRAY_NAMES.has(expr.expression.text) && (!isBigIntView838 || ctx.wasi || ctx.standalone)) {
+    const isBigIntView838 = typedArrayName === "BigInt64Array" || typedArrayName === "BigUint64Array";
+    if (TYPED_ARRAY_NAMES.has(typedArrayName) && (!isBigIntView838 || ctx.wasi || ctx.standalone)) {
       // (#2593) Standalone/WASI packs integer views into i8/i16/i32 storage
       // (Int8/Uint8/Uint8Clamped→i8_byte, Int16/Uint16→i16_byte,
       // Int32/Uint32→i32_byte); host/gc and the float views keep f64.
@@ -1187,12 +1189,17 @@ export function tryCompileBuiltinGlobalNew(
       // Before #2593 only native Uint8Array packed (everything else f64), which
       // left `new Int32Array(n)` on an f64 vec while the byteLength reader cast
       // to i32_byte — a runtime type mismatch (read 0 / illegal cast).
-      const storage = typedArrayVecStorage(ctx, expr.expression.text);
+      const storage = typedArrayVecStorage(ctx, typedArrayName);
       const elemWasm: ValType = storage.type;
       const elemKey = storage.key;
       const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
+      const resultType: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
+      const finishNativeTypedArray = (): ValType => {
+        emitHostTypedArrayCarrierRegistration(ctx, fctx, typedArrayName, resultType);
+        return resultType;
+      };
 
       // (#3097) JS-host lane `new <TA>(buffer[, byteOffset[, length]])`:
       // route through the host construct bridge (real host TypedArray view
@@ -1200,7 +1207,7 @@ export function tryCompileBuiltinGlobalNew(
       // fallback below, which coerced the buffer struct to NaN → a length-0
       // vec. Standalone keeps the native `$__ta_view` paths (B1/B2 below).
       if (hostTaBufferArgSymName(ctx, args) !== undefined) {
-        const hostTa = emitHostTaBufferConstruct(ctx, fctx, expr.expression.text, args);
+        const hostTa = emitHostTaBufferConstruct(ctx, fctx, typedArrayName, args);
         if (hostTa) return hostTa;
       }
 
@@ -1210,7 +1217,7 @@ export function tryCompileBuiltinGlobalNew(
         fctx.body.push({ op: "i32.const", value: 0 });
         fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
         fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-        return { kind: "ref_null", typeIdx: vecTypeIdx };
+        return finishNativeTypedArray();
       }
 
       if (args.length === 1) {
@@ -1266,7 +1273,7 @@ export function tryCompileBuiltinGlobalNew(
           fctx.body.push({ op: "local.get", index: sizeLocal });
           fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
           fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-          return { kind: "ref_null", typeIdx: vecTypeIdx };
+          return finishNativeTypedArray();
         }
 
         // new TypedArray(arrayLike) — copy from source array
@@ -1435,7 +1442,7 @@ export function tryCompileBuiltinGlobalNew(
             fctx.body.push({ op: "local.get", index: lenLocal });
             fctx.body.push({ op: "local.get", index: dstDataLocal });
             fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-            return { kind: "ref_null", typeIdx: vecTypeIdx };
+            return finishNativeTypedArray();
           }
         }
         // Fallback: treat argument as length
@@ -1448,7 +1455,7 @@ export function tryCompileBuiltinGlobalNew(
         fctx.body.push({ op: "local.get", index: fallbackSize });
         fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
         fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-        return { kind: "ref_null", typeIdx: vecTypeIdx };
+        return finishNativeTypedArray();
       }
 
       // (#3054 B2) `new <TA>(buffer, byteOffset[, length])` — windowed
@@ -1483,7 +1490,7 @@ export function tryCompileBuiltinGlobalNew(
       fctx.body.push({ op: "i32.const", value: 0 });
       fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
       fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-      return { kind: "ref_null", typeIdx: vecTypeIdx };
+      return finishNativeTypedArray();
     }
   }
   return NEW_GLOBAL_FALLTHROUGH;
@@ -1544,6 +1551,37 @@ export function tryCompileErrorCtorCallWithoutNew(
 
   const result = tryCompileBuiltinGlobalNew(ctx, fctx, expr as unknown as ts.NewExpression);
   return result === NEW_GLOBAL_FALLTHROUGH ? undefined : result;
+}
+
+/**
+ * (#4732) `WeakSet(...)` is not callable — §23.4.1.1 step 1 requires a
+ * TypeError when `NewTarget` is undefined. The generic identifier-call path
+ * used to answer with the undefined sentinel instead, so both `WeakSet()` and
+ * `WeakSet([])` silently succeeded. Evaluate arguments first (including their
+ * side effects), then emit the same real TypeError instance used by the other
+ * call-without-`new` guards.
+ *
+ * The ambient-global and class checks are important: a user binding named
+ * `WeakSet` must retain ordinary call semantics, just like the Error and Date
+ * guards above.
+ */
+export function tryCompileWeakSetCallWithoutNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "WeakSet") return undefined;
+  if (ctx.classSet.has("WeakSet")) return undefined;
+  if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
+
+  for (const arg of expr.arguments ?? []) {
+    const argResult = compileExpression(ctx, fctx, arg);
+    if (argResult) fctx.body.push({ op: "drop" });
+  }
+  emitThrowTypeError(ctx, fctx, "Constructor WeakSet requires 'new'");
+  return { kind: "externref" };
 }
 
 /** `__date_format_string` mode selector for §21.4.4.41 `toString`. */

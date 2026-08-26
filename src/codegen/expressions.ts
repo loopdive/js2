@@ -46,10 +46,13 @@ import {
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
-import { compileStringLiteral } from "./string-ops.js";
+import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
+import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
 
@@ -518,6 +521,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
         { op: "i32.const", value: PROMISE_STATE_FULFILLED },
         { op: "local.get", index: valueLocal },
         { op: "ref.null.extern" },
+        { op: "ref.null.extern" },
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "extern.convert_any" },
       ],
@@ -606,11 +610,13 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "local.get", index: reasonLocal },
       { op: "ref.null.extern" },
+      { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
     const catchAll: Instr[] = [
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
+      { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: promiseTypeIdx },
@@ -654,24 +660,6 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       catchAll,
     ),
   );
-}
-
-/**
- * Check whether the last instruction emitted since bodyLenBefore is a
- * void-returning call.
- */
-function _isLastInstrVoidCall(ctx: CodegenContext, fctx: FunctionContext, bodyLenBefore: number): boolean {
-  if (fctx.body.length <= bodyLenBefore) return true;
-  const lastInstr = fctx.body[fctx.body.length - 1];
-  if (!lastInstr) return false;
-  const op = (lastInstr as any).op;
-  if (op === "call" && (lastInstr as any).funcIdx !== undefined) {
-    return wasmFuncReturnsVoid(ctx, (lastInstr as any).funcIdx);
-  }
-  if (op === "call_ref" && (lastInstr as any).typeIdx !== undefined) {
-    return wasmFuncTypeReturnsVoid(ctx, (lastInstr as any).typeIdx);
-  }
-  return false;
 }
 
 // ── Recursion depth guard ──────────────────────────────────────────────
@@ -764,13 +752,7 @@ function compileExpressionBody(
       }
     }
     if (ts.isVoidExpression(inner)) {
-      const bodyLenBefore = fctx.body.length;
-      const operandType = compileExpressionInner(ctx, fctx, inner.expression);
-      if (operandType !== null && operandType !== VOID_RESULT) {
-        if (!_isLastInstrVoidCall(ctx, fctx, bodyLenBefore)) {
-          fctx.body.push({ op: "drop" });
-        }
-      }
+      emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       if (expectedType.kind === "f64") {
         fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
         fctx.body.push({ op: "f64.reinterpret_i64" });
@@ -840,13 +822,7 @@ function compileExpressionBody(
       }
     }
     if (ts.isVoidExpression(inner)) {
-      const bodyLenBefore2 = fctx.body.length;
-      const operandType = compileExpressionInner(ctx, fctx, inner.expression);
-      if (operandType !== null && operandType !== VOID_RESULT) {
-        if (!_isLastInstrVoidCall(ctx, fctx, bodyLenBefore2)) {
-          fctx.body.push({ op: "drop" });
-        }
-      }
+      emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       ensureAnyHelpers(ctx);
       const funcIdx = ctx.funcMap.get("__any_box_undefined");
       if (funcIdx !== undefined) {
@@ -1007,6 +983,40 @@ export function coerceType(
   return coerceTypeImpl(ctx, fctx, from, to, toPrimitiveHint);
 }
 
+function compileBigIntLiteral(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BigIntLiteral,
+  expectedType: ValType | undefined,
+): ValType | null {
+  const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
+  const hostBigIntRef =
+    usesHostBigIntCarrier(ctx) &&
+    (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
+  if (hostBigIntRef) {
+    const stringType = compileHostBigIntLiteralText(ctx, fctx, text);
+    if (!stringType) return null;
+    if (stringType.kind !== "externref") {
+      // `fast`/native-strings still targets the JS host. Convert the native
+      // `$AnyString` value to a real host string before calling BigInt; a bare
+      // `extern.convert_any` would expose an opaque WasmGC object and the host
+      // constructor would throw `Cannot convert [object Object] to a BigInt`.
+      if (!emitNativeStringToHostExternref(ctx, fctx)) {
+        coerceType(ctx, fctx, stringType, { kind: "externref" });
+      }
+    }
+    const ctorIdx = ensureLateImport(ctx, "__bigint_ctor_ref", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__bigint_ctor_ref") ?? ctorIdx;
+    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __bigint_ctor_ref");
+    fctx.body.push({ op: "call", funcIdx: finalIdx });
+    return { kind: "externref" };
+  }
+  const value = BigInt(text);
+  fctx.body.push({ op: "i64.const", value });
+  return { kind: "i64", bigint: true };
+}
+
 function compileExpressionInner(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1024,10 +1034,7 @@ function compileExpressionInner(
   }
 
   if (ts.isBigIntLiteral(expr)) {
-    const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
-    const value = BigInt(text);
-    fctx.body.push({ op: "i64.const", value });
-    return { kind: "i64", bigint: true };
+    return compileBigIntLiteral(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
@@ -1180,7 +1187,7 @@ function compileExpressionInner(
         return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
     }
-    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr));
+    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr, expectedType));
   }
 
   if (ts.isTypeOfExpression(expr)) {
@@ -1315,7 +1322,7 @@ function compileExpressionInner(
   }
 
   if (ts.isConditionalExpression(expr)) {
-    return compileConditionalExpression(ctx, fctx, expr);
+    return compileConditionalExpression(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
@@ -1401,6 +1408,13 @@ function compileExpressionInner(
   }
 
   if (ts.isAwaitExpression(expr)) {
+    const deliveredLocal = fctx.asyncAwaitValueLocals?.get(expr);
+    if (deliveredLocal !== undefined) {
+      const deliveredType = getLocalType(fctx, deliveredLocal);
+      fctx.body.push({ op: "local.get", index: deliveredLocal });
+      return deliveredType ?? { kind: "externref" };
+    }
+
     // (#2967 2c) The legacy async-CPS lane (`asyncCpsActive` /
     // `emitAsyncStateMachine`) is DELETED — an await in an ACTIVATED async fn
     // is consumed by the $AsyncFrame planners (`planLinearAwaits` / the CFG
@@ -1458,13 +1472,7 @@ function compileExpressionInner(
   }
 
   if (ts.isVoidExpression(expr)) {
-    const voidBodyLen = fctx.body.length;
-    const operandType = compileExpressionInner(ctx, fctx, expr.expression);
-    if (operandType !== null && operandType !== VOID_RESULT) {
-      if (!_isLastInstrVoidCall(ctx, fctx, voidBodyLen)) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
+    emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, expr.expression));
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }

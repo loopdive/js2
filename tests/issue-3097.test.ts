@@ -139,4 +139,39 @@ describe("#3097 compiled ArrayBuffer → host TypedArray ctor boundary", () => {
         }`),
     ).toBe(5);
   });
+
+  it("untyped helper constructs a view from a host ArrayBuffer", async () => {
+    expect(
+      await run(`function firstByte(buf: any): number {
+          var bytes = new Uint8Array(buf);
+          return bytes.length === 3 ? bytes[0] : -1;
+        }
+        export function main(): number {
+          return firstByte(new TextEncoder().encode("foo").buffer);
+        }`),
+    ).toBe(102);
+  });
+
+  it("dynamic .buffer preserves compiled Uint8Array identity without branding plain arrays", async () => {
+    expect(
+      await run(`function bufferOf(value: any): any { return value.buffer; }
+        export function main(): number {
+          var bytes = new Uint8Array(3);
+          bytes[0] = 102; bytes[1] = 111; bytes[2] = 111;
+          var row: any = [bytes, "expected"];
+          var nestedBytes: any = row[0];
+          var first = bufferOf(nestedBytes);
+          var second = bufferOf(nestedBytes);
+          var copy = new Uint8Array(first);
+          var plain = [102, 111, 111];
+          return first === second &&
+            bufferOf(plain) === undefined &&
+            copy.length === 3 &&
+            copy[0] === 102 &&
+            copy[1] === 111 &&
+            copy[2] === 111 &&
+            first !== undefined ? 1 : 0;
+        }`),
+    ).toBe(1);
+  });
 });

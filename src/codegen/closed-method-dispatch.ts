@@ -521,17 +521,6 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     // the call to the host fallback (`inline is not a function` in marked).
     const fullName = `${structName}_${methodName}`;
     const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
-    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexer" || methodName === "parseInline")) {
-      console.error(
-        "[marked-collect-lexer]",
-        structName,
-        fullName,
-        ctx.classMethodSet.has(fullName),
-        funcIdx,
-        funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx)?.typeIdx,
-        ctx.funcOptionalParams.get(fullName),
-      );
-    }
     if (funcIdx === undefined) continue;
     const funcDef = definedFuncAt(ctx, funcIdx);
     const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
@@ -1628,9 +1617,6 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       { op: "local.set", index: anyLocalIdx },
       ...current,
     ];
-    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexer" || methodName === "parseInline")) {
-      console.error("[marked-fill-lexer]", dispIdx, entries.length, dispFn.body.slice(-5));
-    }
     void (dispFn as WasmFunction);
   }
 

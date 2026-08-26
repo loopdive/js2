@@ -4,7 +4,7 @@ title: "ES2015 for-of head scope without a variable environment"
 status: done
 sprint: current
 created: 2026-08-25
-updated: 2026-08-25
+updated: 2026-08-26
 completed: 2026-08-25
 priority: high
 horizon: m
@@ -18,6 +18,7 @@ goal: es6
 related: [4706]
 loc-budget-max: 180
 loc-budget-allow:
+  - src/codegen/expressions/eval-inline.ts
   - src/codegen/index.ts
 ---
 
@@ -172,3 +173,19 @@ biome lint src/codegen/index.ts tests/issue-4713.test.ts \
   --diagnostic-level=error: pass
 prettier --check tests/issue-4713.test.ts: pass
 ```
+
+## Follow-up: module-init IIFE shadowing
+
+The original module-global reuse test was attached to every `var` hoist that
+shared the `__module_init` function context. Top-level IIFEs are inlined into
+that same Wasm function, so an IIFE-local `var x` that collided with a script
+global incorrectly reused the global instead of creating the function-local
+binding required by FunctionDeclarationInstantiation.
+
+The follow-up makes global reuse an explicit hoist mode selected only by the
+folded-eval entry point. Ordinary function and inline-IIFE hoists retain their
+existing local-shadow behavior even when their Wasm context is the module
+initializer. The exact original row plus
+`language/expressions/call/scope-var-close.js` and
+`language/statements/variable/S12.2_A3.js` pass 3/3 through the assembled
+Test262 harness on `6eb910d3f`.

@@ -26,6 +26,8 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
+import { exactClassExpressionTypeName } from "../class-expression-identity.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -138,7 +140,7 @@ import {
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
-import { compileExternMethodCall } from "./extern.js";
+import { compileExternMethodCall, compileSpreadCallArgs } from "./extern.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
@@ -147,6 +149,7 @@ import {
   emitKnownRestMethodArguments,
   knownMethodRestInfo,
 } from "./object-method-rest-abi.js";
+import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -639,30 +642,6 @@ export function compileReceiverMethodCall(
 
   // Check if receiver is an externref object
   let receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  if (
-    process.env.DEBUG_MARKED_CODEGEN === "1" &&
-    fctx.name.includes("closure") &&
-    (propAccess.name.text === "lex" ||
-      propAccess.name.text === "lexInline" ||
-      propAccess.name.text === "parse" ||
-      propAccess.name.text === "parseInline")
-  ) {
-    console.error(
-      "[marked-receiver-enter]",
-      fctx.name,
-      propAccess.name.text,
-      "receiverText",
-      propAccess.expression.getText?.(),
-      "type",
-      receiverType.getSymbol?.()?.name,
-      "construct",
-      receiverType.getConstructSignatures?.().length,
-      "external",
-      isExternalDeclaredClass(receiverType, ctx.checker),
-      "classMap",
-      ts.isIdentifier(propAccess.expression) ? ctx.classExprNameMap.get(propAccess.expression.text) : undefined,
-    );
-  }
   // (#2767) When the static type resolves NO nominal symbol and the receiver
   // is a bare identifier (the evolving-`any` `var d; d = new Date(0)` case),
   // recover the effective nominal type from the binding's assignments so the
@@ -1377,6 +1356,49 @@ export function compileReceiverMethodCall(
     }
   }
 
+  // An array or property read can retain a union of unrelated class instance
+  // types. Selecting the first member's method body is unsound: the runtime
+  // value may carry any member's private fields and implementation. On the JS
+  // host lane, use the existing runtime class-member bridge when every
+  // candidate has an externref-compatible ABI. The bridge ref.tests the real
+  // WasmGC instance and dispatches to that class's own method.
+  if (!ctx.standalone && !ctx.wasi && receiverType.isUnion() && !ts.isPrivateIdentifier(propAccess.name)) {
+    const methodName = propAccess.name.text;
+    const classNames = new Set<string>();
+    let bridgeCompatible = true;
+    for (const memberType of receiverType.types) {
+      const memberName =
+        exactClassExpressionTypeName(ctx, memberType) ??
+        canonicalClassExpressionName(ctx, memberType.getSymbol()?.name);
+      if (!memberName || !ctx.classSet.has(memberName)) continue;
+      classNames.add(memberName);
+
+      let owner: string | undefined = memberName;
+      let methodParams: ValType[] | undefined;
+      while (owner !== undefined) {
+        const fullName = `${owner}_${methodName}`;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) ?? ctx.funcMap.get(fullName);
+        if (methodIdx !== undefined) {
+          methodParams = getFuncParamTypes(ctx, methodIdx);
+          break;
+        }
+        owner = ctx.classParentMap.get(owner);
+      }
+      if (
+        methodParams === undefined ||
+        methodParams.length === 0 ||
+        methodParams.slice(1).some((param) => param.kind !== "externref" && param.kind !== "ref_extern")
+      ) {
+        bridgeCompatible = false;
+        break;
+      }
+    }
+    if (bridgeCompatible && classNames.size > 1) {
+      const dynamicResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName, true);
+      if (dynamicResult !== undefined) return dynamicResult;
+    }
+  }
+
   // Check if receiver is a local class instance.
   let receiverClassName = resolveReceiverMethodClassName(ctx, fctx, propAccess, receiverType);
   // Fallback for union types, interfaces, abstract classes:
@@ -1556,6 +1578,12 @@ export function compileReceiverMethodCall(
     let funcIdx = hasReceiverMember
       ? ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind))
       : undefined; // (#1983)
+    if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
+      // Route the dynamic-prototype object-literal method through
+      // compileCallablePropertyCall, which installs its actual call-time
+      // receiver. The static `__anon_*_method` stub cannot do that.
+      funcIdx = undefined;
+    }
     if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexInline" || methodName === "lex")) {
       console.error(
         "[marked-call-receiver]",
@@ -1757,28 +1785,6 @@ export function compileReceiverMethodCall(
         const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? resolvedStaticIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const sig = ctx.checker.getResolvedSignature(expr);
-        if (
-          process.env.DEBUG_MARKED_CODEGEN === "1" &&
-          (methodName === "lex" || methodName === "lexInline" || methodName === "parse" || methodName === "parseInline")
-        ) {
-          console.error(
-            "[marked-static-return]",
-            methodName,
-            fullName,
-            "idx",
-            finalMethodIdx,
-            "sig",
-            !!sig,
-            "wasmVoid",
-            wasmFuncReturnsVoid(ctx, finalMethodIdx),
-            "wasmRet",
-            getWasmFuncReturnType(ctx, finalMethodIdx),
-            "expected",
-            expectedType,
-            "parent",
-            expr.parent?.kind,
-          );
-        }
         if (sig) {
           const retType = ctx.checker.getReturnTypeOfSignature(sig);
           if (isEffectivelyVoidReturn(ctx, retType, fullName)) return VOID_RESULT;
@@ -1975,12 +1981,21 @@ export function compileReceiverMethodCall(
       const restInfoNn = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
       const handledRestNn =
         restInfoNn !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNn, 1);
-      if (!handledRestNn) {
+      const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
+      const handledSpreadNn =
+        !handledRestNn && methodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+      if (handledSpreadNn) {
+        compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
+      } else if (!handledRestNn) {
         for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+          const sourceParam =
+            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+          const forceArrayLiteralVec =
+            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1], forceArrayLiteralVec); // +1 to skip self
         }
       }
-      if (!handledRestNn && expr.arguments.length > methodParamCount) {
+      if (!handledRestNn && !handledSpreadNn && expr.arguments.length > methodParamCount) {
         if (calleeReadsArgsNn) {
           emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], methodParamCount);
         } else {
@@ -1993,7 +2008,7 @@ export function compileReceiverMethodCall(
         }
       }
       // Pad missing arguments with defaults (skip self param at index 0)
-      if (paramTypes && !handledRestNn) {
+      if (paramTypes && !handledRestNn && !handledSpreadNn) {
         for (let i = expr.arguments.length + 1; i < paramTypes.length; i++) {
           pushDefaultValue(fctx, paramTypes[i]!, ctx);
         }
@@ -2023,13 +2038,17 @@ export function compileReceiverMethodCall(
 
   // Check if receiver is a struct type (e.g. object literal with methods)
   {
+    const resolvedReceiverCarrier = resolveWasmType(ctx, receiverType);
     const structTypeName = receiverIsExternrefTagged
       ? undefined
-      : resolveStructNameForExpr(ctx, fctx, propAccess.expression, propAccess.name);
+      : resolveStructNameForExpr(ctx, fctx, propAccess.expression, propAccess.name, resolvedReceiverCarrier);
     if (structTypeName) {
       const methodName = propAccess.name.text;
       const fullName = `${structTypeName}_${methodName}`;
       let funcIdx = ctx.funcMap.get(fullName);
+      if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
+        funcIdx = undefined;
+      }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
@@ -2472,7 +2491,7 @@ export function compileReceiverMethodCall(
   // boundary as i64. Mirror the number branch: validate radix range (2-36),
   // throw RangeError otherwise, then call bigint_toString_radix (or the
   // 1-arg bigint_toString for the default radix-10 case).
-  if (isBigIntType(receiverType) && propAccess.name.text === "toString") {
+  if (!usesHostBigIntCarrier(ctx) && isBigIntType(receiverType) && propAccess.name.text === "toString") {
     let radixLocalIdx: number | undefined;
     if (expr.arguments.length > 0) {
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
@@ -3385,29 +3404,6 @@ export function compileReceiverMethodCall(
   const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
   // A mixed mutable local's physical carrier outranks its stale checker type.
   const recvWasm = effectiveLocalCarrier(fctx, propAccess.expression, resolveWasmType(ctx, recvTsType));
-  if (
-    process.env.DEBUG_MARKED_CODEGEN === "1" &&
-    fctx.name.includes("closure") &&
-    propAccess.name.text === "preprocess"
-  ) {
-    console.error(
-      "[marked-preprocess-fallback]",
-      fctx.name,
-      propAccess.expression.getText?.(),
-      "flags",
-      recvTsType.flags,
-      "symbol",
-      recvTsType.getSymbol?.()?.name,
-      "wasm",
-      recvWasm,
-      "fieldShadow",
-      [...ctx.structFields.entries()].some(
-        ([structName, fields]) =>
-          fields.some((field) => field.name === "preprocess" && field.type.kind === "externref") &&
-          ctx.funcMap.has(classMemberFuncKey(ctx, `${structName}_preprocess`, "instance")),
-      ),
-    );
-  }
   {
     const isAnyOrExternref =
       (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref" || receiverIsExternrefTagged;
@@ -3529,23 +3525,7 @@ export function compileReceiverMethodCall(
         const receiverOwnerIsUnknown =
           !ts.isPropertyAccessExpression(propAccess.expression) || receiverPropertySymbol === undefined;
         if (hasCallableField && receiverOwnerIsUnknown) {
-          if (process.env.DEBUG_MARKED_CODEGEN === "1") {
-            console.error(
-              "[marked-callable-field-fallback]",
-              fctx.name,
-              methodName,
-              propAccess.expression.getText?.(),
-              [...ctx.structFields.entries()]
-                .filter(([, fields]) =>
-                  fields.some((field) => field.name === methodName && field.type.kind === "externref"),
-                )
-                .map(([name]) => name),
-            );
-          }
           const dynamicFieldCall = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-          if (process.env.DEBUG_MARKED_CODEGEN === "1") {
-            console.error("[marked-callable-field-result]", fctx.name, methodName, dynamicFieldCall);
-          }
           if (dynamicFieldCall !== null) return dynamicFieldCall;
         }
       }
@@ -3640,46 +3620,11 @@ export function compileReceiverMethodCall(
           (field) => field.name === methodName && field.type.kind === "externref",
         ),
       );
-      const needsRuntimeUserMethodDispatch =
-        dispatchArgs !== null &&
+      const needsRuntimeUserMethodName =
         hasUniformUserMethodAbi &&
         (sourceDefinesFunctionMember(expr.getSourceFile(), methodName) || hasKnownUserClassMethod) &&
         !(hasUserClassField && hasKnownUserClassMethod);
-      if (
-        process.env.DEBUG_MARKED_CODEGEN === "1" &&
-        fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral")
-      ) {
-        console.error(
-          "[marked-any-dispatch]",
-          fctx.name,
-          methodName,
-          "dispatchArgs",
-          dispatchArgs?.length,
-          "sourceMember",
-          sourceDefinesFunctionMember(expr.getSourceFile(), methodName),
-          "knownUser",
-          hasKnownUserClassMethod,
-          "uniform",
-          hasUniformUserMethodAbi,
-          "field",
-          hasUserClassField,
-          "matchingFields",
-          [...ctx.classSet]
-            .map((name) => ({
-              name,
-              fields: (ctx.structFields.get(name) ?? []).filter((field) => field.name === methodName),
-            }))
-            .filter((entry) => entry.fields.length > 0),
-          "needs",
-          needsRuntimeUserMethodDispatch,
-          "classes",
-          [...ctx.classSet],
-          "structNames",
-          [...ctx.structFields.keys()],
-          "arities",
-          userMethodArities,
-        );
-      }
+      const needsRuntimeUserMethodDispatch = dispatchArgs !== null && needsRuntimeUserMethodName;
       // The closed dispatcher is also the JS-host implementation for an
       // any-typed call into a compiled class.  Mark the name before reserving
       // it so finalization can preserve JavaScript's ordinary under-application
@@ -3694,12 +3639,6 @@ export function compileReceiverMethodCall(
         !recvIsBuiltinClass
       ) {
         const arity = dispatchArgs.length;
-        if (
-          process.env.DEBUG_MARKED_CODEGEN === "1" &&
-          fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral")
-        ) {
-          console.error("[marked-any-reserve]", fctx.name, methodName, arity, "standalone", ctx.standalone);
-        }
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
         // indices are still append-safe. The dispatcher fill only reads it.
@@ -3878,7 +3817,7 @@ export function compileReceiverMethodCall(
             else if (at === null) fctx.body.push({ op: "ref.null.extern" });
             continue;
           }
-          const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
+          const at = compileInternalCallArgument(ctx, fctx, arg, { kind: "externref" });
           if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
           else if (at === null) fctx.body.push({ op: "ref.null.extern" });
         }
@@ -3905,11 +3844,16 @@ export function compileReceiverMethodCall(
       // (the same pre-existing wasi arg-vec gap noted in the issue). Widening
       // the array-like arms to wasi is a separate, broader change.
       const isSingleDynamicSpread =
-        (ctx.standalone || needsRuntimeUserMethodDispatch) &&
+        (ctx.standalone || (!ctx.wasi && needsRuntimeUserMethodName)) &&
         !recvIsBuiltinClass &&
         expr.arguments.length === 1 &&
         ts.isSpreadElement(expr.arguments[0]!);
       if (isSingleDynamicSpread) {
+        // Host mode needs the same class-member export surface as the fixed
+        // arity dispatcher. The spread source supplies the vararg bridge's
+        // runtime argument list; recording the name here lets finalization
+        // emit the matching receiver-discriminating method arm.
+        if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
         const dispatchIdx = reserveClosedMethodDispatchVararg(ctx, methodName);
         flushLateImportShifts(ctx, fctx);
         // Receiver as externref.

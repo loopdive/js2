@@ -118,7 +118,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__bigint_ctor_ref") return { type: "builtin", name: "__bigint_ctor_ref" };
   if (name === "__is_truthy") return { type: "truthy_check" };
   if (name === "__typeof") return { type: "builtin", name: "__typeof" };
-
+  if (name === "__wrap_callable_for_host") return { type: "builtin", name: "__wrap_callable_for_host" };
   // globalThis
   if (name === "__get_globalThis") return { type: "declared_global", name: "globalThis" };
 

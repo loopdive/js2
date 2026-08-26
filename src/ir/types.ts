@@ -43,6 +43,16 @@ export interface ExternClassMeta {
 
 export interface WasmModule {
   types: TypeDef[];
+  /**
+   * A retained, explicitly encoded recursive type group used by separately
+   * instantiated core-Wasm modules (#2527). The range addresses the flat
+   * `types` table and is updated by any pass that compacts that table.
+   */
+  canonicalRuntimeRecGroup?: {
+    start: number;
+    end: number;
+    abiVersion: number;
+  };
   imports: Import[];
   functions: WasmFunction[];
   exports: WasmExport[];
@@ -193,6 +203,12 @@ export interface FieldDef {
   name: string;
   type: ValType;
   mutable: boolean;
+  /**
+   * An uninitialized optional numeric class field starts as JavaScript
+   * `undefined`, represented in an f64 slot by the canonical signaling-NaN
+   * sentinel rather than Wasm's numeric zero default.
+   */
+  undefinedDefault?: true;
   /**
    * The field's constructor initializer is a call proven to return the native
    * open `$Object` carrier (for example acorn's `this.options = getOptions()`).

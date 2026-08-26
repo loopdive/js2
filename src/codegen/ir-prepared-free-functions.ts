@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
 import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
@@ -318,7 +319,7 @@ function deferUnsealedPreparedComponents(
       ? {
           preparedCountedStringAppendReceipts: Object.freeze(
             report.preparedCountedStringAppendReceipts.filter(
-              (receipt) => !deferredUnitIds.has(receipt.plan.ownerUnitId),
+              (receipt) => !deferredUnitIds.has(requireValidPreparedCountedStringAppendReceipt(receipt).ownerUnitId),
             ),
           ),
         }

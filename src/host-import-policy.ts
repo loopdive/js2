@@ -47,6 +47,7 @@ const VALUE_ADAPTER_BUILTINS = new Set([
   "__str_to_mem",
   "__str_extern_len",
   "__get_caught_exception",
+  "__unwrap_for_wasm",
 ]);
 
 const INSTANCE_LIFECYCLE_PREFIXES = ["__register_"] as const;

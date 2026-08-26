@@ -148,6 +148,7 @@ tests/fixtures/*.imports.js
 *.jsonl
 benchmarks/results/runs/
 benchmarks/wasmtime-cold-host/target/
+.js2wasm-cache/
 .playwright-cli/
 vendor/
 docs/publications/

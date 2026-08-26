@@ -488,6 +488,41 @@ export function emitNonIndexVecElementGet(ctx: CodegenContext, fctx: FunctionCon
   return EXTERNREF;
 }
 
+/** A non-constant key whose checker type can carry a property-name string. */
+export function isDynamicStringVecKey(ctx: CodegenContext, key: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(key);
+  if (fact.kind === "string" || fact.kind === "any" || fact.kind === "unknown") return true;
+  return (
+    fact.kind === "union" &&
+    fact.parts.some((member) => member.kind === "string" || member.kind === "any" || member.kind === "unknown")
+  );
+}
+
+/**
+ * Host/gc runtime dispatch for `vec[key]` when `key` is a dynamic string.
+ *
+ * A string can denote either an array index (`"0"`) or a named expando
+ * (`"bar"`), so compiling it eagerly as i32 is unsound (`"bar"` became index
+ * zero). The host's ordinary property operation performs ToPropertyKey and the
+ * array-index classification at runtime. Standalone keeps its existing route
+ * until its native helper gains the full non-canonical index classifier.
+ */
+export function emitDynamicStringVecElementGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: ts.Expression,
+): ValType | null {
+  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
+  const funcIdx = resolveNamedPropHelper(ctx, fctx, "get");
+  if (funcIdx === undefined) return null;
+  fctx.body.push({ op: "extern.convert_any" });
+  const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
+  if (!keyType) return null;
+  if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
+  fctx.body.push({ op: "call", funcIdx });
+  return EXTERNREF;
+}
+
 /**
  * `arr[<non-index number>] = v` WRITE. The receiver vec ref is already on the
  * stack; `recvType` is its ValType so it can be stashed in a local of the
@@ -527,4 +562,62 @@ export function emitNonIndexVecElementSet(
   // The assignment expression evaluates to the assigned value.
   fctx.body.push({ op: "local.get", index: valLocal });
   return EXTERNREF;
+}
+
+/** Host/gc write twin of {@link emitDynamicStringVecElementGet}. */
+export function emitDynamicStringVecElementSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvType: ValType,
+  key: ts.Expression,
+  value: ts.Expression,
+  compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null {
+  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
+  const funcIdx = resolveNamedPropHelper(ctx, fctx, "set");
+  if (funcIdx === undefined) return null;
+
+  const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
+  fctx.body.push({ op: "local.set", index: recvLocal });
+  const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
+  if (!keyType) return null;
+  if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
+  const keyLocal = allocLocal(fctx, `__dynkey_key_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: keyLocal });
+
+  const valResult = compile(value, EXTERNREF);
+  if (!valResult) return null;
+  if (valResult.kind !== "externref") coerceType(ctx, fctx, valResult, EXTERNREF);
+  const valLocal = allocLocal(fctx, `__dynkey_val_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: valLocal });
+
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.get", index: keyLocal });
+  fctx.body.push({ op: "local.get", index: valLocal });
+  fctx.body.push({ op: "call", funcIdx });
+  fctx.body.push({ op: "local.get", index: valLocal });
+  return EXTERNREF;
+}
+
+/** Route the named-key and dynamic-string write cases owned by this module. */
+export function emitVecNamedOrDynamicElementSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvType: ValType,
+  target: ts.ElementAccessExpression,
+  value: ts.Expression,
+): ValType | null {
+  const compile = (expr: ts.Expression, hint?: ValType) => compileExpression(ctx, fctx, expr, hint);
+  if (
+    elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+    !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
+  ) {
+    const namedKey = nonArrayIndexNumericKey(ctx, fctx, target.argumentExpression);
+    if (namedKey !== undefined) {
+      const named = emitNonIndexVecElementSet(ctx, fctx, recvType, namedKey, value, compile);
+      if (named) return named;
+    }
+  }
+  return emitDynamicStringVecElementSet(ctx, fctx, recvType, target.argumentExpression, value, compile);
 }

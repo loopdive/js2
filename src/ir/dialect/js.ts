@@ -54,6 +54,7 @@ import type {
 // representation axis lives), so this is an ordinary downward edge, not a
 // second core->dialect one. Type-only, like everything else here.
 import type { IrStringEncoding } from "../string-runtime.js";
+import type { IrCountedStringAppendSiteId } from "../counted-string-append-provenance.js";
 
 /**
  * (#1373 Phase B) `await <expr>` — suspend the current async function until
@@ -623,6 +624,8 @@ export interface IrInstrStringRepeat extends IrInstrBase {
   readonly encodingEvidence: IrStringEncoding;
   /** Semantic callable intent bound to the exact backend provider during final preparation. */
   readonly provider?: IrFuncRef;
+  /** Exact counted-loop provenance; absent for unrelated generic repeat producers. */
+  readonly countedStringAppendSite?: IrCountedStringAppendSiteId;
 }
 
 /** Return one UTF-16 code unit as a string, or the empty string out of bounds. */

@@ -56,7 +56,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
-import { ensureStandaloneNativeMethodClosure, seededNativeProtoDataMembersByBrand } from "./native-proto.js";
+import { ensureStandaloneNativeMethodClosure, seededNativeProtoOwnMembersByBrand } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /** `$PropEntry.$value` field index (object-runtime.ts layout). */
@@ -115,7 +115,7 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
   if (!fn) return;
 
   const byBrand = mintedMethodsByBrand(ctx);
-  const seededByBrand = seededNativeProtoDataMembersByBrand(ctx);
+  const seededByBrand = seededNativeProtoOwnMembersByBrand(ctx);
   const protoGetIdx = ctx.funcMap.get("__protoidx_get_r");
   if (byBrand.size === 0 && (seededByBrand.size === 0 || protoGetIdx === undefined)) return;
 

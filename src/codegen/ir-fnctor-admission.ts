@@ -19,7 +19,40 @@ import type {
 } from "../ir/propagate.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSourceId } from "../ir/identity.js";
+import {
+  collectIrFnctorArgumentProjections,
+  proveIrFnctorInputConstructorSyntax,
+  type IrFnctorArgumentProjection,
+  type IrFnctorArgumentProjectionAuthority,
+  type IrFnctorInputConstructorSyntaxProof,
+} from "../ir/fnctor-argument-projection.js";
+import type { IrUnitTypeMap } from "../ir/propagate.js";
 import type { CodegenContext } from "./context/types.js";
+
+export interface IrFnctorArgumentProjectionRoute {
+  readonly experimentalIR: boolean;
+  /** True only after legacy bodies have materialized the physical reservation. */
+  readonly postLegacyPhysicalReservation: boolean;
+  /** Exact environment snapshot; L1 is intentionally limited to the literal escape hatch. */
+  readonly irFirstEnvironment: string | undefined;
+}
+
+/** Normative route authority for the dormant L1 evidence. */
+export function irFnctorArgumentProjectionRouteIsActive(
+  ctx: CodegenContext,
+  route: IrFnctorArgumentProjectionRoute,
+): boolean {
+  return (
+    route.experimentalIR &&
+    route.postLegacyPhysicalReservation &&
+    route.irFirstEnvironment === "0" &&
+    ctx.standalone === true &&
+    ctx.nativeStrings === true &&
+    ctx.wasi === false &&
+    ctx.fast === false &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  );
+}
 
 function aliasedSymbol(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined {
   const symbol = checker.getSymbolAtLocation(node);
@@ -40,69 +73,6 @@ function symbolOwnsDeclaration(checker: ts.TypeChecker, node: ts.Identifier, dec
 function isStringType(checker: ts.TypeChecker, node: ts.Node): boolean {
   const type = checker.getTypeAtLocation(node);
   return (type.flags & ts.TypeFlags.StringLike) !== 0;
-}
-
-function directInputAssignment(
-  statement: ts.Statement,
-  checker: ts.TypeChecker,
-  parameter: ts.ParameterDeclaration,
-): boolean {
-  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return false;
-  const assignment = statement.expression;
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
-  if (!ts.isPropertyAccessExpression(assignment.left) || assignment.left.name.text !== "input") return false;
-  if (assignment.left.expression.kind !== ts.SyntaxKind.ThisKeyword) return false;
-  return ts.isIdentifier(assignment.right) && symbolOwnsDeclaration(checker, assignment.right, parameter);
-}
-
-/**
- * Prove the intentionally narrow constructor shape used by the first linked
- * parser slice.  Requiring the assignment to be a top-level statement and the
- * RHS to be the exact string parameter rejects aliases, conditional writes,
- * reassignment, helper calls, and hidden object-shape growth.
- */
-function hasFixedInputConstructor(
-  checker: ts.TypeChecker,
-  declaration: ts.FunctionDeclaration | ts.FunctionExpression,
-): boolean {
-  if (!declaration.body || !ts.isBlock(declaration.body) || declaration.parameters.length !== 1) return false;
-  const parameter = declaration.parameters[0];
-  if (
-    !ts.isIdentifier(parameter.name) ||
-    parameter.name.text !== "input" ||
-    parameter.initializer !== undefined ||
-    parameter.questionToken !== undefined ||
-    parameter.dotDotDotToken !== undefined ||
-    !isStringType(checker, parameter)
-  ) {
-    return false;
-  }
-  if (
-    declaration.body.statements.length !== 1 ||
-    !directInputAssignment(declaration.body.statements[0]!, checker, parameter)
-  ) {
-    return false;
-  }
-
-  // Keep this explicit walk as a defense against a future AST transform that
-  // leaves a second `this.input` write below the statement-level proof.
-  let assignments = 0;
-  let foreignThisWrite = false;
-  const visit = (node: ts.Node): void => {
-    if (node !== declaration && ts.isFunctionLike(node)) return;
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left) &&
-      node.left.expression.kind === ts.SyntaxKind.ThisKeyword
-    ) {
-      if (node.left.name.text === "input") assignments++;
-      else foreignThisWrite = true;
-    }
-    forEachChild(node, visit);
-  };
-  visit(declaration.body);
-  return assignments === 1 && !foreignThisWrite;
 }
 
 /** Prove the admitted value stays inside source-local member receivers. */
@@ -188,7 +158,16 @@ function resolveAdmission(
   if (!constructorUnitId) return undefined;
   const reservedTypeIdx = ctx.fnctorReservedTypeIdx.get(name);
   if (reservedTypeIdx === undefined || ctx.structMap.get(`__fnctor_${name}`) !== reservedTypeIdx) return undefined;
-  if (!hasFixedInputConstructor(checker, declaration)) return undefined;
+  const syntax = proveIrFnctorInputConstructorSyntax(checker, identityContext, declaration);
+  if (
+    !syntax ||
+    syntax.constructorUnitId !== constructorUnitId ||
+    !ts.isIdentifier(syntax.parameterDeclaration.name) ||
+    syntax.parameterDeclaration.name.text !== "input" ||
+    !isStringType(checker, syntax.parameterDeclaration)
+  ) {
+    return undefined;
+  }
   if (!hasNoEscape(checker, site)) return undefined;
   const argumentsList = site.arguments ?? [];
   if (argumentsList.length !== 1 || argumentsList.some((argument) => ts.isSpreadElement(argument))) return undefined;
@@ -233,4 +212,76 @@ export function makeIrFnctorPropagationAdmissionResolver(
     const admission = resolveAdmission(ctx, checker, identityContext, site);
     return admission?.sourceId === sourceId ? admission : undefined;
   };
+}
+
+function resolveArgumentProjectionReservation(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  site: ts.NewExpression,
+  constructorProof: IrFnctorInputConstructorSyntaxProof,
+) {
+  const gate = ctx.fnctorEscapeGate;
+  if (!gate || !ts.isIdentifier(site.expression) || !gate.approved.has(site)) return undefined;
+  const name = gate.siteCtorName.get(site);
+  if (
+    name === undefined ||
+    name !== site.expression.text ||
+    !gate.approvedNames.has(name) ||
+    gate.provenance.refusedNames.includes(name) ||
+    gate.ctorDeclByName.get(name) !== constructorProof.constructorDeclaration ||
+    !symbolOwnsDeclaration(checker, site.expression, constructorProof.constructorDeclaration)
+  ) {
+    return undefined;
+  }
+  const reservationKey = `__fnctor_${name}`;
+  const reservedTypeIdx = ctx.fnctorReservedTypeIdx.get(name);
+  if (
+    reservedTypeIdx === undefined ||
+    !Number.isSafeInteger(reservedTypeIdx) ||
+    reservedTypeIdx < 0 ||
+    ctx.structMap.get(reservationKey) !== reservedTypeIdx
+  ) {
+    return undefined;
+  }
+  return {
+    kind: "fnctor-physical-reservation" as const,
+    sourceId: constructorProof.sourceId,
+    constructorUnitId: constructorProof.constructorUnitId,
+    constructorDeclaration: constructorProof.constructorDeclaration,
+    constructorSite: site,
+    reservationKey,
+    reservedTypeIdx,
+  };
+}
+
+/** Bind retained L1 evidence back to the live checker and reservation registry. */
+export function makeIrFnctorArgumentProjectionAuthority(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+): IrFnctorArgumentProjectionAuthority {
+  return Object.freeze({
+    checker,
+    resolvePhysicalReservation: (site: ts.NewExpression, constructorProof: IrFnctorInputConstructorSyntaxProof) =>
+      resolveArgumentProjectionReservation(ctx, checker, site, constructorProof),
+  });
+}
+
+/** Collect evidence for structural retention only; L1 has no selector or lowering consumer. */
+export function collectIrFnctorArgumentProjectionsForPlanning(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  identityContext: IrPlanningIdentityContext,
+  sourceFile: ts.SourceFile,
+  unitTypeMap: IrUnitTypeMap,
+  route: IrFnctorArgumentProjectionRoute,
+): readonly IrFnctorArgumentProjection[] {
+  if (!irFnctorArgumentProjectionRouteIsActive(ctx, route)) return Object.freeze([]);
+  const authority = makeIrFnctorArgumentProjectionAuthority(ctx, checker);
+  return collectIrFnctorArgumentProjections({
+    sourceFile,
+    checker,
+    identityContext,
+    unitTypeMap,
+    resolvePhysicalReservation: authority.resolvePhysicalReservation,
+  });
 }

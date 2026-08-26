@@ -194,6 +194,7 @@ import {
 } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`; (#4484) `<Builtin>.constructor`
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
+import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -1994,6 +1995,16 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       }
     }
     if (enclosingClass) {
+      // `this` in a static method is the constructor object, so
+      // `this.prototype` must resolve to the same lazy prototype singleton as
+      // `ClassName.prototype`. Falling through to the generic externref read
+      // asks the host-side class-object mirror before its prototype link has
+      // been installed (notably during deferred module initialization), which
+      // produces `undefined` and makes class bootstrap code such as Axios'
+      // static accessor installer dereference a null prototype.
+      if (propName === "prototype" && emitLazyProtoGet(ctx, fctx, enclosingClass)) {
+        return { kind: "externref" };
+      }
       const fullName = `${enclosingClass}_${propName}`;
       const globalIdx = ctx.staticProps.get(fullName);
       if (globalIdx !== undefined) {
@@ -2039,35 +2050,6 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
   const staticReceiver = skipTransparentExpressions(expr.expression);
   if (ts.isIdentifier(staticReceiver)) {
     const objName = staticReceiver.text;
-    if (
-      process.env.DEBUG_MARKED_CODEGEN === "1" &&
-      (objName === "Lexer" ||
-        objName === "Parser" ||
-        propName === "lex" ||
-        propName === "lexInline" ||
-        propName === "parse" ||
-        propName === "parseInline")
-    ) {
-      const construct = objType.getConstructSignatures?.() ?? [];
-      console.error(
-        "[marked-static-read]",
-        objName,
-        "type",
-        objType.getSymbol()?.name,
-        "exact",
-        exactClassExpressionTypeName(ctx, objType),
-        "constructReturn",
-        construct[0]?.getReturnType?.().getSymbol?.()?.name,
-        "constructExact",
-        construct[0] ? exactClassExpressionTypeName(ctx, construct[0].getReturnType()) : undefined,
-        "mapped",
-        ctx.classExprNameMap.get(objName),
-        "classSet",
-        ctx.classSet.has(objName),
-        "moduleGlobal",
-        ctx.moduleGlobals.get(objName),
-      );
-    }
 
     // (#1639) `genFn.prototype` where `genFn` is a `function*` / `async function*`
     // declaration must return the intrinsic `%GeneratorPrototype%` /
@@ -3228,14 +3210,10 @@ export function tryNamespaceConstantAndSymbolReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
-  // Handle .raw on tagged template strings arrays (template vec struct)
-  // The strings parameter is typed as a base vec, but at runtime it's a
-  // template vec (subtype with an extra raw field). We ref.cast to the
-  // template vec type and then struct.get field 2.
   if (propName === "raw" && ctx.templateVecTypeIdx >= 0) {
     const templateVecTypeIdx = ctx.templateVecTypeIdx;
-    // Check if the object is a vec-like type (base vec or template vec)
     let isVecLike = false;
+    let inlineTemplateParam = false;
     if (ts.isIdentifier(expr.expression)) {
       const localIdx = fctx.localMap.get(expr.expression.text);
       if (localIdx !== undefined) {
@@ -3253,6 +3231,8 @@ export function tryNamespaceConstantAndSymbolReads(
           ) {
             isVecLike = true;
           }
+        } else if (localType?.kind === "externref" && isInlineTaggedTemplateParameter(ctx, expr.expression)) {
+          inlineTemplateParam = isVecLike = true;
         }
       }
     }
@@ -3267,10 +3247,8 @@ export function tryNamespaceConstantAndSymbolReads(
       }
     }
     if (isVecLike) {
-      // Compile the object expression, cast to template vec, and get raw field
-      // Guard with ref.test to avoid illegal cast trap if the runtime type
-      // is a base vec (not a template vec with the extra raw field).
-      compileExpression(ctx, fctx, expr.expression);
+      const receiverType = compileExpression(ctx, fctx, expr.expression);
+      if (inlineTemplateParam && receiverType?.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
       const baseVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
       const rawTmp = allocLocal(fctx, `__raw_tmp_${fctx.locals.length}`, { kind: "ref_null", typeIdx: baseVecTypeIdx });
       const rawObj = allocLocal(fctx, `__raw_obj_${fctx.locals.length}`, { kind: "anyref" });
@@ -3653,7 +3631,7 @@ function emitExternGetReceiverGuard(
       boxed: numeric && ctx.funcMap.get("__box_number") !== undefined,
       syntacticNonNull: isProvablyNonNull(expr.expression, ctx.checker),
     },
-    () => typeErrorThrowInstrs(ctx, expr),
+    () => typeErrorThrowInstrs(ctx, expr, fctx),
     // (#4519) §7.3.2 rejects `undefined` as well as `null`, and under the #4489
     // S1 regime `undefined` is a NON-null singleton. `objTmp` is an externref
     // local (allocated by the caller), which is the shape this builder wants.
@@ -3887,10 +3865,15 @@ export function finalizeStructAndDynamicMemberGet(
       // undefined → helper unavailable; fall through to the legacy path.
     }
 
+    // Externref-backed builtin subclasses are represented by the host object
+    // returned from `super(...)` in JS-host mode. Their registered class struct
+    // is bookkeeping only and must never be used to read the live instance.
+    const isHostExternrefBackedClass = !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName);
+
     // Handle struct field access (named or anonymous)
     const structTypeIdx = ctx.structMap.get(typeName);
     const fields = ctx.structFields.get(typeName);
-    if (structTypeIdx !== undefined && fields) {
+    if (!isHostExternrefBackedClass && structTypeIdx !== undefined && fields) {
       const exactField = tryEmitExactStructFieldGet(
         ctx,
         fctx,
@@ -4140,7 +4123,10 @@ export function finalizeStructAndDynamicMemberGet(
   // For externref objects (e.g. results of host calls like RegExp.exec()),
   // use __extern_get(obj, key) to dynamically read the property at runtime.
   {
-    const objWasmType = resolveWasmType(ctx, objType);
+    const objWasmType =
+      typeName && !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName)
+        ? ({ kind: "externref" } as const)
+        : resolveWasmType(ctx, objType);
     const isExternObj =
       objWasmType.kind === "externref" ||
       // (#3033 Bug 2b) CHAINED dynamic read: the receiver is itself a purely-
@@ -4192,7 +4178,7 @@ export function finalizeStructAndDynamicMemberGet(
         // ref.test ladder. Flag-gated (declines → byte-identical fallthrough);
         // flag-independent census under JS2WASM_FNCTOR_TYPED_READS_DEBUG.
         const fnctorTypedGet = tryEmitFnctorTypedFieldGet(ctx, fctx, expr, propName, objExprType, () =>
-          typeErrorThrowInstrs(ctx, expr),
+          typeErrorThrowInstrs(ctx, expr, fctx),
         );
         if (fnctorTypedGet !== undefined) return fnctorTypedGet;
         // If the expression produced a ref/ref_null (struct), convert to externref

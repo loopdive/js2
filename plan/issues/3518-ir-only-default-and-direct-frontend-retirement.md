@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-24
+updated: 2026-08-25
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -1229,50 +1229,528 @@ report merge rejects a duplicate canonical site even when its AST objects were
 cloned or reparsed. C0 runs the existing B2 WasmGC/linear runtime controls and
 proves byte/runtime route policy is unchanged before its signed checkpoint.
 
-Add `src/codegen/multi-prepared-string-leaf.ts` rather than broadening the
-numeric scalar or array recognizers. The route is default-on only for
-experimental-IR, non-disabled, standalone WasmGC, non-fast, non-WASI,
-multi-source graphs. `JS2WASM_MULTI_PREPARED_STRING_CUTOVER=0` is the narrow
-route rollback and must restore exactly the two measured target rows; it is
-not permission for an additional frontend. The implementation PR must add it
-atomically to #4522's live `retire-at-R9` table rather than leaving a fifth
-bounded route switch outside the inventory.
+##### C0 current-main implementation plan (2026-08-25)
 
-Candidate eligibility is structural and source-qualified, never the spelling
-`bench_string`:
+Implement C0 as one behavior-neutral signed PR on the current `main`, with no
+C1 planner or C2 route wiring mixed into the delta. Preserve the reviewed
+two-file site-ID draft as input, but do not publish that foundation alone: the
+checkpoint is complete only when both backends and every publication boundary
+use the new authority.
 
-1. exactly one exported, bodyful, top-level, non-async, non-generator,
-   non-generic, zero-parameter function in the entry source with explicit
-   `number` return;
-2. exactly one string accumulator declaration, one shared
-   `IrCountedStringAppendPlan`, and one return of that accumulator's `.length`;
-3. no other local, statement, call, property read, loop, capture, class,
-   module-init/storage terminal, derived owner, or cross-file component; and
-4. one source-qualified function-value use as argument four of the exact
-   imported `helpers.ts::addBenchCard` call owned by a distinct direct `main`
-   terminal.
+1. **Identity and contract surface.** Add
+   `src/ir/counted-string-append-provenance.ts` as the only brand,
+   factory/parser/currentness, and final association authority. The primitive
+   grammar proves a source-qualified, non-derived UnitId and canonical
+   fixed-width non-negative source span; the projection and final association
+   additionally prove that UnitId is an inventoried terminal owner. Add
+   required `siteId` to
+   `IrCountedStringAppendLoweringPlan` and
+   `PreparedCountedStringAppendReceipt`; add optional
+   `countedStringAppendSite` to `IrInstrStringRepeat` and the builder API.
+   Bump `IR_FORMAT_VERSION`, the contract prose, JSON schema, and backend
+   contract assertions from v5.2 to v5.3. The optional instruction field is
+   serialized semantic state; the schema must reject malformed values when it
+   is present while continuing to admit unrelated generic repeats without it.
+2. **Single projection and consumption.** At the WasmGC
+   `projectIrIntegrationLoweringPlans` seam and the linear
+   `planLinearIrOverlay` seam, create the site ID exactly once after the live
+   loop/source/declaration/UnitId proof succeeds. Revalidation must recompute
+   the same ID from the retained source span; it may not accept spelling,
+   map position, or AST object identity. `from-ast` passes that exact ID only
+   to the two-or-more-trip `emitStringRepeat`; zero/one-trip plans still retain
+   their site ID and are consumed exactly once without emitting a
+   provenance-bearing repeat.
+3. **Shared final association.** Expose one pure helper from the provenance
+   module that accepts retained plans plus successful final terminal artifacts
+   and returns frozen receipts in canonical retained-plan order. It builds a
+   unique expected-site index, walks every artifact deeply (including an
+   artifact with no counted sidecar), selects prepared executable
+   `asyncRuntime` state bodies when present and otherwise the semantic
+   `asyncPlan` bodies (never both), ignores only site-less generic repeats,
+   and joins each provenance-bearing repeat to the exact site, source,
+   terminal owner, and canonical provider. It rejects malformed, unknown,
+   borrowed, duplicate, missing, and unexpected sites; rejects a
+   provenance-bearing repeat for a zero/one-trip plan; and includes the final
+   provider-bound instruction digest in every receipt. WasmGC and linear call
+   this same helper and use its failure vocabulary. Receipt publication stays
+   after exact terminal patch/backend success; an earlier successful owner
+   cannot publish if a later counted owner makes the transaction fatal.
+4. **Publication and transformation boundaries.** Validate receipt `siteId`
+   against its plan in `integration-report`, retain the existing exact terminal
+   artifact requirement, filter deferred receipts by exact owner without
+   rewriting their site, and detect merge duplicates by canonical site rather
+   than `syntaxPlan.loop` identity. Provider attachment, nested-buffer maps,
+   value-ID rewrites, and instruction digests must preserve/include the field.
+   Until a separately reviewed ownership-transfer proof exists, `inline-small`
+   must not inline from or into a function containing a provenance-bearing
+   repeat, and `monomorphize` must not clone one; add explicit fail-closed
+   guards rather than relying on object spread.
+5. **Non-vacuous evidence.** Extend the focused C0 unit suite with canonical
+   grammar/ownership/span mutations, builder and verifier checks, provider and
+   mapper preservation, digest sensitivity, and pass rejection. Exercise the
+   shared association helper identically for WasmGC-shaped and linear-shaped
+   artifacts with: a coexisting generic repeat, reordered counted sites,
+   replacement by a site-less repeat, deleted/duplicate/unknown/forged sites,
+   same-source different-owner and cross-source borrowing, wrong provider,
+   wrong terminal/source, and zero/one-trip receipt rows. Extend report/merge
+   tests with cloned/reparsed AST objects carrying the same canonical site so
+   duplicate detection cannot regress to object identity. Re-run the existing
+   B2 WasmGC and linear runtime/body-attribution suites and prove route,
+   artifact, and runtime behavior remain unchanged.
+6. **Review and landing discipline.** Use separate non-overlapping execution
+   ownership for production/authentication code and contract/tests, followed
+   by an independent read-only review of their integrated bytes. Add LOC or
+   function-budget allowances only for measured irreducible growth, never
+   speculatively. Before the signed commit run the explicit LOC-regrowth
+   ratchet, then all normal pre-commit hooks; before the non-force push run all
+   normal pre-push hooks. Every heavy command and the commit/push boundary
+   requires a fresh finite non-negative one-minute load strictly below
+   `logical cores - 2`. Shepherd the PR through actual merge before beginning
+   C1.
 
-Follow the array route's composition, but import the actual shared
-`MultiPreparedLeafRouteBase` and `MultiPreparedFunctionValueSupportReceipt`
-exports from `src/codegen/multi-prepared-scalar-leaf.ts`; the array module only
-imports that base and is not its authority. Reuse
-`prepareTopLevelFunctionValueTargetSupport` for the exact `[] -> f64`
-callable/trampoline/cache receipt. The string route prepares only the target
-body with ordinary `prepareIrBodies`; it must never install a handwritten
-Wasm body or prepare/duplicate `main` or `addBenchCard`. Before skip and again
-after all direct owners complete, revalidate the declaration/source/UnitId,
-plan node and symbol identities, callback owner/import target/call AST,
-Program ABI slot and signature, callable/support allocator identities,
-provider dependencies, exact prepared component, and immutable instruction
-digest. Post-certification drift is an `IrInvariantError`, not a direct
-fallback.
+##### C1 current-main implementation plan (2026-08-25)
 
-Wire this route before generic function-value handling with an overlap
-assertion against scalar, Fibonacci, bench-loop, and array routes. The route
-must remove only the target `compileFunctionBody` and `compileStatement` rows.
-The remaining 14 raw audit rows, declarations, module setup, imports/exports,
-DTS/import helper/string pool, callback support, and public artifact surface
-must remain exact.
+C1 is a dormant, behavior-neutral planner checkpoint that begins only after
+C0 is merged on `main`. Its implementation commit adds exactly two files:
+
+- `src/codegen/multi-prepared-string-leaf.ts`; and
+- `tests/issue-3518-multi-prepared-string-leaf-planner.test.ts`.
+
+It must not edit `src/codegen/index.ts`, `MultiPreparedEarlyLeafRoute`, any
+skip/preserve set, `prepareIrBodies`, an environment switch, or #4522's
+retirement inventory. It must not allocate a Wasm function, prepare a body,
+or mutate a `CodegenContext`. Those belong to C2. The checkpoint is useful as
+an independently signed and reviewed local commit because it freezes the exact
+proof object and fail-closed currentness contract C2 must consume instead of
+growing a second recognizer in the orchestrator. It is **not** independently
+publishable: the dead-export audit intentionally ignores tests, so a new
+unconsumed planner module would be new production dead code. Do not add a fake
+import or increase `scripts/dead-export-baseline.json`. Land this issue-plan
+amendment first, create and review the two-file C1 implementation commit, then
+add C2's real production consumer before the branch is pushed or opened as a
+PR.
+
+1. **Minimal dormant planner API.** Define a frozen
+   `MultiPreparedStringLeafShape` containing the exact proof-owned const
+   declaration closure, accumulator declaration, counted loop, `.length` read,
+   return statement, and exact cached shared `IrCountedStringAppendPlan` object.
+   The collector invokes shared `planCountedStringAppend` read-only for the
+   exact structural loop and never rebuilds that proof. Define a
+   frozen `MultiPreparedStringLeafCandidateEvidence` extending the existing
+   function-value evidence with `shape: MultiPreparedStringLeafShape` retained
+   by exact object identity, the entry source/source ID/declaration, the exact
+   projected `IrCountedStringAppendLoweringPlan`, imported target declaration/
+   source ID, and exact caller declaration/UnitId. Candidate currentness must
+   re-walk the body against the retained `candidate.shape`, compare every
+   structural node, symbol, and proof-owned const closure by exact identity,
+   and call
+   `countedStringAppendPlanIsCurrent(proofContext, candidate.shape.plan)`; it
+   must not allocate a fresh shape/plan and compare those wrapper identities.
+   Export only
+   `collectMultiPreparedStringLeafShapes`,
+   `resolveMultiPreparedStringLeafCandidate`,
+   `requireCurrentMultiPreparedStringLeafCandidate`, and
+   `requireCurrentMultiPreparedStringLeafSupport`, plus the exact types in
+   those signatures. The collector invokes the module-private structural
+   eligibility predicate; the resolver consumes collector output and rechecks
+   eligibility; each `requireCurrent*` wrapper calls one module-private boolean
+   currentness predicate. C2 must import every exported value through that real
+   production chain, and `check:dead-exports` must report zero new rows. Do not
+   export redundant boolean/assertion aliases solely for tests. The resolver input carries the current
+   `CodegenContext`, entry source, `MultiPreparedFunctionValuePlan`, safe
+   selection, projected lowering plans, graph safety, checker/oracle proof
+   context, and a `hasForeignLateProvider(unitId)` query. It requires the exact
+   same `ctx.irPlanningIdentityContext`,
+   `plan.identityPlan.identityContext`, and
+   `projectedLoweringPlans.identityContext` object; their source/declaration/
+   UnitId forward and reverse maps must join the exact retained sources,
+   declarations, units, and terminals. The selector's counted-plan map for the
+   candidate UnitId must be an exact singleton containing `shape.plan`, and
+   the projected counted-plan map must have the exact singleton
+   `shape.loop -> candidate.loweringPlan` entry for that candidate. All return
+   values are immutable and every ordinary mismatch returns
+   `undefined`/`false` before mutation; currentness drift after a frozen
+   candidate exists throws the shared invariant vocabulary only when the caller
+   explicitly requests the invariant form.
+
+2. **Exact structural candidate.** Admit one exported, top-level, bodyful,
+   non-async, non-generator, non-generic, zero-parameter entry-source function
+   with an explicit `number` result. Its body contains exactly the top-level
+   immutable declarations named by the retained syntax plan's transitive
+   `startConstDeclarations`, `boundConstDeclarations`, and
+   `fragmentConstDeclarations` union; one `let` string accumulator declaration;
+   the retained counted-string loop; and
+   `return <same-symbol>.length`. Every proof-owned const shares the same
+   runtime owner, resolves to the exact retained declaration/symbol, and
+   lexically dominates its use and the loop. Empty proof arrays retain the
+   minimal accumulator/loop/return form. Resolve symbols through the checker;
+   do not accept spelling equality. Reject a missing, duplicated, nested,
+   reordered-after-use, or unreferenced const as well as any other declaration,
+   statement, loop, call, property read, accumulator alias/reassignment/
+   capture, class, module-init/storage terminal, or derived owner. Accept the
+   shared counted proof's supported `+=`, assignment, braced-body,
+   nonempty-seed, identifier fragment/start/bound chains, and zero/one/two-plus
+   trip shapes without copying their syntax recognizer.
+
+3. **Identity, selection, ABI, and provenance join.** Require one exact
+   source-owned, self-owned `top-level-function` terminal UnitId for the
+   candidate; the declaration, identity inventory, claim, safe UnitId,
+   selection, source record, `functionClaimsByUnitId`, both override maps, and
+   Program ABI registry must all name that same unit. The callable is the
+   unique allocated empty target with exact `[] -> f64` ABI. Scope the route
+   exclusions to that candidate owner: reject its module-init selection/
+   storage, class ownership, derived children, local-call or cross-file call
+   component, direct caller activation target, or additional runtime
+   function-value target. Evaluate foreign-late-provider evidence with the
+   existing `multiIrFunctionValueLeafHasForeignLateProvider(..., true)`
+   semantics so the candidate's one expected function-value target does not
+   reject itself. Unrelated `main` edges, the second `helpers.ts` import, and
+   helper-owned arrow support remain valid graph members and must not be
+   rejected as candidate dependencies. Require exactly one selector-retained
+   syntax plan and one projected
+   lowering plan for the same loop. The projected plan must retain the exact
+   syntax-plan object, source file/source ID/terminal owner, canonical
+   `String.prototype.repeat` provider, and current C0 site. Re-run
+   `countedStringAppendPlanIsCurrent` and
+   `requireCurrentIrCountedStringAppendPlanSite`; a same-shaped loop, copied
+   AST, borrowed site, spelling match, or map position is never authority.
+
+4. **Exact callback and import edge.** The candidate declaration has exactly
+   one value use: argument index 3 of one non-optional, non-generic,
+   non-spread call with exactly four arguments. Its nearest function owner is
+   the exact top-level entry-source `main` declaration, with a distinct
+   self-owned terminal UnitId, explicit `() -> void`, and no safe/final IR
+   selection. No stored, returned, directly-called, duplicated, aliased, or
+   second-caller use is accepted. Resolve the callee with
+   `resolveMultiPreparedFunctionValueImportTarget`, then additionally require
+   a direct unaliased named import whose exact inventory `sourceKey` is
+   `helpers.ts`, exact exported declaration name is `addBenchCard`, and exact
+   distinct source/UnitId/declaration joins hold. The oracle resolves exactly
+   one bodyful direct named-export declaration with zero type parameters and no
+   overload siblings. Its four parameters are exactly
+   `HTMLElement, string, string, () => number`; all are required and none is
+   optional, rest, defaulted, or generic. Its explicit result is `void`.
+   Reject suffix matches, shadowing, re-export, same-source targets, duplicate
+   targets, or helper ABI drift. Candidate currentness must rerun the exact
+   argument-index/four-argument/nonspread/nonoptional/nongeneric call proof,
+   unaliased import declaration, source key, singleton helper declaration, and
+   complete helper ABI; shared function-value-use currentness alone is not
+   sufficient.
+
+5. **Graph and allocation safety.** Reuse `buildMultiIrGraphSafety`,
+   `exactAllocatedNumericCallable`, and the shared Program-ABI authorities.
+   Apply target-reference and occupied-target checks to the candidate's exact
+   route projection, not to unrelated functions in the two-source program.
+   Reject candidate/import/caller name collisions, a foreign reference to the
+   candidate outside the one callback edge, import-alias collisions, any
+   occupied candidate-target count other than one, `$`-suffix slots, live
+   candidate bindings, preoccupied trampoline/cache namespaces, and mismatched
+   callable objects or handles. C1 may inspect the allocation state but must
+   prove its own calls do not change module arrays, maps, registries,
+   Program-ABI plans/locators, or selection cardinalities.
+
+6. **Three-boundary support currentness.** Wrap rather than alias
+   `functionValueSupportIsCurrent` and distinguish three exact boundaries:
+
+   - the pre-support candidate check requires the empty target body and empty
+     trampoline/cache namespaces; a mismatch is an ordinary pre-mutation
+     decline;
+   - immediately after `prepareTopLevelFunctionValueTargetSupport`, the
+     post-support/pre-body `before-prepare` check requires the target body still
+     empty and authenticates the exact frozen support receipt with
+     `functionValueSupportIsCurrent(ctx, candidate, receipt, true)`. The
+     support namespaces are now occupied and must not be tested for emptiness.
+     At this boundary the source-callable registry observation is the Program-
+     ABI authority for the target; only the trampoline/cache have session
+     plans and current locators. Authenticate the exact target/handle,
+     trampoline function/handle/ref/binding/one-call body, cache global/handle/
+     ref/binding/type/init/mutability, unique live support names, recomputed
+     support role/binding references, and reverse singleton row
+     `ctx.funcClosureSingletonKeyByFuncIdx.get(targetHandle) === legacyName`.
+     Any mismatch is fatal because support allocation already began; and
+   - `after-direct` authenticates the same receipt and current candidate/
+     callback edge with
+     `functionValueSupportIsCurrent(ctx, candidate, receipt, false)` while
+     permitting a bodyful target. C2 must additionally authenticate the exact
+     live target body-array reference and instruction-identity snapshot; this
+     boundary never treats an arbitrary nonempty body as the prepared one.
+
+   Stable candidate currentness is separate from the pre-support eligibility
+   predicate and never reruns the initial namespace-emptiness checks after
+   allocation.
+
+7. **Non-vacuous pure test matrix.** Build the full in-memory
+   `website/playground/examples/benchmarks/string.ts` plus `helpers.ts` graph:
+   exactly two sources, six inventory units, five terminals, both entry-source
+   imports, and the one helper-owned arrow support unit. Create the real checker, identity inventory/context,
+   declaration allocation, safe selection, projected C0 lowering plan, and
+   Program-ABI support objects. C1 is intentionally dormant, so the test
+   fixture must explicitly request counted-string proof through the same
+   exported planning boundary used by the enabled single-source controls; it
+   must not assume current multi-source orchestration populated the plan or
+   hand-forge a lowering-plan object. Pin positive controls for a renamed
+   candidate, canonical fixture, unrelated `main`/helper edges retained as
+   positive evidence, all shared assignment/seed/trip-count and immutable
+   fragment/start/bound declaration-chain variants, and
+   unchanged module/map/registry cardinalities after every planning call.
+   Mutations must reject:
+
+   - export/body/async/generator/type-parameter/parameter/result drift;
+   - extra statement/local/loop/call/property, wrong return receiver/property,
+     accumulator alias/reassignment/capture;
+   - missing/duplicate/detached syntax or projected plan, stale/forged/
+     borrowed site/span, wrong source/owner/provider;
+   - missing/swapped/non-self claims, terminals, declarations, selections,
+     source records, override rows, module-init/class/derived/call-component
+     ownership;
+   - missing/duplicate/stored/returned/directly-called callback use, second
+     caller, wrong argument index/arity, spread, optional or generic call;
+   - aliased/shadowed/re-exported/same-source/wrong-sourceKey import, wrong
+     helper name, duplicate target, callback-parameter or result ABI drift;
+   - wrong/nested/selected caller, equal/swapped/missing UnitIds, occupied
+     names/suffix keys/live bindings, target/support ABI or identity drift; and
+   - unfrozen/swapped support receipt members, wrong trampoline target/body,
+     cache shape, binding, locator/current index, duplicate live support names,
+     and final AST/selection/safety/site drift.
+
+   Every mutation must identify the one fact it changes, retain a positive
+   sibling, and assert planner cardinalities remain zero/one as expected so an
+   empty detector cannot masquerade as a pass.
+
+8. **Checkpoint gates and C2 handoff.** Measure LOC/function growth and add
+   only exact #3518 allowances if a gate proves them necessary; do not add a
+   speculative `total` allowance or any dead-export baseline row. Run the
+   focused planner suite, TypeScript 7 and 5, Prettier, IR
+   layering/dialect/fallback, oracle/coercion/optimization, LOC and function
+   ratchets. Run the LOC ratchet again immediately before a normally signed C1
+   commit and run every normal pre-commit hook. Keep that signed commit local
+   and obtain an independent read-only review. C2 must then import only this
+   frozen planner contract, add the route union/orchestration/rollback
+   inventory, prepare the target, request the exact skip, and revalidate the
+   same evidence after all direct owners; C2 must not duplicate or weaken any
+   C1 predicate. Only the combined C1+C2 change may run the normal pre-push
+   hooks, prove the production reachability audit has zero new dead exports,
+   open a ready PR, and enter the merge queue. Every heavy command and every
+   commit/push boundary uses a fresh finite nonnegative one-minute load
+   strictly below `logical cores - 2`.
+
+##### C2 current-main orchestration plan (2026-08-25)
+
+C2 begins only after C0 is on live `main` and the signed C1 two-file checkpoint
+has passed independent review. It turns the dormant planner into one narrowly
+default-on standalone WasmGC route. The initial production boundary is:
+
+- extend `src/codegen/multi-prepared-string-leaf.ts` with the route and
+  currentness contract;
+- add only a type-level string arm to `MultiPreparedEarlyLeafRoute` in
+  `src/codegen/multi-prepared-scalar-leaf.ts`;
+- thread the scalar-claim exclusion into the array planner in
+  `src/codegen/multi-prepared-array-leaf.ts` before its first preparation;
+- orchestrate it in `src/codegen/index.ts`;
+- thread the frozen pre-mutation exclusion input through
+  `src/codegen/multi-prepared-fibonacci-pair.ts` to the later generic route;
+- add `tests/issue-3518-bench-string-prepared-cutover.test.ts`;
+- extend `tests/issue-1004.test.ts` only with the exact retained callback/
+  observable-result assertions;
+- update #4522's bounded-switch inventory in the same behavioral commit; and
+- add a durable runtime measurement driver before changing optimization
+  retirement evidence.
+
+No `src/ir/*`, public compiler option, schema/dialect, handwritten Wasm body,
+linear executable route, or second planner is in scope.
+
+1. **Exact-loop proof injection is a prerequisite, not a global mode.** The
+   current multi-source call to `planMultiIrOverlaySource` never sets
+   `enableCountedStringAppendProof`, so it cannot produce C0's authenticated
+   plan/receipt. C1's pure preliminary collector first proves the exact
+   structural/callback/import shape and caches the exact shared
+   `IrCountedStringAppendPlan`. Add a private exact-loop plan resolver/map to
+   `planIrOverlay` and `planMultiIrOverlaySource`; it returns that cached object
+   only when `loop === chosenLoop`. Keep the existing source-wide boolean only
+   for current single-source controls. Never probe or admit another loop in the
+   source, and require the projected C0 lowering plan to retain the same syntax-
+   plan object.
+
+   Run this through the ordinary multi-source planning boundary, then resolve
+   the full C1 selection/ABI/site/currentness contract. If full resolution
+   fails, discard the provisional proof-enabled plan reference and let late
+   `compileMultiIrOverlaySource` replan with proof disabled; the near miss must
+   not reach a late counted-string overlay. `planIrOverlay` may perform its
+   ordinary baseline type registrations, so zero-side-effect assertions begin
+   at route support/allocation and compare the failed preflight with a normal
+   proof-disabled planning control. Only a fully certified exact candidate with
+   the explicit string-route switch off retains the proof-enabled no-route
+   state, making the ordinary late overlay deterministically yield
+   `legacyBodyEmitted: true` and `irBodyEmitted: true`. Builder-off is the exact
+   proof-disabled direct control.
+
+2. **Reject overlaps before allocation.** The current
+   `EarlyMultiPreparedScalarLeafState.route` and entry-source route map are
+   structurally singular, so this checkpoint deliberately admits at most one
+   successful early route for the one entry source. It does not widen that API
+   into a multi-route container. Maintain persistent frozen claimed
+   source/terminal/target snapshots. Start empty; after each successful earlier
+   scalar route, derive a new snapshot without mutating the old one. Extend the
+   array planner's existing resolve-then-prepare call to accept that snapshot
+   and reject an overlapping private candidate after resolution but before its
+   first allocation/preparation; no resolver export is required. Derive the
+   next snapshot, resolve the string candidate against it before string support
+   allocation, then derive the snapshot supplied to generic function-value/
+   Fibonacci planning. Bench-loop participates in the same exclusivity proof
+   where its source graph overlaps. Thread that input through
+   `planEarlyMultiPreparedFunctionValueRoutes` in
+   `multi-prepared-fibonacci-pair.ts`; it likewise checks its private resolved
+   candidate before its first mutation. Candidate resolution order is scalar,
+   array, string, then generic function-value/Fibonacci. A conflict discovered only while
+   inserting the final route map is too late because both planners may already
+   have allocated support. Once an earlier route succeeds, every later family
+   must see its exclusion and decline before mutation. Positive controls prove
+   scalar, array, string, and generic/Fibonacci routes independently retain
+   their existing behavior in otherwise disjoint fixtures; they do not claim
+   simultaneous composition within one entry source. A one-fact overlap leaves
+   state byte/cardinality-equal to the earlier-route-only control, not
+   necessarily to the empty pre-orchestration module.
+
+3. **Exact early route and captured projection.** Define a frozen
+   `MultiPreparedStringLeafRoute extends MultiPreparedLeafRouteBase` with
+   `routeKind: "string"`, the full C1 candidate, the exact
+   `MultiPreparedFunctionValueSupportReceipt`, the exact
+   `PreparedCountedStringAppendReceipt`, the allocated target function, the
+   exact live body-array reference, and a frozen shallow snapshot of the
+   prepared instruction object identities.
+   `projectIrIntegrationLoweringPlans` creates a new frozen lowering-plan
+   object on every projection, so project once for the
+   explicit target-only early prepared selection, resolve C1 against that
+   captured object, and
+   pass the same projection to `prepareIrBodies`. The preparation callback
+   first asserts the selection is target-only. Its report must contain exactly
+   one valid receipt whose plan object, site, source, owner, component,
+   artifact, provider, and signature match the captured C0 evidence. Store that
+   receipt; a structurally equal late reprojection may prove currentness but may
+   not replace it.
+
+4. **Reuse shared callback support and ordinary preparation.** Call the
+   existing private `prepareTopLevelFunctionValueTargetSupport` for the exact
+   `[] -> f64` target/trampoline/cache graph. That call is C2's first mutation.
+   Once it begins, a missing/invalid support receipt, failed C1
+   `before-prepare` check, preparation withdrawal/throw, malformed preparation
+   report/receipt, skip-set mismatch, or artifact/component mismatch is an
+   `IrInvariantError` with no direct retry. Call ordinary `prepareIrBodies`
+   only for the target, then
+   retain the exact live body-array reference plus frozen `[...body]` snapshot.
+   Do not freeze the allocator-owned `WasmFunction`, its live body array, or
+   instruction objects; later compilation stages legitimately mutate them.
+   Never prepare or duplicate direct `main` or imported `addBenchCard`; direct `main` must call
+   through the same trampoline/cache receipt. Never synthesize a provider or
+   install an equivalent Wasm body by hand.
+
+5. **Use the generic direct-body skip boundary exactly.** The existing
+   `compileMultiPreparedScalarLeafDeclarations` path may consume the added
+   route arm without a string-specific compiler. Require free-functions
+   `requestedSkipProjection`, `skipBodies`, `preserveBodies`, and
+   `completedBodies` to be exact singleton sets for the target; require
+   `skippedFunctionUnitIds` to be exactly `{route.unitId}`. No class member,
+   module init, implicit constructor, caller, import, or support function may
+   enter the skip. The default route removes only the target's physical
+   `compileFunctionBody` and `compileStatement` rows; the other 14 raw audit
+   rows stay exact.
+
+6. **Revalidate after every direct owner.** After direct body compilation and
+   `finalizeMethodTrampolines`, recompute the final safe selection and require
+   the C1 candidate, callback/import edge, source/UnitId, C0 site and plan
+   currentness, support receipt in `after-direct`, the same live target
+   body-array reference, the expected final length and per-index instruction
+   object identities from the shallow snapshot, and exact skipped UnitId. Then
+   call
+   `completePreparedIrIntegration` and require the stored counted-string
+   receipt to occur exactly once in the merged report before
+   `consumeIrOverlayReport` performs the terminal audit. After support
+   allocation starts, any missing, duplicate, foreign, or drifted fact is
+   `IrInvariantError` with no direct retry and no target legacy rows. Ordinary
+   mismatches may decline to direct only before that first mutation.
+
+7. **One rollback switch with two distinct controls.** Add internal
+   `JS2WASM_MULTI_PREPARED_STRING_CUTOVER`, default on only for
+   experimental-IR, non-disabled, standalone WasmGC, non-fast, non-WASI,
+   multi-source graphs. `=0` restores the two target direct rows and must retain
+   the exact proof-enabled plan so the late overlay produces
+   `legacyBodyEmitted: true` and `irBodyEmitted: true`.
+   `JS2WASM_IR_STRING_BUILDER=0` is the true direct artifact with those two rows
+   and `irBodyEmitted: false`. Add the new switch atomically to #4522's
+   `retire-at-R9` table, update the live `JS2WASM_MULTI_*` count from four to
+   five, and leave the separate original four `JS2WASM_IR_*` count unchanged.
+
+8. **Focused orchestration and anti-widening tests.** Use
+   `website/playground/examples/benchmarks/string.ts` and require result 5000
+   with a renamed-function positive sibling. Keep
+   `tests/issue-3518-counted-string-cutover.test.ts` as an anti-widening
+   control: its multi-source fixture lacks the exact `addBenchCard` callback
+   edge and stays direct. C2 owns mutations for selection/source/UnitId/site/
+   receipt/artifact/component/body/instruction/support drift; exact skip/
+   preserve/completed mismatch; callback/direct-caller/ABI drift; second
+   candidate; overlap with scalar/array/bench-loop/generic-function/Fibonacci;
+   and missing/duplicate/foreign post-merge receipts. Host-GC, fast, WASI,
+   IR-first-off, IR-off, unsupported backends, and pre-certification shape
+   mutations remain direct with zero route allocation/preparation side effects;
+   ordinary proof-disabled planning registrations are the control baseline. Add
+   `JS2WASM_TEST_REQUIRE_MULTI_PREPARED_STRING_LEAF=1` so every positive route
+   test fails if detection is empty. Add a parsed, test-only
+   `JS2WASM_TEST_TAMPER_MULTI_PREPARED_STRING_LEAF` selector over the exact
+   UnitId and explicit post-certification phases (support, preparation receipt,
+   skip report, post-direct currentness, and post-merge receipt). Each selector
+   must match exactly once after the first mutation and prove the invariant/no-
+   fallback boundary; an unmatched or multiply matched selector is itself an
+   invariant.
+
+9. **Artifact and ownership audit.** Prepared raw audit has 14 rows versus the
+   direct control's 16; only target `compileFunctionBody` and
+   `compileStatement` disappear. Raw and optimized output preserve exports,
+   imports, DTS/import helper, string pool, callback behavior, and Program-ABI
+   source/target/trampoline/cache joins without pinning numeric slots. Resolve
+   call targets structurally. The target WAT contains one aggregate repeat and
+   one concat, no counted loop, dynamic carrier, externref round trip, boxing,
+   per-iteration call/allocation, AST dispatcher, or duplicate repeat/concat.
+   Host-string WasmGC, native-string WasmGC, and linear must continue lowering
+   the same in-memory v5.3 instruction through their authenticated providers;
+   C2 makes no linear serialization/cutover claim. Compare the optimized
+   Prepared artifact to the contemporaneous builder-off direct artifact:
+   Prepared optimized bytes, resolved helper/provider call census, and
+   allocation census must each be no greater than direct. Use no unrelated
+   #4035 size ceiling or historical binary baseline. Raw binary difference is
+   observational only; resolved structural call/allocation targets are the
+   acceptance authority.
+
+10. **Runtime and retirement evidence are a later signed checkpoint.** Existing
+    runtime scripts do not satisfy this issue's protocol. Add a durable driver,
+    preferably `scripts/measure/bench-string-ir-runtime.mts`, that launches
+    fresh identical memory-capped processes in interleaved ABBA order, retains
+    every sample, collects at least 30 valid samples per arm, brackets with a
+    contemporaneous direct/direct control, and publishes the paired median plus
+    a 95% bootstrap interval. Every child launch enforces a finite nonnegative
+    one-minute load strictly below `logical cores - 2`. Direct/direct deviation
+    above 5%, Prepared/direct median above 1.05, or interval upper bound above
+    1.10 fails closed.
+
+    Do not mark `IR-OPT-COUNTED-LITERAL-STRING-APPEND` retirement-ready in the
+    compile-once PR. Only after complete semantic, output, and runtime evidence
+    may its owner move from `containsCountedLiteralStringAppend` to the actual
+    executable lowerer (expected `from-ast.ts::lowerPreparedCountedStringAppend`)
+    in `plan/log/ir-optimization-retirement-ledger.md` and set
+    lowering/complete/retirement-ready. At that point, and only then, update
+    `tests/issue-3792-ir-optimization-retirement-gate.test.ts` to the measured
+    totals of 46 rows, 33 complete, and 4 ready. Neither evidence file belongs
+    to the compile-once C2 commit.
+
+11. **C2 landing discipline.** Run the new route/anti-widening suites, the
+    unchanged prior scalar/array/bench-loop/Fibonacci controls, TypeScript 7 and
+    5, Prettier, dead-export, IR layering/dialect/fallback, oracle/coercion/
+    optimization, LOC, and function-growth ratchets. Before every heavy command
+    and commit/push boundary, require a fresh finite nonnegative one-minute load
+    strictly below `logical cores - 2`. Run `pnpm run check:loc-budget` again
+    immediately before the normally signed C2 commit. Run all normal precommit
+    and prepush hooks without `--no-verify` or a skip environment. Push only the
+    combined C1+C2 branch after its independent read-only review, then open a
+    ready PR and shepherd it through the merge queue.
 
 #### Acceptance and non-vacuous controls
 
@@ -1314,9 +1792,9 @@ Add `tests/issue-3518-bench-string-prepared-cutover.test.ts` and extend
 - counter-dependent/prepend/self-fragment, multi-statement, dynamic or unsafe
   bound, non-unit/decreasing update, alias/reassignment/capture/getter/call,
   extra candidate/caller, callback source/ABI drift, provider/allocator/plan
-  tamper, class/module-init/cross-file, fast, WASI, IR-disabled, and unsupported
-  backend mutations decline before skip or fail with typed pre-emission
-  evidence.
+  tamper, class/module-init, an unexpected candidate-owned cross-file call
+  component, fast, WASI, IR-disabled, and unsupported backend mutations decline
+  before skip or fail with typed pre-emission evidence.
 
 The optimization ledger row `IR-OPT-COUNTED-LITERAL-STRING-APPEND` becomes
 retirement-ready only after semantic, output-shape, and paired runtime evidence
