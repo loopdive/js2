@@ -13,6 +13,7 @@ export type IrRuntimeEvalSiteKind =
   | "function-constructor"
   | "intrinsic-value"
   | "global-eval-property"
+  | "global-script-eval"
   | "provider-definition";
 
 export interface IrRuntimeEvalSite {
@@ -56,6 +57,7 @@ const PROVIDER_NAMES = new Set([
   "__runtime_new_function",
   "__runtime_indirect_eval",
   "__runtime_direct_eval",
+  "__runtime_script_eval",
   "__runtime_apply_interpreted",
 ]);
 
@@ -212,7 +214,13 @@ export function buildIrRuntimeEvalBoundaryPlan(
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
         const callee = unwrapExpression(node.expression);
-        if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
+        if (ts.isIdentifier(callee) && callee.text === "__js2wasm_global_script_eval") {
+          const source = node.arguments?.[0];
+          const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
+          addSite(sourceFile, id, node, "global-script-eval", "required", literalSource);
+          if (literalSource !== undefined) dynamicSourceFragments.push(literalSource);
+          else if (source !== undefined) unknownDynamicSource = true;
+        } else if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
           if (callee.text === "eval") {
             const source = node.arguments?.[0];
             const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;

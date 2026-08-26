@@ -411,7 +411,7 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
  * HasProperty because a Global Environment Record delegates object-record
  * lookup through the prototype chain. `missingAsUndefined` implements the
  * special non-throwing lookup required by `typeof IdentifierName`. */
-export function emitRuntimeEvalGlobalRead(
+function emitRuntimeEvalGlobalObjectRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   name: string,
@@ -463,6 +463,109 @@ export function emitRuntimeEvalGlobalRead(
     else: missingBody,
   });
   return { kind: "externref" };
+}
+
+const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
+
+export function emitRuntimeEvalGlobalLexicalReadOrFallback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  fallbackBody: Instr[],
+  fallbackType: ValType,
+): ValType | null {
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) {
+    fctx.body.push(...fallbackBody);
+    return fallbackType;
+  }
+  const globalLocal = allocLocal(fctx, "__runtime_eval_dynamic_global_obj_" + fctx.locals.length, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: globalLocal });
+  const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
+  const hasIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_has");
+  if (getIdx === undefined || hasIdx === undefined) {
+    fctx.body.push(...fallbackBody);
+    return fallbackType;
+  }
+  const mapLocal = allocLocal(fctx, "__runtime_eval_dynamic_lexicals_" + fctx.locals.length, {
+    kind: "externref",
+  });
+  addStringConstantGlobal(ctx, RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY);
+  const mapPropertyKey = stringConstantExternrefInstrs(ctx, RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY);
+  const resolvedBody: Instr[] = [
+    { op: "local.get", index: mapLocal },
+    ...stringConstantExternrefInstrs(ctx, name),
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx },
+  ];
+  const savedBody = fctx.body;
+  fctx.body = resolvedBody;
+  emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  fctx.body = savedBody;
+  const mapLookupBody = resolvedBody;
+  const mapHasBody: Instr[] = [
+    { op: "local.get", index: mapLocal },
+    ...(() => {
+      addStringConstantGlobal(ctx, name);
+      return stringConstantExternrefInstrs(ctx, name);
+    })(),
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_has") ?? hasIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: mapLookupBody,
+      else: fallbackBody,
+    },
+  ];
+  const mapPropertyPresentBody: Instr[] = [
+    { op: "local.get", index: globalLocal },
+    ...mapPropertyKey,
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx },
+    { op: "local.set", index: mapLocal },
+    { op: "local.get", index: mapLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: fallbackBody,
+      else: mapHasBody,
+    },
+  ];
+  // The provider does not install the sidecar until the first global Script.
+  // Check the property before reading it: an absent `$Object` property returns
+  // the module's undefined carrier, which is non-null and unsafe as a receiver
+  // for `__extern_has`.
+  fctx.body.push(
+    { op: "local.get", index: globalLocal },
+    ...mapPropertyKey,
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_has") ?? hasIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: mapPropertyPresentBody,
+      else: fallbackBody,
+    },
+  );
+  return { kind: "externref" };
+}
+/** Read a global name while honoring lexical bindings introduced by the
+ * provider global-Script entry. Ordinary global object lookup remains the
+ * fallback and retains its missing-name behavior. */
+export function emitRuntimeEvalGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  missingAsUndefined: boolean,
+): ValType | null {
+  if (!(ctx.standalone || ctx.wasi) || ctx.runtimeEvalGlobalFunctionBindings !== true) {
+    return emitRuntimeEvalGlobalObjectRead(ctx, fctx, name, missingAsUndefined);
+  }
+  const savedBody = pushBody(fctx);
+  const fallbackType = emitRuntimeEvalGlobalObjectRead(ctx, fctx, name, missingAsUndefined);
+  const fallbackBody = fctx.body;
+  popBody(fctx, savedBody);
+  if (fallbackType === null) return null;
+  return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, fallbackType);
 }
 
 /** Read an identifier that may have been introduced by an earlier direct eval

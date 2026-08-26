@@ -1982,6 +1982,46 @@ export function emitStandaloneIndirectEvalRuntime(
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
 }
 
+/** Standalone host-facing global Script route. This is distinct from
+ * indirect eval: lexical declarations belong to the persistent realm
+ * GlobalEnvironmentRecord and are visible to later global Script calls. */
+export function emitStandaloneGlobalScriptEvalRuntime(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (args.length === 0) {
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
+  if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+  const sourceType = compileExpression(ctx, fctx, args[0]!);
+  if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
+  for (let i = 1; i < args.length; i++) {
+    const extraType = compileExpression(ctx, fctx, args[i]!);
+    if (extraType !== null) fctx.body.push({ op: "drop" });
+  }
+  if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
+  const evalIdx = ensureLateImport(
+    ctx,
+    "__runtime_script_eval",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (evalIdx === undefined) {
+    fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+    emitRuntimeEvalProviderActive(ctx, fctx, false);
+    return { kind: "externref" };
+  }
+  const liveIdx = ctx.funcMap.get("__runtime_script_eval") ?? evalIdx;
+  fctx.body.push({ op: "call", funcIdx: liveIdx });
+  return emitRuntimeEvalResultUnwrap(ctx, fctx);
+}
+
 /** Hoist the realm's first-class `%eval%` wrapper without executing eval. */
 export function ensureStandaloneIntrinsicEvalWrapper(
   ctx: CodegenContext,

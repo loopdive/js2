@@ -50,6 +50,8 @@ export const HOST_RUNTIME_DIRECT_EVAL_IMPORT = "__extern_direct_eval";
  * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
  * the slot itself is deliberately non-enumerable and non-configurable. */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+/** Extensible map for lexical names introduced by a global Script source. */
+export const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
 /**
  * (#4308 slice C) One extra activation-seed entry emitted at every
  * FUNCTION-scoped direct-eval call site, so a provider can tell an activation

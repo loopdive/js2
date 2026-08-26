@@ -77,6 +77,7 @@ import {
   emitImplicitGlobalRead,
   emitRuntimeEvalBindingRead,
   emitRuntimeEvalGlobalRead,
+  emitRuntimeEvalGlobalLexicalReadOrFallback,
   emitRuntimeEvalSharedValueUnwrap,
   runtimeEvalSharedValueUnwrapInstrs,
 } from "../global-environment.js";
@@ -756,6 +757,60 @@ function ambientGlobalReadIsUserFunctionShadowed(ctx: CodegenContext, id: ts.Ide
   return ts.isFunctionDeclaration(decl) && decl.name?.text === name;
 }
 
+function compileRuntimeEvalGlobalLexicalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | null {
+  const name = id.text;
+  const savedFallback = pushBody(fctx);
+  const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
+  if (fallbackType === null) {
+    popBody(fctx, savedFallback);
+    return null;
+  }
+  if (fallbackType.kind !== "externref") coerceType(ctx, fctx, fallbackType, { kind: "externref" });
+  const fallbackBody = fctx.body;
+  popBody(fctx, savedFallback);
+  return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, { kind: "externref" });
+}
+
+function shouldUseRuntimeEvalGlobalLexicalRead(
+  ctx: CodegenContext,
+  skipRuntimeEvalState: boolean,
+  unresolvedInModuleGoal: boolean,
+): boolean {
+  return (
+    !skipRuntimeEvalState &&
+    !unresolvedInModuleGoal &&
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalGlobalFunctionBindings === true
+  );
+}
+
+function compileCapturedGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  name: string,
+  capturedIdx: number,
+): ValType {
+  const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+  if (tdzResult === "check") {
+    emitTdzCheck(ctx, fctx, name);
+  } else if (tdzResult === "throw") {
+    emitStaticTdzThrow(ctx, fctx, id.text);
+  }
+  fctx.body.push({ op: "global.get", index: capturedIdx });
+  const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
+  const gType = globalDef?.type ?? { kind: "f64" };
+  if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
+    fctx.body.push({ op: "ref.as_non_null" });
+    return { kind: "ref", typeIdx: gType.typeIdx };
+  }
+  return gType;
+}
+
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
@@ -791,7 +846,7 @@ function compileIdentifierCore(
     const savedBody = fctx.body;
     fctx.body = staticArm;
     const staticTy = withShadowReadSuppressed(
-      () => compileIdentifierCore(ctx, fctx, id, skipRuntimeEvalState),
+      () => compileIdentifierCore(ctx, fctx, id, true),
       name, // (#4648) marks this as the static fallback arm FOR `name`
     );
     if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
@@ -1134,24 +1189,11 @@ function compileIdentifierCore(
   // Check captured globals (variables promoted from enclosing scope for callbacks)
   const capturedIdx = unresolvedInModuleGoal ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
-    // TDZ check: throw ReferenceError if let/const variable accessed before initialization
-    // Apply static analysis — captured globals are often accessed from closures,
-    // but analyzeTdzAccess handles the cross-function case correctly (returns "check")
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
-    fctx.body.push({ op: "global.get", index: capturedIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
-    const gType = globalDef?.type ?? { kind: "f64" };
-    // Globals widened from ref to ref_null for null init — narrow back
-    if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
-      fctx.body.push({ op: "ref.as_non_null" });
-      return { kind: "ref", typeIdx: gType.typeIdx };
-    }
-    return gType;
+    return compileCapturedGlobalRead(ctx, fctx, id, name, capturedIdx);
+  }
+
+  if (shouldUseRuntimeEvalGlobalLexicalRead(ctx, skipRuntimeEvalState, unresolvedInModuleGoal)) {
+    return compileRuntimeEvalGlobalLexicalRead(ctx, fctx, id);
   }
 
   // Check module-level globals (top-level let/const declarations)

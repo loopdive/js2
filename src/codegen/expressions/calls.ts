@@ -279,6 +279,7 @@ import { compileOptionalCallExpression } from "./calls-optional.js";
 import {
   emitStandaloneDirectEvalRuntime,
   emitStandaloneIndirectEvalRuntime,
+  emitStandaloneGlobalScriptEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
   isGlobalFunctionIdentifier,
   isFunctionCtorImmediateCall,
@@ -6744,6 +6745,29 @@ function compileCallExpression(
     return compileOptionalDirectCall(ctx, fctx, expr);
   }
 
+  const globalScriptEvalCallee = unwrapTransparent(expr.expression);
+  if (
+    ctx.standalone &&
+    ts.isIdentifier(globalScriptEvalCallee) &&
+    globalScriptEvalCallee.text === "__js2wasm_global_script_eval"
+  ) {
+    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    if (runtimeScriptEval !== undefined) return runtimeScriptEval;
+  }
+  // Test262's `$262.evalScript` is a host-facing global-Script entry, not an
+  // ordinary open-object method. Lower the direct canonical spelling before
+  // native `$Object` method dispatch would try to recover a closure from the
+  // harness object. Aliased reads still execute the shim's intrinsic helper.
+  if (
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    expr.expression.name.text === "evalScript" &&
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "$262"
+  ) {
+    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    if (runtimeScriptEval !== undefined) return runtimeScriptEval;
+  }
   // eval(...) — first try static inlining (#1163): if the source argument is
   // a compile-time-constant string, parse it and splice the AST inline at the
   // call site.  This is the zero-runtime-cost path.  If the argument is not

@@ -73,7 +73,21 @@ var $262 = {
     return realm;
   },
   evalScript: function (sourceText) {
-    return eval(sourceText);
+    try {
+      return __js2wasm_global_script_eval(sourceText);
+    } catch (error) {
+      // The standalone compiler recognizes the private host entry above. The
+      // ordinary host lane has no such import, so preserve its native-eval
+      // fallback without swallowing a ReferenceError thrown by the script.
+      if (
+        error instanceof ReferenceError &&
+        typeof error.message === "string" &&
+        error.message.indexOf("__js2wasm_global_script_eval") !== -1
+      ) {
+        return eval(sourceText);
+      }
+      throw error;
+    }
   },
   gc: function () {},
   detachArrayBuffer: function (buffer) {
