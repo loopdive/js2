@@ -679,6 +679,139 @@ describe("#3520 structural IR identity", () => {
     expect(context.declarationByUnitId.size).toBe(inventory.allUnits.length - 1);
   });
 
+  it("joins initialized fields to the exact terminal constructor without widening unsupported nested classes", () => {
+    const fixture = source(
+      "/repo/field-constructor-owners.ts",
+      `
+        function seed() { return 1; }
+        class TopExplicit {
+          value = 1;
+          constructor() {}
+          read() { return this.value; }
+        }
+        class TopImplicit {
+          value = 2;
+          read() { return this.value; }
+        }
+        function outer() {
+          class NestedExplicit {
+            value = 3;
+            constructor() {}
+            read() { return this.value; }
+          }
+          class NestedImplicit {
+            value = 4;
+            read() { return this.value; }
+          }
+          class UnsupportedNestedExplicit {
+            value = seed();
+            constructor() {}
+            read() { return this.value; }
+          }
+          return 0;
+        }
+      `,
+    );
+    const inventory = buildIrUnitInventory([fixture], { entrySource: fixture });
+    const context = buildIrPlanningIdentityContext(inventory);
+    const sourceId = context.sourceIdBySourceFile.get(fixture)!;
+    expect(context.sourceFileBySourceId.get(sourceId)).toBe(fixture);
+    const outer = collectNodes(fixture, ts.isFunctionDeclaration).find(
+      (declaration) => declaration.name?.text === "outer",
+    )!;
+    const outerId = context.unitIdByDeclaration.get(outer)!;
+    const classes = collectNodes(fixture, ts.isClassDeclaration);
+    const classByName = (name: string): ts.ClassDeclaration => {
+      const declaration = classes.find((candidate) => candidate.name?.text === name);
+      if (!declaration) throw new Error(`missing class ${name}`);
+      return declaration;
+    };
+
+    const expectTerminalFieldOwner = (name: string, containingOwnerId: typeof outerId | null): void => {
+      const declaration = classByName(name);
+      const explicitConstructor = declaration.members.find(ts.isConstructorDeclaration);
+      const constructorDeclaration = explicitConstructor ?? declaration;
+      const field = declaration.members.find(
+        (member): member is ts.PropertyDeclaration =>
+          ts.isPropertyDeclaration(member) && ts.isIdentifier(member.name) && member.name.text === "value",
+      )!;
+      const classId = context.classIdByDeclaration.get(declaration)!;
+      const constructorId = context.unitIdByDeclaration.get(constructorDeclaration)!;
+      const fieldId = context.unitIdByDeclaration.get(field)!;
+      const classRecord = inventory.classes.find((record) => record.id === classId)!;
+      const constructorRecord = context.unitByUnitId.get(constructorId)!;
+      const fieldRecord = context.unitByUnitId.get(fieldId)!;
+
+      expect(context.declarationByClassId.get(classId)).toBe(declaration);
+      expect(context.declarationByUnitId.get(constructorId)).toBe(constructorDeclaration);
+      expect(context.declarationByUnitId.get(fieldId)).toBe(field);
+      expect(classRecord).toMatchObject({
+        id: classId,
+        sourceId,
+        lexicalOwnerId: containingOwnerId,
+      });
+      expect(constructorRecord).toMatchObject({
+        id: constructorId,
+        sourceId,
+        lexicalOwnerId: classId,
+        terminal: true,
+        terminalOwnerId: constructorId,
+      });
+      if (containingOwnerId === null) {
+        expect(constructorRecord).not.toHaveProperty("containingTerminalOwnerId");
+      } else {
+        expect(constructorRecord).toMatchObject({ containingTerminalOwnerId: containingOwnerId });
+      }
+      expect(context.terminalByUnitId.get(constructorId)).toBe(constructorRecord);
+      expect(fieldRecord).toMatchObject({
+        id: fieldId,
+        sourceId,
+        lexicalOwnerId: classId,
+        kind: "class-instance-field-initializer",
+        terminal: false,
+        terminalOwnerId: constructorId,
+      });
+      expect(requireIrPlanningOwnerUnitId(context, field.initializer!)).toBe(constructorId);
+    };
+
+    expectTerminalFieldOwner("TopExplicit", null);
+    expectTerminalFieldOwner("TopImplicit", null);
+    expectTerminalFieldOwner("NestedExplicit", outerId);
+    expectTerminalFieldOwner("NestedImplicit", outerId);
+
+    const unsupported = classByName("UnsupportedNestedExplicit");
+    const unsupportedClassId = context.classIdByDeclaration.get(unsupported)!;
+    const unsupportedConstructor = unsupported.members.find(ts.isConstructorDeclaration)!;
+    const unsupportedField = unsupported.members.find(ts.isPropertyDeclaration)!;
+    const unsupportedConstructorId = context.unitIdByDeclaration.get(unsupportedConstructor)!;
+    const unsupportedFieldId = context.unitIdByDeclaration.get(unsupportedField)!;
+    const unsupportedConstructorRecord = context.unitByUnitId.get(unsupportedConstructorId)!;
+    const unsupportedFieldRecord = context.unitByUnitId.get(unsupportedFieldId)!;
+
+    expect(context.declarationByClassId.get(unsupportedClassId)).toBe(unsupported);
+    expect(context.declarationByUnitId.get(unsupportedConstructorId)).toBe(unsupportedConstructor);
+    expect(context.declarationByUnitId.get(unsupportedFieldId)).toBe(unsupportedField);
+    expect(inventory.classes.find((record) => record.id === unsupportedClassId)).toMatchObject({
+      sourceId,
+      lexicalOwnerId: outerId,
+    });
+    expect(unsupportedConstructorRecord).toMatchObject({
+      sourceId,
+      lexicalOwnerId: unsupportedClassId,
+      terminal: false,
+      terminalOwnerId: outerId,
+    });
+    expect(context.terminalByUnitId.has(unsupportedConstructorId)).toBe(false);
+    expect(unsupportedFieldRecord).toMatchObject({
+      sourceId,
+      lexicalOwnerId: unsupportedClassId,
+      terminal: false,
+      terminalOwnerId: outerId,
+    });
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(outerId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(outerId);
+  });
+
   it("keeps planning declaration identities stable when source input order reverses", () => {
     const makeRows = (reverse: boolean) => {
       const a = source(
