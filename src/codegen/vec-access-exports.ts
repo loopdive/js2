@@ -8,7 +8,7 @@
 // finalize passes and re-exports `reserveVecMethodHelper` for its compile-time
 // callers (calls.ts, property-access.ts, closed-method-dispatch.ts).
 
-import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { FuncHandle, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3315)
 import { ensureHoleType } from "./array-holes.js";
@@ -118,6 +118,7 @@ export function vecHostBridgeMaterializerOrdinal(kind: VecHostBridgeMaterializer
 }
 
 const vecHostBridgeAllocations = new WeakMap<CodegenContext, ReadonlyMap<VecHostBridgeKind, VecHostBridgeAllocation>>();
+const vecHostBridgeExportOwners = new WeakMap<CodegenContext, Map<WasmExport, VecHostBridgeDefinition>>();
 
 function vecHostBridgeDefinition(kind: VecHostBridgeKind): VecHostBridgeDefinition {
   const definition = VEC_HOST_BRIDGE_DEFINITIONS.find((candidate) => candidate.kind === kind);
@@ -195,6 +196,11 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
  */
 function publishVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = ensureVecHostBridgeAllocations(ctx);
+  let publishedExports = vecHostBridgeExportOwners.get(ctx);
+  if (!publishedExports) {
+    publishedExports = new Map();
+    vecHostBridgeExportOwners.set(ctx, publishedExports);
+  }
   const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
   for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
     const allocation = allocations.get(definition.kind);
@@ -211,7 +217,9 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
     }
     const logicalNameOccupied = occupied.has(definition.name);
     if (!logicalNameOccupied) {
-      exportFunc(ctx.mod, definition.name, funcIdx);
+      const entry = { name: definition.name, desc: { kind: "func" as const, index: funcIdx } };
+      ctx.mod.exports.push(entry);
+      publishedExports.set(entry, definition);
       occupied.add(definition.name);
     }
     if (logicalNameOccupied || maxOccupiedSuffix >= 0) {
@@ -222,7 +230,9 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
       for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
         const physicalName = `${physicalBase}${"$".repeat(suffixLength)}`;
         if (occupied.has(physicalName)) continue;
-        exportFunc(ctx.mod, physicalName, funcIdx);
+        const entry = { name: physicalName, desc: { kind: "func" as const, index: funcIdx } };
+        ctx.mod.exports.push(entry);
+        publishedExports.set(entry, definition);
         occupied.add(physicalName);
       }
     }
@@ -237,6 +247,9 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
  * suffix. Most emitters are repaired by the late-import shifter, but exports
  * published before the last batch have no function-body traversal to repair
  * them. Resolve by the allocator-owned function object at the freeze point.
+ * The sidecar is important here: a user may legitimately export the same
+ * logical or physical spelling, and a name-based sweep would rewrite that
+ * user export to the compiler helper.
  */
 export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = vecHostBridgeAllocations.get(ctx);
@@ -245,20 +258,7 @@ export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
   // the context's cached `numImportFuncs`. Public export descriptors are raw
   // Wasm indices at this point, so derive the live prefix from the module.
   const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
-  const occupied = new Map<string, VecHostBridgeDefinition>();
-  for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
-    occupied.set(definition.name, definition);
-    const physicalBase = vecHostBridgePhysicalExportBase(definition.kind);
-    for (const entry of ctx.mod.exports) {
-      if (entry.name.startsWith(physicalBase) && /^\$*$/.test(entry.name.slice(physicalBase.length))) {
-        occupied.set(entry.name, definition);
-      }
-    }
-  }
-  for (const entry of ctx.mod.exports) {
-    if (entry.desc.kind !== "func") continue;
-    const definition = occupied.get(entry.name);
-    if (!definition) continue;
+  for (const [entry, definition] of vecHostBridgeExportOwners.get(ctx) ?? []) {
     const allocation = allocations.get(definition.kind);
     if (!allocation) continue;
     const position = ctx.mod.functions.indexOf(allocation.func);
