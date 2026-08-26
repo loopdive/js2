@@ -6,7 +6,7 @@ sprint: current
 created: 2026-07-21
 updated: 2026-08-26
 assignee: ttraenkler/codex
-branch: codex/3525-m0-program-container-plan
+branch: codex/3525-m1-binding-plan
 priority: critical
 horizon: xl
 complexity: XL
@@ -20,7 +20,7 @@ goal: ir-full-coverage
 lane: ir-retirement-r5
 model: gpt-5.6-sol
 parent: 3518
-depends_on: [3520, 3521, 3522, 3523]
+depends_on: [3520, 3521, 3522, 3523, 4260]
 required_by: [3527, 3528]
 related: [1277, 1983, 2138, 2771, 2930, 2931, 3142, 3214, 3493, 3495, 3505, 3518, 4589, 4590, 4591]
 origin: "#3518 R5 — replace per-source M0 overlays with one whole-program preparation owner"
@@ -389,6 +389,432 @@ plumbing is deleted. It does **not** complete #3525: M1 must move cross-file
 binding/call components into pre-body preparation; M2 must move classes,
 closures, globals, and ordered module init; final R5 must converge the
 single-source entry and delete the late per-source overlay and flat-name gates.
+
+## M1A implementation lock — structural callable graph and standalone cross-source components (2026-08-26)
+
+This section is the next bounded implementation checkpoint after M0. It is
+grounded on current `main` at `b8ed99107a3c6ba11585bd7544e30ef21b1e3bf7`
+and on the reviewed M0 coordinator shape. The implementation branch must base
+on the merged M0 implementation, #4260's atomic Prepared publication support,
+and #4755's direct-fallback TDZ prerequisite. It must not copy this plan's
+current line numbers into code or silently adapt around an unmerged dependency.
+
+M1A makes one real retirement step: eligible cross-source top-level function
+components are selected, typed, lowered, and sealed before the first direct
+body in ordinary standalone mode. It removes flat-name authority for that
+population. It does **not** complete all of M1: fast-mode carrier convergence,
+function values, mutable callable bindings, classes, globals, and module init
+remain later milestones and must stay explicitly accounted as typed
+Unsupported/direct-owned units.
+
+### Current-main facts that constrain M1A
+
+The exact structural pieces already exist but are joined too late or projected
+back to names:
+
+- `src/ir/imported-functions.ts` can resolve a named/default import to an exact
+  target `IrUnitId`, and its tests already prove same-labelled declarations
+  remain distinct. Production immediately projects that result through
+  `legacyProjection`, so a valid same-name target becomes unavailable.
+- `planIrOverlay` passes imported-source evidence to selection and imported
+  call planning only under `jsHostExterns`. Standalone therefore cannot even
+  form the exact call edge despite needing no host import for a source unit.
+- `makeMultiIrSafeSelection` then blocks every standalone/WASI cross-file
+  caller and validates targets through `ctx.funcMap`, occupied function names,
+  and `WasmFunction.name`. `prepareMultiIrImportedLowering` repeats the same
+  name lookup for function-value support.
+- `registerImportBindingAliases` copies `funcMap`, `closureMap`,
+  `moduleGlobals`, optional/rest metadata, and live-binding membership from a
+  target spelling to a local spelling. That pass remains necessary for direct
+  fallback, but it cannot be semantic evidence for an IR component: it is
+  last-wins, namespace imports are a no-op, and two source functions with the
+  same display name cannot both be authoritative.
+- `ProgramAbiSourceCallableRegistry` already observes allocator objects by
+  exact source `IrUnitId`, while `ProgramAbiMap` has the low-level mechanics
+  for a non-allocating callable alias (`slotPolicy: "alias"`, `aliasOf`, no
+  locator/final index, and exact signature equality). The session does **not**
+  yet have an honest internal-module-callable alias intent: support aliases use
+  the `support` ID/origin family, source origins require a unit, and import
+  origins describe host/provider callables. M1A must add a bounded provenance
+  rather than force an internal alias through raw `ensurePlan` or mislabel it
+  as a public `export`/platform `import`.
+- `prepareIrBodies` and `compileIrPathFunctions` currently accept one source
+  and one name-keyed override projection. Sequentially preparing two sources
+  would allow the first to publish before the second fails. M1A therefore
+  depends on #4260 and must introduce a genuine cross-source staging entry,
+  not patch-and-rollback or a loop of independent per-source transactions.
+- The reviewed M0 `MultiPreparedProgramOwner` owns the complete source and
+  terminal census, but it is not a plug-in extension point yet: its private
+  state is keyed by `SourceFile`, `sealBodyBoundary()` rejects a second route
+  for a source as `duplicate-route-source`, and the body accessor returns one
+  `EarlyMultiPreparedScalarLeafState`. A cross-source component can contain
+  multiple units in one source and can overlap a source that also contains an
+  existing scalar/array/function-value route. M1A must refactor this into a
+  unit-keyed reservation/component ledger plus one per-source composite body
+  consumer; it may not add a fifth mutually-exclusive source map.
+- #4260's reviewed batch can cover multiple terminal IDs in one scope and
+  atomically consumes its staged Program ABI plus callable-import/provider,
+  class-layout, and export-alias registry writes. It does not yet stage live
+  allocator body replacement, IR outcomes/terminal evidence, or M0
+  reservation/skip receipts. `prepareIrBodies` remains single-source and
+  `compileIrPathFunctions` still mutates allocator bodies/locators after its
+  pending-patch pass. M1A therefore must extend that authenticated batch (or
+  add one enclosing commit primitive); merely sealing ABI and then patching
+  bodies is not component atomicity.
+
+### 1. Build one IR-owned callable binding graph
+
+Add `src/ir/program-callable-bindings.ts`. This module is the only new
+TypeScript-checker owner for program-wide callable imports/exports. It may
+import IR identity, callable-reference, planning-identity, type/oracle, and
+TypeScript AST modules. It must not import `src/codegen`, Wasm allocator/layout
+types, `CodegenContext`, `funcMap`, or a backend target.
+
+Build exactly one frozen `IrProgramCallableBindingGraph` from the complete
+ordered source set, checker/oracle, and the M0 `IrPlanningIdentityContext`
+before any declaration or body emission. The public shape must carry at least:
+
+```ts
+interface IrProgramCallableBindingRecord {
+  bindingId: IrBindingId;
+  sourceId: IrSourceId;
+  declarationOrdinal: number;
+  kind: "source" | "import-alias" | "export-alias";
+  localName: string;
+  targetBindingId: IrBindingId;
+  canonicalBindingId: IrBindingId;
+  targetUnitId: IrUnitId;
+}
+
+interface IrProgramCallableUse {
+  sourceId: IrSourceId;
+  ownerUnitId: IrUnitId;
+  node: ts.CallExpression;
+  bindingId: IrBindingId;
+  canonicalBindingId: IrBindingId;
+  targetUnitId: IrUnitId;
+}
+
+interface IrProgramCallableBindingGraph {
+  schema: "ir-program-callable-binding-graph-v1";
+  sourceIds: readonly IrSourceId[];
+  records: readonly IrProgramCallableBindingRecord[];
+  uses: readonly IrProgramCallableUse[];
+  resolveCall(call: ts.CallExpression, ownerUnitId: IrUnitId):
+    | IrProgramCallableUse
+    | undefined;
+}
+```
+
+Names and additional private indices may vary, but the semantics may not:
+
+1. A source function's canonical binding is
+   `irUnitCallableBindingId(targetUnitId)`. Its display name is diagnostic and
+   never participates in lookup, equality, ordering, or component closure.
+2. Internal import/export aliases use source-owned `IrBindingId`s in the
+   `callable` domain with distinct roles such as
+   `module-import-callable` and `module-export-callable`, plus a stable
+   top-level declaration/binding ordinal. They are callable aliases, not final
+   public-Wasm `export` intents.
+3. Record named imports, renamed imports, default imports, named/default local
+   exports, anonymous default function declarations, `export { x as y } from`,
+   chained re-exports, and unambiguous `export *` edges. A legal alias chain may
+   cross multiple sources and resolves to one canonical source callable.
+4. Record a statically named `ns.member(...)` use of
+   `import * as ns` by the exact exported binding reached through the namespace.
+   Do not manufacture a runtime namespace-object representation. Element
+   access, optional/dynamic property access, namespace value escape, and
+   ambiguous star collisions remain Unsupported.
+5. Use checker/oracle symbol identity only to join exact AST declarations.
+   Every published source, declaration, target unit, and owner unit must join
+   back to the same M0 identity context object in both directions. A cloned AST
+   node, declaration outside the active source population, declaration-file or
+   linked-package target, overload/merge set, missing body, or mutable/reassigned
+   source function is not an alias to a source callable.
+6. Preserve legal export cycles when they resolve to a unique canonical source
+   callable. Reject an alias cycle with no canonical target, duplicate binding
+   ID/order, two different canonical targets for one local/export binding, a
+   missing target, or a wrong-source/unit join with a typed planning invariant.
+   An ordinary language ambiguity/capability gap is an Unsupported graph row,
+   not last-wins resolution and not an invariant.
+7. Canonical records are ordered by inventory source order and exact syntactic
+   binding order. Reordering caller `Map` insertion or a test-only internal map
+   must not alter IDs or the canonical snapshot. Semantic source evaluation
+   order remains the separate M0 sequence.
+
+Refactor `src/ir/imported-functions.ts` to delegate its identity-aware factory
+to this graph or become a thin compatibility projection. New production
+selection/lowering may not call
+`projectIrIdentityImportedFunctionResolverToLegacy`. Keep the legacy factory
+only for still-direct routes and existing API compatibility until their
+callers are deleted; mark it as a one-way compatibility boundary.
+
+### 2. Feed selection from structural uses in every source backend
+
+Change the selector/imported-call contract to consume exact
+`IrProgramCallableUse` evidence. The TypeScript/checker decision remains above
+codegen; the backend receives a frozen use with source, owner, alias, canonical
+binding, and target unit IDs.
+
+- Pass source-callable evidence independently of `jsHostExterns`. Host ambient
+  imports remain a separate backend-capability resolver and retain their
+  existing host-only gate.
+- Extend direct-call certification to identifier calls and the bounded static
+  namespace member form above. Certification must prove that the call node is
+  inside the exact owner declaration and that the owner/target occur in the
+  active graph exactly once.
+- Build target parameter/result types from the target unit's exact IR type
+  projection. Reconcile them with the already-allocated source callable's
+  `ProgramAbi` type contract before component admission. Do not read optional,
+  rest, `arguments`, or callable metadata from a target name. Either add
+  unit-keyed source-callable metadata beside the graph or classify those
+  families Unsupported for M1A.
+- `IrImportedCallLoweringPlan.target` remains an `irUnitFuncRef` to the
+  canonical `targetUnitId`; its compatibility name may be any stable diagnostic
+  label and cannot redirect resolution.
+- Remove `legacyProjection === "unambiguous"`, `ctx.funcMap.get(name)`,
+  occupied-name counts, prefix probes, and `WasmFunction.name` from M1A
+  admission. Retain those checks only in the untouched late/direct compatibility
+  routes until their own deletion proof.
+
+The M1A callable family is deliberately bounded to direct, fixed-target calls
+between bodyful top-level functions. Function values/callbacks, `.call`/`.apply`,
+mutable function bindings, overload sets, generics, async/generator bodies,
+class or module-init owners, runtime-eval boundaries, and late provider
+requests remain typed Unsupported. Do not broaden them by weakening existing
+selector or ABI checks.
+
+### 3. Form whole-program components before direct bodies
+
+Add `src/codegen/multi-prepared-callable-components.ts` as the backend adapter
+for the frozen IR graph. It may inspect allocator objects and `ProgramAbi`
+contracts, but it must not query the checker or rediscover aliases.
+
+After declarations and source callable slots are allocated, but before the
+first direct body:
+
+1. Plan every source through the exact M1A structural resolver. Keep these
+   `IrOverlayPlan`s in the `MultiPreparedProgramOwner`; do not recreate them in
+   the late overlay loop.
+2. Build a program graph keyed only by `IrUnitId`: local direct-call edges plus
+   the cross-source `IrProgramCallableUse` edges. Compute deterministic weak
+   components with a stable unit-ID order. Component IDs derive from the exact
+   sorted unit population/route role, never a display name or map insertion
+   order.
+3. A component is eligible only when every included unit is a selected terminal
+   top-level function with an exact claim, override, allocated source-callable
+   object, Program ABI contract, and complete incoming/outgoing callable edge
+   accounting. A direct/unowned caller or unsupported callee withdraws the
+   whole component unless the existing exact outside-caller ABI certificate
+   proves the boundary unchanged.
+4. Reconcile the caller's call plan, target override, allocator `FuncTypeDef`,
+   and canonical Program ABI callable signature field-for-field, including
+   indexed ref types and semantic brands. A mismatch is one typed Unsupported
+   component before mutation; never coerce one side or adopt a name-selected
+   signature.
+5. Add an idempotent targeted `ProgramAbiSourceCallableRegistry.planUnits()`-
+   style API for the exact component units. It tracks a per-unit planned set;
+   it must not trip the existing global `planRetained()` latch, close further
+   observations, or seal unrelated retained callables. The final
+   `planRetained()` plans only the remaining observed units and then closes the
+   registry.
+6. Add a bounded `module-alias` provenance/intent (or an equally explicit
+   discriminant) to `ProgramAbiSession`, with a dedicated planner and staged
+   descriptor. Materialize every internal import/export alias record needed by
+   the component through that API as a non-allocating callable alias. Each
+   alias carries its source, structural order, canonical callable contract,
+   and `aliasOf`; exact source/ID/order joins are validated, and no alias owns a
+   locator or final index. Include the exact alias bindings in the component
+   scope/borrowed-binding evidence. Do not reuse support, host import, or public
+   export provenance.
+
+Refactor M0's single-route-per-source state into a v2 unit-keyed reservation
+and component ledger. The four existing route states become bounded
+contributors/adapters to this ledger, preserving their exact receipts,
+currentness checks, and route-specific audit evidence. It must support multiple
+reservations in one source and existing route reservations beside a
+cross-source component. Add `cross-source-callable` to the route kind and
+publish, for every source, the exact requested skip projection and component
+IDs. Unit ID, not source object or legacy name, is the uniqueness key. A unit
+cannot belong to two routes/components; two sources may legitimately reserve
+same-labelled units.
+
+Replace the route-specific body wrapper with one
+`compileMultiPreparedProgramDeclarations`-style consumer. It combines the
+already-proved route projections for one source, calls `compileDeclarations`
+once, and correlates every returned skipped name back to the exact source-local
+requested unit projection. It must reject missing, duplicate, foreign, or
+cross-component skips. The existing four M0 routes retain byte-identical
+receipts and behavior.
+
+### 4. Stage and publish a cross-source component atomically
+
+Do not call the existing single-source `prepareIrBodies` independently for
+each source. Extract or add a whole-component entry below it that accepts:
+
+- the exact component unit IDs and source partitions;
+- per-unit claims and type overrides;
+- each exact source AST and its structural lowering plans;
+- the frozen callable graph/alias binding IDs; and
+- one #4260 Prepared transaction extended with the component publication
+  fields below, or one authenticated outer commit owner that contains it.
+
+Lower all member bodies into detached staging artifacts. Extend the #4260 batch
+or wrap it in one authenticated commit primitive that stages prevalidated
+allocator body/locator compare-and-swap writes, IR outcomes, terminal evidence,
+and M0 component/reservation/skip publication alongside its Program ABI and
+registry writes. The live allocator objects, Program ABI publication,
+provider/import registries, terminal ledger, and body-skip projection remain
+unchanged until every member has built and the whole component has passed
+source/unit/signature/call-edge validation. Validate every possible failure
+before the commit boundary; after the first live write, the commit sequence
+must contain no throwable computation or fallible lookup. Then publish all
+bodies, ABI aliases/borrowed bindings, terminal evidence, and skip receipts once
+under one `preparedComponentId`.
+
+If any member is Unsupported, abort the staging owner and publish an exact
+component failure for every member: no staged body or ABI alias becomes live,
+no unit is reserved/skipped, and the later body loop direct-emits each member
+exactly once. An Invariant is fatal and likewise publishes no prefix. Never
+implement atomicity with sequential patching plus rollback, ABI-first sealing
+followed by live body writes, body cloning after publication, or
+catch-and-continue around a partially sealed scope. The candidate-only
+`PreparedIrEmissionTransaction` in `src/ir/program.ts` is evidence, not a
+production substitute for this commit primitive.
+
+Keep the shared integration implementation out of another god file. Prefer a
+new `src/ir/program-component-integration.ts` plus a narrow adapter in
+`src/ir/integration.ts`; the latter must not grow past its current LOC ratchet.
+Likewise, extract from `multi-prepared-program.ts` if adding M1A would push it
+over its file budget. No IR module may import codegen to reach the transaction;
+pass an interface/callback owned below the IR boundary.
+
+After a committed component, the late overlay loop consumes the exact stored
+plans only for audit/report completion and must not rebuild or repatch those
+units. After an aborted component, it must not make a second preparation
+attempt. Exactly one pre-body decision and exactly one body emitter exist per
+terminal.
+
+### 5. Bounded rollout and deletions
+
+Gate the new route with
+`JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER`; enabled is the default for
+ordinary standalone multi-source compilation with `experimentalIR: true`,
+native strings, no WASI, and non-fast ABI. The exact disabled lane is a
+required control with the same graph/census and zero M1A reservations.
+
+For units admitted through M1A, delete/bypass these authorities:
+
+- the standalone `conservativeCrossFileCallers` rejection;
+- flat collision/import-alias/cross-file-name suppressors;
+- `multiIrTargetHasExactRegistryEntry` name lookup; and
+- `registerImportBindingAliases` as evidence for selection, target ABI, or IR
+  lowering.
+
+Do not yet delete the compatibility helpers globally. Direct fallback, fast,
+WASI, classes, globals, module init, function values, and the old late overlay
+still use them. Add reachability counters or explicit route assertions so M1A
+tests prove the structural route did not consult them; final deletion belongs
+to M1B/M2 once their remaining population reaches zero.
+
+Fast mode remains outside M1A because its direct `number` carrier is i32 while
+the current IR overlay is f64. Host and WASI are controls, not alternate
+planners. M1B must make the frozen program signature mode-aware and feed fast
+and ordinary backends from the same graph before the parent M1 checkbox can
+close.
+
+### Mutation and integration proof
+
+Add `tests/issue-3525-multi-prepared-callable-bindings.test.ts` and update the
+standalone/collision assertions in
+`tests/issue-2138-multi-module-ir-overlay.test.ts` only after the new evidence
+is available.
+
+The direct graph harness must fail closed with stable codes for:
+
+1. missing, duplicate, foreign, cloned, or reordered source records;
+2. missing/duplicate source callable, alias binding ID, declaration ordinal,
+   owner unit, target unit, or canonical binding;
+3. named/default/namespace/re-export alias attached to the wrong source or AST
+   node;
+4. two canonical targets for one alias, ambiguous star export, dangling alias,
+   and an alias cycle without a canonical source callable;
+5. overload/merge, declaration-file, linked-package, missing-body, mutable, or
+   reassigned target incorrectly admitted as a source callable;
+6. use node outside its exact owner, dynamic namespace member, namespace value
+   escape, and a use whose checker symbol disagrees with its graph record;
+7. wrong target signature/Program ABI alias contract, alias with a locator,
+   alias that owns a slot, and alias attached to a foreign prepared scope; and
+8. internal map/source insertion reversal changing canonical records or the
+   component/evidence digest.
+
+The component harness must reject missing/duplicate/cross-source-wrong unit
+membership, incomplete incoming/outgoing edge closure, two component IDs for
+one unit, partial source skip correlation, a late second attempt, and a
+different second completion input. Inject first/middle/last member lowering,
+ABI-alias, provider, and publication failures; every case must retain zero live
+prefix and one complete typed component outcome.
+
+Real standalone A/B fixtures must prove:
+
+1. named, renamed, default-named, anonymous-default, namespace-member,
+   `export { x as y } from`, chained re-export, and unambiguous `export *`
+   calls all prepare before direct bodies and return exact disabled-lane values;
+2. two providers exporting same-named functions plus same-named local callers
+   retain distinct source/unit/binding IDs, both IR-emit, and dispatch to the
+   correct provider without a flat-name collision gate;
+3. forward cross-file chains and a legal call SCC share deterministic component
+   IDs and compile once; reversing caller input/internal map order preserves
+   structural identities while retaining semantic source order;
+4. every Prepared member records `directBodyEmissions=0` and
+   `irBodyEmissions=1`; poisoning the direct body and legacy alias-copy lookup
+   cannot affect the enabled fixture;
+5. an injected signature or lowering withdrawal aborts the whole component,
+   records no reservation, and every member direct-emits once with runtime,
+   surface, and artifact parity after #4755;
+6. the cutover-disabled lane has the same source/terminal/callable graph,
+   zero `cross-source-callable` reservations, no IR-first skip, and exact current
+   direct behavior;
+7. standalone retains zero host imports, exact public exports, identical
+   module-init behavior, and no new runtime provider; and
+8. host, fast, WASI, single-source, existing M0 scalar/array/function-value/
+   Fibonacci routes, and non-callable multi-source fixtures remain exact
+   controls with no accidental M1A reservation.
+
+Compare raw and optimized functions, Program ABI entries/final indices,
+terminal outcomes, prepared component IDs, body-route audit, import/provider
+manifest, public surface, runtime values, binary validity, and repeated-run
+determinism. Binary equality is required for controls and disabled lanes; the
+enabled route may differ only where direct bodies are genuinely absent.
+
+Run the new suite with #2138, #2930, #2931, #3214 imported HOF/callable ABI,
+#3520 imported-target/Program-ABI tests, #4530 import-alias arguments behavior,
+the four M0 early-route suites, multi-file/equivalence, closed/bare imports,
+standalone relative imports, and #4755/#4260 fallback/transaction suites.
+
+### Validation and checkpoint boundary
+
+Before commit and push, sample the one-minute load and require it to be finite,
+non-negative, and strictly less than `logical cores - 2`. Then:
+
+1. run focused mutation/integration suites and both TypeScript 7 and 5 checks;
+2. run formatting, IR layering/dialect, dead exports, fallback/oracle/coercion,
+   function-size, optimization-preservation, and issue-integrity ratchets;
+3. run `pnpm run check:loc-budget` immediately before the signed commit;
+4. run the complete precommit and prepush hooks without bypass; and
+5. leave no `node_modules` link in the worktree after push.
+
+No LOC/function/layering/baseline allowance is authorized. New graph/component
+logic belongs in bounded modules; shrink `index.ts`, `integration.ts`, and any
+M0 file that would otherwise regrow. Do not widen a Test262 baseline or relock
+an unrelated binary hash to make the branch green.
+
+M1A is complete only when the enabled standalone fixtures publish a frozen
+callable graph, atomically reserve every cross-source component before direct
+bodies, bypass flat-name authority, and prove zero direct emissions without
+weakening fallback. The parent #3525/M1 milestone remains open until M1B makes
+fast/ordinary ownership converge and retires the residual callable/name
+compatibility path.
 
 ## Ownership and resolution invariants
 
