@@ -7294,7 +7294,10 @@ function compileCallExpression(
     if (
       !ts.isPrivateIdentifier(propAccess.name) &&
       (isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression) ||
-        (ctx.standalone && chainRootIsGrowable(ctx, propAccess.expression)))
+        (ctx.standalone &&
+          ts.isIdentifier(propAccess.expression) &&
+          ctx.sloppyImplicitGlobals?.has(propAccess.expression.text) === true &&
+          chainRootIsGrowable(ctx, propAccess.expression)))
     ) {
       const openTargetCall = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
       if (openTargetCall !== undefined) return openTargetCall;
