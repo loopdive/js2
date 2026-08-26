@@ -360,6 +360,7 @@ import {
   type PreparedDerivedCallableSlot,
 } from "./prepared-closure-support.js";
 import type { PreparedClassAccessorWritebackEvidence } from "./prepared-component-dependencies.js";
+import type { PreparedComponentSealFailureHandler } from "./prepared-component-sealing.js";
 import {
   createCompilerTimerShimLoweringBoundary,
   prepareCompilerTimerShimLateSealTransaction,
@@ -692,7 +693,7 @@ function prepareClosureTransaction(input: {
   readonly originalArtifactUnitIds: ReadonlySet<IrUnitId>;
   readonly inventory: IrUnitInventory;
   readonly callableImports: ReadonlyMap<string, Import>;
-  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
+  readonly onSealFailure: PreparedComponentSealFailureHandler;
 }): PreparedClosureTransaction {
   const refCells = new RefCellRegistry(input.ctx);
   let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
@@ -2110,12 +2111,10 @@ export function compileIrPathFunctions(
   }
 
   if (built.length === 0) return finishReport();
-
   // -------------------------------------------------------------------------
   // Phase 2 — Pass: per-function hygiene → module-scope inline → re-run
   // hygiene on modified functions. Verify between stages.
   // -------------------------------------------------------------------------
-
   // 2a. Per-function hygiene (CF → DCE → simplifyCFG to fixpoint).
   const failedOwners = new Set<IrUnitId>();
   const terminalOwnerOf = (entry: BuiltFn): IrLegacyUnitProjectionEntry => ({
@@ -2128,6 +2127,7 @@ export function compileIrPathFunctions(
     artifactName: string,
     error: unknown,
     stage: Exclude<IrPreparationStage, "select">,
+    diagnosticVisibility: IrIntegrationTerminalFailureEvent["diagnosticVisibility"] = "report",
   ): void => {
     if (failedOwners.has(owner.unitId)) return;
     const classified = classifyIrFailure(error, stage);
@@ -2135,7 +2135,7 @@ export function compileIrPathFunctions(
       artifactUnitId === owner.unitId
         ? classified
         : { ...classified, detail: `synthetic artifact ${artifactName}: ${classified.detail}` };
-    failures.record(owner, integrationFailure(owner.legacyName, outcome));
+    failures.record(owner, integrationFailure(owner.legacyName, outcome), diagnosticVisibility);
     failedOwners.add(owner.unitId);
   };
   const markOwnerInvariant = (
@@ -2758,9 +2758,9 @@ export function compileIrPathFunctions(
         originalArtifactUnitIds,
         inventory: moduleBindingIdentityContext.inventory,
         callableImports: importedCallableCatalog,
-        onSealFailure: (terminalUnitId, error) => {
+        onSealFailure: (terminalUnitId, error, diagnosticVisibility) => {
           const owner = activeOwnerProjection.requireUnit(terminalUnitId);
-          markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve");
+          markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve", diagnosticVisibility);
         },
       });
       freshSlots.push(...preparedClosure.freshSlots);

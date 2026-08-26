@@ -1,7 +1,7 @@
 ---
 id: 4260
 title: "Prepared callable-provider plans leak across an aborted component seal"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-08-09
 updated: 2026-08-26
@@ -541,3 +541,36 @@ speculatively. Immediately before every normal signed commit, rerun
 push run every normal pre-push hook; never use a skip flag or `--no-verify`.
 Every heavy command and every commit/push boundary requires a fresh finite,
 nonnegative one-minute load strictly below `logical cores - 2`.
+
+## 2026-08-26 implementation handover
+
+Draft PR #4996 carries the atomic-publication checkpoint on branch
+`codex/4260-b-atomic-publication`, exact implementation head before this
+handover-only update
+`493ad47d316d69b16c0db802bb7bbe8eba6d269e`. It stages callable imports,
+providers, class layouts, export aliases, and Program-ABI session writes in one
+authenticated prepared-component overlay, validates the complete batch before
+publication, and retains terminal diagnostic evidence across component-local
+aborts. Its focused transaction suite passed 19/19, and its signed checkpoint
+passed the normal LOC/function ratchets plus unskipped precommit and prepush
+hooks.
+
+This is not final #4260 acceptance. Keep the PR draft until prerequisite #4755
+lands and the literal B.7 matrix below passes on current main. The branch is
+behind the live integration seams; after #4755 merges, merge live `main` into
+this branch without rebasing and semantically review the overlapping
+`integration-report.ts` and `integration.ts` changes.
+
+The missing proof must use a prepared component that is the sole
+`__new_ReferenceError` requester and cover injected pre-seal failure,
+uninjected Prepared, and direct controls in GC and standalone. Require exact
+Unsupported/direct-only evidence (`legacyBodyEmitted: true`,
+`irBodyEmitted: false`, no `preparedComponentId`, zero post-claim errors), no
+stale host import or orphan standalone constructor, and a healthy
+shared-provider component that remains sealed/emitted with one canonical
+provider. Change production only if that matrix exposes a current-main defect.
+
+The detached `/private/tmp/js2-4260-baseline-debug` worktree contains deliberate
+diagnostic edits and is not an implementation source. The cross-lane stop
+point and resume order are also recorded in
+`plan/agent-context/ir-migration-handover-2026-08-26.md` on draft PR #5000.
