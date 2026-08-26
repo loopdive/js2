@@ -11300,9 +11300,10 @@ export function hoistVarDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | ts.Statement[],
+  reuseExistingModuleGlobals = false,
 ): void {
   for (const stmt of stmts) {
-    walkStmtForVars(ctx, fctx, stmt);
+    walkStmtForVars(ctx, fctx, stmt, reuseExistingModuleGlobals);
   }
 }
 
@@ -11436,7 +11437,12 @@ function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.Variabl
 }
 
 /** Hoist a single variable declaration (handles both simple identifiers and binding patterns). */
-function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.VariableDeclaration): void {
+function hoistVarDecl(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.VariableDeclaration,
+  reuseExistingModuleGlobals: boolean,
+): void {
   if (ts.isIdentifier(decl.name)) {
     const name = decl.name.text;
     // A folded Script-level eval executes in the module initializer's
@@ -11445,7 +11451,7 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     // declaration lowering emits the live global store. This matters when the
     // eval is in a loop head: ForIn/OfHeadEvaluation creates no environment
     // when the head names are not referenced by the receiver expression.
-    if (fctx.name === "__module_init" && ctx.moduleGlobals.has(name)) return;
+    if (reuseExistingModuleGlobals && fctx.name === "__module_init" && ctx.moduleGlobals.has(name)) return;
     if (fctx.localMap.has(name)) return;
     // #1690b: do NOT skip allocation when the name collides with a module
     // global. This hoister only runs for nested function bodies; per JS var
@@ -11620,27 +11626,32 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
   }
 }
 
-function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): void {
+function walkStmtForVars(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.Statement,
+  reuseExistingModuleGlobals: boolean,
+): void {
   if (ts.isVariableStatement(stmt)) {
     const list = stmt.declarationList;
     // Only hoist `var` (not let/const/using/await-using). #1177
     if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) return;
     for (const decl of list.declarations) {
-      hoistVarDecl(ctx, fctx, decl);
+      hoistVarDecl(ctx, fctx, decl, reuseExistingModuleGlobals);
     }
     return;
   }
   if (ts.isBlock(stmt)) {
-    for (const s of stmt.statements) walkStmtForVars(ctx, fctx, s);
+    for (const s of stmt.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isIfStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.thenStatement);
-    if (stmt.elseStatement) walkStmtForVars(ctx, fctx, stmt.elseStatement);
+    walkStmtForVars(ctx, fctx, stmt.thenStatement, reuseExistingModuleGlobals);
+    if (stmt.elseStatement) walkStmtForVars(ctx, fctx, stmt.elseStatement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isForStatement(stmt)) {
@@ -11648,11 +11659,11 @@ function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.St
       const list = stmt.initializer;
       if (!(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
         for (const decl of list.declarations) {
-          hoistVarDecl(ctx, fctx, decl);
+          hoistVarDecl(ctx, fctx, decl, reuseExistingModuleGlobals);
         }
       }
     }
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isForInStatement(stmt) || ts.isForOfStatement(stmt)) {
@@ -11661,30 +11672,30 @@ function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.St
       const list = stmt.initializer;
       if (!(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
         for (const decl of list.declarations) {
-          hoistVarDecl(ctx, fctx, decl);
+          hoistVarDecl(ctx, fctx, decl, reuseExistingModuleGlobals);
         }
       }
     }
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isLabeledStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isTryStatement(stmt)) {
-    for (const s of stmt.tryBlock.statements) walkStmtForVars(ctx, fctx, s);
+    for (const s of stmt.tryBlock.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     if (stmt.catchClause) {
-      for (const s of stmt.catchClause.block.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of stmt.catchClause.block.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     }
     if (stmt.finallyBlock) {
-      for (const s of stmt.finallyBlock.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of stmt.finallyBlock.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     }
     return;
   }
   if (ts.isSwitchStatement(stmt)) {
     for (const clause of stmt.caseBlock.clauses) {
-      for (const s of clause.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of clause.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     }
   }
 }
