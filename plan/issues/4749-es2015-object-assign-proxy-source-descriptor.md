@@ -23,6 +23,8 @@ loc-budget-allow:
   - src/codegen/object-runtime-proxy.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+coercion-sites-allow:
+  - src/codegen/object-runtime-enumeration.ts
 ---
 
 # #4749 — ES2015 Object.assign Proxy source descriptor trap
