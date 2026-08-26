@@ -160,7 +160,7 @@ import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
-import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
+import { buildObjectEnumerationHelpers, fillObjectAssignProxySourceArm } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
@@ -6088,6 +6088,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // them when a trap is absent) and only adds DEFINED functions, so no index
   // shift (same invariant as the rest of this runtime).
   ensureProxyRuntime(ctx, types, registerNative);
+
+  // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
+  // arm now that descriptor helpers and Proxy dispatch front-guards exist.
+  fillObjectAssignProxySourceArm(ctx, types.proxyTypeIdx, types.objectTypeIdx);
 
   // (#4223) Mint the primitive-wrapper `.constructor` carriers, when the module
   // was pre-scanned as reading a `constructor` property. Hung HERE — the tail of

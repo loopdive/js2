@@ -33,6 +33,7 @@ import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // 
 // `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
+import { definedFuncAt } from "./func-space.js";
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -1394,4 +1395,180 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       nullArm(numberArm(boolArm(bigintArm(identityArm)))),
     );
   }
+}
+
+/**
+ * (#4749) Prepend the standalone Proxy-source arm to `__object_assign`.
+ *
+ * `$Proxy` is deliberately not a subtype of `$Object`, so the original
+ * open-object loop skips it entirely.  CopyDataProperties must instead ask
+ * the Proxy for its own keys, retrieve each own descriptor (which invokes the
+ * getOwnPropertyDescriptor trap), filter on `enumerable`, then read and set
+ * the value through the existing Proxy-aware helpers.  This is filled after
+ * the descriptor and Proxy runtimes are registered so all dispatch indices
+ * are available and their front-guards are already installed.
+ */
+export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx: number, objectTypeIdx: number): void {
+  if (!ctx.standalone) return;
+
+  const objectAssignIdx = ctx.funcMap.get("__object_assign");
+  const objectAssign = objectAssignIdx === undefined ? undefined : definedFuncAt(ctx, objectAssignIdx);
+  if (!objectAssign) return;
+
+  const objectKeysIdx = ctx.funcMap.get("__object_keys");
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const getOwnPropertyDescriptorIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (
+    objectKeysIdx === undefined ||
+    externLengthIdx === undefined ||
+    externGetIdxIdx === undefined ||
+    getOwnPropertyDescriptorIdx === undefined ||
+    externGetIdx === undefined ||
+    externSetIdx === undefined ||
+    isUndefinedIdx === undefined ||
+    isTruthyIdx === undefined
+  ) {
+    return;
+  }
+
+  // The original source loop has one distinctive source-object test. Avoid a
+  // second insertion if a later runtime pass happens to call this fill twice.
+  if (
+    objectAssign.body.some(
+      (instr, index) =>
+        instr.op === "local.get" &&
+        instr.index === 6 &&
+        objectAssign.body[index + 1]?.op === "ref.test" &&
+        (objectAssign.body[index + 1] as { typeIdx?: number } | undefined)?.typeIdx === proxyTypeIdx,
+    )
+  ) {
+    return;
+  }
+
+  // Params 0/1 are followed by the eleven locals registered by the original
+  // helper (indices 2..12). Append scratch locals for the Proxy arm.
+  const keyListLocal = 2 + objectAssign.locals.length;
+  const keyListLengthLocal = keyListLocal + 1;
+  const keyIndexLocal = keyListLocal + 2;
+  const keyLocal = keyListLocal + 3;
+  const descriptorLocal = keyListLocal + 4;
+  const enumerableLocal = keyListLocal + 5;
+  objectAssign.locals.push(
+    { name: "proxyKeys", type: { kind: "externref" } },
+    { name: "proxyKeysLength", type: { kind: "i32" } },
+    { name: "proxyKeyIndex", type: { kind: "i32" } },
+    { name: "proxyKey", type: { kind: "externref" } },
+    { name: "proxyDescriptor", type: { kind: "externref" } },
+    { name: "proxyEnumerable", type: { kind: "externref" } },
+  );
+
+  const proxyArm: Instr[] = [
+    { op: "local.get", index: 6 },
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // keys = [[OwnPropertyKeys]](source)
+        { op: "local.get", index: 12 },
+        { op: "call", funcIdx: objectKeysIdx },
+        { op: "local.set", index: keyListLocal },
+        // length = ToLength(keys.length), narrowed to the bounded native loop
+        { op: "local.get", index: keyListLocal },
+        { op: "call", funcIdx: externLengthIdx },
+        { op: "i32.trunc_sat_f64_s" },
+        { op: "local.set", index: keyListLengthLocal },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: keyIndexLocal },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: keyIndexLocal },
+                { op: "local.get", index: keyListLengthLocal },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                // key = keys[index]
+                { op: "local.get", index: keyListLocal },
+                { op: "local.get", index: keyIndexLocal },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: externGetIdxIdx },
+                { op: "local.set", index: keyLocal },
+                // desc = source.[[GetOwnProperty]](key)
+                { op: "local.get", index: 12 },
+                { op: "local.get", index: keyLocal },
+                { op: "call", funcIdx: getOwnPropertyDescriptorIdx },
+                { op: "local.set", index: descriptorLocal },
+                // Missing descriptors are skipped; otherwise test desc.enumerable.
+                { op: "local.get", index: descriptorLocal },
+                { op: "call", funcIdx: isUndefinedIdx },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: descriptorLocal },
+                    ...nativeStringLiteralInstrs(ctx, "enumerable"),
+                    { op: "extern.convert_any" },
+                    { op: "call", funcIdx: externGetIdx },
+                    { op: "local.set", index: enumerableLocal },
+                    { op: "local.get", index: enumerableLocal },
+                    { op: "call", funcIdx: isTruthyIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        // target[key] = source[key] via Proxy-aware Get/Set.
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "local.get", index: 12 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "call", funcIdx: externGetIdx },
+                        { op: "call", funcIdx: externSetIdx },
+                      ],
+                    },
+                  ],
+                },
+                { op: "local.get", index: keyIndexLocal },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: keyIndexLocal },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const insertBeforeSourceObjectTest = (body: Instr[]): boolean => {
+    for (let index = 0; index < body.length; index++) {
+      const instr = body[index]!;
+      const next = body[index + 1];
+      const nextTypeIdx =
+        next && (next.op === "ref.test" || next.op === "ref.cast") ? (next as { typeIdx: number }).typeIdx : undefined;
+      if (instr.op === "local.tee" && instr.index === 6 && next?.op === "ref.test" && nextTypeIdx === objectTypeIdx) {
+        body.splice(index + 1, 0, ...proxyArm);
+        return true;
+      }
+      if (instr.op === "if") {
+        if (insertBeforeSourceObjectTest(instr.then)) return true;
+        if (instr.else && insertBeforeSourceObjectTest(instr.else)) return true;
+      } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try" || instr.op === "try_table") {
+        if (insertBeforeSourceObjectTest(instr.body)) return true;
+      }
+    }
+    return false;
+  };
+  insertBeforeSourceObjectTest(objectAssign.body);
 }
