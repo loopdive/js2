@@ -58,7 +58,6 @@ import {
   isDynamic,
   irVal,
   irVec,
-  type IrClosureSignature,
   type IrClassMethodDescriptor,
   type IrFuncRef,
   type IrType,
@@ -81,12 +80,10 @@ import {
   type IrSelection,
 } from "../ir/select.js";
 import type {
-  IrDirectCallLoweringPlan,
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
-  IrIntegrationLoweringPlans,
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
 import { makeIrAmbientClassCallResolver, makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856/#3214/#3657)
@@ -117,7 +114,6 @@ import {
 } from "../ir/identity.js";
 import {
   buildIrPlanningIdentityContext,
-  buildIrLegacyUnitProjection,
   requireIrPlanningSourceId,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
@@ -148,6 +144,10 @@ import {
   type IrProgramCallableBindingGraph,
   type IrProgramCallableUse,
 } from "../ir/program-callable-bindings.js";
+import {
+  prepareMultiPreparedCallableGroup,
+  type MultiPreparedCallableCandidate,
+} from "./multi-prepared-callable-components.js";
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
@@ -2244,7 +2244,7 @@ export function formatIrPathFallbackDiagnostic(
 // preserves the opt-out pipeline's type-index and body-emission behavior.
 // ---------------------------------------------------------------------------
 
-interface IrOverlayPlan {
+export interface IrOverlayPlan {
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
   readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
   readonly selection: import("../ir/select.js").IrSelection;
@@ -3670,15 +3670,6 @@ function collectMultiIrLateProviderOwnerUnitIds(
   ]);
 }
 
-interface MultiPreparedCallableCandidate {
-  readonly sourceFile: ts.SourceFile;
-  readonly sourceId: IrSourceId;
-  readonly unitId: IrUnitId;
-  readonly legacyName: string;
-  readonly declaration: ts.FunctionDeclaration;
-  readonly plan: IrOverlayPlan;
-}
-
 function aggregateProgramCallableUse(
   graph: IrProgramCallableBindingGraph,
   recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
@@ -3816,228 +3807,6 @@ interface MultiPreparedCallablePlanningInput {
   readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
 }
 
-function prepareMultiPreparedCallableGroup(
-  input: MultiPreparedCallablePlanningInput,
-  group: readonly MultiPreparedCallableCandidate[],
-  groupIndex: number,
-  candidatePlans: ReadonlyMap<ts.SourceFile, IrOverlayPlan>,
-  graph: IrProgramCallableBindingGraph,
-  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
-  attempted: Set<IrUnitId>,
-): MultiPreparedProgramCallableComponent | undefined {
-  let preparedComponent: MultiPreparedProgramCallableComponent | undefined;
-  for (const candidateGroup of [group]) {
-    const group = candidateGroup;
-    const groupUnitIds = new Set(group.map((candidate) => candidate.unitId));
-    let valid = true;
-    for (const candidate of group) {
-      for (const targetUnitId of candidate.plan.identityPlan.identitySelection.localCallees?.get(candidate.unitId) ??
-        []) {
-        if (!groupUnitIds.has(targetUnitId)) valid = false;
-      }
-      for (const [call, callPlan] of candidate.plan.importedCalls) {
-        if (callPlan.ownerUnitId !== candidate.unitId) continue;
-        const use = aggregateProgramCallableUse(graph, recordsByBindingId, call, candidate.unitId, callPlan);
-        if (!use || !groupUnitIds.has(use.targetUnitId)) valid = false;
-      }
-    }
-    if (!valid) continue;
-
-    const namesByUnitId = new Map<IrUnitId, string>();
-    const originalNameBySyntheticName = new Map<string, string>();
-    for (const [unitIndex, candidate] of group.entries()) {
-      const syntheticName = `__ir_m1a_${groupIndex}_${unitIndex}_${candidate.legacyName}`;
-      if (input.ctx.funcMap.has(syntheticName) || originalNameBySyntheticName.has(syntheticName)) {
-        valid = false;
-        break;
-      }
-      namesByUnitId.set(candidate.unitId, syntheticName);
-      originalNameBySyntheticName.set(syntheticName, candidate.legacyName);
-    }
-    if (!valid) continue;
-
-    const signaturesByUnitId = new Map<IrUnitId, IrClosureSignature>();
-    const overrides = new Map<string, { params: IrType[]; returnType: IrType | null }>();
-    const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
-    const importedCalls = new Map<ts.CallExpression, IrImportedCallLoweringPlan>();
-    const sourceSelections = new Map<ts.SourceFile, IrSelection>();
-    for (const candidate of group) {
-      const override = candidate.plan.overrideMapByUnitId.get(candidate.unitId);
-      const syntheticName = namesByUnitId.get(candidate.unitId);
-      if (!override || !syntheticName) {
-        valid = false;
-        break;
-      }
-      signaturesByUnitId.set(candidate.unitId, override);
-      overrides.set(syntheticName, override);
-      const sourceSelection = sourceSelections.get(candidate.sourceFile) ?? { funcs: new Set<string>() };
-      (sourceSelection.funcs as Set<string>).add(candidate.legacyName);
-      sourceSelections.set(candidate.sourceFile, sourceSelection);
-    }
-    if (!valid) continue;
-
-    for (const [sourceFile, sourceSelection] of sourceSelections) {
-      const plan = candidatePlans.get(sourceFile);
-      if (!plan) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          "callable component lost its source plan",
-        );
-      }
-      const projected = irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, sourceSelection);
-      for (const [call, callPlan] of projected.directCalls) {
-        if (!groupUnitIds.has(callPlan.ownerUnitId)) continue;
-        if (callPlan.target.binding.kind === "unit" && !groupUnitIds.has(callPlan.target.binding.unitId)) {
-          valid = false;
-          break;
-        }
-        directCalls.set(call, {
-          ...callPlan,
-          target: rewriteAggregateCallableRef(callPlan.target, namesByUnitId),
-        });
-      }
-      if (!valid) break;
-      for (const [call, callPlan] of projected.importedCalls) {
-        if (!groupUnitIds.has(callPlan.ownerUnitId)) continue;
-        const use = aggregateProgramCallableUse(graph, recordsByBindingId, call, callPlan.ownerUnitId, callPlan);
-        if (!use || !groupUnitIds.has(use.targetUnitId)) {
-          valid = false;
-          break;
-        }
-        const ownerName = namesByUnitId.get(callPlan.ownerUnitId);
-        if (!ownerName) {
-          valid = false;
-          break;
-        }
-        importedCalls.set(call, {
-          ...callPlan,
-          ownerName,
-          target: rewriteAggregateCallableRef(callPlan.target, namesByUnitId),
-        });
-      }
-      if (!valid) break;
-    }
-    if (!valid) continue;
-
-    const ownerProjection = buildIrLegacyUnitProjection(
-      group.map((candidate) => ({ unitId: candidate.unitId, legacyName: namesByUnitId.get(candidate.unitId)! })),
-    );
-    const loweringPlans: IrIntegrationLoweringPlans = {
-      identityContext: input.identityContext,
-      ownerProjection,
-      ownerUnitIdByLegacyName: new Map(ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId])),
-      signaturesByUnitId,
-      directCalls,
-      importedCalls,
-      topLevelFunctionValues: new Map(),
-      hostVoidCallbacks: new Map(),
-      hostDateSnapshots: new Map(),
-      hostDateGetters: new Map(),
-      promiseDelays: { constructions: new Map(), timers: new Map(), resolves: new Map() },
-      suspendingAsyncUnitIds: new Set(),
-    };
-    const aggregateSelection: IrSelection = { funcs: new Set(namesByUnitId.values()) };
-    const integrationSourceFiles = input.multiAst.sourceFiles.filter((sourceFile) =>
-      group.some((candidate) => candidate.sourceFile === sourceFile),
-    );
-    for (const candidate of group) attempted.add(candidate.unitId);
-    input.ctx.irProgramCallableAttemptedUnitIds = attempted;
-
-    const report = compileIrPathFunctions(
-      input.ctx,
-      group[0]!.sourceFile,
-      aggregateSelection,
-      overrides,
-      undefined,
-      loweringPlans,
-      { sealPreparedComponents: true, integrationSourceFiles, atomicComponent: true },
-    );
-    if (report.errors.length > 0) {
-      if ((report.compiledArtifactEvidence?.length ?? 0) !== 0 || report.compiled.length !== 0) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "patch",
-          "atomic callable component reported both a failure and an installed artifact",
-        );
-      }
-      recordMultiPreparedCallableAggregateFailure(input.ctx, report, originalNameBySyntheticName);
-      continue;
-    }
-
-    const artifacts = report.compiledArtifactEvidence ?? [];
-    const terminalEvidence = report.terminalEvidence ?? [];
-    const componentId = artifacts[0]?.preparedComponentId;
-    const expectedSyntheticNames = new Set(namesByUnitId.values());
-    const reportIsExact =
-      componentId !== undefined &&
-      report.compiled.length === group.length &&
-      new Set(report.compiled).size === group.length &&
-      [...expectedSyntheticNames].every((name) => report.compiled.includes(name)) &&
-      report.terminalCompiledOwners?.length === group.length &&
-      new Set(report.terminalCompiledOwners).size === group.length &&
-      [...expectedSyntheticNames].every((name) => report.terminalCompiledOwners?.includes(name)) &&
-      report.errors.length === 0 &&
-      artifacts.length === group.length &&
-      artifacts.every(
-        (artifact) =>
-          artifact.artifactUnitId === artifact.terminalOwnerUnitId &&
-          groupUnitIds.has(artifact.artifactUnitId) &&
-          artifact.name === namesByUnitId.get(artifact.artifactUnitId) &&
-          artifact.preparedComponentId === componentId,
-      ) &&
-      terminalEvidence.length === group.length &&
-      terminalEvidence.every(
-        (evidence) =>
-          evidence.kind === "patched" &&
-          groupUnitIds.has(evidence.unitId) &&
-          evidence.legacyName === namesByUnitId.get(evidence.unitId) &&
-          evidence.preparedComponentId === componentId,
-      );
-    if (!reportIsExact) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        "atomic callable component did not return exact terminal and artifact evidence",
-      );
-    }
-
-    const preparedComponentId = componentId;
-    preparedComponent = {
-      preparedComponentId,
-      units: group.map((candidate) => ({
-        sourceFile: candidate.sourceFile,
-        sourceId: candidate.sourceId,
-        unitId: candidate.unitId,
-        legacyName: candidate.legacyName,
-        declaration: candidate.declaration,
-      })),
-      assertCurrent: () => {
-        const sourceCallables = input.ctx.programAbiSourceCallables;
-        if (!sourceCallables) {
-          throw new IrInvariantError(
-            "selection-preparation-mismatch",
-            "patch",
-            `prepared callable component ${preparedComponentId} lost its source callable registry`,
-          );
-        }
-        for (const candidate of group) {
-          const current = input.ctx.irUnitFuncMap.get(candidate.unitId);
-          const observed = sourceCallables.functionForUnit(candidate.unitId);
-          if (!current || observed !== current || current.name !== candidate.legacyName || current.body.length === 0) {
-            throw new IrInvariantError(
-              "selection-preparation-mismatch",
-              "patch",
-              `prepared callable component ${preparedComponentId} lost exact unit ${candidate.unitId}`,
-            );
-          }
-        }
-      },
-    };
-  }
-  return preparedComponent;
-}
-
 function planMultiPreparedCallableComponents(input: MultiPreparedCallablePlanningInput): void {
   const graph = input.ctx.irProgramCallableBindingGraph;
   if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
@@ -4156,15 +3925,20 @@ function planMultiPreparedCallableComponents(input: MultiPreparedCallablePlannin
   const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
 
   for (const [groupIndex, group] of groups.entries()) {
-    const preparedComponent = prepareMultiPreparedCallableGroup(
-      input,
+    const preparedComponent = prepareMultiPreparedCallableGroup({
+      ctx: input.ctx,
+      multiAst: input.multiAst,
+      identityContext: input.identityContext,
       group,
       groupIndex,
       candidatePlans,
       graph,
       recordsByBindingId,
       attempted,
-    );
+      aggregateProgramCallableUse,
+      recordMultiPreparedCallableAggregateFailure,
+      rewriteAggregateCallableRef,
+    });
     if (preparedComponent) preparedComponents.push(preparedComponent);
   }
 
