@@ -1435,6 +1435,13 @@ export function compileIdentifierCall(
     const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
+    // A redeclared `var` binding has multiple initializer-specific closure
+    // records, while closureMap intentionally tracks the last declaration's
+    // callable value. Only let declaration-owned metadata override that map
+    // when the binding has one variable declaration (the A17 case).
+    const bindingHasUniqueVariableDeclaration =
+      ctx.oracle.declarationsOf(expr.expression).filter((declaration) => ts.isVariableDeclaration(declaration))
+        .length === 1;
     const bindingInitializer =
       calleeBindingDecl !== undefined && ts.isVariableDeclaration(calleeBindingDecl)
         ? calleeBindingDecl.initializer
@@ -1445,7 +1452,9 @@ export function compileIdentifierCall(
         ? ctx.closureStructByNode?.get(bindingInitializer)
         : undefined;
     const bindingClosureInfo =
-      bindingClosureRecord !== undefined ? ctx.closureInfoByTypeIdx.get(bindingClosureRecord.structTypeIdx) : undefined;
+      bindingHasUniqueVariableDeclaration && bindingClosureRecord !== undefined
+        ? ctx.closureInfoByTypeIdx.get(bindingClosureRecord.structTypeIdx)
+        : undefined;
     let closureInfo =
       isLocallyShadowed ||
       nestedBindingVisible ||
