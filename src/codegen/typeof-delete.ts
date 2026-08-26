@@ -53,12 +53,23 @@ import {
 } from "./global-environment.js";
 import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
+import { emitLazyNativeProtoGet } from "./native-proto.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
 // these must evaluate to `false`; every OTHER built-in global property
 // (`JSON`/`Object`/`Math`/`parseInt`/…) is configurable ⇒ `delete` returns `true`.
 const NON_CONFIGURABLE_GLOBALS = new Set(["NaN", "Infinity", "undefined"]);
+
+function isFunctionPrototypeExpression(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "prototype" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Function"
+  );
+}
 
 // Ambient names supplied by lib.dom but absent from host-free Wasm targets.
 // Their declaration-file symbols must not make `typeof name` claim that the
@@ -553,6 +564,38 @@ export function compileDeleteExpression(
   // are unaffected; this arm only claims static NON-index keys.
   if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
     if (emitArgumentsOrdinaryNamedDelete(ctx, fctx, inner)) return { kind: "i32", boolean: true };
+  }
+
+  if (
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(inner) &&
+    inner.name.text === "prototype" &&
+    isFunctionPrototypeExpression(inner.expression)
+  ) {
+    // `Function.prototype` is represented by the shared native-prototype
+    // companion, not by the null placeholder returned by the generic static
+    // builtin-value path. Delete the runtime descriptor from that actual
+    // object so a configurable expando/accessor really disappears.
+    const brand = ensureFunctionNativeProtoGlue(ctx);
+    if (brand !== undefined && emitLazyNativeProtoGet(ctx, fctx, brand)) {
+      const keyResult = compileStringLiteral(ctx, fctx, "prototype", inner.name);
+      const delIdx = ensureLateImport(
+        ctx,
+        "__delete_property",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (keyResult && delIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: delIdx });
+        emitStrictDeleteCheck(ctx, fctx, expr);
+        return { kind: "i32" };
+      }
+      if (keyResult) fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+    }
+    fctx.body.push({ op: "i32.const", value: 1 });
+    return { kind: "i32" };
   }
 
   // Try to resolve struct type and field for property access: delete obj.prop

@@ -14,6 +14,12 @@ area: codegen
 es_edition: es5
 goal: standalone-mode
 related: [4444, 3031, 4490, 4504]
+func-budget-allow:
+  # Ordinary-function `prototype` reflection adds one identity-gated descriptor
+  # arm plus its local to the shared descriptor-helper orchestrator. The arm's
+  # implementation is extracted into closurePrototypeDescriptorArm; these 19
+  # lines are the remaining registration/wiring at the owning function.
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
 # 2026-08-25 standalone Array constructor pair: the dynamic computed-key
 # dispatch for S15.4_A1.1_T9 and the sparse companion write/read for
 # S15.4_A1.1_T10 are the remaining value-representation slice described in

@@ -993,6 +993,66 @@ function collectRedeclaredObjectIdentityLiterals(
   visit(sourceFile);
 }
 
+/**
+ * A module `var` may be redeclared with a differently shaped object literal and
+ * then used as a `with` target after each initializer. Both declarations are
+ * one binding, so selecting the first declaration's anonymous struct for the
+ * shared slot loses keys introduced by the later literal. Keep only this
+ * identity-sensitive shape on the open-object carrier; declaration-keyed
+ * markers avoid changing unrelated same-named locals.
+ */
+function collectRedeclaredWithTargetObjects(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
+  const withTargetSymbols = new Set<ts.Symbol>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      literalShapeNames(node.initializer) !== null
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) {
+        const declarations = declarationsBySymbol.get(symbol) ?? [];
+        declarations.push(node);
+        declarationsBySymbol.set(symbol, declarations);
+      }
+    }
+    if (ts.isWithStatement(node)) {
+      let target: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) {
+        const symbol = checker.getSymbolAtLocation(target);
+        if (symbol) withTargetSymbols.add(symbol);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const [symbol, declarations] of declarationsBySymbol) {
+    if (declarations.length < 2 || !withTargetSymbols.has(symbol)) continue;
+    const shapes = declarations.map(
+      (declaration) => literalShapeNames(declaration.initializer as ts.ObjectLiteralExpression)!,
+    );
+    const first = shapes[0]!;
+    if (shapes.every((shape) => shape.size === first.size && [...shape].every((name) => first.has(name)))) continue;
+    for (const declaration of declarations) {
+      recordOpenObjectConsumerTypes(ctx, checker, declaration, (declaration.name as ts.Identifier).text, false);
+      ctx.irWithOpenObjectTargetKeys.add(widenedVarKeyFromDecl(declaration.name as ts.Identifier));
+    }
+  }
+}
+
 /** True for a declaration hoisted to this source file's module/script scope. */
 function isModuleScopedDeclaration(node: ts.Node): boolean {
   for (let parent = node.parent; parent !== undefined && !ts.isSourceFile(parent); parent = parent.parent) {
@@ -1048,6 +1108,7 @@ export function collectGrowableObjectLiterals(
 ): void {
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
+  collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.

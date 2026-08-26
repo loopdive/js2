@@ -90,7 +90,7 @@ import {
 } from "./disposable-runtime.js";
 import { tryCompileNativeSetSizeGet } from "./set-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
-import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { resolveUserFnctorName, tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -3588,7 +3588,11 @@ export function compilePropertyAccess(
   // Descriptor accessors are runtime state even when shape analysis widened
   // the receiver with a same-named field. Consult them before any struct-field
   // fast path so the getter remains observable after a rejected assignment.
-  if (runtimeAccessorDescriptorKey(ctx, expr.expression, propName) !== undefined) {
+  // An ordinary function's mandatory own `prototype` data property shadows an
+  // inherited accessor installed on `Function.prototype`; let the established
+  // fnctor-prototype arm below emit that own object in its normal ordering.
+  const shadowsRuntimeAccessor = propName === "prototype" && resolveUserFnctorName(ctx, expr.expression) !== undefined;
+  if (!shadowsRuntimeAccessor && runtimeAccessorDescriptorKey(ctx, expr.expression, propName) !== undefined) {
     const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr);
     if (runtimeResult !== null) return runtimeResult;
   }

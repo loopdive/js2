@@ -295,7 +295,7 @@ describe("#4653 residuals — measured standalone", () => {
   // static target proof, keyed off the FIRST initializer's key set, so a name
   // only the second literal owns falls through to the outer lexical binding.
   // Measured: identical program with two DISTINCT target variables is correct.
-  it.fails("(#4653 residual, with-scope) a re-declared `with` target re-proves its key set", async () => {
+  it("(#4653 residual, with-scope) a re-declared `with` target re-proves its key set", async () => {
     expect(
       await runScript(`
         var a = 1, b = "a";
@@ -470,9 +470,62 @@ describe("#4653 residuals — measured standalone", () => {
   // ROW 13.2-18-1. Keep this sentinel on the exact upstream file: smaller
   // `runScript` approximations now pass and would falsely report this row as
   // closed, while the propertyHelper-backed Test262 program remains red.
-  it.fails("(#4491) `fun.prototype` is an own property, not an inherited accessor", async () => {
+  it("(#4491) `fun.prototype` is an own property, not an inherited accessor", async () => {
     const result = await runTest262File(
       resolve("test262/test/language/statements/function/13.2-18-1.js"),
+      "issue-4653-residual",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error).toBe("pass");
+  });
+
+  it("keeps ordinary-function prototype descriptors distinct from arrows", async () => {
+    expect(
+      await runScript(`
+        var ordinary = function () {};
+        var own = Object.getOwnPropertyDescriptor(ordinary, "prototype");
+        if (!own || own.value !== ordinary.prototype) throw new Error("missing value");
+        if (own.writable !== true || own.enumerable !== false || own.configurable !== false) {
+          throw new Error("wrong attributes");
+        }
+        var arrow = () => 1;
+        if (Object.getOwnPropertyDescriptor(arrow, "prototype") !== undefined) {
+          throw new Error("arrow acquired prototype");
+        }
+      `),
+    ).toBe(null);
+  });
+
+  it("really deletes a configurable Function.prototype expando", async () => {
+    expect(
+      await runScript(`
+        Object.defineProperty(Function.prototype, "prototype", {
+          get: function () { return 17; }, configurable: true
+        });
+        if (Function.prototype.prototype !== 17) throw new Error("getter missing");
+        if (!delete Function.prototype.prototype) throw new Error("delete refused");
+        if (Object.getOwnPropertyDescriptor(Function.prototype, "prototype") !== undefined) {
+          throw new Error("descriptor survived delete");
+        }
+        if (Function.prototype.prototype !== undefined) throw new Error("value survived delete");
+      `),
+    ).toBe(null);
+  });
+
+  it.fails("routes a with-scoped var function initializer through the object environment", async () => {
+    const result = await runTest262File(
+      resolve("test262/test/language/statements/function/S13.2.2_A17_T3.js"),
+      "issue-4653-residual",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error).toBe("pass");
+  });
+
+  it("captures each redeclared with environment in its function expression", async () => {
+    const result = await runTest262File(
+      resolve("test262/test/language/statements/function/S13.2.2_A19_T8.js"),
       "issue-4653-residual",
       120_000,
       "standalone",
