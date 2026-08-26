@@ -17,3 +17,10 @@ describe("ES5 standalone folded direct eval in static class code", () => {
     expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
   });
 });
+
+describe("ES5 host folded direct eval in static class code", () => {
+  it.each(ROWS)("passes %s", async (file) => {
+    const result = await runTest262File(join("test262/test", file), "es5-static-eval-class-host", 120_000);
+    expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
+  });
+});
