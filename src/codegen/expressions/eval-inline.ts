@@ -921,7 +921,7 @@ function inheritedStrictEvalSource(
   directEval: boolean,
   src: string,
 ): string {
-  if (!directEval || !isStrictContext(call, ctx.inferModuleStrictArguments)) return src;
+  if (!directEval || !isStrictContext(call, false)) return src;
   // Foreign eval nodes have no parent chain back to the caller. A directive is
   // equivalent to inherited strictness and lets every nested emitter observe it.
   return `"use strict";\n${src}`;

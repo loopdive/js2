@@ -1597,6 +1597,8 @@ export function objectLiteralIsStandaloneAnyObjectCarrier(
 function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (!ctx.standalone || ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
   for (const prop of expr.properties) {
+    const name = resolvePropertyNameText(ctx, prop);
+    if (name !== "toString" && name !== "valueOf") continue;
     if (ts.isMethodDeclaration(prop)) return true;
     if (!ts.isPropertyAssignment(prop)) continue;
     const initializer = prop.initializer;
