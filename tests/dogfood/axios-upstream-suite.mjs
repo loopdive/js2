@@ -17,7 +17,9 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GENERATED_ROOT = resolve(HERE, "..", "..", ".axios-upstream-suite-generated");
-const REPORT_PATH = join(HERE, "report", "axios-upstream-suite.json");
+const REPORT_PATH = process.env.DOGFOOD_AXIOS_REPORT_PATH
+  ? resolve(process.env.DOGFOOD_AXIOS_REPORT_PATH)
+  : join(HERE, "report", "axios-upstream-suite.json");
 
 function moduleSpecifier(fromDirectory, target) {
   let value = relative(fromDirectory, target).replace(/\\/g, "/");
@@ -53,10 +55,17 @@ export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
   const packageSetup = setupNpmCompatCatalogPackage("axios");
   const suite = setupAxiosUpstreamSuite();
+  const fileFilter = String(process.env.DOGFOOD_AXIOS_FILTER ?? "").trim();
+  const selectedPaths = fileFilter
+    ? suite.selectedPaths.filter((filePath) => suite.relativePath(filePath).includes(fileFilter))
+    : suite.selectedPaths;
+  if (selectedPaths.length === 0) {
+    throw new Error(`[dogfood] no Axios upstream file matches DOGFOOD_AXIOS_FILTER=${JSON.stringify(fileFilter)}`);
+  }
   const runs = [];
 
   log(`[dogfood] axios@${packageSetup.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
-  for (const filePath of suite.selectedPaths) {
+  for (const filePath of selectedPaths) {
     const file = suite.relativePath(filePath);
     const generatedPath = join(GENERATED_ROOT, file.replace(/\.js$/, ".ts"));
     const transformed = transformAxiosTest(

@@ -205,17 +205,28 @@ function createReactValueAdapter(react) {
       for (const child of value) array.push(prepare(child, seen));
       return array;
     }
-    // Native React elements already have the host shape. In particular, do
-    // not read their deprecated `ref` accessor or clone them through the
-    // adapter: the native oracle must observe React's own warning behavior.
-    // Wasm-marshalled component constructors arrive as object handles, so
-    // those continue through the reification arm below.
-    if (react.isValidElement?.(value) && typeof value.type !== "object") return value;
+    // React refs are mutable identity cells. Cloning `{ current }` while
+    // reifying an element's props makes the host renderer write a detached
+    // copy, while the compiled test keeps reading the original cell (and
+    // therefore observes `null`). The Wasm host wrapper already supports the
+    // required live read/write semantics, so preserve the cell itself. This
+    // shape is React's public createRef contract; ordinary prop records keep
+    // using the recursive reifier below.
+    const ownKeys = Object.keys(value);
+    if (ownKeys.length === 1 && ownKeys[0] === "current") {
+      seen.set(value, value);
+      return value;
+    }
     // A React element created inside Wasm has the same global $$typeof symbol
     // as the host React package, but its props object is a Wasm proxy. Rebuild
     // the element with host React so ReactDOM can use ordinary object
     // operations (`hasOwnProperty`, descriptors, and child traversal) at the
-    // Wasm/host boundary.
+    // Wasm/host boundary. This adapter is enabled only while a compiled test
+    // export is running; the native oracle never enters it. Do not use the
+    // historical `typeof value.type === "object"` discriminator here: once a
+    // compiled class is correctly surfaced as a host-callable constructor its
+    // type is `function`, but the surrounding element and props still need
+    // reification.
     if ("type" in value && "props" in value && "$$typeof" in value) {
       const props = prepare(value.props, seen) ?? {};
       if (value.key !== undefined && value.key !== null) props.key = value.key;

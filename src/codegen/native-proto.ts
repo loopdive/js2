@@ -361,7 +361,7 @@ function nativeProtoSeederRegistry(ctx: CodegenContext): Map<number, string> {
 /**
  * (#4491 T9) Brands whose seeder installed a `constructor` companion entry —
  * i.e. those with an identity-stable carrier (`hasBuiltinProtoConstructorCarrier`).
- * Read by {@link seededNativeProtoDataMembersByBrand} so `__nproto_hasown`
+ * Read by {@link seededNativeProtoOwnMembersByBrand} so `__nproto_hasown`
  * consults the companion for `constructor` on exactly those brands instead of
  * answering the unconditional spec `1`, which no `delete` could ever retract.
  */
@@ -406,13 +406,13 @@ export function nativeProtoSeedersByBrandOffset(ctx: CodegenContext): ReadonlyMa
 }
 
 /**
- * Data-method keys whose builtin prototype companion is authoritative.
+ * Seeded own keys whose builtin prototype companion is authoritative.
  *
  * A registered seeder installs these members as ordinary `$PropEntry` values,
  * so later assignment or deletion must be observed from that table rather than
  * from the immutable `$NativeProto.$memberCsv` / singleton-closure shortcuts.
- * Accessors are deliberately absent because the current seeder does not install
- * them; constructors have their own carrier and are not part of `memberCsv`.
+ * This includes data methods and accessor getters; constructors have their own
+ * carrier and are not part of `memberCsv`.
  *
  * (#4491 T9) …but a `constructor` the seeder DID install is appended here even
  * though it is not a CSV member, and for the same reason the CSV members are
@@ -426,9 +426,10 @@ export function nativeProtoSeedersByBrandOffset(ctx: CodegenContext): ReadonlyMa
  * this list unchanged. A brand with NO carrier seeds nothing and is absent from
  * the set, so its unconditional arm is untouched.
  */
-export function seededNativeProtoDataMembersByBrand(ctx: CodegenContext): ReadonlyMap<number, readonly string[]> {
+export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): ReadonlyMap<number, readonly string[]> {
   const out = new Map<number, readonly string[]>();
   const seededCtors = nativeProtoSeededConstructorBrands(ctx);
+  const accessorSeederAvailable = ctx.funcMap.has("__defineProperty_accessor");
   for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
     if (ctx.funcMap.get(seederName) === undefined) continue;
     const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -436,7 +437,11 @@ export function seededNativeProtoDataMembersByBrand(ctx: CodegenContext): Readon
     const members = glue.memberCsv
       .split(",")
       .map((member) => member.trim())
-      .filter((member) => member.length > 0 && !member.startsWith("@@") && glue.memberKind(member) === "method");
+      .filter((member) => {
+        if (member.length === 0 || member.startsWith("@@")) return false;
+        const kind = glue.memberKind(member);
+        return kind === "method" || (kind === "getter" && accessorSeederAvailable);
+      });
     if (seededCtors.has(brand)) members.push("constructor");
     if (members.length > 0) out.set(brand, members);
   }
@@ -454,12 +459,12 @@ export function seededNativeProtoDataMembersByBrand(ctx: CodegenContext): Readon
  */
 const PROTO_METHOD_DEFINE_FLAGS = 0xbd;
 
-// (Deferred, for the accessor tier — see the `kind === "getter"` skip below for
-// why it is not this slice.) When accessors are seeded they must use
-// `__defineProperty_accessor`'s SEPARATE `computeRuntimeFlags` word, not the
-// value encoding above: `(1<<4)|(1<<5)|(1<<2)` = enumerable/configurable
-// SPECIFIED + configurable true, i.e. `{enumerable:false, configurable:true}`
-// (§15.7.14 / §17). Same constant as `ACCESSOR_FLAGS` in class-proto-accessors.ts.
+/** §17 accessor attributes in `__defineProperty_accessor`'s flag encoding. */
+const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
+
+// Accessors use `__defineProperty_accessor`'s SEPARATE `computeRuntimeFlags`
+// word, not the value encoding above. Same constant as `ACCESSOR_FLAGS` in
+// class-proto-accessors.ts.
 
 /**
  * (#2175 V2-S3b-1) Ensure a `__nativeproto_seed_<brand>(externref companion)`
@@ -525,6 +530,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   if (brandOffset < 0 || brandOffset >= BUILTIN_BRAND_COUNT) return undefined;
 
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const defineAccessorIdx = ctx.funcMap.get("__defineProperty_accessor");
   if (defineValueIdx === undefined) return undefined;
 
   const funcName = `__nativeproto_seed_${brand}`;
@@ -549,7 +555,6 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     installed = 1;
     nativeProtoSeededConstructorBrands(ctx).add(brand);
   }
-  const defineValueIdx2 = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
   for (const rawMember of glue.memberCsv.split(",")) {
     const member = rawMember.trim();
     if (member.length === 0) continue;
@@ -603,17 +608,22 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       refusalBodyFallback: true,
     });
     if (!closure) continue;
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    // Preserve the historical data-method seeder even in a defensive partial
+    // object-runtime build that has no accessor helper.
+    if (defineIdx === undefined) continue;
 
     const body = seedFctx.body;
     body.push({ op: "local.get", index: 0 });
     addStringConstantGlobal(ctx, member);
     for (const instr of stringConstantExternrefInstrs(ctx, member)) body.push(instr);
 
-    // [obj, key, value, flags] → §17 data entry.
     for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, closure)) body.push(instr);
     body.push({ op: "extern.convert_any" });
+    // [obj, key, value, flags] → §17 data entry. Getter members were skipped
+    // above until their inline/materialized receiver behavior is unified.
     body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
-    body.push({ op: "call", funcIdx: defineValueIdx2 });
+    body.push({ op: "call", funcIdx: defineIdx });
     body.push({ op: "drop" }); // the helper returns the target
     installed++;
   }
@@ -651,9 +661,8 @@ function pushNativeStringToExternref(_body: Instr[]): void {
 }
 
 function nativeProtoGlobalMap(ctx: CodegenContext): Map<number, number> {
-  const slot = ctx as unknown as { __nativeProtoGlobals?: Map<number, number> };
-  if (!slot.__nativeProtoGlobals) slot.__nativeProtoGlobals = new Map();
-  return slot.__nativeProtoGlobals;
+  if (!ctx.nativeProtoGlobals) ctx.nativeProtoGlobals = new Map();
+  return ctx.nativeProtoGlobals;
 }
 
 // ── Brand-keyed native-method-closure factory ─────────────────────────────────
@@ -880,17 +889,22 @@ export function ensureStandaloneNativeMethodClosure(
     arity,
   );
 
-  // (#2193 PR-B) A `"method"` closure's first user param is the receiver
-  // (`this`); record its struct type so a reflective `m.call(thisArg, …args)`
-  // threads `thisArg` into param 1 instead of dropping it (the plain-function
-  // `.call` default). Getters carry no user-visible receiver-arg semantics here.
-  // Both the base wrapper AND the meta subtype are recorded — call sites key
-  // this set by the ClosureInfo's structTypeIdx, which is the meta type for
-  // values produced by this factory.
-  if (kind === "method") {
-    if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();
-    ctx.nativeProtoReceiverClosureStructTypes.add(wrapperTypes.structTypeIdx);
-    ctx.nativeProtoReceiverClosureStructTypes.add(metaTypeIdx);
+  // (#2193 PR-B / #4664) Every native-proto closure's first user param is the
+  // internal receiver (`this`). Methods use that mapping at every reflective
+  // arity. Seeded accessor getters use it only in the zero-argument accessor
+  // bridge: their historical directly-called form still treats its first
+  // supplied argument as the receiver. Keep the sets separate so seeding the
+  // descriptor does not change that established callable surface.
+  if (kind === "getter") {
+    // The exact metadata subtype is enough for the accessor bridge and avoids
+    // classifying an unrelated closure that happens to share the base wrapper.
+    (ctx.nativeProtoAccessorGetterClosureStructTypes ??= new Set()).add(metaTypeIdx);
+    // `.call(thisArg)` keeps using the established receiver-aware rewrite.
+    (ctx.nativeProtoReceiverClosureStructTypes ??= new Set()).add(metaTypeIdx);
+  } else {
+    const receiverTypes = (ctx.nativeProtoReceiverClosureStructTypes ??= new Set());
+    receiverTypes.add(wrapperTypes.structTypeIdx);
+    receiverTypes.add(metaTypeIdx);
   }
 
   return { type: { kind: "ref", typeIdx: metaTypeIdx }, funcIdx };

@@ -42,6 +42,7 @@ import {
 import { irFnctorShapeEquals, validateIrFnctorShape, type IrFnctorShape } from "./fnctor-abi.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { Instr, ValType } from "./types.js";
+import type { IrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 // #3954 phase 1 — the builder's payload-shape question ("does this partition
 // have a payload, and of what shape?") is a `TagDomain` question.
 // #3954 phase 3 (W5) — the builder now HOLDS its domain (constructor arg,
@@ -374,7 +375,12 @@ export class IrFunctionBuilder {
     return result;
   }
 
-  emitStringRepeat(value: IrValueId, count: IrValueId, encodingEvidence: IrStringEncoding): IrValueId {
+  emitStringRepeat(
+    value: IrValueId,
+    count: IrValueId,
+    encodingEvidence: IrStringEncoding,
+    countedStringAppendSite?: IrCountedStringAppendSiteId,
+  ): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "string" };
     this.valueTypes.set(result, resultType);
@@ -387,6 +393,7 @@ export class IrFunctionBuilder {
       resultType,
       alloc,
       encodingEvidence,
+      ...(countedStringAppendSite === undefined ? {} : { countedStringAppendSite }),
     });
     return result;
   }

@@ -619,6 +619,60 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
+  it("keeps native-first BigInts on the signed-i64 carrier across storage and operators", async () => {
+    const native = await instantiate(
+      `
+        interface Box { value: bigint }
+        const box: Box = { value: 40n };
+        const values: bigint[] = [40n];
+
+        export function local(value: bigint): bigint {
+          let copy = value;
+          copy += 1n;
+          return ++copy;
+        }
+        export function member(): bigint { box.value += 1n; return box.value; }
+        export function element(): bigint { values[0]++; return values[0]; }
+        export function unary(): bigint { return ~(-42n); }
+        export function conversions(value: bigint): string {
+          return Boolean(value) ? String(Number(value)) : "zero";
+        }
+        export function branches(flag: boolean): bigint {
+          const maybe: bigint | null = flag ? 41n : null;
+          return (maybe ?? 0n) || 1n;
+        }
+        export function compares(value: bigint): number {
+          return value > 40n && value == 41n ? 1 : 0;
+        }
+      `,
+      "native-first",
+    );
+
+    expect(native.exports.local(40n)).toBe(42n);
+    expect(native.exports.member()).toBe(41n);
+    expect(native.exports.element()).toBe(41n);
+    expect(native.exports.unary()).toBe(41n);
+    expect(native.exports.conversions(42n)).toBe("42");
+    expect(native.exports.branches(true)).toBe(41n);
+    expect(native.exports.branches(false)).toBe(1n);
+    expect(native.exports.compares(41n)).toBe(1);
+
+    const importNames = wasmImports(native.result.binary).map((entry) => entry.name);
+    expect(importNames).not.toEqual(
+      expect.arrayContaining([
+        "__bigint_ctor_ref",
+        "__host_bigint_binop",
+        "__host_eq",
+        "__host_loose_eq",
+        "__to_boolean",
+      ]),
+    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
+      [],
+    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
+  });
+
   it("formats the full signed-i64 BigInt range natively for radices 2 through 36", async () => {
     const native = await instantiate(
       `

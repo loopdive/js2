@@ -15,7 +15,7 @@
  * `Array.isArray(new Date(0))` all answered `true`.
  */
 import type { ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 
@@ -38,4 +38,19 @@ export function isArrayCarrierValType(ctx: CodegenContext, t: ValType): boolean 
     if (name === `__vec_${elemKind}`) return false;
   }
   return name.startsWith("__vec_") || name === "__template_vec_externref";
+}
+
+/**
+ * Normalize an `externref`-expected Array.isArray operand for the runtime
+ * carrier test. Concrete GC references remain candidates; scalar values emit
+ * the already-known false result and tell the caller not to run the test.
+ */
+export function retainArrayIsArrayExternrefCandidate(fctx: FunctionContext, type: ValType | null): boolean {
+  if (type === null || type.kind === "externref") return true;
+  if (type.kind === "ref" || type.kind === "ref_null" || type.kind === "anyref") {
+    fctx.body.push({ op: "extern.convert_any" });
+    return true;
+  }
+  fctx.body.push({ op: "drop" }, { op: "i32.const", value: 0 });
+  return false;
 }

@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-26T02:24:30.983Z",
+  "generatedAt": "2026-08-26T06:17:15.088Z",
   "measuredRange": {
-    "oldest": "2026-08-25T04:35:13.126Z",
-    "newest": "2026-08-26T02:23:42.881Z"
+    "oldest": "2026-08-26T02:13:36.660Z",
+    "newest": "2026-08-26T06:10:50.878Z"
   },
   "correctness": {
     "definition": {
@@ -68,10 +68,31 @@
   "refresh": {
     "status": "partial",
     "stalePackages": [
-      "lit",
-      "react-dom"
+      "acorn",
+      "axios",
+      "clsx",
+      "cookie",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "lodash-es",
+      "marked",
+      "moment",
+      "prettier",
+      "react",
+      "react-dom",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
     ],
-    "freshCount": 22,
+    "freshCount": 1,
     "totalCount": 24
   },
   "packages": [
@@ -572,7 +593,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:13:40.687Z",
-      "weeklyDownloads": 275892096
+      "weeklyDownloads": 275892096,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:13:40.687Z"
+      }
     },
     {
       "name": "typescript",
@@ -2013,7 +2039,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:23:42.881Z",
-      "weeklyDownloads": 250686863
+      "weeklyDownloads": 250686863,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:23:42.881Z"
+      }
     },
     {
       "name": "acorn",
@@ -2421,7 +2452,12 @@
         }
       ],
       "measuredAt": "2026-08-26T02:17:32.697Z",
-      "weeklyDownloads": 240886853
+      "weeklyDownloads": 240886853,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:17:32.697Z"
+      }
     },
     {
       "name": "cookie",
@@ -2799,7 +2835,12 @@
         }
       ],
       "measuredAt": "2026-08-26T02:13:59.633Z",
-      "weeklyDownloads": 173435452
+      "weeklyDownloads": 173435452,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:13:59.633Z"
+      }
     },
     {
       "name": "lodash",
@@ -3219,7 +3260,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:14:38.138Z",
-      "weeklyDownloads": 164859858
+      "weeklyDownloads": 164859858,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:14:38.138Z"
+      }
     },
     {
       "name": "react",
@@ -4313,7 +4359,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:15:52.235Z",
-      "weeklyDownloads": 162687688
+      "weeklyDownloads": 162687688,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:15:52.235Z"
+      }
     },
     {
       "name": "eslint",
@@ -4450,7 +4501,12 @@
         }
       ],
       "measuredAt": "2026-08-26T02:16:11.813Z",
-      "weeklyDownloads": 152308132
+      "weeklyDownloads": 152308132,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:16:11.813Z"
+      }
     },
     {
       "name": "react-dom",
@@ -4460,17 +4516,17 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 11473345,
+        "durationMs": 15040818,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 268987582,
+        "binaryBytes": 234473480,
         "categories": {},
         "error": null
       },
       "validation": {
         "validates": false,
-        "firstError": "CompileError: WebAssembly.compile(): Compiling function #290:\"trackValueOnNode\" failed: ref.is_null[0] expected reference type, found global.get of type f64 @+535038"
+        "firstError": "CompileError: WebAssembly.compile(): Compiling function #290:\"trackValueOnNode\" failed: ref.is_null[0] expected reference type, found global.get of type f64 @+534907"
       },
       "capabilities": {
         "nodeFs": false
@@ -4499,13 +4555,13 @@
           "implementationInvalidTests": 1,
           "compile": {
             "success": false,
-            "durationMs": 384349,
-            "binaryBytes": 21868840,
+            "durationMs": 546275,
+            "binaryBytes": 21865675,
             "invalidBatches": 2
           },
           "validation": {
             "validates": false,
-            "firstError": "Codegen error: stack-balance invariant (entry): 'Child_render' references local 4, but only 1 params + 2 locals are declared (locals: 1:__dynm_args_0, 2:__fnmemo_Grandchild_1; body: [{\"op\":\"global.get\",\"index\":3322},{\"op\":\"global.get\",\"index\":1095},{\"op\":\"call\",\"funcIdx\":77},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.get\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2098431},{\"op\":\"i32.const\",\"value\":2},{\"op\":\"ref.null.extern\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":547},{\"op\":\"local.set\",\"index\":2}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"ref.as_non_null\"},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":78},{\"op\":\"local.get\",\"index\":1},{\"op\":\"ref.null.extern\"},{\"op\":\"call\",\"funcIdx\":78},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+            "firstError": "Codegen error: stack-balance invariant (entry): 'Child_render' references local 4, but only 1 params + 2 locals are declared (locals: 1:__dynm_args_0, 2:__fnmemo_Grandchild_1; body: [{\"op\":\"global.get\",\"index\":3321},{\"op\":\"global.get\",\"index\":1095},{\"op\":\"call\",\"funcIdx\":77},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.get\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2098431},{\"op\":\"i32.const\",\"value\":2},{\"op\":\"ref.null.extern\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":547},{\"op\":\"local.set\",\"index\":2}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"ref.as_non_null\"},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":78},{\"op\":\"local.get\",\"index\":1},{\"op\":\"ref.null.extern\"},{\"op\":\"call\",\"funcIdx\":78},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "fizz": {
@@ -4519,7 +4575,7 @@
           "implementationInvalidTests": 14,
           "compile": {
             "success": false,
-            "durationMs": 4634899,
+            "durationMs": 5039661,
             "binaryBytes": 0,
             "invalidBatches": 28
           },
@@ -4539,8 +4595,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 348282,
-            "binaryBytes": 7875828,
+            "durationMs": 560541,
+            "binaryBytes": 7874773,
             "invalidBatches": 3
           },
           "validation": {
@@ -4559,8 +4615,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 23312,
-            "binaryBytes": 1490245,
+            "durationMs": 38157,
+            "binaryBytes": 1490034,
             "invalidBatches": 0
           },
           "validation": {
@@ -5283,7 +5339,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "module init: RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __module_init (wasm://wasm/00a5b60e:wasm-function[2414]:0x217a0c)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:225:39)",
+            "error": "module init: RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __module_init (wasm://wasm/00a5b32a:wasm-function[2414]:0x217953)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:225:39)",
             "tests": [
               {
                 "status": "trapped"
@@ -9464,7 +9520,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "module init: RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __module_init (wasm://wasm/009060be:wasm-function[2324]:0x1c8ad6)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:225:39)",
+            "error": "module init: RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __module_init (wasm://wasm/00905dda:wasm-function[2324]:0x1c8a1d)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:225:39)",
             "tests": [
               {
                 "status": "trapped"
@@ -10717,12 +10773,12 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T09:13:03.673Z",
+      "measuredAt": "2026-08-26T06:06:15.917Z",
       "weeklyDownloads": 139740993,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-25T09:13:03.673Z"
+        "lastMeasuredAt": "2026-08-26T06:06:15.917Z"
       }
     },
     {
@@ -10852,7 +10908,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:22:44.394Z",
-      "weeklyDownloads": 117242232
+      "weeklyDownloads": 117242232,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:22:44.394Z"
+      }
     },
     {
       "name": "tailwindcss",
@@ -11225,7 +11286,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:15:31.836Z",
-      "weeklyDownloads": 117155768
+      "weeklyDownloads": 117155768,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:15:31.836Z"
+      }
     },
     {
       "name": "axios",
@@ -12667,7 +12733,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:19:30.749Z",
-      "weeklyDownloads": 112353408
+      "weeklyDownloads": 112353408,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:19:30.749Z"
+      }
     },
     {
       "name": "clsx",
@@ -13010,7 +13081,12 @@
         }
       ],
       "measuredAt": "2026-08-26T02:13:47.338Z",
-      "weeklyDownloads": 104930549
+      "weeklyDownloads": 104930549,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:13:47.338Z"
+      }
     },
     {
       "name": "jsdom",
@@ -13226,7 +13302,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:16:23.562Z",
-      "weeklyDownloads": 89317829
+      "weeklyDownloads": 89317829,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:16:23.562Z"
+      }
     },
     {
       "name": "marked",
@@ -13421,7 +13502,12 @@
         }
       ],
       "measuredAt": "2026-08-26T02:13:36.660Z",
-      "weeklyDownloads": 60496071
+      "weeklyDownloads": 60496071,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:13:36.660Z"
+      }
     },
     {
       "name": "webpack",
@@ -14090,7 +14176,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:15:40.065Z",
-      "weeklyDownloads": 55617769
+      "weeklyDownloads": 55617769,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:15:40.065Z"
+      }
     },
     {
       "name": "hono",
@@ -16184,7 +16275,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:16:50.172Z",
-      "weeklyDownloads": 53123258
+      "weeklyDownloads": 53123258,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:16:50.172Z"
+      }
     },
     {
       "name": "jest",
@@ -19063,7 +19159,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:16:31.558Z",
-      "weeklyDownloads": 46631732
+      "weeklyDownloads": 46631732,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:16:31.558Z"
+      }
     },
     {
       "name": "lodash-es",
@@ -19514,7 +19615,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:16:54.809Z",
-      "weeklyDownloads": 42294984
+      "weeklyDownloads": 42294984,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:16:54.809Z"
+      }
     },
     {
       "name": "redux",
@@ -20038,7 +20144,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:14:41.909Z",
-      "weeklyDownloads": 40344956
+      "weeklyDownloads": 40344956,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:14:41.909Z"
+      }
     },
     {
       "name": "moment",
@@ -21158,7 +21269,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:17:13.992Z",
-      "weeklyDownloads": 34294671
+      "weeklyDownloads": 34294671,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:17:13.992Z"
+      }
     },
     {
       "name": "three",
@@ -22499,7 +22615,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:16:35.853Z",
-      "weeklyDownloads": 12487515
+      "weeklyDownloads": 12487515,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:16:35.853Z"
+      }
     },
     {
       "name": "styled-components",
@@ -22857,7 +22978,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:13:58.995Z",
-      "weeklyDownloads": 11029759
+      "weeklyDownloads": 11029759,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:13:58.995Z"
+      }
     },
     {
       "name": "stylelint",
@@ -24917,7 +25043,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T02:18:14.704Z",
-      "weeklyDownloads": 10427988
+      "weeklyDownloads": 10427988,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T02:18:14.704Z"
+      }
     },
     {
       "name": "lit",
@@ -24927,16 +25058,16 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7553,
+        "durationMs": 7909,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 189814,
+        "binaryBytes": 189834,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #128:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 108), found global.get of type i32 @+54420"
+        "firstError": "WebAssembly.Module(): Compiling function #128:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 108), found global.get of type i32 @+54440"
       },
       "capabilities": {
         "nodeFs": false
@@ -24944,14 +25075,14 @@
       "entryIsBarrel": true,
       "tests": {
         "kind": "upstream-suite",
-        "passed": 13,
+        "passed": 0,
         "total": 151,
-        "passRatePct": 8.61,
+        "passRatePct": 0,
         "admitted": 583,
         "upstreamTestsSeen": 587,
-        "harnessIncompatible": 420,
+        "harnessIncompatible": 432,
         "unavailableInfra": 0,
-        "implementationInvalidTests": 49,
+        "implementationInvalidTests": 398,
         "sourceIssue": 3977
       },
       "playground": {
@@ -24989,36 +25120,37 @@
           },
           {
             "path": "packages/lit-html/src/test/directive-helpers_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 9,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directive-helpers_test.ts"
@@ -25127,33 +25259,34 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/cache_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 8,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/cache_test.ts"
@@ -25161,15 +25294,15 @@
           {
             "path": "packages/lit-html/src/test/directives/choose_test.ts",
             "status": "fail",
-            "passed": 1,
+            "passed": 0,
             "total": 3,
-            "error": "expected null to strictly equal undefined",
+            "error": "TypeError: Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
                 "status": "fail"
@@ -25180,12 +25313,36 @@
           {
             "path": "packages/lit-html/src/test/directives/class-map_test.ts",
             "status": "fail",
-            "passed": 3,
+            "passed": 0,
             "total": 12,
-            "error": "Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.",
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "fail"
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
               },
               {
                 "status": "fail"
@@ -25195,108 +25352,86 @@
               },
               {
                 "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "pass"
-              },
-              {
-                "status": "pass"
-              },
-              {
-                "status": "pass"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/class-map_test.ts"
           },
           {
             "path": "packages/lit-html/src/test/directives/guard_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 6,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/guard_test.ts"
           },
           {
             "path": "packages/lit-html/src/test/directives/if-defined_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 14,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/if-defined_test.ts"
@@ -25327,12 +25462,13 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/keyed_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 1,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/keyed_test.ts"
@@ -25406,24 +25542,25 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/range_test.ts",
-            "status": "pass",
-            "passed": 5,
+            "status": "fail",
+            "passed": 0,
             "total": 5,
+            "error": "TypeError: Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/range_test.ts"
@@ -25433,13 +25570,28 @@
             "status": "fail",
             "passed": 0,
             "total": 18,
-            "error": "Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.",
+            "error": "TypeError: Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
               },
               {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
                 "status": "fail"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "fail"
+              },
+              {
+                "status": "trapped"
               },
               {
                 "status": "fail"
@@ -25448,130 +25600,116 @@
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/ref_test.ts"
           },
           {
             "path": "packages/lit-html/src/test/directives/repeat_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 25,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/repeat_test.ts"
@@ -25617,21 +25755,22 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/template-content_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 4,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/template-content_test.ts"
@@ -25643,33 +25782,34 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/unsafe-html_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 8,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/unsafe-html_test.ts"
@@ -25709,33 +25849,34 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/unsafe-svg_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 8,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/unsafe-svg_test.ts"
@@ -25746,6 +25887,9 @@
             "passed": 0,
             "total": 0,
             "tests": [
+              {
+                "status": "harness-incompatible"
+              },
               {
                 "status": "harness-incompatible"
               },
@@ -25910,12 +26054,13 @@
           },
           {
             "path": "packages/lit-html/src/test/is-server_test.ts",
-            "status": "pass",
-            "passed": 1,
+            "status": "fail",
+            "passed": 0,
             "total": 1,
+            "error": "TypeError: Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "pass"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/is-server_test.ts"
@@ -25936,6 +26081,12 @@
             "passed": 0,
             "total": 0,
             "tests": [
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
               {
                 "status": "harness-incompatible"
               },
@@ -26596,9 +26747,9 @@
           {
             "path": "packages/reactive-element/src/test/css-tag_test.ts",
             "status": "fail",
-            "passed": 3,
+            "passed": 0,
             "total": 7,
-            "error": "No dependency provided for extern class \"CSSStyleSheet\"",
+            "error": "null",
             "tests": [
               {
                 "status": "fail"
@@ -26610,16 +26761,16 @@
                 "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/reactive-element/src/test/css-tag_test.ts"
@@ -26875,6 +27026,9 @@
               },
               {
                 "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/reactive-element/src/test/reactive-element-controllers_test.ts"
@@ -27106,24 +27260,48 @@
               },
               {
                 "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/reactive-element/src/test/reactive-element_test.ts"
           }
         ],
         "summary": {
-          "pass": 13,
-          "fail": 34,
+          "pass": 0,
+          "fail": 130,
           "compile_error": 0,
-          "skip": 127,
+          "skip": 44,
           "total": 174
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 13,
+        "passed": 0,
         "total": 151,
-        "reason": "138 of 151 operations diverged from native node"
+        "reason": "151 of 151 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "select one of two runtime-owned callbacks",
@@ -27133,51 +27311,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.515467261697914,
-            "nodeUs": 0.0052985093100154325,
-            "wasmStdUs": 0.0009554272615220298,
-            "nodeStdUs": 0.000012428603100774815,
-            "ratio": 0.01028156017679827,
-            "ratioStd": 0.000032542301048419464,
+            "wasmUs": 0.5597421010706382,
+            "nodeUs": 0.003917421036152699,
+            "wasmStdUs": 0.0009537554899643119,
+            "nodeStdUs": 0.000058360272357095024,
+            "ratio": 0.007000464069232417,
+            "ratioStd": 0.00010763238621146862,
             "ratioSamples": [
-              0.010297171692484836,
-              0.010321776685345091,
-              0.010220752278142902,
-              0.010239521374893328,
-              0.010249451025998238,
-              0.010252726962944462,
-              0.01028156017679827,
-              0.01029925364072421,
-              0.010304616293796259
+              0.0068125618630049505,
+              0.006938897284952997,
+              0.007054637421936159,
+              0.007000464069232417,
+              0.006978221157227215,
+              0.006972718196839208,
+              0.007079815561240954,
+              0.007148230739903785,
+              0.007190506910591584
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 460592,
+            "iters": 392933,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.5155462231211759,
-              0.515362463959559,
-              0.5172749787234678,
-              0.5174567361133743,
-              0.5156545901799078,
-              0.515110143033062,
-              0.5146027438603015,
-              0.5147493074126451,
-              0.515467261697914
+              0.5621883654465275,
+              0.5597421010706382,
+              0.5596457742159497,
+              0.5595944779389795,
+              0.5590765448562394,
+              0.561340528792414,
+              0.5594862584715476,
+              0.5603323798204821,
+              0.5607213265365681
             ],
             "nodeSamplesUs": [
-              0.005308667974890844,
-              0.005319456264999776,
-              0.005286939417214205,
-              0.0052985093100154325,
-              0.005285176468380157,
-              0.005281283652361254,
-              0.005290919078145197,
-              0.005301533678429951,
-              0.005311692343810865
+              0.003829943018266103,
+              0.0038839929453929373,
+              0.003948098021812273,
+              0.003917421036152699,
+              0.0039013597738253,
+              0.003914069319734209,
+              0.003961059519027341,
+              0.004005385141996214,
+              0.0040318705733772735
             ],
-            "compileDurationMs": 4073.6236300000455,
+            "compileDurationMs": 4838.030071999994,
             "binaryBytes": 1484,
             "moduleImportCount": 5,
             "functionImportCount": 5,
@@ -27202,59 +27380,54 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.515467261697914,
-        "nodeUs": 0.0052985093100154325,
-        "wasmStdUs": 0.0009554272615220298,
-        "nodeStdUs": 0.000012428603100774815,
-        "ratio": 0.01028156017679827,
-        "ratioStd": 0.000032542301048419464,
+        "wasmUs": 0.5597421010706382,
+        "nodeUs": 0.003917421036152699,
+        "wasmStdUs": 0.0009537554899643119,
+        "nodeStdUs": 0.000058360272357095024,
+        "ratio": 0.007000464069232417,
+        "ratioStd": 0.00010763238621146862,
         "ratioSamples": [
-          0.010297171692484836,
-          0.010321776685345091,
-          0.010220752278142902,
-          0.010239521374893328,
-          0.010249451025998238,
-          0.010252726962944462,
-          0.01028156017679827,
-          0.01029925364072421,
-          0.010304616293796259
+          0.0068125618630049505,
+          0.006938897284952997,
+          0.007054637421936159,
+          0.007000464069232417,
+          0.006978221157227215,
+          0.006972718196839208,
+          0.007079815561240954,
+          0.007148230739903785,
+          0.007190506910591584
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 460592,
+        "iters": 392933,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.5155462231211759,
-          0.515362463959559,
-          0.5172749787234678,
-          0.5174567361133743,
-          0.5156545901799078,
-          0.515110143033062,
-          0.5146027438603015,
-          0.5147493074126451,
-          0.515467261697914
+          0.5621883654465275,
+          0.5597421010706382,
+          0.5596457742159497,
+          0.5595944779389795,
+          0.5590765448562394,
+          0.561340528792414,
+          0.5594862584715476,
+          0.5603323798204821,
+          0.5607213265365681
         ],
         "nodeSamplesUs": [
-          0.005308667974890844,
-          0.005319456264999776,
-          0.005286939417214205,
-          0.0052985093100154325,
-          0.005285176468380157,
-          0.005281283652361254,
-          0.005290919078145197,
-          0.005301533678429951,
-          0.005311692343810865
+          0.003829943018266103,
+          0.0038839929453929373,
+          0.003948098021812273,
+          0.003917421036152699,
+          0.0039013597738253,
+          0.003914069319734209,
+          0.003961059519027341,
+          0.004005385141996214,
+          0.0040318705733772735
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T04:35:13.126Z",
-      "weeklyDownloads": 6829692,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-25T04:35:13.126Z"
-      }
+      "measuredAt": "2026-08-26T06:10:50.878Z",
+      "weeklyDownloads": 6829692
     }
   ]
 }

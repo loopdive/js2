@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-24
+updated: 2026-08-26
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -2335,6 +2335,30 @@ Land a small independently reviewed PR before the routing change.
    optional/generic/spread, alias, stored/returned, reassigned, captured,
    second-use, second-allocation, and non-string allocation cases. Canonical
    source ordering must not change the projection.
+
+#### L1 implementation evidence (2026-08-26)
+
+The L1 checkpoint is implemented in signed commits
+`10279401a1eaa68b2289cef137be14631f5590e0` and
+`88892d1da27e1672f5afd548b946c0473a46b828`. The retained projection is
+source-qualified, evidence-only, and dormant outside the exact standalone,
+native-string, non-fast, experimental, post-legacy route with
+`JS2WASM_IR_FIRST=0`; it does not alter admission, selection, propagation, or
+emitted outcomes. Collection covers the complete active-source semantic-use
+census, and retention revalidates the live call/new/parameter declarations and
+physical reservation identity before deep-freezing the canonical evidence.
+The negative matrix includes same-spelled foreign declarations, forwarding,
+default/assignment/factory/class-field uses, aliases, captures, reassignment,
+storage/return, duplicate allocations, and an unrelated compound-call positive
+control.
+
+The focused projection suite passed 52/52 tests and the four affected fnctor
+suites passed 71/71. TypeScript 5 and 7 checks, scoped formatting, static IR
+ratchets, the LOC and function-growth ratchets, and the complete commit hooks
+passed. Independent pre- and post-signature reviews approved the exact signed
+repair commit. No compiler/runtime A/B or R2 replay was performed for this
+dormant checkpoint; L2 and L3 remain gated on their own implementation,
+review, and validation requirements.
 
 ### Checkpoint L2 — dormant logical-to-physical fnctor layout contract
 

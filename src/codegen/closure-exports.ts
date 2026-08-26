@@ -12,7 +12,8 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
-import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureHostCallFallbackImports, planHostCallFallback } from "./expressions/host-call-fallback.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 import {
@@ -545,9 +546,8 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   //   structLocal = (ref null $baseWrapper) for the cast struct
   //   funcLocal   = funcref extracted from struct field 0
   const anyLocal = arity + 1;
-  // arity + 2 is the declared-but-now-unused `__struct` slot (kept so the
-  // local layout and funcLocal index stay stable after the #1712 per-shape
-  // extraction removed the single representative struct cast).
+  // arity + 2 is the unused `__struct` slot, kept so the local layout and
+  // funcLocal stay stable after #1712 removed the representative cast.
   const funcLocal = arity + 3;
 
   let baseWrapperIdx: number | undefined;
@@ -677,9 +677,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
 
-  let funcrefDispatch: Instr[] = hostCallableFallbackTerminal(ctx, arity, 0, [{ op: "ref.null.extern" }], 1) ?? [
-    { op: "ref.null.extern" },
-  ];
+  let funcrefDispatch: Instr[] = directHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }];
 
   // `funcrefDispatch` is built by prepending each arm, so reverse the
   // priority order returned by `orderClosureDispatchEntries` to keep the
@@ -854,6 +852,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         { name: "__any", type: { kind: "anyref" } },
         { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
         { name: "__funcref", type: { kind: "funcref" } },
+        { name: "__host_args", type: { kind: "externref" } },
       ],
       body,
       exported: true,
@@ -996,8 +995,8 @@ function orderClosureDispatchEntries<T extends { funcTypeIdx: number; rest?: unk
  * `ref.null.extern` terminal silently dropped the invocation — every
  * ReactChildren mock-args/count test). Emit
  * `__call_function_<arity>(fn, thisArg, args…)` for a non-null unmatched
- * callee; null keeps the old null answer. Host lane only; arity ≤ 4 (the
- * fixed-arity ABI); anything else keeps the null terminal.
+ * callee. The fixed-arity kill switch uses the legacy argument-array ABI;
+ * null and unsupported target profiles keep the null terminal.
  */
 function hostCallableFallbackTerminal(
   ctx: CodegenContext,
@@ -1005,25 +1004,47 @@ function hostCallableFallbackTerminal(
   fnParamIdx: number,
   thisInstrs: readonly Instr[],
   argParamStart: number,
+  hostArgsLocal: number,
 ): Instr[] | undefined {
   // Native-first modules classify their host boundary explicitly
   // (`__boundary_callback_call_N`, see planHostCallFallback); an implicit
   // `__call_function_N` there trips the host-import-policy ratchet (#4397).
   // Keep the legacy null terminal for that profile.
-  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first" || arity > 4) {
+  const legacyArrayAbi = process.env.JS2WASM_FIXED_ARITY_HOST_CALLS === "0";
+  if (
+    ctx.standalone ||
+    ctx.wasi ||
+    ctx.targetProfile.semanticProviders === "native-first" ||
+    (!legacyArrayAbi && arity > 4)
+  ) {
     return undefined;
   }
-  const importName = `__call_function_${arity}`;
-  const externRef: ValType = { kind: "externref" };
-  const params: ValType[] = [externRef, externRef];
-  for (let i = 0; i < arity; i++) params.push(externRef);
-  const idx = ensureLateImport(ctx, importName, params, [externRef]);
-  if (idx === undefined) return undefined;
+  const plan = planHostCallFallback(arity);
+  ensureHostCallFallbackImports(ctx, plan);
   flushLateImportShifts(ctx, null);
-  const callIdx = ctx.funcMap.get(importName) ?? idx;
-  const callInstrs: Instr[] = [{ op: "local.get", index: fnParamIdx }];
-  callInstrs.push(...thisInstrs);
-  for (let i = 0; i < arity; i++) callInstrs.push({ op: "local.get", index: argParamStart + i });
+  const callIdx = ctx.funcMap.get(plan.importName);
+  if (callIdx === undefined) return undefined;
+  const callInstrs: Instr[] = [];
+  if (plan.fixedArity) {
+    callInstrs.push({ op: "local.get", index: fnParamIdx }, ...thisInstrs);
+    for (let i = 0; i < arity; i++) callInstrs.push({ op: "local.get", index: argParamStart + i });
+  } else {
+    const arrNew = ctx.funcMap.get("__js_array_new");
+    const arrPush = ctx.funcMap.get("__js_array_push");
+    if (arrNew === undefined || arrPush === undefined) return undefined;
+    callInstrs.push({ op: "call", funcIdx: arrNew }, { op: "local.set", index: hostArgsLocal });
+    for (let i = 0; i < arity; i++) {
+      callInstrs.push(
+        { op: "local.get", index: hostArgsLocal },
+        { op: "local.get", index: argParamStart + i },
+        { op: "call", funcIdx: arrPush },
+      );
+    }
+    callInstrs.push({ op: "local.get", index: fnParamIdx }, ...thisInstrs, {
+      op: "local.get",
+      index: hostArgsLocal,
+    });
+  }
   callInstrs.push({ op: "call", funcIdx: callIdx });
   return [
     { op: "local.get", index: fnParamIdx },
@@ -1036,6 +1057,14 @@ function hostCallableFallbackTerminal(
       else: callInstrs,
     },
   ];
+}
+
+function directHostCallableFallback(ctx: CodegenContext, arity: number): Instr[] | undefined {
+  return hostCallableFallbackTerminal(ctx, arity, 0, [{ op: "ref.null.extern" }], 1, arity + 4);
+}
+
+function methodHostCallableFallback(ctx: CodegenContext, arity: number): Instr[] | undefined {
+  return hostCallableFallbackTerminal(ctx, arity, 1, [{ op: "local.get", index: 0 }], 2, arity + 8);
 }
 
 /**
@@ -1196,9 +1225,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   };
   body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));
 
-  let funcrefDispatch: Instr[] = hostCallableFallbackTerminal(ctx, arity, 1, [{ op: "local.get", index: 0 }], 2) ?? [
-    { op: "ref.null.extern" },
-  ];
+  let funcrefDispatch: Instr[] = methodHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }];
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed
   // dispatch built after the loop.
   const callBodyByEntry: { entry: (typeof entries)[number]; callBody: Instr[] }[] = [];
@@ -1501,6 +1528,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         // (#3673 round 10) declared arity read off the root wrapper for the
         // arity-bucketed signature dispatch (-1 = not root-readable).
         { name: "__declared_arity", type: { kind: "i32" } },
+        { name: "__host_args", type: { kind: "externref" } },
       ],
       body,
       exported: true,

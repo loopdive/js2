@@ -41,6 +41,10 @@ import {
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
+import {
+  emitHostTypedArrayCarrierRegistration,
+  isHostTypedArrayCarrierName,
+} from "../expressions/typed-array-host-carrier.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 
 /**
@@ -148,6 +152,26 @@ function emitLinearU8ArenaResetBeforeReturn(ctx: CodegenContext, fctx: FunctionC
     emitLinearU8ArenaReset(ctx, fctx, fctx.linearU8ArenaMarkLocalIdx);
   }
   return true;
+}
+
+function normalizeReturnExpression(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+  exprType: ValType | null,
+): void {
+  if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
+    coerceType(ctx, fctx, exprType, fctx.returnType);
+  }
+  if (!exprType || (fctx.returnType?.kind !== "ref" && fctx.returnType?.kind !== "ref_null")) return;
+
+  // A host TypedArray materialized into a native vec did not pass through the
+  // constructor emission site. Preserve its brand here without branding
+  // ordinary Array returns that happen to share the same vec representation.
+  const returnedName = ctx.oracle.builtinReceiverOf(expression) ?? ctx.oracle.declaredNameOf(expression);
+  if (isHostTypedArrayCarrierName(returnedName)) {
+    emitHostTypedArrayCarrierRegistration(ctx, fctx, returnedName, fctx.returnType);
+  }
 }
 
 export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ReturnStatement): void {
@@ -468,10 +492,7 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   if (stmt.expression) {
     const exprType = compileExpression(ctx, fctx, stmt.expression, fctx.returnType ?? undefined);
-    // Coerce expression result to match function return type if they differ
-    if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
-      coerceType(ctx, fctx, exprType, fctx.returnType);
-    }
+    normalizeReturnExpression(ctx, fctx, stmt.expression, exprType);
     // (#585) If the function is void (no return type) but the expression produced
     // a value, drop it — Wasm requires an empty stack before `return` in void funcs.
     if (exprType && !fctx.returnType) {

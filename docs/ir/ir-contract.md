@@ -1,4 +1,4 @@
-# The IR interchange contract — v5.2
+# The IR interchange contract — v5.3
 
 > **Normative.** The #3030 contract is the union of this document,
 > [`ir-module.schema.json`](ir-module.schema.json), and the exported
@@ -37,12 +37,15 @@ One JSON document per compiled module.
 
 ## D2 — Versioning
 
-`IR_FORMAT_VERSION = "5.2"` (exported from `src/ir/contract.ts`). Version 5.2
-appends the typed JS-dialect `string.repeat` instruction. It is backend-neutral
-because one semantic operation crosses host, native, and linear providers; it
-is not language-neutral core IR. Its f64 count preserves ToIntegerOrInfinity
-semantics and its callable provider is a required final dependency. Version 5.1
-added optional prepared callable providers on
+`IR_FORMAT_VERSION = "5.3"` (exported from `src/ir/contract.ts`). Version 5.3
+adds optional source-qualified counted-append provenance to the typed
+JS-dialect `string.repeat` instruction. The provenance is semantic contract
+state: when present it identifies the exact checker-proven source, terminal
+owner, and loop span that produced the aggregate repeat. Version 5.2 appended
+`string.repeat`. It is backend-neutral because one semantic operation crosses
+host, native, and linear providers; it is not language-neutral core IR. Its f64
+count preserves ToIntegerOrInfinity semantics and its callable provider is a
+required final dependency. Version 5.1 added optional prepared callable providers on
 `forof.string` and oversized `string.const` materialization; version 5.0 made
 global and symbolic type references carry required closed structural bindings.
 Their `name` fields are compatibility/debug metadata. Source-qualified class
@@ -95,7 +98,7 @@ work, as recorded in the slice table below.
    classification") is part of this contract; instruction order within a
    block is program order, and any reordering the compiler performed
    respected the classification (#2134). Effects are _derived_ (published
-   table), not serialized per instruction in v5.2.
+   table), not serialized per instruction in v5.3.
 6. **Source positions.** Instructions and terminators may carry
    `site: {line, column}` (1-based line, 0-based column, in the `source`
    file named by the header). Alloc-site provenance rides on `alloc`
@@ -195,7 +198,7 @@ landed.
 
 ```
 IrModuleDocument
-├─ irVersion: "5.2"
+├─ irVersion: "5.3"
 ├─ source?: string
 ├─ coverage: [{unitId, name, carrier: "ir"|"legacy", exported, reason?}]   (D3.7)
 └─ functions: [IrFunctionDoc]           (exactly the carrier:"ir" entries)
@@ -271,7 +274,7 @@ must not diverge (T4 acceptance).
 | --------------- | ------------ | ----------------- | ---------------------------------------- | ------- |
 | `string.const`  | —            | `value: string`, `storage?: GlobalRef`, `materializer?: FuncRef` | ⇒ `string`; storage and materializer are mutually exclusive | pure    |
 | `string.concat` | `lhs`, `rhs` | —                 | operands `string` ⇒ `string`             | pure    |
-| `string.repeat` | `value`, `count` | `encodingEvidence: "ascii"\|"utf8-guaranteed"\|"wtf16"`, `provider: FuncRef` | `value` is `string`, `count` is `val:f64` ⇒ `string`; ToIntegerOrInfinity; negative or +∞ throws RangeError (or the backend's documented trap where JS exceptions are unavailable) | full barrier |
+| `string.repeat` | `value`, `count` | `encodingEvidence: "ascii"\|"utf8-guaranteed"\|"wtf16"`, `provider: FuncRef`, `countedStringAppendSite?: IrCountedStringAppendSiteId` | `value` is `string`, `count` is `val:f64` ⇒ `string`; ToIntegerOrInfinity; negative or +∞ throws RangeError (or the backend's documented trap where JS exceptions are unavailable) | full barrier |
 | `string.eq`     | `lhs`, `rhs` | `negate: boolean` | operands `string` ⇒ `val:i32`            | pure    |
 | `string.len`    | `value`      | —                 | operand `string` ⇒ `val:f64` (JS Number) | pure    |
 
@@ -283,6 +286,29 @@ adapter therefore returns an empty receiver before its `0x40000000`-code-unit
 non-empty result limit and throws above that limit instead of silently wrapping
 the historical i32 rope kernel. The linear provider analogously checks its
 exact memory-bound result length in f64 before converting to i32.
+
+`countedStringAppendSite`, when present, is the canonical v1 encoding
+`ir-counted-string-append-site:v1:<encoded-source-id>:<encoded-owner-unit-id>:<loop-start>:<loop-end>`.
+The source and owner components are the uppercase-percent-escaped canonical
+`IrSourceId` and source-owned, non-derived `IrUnitId`; positions are
+fixed-width 16-digit non-negative decimal safe integers and
+`loopEnd > loopStart`. Projection/from-AST and final association additionally
+require that unit to be the exact inventoried terminal owner. The schema
+enforces the outer prefixes, closed source/unit kinds, canonical escape
+structure, and fixed-width ordinal/span fields. The parser and verifier also
+enforce safe-integer ordinals/spans, `loopEnd > loopStart`, recursive lexical
+owner grammar, equality between the outer source and the source embedded in
+the unit, and that the parsed owner equals the containing function's `unitId`.
+The verifier cannot re-derive source-loop membership from an `IrFunction`
+alone. Projection and final counted-append boundaries recompute the
+exact source/owner/span tuple from the retained live plan and reject foreign,
+stale, or borrowed sites. General
+`string.repeat` producers omit the field. The field is not the diagnostic
+`site: { line, column }`: that location is not source-qualified and cannot
+authenticate counted-append receipts. Every mapper, provider attachment, and
+in-memory instruction digest preserves/includes this field. Until
+ownership-transfer provenance exists, functions carrying it are ineligible for
+`inline-small` and `monomorphize`.
 
 ### Objects, closures, ref cells, classes
 
@@ -400,9 +426,9 @@ boxed, dynamic`.
 
 ## Slice status
 
-| Slice | What                                                        | Status at v5.2                                               |
+| Slice | What                                                        | Status at v5.3                                               |
 | ----- | ----------------------------------------------------------- | ------------------------------------------------------------ |
-| T1    | this document + schema + `IR_FORMAT_VERSION`                | **v5.2 typed `string.repeat` contract** (#3518)              |
+| T1    | this document + schema + `IR_FORMAT_VERSION`                | **v5.3 counted `string.repeat` site provenance** (#3518)     |
 | T2    | purge module-relative indices from in-memory `IrType` (D5)  | open — until then, affected functions are `carrier:"legacy"` |
 | T3    | `serializeIrModule`/`deserializeIrModule` + `--emit-ir`     | open                                                         |
 | T4    | verifier re-derivation of the §Node-inventory rules (#1924) | open — D3.3 effective from here                              |

@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-24
+updated: 2026-08-25
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -1228,6 +1228,85 @@ tests preserve the site, the verifier rejects malformed/noncanonical IDs, and
 report merge rejects a duplicate canonical site even when its AST objects were
 cloned or reparsed. C0 runs the existing B2 WasmGC/linear runtime controls and
 proves byte/runtime route policy is unchanged before its signed checkpoint.
+
+##### C0 current-main implementation plan (2026-08-25)
+
+Implement C0 as one behavior-neutral signed PR on the current `main`, with no
+C1 planner or C2 route wiring mixed into the delta. Preserve the reviewed
+two-file site-ID draft as input, but do not publish that foundation alone: the
+checkpoint is complete only when both backends and every publication boundary
+use the new authority.
+
+1. **Identity and contract surface.** Add
+   `src/ir/counted-string-append-provenance.ts` as the only brand,
+   factory/parser/currentness, and final association authority. The primitive
+   grammar proves a source-qualified, non-derived UnitId and canonical
+   fixed-width non-negative source span; the projection and final association
+   additionally prove that UnitId is an inventoried terminal owner. Add
+   required `siteId` to
+   `IrCountedStringAppendLoweringPlan` and
+   `PreparedCountedStringAppendReceipt`; add optional
+   `countedStringAppendSite` to `IrInstrStringRepeat` and the builder API.
+   Bump `IR_FORMAT_VERSION`, the contract prose, JSON schema, and backend
+   contract assertions from v5.2 to v5.3. The optional instruction field is
+   serialized semantic state; the schema must reject malformed values when it
+   is present while continuing to admit unrelated generic repeats without it.
+2. **Single projection and consumption.** At the WasmGC
+   `projectIrIntegrationLoweringPlans` seam and the linear
+   `planLinearIrOverlay` seam, create the site ID exactly once after the live
+   loop/source/declaration/UnitId proof succeeds. Revalidation must recompute
+   the same ID from the retained source span; it may not accept spelling,
+   map position, or AST object identity. `from-ast` passes that exact ID only
+   to the two-or-more-trip `emitStringRepeat`; zero/one-trip plans still retain
+   their site ID and are consumed exactly once without emitting a
+   provenance-bearing repeat.
+3. **Shared final association.** Expose one pure helper from the provenance
+   module that accepts retained plans plus successful final terminal artifacts
+   and returns frozen receipts in canonical retained-plan order. It builds a
+   unique expected-site index, walks every artifact deeply (including an
+   artifact with no counted sidecar), selects prepared executable
+   `asyncRuntime` state bodies when present and otherwise the semantic
+   `asyncPlan` bodies (never both), ignores only site-less generic repeats,
+   and joins each provenance-bearing repeat to the exact site, source,
+   terminal owner, and canonical provider. It rejects malformed, unknown,
+   borrowed, duplicate, missing, and unexpected sites; rejects a
+   provenance-bearing repeat for a zero/one-trip plan; and includes the final
+   provider-bound instruction digest in every receipt. WasmGC and linear call
+   this same helper and use its failure vocabulary. Receipt publication stays
+   after exact terminal patch/backend success; an earlier successful owner
+   cannot publish if a later counted owner makes the transaction fatal.
+4. **Publication and transformation boundaries.** Validate receipt `siteId`
+   against its plan in `integration-report`, retain the existing exact terminal
+   artifact requirement, filter deferred receipts by exact owner without
+   rewriting their site, and detect merge duplicates by canonical site rather
+   than `syntaxPlan.loop` identity. Provider attachment, nested-buffer maps,
+   value-ID rewrites, and instruction digests must preserve/include the field.
+   Until a separately reviewed ownership-transfer proof exists, `inline-small`
+   must not inline from or into a function containing a provenance-bearing
+   repeat, and `monomorphize` must not clone one; add explicit fail-closed
+   guards rather than relying on object spread.
+5. **Non-vacuous evidence.** Extend the focused C0 unit suite with canonical
+   grammar/ownership/span mutations, builder and verifier checks, provider and
+   mapper preservation, digest sensitivity, and pass rejection. Exercise the
+   shared association helper identically for WasmGC-shaped and linear-shaped
+   artifacts with: a coexisting generic repeat, reordered counted sites,
+   replacement by a site-less repeat, deleted/duplicate/unknown/forged sites,
+   same-source different-owner and cross-source borrowing, wrong provider,
+   wrong terminal/source, and zero/one-trip receipt rows. Extend report/merge
+   tests with cloned/reparsed AST objects carrying the same canonical site so
+   duplicate detection cannot regress to object identity. Re-run the existing
+   B2 WasmGC and linear runtime/body-attribution suites and prove route,
+   artifact, and runtime behavior remain unchanged.
+6. **Review and landing discipline.** Use separate non-overlapping execution
+   ownership for production/authentication code and contract/tests, followed
+   by an independent read-only review of their integrated bytes. Add LOC or
+   function-budget allowances only for measured irreducible growth, never
+   speculatively. Before the signed commit run the explicit LOC-regrowth
+   ratchet, then all normal pre-commit hooks; before the non-force push run all
+   normal pre-push hooks. Every heavy command and the commit/push boundary
+   requires a fresh finite non-negative one-minute load strictly below
+   `logical cores - 2`. Shepherd the PR through actual merge before beginning
+   C1.
 
 Add `src/codegen/multi-prepared-string-leaf.ts` rather than broadening the
 numeric scalar or array recognizers. The route is default-on only for

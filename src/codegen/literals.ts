@@ -283,6 +283,48 @@ function hasHeterogeneousNestedArrayCarriers(
   return false;
 }
 
+/** Resolve a direct constructor binding through import aliases to its exact class. */
+function exactConstructedClassName(ctx: CodegenContext, expression: ts.NewExpression): string | undefined {
+  const typeName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(expression.expression));
+  if (typeName !== undefined) return typeName;
+
+  let target: ts.Expression = expression.expression;
+  while (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isTypeAssertionExpression(target) ||
+    ts.isSatisfiesExpression(target) ||
+    ts.isNonNullExpression(target)
+  ) {
+    target = target.expression;
+  }
+  if (!ts.isIdentifier(target)) return undefined;
+
+  let symbol = ctx.checker.getSymbolAtLocation(target);
+  const seen = new Set<ts.Symbol>();
+  while (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0 && !seen.has(symbol)) {
+    seen.add(symbol);
+    try {
+      const aliased = ctx.checker.getAliasedSymbol(symbol);
+      if (aliased === symbol) break;
+      symbol = aliased;
+    } catch {
+      return undefined;
+    }
+  }
+  for (const declaration of symbol?.getDeclarations() ?? []) {
+    let candidate: ts.Node = declaration;
+    if (ts.isVariableDeclaration(candidate) && candidate.initializer) {
+      candidate = unwrapArrayCarrierExpression(candidate.initializer);
+    }
+    if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
+    const syntheticName = ctx.anonClassExprNames.get(candidate);
+    if (syntheticName && ctx.classSet.has(syntheticName)) return syntheticName;
+    if (candidate.name && ctx.classSet.has(candidate.name.text)) return candidate.name.text;
+  }
+  return undefined;
+}
+
 /** Exact synthetic classes constructed by every real element, when provable. */
 function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): string[] | null {
   const names: string[] = [];
@@ -299,7 +341,7 @@ function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralEx
       value = value.expression;
     }
     if (!ts.isNewExpression(value)) return null;
-    const name = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(value.expression));
+    const name = exactConstructedClassName(ctx, value);
     if (!name) return null;
     names.push(name);
   }
@@ -409,7 +451,13 @@ export function compileObjectLiteralAsExternref(
       // Compile spread source and call __object_assign(target, [source]) -> target
       const srcType = compileExpression(ctx, fctx, prop.expression);
       if (srcType) {
-        if (srcType.kind !== "externref") {
+        const spreadStructIdx = materializableSpreadStructTypeIdx(ctx, prop.expression, srcType);
+        if (
+          spreadStructIdx !== undefined &&
+          materializeStructAsDynamicObject(ctx, fctx, spreadStructIdx, { skipInternalFields: true })
+        ) {
+          // A host-readable open object is now on the stack.
+        } else if (srcType.kind !== "externref") {
           coerceType(ctx, fctx, srcType, { kind: "externref" });
         }
         // Wrap source in a single-element sources list for __object_assign(target,
@@ -706,6 +754,84 @@ export function materializeStructAsDynamicObject(
 registerMaterializeStructAsObject(materializeStructAsDynamicObject);
 
 /**
+ * (#4435) True when a spread source is backed by a compiler-visible plain data
+ * literal. In the JS-host lane a top-level spread runs during Wasm module
+ * initialization, before `setExports` makes the generated struct-field readers
+ * available to `_wrapForHost`. Passing the opaque struct to host
+ * `Object.assign` therefore exposes zero keys. Such a source can be copied by
+ * the existing struct materializer without changing observable accessor order:
+ * every property is a statically named data property and there are no getters,
+ * setters, methods, computed keys, or nested spreads to invoke while copying.
+ *
+ * Keep this deliberately narrower than a type-only "has no accessors" test.
+ * The accessor-order regressions pinned by #4466 rely on the general host path
+ * remaining lazy; only a direct literal, or an identifier declared from one,
+ * is admitted here.
+ */
+function isPlainDataLiteralSpreadSource(ctx: CodegenContext, expression: ts.Expression): boolean {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+
+  let literal: ts.ObjectLiteralExpression | undefined;
+  if (ts.isObjectLiteralExpression(current)) {
+    literal = current;
+  } else if (ts.isIdentifier(current)) {
+    let symbol = ctx.checker.getSymbolAtLocation(current);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+      try {
+        symbol = ctx.checker.getAliasedSymbol(symbol);
+      } catch {
+        symbol = undefined;
+      }
+    }
+    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
+      let initializer = declaration.initializer;
+      while (
+        ts.isParenthesizedExpression(initializer) ||
+        ts.isAsExpression(initializer) ||
+        ts.isTypeAssertionExpression(initializer) ||
+        ts.isSatisfiesExpression(initializer) ||
+        ts.isNonNullExpression(initializer)
+      ) {
+        initializer = initializer.expression;
+      }
+      if (ts.isObjectLiteralExpression(initializer)) literal = initializer;
+    }
+  }
+
+  return (
+    literal !== undefined &&
+    literal.properties.length > 0 &&
+    literal.properties.every(
+      (property) =>
+        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+        resolvePropertyNameText(ctx, property) !== undefined,
+    )
+  );
+}
+
+function materializableSpreadStructTypeIdx(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  srcType: ValType,
+): number | undefined {
+  if (srcType.kind !== "ref" && srcType.kind !== "ref_null") return undefined;
+  const typeIdx = srcType.typeIdx;
+  if (!ctx.typeIdxToStructName.has(typeIdx)) return undefined;
+  if (ctx.targetProfile.semanticProviders === "native-first") return typeIdx;
+  return isPlainDataLiteralSpreadSource(ctx, expression) ? typeIdx : undefined;
+}
+
+/**
  * Compile a runtime object-literal key for the open-object bridge.
  *
  * The standalone object runtime's `__to_property_key` must see a canonical
@@ -935,11 +1061,8 @@ function compileObjectLiteralWithAccessors(
         // obj-in-getter.js` all flip pass→fail). Dropping the gate to reach a
         // dogfood case in the host lane is not a safe trade.
         const spreadStructIdx =
-          ctx.targetProfile.semanticProviders === "native-first" &&
-          (srcType.kind === "ref" || srcType.kind === "ref_null") &&
-          typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
-          ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)
-            ? (srcType as { typeIdx: number }).typeIdx
+          ctx.targetProfile.semanticProviders === "native-first"
+            ? materializableSpreadStructTypeIdx(ctx, prop.expression, srcType)
             : undefined;
         if (
           spreadStructIdx !== undefined &&
@@ -1496,6 +1619,18 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
       _hasDisposalMethod(expr) ||
       _hasRuntimeComputedKey(ctx, expr) ||
+      // A colon-form `__proto__` property is not an own data property. It sets
+      // the new object's [[Prototype]] while the literal is evaluated. A
+      // closed WasmGC struct cannot represent that operation, and exposing the
+      // struct to a dynamic consumer makes its fields invisible as ordinary
+      // own properties. Build the open object instead; `__extern_set` performs
+      // the required prototype setter operation in both runtime profiles.
+      expr.properties.some(
+        (p) =>
+          ts.isPropertyAssignment(p) &&
+          !ts.isComputedPropertyName(p.name) &&
+          resolvePropertyNameText(ctx, p) === "__proto__",
+      ) ||
       // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
       // — a legal JS property) cannot be a struct field: the field-name
       // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)
@@ -4012,6 +4147,94 @@ export function compileTupleLiteral(
   const elemTypes = getTupleElementTypes(ctx, tupleType);
 
   const tupleIdx = getOrRegisterTupleType(ctx, elemTypes);
+
+  // A contextually typed tuple literal can contain another statically known
+  // tuple spread, for example Hono's `[isStatic, ...route]` where `route` is a
+  // `[string, Handler[]]`. A spread contributes each source field; treating the
+  // SpreadElement AST node as one destination slot loses the whole source
+  // tuple (the old path compiled it as a value for field 1 and default-filled
+  // field 2). Keep the compact struct representation by expanding only tuple
+  // sources whose width and field carriers are known to the checker.
+  const tupleSpreads = new Map<ts.SpreadElement, { elemTypes: ValType[]; typeIdx: number }>();
+  let canExpandTupleSpreads = false;
+  for (const element of expr.elements) {
+    if (!ts.isSpreadElement(element)) continue;
+    canExpandTupleSpreads = true;
+    const sourceType = ctx.checker.getTypeAtLocation(element.expression);
+    if (!isTupleType(sourceType)) {
+      canExpandTupleSpreads = false;
+      tupleSpreads.clear();
+      break;
+    }
+    const sourceElemTypes = getTupleElementTypes(ctx, sourceType);
+    tupleSpreads.set(element, {
+      elemTypes: sourceElemTypes,
+      typeIdx: getOrRegisterTupleType(ctx, sourceElemTypes),
+    });
+  }
+
+  if (canExpandTupleSpreads) {
+    let destinationIndex = 0;
+    for (const element of expr.elements) {
+      if (destinationIndex >= elemTypes.length) break;
+      if (!ts.isSpreadElement(element)) {
+        const expectedType = elemTypes[destinationIndex] ?? ({ kind: "externref" } as const);
+        if (expectedType.kind === "f64" && _isUndefinedLike(element)) {
+          fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+          fctx.body.push({ op: "f64.reinterpret_i64" });
+        } else {
+          compileExpression(ctx, fctx, element, expectedType);
+        }
+        destinationIndex++;
+        continue;
+      }
+
+      const spread = tupleSpreads.get(element)!;
+      const spreadRefType: ValType = { kind: "ref_null", typeIdx: spread.typeIdx };
+      const spreadLocal = allocLocal(fctx, `__tuple_spread_${fctx.locals.length}`, spreadRefType);
+      const compiledSourceType = compileExpression(ctx, fctx, element.expression, spreadRefType);
+      if (compiledSourceType) {
+        coerceType(ctx, fctx, compiledSourceType, spreadRefType);
+      } else {
+        fctx.body.push({ op: "ref.null", typeIdx: spread.typeIdx });
+      }
+      fctx.body.push({ op: "local.set", index: spreadLocal });
+
+      for (
+        let sourceIndex = 0;
+        sourceIndex < spread.elemTypes.length && destinationIndex < elemTypes.length;
+        sourceIndex++
+      ) {
+        const sourceFieldType = spread.elemTypes[sourceIndex]!;
+        const expectedType = elemTypes[destinationIndex]!;
+        fctx.body.push({ op: "local.get", index: spreadLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: spread.typeIdx, fieldIdx: sourceIndex });
+        coerceType(ctx, fctx, sourceFieldType, expectedType);
+        destinationIndex++;
+      }
+    }
+
+    // A shorter source tuple still needs the same missing-field defaults as a
+    // shorter ordinary literal.
+    for (; destinationIndex < elemTypes.length; destinationIndex++) {
+      const expectedType = elemTypes[destinationIndex]!;
+      if (expectedType.kind === "f64") {
+        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
+      } else if (expectedType.kind === "i32") {
+        fctx.body.push({ op: "i32.const", value: 0 });
+      } else if (expectedType.kind === "externref") {
+        emitUndefined(ctx, fctx);
+      } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
+        fctx.body.push({ op: "ref.null", typeIdx: expectedType.typeIdx });
+      } else {
+        pushDefaultValue(fctx, expectedType, ctx);
+      }
+    }
+
+    fctx.body.push({ op: "struct.new", typeIdx: tupleIdx });
+    return { kind: "ref", typeIdx: tupleIdx };
+  }
 
   // Compile each element with the expected field type.
   // For missing positions (literal shorter than tuple), push default values

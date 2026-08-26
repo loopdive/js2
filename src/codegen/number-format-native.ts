@@ -46,6 +46,7 @@ import { emitRyuToBuf } from "./number-ryu.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { emitSelfHostedToStringRadix } from "./number-format-selfhost.js";
+import { ensureLateImport } from "./shared.js";
 
 const BUF_CAP = 256;
 const MAX_SAFE_INTEGER = 9007199254740991;
@@ -491,6 +492,16 @@ export const irNativeNumberToFixedAvailable = irNativeNumberToStringAvailable;
  * up the NativeString types.
  */
 export function emitNativeNumberFormat(ctx: CodegenContext, which: Set<string>): void {
+  // #2527 / #2514 — an explicitly linked runtime owns the formatter family.
+  // Keep the ABI identical to the historical helpers (`externref` results)
+  // so native-string call sites can continue to perform their existing
+  // `any.convert_extern` + `ref.cast $AnyString` recovery. This is deliberately
+  // opt-in: without a declared provider we retain the in-module implementation
+  // and never emit an unsatisfied runtime import by default.
+  if (ctx.linkedNamespaces.has("js2wasm:runtime")) {
+    emitLinkedNumberFormatImports(ctx, which);
+    return;
+  }
   ensureNativeStringHelpers(ctx);
   const finalizeIdx = emitFinalize(ctx);
   const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
@@ -529,6 +540,30 @@ export function emitNativeNumberFormat(ctx: CodegenContext, which: Set<string>):
   if (needPrecision && !ctx.funcMap.has("number_toPrecision")) {
     emitToPrecision(ctx, finalizeIdx, strDataTypeIdx, i32, f64, extern, bufType);
   }
+}
+
+/** Register the complete dependency closure for the linkable runtime ABI. */
+function emitLinkedNumberFormatImports(ctx: CodegenContext, which: Set<string>): void {
+  const extern: ValType = { kind: "externref" };
+  const f64: ValType = { kind: "f64" };
+  const runtime = "js2wasm:runtime";
+  const importFn = (name: string, params: ValType[]): void => {
+    ensureLateImport(ctx, name, params, [extern], runtime);
+  };
+
+  const needPrecision = which.has("number_toPrecision");
+  const needFixed = which.has("number_toFixed") || needPrecision;
+  const needExponential = which.has("number_toExponential") || needPrecision;
+  const needRadix = which.has("number_toString") || which.has("number_toString_radix");
+
+  // The provider's fixed/precision implementations delegate through these
+  // same named helpers, so retain the dependency closure rather than relying
+  // on the consumer's source-level call set.
+  if (needRadix) importFn("number_toString_radix", [f64, f64]);
+  if (which.has("number_toString") || needFixed) importFn("number_toString", [f64]);
+  if (needFixed) importFn("number_toFixed", [f64, f64]);
+  if (needExponential) importFn("number_toExponential", [f64, f64]);
+  if (needPrecision) importFn("number_toPrecision", [f64, f64]);
 }
 
 /**

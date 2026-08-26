@@ -59,6 +59,11 @@ export function emitLocalTdzInit(fctx: FunctionContext, name: string): void {
 export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
   const flagIdx = ctx.tdzGlobals.get(name);
   if (flagIdx === undefined) return;
+  emitTdzCheckAtGlobal(ctx, fctx, flagIdx, name);
+}
+
+/** Emit a TDZ check against an exact initialization-flag global. */
+export function emitTdzCheckAtGlobal(ctx: CodegenContext, fctx: FunctionContext, flagIdx: number, name: string): void {
   const tagIdx = ensureExnTag(ctx);
   // if (flag == 0) throw ReferenceError
   fctx.body.push({ op: "global.get", index: flagIdx });

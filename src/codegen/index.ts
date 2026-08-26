@@ -9,8 +9,15 @@ import {
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
+import {
+  collectIrFnctorArgumentProjectionsForPlanning,
+  makeIrFnctorArgumentProjectionAuthority,
+  makeIrFnctorAdmissionResolver,
+  makeIrFnctorPropagationAdmissionResolver,
+  type IrFnctorArgumentProjectionRoute,
+} from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -42,7 +49,7 @@ import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule 
 import { createEmptyModule } from "../ir/types.js";
 import { planCountedStringAppend } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
-import { irSupportGlobalRef } from "../ir/abi-bindings.js";
+import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -90,6 +97,8 @@ import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
   reconcileIrModuleInitPlan,
+  type IrModuleInitBindingIntent,
+  type IrModuleInitEvaluationEntry,
   type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
@@ -99,6 +108,7 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  type IrSourceId,
   type IrUnitKind,
   type IrUnitId,
 } from "../ir/identity.js";
@@ -489,7 +499,11 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
-import { irNativeNumberToFixedAvailable, irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462/#4576
+import {
+  emitNativeNumberFormat,
+  irNativeNumberToFixedAvailable,
+  irNativeNumberToStringAvailable,
+} from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { fillStandaloneObjectProtoToStringFnctorArms } from "./object-proto-tostring-native.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
@@ -2561,6 +2575,8 @@ function planIrOverlay(
     readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
     /** Transaction B2 is single-source only; Transaction C owns graph composition. */
     readonly enableCountedStringAppendProof?: boolean;
+    /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
+    readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
@@ -2587,6 +2603,17 @@ function planIrOverlay(
       error,
     );
   }
+  const fnctorArgumentProjections =
+    !options.fnctorArgumentProjectionRoute || (ctx.fnctorEscapeGate?.approved.size ?? 0) === 0
+      ? []
+      : collectIrFnctorArgumentProjectionsForPlanning(
+          ctx,
+          ast.checker,
+          identityContext,
+          ast.sourceFile,
+          identityMaps.unitTypeMap,
+          options.fnctorArgumentProjectionRoute,
+        );
   // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS is set, request the
   // selector to track every top-level FunctionDeclaration that didn't
   // make it into `funcs` along with the rejection reason. Logged to
@@ -2812,6 +2839,12 @@ function planIrOverlay(
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
       resolveFnctorAdmission,
+      ...(fnctorArgumentProjections.length > 0
+        ? {
+            fnctorArgumentProjections,
+            fnctorArgumentProjectionAuthority: makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker),
+          }
+        : {}),
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,
@@ -3536,6 +3569,7 @@ function planMultiIrOverlaySource(
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
+  fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3547,6 +3581,7 @@ function planMultiIrOverlaySource(
   return planIrOverlay(ctx, sourceAst, identityContext, {
     resolveModuleBindings: false,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
+    ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
   });
 }
 
@@ -3680,7 +3715,12 @@ function compileMultiIrOverlaySource(
   early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
 ): void {
   const plan =
-    early?.plan ?? planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions);
+    early?.plan ??
+    planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions, {
+      experimentalIR: true,
+      postLegacyPhysicalReservation: true,
+      irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+    });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
@@ -3762,15 +3802,181 @@ interface IrFirstBodyRouting {
 }
 
 /**
- * R4's intentionally bounded module-init owner: an ordered sequence of
- * initialized top-level lexical declarations. The selector proves a one-to-one
- * Program ABI projection while the semantic plan proves exact source order,
- * binding identity, TDZ intent, and exactly-once invocation parity.
+ * R4's intentionally bounded module-init owner: initialized top-level lexical
+ * declarations followed by exact scalar self-increment assignments. The
+ * selector proves a one-to-one Program ABI projection while the semantic plan
+ * proves exact source order, binding identity, TDZ intent, and exactly-once
+ * invocation parity.
  */
 interface PreparedLexicalModuleInitEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<IrBindingId>;
   readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export">;
+}
+
+function preparedModuleInitEvaluationMatchesStatement(
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.Statement,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  kind: Extract<IrModuleInitEvaluationEntry["kind"], "variable-initializer" | "statement">,
+  bindingIds: readonly IrBindingId[],
+): boolean {
+  const statementOrdinal = sourceFile.statements.indexOf(statement);
+  const start = statement.getStart(sourceFile);
+  return (
+    statement.getSourceFile() === sourceFile &&
+    statementOrdinal >= 0 &&
+    evaluation.key === `${sourceId}:eval:${sourceOrdinal}` &&
+    evaluation.kind === kind &&
+    evaluation.sourceOrdinal === sourceOrdinal &&
+    evaluation.statementOrdinal === statementOrdinal &&
+    evaluation.nestedOrdinal === 0 &&
+    evaluation.start === start &&
+    evaluation.end === statement.end &&
+    evaluation.classId === null &&
+    evaluation.legacyKey === `statement:${start}:${statement.end}` &&
+    evaluation.bindingIds.length === bindingIds.length &&
+    evaluation.bindingIds.every((bindingId, index) => bindingId === bindingIds[index])
+  );
+}
+
+function preparedExactLexicalDeclaration(
+  ctx: CodegenContext,
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.VariableStatement,
+  binding: IrModuleInitBindingIntent,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  declarationOrdinal: number,
+  sourceExecutableDeclarations: ReadonlySet<ts.Declaration>,
+): ts.VariableDeclaration | undefined {
+  const declarations = statement.declarationList.declarations;
+  const declaration = declarations[0];
+  const declarationKind =
+    statement.declarationList.flags & ts.NodeFlags.Const
+      ? "const"
+      : statement.declarationList.flags & ts.NodeFlags.Let
+        ? "let"
+        : undefined;
+  const globalBindingId = irModuleGlobalBindingId(sourceId, declarationOrdinal);
+  const tdzBindingId = irModuleTdzGlobalBindingId(sourceId, declarationOrdinal);
+  if (
+    !declarationKind ||
+    declarations.length !== 1 ||
+    !declaration ||
+    declaration.getSourceFile() !== sourceFile ||
+    !ts.isIdentifier(declaration.name) ||
+    !declaration.initializer ||
+    binding.declarationOrdinal !== declarationOrdinal ||
+    binding.names.length !== 1 ||
+    binding.names[0] !== declaration.name.text ||
+    binding.declarationKind !== declarationKind ||
+    binding.mutable !== (declarationKind === "let") ||
+    binding.initialization !== "tdz" ||
+    binding.globalBindingId !== globalBindingId ||
+    binding.tdzBindingId !== tdzBindingId ||
+    binding.start !== declaration.getStart(sourceFile) ||
+    binding.end !== declaration.end ||
+    !preparedModuleInitEvaluationMatchesStatement(
+      sourceId,
+      sourceFile,
+      statement,
+      evaluation,
+      sourceOrdinal,
+      "variable-initializer",
+      [globalBindingId],
+    )
+  ) {
+    return undefined;
+  }
+
+  let reachesSourceFunction = false;
+  const visitInitializer = (node: ts.Node): void => {
+    if (reachesSourceFunction) return;
+    if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      reachesSourceFunction = true;
+      return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      ctx.oracle.declarationsOf(node).some((candidate) => sourceExecutableDeclarations.has(candidate))
+    ) {
+      reachesSourceFunction = true;
+      return;
+    }
+    ts.forEachChild(node, visitInitializer);
+  };
+  visitInitializer(declaration.initializer);
+  return reachesSourceFunction ? undefined : declaration;
+}
+
+function isPreparedExactScalarModuleAssignment(
+  ctx: CodegenContext,
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.Statement,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  admittedBindings: ReadonlyMap<ts.VariableDeclaration, IrModuleInitBindingIntent>,
+): boolean {
+  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return false;
+  const assignment = statement.expression;
+  if (
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isIdentifier(assignment.left) ||
+    !ts.isBinaryExpression(assignment.right)
+  ) {
+    return false;
+  }
+  const increment = assignment.right;
+  if (
+    increment.operatorToken.kind !== ts.SyntaxKind.PlusToken ||
+    !ts.isIdentifier(increment.left) ||
+    !ts.isNumericLiteral(increment.right) ||
+    !preparedModuleInitEvaluationMatchesStatement(
+      sourceId,
+      sourceFile,
+      statement,
+      evaluation,
+      sourceOrdinal,
+      "statement",
+      [],
+    )
+  ) {
+    return false;
+  }
+
+  const targetDeclarations = ctx.oracle.declarationsOf(assignment.left);
+  const readDeclarations = ctx.oracle.declarationsOf(increment.left);
+  const declaration = targetDeclarations[0];
+  if (
+    targetDeclarations.length !== 1 ||
+    readDeclarations.length !== 1 ||
+    declaration !== readDeclarations[0] ||
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.getSourceFile() !== sourceFile ||
+    !ts.isIdentifier(declaration.name) ||
+    assignment.left.text !== declaration.name.text ||
+    increment.left.text !== declaration.name.text
+  ) {
+    return false;
+  }
+
+  const binding = admittedBindings.get(declaration);
+  return (
+    binding !== undefined &&
+    binding.declarationKind === "let" &&
+    binding.mutable &&
+    binding.initialization === "tdz" &&
+    binding.globalBindingId !== null &&
+    binding.tdzBindingId !== null &&
+    binding.start === declaration.getStart(sourceFile) &&
+    binding.end === declaration.end
+  );
 }
 
 function preparedExactLexicalModuleInit(
@@ -3821,7 +4027,6 @@ function preparedExactLexicalModuleInit(
   if (
     population.length === 0 ||
     selection.moduleInit.stmtCount !== population.length ||
-    planning.plan.bindings.length !== population.length ||
     planning.plan.evaluations.length !== population.length ||
     planning.parity.plannedEntryCount !== population.length ||
     planning.parity.legacyEntryCount !== population.length
@@ -3835,67 +4040,69 @@ function preparedExactLexicalModuleInit(
         (ts.isFunctionDeclaration(statement) && !!statement.body) || ts.isClassDeclaration(statement),
     ),
   );
-  const globalBindingIds = new Set<IrBindingId>();
-  for (let ordinal = 0; ordinal < population.length; ordinal++) {
-    const statement = population[ordinal];
-    const binding = planning.plan.bindings[ordinal];
-    const evaluation = planning.plan.evaluations[ordinal];
-    if (!statement || !binding || !evaluation || !ts.isVariableStatement(statement)) return undefined;
-    const declarations = statement.declarationList.declarations;
-    const declaration = declarations[0];
-    const declarationKind =
-      statement.declarationList.flags & ts.NodeFlags.Const
-        ? "const"
-        : statement.declarationList.flags & ts.NodeFlags.Let
-          ? "let"
-          : undefined;
+  const bindingByDeclarationOrdinal = new Map<number, IrModuleInitBindingIntent>();
+  for (const binding of planning.plan.bindings) {
     if (
-      !declarationKind ||
-      declarations.length !== 1 ||
-      !declaration ||
-      !ts.isIdentifier(declaration.name) ||
-      !declaration.initializer ||
-      binding.declarationOrdinal !== ordinal ||
-      binding.names.length !== 1 ||
-      binding.names[0] !== declaration.name.text ||
-      binding.declarationKind !== declarationKind ||
-      binding.mutable !== (declarationKind === "let") ||
-      binding.initialization !== "tdz" ||
-      binding.globalBindingId === null ||
-      binding.tdzBindingId === null ||
-      binding.start !== declaration.getStart(sourceFile) ||
-      binding.end !== declaration.end ||
-      evaluation.kind !== "variable-initializer" ||
-      evaluation.sourceOrdinal !== ordinal ||
-      evaluation.statementOrdinal !== sourceFile.statements.indexOf(statement) ||
-      evaluation.nestedOrdinal !== 0 ||
-      evaluation.start !== statement.getStart(sourceFile) ||
-      evaluation.end !== statement.end ||
-      evaluation.classId !== null ||
-      evaluation.bindingIds.length !== 1 ||
-      evaluation.bindingIds[0] !== binding.globalBindingId
+      !Number.isSafeInteger(binding.declarationOrdinal) ||
+      binding.declarationOrdinal < 0 ||
+      bindingByDeclarationOrdinal.has(binding.declarationOrdinal)
     ) {
       return undefined;
     }
-    globalBindingIds.add(binding.globalBindingId);
+    bindingByDeclarationOrdinal.set(binding.declarationOrdinal, binding);
+  }
 
-    let reachesSourceFunction = false;
-    const visitInitializer = (node: ts.Node): void => {
-      if (reachesSourceFunction) return;
-      if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        reachesSourceFunction = true;
-        return;
-      }
-      if (ts.isIdentifier(node)) {
-        if (ctx.oracle.declarationsOf(node).some((declaration) => sourceExecutableDeclarations.has(declaration))) {
-          reachesSourceFunction = true;
-          return;
-        }
-      }
-      ts.forEachChild(node, visitInitializer);
-    };
-    visitInitializer(declaration.initializer);
-    if (reachesSourceFunction) return undefined;
+  const globalBindingIds = new Set<IrBindingId>();
+  const admittedBindings = new Map<ts.VariableDeclaration, IrModuleInitBindingIntent>();
+  let declarationOrdinal = 0;
+  let sawAssignment = false;
+  for (let ordinal = 0; ordinal < population.length; ordinal++) {
+    const statement = population[ordinal];
+    const evaluation = planning.plan.evaluations[ordinal];
+    if (!statement || !evaluation) return undefined;
+    if (ts.isVariableStatement(statement)) {
+      if (sawAssignment) return undefined;
+      const binding = bindingByDeclarationOrdinal.get(declarationOrdinal);
+      if (!binding) return undefined;
+      const declaration = preparedExactLexicalDeclaration(
+        ctx,
+        sourceId,
+        sourceFile,
+        statement,
+        binding,
+        evaluation,
+        ordinal,
+        declarationOrdinal,
+        sourceExecutableDeclarations,
+      );
+      if (!declaration || !binding.globalBindingId || globalBindingIds.has(binding.globalBindingId)) return undefined;
+      globalBindingIds.add(binding.globalBindingId);
+      admittedBindings.set(declaration, binding);
+      declarationOrdinal++;
+      continue;
+    }
+
+    sawAssignment = true;
+    if (
+      !isPreparedExactScalarModuleAssignment(
+        ctx,
+        sourceId,
+        sourceFile,
+        statement,
+        evaluation,
+        ordinal,
+        admittedBindings,
+      )
+    ) {
+      return undefined;
+    }
+  }
+  if (
+    admittedBindings.size === 0 ||
+    declarationOrdinal !== planning.plan.bindings.length ||
+    declarationOrdinal !== bindingByDeclarationOrdinal.size
+  ) {
+    return undefined;
   }
   const invocationKind = planning.plan.invocation.kind;
   if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") return undefined;
@@ -4430,6 +4637,43 @@ export interface GeneratedModule extends GeneratedCodegenModule {
   moduleInitPlanning?: IrModuleInitPlanningEvidence;
 }
 
+const SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS = [
+  "number_toString",
+  "number_toString_radix",
+  "number_toFixed",
+  "number_toPrecision",
+  "number_toExponential",
+] as const;
+
+/**
+ * Publish the compiler-owned number-format ABI for `js2wasm:runtime`.
+ *
+ * These are the raw `(f64[, f64]) -> externref` helpers, rather than wrapper
+ * functions returning a source-level string. The exact signatures are the
+ * same ones consumers import, and the native-string rec group is retained by
+ * the normal #2527 metadata/emit path so the returned GC strings canonicalize
+ * across the shared store.
+ */
+function emitSharedRuntimeProviderExports(ctx: CodegenContext): void {
+  if (!ctx.runtimeProvider) return;
+  if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+    throw new Error("the js2wasm:runtime provider requires standalone/WASI native strings");
+  }
+
+  emitNativeNumberFormat(ctx, new Set(SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS));
+  for (const name of SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS) {
+    const funcIdx = ctx.funcMap.get(name);
+    const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+    if (funcIdx === undefined || !func || func.name !== name) {
+      throw new Error(`shared runtime provider failed to materialize ${name}`);
+    }
+    func.exported = true;
+    if (!ctx.mod.exports.some((entry) => entry.name === name && entry.desc.kind === "func")) {
+      exportFunc(ctx.mod, name, funcIdx);
+    }
+  }
+}
+
 export function generateModule(
   ast: TypedAST,
   options?: CodegenOptions,
@@ -4797,6 +5041,7 @@ export function generateModule(
           { kind: "externref" },
           { kind: "externref" },
           { kind: "externref" },
+          { kind: "i32" },
         ],
         [],
       );
@@ -4967,6 +5212,11 @@ export function generateModule(
     // has a top-level block/`if`/`switch`-nested `function` declaration.
     registerAnnexBGlobalLiveBindings(ctx, [ast.sourceFile]);
 
+    // Keep the single-source pipeline in parity with generateMultiModule: a
+    // module-scope class static assignment needs its value cell registered
+    // before the module initializer and exported bodies are emitted.
+    registerModuleClassStaticAssignments(ctx, [ast.sourceFile]);
+
     // (#3523 R4) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. The plan remains an observer for
     // generic module shapes, while the exact prepared lexical initializer below
@@ -5121,7 +5371,15 @@ export function generateModule(
       // planning code verbatim (typeMap → selection → STRICT_IR_REASONS →
       // classShapes → overrideMap → safeSelection → new.target gate).
       const plan =
-        irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
+        irPlan ??
+        planIrOverlay(ctx, ast, irPlanningIdentityContext!, {
+          enableCountedStringAppendProof: true,
+          fnctorArgumentProjectionRoute: {
+            experimentalIR: true,
+            postLegacyPhysicalReservation: true,
+            irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+          },
+        });
       const { classShapes, overrideMap } = plan;
       const safeSelection = preparedSelection ?? finalizePreparedIrSelection(ctx, ast.sourceFile, plan);
       const report = completePreparedIrIntegration({
@@ -5183,10 +5441,16 @@ export function generateModule(
       }
       ctx.deferredDefaultGlobalExport = undefined;
     }
-    for (const bindingName of ctx.deferredDefaultExpressionExports ?? []) {
-      const globalName = `__mod_${bindingName}`;
-      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-      if (localIdx < 0 || ctx.mod.exports.some((e) => e.name === "default")) continue;
+    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
+      const localIdx = ctx.mod.globals.indexOf(value);
+      if (localIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
+        continue;
+      }
+      if (ctx.mod.exports.some((e) => e.name === "default")) {
+        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
+        continue;
+      }
       ctx.mod.exports.push({
         name: "default",
         desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
@@ -5937,6 +6201,11 @@ export function generateModule(
     // Additive + before dead-elim (which remaps declaredFuncRefs).
     collectDeclaredFuncRefs(ctx, { additive: true });
 
+    // #2527 — publish compiler-owned helpers only for the dedicated runtime
+    // provider build, before DCE so their exports keep the full dependency
+    // closure alive and all type references are remapped together.
+    emitSharedRuntimeProviderExports(ctx);
+
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
@@ -6422,6 +6691,35 @@ function supportsHostClassBridgeParam(type: ValType): boolean {
   return type.kind === "externref" || type.kind === "ref_extern";
 }
 
+/**
+ * Return whether a host-visible class bridge will need to box a numeric
+ * result. The bridge bodies below have an `(externref, ...externref) ->
+ * externref` ABI, so every numeric class method/accessor result must go through
+ * `__box_number`. Keep this scan ahead of bridge entry collection: adding the
+ * union imports shifts defined-function indices, and collecting `funcIdx`
+ * values before that shift would make the emitted bridge call the wrong
+ * function.
+ */
+function classBridgeNeedsNumberBox(ctx: CodegenContext): boolean {
+  const numeric = new Set(["f64", "f32", "i32", "i64"]);
+  for (const [structName] of ctx.structFields) {
+    if (isSyntheticStructName(structName)) continue;
+    for (const key of ctx.hostDynamicClassMethodNames) {
+      for (const fullName of [`${structName}_${key}`, `${structName}_get_${key}`]) {
+        if (!ctx.classMethodSet.has(fullName) && !ctx.classAccessorSet.has(fullName)) continue;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+        if (methodIdx === undefined) continue;
+        const method = definedFuncAt(ctx, methodIdx);
+        const methodType = method === undefined ? undefined : ctx.mod.types[method.typeIdx];
+        const resultType =
+          methodType && methodType.kind === "func" && methodType.results.length > 0 ? methodType.results[0] : undefined;
+        if (resultType !== undefined && numeric.has(resultType.kind)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function emitIteratorMethodExport(ctx: CodegenContext): void {
   // The iterator protocol and the host-side dynamic class-member bridge share
   // the same `(externref) -> externref` dispatcher shape.  Keep the old
@@ -6454,6 +6752,13 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, null);
   }
+  // Numeric class methods/accessors return a Wasm primitive but the dynamic
+  // host bridge must return externref. Ensure the boxing helper exists before
+  // the bridge entry loop captures any function indices; addUnionImports owns
+  // the required index shift and is idempotent with the rest-parameter path.
+  if (classBridgeNeedsNumberBox(ctx)) {
+    addUnionImports(ctx);
+  }
   // A host dynamic call supplies externrefs.  A class bridge may therefore
   // only target methods whose formal arguments are already externref-shaped;
   // non-rest unsupported signatures deliberately remain on the existing
@@ -6470,7 +6775,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // must keep matching subclass instances for inherited-method dispatch).
   // Returns undefined — zero byte change — when no collision exists.
   const classDispatchTagCondition = (
-    entriesAll: readonly { structName: string }[],
     structName: string,
     typeIdx: number,
     receiverLocal: number,
@@ -6483,7 +6787,13 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     };
     const own = layoutSig(structName);
     if (own === undefined) return undefined;
-    const conflict = entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own);
+    // Compare against every emitted struct, not only the classes that also
+    // declare this member. A same-layout sibling that does NOT declare the
+    // key is the important negative case: without a tag guard its instance
+    // passes this arm's structural ref.test and appears to inherit an
+    // unrelated sibling-only lifecycle method (React's repeated `class Foo`
+    // tests observed UNSAFE_componentWillMount from a later sibling).
+    const conflict = [...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own);
     if (!conflict) return undefined;
     const ownTag = ctx.classTagMap.get(structName);
     if (ownTag === undefined) return undefined;
@@ -6646,19 +6956,32 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         instrs.push({ op: "extern.convert_any" });
       } else if (resultType.kind === "f64") {
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       } else if (resultType.kind === "i32") {
-        instrs.push({ op: "f64.convert_i32_s" });
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       } else if (resultType.kind === "i64") {
-        instrs.push({ op: "f64.convert_i64_s" });
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       } else if (resultType.kind === "f32") {
-        instrs.push({ op: "f64.promote_f32" });
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       }
     };
 
@@ -6811,41 +7134,11 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       }
       testAndCall.push({ op: "call", funcIdx: entry.funcIdx });
 
-      if (classMember && classArity === -1 && entry.restInfo) {
-        appendResultBoxing(testAndCall, entry.resultType);
-      } else if (entry.resultType === undefined) {
-        const undefinedIdx = ctx.funcMap.get("__get_undefined");
-        testAndCall.push(
-          ...(undefinedIdx !== undefined
-            ? ([{ op: "call", funcIdx: undefinedIdx }] satisfies Instr[])
-            : ([{ op: "ref.null.extern" }] satisfies Instr[])),
-        );
-      } else if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
-        testAndCall.push({ op: "extern.convert_any" });
-      } else if (entry.resultType.kind === "f64") {
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) {
-          testAndCall.push({ op: "call", funcIdx: boxIdx });
-        }
-      } else if (entry.resultType.kind === "i32") {
-        testAndCall.push({ op: "f64.convert_i32_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) {
-          testAndCall.push({ op: "call", funcIdx: boxIdx });
-        }
-      } else if (entry.resultType.kind === "i64") {
-        testAndCall.push({ op: "f64.convert_i64_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
-      } else if (entry.resultType.kind === "f32") {
-        testAndCall.push({ op: "f64.promote_f32" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
-      }
+      appendResultBoxing(testAndCall, entry.resultType);
       // externref: no conversion needed
 
       const tagCond = classMember
-        ? classDispatchTagCondition(entries, entry.structName, entry.typeIdx, receiverAnyLocal)
+        ? classDispatchTagCondition(entry.structName, entry.typeIdx, receiverAnyLocal)
         : undefined;
       current = [
         { op: "local.get", index: receiverAnyLocal },
@@ -6940,17 +7233,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       if (typeIdx === undefined || isSyntheticStructName(structName)) continue;
       for (const key of keys) {
         const fullName = `${structName}_${key}`;
-        if (process.env.DEBUG_MARKED_CODEGEN === "1" && key === "parseInline") {
-          console.error(
-            "[marked-class-bridge-scan]",
-            structName,
-            fullName,
-            ctx.classMethodSet.has(fullName),
-            ctx.staticMethodSet.has(fullName),
-            ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
-            ctx.funcMap.get(fullName),
-          );
-        }
         if (!ctx.classMethodSet.has(fullName)) continue;
         const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
         const method = methodIdx === undefined ? undefined : definedFuncAt(ctx, methodIdx);
@@ -7075,7 +7357,6 @@ function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string
 // dispatch working.
 function classArmTagCondition(
   ctx: CodegenContext,
-  entriesAll: readonly { structName: string }[],
   structName: string,
   typeIdx: number,
   receiverLocal: number,
@@ -7088,7 +7369,11 @@ function classArmTagCondition(
   };
   const own = layoutSig(structName);
   if (own === undefined) return undefined;
-  if (!entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own)) return undefined;
+  // A class-member arm must also reject same-layout classes that do not own
+  // this member. Restricting the collision universe to `methodEntries` made a
+  // singleton entry look safe even though a structurally identical sibling
+  // could pass its ref.test and acquire the method.
+  if (![...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own)) return undefined;
   const ownTag = ctx.classTagMap.get(structName);
   if (ownTag === undefined) return undefined;
   const tags = [ownTag];
@@ -7129,30 +7414,23 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
     paramTypes: ValType[];
     isRest?: boolean;
   };
-  const collect = (nameOf: (structName: string) => string): KindEntry[] => {
+  const collect = (
+    nameOf: (structName: string) => string,
+    memberKind: "method" | "getter" | "setter",
+    memberKey: string,
+  ): KindEntry[] => {
     const entries: KindEntry[] = [];
     for (const [structName] of ctx.structFields) {
       const typeIdx = ctx.structMap.get(structName);
       if (typeIdx === undefined || skipStruct(structName)) continue;
       const fullName = nameOf(structName);
-      if (process.env.DEBUG_MARKED_CODEGEN === "1" && fullName.endsWith("_parseInline")) {
-        console.error(
-          "[marked-member-kind-scan]",
-          structName,
-          fullName,
-          ctx.classMethodSet.has(fullName),
-          ctx.staticMethodSet.has(fullName),
-          ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
-          ctx.funcMap.get(fullName),
-        );
-      }
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
       if (funcIdx === undefined) continue;
       const funcDef = definedFuncAt(ctx, funcIdx);
       const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
       if (!funcType || funcType.kind !== "func") continue;
-      const memberKey = fullName.slice(fullName.lastIndexOf("_") + 1);
-      const isGetter = fullName.includes("_get_");
+      const isGetter = memberKind === "getter";
+      const isSetter = memberKind === "setter";
       const restInfo = ctx.funcRestParams.get(fullName);
       if (!isGetter && restInfo) {
         if (!ctx.hostDynamicClassMethodNames.has(memberKey)) continue;
@@ -7160,7 +7438,14 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
         entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
         continue;
       }
-      if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) continue;
+      if (isSetter) {
+        // Dynamic host writes can forward an erased externref without a
+        // representation guess. Typed setter parameters keep their existing
+        // compiled/static path until that ABI has an explicit coercion rule.
+        if (funcType.params.length !== 2 || funcType.params[1]!.kind !== "externref") continue;
+      } else if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) {
+        continue;
+      }
       if (funcType.params.length < 1) continue;
       if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
       const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
@@ -7174,9 +7459,10 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
 
   for (const key of keys) {
     if (ctx.funcMap.has(`__member_kind_${key}`)) continue; // idempotent
-    const methodEntries = collect((s) => `${s}_${key}`);
-    const getterEntries = collect((s) => `${s}_get_${key}`);
-    if (methodEntries.length === 0 && getterEntries.length === 0) continue;
+    const methodEntries = collect((s) => `${s}_${key}`, "method", key);
+    const getterEntries = collect((s) => `${s}_get_${key}`, "getter", key);
+    const setterEntries = collect((s) => `${s}_set_${key}`, "setter", key);
+    if (methodEntries.length === 0 && getterEntries.length === 0 && setterEntries.length === 0) continue;
 
     // __member_kind_<key>: ref.test cascade → 1 (method) / 2 (getter) / 0.
     {
@@ -7184,7 +7470,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       let current: Instr[] = [{ op: "i32.const", value: 0 }];
       const allEntries = [...methodEntries, ...getterEntries];
       const arm = (entry: KindEntry, kind: number, tail: Instr[]): Instr[] => {
-        const tagCond = classArmTagCondition(ctx, allEntries, entry.structName, entry.typeIdx, 1);
+        const tagCond = classArmTagCondition(ctx, entry.structName, entry.typeIdx, 1);
         return [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: entry.typeIdx },
@@ -7227,7 +7513,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
       let current: Instr[] = [{ op: "i32.const", value: -1 }];
       for (const e of methodEntries) {
-        const tagCond = classArmTagCondition(ctx, methodEntries, e.structName, e.typeIdx, 1);
+        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 1);
         current = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: e.typeIdx },
@@ -7288,9 +7574,20 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
           const boxIdx = ctx.funcMap.get("__box_number");
           if (boxIdx !== undefined) callArm.push({ op: "call", funcIdx: boxIdx });
         }
+        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 1);
         current = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: e.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
@@ -7305,6 +7602,62 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
         typeIdx: dispatchTypeIdx,
         locals: [{ name: "__any", type: { kind: "anyref" } }],
         body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...current],
+        exported: true,
+      } as WasmFunction);
+      exportFunc(mod, exportName, funcIdx);
+      ctx.funcMap.set(exportName, funcIdx);
+    }
+
+    // __call_set_<key>(receiver, value) -> i32. A successful arm invokes the
+    // real compiled prototype setter and returns 1; 0 means this receiver has
+    // no matching setter. The runtime uses that positive result before its
+    // sidecar fallback, preserving setter side effects such as Hono Context's
+    // `res` setter also marking `finalized = true`.
+    if (setterEntries.length > 0) {
+      const setterTypeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+        `$call_set_${key}_type`,
+      );
+      const funcIdx = ctx.numImportFuncs + mod.functions.length;
+      let current: Instr[] = [{ op: "i32.const", value: 0 }];
+      for (const e of setterEntries) {
+        const callArm: Instr[] = [
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: e.typeIdx },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: e.funcIdx },
+          { op: "i32.const", value: 1 },
+        ];
+        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 2);
+        current = [
+          { op: "local.get", index: 2 },
+          { op: "ref.test", typeIdx: e.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: callArm,
+            else: current,
+          },
+        ];
+      }
+      const exportName = `__call_set_${key}`;
+      mod.functions.push({
+        name: exportName,
+        typeIdx: setterTypeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } }],
+        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 2 }, ...current],
         exported: true,
       } as WasmFunction);
       exportFunc(mod, exportName, funcIdx);
@@ -8041,6 +8394,7 @@ function registerReassignedFunctionGlobals(
   runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
 ): void {
   const reassigned = new Set<string>();
+  const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
   const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
   const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
@@ -8062,6 +8416,7 @@ function registerReassignedFunctionGlobals(
       const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
       if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
         reassigned.add(decl.name.text);
+        reassignedDeclarations.add(decl);
       }
     }
     ts.forEachChild(node, scan);
@@ -8108,10 +8463,14 @@ function registerReassignedFunctionGlobals(
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
         reassigned.add(name);
+        if (declaration) reassignedDeclarations.add(declaration);
       }
     }
   }
   if (reassigned.size === 0) return;
+
+  const exactDeclarations = (ctx.reassignedFunctionDeclarations ??= new WeakSet<ts.FunctionDeclaration>());
+  for (const declaration of reassignedDeclarations) exactDeclarations.add(declaration);
 
   const set = (ctx.liveFuncBindingGlobals ??= new Set<string>());
   for (const name of reassigned) {
@@ -8128,6 +8487,115 @@ function registerReassignedFunctionGlobals(
     });
     ctx.moduleGlobals.set(name, globalIdx);
     set.add(name);
+  }
+}
+
+/** Conservatively find class declaration bindings changed by direct syntax. */
+function directlyReassignedClassDeclarations(
+  ctx: CodegenContext,
+  sourceFiles: readonly ts.SourceFile[],
+): WeakSet<ts.ClassDeclaration> {
+  const reassigned = new WeakSet<ts.ClassDeclaration>();
+  const recordTarget = (target: ts.Node): void => {
+    if (ts.isIdentifier(target)) {
+      const declaration = ctx.oracle.valueDeclarationOf(target);
+      if (declaration !== undefined && ts.isClassDeclaration(declaration)) reassigned.add(declaration);
+      return;
+    }
+    // Recurse only through assignment PATTERNS. A member target such as
+    // `C.code = value` assigns the property, not the `C` class binding.
+    if (ts.isArrayLiteralExpression(target)) {
+      for (const element of target.elements) recordTarget(element);
+    } else if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isPropertyAssignment(property)) recordTarget(property.initializer);
+        else if (ts.isShorthandPropertyAssignment(property)) recordTarget(property.name);
+        else if (ts.isSpreadAssignment(property)) recordTarget(property.expression);
+      }
+    } else if (ts.isSpreadElement(target) || ts.isParenthesizedExpression(target)) {
+      recordTarget(target.expression);
+    }
+  };
+  const scan = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      recordTarget(node.left);
+    } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) {
+        recordTarget(node.operand);
+      }
+    } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+      if (!ts.isVariableDeclarationList(node.initializer)) recordTarget(node.initializer);
+    }
+    ts.forEachChild(node, scan);
+  };
+  for (const sourceFile of sourceFiles) scan(sourceFile);
+  return reassigned;
+}
+
+/**
+ * Register module-scope `ClassName.prop = value` definitions before bodies are
+ * emitted.
+ *
+ * A class static field already owns a mutable Wasm global. A data property
+ * added with an assignment has the same observable value role, but historically
+ * fell through to the host class-object setter. Externref-backed builtin
+ * subclasses (for example `class E extends Error`) deliberately have no host
+ * class-object singleton, so that fallback writes through `null` and a later
+ * imported `E.prop` read cannot recover the value.
+ *
+ * Only direct source-file assignment statements on unreassigned class
+ * declarations are admitted here. They are the declaration-like CommonJS/ESM
+ * pattern this prepass can represent without changing control-flow or
+ * delete/redefinition semantics. The value cell is representation-neutral
+ * because an assignment-created property may later hold another JS type.
+ */
+function registerModuleClassStaticAssignments(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+  const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
+  for (const sourceFile of sourceFiles) {
+    for (const statement of sourceFile.statements) {
+      if (!ts.isExpressionStatement(statement)) continue;
+      const expression = statement.expression;
+      if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+        continue;
+      }
+      const target = expression.left;
+      if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression)) continue;
+
+      const sourceName = target.expression.text;
+      const resolvedClass = ctx.classExprNameMap.get(sourceName) ?? sourceName;
+      if (!ctx.classSet.has(resolvedClass)) continue;
+
+      // A same-spelled non-class binding in another source must not acquire the
+      // graph-wide class's static storage merely because class registries are
+      // currently keyed by display name.
+      const declaration = ctx.oracle.valueDeclarationOf(target.expression);
+      if (declaration === undefined || !ts.isClassDeclaration(declaration)) continue;
+      if (ctx.classDeclarationMap.get(resolvedClass) !== declaration) continue;
+      if (reassignedClasses.has(declaration)) continue;
+
+      const propName = target.name.text;
+      // These are intrinsic Function/Class properties, not assignment-created
+      // ordinary data slots.  Existing declared fields/methods/accessors retain
+      // their established lowering and descriptor semantics below as well.
+      if (propName === "prototype" || propName === "name" || propName === "length") continue;
+      const fullName = `${resolvedClass}_${propName}`;
+      if (ctx.staticProps.has(fullName) || ctx.staticMethodSet.has(fullName) || ctx.staticAccessorSet.has(fullName)) {
+        continue;
+      }
+
+      const globalIdx = nextModuleGlobalIdx(ctx);
+      ctx.mod.globals.push({
+        name: `__static_${fullName}`,
+        type: { kind: "externref" },
+        mutable: true,
+        init: [{ op: "ref.null.extern" }],
+      });
+      ctx.staticProps.set(fullName, globalIdx);
+    }
   }
 }
 
@@ -8151,18 +8619,9 @@ function registerReassignedFunctionGlobals(
  * name stays byte-identical.
  */
 function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+  const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
   const aliasOneBinding = (localId: ts.Identifier): void => {
     const localName = localId.text;
-    // Already resolvable under the local name (e.g. `import { add }` where the
-    // local name equals the export) — nothing to alias.
-    const existingLocalFunc = ctx.funcMap.get(localName);
-    if (
-      ctx.moduleGlobals.has(localName) ||
-      ctx.closureMap.has(localName) ||
-      (existingLocalFunc !== undefined && !isImportFuncIdx(ctx, existingLocalFunc))
-    ) {
-      return;
-    }
     let sym: ts.Symbol | undefined;
     try {
       sym = ctx.checker.getSymbolAtLocation(localId);
@@ -8178,9 +8637,75 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
         return;
       }
     }
-    if (!target) return;
-    const decl = target.valueDeclaration ?? target.declarations?.[0];
+    const binding = ctx.oracle.valueDeclarationOf(localId);
+    if (!target || !binding) return;
+    let decl = target.valueDeclaration ?? target.declarations?.[0];
+    // TypeScript follows a default import of `export default <expression>`
+    // through the expression's inferred value symbol. For example, importing
+    // `Function.prototype.bind` resolves to lib.d.ts's `MethodSignature`, not
+    // to the exporting module's `ExportAssignment`. The module specifier's
+    // oracle declaration is the exact source module, so retain the live export
+    // cell identity at this one established import-resolution boundary.
+    const importsDefault =
+      ts.isImportClause(binding) ||
+      (ts.isImportSpecifier(binding) && (binding.propertyName?.text ?? binding.name.text) === "default");
+    const importDecl = ts.isImportClause(binding)
+      ? binding.parent
+      : ts.isImportSpecifier(binding)
+        ? binding.parent.parent.parent
+        : undefined;
+    if (importsDefault && importDecl && ts.isImportDeclaration(importDecl)) {
+      const targetSource = ctx.oracle.declarationsOf(importDecl.moduleSpecifier).find(ts.isSourceFile);
+      const expressionDefault = targetSource?.statements.find(
+        (statement): statement is ts.ExportAssignment =>
+          ts.isExportAssignment(statement) && statement.isExportEquals !== true,
+      );
+      if (expressionDefault) {
+        // An UNREASSIGNED, uniquely registered class declaration evaluates to
+        // the exact constructor that `export default C` snapshots. Preserve
+        // that declaration identity so the existing import-alias machinery can
+        // route `new Alias()` and static reads to the compiled class. This is
+        // especially important for
+        // externref-backed builtin subclasses (`class E extends Error`): they do
+        // not have a class-object singleton that an expression cell could copy,
+        // so compiling the export identifier as an ordinary value yields null.
+        const expressionDeclaration = ts.isIdentifier(expressionDefault.expression)
+          ? ctx.oracle.valueDeclarationOf(expressionDefault.expression)
+          : undefined;
+        decl =
+          expressionDeclaration &&
+          ts.isClassDeclaration(expressionDeclaration) &&
+          expressionDeclaration.name !== undefined &&
+          ctx.classDeclarationMap.get(expressionDeclaration.name.text) === expressionDeclaration &&
+          !reassignedClasses.has(expressionDeclaration)
+            ? expressionDeclaration
+            : expressionDefault;
+      }
+    }
     if (!decl) return;
+    if (binding && (ts.isImportClause(binding) || ts.isImportSpecifier(binding))) {
+      (ctx.importBindingTargets ??= new WeakMap()).set(binding, decl);
+    }
+
+    // Already resolvable under the local name (e.g. `import { add }` where the
+    // local name equals the export) — the exact target above is still recorded
+    // for declaration-identity consumers, but no registry aliases are needed.
+    const existingLocalFunc = ctx.funcMap.get(localName);
+    if (
+      ctx.moduleGlobals.has(localName) ||
+      ctx.closureMap.has(localName) ||
+      (existingLocalFunc !== undefined && !isImportFuncIdx(ctx, existingLocalFunc))
+    ) {
+      return;
+    }
+    // `export default <expression>` owns an exact snapshot cell rather than a
+    // named declaration. Identifier/call lowering resolves it through
+    // importBindingTargets + defaultExpressionGlobals; never publish it under
+    // the graph-wide local spelling, where a same-named binding from another
+    // source could capture or overwrite it.
+    if (ts.isExportAssignment(decl)) {
+      return;
+    }
     // The name the target was registered under in funcMap/moduleGlobals/closureMap.
     let targetName: string | undefined;
     const declName = (decl as { name?: ts.Node }).name;
@@ -8195,13 +8720,33 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       // is registered under the synthetic name "default".
       targetName = "default";
     }
-    if (!targetName && ts.isExportAssignment(decl) && !decl.isExportEquals) {
-      // An ESM default export whose value is an expression has no declaration
-      // name for TypeScript to expose: the aliased symbol's valueDeclaration is
-      // the ExportAssignment itself. `collectDeclarations` materializes that
-      // expression in a synthetic module-global cell; follow the same cell as
-      // a normal import alias instead of falling through to the null sentinel.
-      targetName = ctx.defaultExpressionGlobals?.get(decl)?.bindingName;
+    // A separately linked package can publish a declaration-only function that
+    // has no local body to seed `funcMap` (notably a default export re-exposed
+    // through a generated facade). Materialize that one narrow boundary as a
+    // real Wasm import from the checker signature. Ordinary ambient globals and
+    // unsupported module values never enter this path because they have no
+    // linked-package manifest entry.
+    const linked =
+      (targetName && ctx.linkedPackageBindings.get(targetName)) ?? ctx.linkedPackageBindings.get(localName);
+    if (linked && (!targetName || ctx.funcMap.get(targetName) === undefined)) {
+      const type = ctx.checker.getTypeAtLocation(localId);
+      const signature = ctx.checker.getSignaturesOfType(type, ts.SignatureKind.Call)[0];
+      if (signature) {
+        const params = signature.parameters.map((parameter) =>
+          mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(parameter, localId), ctx.checker, ctx.fast),
+        );
+        const returnType = ctx.checker.getReturnTypeOfSignature(signature);
+        const results = isVoidType(returnType) ? [] : [mapTsTypeToWasm(returnType, ctx.checker, ctx.fast)];
+        const typeIdx = addFuncType(ctx, params, results, `${targetName ?? localName}_linked_type`);
+        const imported = addImport(ctx, linked.module, linked.field, { kind: "func", typeIdx });
+        if (imported) {
+          const importedIndex = ctx.funcMap.get(linked.field);
+          if (importedIndex !== undefined) {
+            if (targetName) ctx.funcMap.set(targetName, importedIndex);
+            ctx.funcMap.set(localName, importedIndex);
+          }
+        }
+      }
     }
     if (!targetName || targetName === localName) return;
     // Imported class bindings need the same canonical class identity as the
@@ -8453,6 +8998,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           { kind: "externref" },
           { kind: "externref" },
           { kind: "externref" },
+          { kind: "i32" },
         ],
         [],
       );
@@ -8739,6 +9285,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // site above). Runs before aliasing/bodies for the same reason as #2931.
     registerAnnexBGlobalLiveBindings(ctx, multiAst.sourceFiles);
 
+    // Module-scope `ClassName.prop = value` is declaration-like static storage.
+    // Register it before import aliases and body emission so both the exporting
+    // spelling and an imported class alias resolve to the same value cell.
+    registerModuleClassStaticAssignments(ctx, multiAst.sourceFiles);
+
     // (#2930) Register import-binding aliases (default / renamed / anonymous-default
     // imports whose LOCAL name differs from the imported target's declaration name)
     // so their reads and calls resolve to the target instead of the graceful-null
@@ -8886,10 +9437,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       }
       ctx.deferredDefaultGlobalExport = undefined;
     }
-    for (const bindingName of ctx.deferredDefaultExpressionExports ?? []) {
-      const globalName = `__mod_${bindingName}`;
-      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-      if (localIdx < 0 || ctx.mod.exports.some((e) => e.name === "default")) continue;
+    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
+      const localIdx = ctx.mod.globals.indexOf(value);
+      if (localIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
+        continue;
+      }
+      if (ctx.mod.exports.some((e) => e.name === "default")) {
+        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
+        continue;
+      }
       ctx.mod.exports.push({
         name: "default",
         desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
@@ -9109,6 +9666,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#3058) Resizable-ArrayBuffer helper exports (mirrors generateModule path).
     emitResizableAbExports(ctx);
 
+    // Multi-source parity with generateModule: linked Web Crypto calls need a
+    // byte writer for their Wasm vec argument, and exported typed-array params
+    // need the inbound f64-vec allocator.
+    emitVecSetByteExport(ctx);
+    emitNewVecF64Export(ctx);
+
     // Emit __test_str_from_externref / __test_str_to_externref helpers
     // (no-op unless ctx.testRuntime && ctx.nativeStrings).
     emitTestRuntimeStringHelpers(ctx);
@@ -9311,6 +9874,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
     // Additive + before dead-elim (which remaps declaredFuncRefs).
     collectDeclaredFuncRefs(ctx, { additive: true });
+
+    // #2527 — same provider publication point as the single-source pipeline.
+    emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
@@ -9897,7 +10463,7 @@ export function resolveIdentifierType(ctx: CodegenContext, id: ts.Identifier): t
  * `getTypeAtLocation` gives the real type, or undefined if no user binding
  * shadows the ambient global.
  */
-function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
+export function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
   const name = id.text;
   const bindsName = (node: ts.Node): ts.Node | undefined => {
     if (
@@ -9972,6 +10538,20 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // Check aliasSymbol first — TypeScript preserves the alias name on the type.
   const nativeType = resolveNativeTypeAnnotation(tsType);
   if (nativeType) return nativeType;
+
+  // A JavaScript BigInt is arbitrary precision. The native i64 carrier is a
+  // useful host-free representation, but using it in JS-host mode silently
+  // truncates values wider than 64 bits at every local/parameter/return
+  // boundary. Keep host BigInts as externref so arithmetic can delegate to the
+  // real JS BigInt operators without losing high bits. Standalone/WASI retain
+  // the existing i64 carrier until they have a native arbitrary-precision
+  // implementation. Explicit native `i64` annotations returned above remain
+  // i64 on every target.
+  if (usesHostBigIntCarrier(ctx) && isBigIntType(tsType)) {
+    return { kind: "externref" };
+  }
+  const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
+  if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
 
   // Fast mode: string → ref $AnyString (not externref).
   // The String WRAPPER object (`new String(x)`) is excluded here — `isStringType`
@@ -11017,9 +11597,10 @@ export function hoistVarDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | ts.Statement[],
+  reuseExistingModuleGlobals = false,
 ): void {
   for (const stmt of stmts) {
-    walkStmtForVars(ctx, fctx, stmt);
+    walkStmtForVars(ctx, fctx, stmt, reuseExistingModuleGlobals);
   }
 }
 
@@ -11153,7 +11734,12 @@ function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.Variabl
 }
 
 /** Hoist a single variable declaration (handles both simple identifiers and binding patterns). */
-function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.VariableDeclaration): void {
+function hoistVarDecl(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.VariableDeclaration,
+  reuseExistingModuleGlobals: boolean,
+): void {
   if (ts.isIdentifier(decl.name)) {
     const name = decl.name.text;
     // A folded Script-level eval executes in the module initializer's
@@ -11162,7 +11748,7 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     // declaration lowering emits the live global store. This matters when the
     // eval is in a loop head: ForIn/OfHeadEvaluation creates no environment
     // when the head names are not referenced by the receiver expression.
-    if (fctx.name === "__module_init" && ctx.moduleGlobals.has(name)) return;
+    if (reuseExistingModuleGlobals && fctx.name === "__module_init" && ctx.moduleGlobals.has(name)) return;
     if (fctx.localMap.has(name)) return;
     // #1690b: do NOT skip allocation when the name collides with a module
     // global. This hoister only runs for nested function bodies; per JS var
@@ -11340,27 +11926,32 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
   }
 }
 
-function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): void {
+function walkStmtForVars(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.Statement,
+  reuseExistingModuleGlobals: boolean,
+): void {
   if (ts.isVariableStatement(stmt)) {
     const list = stmt.declarationList;
     // Only hoist `var` (not let/const/using/await-using). #1177
     if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) return;
     for (const decl of list.declarations) {
-      hoistVarDecl(ctx, fctx, decl);
+      hoistVarDecl(ctx, fctx, decl, reuseExistingModuleGlobals);
     }
     return;
   }
   if (ts.isBlock(stmt)) {
-    for (const s of stmt.statements) walkStmtForVars(ctx, fctx, s);
+    for (const s of stmt.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isIfStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.thenStatement);
-    if (stmt.elseStatement) walkStmtForVars(ctx, fctx, stmt.elseStatement);
+    walkStmtForVars(ctx, fctx, stmt.thenStatement, reuseExistingModuleGlobals);
+    if (stmt.elseStatement) walkStmtForVars(ctx, fctx, stmt.elseStatement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isForStatement(stmt)) {
@@ -11368,11 +11959,11 @@ function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.St
       const list = stmt.initializer;
       if (!(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
         for (const decl of list.declarations) {
-          hoistVarDecl(ctx, fctx, decl);
+          hoistVarDecl(ctx, fctx, decl, reuseExistingModuleGlobals);
         }
       }
     }
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isForInStatement(stmt) || ts.isForOfStatement(stmt)) {
@@ -11381,30 +11972,30 @@ function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.St
       const list = stmt.initializer;
       if (!(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
         for (const decl of list.declarations) {
-          hoistVarDecl(ctx, fctx, decl);
+          hoistVarDecl(ctx, fctx, decl, reuseExistingModuleGlobals);
         }
       }
     }
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isLabeledStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
   if (ts.isTryStatement(stmt)) {
-    for (const s of stmt.tryBlock.statements) walkStmtForVars(ctx, fctx, s);
+    for (const s of stmt.tryBlock.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     if (stmt.catchClause) {
-      for (const s of stmt.catchClause.block.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of stmt.catchClause.block.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     }
     if (stmt.finallyBlock) {
-      for (const s of stmt.finallyBlock.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of stmt.finallyBlock.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     }
     return;
   }
   if (ts.isSwitchStatement(stmt)) {
     for (const clause of stmt.caseBlock.clauses) {
-      for (const s of clause.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of clause.statements) walkStmtForVars(ctx, fctx, s, reuseExistingModuleGlobals);
     }
   }
 }

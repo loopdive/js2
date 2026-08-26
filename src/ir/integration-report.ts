@@ -2,6 +2,7 @@
 
 import type { IrUnitId } from "./identity.js";
 import type { PreparedCountedStringAppendReceipt } from "./ast-lowering-plans.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "./counted-string-append-provenance.js";
 import {
   classifyIrFailure,
   type IrInvariantCode,
@@ -281,22 +282,16 @@ export function buildIrIntegrationReport(
       .filter((artifact) => artifact.artifactUnitId === artifact.terminalOwnerUnitId)
       .map((artifact) => artifact.terminalOwnerUnitId),
   );
-  const receiptLoops = new Set<object>();
+  const receiptSites = new Set<string>();
   for (const receipt of preparedCountedStringAppendReceipts ?? []) {
-    ownerProjection.requireUnit(receipt.plan.ownerUnitId);
-    if (
-      !Object.isFrozen(receipt) ||
-      !Object.isFrozen(receipt.plan) ||
-      !Object.isFrozen(receipt.plan.syntaxPlan) ||
-      !compiledTerminalOwnerUnitIds.has(receipt.plan.ownerUnitId) ||
-      receiptLoops.has(receipt.plan.syntaxPlan.loop) ||
-      !/^[0-9a-f]{16}$/.test(receipt.finalInstructionDigest)
-    ) {
+    const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+    ownerProjection.requireUnit(identity.ownerUnitId);
+    if (!compiledTerminalOwnerUnitIds.has(identity.ownerUnitId) || receiptSites.has(receipt.siteId)) {
       throw new TypeError(
-        "prepared counted-string receipt is mutable, duplicated, uncompiled, or has a malformed digest",
+        "prepared counted-string receipt site is duplicated or has no exact compiled terminal artifact",
       );
     }
-    receiptLoops.add(receipt.plan.syntaxPlan.loop);
+    receiptSites.add(receipt.siteId);
   }
   const frozenCountedStringAppendReceipts = preparedCountedStringAppendReceipts?.length
     ? Object.freeze([...preparedCountedStringAppendReceipts])

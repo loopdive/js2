@@ -1231,7 +1231,7 @@ export function tryStaticEvalInline(
   const isolateIndirectBindings = !directEval && hasScriptScopeAnnexBFunction(sf);
   if (!directEval) {
     try {
-      return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+      return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings, fctx.name === "__module_init");
     } finally {
       restoreFoldedEvalLexicalScope(fctx, lexicalScope);
     }
@@ -1242,7 +1242,7 @@ export function tryStaticEvalInline(
   fctx.directEvalSloppyThisFallback =
     savedDirectEvalThisFallback === true || !isStrictContext(expr, ctx.inferModuleStrictArguments);
   try {
-    const result = compileInlinedEvalStatements(ctx, fctx, stmts, false);
+    const result = compileInlinedEvalStatements(ctx, fctx, stmts, false, fctx.name === "__module_init");
     if (result === undefined) {
       // Late bail to the provider: undo BOTH scope mutations before the caller
       // recompiles the call, or the provider path sees phantom caller bindings.
@@ -1312,6 +1312,7 @@ function compileInlinedEvalStatements(
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement>,
   isolateBindings: boolean,
+  reuseExistingModuleGlobals: boolean,
 ): InnerResult | undefined {
   const savedBindingState = isolateBindings
     ? {
@@ -1343,7 +1344,7 @@ function compileInlinedEvalStatements(
     // Hoist var / function declarations before compiling any statements.
     // `let`/`const` enter the block scope in source order.
     try {
-      hoistVarDeclarations(ctx, fctx, stmts);
+      hoistVarDeclarations(ctx, fctx, stmts, reuseExistingModuleGlobals);
       hoistLetConstWithTdz(ctx, fctx, stmts);
       hoistFunctionDeclarations(ctx, fctx, stmts);
     } catch {
