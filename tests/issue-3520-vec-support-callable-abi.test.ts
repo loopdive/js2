@@ -421,12 +421,16 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(unreported.irOutcomes).toBeUndefined();
     expect(unreported.module.functions).toHaveLength(routed.module.functions.length);
 
+    // Deliberately NOT an absolute-count census (#3520 C35 follow-up). This used
+    // to pin `definedFunctions: 166`, `genericRows: 45`, `closureRows: 26` and
+    // `dataRows: 5`; every one has since moved while the five corpus FILES are
+    // byte-for-byte unchanged, so the assertion reported compiler evolution
+    // rather than vec ownership. See the issue file's drift table.
+    const VEC_BRIDGE_NAMES = new Set(VEC_BRIDGES.map((bridge) => bridge.name));
     let definedFunctions = 0;
-    let genericRows = 0;
+    let vecBridgeFunctions = 0;
     let vecRows = 0;
-    let closureRows = 0;
-    let dateRows = 0;
-    let dataRows = 0;
+    let genericVecRows = 0;
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
       const ast = analyzeSource(source, entry);
@@ -437,20 +441,20 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
       const hardErrors = result.errors.filter((error) => error.severity !== "warning");
       expect(hardErrors, `${entry}\n${hardErrors.map((error) => error.message).join("\n")}`).toEqual([]);
       definedFunctions += result.module.functions.length;
-      const entries = result.programAbi!.abi.entries();
-      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
-      vecRows += entries.filter((candidate) => candidate.id.includes(VEC_HOST_BRIDGE_ROLE)).length;
-      closureRows += entries.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
-      dateRows += entries.filter((candidate) => candidate.id.includes(":date-civil-support:")).length;
-      dataRows += entries.filter((candidate) => candidate.id.includes(":data-struct-host-bridge:")).length;
+      vecBridgeFunctions += result.module.functions.filter((func) => VEC_BRIDGE_NAMES.has(func.name)).length;
+      const callableRows = result
+        .programAbi!.abi.entries()
+        .filter((candidate) => candidate.intent?.kind === "callable");
+      vecRows += callableRows.filter((candidate) => candidate.id.includes(VEC_HOST_BRIDGE_ROLE)).length;
+      genericVecRows += callableRows.filter(
+        (candidate) =>
+          candidate.id.includes(":retained-module-function:") && VEC_BRIDGE_NAMES.has(candidate.displayName ?? ""),
+      ).length;
     }
-    expect({ definedFunctions, genericRows, vecRows, closureRows, dateRows, dataRows }).toEqual({
-      definedFunctions: 166,
-      genericRows: 45,
-      vecRows: 24,
-      closureRows: 26,
-      dateRows: 1,
-      dataRows: 5,
-    });
+    // Anti-vacuity, then one structural owner per emitted bridge, none generic.
+    expect(definedFunctions).toBeGreaterThan(0);
+    expect(vecBridgeFunctions).toBeGreaterThan(0);
+    expect(vecRows).toBe(vecBridgeFunctions);
+    expect(genericVecRows).toBe(0);
   });
 });
