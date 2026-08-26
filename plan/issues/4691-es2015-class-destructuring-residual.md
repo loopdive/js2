@@ -4,7 +4,7 @@ title: "ES2015 standalone class-method array destructuring preserves explicit nu
 status: done
 sprint: current
 created: 2026-08-25
-updated: 2026-08-25
+updated: 2026-08-26
 completed: 2026-08-25
 priority: high
 feasibility: medium
@@ -94,3 +94,17 @@ All commands used the pinned PATH `PATH=/private/tmp/codex-pnpm10/node_modules/.
 - `src/codegen/expressions/call-receiver-method.ts` (instance class-method call site)
 - `src/codegen/expressions/call-namespace-static.ts` (static class-method call site)
 - `tests/issue-4691.test.ts`
+
+## Integration follow-up
+
+The combined conformance branch retained a wider version of the carrier
+override: it routed unrelated namespace-static arguments through internal-call
+adaptation and changed the default identifier probe to compile with an expected
+type. The queue merge group exposed three host `Object.defineProperty`
+regressions from that widening.
+
+The integration repair keeps the pre-existing host/default lowering verbatim
+and enters the override only for standalone/WASI array literals passed to class
+method array binding patterns. `tests/issue-4691.test.ts` passes 7/7, and the
+assembled host harness passes all three descriptor rows that failed before the
+repair (3/3).
