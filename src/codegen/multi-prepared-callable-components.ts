@@ -45,6 +45,32 @@ function clonePlanningContainer(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Fork a Program ABI registry without invoking its constructor. Registry
+ * constructors authenticate against the live module, while this transaction
+ * deliberately gives every registry the detached module through its existing
+ * context reference. Private TypeScript fields are ordinary runtime fields;
+ * copying their descriptors preserves the prototype methods and the
+ * registry-owned state containers without sharing mutable Maps/Sets/arrays.
+ */
+function clonePlanningRegistry(value: object): object {
+  const clone = Object.create(Object.getPrototypeOf(value)) as object;
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    Object.defineProperty(
+      clone,
+      key,
+      "value" in descriptor ? { ...descriptor, value: clonePlanningContainer(descriptor.value) } : descriptor,
+    );
+  }
+  return clone;
+}
+
+function isProgramAbiRegistryKey(key: string): boolean {
+  return key.startsWith("programAbi") && key !== "programAbiSession";
+}
+
 function cloneComponentModule(module: WasmModule): WasmModule {
   return {
     ...module,
@@ -83,7 +109,12 @@ function beginComponentContextPlanning(ctx: CodegenContext): ComponentContextPla
   for (const key of originalKeys) {
     const value = context[key];
     originalValues.set(key, value);
-    context[key] = key === "mod" ? stagedModule : clonePlanningContainer(value);
+    context[key] =
+      key === "mod"
+        ? stagedModule
+        : isProgramAbiRegistryKey(key) && value !== null && typeof value === "object"
+          ? clonePlanningRegistry(value)
+          : clonePlanningContainer(value);
   }
 
   const pendingPreparedReplacements = new Map<WasmFunction, WasmFunction>();
@@ -99,13 +130,22 @@ function beginComponentContextPlanning(ctx: CodegenContext): ComponentContextPla
   };
   const publishContainer = (original: unknown, staged: unknown): unknown => {
     if (Array.isArray(original) && Array.isArray(staged)) {
+      // Sealed registry snapshots (for example `sealedEntries` and a
+      // provider observation prefix) are intentionally immutable. Replace
+      // those references at publication; mutable working arrays retain their
+      // identity for callers that hold the context container.
+      if (Object.isFrozen(original)) return staged;
       original.length = 0;
       original.push(...staged);
       return original;
     }
     if (original instanceof Map && staged instanceof Map) {
+      const priorEntries = new Map(original);
       original.clear();
-      for (const [key, value] of staged) original.set(key, value);
+      for (const [key, value] of staged) {
+        const prior = priorEntries.get(key);
+        original.set(key, publishContainer(prior, value));
+      }
       return original;
     }
     if (original instanceof Set && staged instanceof Set) {
@@ -114,6 +154,37 @@ function beginComponentContextPlanning(ctx: CodegenContext): ComponentContextPla
       return original;
     }
     return staged;
+  };
+  const publishPlanningRegistry = (original: object, staged: object): object => {
+    const originalKeys = new Set(Reflect.ownKeys(original));
+    const stagedKeys = new Set(Reflect.ownKeys(staged));
+    for (const key of originalKeys) {
+      if (!stagedKeys.has(key)) Reflect.deleteProperty(original, key);
+    }
+    for (const key of stagedKeys) {
+      const stagedDescriptor = Object.getOwnPropertyDescriptor(staged, key);
+      if (!stagedDescriptor) continue;
+      const originalDescriptor = Object.getOwnPropertyDescriptor(original, key);
+      if ("value" in stagedDescriptor) {
+        const prior = originalDescriptor && "value" in originalDescriptor ? originalDescriptor.value : undefined;
+        const value = publishContainer(prior, stagedDescriptor.value);
+        if (originalDescriptor && !originalDescriptor.configurable) {
+          if (!originalDescriptor.writable) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "patch",
+              "Program ABI registry state is not writable at component publication",
+            );
+          }
+          Reflect.set(original, key, value);
+        } else {
+          Object.defineProperty(original, key, { ...stagedDescriptor, value });
+        }
+      } else {
+        Object.defineProperty(original, key, stagedDescriptor);
+      }
+    }
+    return original;
   };
 
   return {
@@ -162,7 +233,15 @@ function beginComponentContextPlanning(ctx: CodegenContext): ComponentContextPla
           context[key] = liveModule;
           continue;
         }
-        context[key] = publishContainer(original, context[key]);
+        const staged = context[key];
+        context[key] =
+          isProgramAbiRegistryKey(key) &&
+          original !== null &&
+          typeof original === "object" &&
+          staged !== null &&
+          typeof staged === "object"
+            ? publishPlanningRegistry(original, staged)
+            : publishContainer(original, staged);
       }
       closed = true;
     },
