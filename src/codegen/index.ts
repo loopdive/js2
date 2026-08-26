@@ -333,6 +333,7 @@ import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
+import { fillNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js"; // shared dynamic HasInstance identity probes
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -5835,6 +5836,11 @@ export function generateModule(
     // synthesised mid-compile). Edits the helper bodies in place — no funcIdx churn.
     fillStandaloneTypeofClosureArms(ctx);
 
+    // Fill the reserve/fill identity probes used by the fully-dynamic
+    // `instanceof` substrate after all builtin carrier globals and native
+    // prototype types have been published.
+    fillNativeDynamicInstanceOf(ctx);
+
     // (#4492 wave-5) …then the CALLABLE OrdinaryToPrimitive consult in front of
     // the #3540 closure arm that call just installed, so an own / inherited
     // `toString` wins over §20.2.3.5 step 3's NativeFunction constant.
@@ -9167,6 +9173,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).
     fillStandaloneTypeofClosureArms(ctx);
+
+    // Same reserve/fill identity probes as the single-source pipeline.
+    fillNativeDynamicInstanceOf(ctx);
 
     // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
     fillSymbolAnyToStringArm(ctx);

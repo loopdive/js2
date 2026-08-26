@@ -38,11 +38,10 @@
  * ## Not covered (deliberate)
  *
  * `obj instanceof FACTORY` where `FACTORY` is a runtime-built `Function(…)`
- * value (the `S15.3.5.3_A2_*` / `_A3_*` family) needs a RUNTIME read of
- * `FACTORY.prototype` off an arbitrary callable, which the standalone object
- * model does not expose yet (`$Object.$proto` is only seeded for #2660-approved
- * fnctor reconstructions). Those keep the host import and stay refused under
- * standalone rather than being answered wrongly.
+ * value still needs a RUNTIME read of `FACTORY.prototype` off an arbitrary
+ * callable. The shared dynamic substrate handles the exact
+ * `FACTORY.prototype = Object.prototype` identity join; other arbitrary
+ * prototypes keep their conservative answer rather than being guessed here.
  *
  * ## Why this cannot regress a passing test
  *
