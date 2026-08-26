@@ -170,6 +170,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
+import { buildTemplateRawGetArm } from "./object-runtime-template-raw.js";
 import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983) strict [[Set]] TypeError
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -1123,44 +1124,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // Look up an already-emitted native string helper.
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals")!;
-  // A tagged-template callback written in JavaScript commonly leaves its
-  // `strings` parameter as `any`, so its `.raw` read reaches this dynamic
-  // property helper rather than the statically typed vec dispatcher. The
-  // template object is a WasmGC subtype of the ordinary vec; recognize only
-  // the exact `raw` key and return the extra field when the runtime value has
-  // that subtype. Other keys and other receivers continue through the normal
-  // object/vec/closure lookup ladder.
-  const templateVecTypeIdx = ctx.templateVecTypeIdx;
-  const templateRawGetArm: Instr[] =
-    templateVecTypeIdx >= 0 && strFlattenIdx !== undefined && strEqualsIdx !== undefined
-      ? [
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: anyStrTypeIdx },
-          { op: "call", funcIdx: strFlattenIdx },
-          ...nativeStringLiteralInstrs(ctx, "raw"),
-          { op: "call", funcIdx: strEqualsIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 4 },
-              { op: "ref.test", typeIdx: templateVecTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 4 },
-                  { op: "ref.cast", typeIdx: templateVecTypeIdx },
-                  { op: "struct.get", typeIdx: templateVecTypeIdx, fieldIdx: 2 },
-                  { op: "extern.convert_any" },
-                  { op: "return" },
-                ],
-              },
-            ],
-          },
-        ]
-      : [];
+  const templateRawGetArm = buildTemplateRawGetArm(ctx, ctx.templateVecTypeIdx, strFlattenIdx, strEqualsIdx);
 
   // ── (#2896) Reserved builtin-fn metadata natives (standalone only) ────────
   //

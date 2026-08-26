@@ -7602,6 +7602,17 @@ function compileCallExpression(
       // Keep this syntactic and standalone-only: constant Function forms are
       // harmless here (the bridge still invokes their compiled closure), while
       // arbitrary callable values continue through the established lowerings.
+      // (#4246) §10.2.1.2 step 5.b — a SLOPPY callee binds `ToObject(thisArg)`
+      // for a primitive receiver. Rewrite the receiver to `new <Wrapper>(…)`
+      // once, here, above the several receiver-install lowerings below, so the
+      // strict/sloppy decision lives in one place. Declines (returns undefined)
+      // for a strict callee, a callee that ignores `this`, and any receiver the
+      // oracle cannot prove primitive. See sloppy-this-toobject.ts.
+      {
+        const boxedThisCall = reshapeSloppyPrimitiveThisArg(ctx, expr, innerExpr);
+        if (boxedThisCall !== undefined) return compileCallExpression(ctx, fctx, boxedThisCall, expectedType);
+      }
+
       const dynamicFunctionCtorArgs = standaloneDynamicFunctionCtorArgs(ctx, innerExpr);
       if (dynamicFunctionCtorArgs !== undefined) {
         const applyArgsExpr = !isCall && expr.arguments.length >= 2 ? expr.arguments[1]! : undefined;
@@ -7683,17 +7694,6 @@ function compileCallExpression(
           fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
           return { kind: "externref" };
         }
-      }
-
-      // (#4246) §10.2.1.2 step 5.b — a SLOPPY callee binds `ToObject(thisArg)`
-      // for a primitive receiver. Rewrite the receiver to `new <Wrapper>(…)`
-      // once, here, above the several receiver-install lowerings below, so the
-      // strict/sloppy decision lives in one place. Declines (returns undefined)
-      // for a strict callee, a callee that ignores `this`, and any receiver the
-      // oracle cannot prove primitive. See sloppy-this-toobject.ts.
-      {
-        const boxedThisCall = reshapeSloppyPrimitiveThisArg(ctx, expr, innerExpr);
-        if (boxedThisCall !== undefined) return compileCallExpression(ctx, fctx, boxedThisCall, expectedType);
       }
 
       // (#3390 slice 1) `Promise.<combinator>.call(recv, …)` with a STATICALLY
