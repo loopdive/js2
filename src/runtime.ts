@@ -1669,6 +1669,14 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+// Track the module instance that owns each callable bridge. A sandbox global
+// is shared by the parent module and standalone child modules, so preserving
+// every function facade there would feed a same-module JS bridge back into a
+// dispatcher that expects the raw WasmGC closure. Conversely, unwrapping a
+// parent facade in a child module makes that closure non-callable in the
+// child's realm. Ownership lets the boundary keep the facade only for the
+// cross-module case.
+const _wasmClosureWrapperOwners = new WeakMap<Function, { getExports: () => Record<string, Function> | undefined }>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
 // #3214 B2 — `__make_callback(-1, closure)` bridges a reusable canonical void
@@ -1912,6 +1920,7 @@ function _wrapWasmClosure(
   };
   installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity });
+  _wasmClosureWrapperOwners.set(wrapped, callbackState);
   if (_canBeWeakKey(closure)) {
     if (!byArity) {
       byArity = new Map();
@@ -2118,6 +2127,7 @@ function _wrapWasmClosureUnknownArity(
   }
   installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity: -1 });
+  _wasmClosureWrapperOwners.set(wrapped, callbackState);
   if (closure != null && typeof closure === "object") {
     _wasmClosureDynamicWrapperCache.set(closure, wrapped);
     _wasmClosureWrapperTargets.set(wrapped, closure);
@@ -8276,6 +8286,7 @@ function _wrapCallableForHost(
   const proxy = new Proxy(fnTarget, handler);
   _hostCallableCache.set(closure, proxy);
   _hostProxyReverse.set(proxy, closure); // so _unwrapForHost round-trips
+  if (callbackState) _wasmClosureWrapperOwners.set(proxy, callbackState);
   // The same closure can cross the boundary as this constructible proxy and as
   // a dynamic wasmClosureDynamicBridge. Canonicalize both representations to
   // the raw closure so strict constructor identity remains stable.
@@ -9467,11 +9478,25 @@ function _temporalPlainTimeAddField(...args: any[]): number {
 
 /**
  * Normalize values read into a supplied per-test sandbox. Realm-global
- * callable facades stay callable across child modules; other values are
- * unwrapped, with host intrinsic constructors mapped to sandbox identities.
+ * callable facades stay callable across child modules, while a facade owned by
+ * the current module is unwrapped before it re-enters that module's Wasm
+ * dispatcher. Other values are unwrapped, with host intrinsic constructors
+ * mapped to sandbox identities.
  */
-function _sandboxConstructorValue(obj: any, value: any, key: any, globalSandbox?: Record<string, any>): any {
-  if (globalSandbox && obj === globalSandbox && typeof value === "function") return value;
+function _sandboxConstructorValue(
+  obj: any,
+  value: any,
+  key: any,
+  globalSandbox?: Record<string, any>,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any {
+  if (globalSandbox && obj === globalSandbox && typeof value === "function") {
+    const owner = _wasmClosureWrapperOwners.get(value);
+    // Ordinary host functions have no owner and must remain callable. A
+    // facade from another module must also remain callable in this module's
+    // realm; only the current module's own facade needs its raw closure back.
+    if (owner === undefined || callbackState === undefined || owner !== callbackState) return value;
+  }
   value = _unwrapForHost(value);
   if (globalSandbox && key === "constructor" && typeof value === "function") {
     const name = (value as { name?: string }).name;
@@ -11029,7 +11054,7 @@ assert._isSameValue = isSameValue;
                 // code must restore the raw Wasm value, otherwise private-field
                 // dispatch cannot ref.cast the proxy to its declaring class and
                 // reads such as `child.#methods` collapse to null.
-                return _sandboxConstructorValue(obj, v, key, globalSandbox);
+                return _sandboxConstructorValue(obj, v, key, globalSandbox, callbackState);
               }
             } catch (e) {
               // #2180/#2617 — a revoked-proxy TypeError, OR any exception from a
@@ -11040,7 +11065,7 @@ assert._isSameValue = isSameValue;
             }
           }
           const val = _safeGet(obj, key, callbackState);
-          if (val !== undefined) return _sandboxConstructorValue(obj, val, key, globalSandbox);
+          if (val !== undefined) return _sandboxConstructorValue(obj, val, key, globalSandbox, callbackState);
           // (#4618) A property read off a BARE closure bridge (the plain host
           // function `_wrapWasmClosureUnknownArity` mints): the bridge drops
           // the closure's sidecar surface, so `console.log.mock` /
@@ -17046,7 +17071,7 @@ assert._isSameValue = isSameValue;
                 const rawVec = _abHostBufferReverse.get(v);
                 if (rawVec !== undefined) return rawVec;
               }
-              return _sandboxConstructorValue(obj, v, key, globalSandbox);
+              return _sandboxConstructorValue(obj, v, key, globalSandbox, callbackState);
             }
           } catch {
             /* fall through to the generic path */
@@ -17060,7 +17085,7 @@ assert._isSameValue = isSameValue;
           // `sandbox.Array`, but `obj.constructor` for host JS arrays
           // returns `globalThis.Array`. Substitute the sandbox version so
           // `arr.constructor === Array` holds. No-op without a sandbox.
-          return _sandboxConstructorValue(obj, val, key, globalSandbox);
+          return _sandboxConstructorValue(obj, val, key, globalSandbox, callbackState);
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {
