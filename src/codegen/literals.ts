@@ -4039,8 +4039,8 @@ export function compileObjectLiteralForStruct(
 
         const bodyInstrs: Instr[] = [];
         const outerBody = methodFctx.body;
+        ctx.liveBodies.add(outerBody);
         methodFctx.body = bodyInstrs;
-
         methodFctx.generatorReturnDepth = 0;
         methodFctx.blockDepth++;
         for (let i = 0; i < methodFctx.breakStack.length; i++) methodFctx.breakStack[i]!++;
@@ -4054,8 +4054,8 @@ export function compileObjectLiteralForStruct(
         for (let i = 0; i < methodFctx.breakStack.length; i++) methodFctx.breakStack[i]!--;
         for (let i = 0; i < methodFctx.continueStack.length; i++) methodFctx.continueStack[i]!--;
         methodFctx.generatorReturnDepth = undefined;
-
         methodFctx.body = outerBody;
+        ctx.liveBodies.delete(outerBody);
 
         // Wrap generator body block in try/catch to capture exceptions as pending throw
         const tagIdx = ensureExnTag(ctx);
