@@ -1571,6 +1571,10 @@ export function tryStaticNewFunction(
   if (closureRef.kind !== "externref") {
     fctx.body.push({ op: "extern.convert_any" });
   }
+  // The synthesized AOT closure is still an ordinary constructable function.
+  // Seed its fresh own `prototype` object just like the runtime-eval lane;
+  // the no-fctx call above only links its inherited Function.prototype.
+  emitRuntimeEvalFunctionPrototypeSeed(ctx, fctx);
   return { kind: "externref" };
 }
 
@@ -2072,6 +2076,16 @@ export function emitStandaloneDynamicFunctionRuntime(
     const savedBody = fctx.body;
     fctx.body = part;
     try {
+      const unwrappedArg = unwrapParens(arg);
+      if (ts.isObjectLiteralExpression(unwrappedArg) && unwrappedArg.properties.length === 0) {
+        // An empty ordinary object has no literal-side effects and its
+        // string-hint OrdinaryToPrimitive result is the inherited canonical
+        // Object.prototype.toString value. Avoid routing that closed literal
+        // through the reflective prototype closure, whose runtime classifier
+        // intentionally refuses nominal structs it cannot otherwise prove.
+        fctx.body.push(...repr.literal("[object Object]"));
+        return part;
+      }
       let tsType: ts.Type;
       try {
         tsType = ctx.checker.getTypeAtLocation(arg);
