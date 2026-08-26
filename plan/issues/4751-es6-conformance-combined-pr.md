@@ -12,7 +12,7 @@ task_type: integration
 area: conformance, test262
 es_edition: es2015
 goal: test262-conformance
-related: [4684, 4688, 4691, 4699, 4702, 4705, 4707, 4709, 4710, 4715, 4716, 4717, 4718, 4719, 4720, 4721, 4722, 4723, 4724, 4725, 4727, 4731, 4732, 4733, 4735, 4736, 4737, 4738, 4739, 4740, 4741, 4742, 4743, 4744, 4745, 4746, 4747, 4748, 4749, 4750]
+related: [4684, 4688, 4691, 4699, 4702, 4705, 4707, 4709, 4710, 4715, 4716, 4717, 4718, 4719, 4720, 4721, 4722, 4723, 4724, 4725, 4727, 4731, 4732, 4733, 4735, 4736, 4737, 4738, 4739, 4740, 4741, 4742, 4743, 4744, 4745, 4746, 4747, 4748, 4749, 4750, 4752, 4753]
 oracle-ratchet-allow:
   - src/codegen/expressions/call-builtin-static.ts
 ---
@@ -60,6 +60,11 @@ including the final #4749 Proxy-source fix. Integration validation passed:
 - The post-merge #4749 host/standalone pins and controls passed 10/10.
 - The late-discovered open #4707 component PR was incorporated before
   supersession; its focused suite and both typechecks passed on the umbrella.
+- CI's first combined quality run exposed one superseded, unreferenced native
+  generator close helper. Issue #4752 removed it; the dead-export gate and
+  #4716/#4718 suites (26/26) pass on the repaired branch.
 
 Component branches retain their individual issue files and commits. The
 combined branch is the sole upstream review and CI surface for this wave.
+Issue #4753 carries the authoritative 11,704-row host/standalone close-out
+handoff; this integration issue does not claim that final conformance proof.
