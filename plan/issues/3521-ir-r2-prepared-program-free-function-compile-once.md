@@ -2597,3 +2597,13 @@ retained before semantic assertions. Its strict gate remains finite,
 non-negative one-minute load strictly below `logical cores - 2` (10 cores means
 `< 8`). C36/C37 stay scheduled for the final aggregate rerun, and the unchanged
 #4035 size ceiling is not reported as a new regression.
+
+## 2026-08-26 session handover
+
+The exact signed checkpoint, remaining L3 ordering, adjacent #1719/#4755/#4260
+dependencies, queue state, and resume protocol are recorded in
+`plan/agent-context/ir-migration-handover-2026-08-26.md`. Draft PR #5000 is the
+continuation PR. Its implementation head before the handover-only checkpoint is
+`9f9d978c743b054d05b01702639a914f268e3c6a`; selector activation, runtime A/B,
+and the final R2 replay remain unclaimed. Do not open a replacement #3522 or a
+new issue for this measured pre-claim gap.
