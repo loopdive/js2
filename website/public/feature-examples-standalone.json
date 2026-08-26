@@ -105,7 +105,7 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 544,
+      "passCount": 545,
       "totalCount": 604
     },
     {
@@ -215,7 +215,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 3721,
+      "passCount": 3723,
       "totalCount": 4290
     },
     {

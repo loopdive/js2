@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9438,
-    "fail": 2160,
+    "pass": 9441,
+    "fail": 2157,
     "ce": 105,
     "skip": 1,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3644,
-        "fail": 468,
+        "pass": 3646,
+        "fail": 466,
         "ce": 41,
         "skip": 0,
         "total": 4153,
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 42,
-        "fail": 34,
+        "pass": 44,
+        "fail": 32,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 55
+        "pct": 58
       },
       {
         "name": "Symbol.match",

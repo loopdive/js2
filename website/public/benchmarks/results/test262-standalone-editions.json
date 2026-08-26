@@ -48,17 +48,17 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8400,
-    "fail": 2731,
-    "ce": 572,
+    "pass": 8403,
+    "fail": 2729,
+    "ce": 571,
     "skip": 1,
     "total": 11704,
     "pct": 72,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3585,
-        "fail": 415,
+        "pass": 3587,
+        "fail": 413,
         "ce": 153,
         "skip": 0,
         "total": 4153,
@@ -94,8 +94,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 410,
-        "fail": 261,
-        "ce": 123,
+        "fail": 262,
+        "ce": 122,
         "skip": 1,
         "total": 795,
         "pct": 52
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 44,
-        "fail": 32,
+        "pass": 46,
+        "fail": 30,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 58
+        "pct": 61
       },
       {
         "name": "Symbol.match",
@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 292,
-    "fail": 112,
-    "ce": 68,
+    "fail": 115,
+    "ce": 65,
     "skip": 0,
     "total": 472,
     "pct": 62,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 20,
-        "fail": 44,
-        "ce": 28,
+        "fail": 47,
+        "ce": 25,
         "skip": 0,
         "total": 92,
         "pct": 22
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 8,
-        "fail": 18,
-        "ce": 14,
+        "fail": 21,
+        "ce": 11,
         "skip": 0,
         "total": 40,
         "pct": 20
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 4,
-        "fail": 23,
-        "ce": 12,
+        "fail": 26,
+        "ce": 9,
         "skip": 0,
         "total": 39,
         "pct": 10
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 1,
-        "fail": 23,
-        "ce": 6,
+        "fail": 26,
+        "ce": 3,
         "skip": 0,
         "total": 30,
         "pct": 3
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 7,
-        "fail": 17,
-        "ce": 3,
+        "fail": 20,
+        "ce": 0,
         "skip": 0,
         "total": 27,
         "pct": 26
@@ -4269,8 +4269,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4249,
-    "fail": 1095,
-    "ce": 101,
+    "fail": 1097,
+    "ce": 99,
     "skip": 0,
     "total": 5445,
     "pct": 78
