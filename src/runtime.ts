@@ -1650,13 +1650,7 @@ function _canBeWeakKey(obj: any): boolean {
   return obj != null && (typeof obj === "object" || typeof obj === "function");
 }
 
-/**
- * IsConcatSpreadable (§23.1.3.1.1) for an opaque WasmGC struct receiver: true
- * iff `Symbol.isConcatSpreadable` resolves to a truthy value. The flag is stored
- * in the sidecar under both the real symbol and the `@@isConcatSpreadable`
- * string mirror (see `_symbolIdToKeys`). Returns false when the property is
- * absent or falsy, so a plain array-like is NOT spread unless explicitly tagged.
- */
+/** IsConcatSpreadable (§23.1.3.1.1) for an opaque WasmGC receiver; plain array-likes are not spread. */
 function _isConcatSpreadable(
   obj: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
@@ -1669,60 +1663,40 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
-// A constructible callable mirror delegates property writes back to the same
-// raw closure through its property proxy. Keep the bridge mirror re-entrancy
-// guard separate from the caches so a mirrored write cannot recurse forever.
+// Prevent callable-mirror property writes from recursing through their raw closure proxy.
 const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
-// #3214 B2 — `__make_callback(-1, closure)` bridges a reusable canonical void
-// IR closure without minting a legacy `__cb_N` export. Cache the
-// non-constructible JS arrow per raw closure so repeated boundary conversion
-// preserves identity. The compiler-owned -2 sentinel proves an inline closure
-// is consumed once and intentionally bypasses this cache.
+// #3214 B2: cache reusable -1 void bridges; one-shot -2 closures intentionally bypass it.
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
 _test262ErrorConstructors.add(test262Host.HostTest262Error);
-// (#3369) Define callback argument slots explicitly to bypass mutated Array prototypes;
-// capture Array/Reflect before evaluated code can rebind them.
+// (#3369/#4758) Captured intrinsics keep callback ABI arrays independent of mutated prototypes.
 const _IntrinsicArray = Array;
 const _intrinsicReflectApply = Reflect.apply;
 const _intrinsicReflectConstruct = Reflect.construct;
 const _intrinsicReflectDefineProperty = Reflect.defineProperty;
+function _defineDenseSlot(array: any[], index: number, value: any): void {
+  _intrinsicReflectDefineProperty(array, index, { value, writable: true, enumerable: true, configurable: true });
+}
 function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
   const dense = new _IntrinsicArray<any>(length);
-  for (let i = 0; i < length; i++) {
-    _intrinsicReflectDefineProperty(dense, i, {
-      value: i < args.length ? args[i] : undefined,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
+  for (let i = 0; i < length; i++) _defineDenseSlot(dense, i, i < args.length ? args[i] : undefined);
   return dense;
 }
-// Restore host proxies to canonical Wasm values in the same prototype-safe list.
-// Compiled closure dispatch exports accept typed structs, not JS-facing views.
+// Compiled closure exports accept canonical Wasm values, not JS-facing proxy views.
 function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
   const dense = _denseOwnArgs(args, length);
-  for (let i = 0; i < length; i++) {
-    _intrinsicReflectDefineProperty(dense, i, {
-      value: _unwrapForHost(dense[i]),
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
+  for (let i = 0; i < length; i++) _defineDenseSlot(dense, i, _unwrapForHost(dense[i]));
   return dense;
 }
 
 // Build callback ABI arguments without Array iteration, then use captured Reflect.apply (#4758).
 function _applyWithPrefix(fn: Function, thisArg: any, prefix: ArrayLike<any>, suffix: ArrayLike<any>): any {
   const args = new _IntrinsicArray<any>(prefix.length + suffix.length);
-  for (let i = 0; i < prefix.length; i++) _intrinsicReflectDefineProperty(args, i, { value: prefix[i] });
-  for (let i = 0; i < suffix.length; i++)
-    _intrinsicReflectDefineProperty(args, prefix.length + i, { value: suffix[i] });
+  for (let i = 0; i < prefix.length; i++) _defineDenseSlot(args, i, prefix[i]);
+  for (let i = 0; i < suffix.length; i++) _defineDenseSlot(args, prefix.length + i, suffix[i]);
   return _intrinsicReflectApply(fn, thisArg, args);
 }
 
@@ -1730,18 +1704,8 @@ function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
     return _wasmClosureWrapperTargets.get(v as Function) ?? v;
   }
-  // (#1712) Canonicalize a `_wrapForHost` proxy back to its underlying raw
-  // WasmGC struct before the reference compare. The two dynamic read paths
-  // that feed `===`/`!==` disagree on representation: an instance-field read
-  // (`this.type`) returns the raw struct, while a module-global + property
-  // read (`types$1.eof`) returns the cached host proxy for the SAME struct
-  // (the proxy is identity-stable per struct via `_hostProxyCache`). Without
-  // this unwrap `proxy === rawStruct` is `false` even though both denote one
-  // object — which is exactly why acorn's `parseTopLevel` guard
-  // `this.type !== types$1.eof` never tripped and the tokenizer looped forever.
-  // `_unwrapForHost` maps any host proxy to its unique struct (1:1 via
-  // `_hostProxyReverse`) and passes a non-proxy through unchanged, so two
-  // genuinely distinct structs still compare unequal.
+  // #1712: canonicalize identity-stable host proxies before reference comparison;
+  // otherwise dynamic proxy and typed raw-struct reads of one object compare unequal.
   if (v != null && typeof v === "object") {
     return _unwrapForHost(v);
   }
@@ -3226,17 +3190,7 @@ function _sidecarSet(obj: any, key: any, val: any): void {
   }
 }
 
-/**
- * Keep host callable views of a Wasm closure in sync with properties written
- * through the raw closure carrier. A closure crossing from a host object into
- * compiled code is canonicalized back to its WasmGC struct by
- * `_unwrapForHost`; a subsequent `fn[Symbol.species] = C` therefore reaches
- * `_safeSet` with that raw struct, while native Promise/RegExp protocols still
- * hold the JS bridge that was originally stored on the host object. The
- * sidecar is authoritative for compiled reads, but native protocols read the
- * bridge directly. Mirror the assignment on every cached callable bridge so
- * both representations observe the same property.
- */
+// Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
 function _mirrorClosurePropertyToHostBridges(
   closure: any,
   key: PropertyKey,
@@ -3245,10 +3199,7 @@ function _mirrorClosurePropertyToHostBridges(
 ): void {
   if (closure == null || typeof closure !== "object") return;
   let active = _closurePropertyMirrorActive.get(closure);
-  if (!active) {
-    active = new Set<PropertyKey>();
-    _closurePropertyMirrorActive.set(closure, active);
-  }
+  if (!active) _closurePropertyMirrorActive.set(closure, (active = new Set<PropertyKey>()));
   if (active.has(key)) return;
   active.add(key);
   try {
@@ -3256,11 +3207,7 @@ function _mirrorClosurePropertyToHostBridges(
     const dynamic = _wasmClosureDynamicWrapperCache.get(closure);
     if (typeof dynamic === "function") bridges.add(dynamic);
     const known = _wasmClosureWrapperCache.get(closure);
-    if (known) {
-      for (const bridge of known.values()) {
-        if (typeof bridge === "function") bridges.add(bridge);
-      }
-    }
+    if (known) for (const bridge of known.values()) bridges.add(bridge);
     const callable = _hostCallableCache.get(closure);
     if (typeof callable === "function") bridges.add(callable);
     if (bridges.size === 0) return;
@@ -3268,11 +3215,7 @@ function _mirrorClosurePropertyToHostBridges(
     for (const bridge of bridges) {
       try {
         Reflect.set(bridge, key, hostValue, bridge);
-      } catch {
-        // A callable proxy can reject a direct [[Set]] through its delegated
-        // property mirror. Its own sidecar remains authoritative for compiled
-        // reads; native consumers are best-effort here.
-      }
+      } catch {}
     }
   } finally {
     active.delete(key);
@@ -3290,21 +3233,8 @@ function _sidecarDelete(obj: any, key: any): boolean {
   return false;
 }
 
-/**
- * Sentinel for OrdinaryToPrimitive's `tryMethod`: distinguishes "method is
- * absent / returned an Object / dispatch trapped" (try the next method) from a
- * method that legitimately returned the primitive `undefined`. Without it, a
- * real `undefined` return is wrongly treated as "absent" and the next method is
- * consulted (#1826). Per §7.1.1.1 steps 5-6, any non-Object return is the result.
- */
-// #1935 — single in-band "absent" sentinel for the host runtime. Returning
-// `undefined` to signal "no such getter / method / property" is a bug: user
-// code can legitimately return `undefined`, and the in-band signal then
-// misreads that as absence (a getter returning `undefined` shadowed by the
-// underlying field; a `valueOf` returning `undefined` treated as "no valueOf").
-// `_MISS` is a unique symbol that user code can never produce, so it
-// unambiguously means absence. (Was `_PRIM_ABSENT`, scoped to ToPrimitive;
-// unified here and now also used by the property-getter lookup path.)
+// #1826/#1935: an unforgeable absence sentinel keeps legitimate `undefined`
+// results distinct from missing getters, methods, and properties.
 const _MISS: unique symbol = Symbol("runtime-absent-sentinel");
 // Back-compat alias so the existing ToPrimitive call sites keep reading
 // naturally; both names refer to the same unique symbol.
@@ -15580,11 +15510,7 @@ assert._isSameValue = isSameValue;
         };
       // (#1382) `executor` is called as `executor(resolve, reject)` — arity 2.
       if (name === "Promise_new") {
-        // Keep test262's source realm aligned with the Promise constructor used
-        // by the host import. `global_Promise` resolves the local sandbox realm
-        // while the legacy import always minted a host-realm promise, so a
-        // source-level Promise[@@species] patch could never affect `.then()`.
-        // Product callers without a sandbox retain the intrinsic Promise.
+        // Honor source-realm Promise[@@species]; product callers retain the intrinsic fallback.
         const PromiseCtor = (globalSandbox?.Promise ?? Promise) as PromiseConstructor;
         return (executor: any) => new PromiseCtor(_maybeWrapCallable(executor, 2, callbackState));
       }

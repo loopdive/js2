@@ -138,3 +138,14 @@ successor draft PR #5010.
   and the constructor/species cluster passes in host, with exact regressions
   and structural controls.
 - No timeout increase, filter exemption, skip, or oracle-only workaround.
+
+## Combined-PR integration follow-up
+
+Cherry-picking the constructor/species slice after #4758 initially put
+`src/runtime.ts` 67 lines over the guarded host-import source budget. The new
+callable-mirror bridge and the adjacent callback ABI helpers were consolidated
+without changing their captured-intrinsic or property-mirroring behavior.
+On the combined worktree, `check:host-import-policy` now passes at
+18,268/18,275 lines and `tests/issue-4760.test.ts` passes 20/20 (the eight
+poisoned/non-thenable rows in both lanes plus four host constructor/species
+pins).

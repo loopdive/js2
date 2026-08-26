@@ -66,3 +66,27 @@ must be proven rather than assumed.
 - Every implemented semantic cluster passes its exact pins and controls in both
   lanes; distinct failures have explicit issue-backed handoffs.
 - No timeout, filter, fixture, skip, or oracle workaround is introduced.
+
+## Fresh combined-head measurement
+
+Scoped authoritative host run `20260826-224008` measured the exact six paths at
+combined head `a356d20d4` with the maintained `test:262 --official-scope-only`
+runner:
+
+- 2/6 pass, 4/6 compile timeout, 0 fail, 0 compile error, 0 skip.
+- `test/built-ins/Array/prototype/Symbol.iterator.js` passes and performs the
+  expected Array iterator realm recycle.
+- `test/built-ins/Set/set-get-add-method-failure.js` passes and performs the
+  expected `Set.prototype.add` realm recycle.
+- All three `instanceof/prototype-getter-*` rows and
+  `language/statements/for-in/head-lhs-let.js` still time out in both the
+  30-second first attempt and isolated 10-second retry.
+
+Artifacts:
+
+- `benchmarks/results/test262-report-20260826-224008.json`
+- `benchmarks/results/test262-results-20260826-224008.jsonl`
+
+The #4758 worker-lifecycle fix therefore closes two of this issue's original
+six rows. The implementation slice now owns exactly the remaining 4/6 rows;
+the two newly passing rows remain regression controls.
