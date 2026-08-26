@@ -65,7 +65,6 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { sourceBindsReceiver } from "../explicit-null-receiver.js";
 
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
@@ -1220,38 +1219,6 @@ function isBindCarrierCall(expr: ts.Expression): boolean {
   return false;
 }
 
-/**
- * A `this` captured by a local in a static method must stay an externref when
- * that source also invokes the method through `.call`/`.apply`/`.bind`.
- * TypeScript otherwise gives `const self = this` the class constructor's
- * structural type.  The static receiver trampoline can supply a foreign
- * object, however, and narrowing that value to the class struct turns the
- * later private-brand check into a null receiver (and loses the required
- * catchable TypeError).  Keep this narrow to static contexts/files that can
- * actually install a receiver; ordinary direct static calls retain their
- * existing class-struct representation.
- */
-function isReflectiveStaticThisBinding(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  decl: ts.VariableDeclaration,
-): boolean {
-  if (!fctx.isStaticContext || fctx.enclosingClassName === undefined || ctx.currentThisGlobalIdx < 0) return false;
-  if (!sourceBindsReceiver(decl.getSourceFile())) return false;
-  let initializer = decl.initializer;
-  while (
-    initializer &&
-    (ts.isParenthesizedExpression(initializer) ||
-      ts.isAsExpression(initializer) ||
-      ts.isTypeAssertionExpression(initializer) ||
-      ts.isNonNullExpression(initializer) ||
-      ts.isSatisfiesExpression(initializer))
-  ) {
-    initializer = initializer.expression;
-  }
-  return initializer !== undefined && initializer.kind === ts.SyntaxKind.ThisKeyword;
-}
-
 export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.VariableStatement): void {
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
@@ -1665,15 +1632,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
-        // A `var` declaration without an initializer has no evaluation-time
-        // effect once GlobalDeclarationInstantiation has created the binding.
-        // Its undefined value is seeded in the module-init prologue.  Do not
-        // write it again here: static class initializers are compiled before
-        // the source-file statements, so this otherwise clobbers a value that
-        // a preceding static block assigned (`var value; class C { static {
-        // value = this; } }`).  Lexical declarations still need their
-        // declaration-time undefined initialization, hence the narrow gate.
-        if (declarationIsLexical && globalDef?.type.kind === "externref") {
+        if (globalDef?.type.kind === "externref") {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
         }
@@ -1940,7 +1899,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                             isBindCarrierCall(decl.initializer)
                                           ? { kind: "externref" as const }
                                           : localTypeForDeclaration(ctx, varType, decl))));
-    const reflectiveStaticThisBinding = isReflectiveStaticThisBinding(ctx, fctx, decl);
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
@@ -1950,12 +1908,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // initializer had its global widened to externref; the module-init shadow
     // local is the same binding and must not be narrowed back by the checker's
     // (first-declaration) symbol type. See `redeclared-var-widening.ts`.
-    const wasmType: ValType = reflectiveStaticThisBinding
-      ? { kind: "externref" }
-      : (redeclarationWidenedLocalSlotType(ctx, decl) ??
-        (wasmTypeBase.kind === "externref"
-          ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase)
-          : wasmTypeBase));
+    const wasmType: ValType =
+      redeclarationWidenedLocalSlotType(ctx, decl) ??
+      (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase);
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
@@ -2136,12 +2091,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // invalidate, and externref locals default to ref.null.extern which
         // is the same "undefined" sentinel a hoisted externref would carry
         // before its first assignment).
-        if (reflectiveStaticThisBinding && existingIsRef && wasmType.kind === "externref") {
-          // The static receiver trampoline can pass a foreign object through
-          // `this`; narrowing the captured binding back to the class struct
-          // would turn that object into null before a private-brand check.
-          localSlot.type = wasmType;
-        } else if (initIsAccessorLiteral && existingIsRef && wasmType.kind === "externref") {
+        if (initIsAccessorLiteral && existingIsRef && wasmType.kind === "externref") {
           localSlot.type = wasmType;
         } else if (filterResultDynamicCarrier && existingIsRef && wasmType.kind === "externref") {
           // A typed numeric filter can widen its result when an inherited
