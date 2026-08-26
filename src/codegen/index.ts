@@ -30,7 +30,6 @@ import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
-import type { TypeFact } from "../checker/oracle.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -140,14 +139,17 @@ import {
 } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
 import {
-  buildIrProgramCallableBindingGraph,
-  type IrProgramCallableBindingGraph,
-  type IrProgramCallableUse,
-} from "../ir/program-callable-bindings.js";
-import {
-  prepareMultiPreparedCallableGroup,
-  type MultiPreparedCallableCandidate,
-} from "./multi-prepared-callable-components.js";
+  functionHasCallableBoundary,
+  hasMultiIrProgramCallableBoundary,
+  initializeIrProgramCallableBindingGraph,
+  initializeMultiPreparedProgram,
+  isMultiIrProgramCallableCall,
+  multiIrFunctionValueLeafHasForeignLateProvider,
+  planMultiPreparedCallableComponents,
+  planMultiPreparedProgramEarlyRoutes,
+  programCallableSelectionOptions,
+  removeMultiIrAttemptedCallableUnits,
+} from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
 import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
@@ -227,10 +229,8 @@ import {
 import { assertMultiPreparedArrayLeafRouteCurrent } from "./multi-prepared-array-leaf.js";
 import { assertMultiPreparedFibonacciPairRouteCurrent } from "./multi-prepared-fibonacci-pair.js";
 import {
-  createMultiPreparedProgramOwner,
   MultiPreparedProgramOwner,
   publishMultiPreparedProgram,
-  type MultiPreparedProgramCallableComponent,
   type MultiPreparedProgramAudit,
 } from "./multi-prepared-program.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
@@ -2588,33 +2588,6 @@ function planIrOverlay(
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
-  const programCallableGraph = ctx.irProgramCallableCutoverEnabled ? ctx.irProgramCallableBindingGraph : undefined;
-  const programCallableRecordByBindingId = programCallableGraph
-    ? new Map(programCallableGraph.records.map((record) => [record.bindingId, record] as const))
-    : undefined;
-  const sourceId = identityContext.sourceIdBySourceFile.get(ast.sourceFile);
-  const programCallableUseByCall =
-    programCallableGraph && sourceId
-      ? new Map(
-          programCallableGraph.uses.filter((use) => use.sourceId === sourceId).map((use) => [use.node, use] as const),
-        )
-      : undefined;
-  const resolveProgramCallableUse =
-    programCallableGraph && sourceId && programCallableUseByCall && programCallableRecordByBindingId
-      ? (call: ts.CallExpression) => {
-          const use = programCallableUseByCall.get(call);
-          if (!use) return undefined;
-          const record = programCallableRecordByBindingId.get(use.bindingId);
-          const targetUnit = identityContext.unitByUnitId.get(use.targetUnitId);
-          if (!record || !targetUnit) return undefined;
-          // Source bindings are represented by the ordinary local selector
-          // graph. Only explicit alias bindings cross the M1A boundary; this
-          // keeps global-script calls on the legacy path until their route is
-          // migrated separately.
-          if (record.kind === "source") return undefined;
-          return use;
-        }
-      : undefined;
   const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
@@ -2648,8 +2621,7 @@ function planIrOverlay(
           identityMaps.unitTypeMap,
           options.fnctorArgumentProjectionRoute,
         );
-  // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS is set, request the
-  // selector to track every top-level FunctionDeclaration that didn't
+  // #1169q telemetry — JS2WASM_LOG_IR_FALLBACKS tracks every top-level FunctionDeclaration that didn't
   // make it into `funcs` along with the rejection reason. Logged to
   // stderr at end of compile. Off by default (zero overhead).
   // #1530 — `trackFallbacks` is also enabled when one or more
@@ -2899,7 +2871,7 @@ function planIrOverlay(
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
       ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
-      ...(resolveProgramCallableUse ? { resolveProgramCallableUse } : {}),
+      ...programCallableSelectionOptions(ctx, identityContext, ast.sourceFile),
       // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
@@ -3347,30 +3319,6 @@ function functionBodyContainsNestedRuntimeDeclaration(fn: ts.FunctionDeclaration
   return found;
 }
 
-function typeFactCouldBeCallable(fact: TypeFact): boolean {
-  if (fact.kind === "function") return true;
-  if (fact.kind === "union") return fact.parts.some(typeFactCouldBeCallable);
-  // This is a safety gate: an incomplete fact must reduce M0 coverage rather
-  // than let a legacy caller cross an ABI boundary we have not proven.
-  return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable";
-}
-
-/** Callable parameters/returns still have a legacy↔IR wrapper ABI boundary. */
-function functionHasCallableBoundary(ctx: CodegenContext, declaration: ts.FunctionDeclaration): boolean {
-  for (const parameter of declaration.parameters) {
-    const typeNode = effectiveIrParamTypeNode(parameter);
-    // A checker-certified exact FunctionTypeNode uses the same canonical
-    // callable ABI in both front-ends. Host A+B1 can therefore retain an
-    // imported HOF target instead of demoting its whole cross-file component.
-    if (typeNode && ts.isFunctionTypeNode(typeNode) && irClosureSignatureFromFunctionTypeNode(typeNode)) continue;
-    if (typeFactCouldBeCallable(ctx.oracle.typeFactOf(parameter))) return true;
-  }
-  const signature = ctx.oracle.signatureOf(declaration);
-  // Unknown callable shape is ABI-sensitive until the canonical callable ABI
-  // slice makes legacy/IR wrappers interchangeable.
-  return signature === undefined || typeFactCouldBeCallable(signature.returns);
-}
-
 /**
  * Bound the M0 multi-module overlay to unambiguous top-level functions.
  *
@@ -3422,33 +3370,6 @@ function requireMultiIrOwnerClaim(
     );
   }
   return claim;
-}
-
-function isMultiIrProgramCallableCall(
-  ctx: CodegenContext,
-  call: ts.CallExpression,
-  callPlan: IrImportedCallLoweringPlan,
-): boolean {
-  return (
-    ctx.irProgramCallableCutoverEnabled === true &&
-    callPlan.source === "module-import" &&
-    ctx.irProgramCallableBindingGraph?.resolveCall(call, callPlan.ownerUnitId) !== undefined
-  );
-}
-
-function hasMultiIrProgramCallableBoundary(
-  ctx: CodegenContext,
-  identityContext: IrPlanningIdentityContext,
-  unitId: IrUnitId,
-): boolean {
-  const graph = ctx.irProgramCallableCutoverEnabled ? ctx.irProgramCallableBindingGraph : undefined;
-  if (!graph) return false;
-  const ownerSourceId = identityContext.unitByUnitId.get(unitId)?.sourceId;
-  return graph.uses.some((use) => {
-    if (use.ownerUnitId === unitId) return true;
-    if (use.targetUnitId !== unitId) return false;
-    return ownerSourceId !== undefined && use.sourceId !== ownerSourceId;
-  });
 }
 
 function makeMultiIrSafeSelection(
@@ -3672,327 +3593,6 @@ function collectMultiIrLateProviderOwnerUnitIds(
     ...irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
     ...collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
   ]);
-}
-
-function aggregateProgramCallableUse(
-  graph: IrProgramCallableBindingGraph,
-  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
-  call: ts.CallExpression,
-  ownerUnitId: IrUnitId,
-  callPlan: IrImportedCallLoweringPlan,
-): IrProgramCallableUse | undefined {
-  const use = graph.resolveCall(call, ownerUnitId);
-  const record = use ? recordsByBindingId.get(use.bindingId) : undefined;
-  return callPlan.source === "module-import" &&
-    use !== undefined &&
-    record !== undefined &&
-    record.kind !== "source" &&
-    callPlan.target.binding.kind === "unit" &&
-    callPlan.target.binding.unitId === use.targetUnitId
-    ? use
-    : undefined;
-}
-
-function multiPreparedCallableOwnerIsEligible(
-  ctx: CodegenContext,
-  identityContext: IrPlanningIdentityContext,
-  graph: IrProgramCallableBindingGraph,
-  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
-  sourceFile: ts.SourceFile,
-  sourceId: IrSourceId,
-  plan: IrOverlayPlan,
-  unitId: IrUnitId,
-  declaration: ts.FunctionDeclaration,
-): boolean {
-  if (
-    !declaration.body ||
-    declaration.parent !== sourceFile ||
-    declaration.name === undefined ||
-    declaration.asteriskToken !== undefined ||
-    hasAsyncModifier(declaration) ||
-    (declaration.typeParameters?.length ?? 0) > 0 ||
-    declaration.parameters.some(
-      (parameter) =>
-        !ts.isIdentifier(parameter.name) ||
-        parameter.questionToken !== undefined ||
-        parameter.dotDotDotToken !== undefined ||
-        parameter.initializer !== undefined,
-    ) ||
-    functionHasCallableBoundary(ctx, declaration)
-  ) {
-    return false;
-  }
-
-  // Module initialization and classes retain source-owned ABI/layout state;
-  // they join a later component slice rather than this scalar callable lane.
-  if (
-    identityContext.moduleInitUnitIdBySourceId.has(sourceId) ||
-    identityContext.inventory.classes.some((record) => record.sourceId === sourceId)
-  ) {
-    return false;
-  }
-
-  if (
-    plan.identityPlan.identitySelection.countedStringAppendPlans?.has(unitId) ||
-    plan.identityPlan.identitySelection.fnctorAdmissions?.has(unitId) ||
-    plan.identityPlan.identitySelection.fnctorArgumentProjections?.some(
-      (projection) =>
-        projection.callerUnitId === unitId ||
-        projection.calleeUnitId === unitId ||
-        projection.constructorUnitId === unitId,
-    ) ||
-    plan.suspendingAsyncUnitIds.has(unitId) ||
-    [...plan.topLevelFunctionValues.values()].some((candidate) => candidate.ownerUnitId === unitId)
-  ) {
-    return false;
-  }
-
-  if (
-    collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
-    collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
-    irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds.has(unitId)
-  ) {
-    return false;
-  }
-
-  if (
-    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostDateSnapshots.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostDateGetters.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.promiseDelays.constructions.values()].some((candidate) => candidate.ownerUnitId === unitId)
-  ) {
-    return false;
-  }
-
-  for (const [call, callPlan] of plan.importedCalls) {
-    if (callPlan.ownerUnitId !== unitId) continue;
-    if (!aggregateProgramCallableUse(graph, recordsByBindingId, call, unitId, callPlan)) return false;
-  }
-
-  const override = plan.overrideMapByUnitId.get(unitId);
-  return override !== undefined && override.params.length === declaration.parameters.length;
-}
-
-function recordMultiPreparedCallableAggregateFailure(
-  ctx: CodegenContext,
-  report: IrIntegrationReport,
-  originalNameBySyntheticName: ReadonlyMap<string, string>,
-): void {
-  for (const error of report.errors) {
-    const originalName = originalNameBySyntheticName.get(error.func) ?? error.func;
-    const adjusted = originalName === error.func ? error : { ...error, func: originalName };
-    (ctx.irPostClaimErrors ??= []).push({
-      kind: adjusted.kind,
-      func: originalName,
-      message: adjusted.message,
-    });
-    const diagnostic = formatIrPathFallbackDiagnostic(adjusted, ctx);
-    ctx.errors.push({
-      message: diagnostic.message,
-      line: 0,
-      column: 0,
-      severity: diagnostic.severity,
-    });
-  }
-}
-
-function rewriteAggregateCallableRef(ref: IrFuncRef, namesByUnitId: ReadonlyMap<IrUnitId, string>): IrFuncRef {
-  if (ref.binding.kind !== "unit") return ref;
-  const name = namesByUnitId.get(ref.binding.unitId);
-  return name === undefined ? ref : irUnitFuncRef({ unitId: ref.binding.unitId, name });
-}
-
-interface MultiPreparedCallablePlanningInput {
-  readonly owner: MultiPreparedProgramOwner<IrOverlayPlan>;
-  readonly multiAst: MultiTypedAST;
-  readonly ctx: CodegenContext;
-  readonly identityContext: IrPlanningIdentityContext;
-  readonly safety: MultiIrGraphSafety;
-  readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
-}
-
-function planMultiPreparedCallableComponents(input: MultiPreparedCallablePlanningInput): void {
-  const graph = input.ctx.irProgramCallableBindingGraph;
-  if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
-
-  const recordsByBindingId = new Map(graph.records.map((record) => [record.bindingId, record] as const));
-  const existingRouteUnitIds = input.owner.existingRouteUnitIds;
-  const candidateByUnitId = new Map<IrUnitId, MultiPreparedCallableCandidate>();
-  const candidatePlans = new Map<ts.SourceFile, IrOverlayPlan>();
-
-  for (const sourceFile of input.multiAst.sourceFiles) {
-    const sourceId = requireIrPlanningSourceId(input.identityContext, sourceFile);
-    const plan = input.planSource(sourceFile);
-    candidatePlans.set(sourceFile, plan);
-    const safeSelection = makeMultiIrSafeSelection(input.ctx, plan, sourceFile, input.safety);
-    for (const [unitId, claim] of plan.functionClaimsByUnitId) {
-      const terminal = input.identityContext.terminalByUnitId.get(unitId);
-      if (
-        existingRouteUnitIds.has(unitId) ||
-        !plan.identityPlan.safeFunctionUnitIds.has(unitId) ||
-        !safeSelection.funcs.has(claim.legacyName) ||
-        !terminal ||
-        terminal.sourceId !== sourceId ||
-        terminal.kind !== "top-level-function" ||
-        terminal.observedKind !== "function" ||
-        terminal.terminalOwnerId !== unitId ||
-        !multiPreparedCallableOwnerIsEligible(
-          input.ctx,
-          input.identityContext,
-          graph,
-          recordsByBindingId,
-          sourceFile,
-          sourceId,
-          plan,
-          unitId,
-          claim.declaration,
-        )
-      ) {
-        continue;
-      }
-      candidateByUnitId.set(unitId, {
-        sourceFile,
-        sourceId,
-        unitId,
-        legacyName: claim.legacyName,
-        declaration: claim.declaration,
-        plan,
-      });
-    }
-  }
-
-  if (candidateByUnitId.size < 2) return;
-
-  const parent = new Map<IrUnitId, IrUnitId>([...candidateByUnitId.keys()].map((unitId) => [unitId, unitId]));
-  const find = (unitId: IrUnitId): IrUnitId => {
-    const parentId = parent.get(unitId);
-    if (parentId === undefined) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        "callable component union lost a candidate",
-      );
-    }
-    if (parentId === unitId) return unitId;
-    const root = find(parentId);
-    parent.set(unitId, root);
-    return root;
-  };
-  const union = (left: IrUnitId, right: IrUnitId): void => {
-    const leftRoot = find(left);
-    const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot < rightRoot ? leftRoot : rightRoot);
-  };
-
-  for (const candidate of candidateByUnitId.values()) {
-    for (const targetUnitId of candidate.plan.identityPlan.identitySelection.localCallees?.get(candidate.unitId) ??
-      []) {
-      if (candidateByUnitId.has(targetUnitId)) union(candidate.unitId, targetUnitId);
-    }
-  }
-  const crossSourceEdges: Array<readonly [IrUnitId, IrUnitId]> = [];
-  for (const use of graph.uses) {
-    const owner = candidateByUnitId.get(use.ownerUnitId);
-    const target = candidateByUnitId.get(use.targetUnitId);
-    if (!owner || !target) continue;
-    union(owner.unitId, target.unitId);
-    if (owner.sourceId !== target.sourceId) crossSourceEdges.push([owner.unitId, target.unitId]);
-  }
-
-  const groupsByRoot = new Map<IrUnitId, MultiPreparedCallableCandidate[]>();
-  for (const candidate of candidateByUnitId.values()) {
-    const root = find(candidate.unitId);
-    const group = groupsByRoot.get(root) ?? [];
-    group.push(candidate);
-    groupsByRoot.set(root, group);
-  }
-  const terminalOrder = new Map(
-    input.identityContext.inventory.terminalUnits.map((unit, index) => [unit.id, index] as const),
-  );
-  const compareCandidates = (left: MultiPreparedCallableCandidate, right: MultiPreparedCallableCandidate): number => {
-    const leftOrder = terminalOrder.get(left.unitId) ?? Number.MAX_SAFE_INTEGER;
-    const rightOrder = terminalOrder.get(right.unitId) ?? Number.MAX_SAFE_INTEGER;
-    return leftOrder - rightOrder || (left.unitId < right.unitId ? -1 : left.unitId > right.unitId ? 1 : 0);
-  };
-  const groups = [...groupsByRoot.values()]
-    .map((group) => [...group].sort(compareCandidates))
-    .filter((group) => {
-      const unitIds = new Set(group.map((candidate) => candidate.unitId));
-      return (
-        new Set(group.map((candidate) => candidate.sourceId)).size > 1 &&
-        crossSourceEdges.some(([ownerUnitId, targetUnitId]) => unitIds.has(ownerUnitId) && unitIds.has(targetUnitId))
-      );
-    })
-    .sort((left, right) => compareCandidates(left[0]!, right[0]!));
-
-  const preparedComponents: MultiPreparedProgramCallableComponent[] = [];
-  const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
-
-  for (const [groupIndex, group] of groups.entries()) {
-    const preparedComponent = prepareMultiPreparedCallableGroup({
-      ctx: input.ctx,
-      multiAst: input.multiAst,
-      identityContext: input.identityContext,
-      group,
-      groupIndex,
-      candidatePlans,
-      graph,
-      recordsByBindingId,
-      attempted,
-      aggregateProgramCallableUse,
-      recordMultiPreparedCallableAggregateFailure,
-      rewriteAggregateCallableRef,
-    });
-    if (preparedComponent) preparedComponents.push(preparedComponent);
-  }
-
-  if (preparedComponents.length > 0) input.owner.registerCallableComponents(preparedComponents);
-}
-
-function multiIrFunctionValueLeafHasForeignLateProvider(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  plan: IrOverlayPlan,
-  unitId: IrUnitId,
-  functionValueTarget: boolean,
-): boolean {
-  const valueTargets = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
-  return (
-    (functionValueTarget ? valueTargets.size !== 1 || !valueTargets.has(unitId) : valueTargets.has(unitId)) ||
-    collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
-    [...plan.importedCalls.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.topLevelFunctionValues.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostDateSnapshots.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostDateGetters.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.promiseDelays.constructions.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    plan.suspendingAsyncUnitIds.has(unitId) ||
-    irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds.has(unitId)
-  );
-}
-
-/** Remove terminals already owned by the pre-body aggregate component lane. */
-function removeMultiIrAttemptedCallableUnits(
-  ctx: CodegenContext,
-  plan: IrOverlayPlan,
-  selection: IrSelection,
-): IrSelection {
-  const attempted = ctx.irProgramCallableAttemptedUnitIds;
-  if (!attempted || attempted.size === 0) return selection;
-  const funcs = new Set(
-    [...selection.funcs].filter((name) => {
-      const unitId = plan.identityPlan.functionUnitIdByLegacyName.get(name);
-      return unitId === undefined || !attempted.has(unitId);
-    }),
-  );
-  if (funcs.size === selection.funcs.size) return selection;
-  return {
-    ...selection,
-    funcs,
-    classMembers: new Set(),
-    classMemberUnitIds: new Set(),
-    moduleInit: undefined,
-  };
 }
 
 function compileMultiIrOverlaySource(
@@ -9106,94 +8706,6 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
   }
 }
 
-function planMultiPreparedProgramEarlyRoutes(
-  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
-  multiAst: MultiTypedAST,
-  options: CodegenOptions | undefined,
-  identityContext: IrPlanningIdentityContext | undefined,
-  ctx: CodegenContext,
-): void {
-  if (!owner || !identityContext) return;
-  const planCache = new Map<ts.SourceFile, IrOverlayPlan>();
-  const planSource = (sourceFile: ts.SourceFile): IrOverlayPlan => {
-    const cached = planCache.get(sourceFile);
-    if (cached) return cached;
-    const plan = planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined);
-    planCache.set(sourceFile, plan);
-    return plan;
-  };
-  let cachedSafety: MultiIrGraphSafety | undefined;
-  const safety = (): MultiIrGraphSafety => {
-    cachedSafety ??= buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
-    return cachedSafety;
-  };
-  owner.planExistingRoutes({
-    active:
-      !!options?.experimentalIR &&
-      !options.disableIrFirst &&
-      !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST) &&
-      ctx.standalone &&
-      !ctx.wasi &&
-      !ctx.fast &&
-      multiAst.sourceFiles.length > 1,
-    scalarCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
-    arrayCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
-    functionValueLeafCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
-    fibonacciPairCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety,
-    planSource,
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
-    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
-      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId, functionValueTarget),
-    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  if (ctx.irProgramCallableCutoverEnabled === true) {
-    planMultiPreparedCallableComponents({
-      owner,
-      multiAst,
-      ctx,
-      identityContext,
-      safety: safety(),
-      planSource,
-    });
-  }
-  owner.sealBodyBoundary();
-}
-
-function compileMultiPreparedBodySource(
-  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  moduleInitMode: ModuleInitMode,
-): void {
-  if (owner) owner.compileBodySource(sourceFile, moduleInitMode);
-  else compileDeclarations(ctx, sourceFile, undefined, undefined, undefined, moduleInitMode);
-}
-
-function compileMultiPreparedOverlaySource(
-  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
-  ctx: CodegenContext,
-  multiAst: MultiTypedAST,
-  sourceFile: ts.SourceFile,
-  identityContext: IrPlanningIdentityContext,
-  safety: MultiIrGraphSafety,
-  hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
-): void {
-  if (owner) {
-    owner.withOverlayState(sourceFile, (early) =>
-      compileMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, safety, hostImportedFunctions, early),
-    );
-    return;
-  }
-  compileMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, safety, hostImportedFunctions, undefined);
-}
-
 /**
  * Compile multiple typed source files into a single WasmModule IR.
  * All source files share the same codegen context (funcMap, structMap, etc.).
@@ -9280,6 +8792,86 @@ function restoreNativeGeneratorEndState(ctx: CodegenContext, endState: OwnNative
   }
 }
 
+function planMultiPreparedProgramRoutes(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  multiAst: MultiTypedAST,
+  options: CodegenOptions | undefined,
+  ctx: CodegenContext,
+  identityContext: IrPlanningIdentityContext | undefined,
+): void {
+  if (!owner || !identityContext) return;
+  planMultiPreparedProgramEarlyRoutes({
+    owner,
+    multiAst,
+    ...(options ? { options } : {}),
+    identityContext,
+    ctx,
+    explicitlyDisabled: explicitlyDisabledEnv,
+    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
+    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
+    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
+    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
+      multiIrFunctionValueLeafHasForeignLateProvider(
+        plan,
+        unitId,
+        functionValueTarget,
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+        collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+        irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
+      ),
+    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
+      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+    callable: {
+      directCallerActivationTargets: (plan, sourceFile) =>
+        collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      preparedFunctionValueTargets: (plan, sourceFile) =>
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      timerOwnerUnitIds: (plan) => irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
+      formatFailure: (error) => formatIrPathFallbackDiagnostic(error, ctx),
+    },
+  });
+}
+
+function compileMultiPreparedProgramOverlays(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  multiAst: MultiTypedAST,
+  options: CodegenOptions | undefined,
+  ctx: CodegenContext,
+  identityContext: IrPlanningIdentityContext | undefined,
+): void {
+  // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
+  // ABI cannot safely be replaced by the current f64 IR ABI.
+  if (!options?.experimentalIR || ctx.fast) return;
+  const hostImportedFunctions =
+    ctx.standalone || ctx.wasi || ctx.strictNoHostImports
+      ? undefined
+      : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, identityContext!);
+  const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
+  profilePhase("ir-overlay", () => {
+    for (const sourceFile of multiAst.sourceFiles) {
+      profilePhase(sourceFile.fileName, () => {
+        const compile = (early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>) =>
+          compileMultiIrOverlaySource(
+            ctx,
+            multiAst,
+            sourceFile,
+            identityContext!,
+            safety,
+            hostImportedFunctions,
+            early,
+          );
+        if (owner) owner.withOverlayState(sourceFile, compile);
+        else compile();
+      });
+    }
+  });
+  // Overlay preparation can create callback trampolines after legacy finalization.
+  finalizeMethodTrampolines(ctx);
+  frameStage(ctx, "ir-overlay");
+}
+
 export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOptions): GeneratedCodegenModule {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
@@ -9295,15 +8887,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
-  ctx.irProgramCallableCutoverEnabled =
-    !!options?.experimentalIR &&
-    multiAst.sourceFiles.length > 1 &&
-    ctx.standalone &&
-    !ctx.wasi &&
-    !ctx.fast &&
-    ctx.nativeStrings &&
-    !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
-  const multiPreparedProgram = createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
+  const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
@@ -9342,13 +8926,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // M1A: construct the checker-owned callable graph exactly once, before
     // declaration/body emission can observe a partial program. All later
     // source overlays consume this immutable identity projection.
-    if (irPlanningIdentityContext) {
-      ctx.irProgramCallableBindingGraph = buildIrProgramCallableBindingGraph({
-        checker: multiAst.checker,
-        sourceFiles: multiAst.sourceFiles,
-        identityContext: irPlanningIdentityContext,
-      });
-    }
+    initializeIrProgramCallableBindingGraph(ctx, multiAst, irPlanningIdentityContext);
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
       registerWasiImports(ctx, multiAst.entryFile);
@@ -9699,7 +9277,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 
-    planMultiPreparedProgramEarlyRoutes(multiPreparedProgram, multiAst, options, irPlanningIdentityContext, ctx);
+    planMultiPreparedProgramRoutes(multiPreparedProgram, multiAst, options, ctx, irPlanningIdentityContext);
 
     // Phase 3: Compile all function bodies.
     //
@@ -9748,7 +9326,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.funcMap.set(name, idx);
         }
         rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
-        profilePhase(sf.fileName, () => compileMultiPreparedBodySource(multiPreparedProgram, ctx, sf, moduleInitMode));
+        profilePhase(sf.fileName, () => {
+          if (multiPreparedProgram) multiPreparedProgram.compileBodySource(sf, moduleInitMode);
+          else compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode);
+        });
       }
     });
     restoreNativeGeneratorEndState(ctx, nativeGenEndState);
@@ -9760,44 +9341,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     frameStage(ctx, "finalizeMethodTrampolines");
     profileCount("functions-after-bodies", ctx.mod.functions.length);
 
-    // (#2138 M0) Late IR overlay for multi-module top-level functions. Ordinary
-    // owners have direct bodies and finalized trampolines here; #4589's one
-    // exact standalone scalar singleton instead carries its Prepared body and
-    // correlated skip into this report. Imported calls remain an external
-    // selector boundary. Class members and module init stay direct-owned; never
-    // patch the shared `__module_init` once per source file.
-    // Fast-mode legacy declarations use i32 for `number`, while the current IR
-    // overlay uses f64. A multi-file target can be reached by a legacy caller,
-    // so replacing only that target would change its live Wasm ABI. Keep the
-    // whole multi-file overlay pre-claim disabled until those numeric boundary
-    // representations are planned mode-aware.
-    if (options?.experimentalIR && !ctx.fast) {
-      const hostImportedFunctions =
-        ctx.standalone || ctx.wasi || ctx.strictNoHostImports
-          ? undefined
-          : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, irPlanningIdentityContext!);
-      const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
-      profilePhase("ir-overlay", () => {
-        for (const sourceFile of multiAst.sourceFiles) {
-          profilePhase(sourceFile.fileName, () =>
-            compileMultiPreparedOverlaySource(
-              multiPreparedProgram,
-              ctx,
-              multiAst,
-              sourceFile,
-              irPlanningIdentityContext!,
-              safety,
-              hostImportedFunctions,
-            ),
-          );
-        }
-      });
-      // A+B1 may create callback singleton trampolines after the legacy
-      // finalization pass. Rebuild those late declarations against the target's
-      // final signature before any fixup/validation pass observes them.
-      finalizeMethodTrampolines(ctx);
-      frameStage(ctx, "ir-overlay");
-    }
+    compileMultiPreparedProgramOverlays(multiPreparedProgram, multiAst, options, ctx, irPlanningIdentityContext);
 
     multiPreparedProgram?.sealRoutesComplete();
 

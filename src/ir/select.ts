@@ -78,7 +78,8 @@ import { selectWithEnvironmentClosures } from "./with-environment.js";
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
-import type { IrProgramCallableUse } from "./program-callable-bindings.js";
+import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
+import { isAffineThreeDeepElementAccess, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
@@ -473,8 +474,6 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * write-side representation before the selector claims the function.
    */
   readonly resolveModuleBinding?: IrModuleBindingResolver | IrLegacyModuleBindingResolver;
-  /** Exact whole-program fixed-target call evidence for M1A. */
-  readonly resolveProgramCallableUse?: (call: ts.CallExpression) => IrProgramCallableUse | undefined;
   /**
    * (#3797) True only after receiver-aware named `.call` lowering and ambient
    * `__current_this` AST-to-IR binding consume the exact
@@ -8118,34 +8117,6 @@ function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boole
   );
 }
 
-/**
- * The shared IR currently widens affine multi-dimensional indices to f64 and
- * re-truncates them in the innermost loop. Keep genuine three-deep numeric
- * kernels on the legacy path, whose promoted-i32 induction variables and
- * proven-in-bounds element accesses are substantially cheaper. This is a
- * selector-owned capability decision so the lowerer never has to fail after
- * the function has already been claimed.
- */
-function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression): boolean {
-  let enclosingForDepth = 0;
-  for (let parent: ts.Node | undefined = expr.parent; parent; parent = parent.parent) {
-    if (ts.isForStatement(parent)) enclosingForDepth++;
-    if (ts.isFunctionLike(parent)) break;
-  }
-  if (enclosingForDepth < 3) return false;
-
-  let indexHasMultiply = false;
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AsteriskToken) {
-      indexHasMultiply = true;
-      return;
-    }
-    forEachChild(node, visit);
-  };
-  visit(expr.argumentExpression);
-  return indexHasMultiply;
-}
-
 function phase1FnctorNewExpression(
   expr: ts.NewExpression,
   scope: ReadonlySet<string>,
@@ -8260,23 +8231,6 @@ function phase1NewExpression(
   return true;
 }
 
-function programCallablePhase1Verdict(
-  expr: ts.CallExpression,
-  scope: ReadonlySet<string>,
-  localClasses: ReadonlySet<string>,
-): boolean | undefined {
-  if (!phase1CallPreambleIsBuildable(expr)) return false;
-  if (!currentSelectionOptions?.resolveProgramCallableUse?.(expr)) return undefined;
-  if (expr.questionDotToken || expr.typeArguments?.length) {
-    return capabilityNo("call-resolution-unsupported", "expr-program-callable-dynamic-shape", expr);
-  }
-  for (const arg of expr.arguments) {
-    if (ts.isSpreadElement(arg)) return shapeNo("expr-program-callable-spread", arg);
-    if (!isPhase1Expr(arg, scope, localClasses)) return false;
-  }
-  return true;
-}
-
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -8286,17 +8240,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
-  // The other `isAsExpression` sites here are helper-local unwrappers for one
-  // analysis each, NOT this shape gate — which is why these really did reject
-  // at `expr-unhandled` before this arm. Full measurement in #3583.
-  if (
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    return isPhase1Expr(expr.expression, scope, localClasses);
-  }
+  // Other `isAsExpression` sites are analysis-local, not this shape gate; these
+  // wrappers previously reached `expr-unhandled`. Full measurement in #3583.
+  const unwrappedTypeErased = unwrapTypeErasedExpression(expr);
+  if (unwrappedTypeErased) return isPhase1Expr(unwrappedTypeErased, scope, localClasses);
   // (#1373b C-1) `await <e>` inside a C-1 async body mirrors legacy sync-model lowering:
   //   - `await Promise.resolve(x)` → static substitution; zero args settle to
   //     `undefined`, which from-ast cannot lower.
@@ -8583,7 +8530,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
-    const programCallableVerdict = programCallablePhase1Verdict(expr, scope, localClasses);
+    const programCallableVerdict = programCallablePhase1Verdict(
+      currentSelectionOptions?.resolveProgramCallableUse,
+      expr,
+      () => phase1CallPreambleIsBuildable(expr),
+      (argument) => isPhase1Expr(argument, scope, localClasses),
+      () => capabilityNo("call-resolution-unsupported", "expr-program-callable-dynamic-shape", expr),
+      (spread) => shapeNo("expr-program-callable-spread", spread),
+    );
     if (programCallableVerdict !== undefined) return programCallableVerdict;
     const indirectEvalStatement = exactIndirectEvalStatement(expr);
     if (indirectEvalStatement) {
@@ -9782,15 +9736,12 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
-        const programCallableUse = currentSelectionOptions?.resolveProgramCallableUse?.(node);
-        if (programCallableUse) {
-          if (node.questionDotToken || node.typeArguments?.length || node.arguments.some(ts.isSpreadElement)) {
-            hasExternalCall.add(callerName);
-            return;
-          }
-          for (const argument of node.arguments) visit(argument);
+        if (
+          visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
+            hasExternalCall.add(callerName),
+          )
+        )
           return;
-        }
         const indirectEval = certifiedHostIndirectEval(node);
         if (indirectEval) {
           visit(indirectEval.source);

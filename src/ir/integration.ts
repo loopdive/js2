@@ -23,6 +23,11 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import {
+  collectIntegrationFunctionDeclarations,
+  makeMultiSourceOverrideResolvers,
+  resolveIntegrationSourceFiles,
+} from "./multi-source-integration.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
@@ -518,23 +523,6 @@ export interface IrIntegrationOptions {
    * support retain the established transitional route.
    */
   readonly sealPreparedComponents?: boolean;
-  /**
-   * Source files whose top-level functions participate in one aggregate IR
-   * integration. The legacy `sourceFile` parameter remains the representative
-   * file for diagnostics and backend capability probing.
-   */
-  readonly integrationSourceFiles?: readonly ts.SourceFile[];
-  /**
-   * The selected population is one atomic cross-source component. A failure
-   * in any terminal owner withdraws the whole integration before patching.
-   */
-  readonly atomicComponent?: boolean;
-  /**
-   * Exact non-source bindings staged by a whole-program component producer.
-   * The sealing transaction includes these aliases with the component's
-   * source-callable closure; they never become an unrelated global dependency.
-   */
-  readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
 }
 
 interface BuiltFn {
@@ -885,72 +873,6 @@ function makeAmbientStringBindingPredicate(checker: ts.TypeChecker): (node: ts.I
   };
 }
 
-function isExactDynamicStringReplaceNumberParser(declaration: ts.FunctionDeclaration): boolean {
-  if (
-    declaration.parameters.length !== 2 ||
-    !ts.isIdentifier(declaration.parameters[0]!.name) ||
-    !ts.isIdentifier(declaration.parameters[1]!.name) ||
-    declaration.body?.statements.length !== 2
-  ) {
-    return false;
-  }
-  const stringName = declaration.parameters[0]!.name.text;
-  const legacyFlagName = declaration.parameters[1]!.name.text;
-  const guard = declaration.body.statements[0]!;
-  const tail = declaration.body.statements[1]!;
-  if (
-    !ts.isIfStatement(guard) ||
-    guard.elseStatement !== undefined ||
-    !ts.isIdentifier(guard.expression) ||
-    guard.expression.text !== legacyFlagName
-  ) {
-    return false;
-  }
-  const guardedReturn = ts.isBlock(guard.thenStatement)
-    ? guard.thenStatement.statements.length === 1 && ts.isReturnStatement(guard.thenStatement.statements[0]!)
-      ? guard.thenStatement.statements[0]
-      : undefined
-    : ts.isReturnStatement(guard.thenStatement)
-      ? guard.thenStatement
-      : undefined;
-  const parseIntCall = guardedReturn?.expression;
-  if (
-    !parseIntCall ||
-    !ts.isCallExpression(parseIntCall) ||
-    !ts.isIdentifier(parseIntCall.expression) ||
-    parseIntCall.expression.text !== "parseInt" ||
-    parseIntCall.arguments.length !== 2 ||
-    !ts.isIdentifier(parseIntCall.arguments[0]!) ||
-    parseIntCall.arguments[0]!.text !== stringName ||
-    !ts.isNumericLiteral(parseIntCall.arguments[1]!) ||
-    parseIntCall.arguments[1]!.text !== "8"
-  ) {
-    return false;
-  }
-  if (!ts.isReturnStatement(tail) || !tail.expression || !ts.isCallExpression(tail.expression)) return false;
-  const parseFloatCall = tail.expression;
-  if (
-    !ts.isIdentifier(parseFloatCall.expression) ||
-    parseFloatCall.expression.text !== "parseFloat" ||
-    parseFloatCall.arguments.length !== 1
-  ) {
-    return false;
-  }
-  const replaceCall = parseFloatCall.arguments[0]!;
-  return (
-    ts.isCallExpression(replaceCall) &&
-    ts.isPropertyAccessExpression(replaceCall.expression) &&
-    replaceCall.expression.name.text === "replace" &&
-    ts.isIdentifier(replaceCall.expression.expression) &&
-    replaceCall.expression.expression.text === stringName &&
-    replaceCall.arguments.length === 2 &&
-    replaceCall.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
-    replaceCall.arguments[0]!.getText() === "/_/g" &&
-    ts.isStringLiteralLike(replaceCall.arguments[1]!) &&
-    replaceCall.arguments[1]!.text === ""
-  );
-}
-
 export function compileIrPathFunctions(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -960,14 +882,7 @@ export function compileIrPathFunctions(
   loweringPlans?: IrIntegrationLoweringPlans,
   options?: IrIntegrationOptions,
 ): IrIntegrationReport {
-  const integrationSourceFiles = options?.integrationSourceFiles ?? [sourceFile];
-  if (integrationSourceFiles.length === 0 || !integrationSourceFiles.includes(sourceFile)) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "resolve",
-      "ir/integration: representative source file is not part of the integration source population",
-    );
-  }
+  const integrationSourceFiles = resolveIntegrationSourceFiles(sourceFile, options?.integrationSourceFiles);
   const inlineOptions = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
   const fuseNativeNumberFormatCarriers =
     inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
@@ -1017,6 +932,14 @@ export function compileIrPathFunctions(
       "ir/integration: ProgramAbiSession and lowering plans use different identity inventories",
     );
   }
+  const activeOwnerProjection =
+    loweringPlans?.ownerProjection ??
+    buildIrLegacyUnitProjection(
+      compatibilityInventory?.terminalUnits.map((unit) => ({
+        unitId: unit.id,
+        legacyName: unit.legacyMatchName,
+      })) ?? [],
+    );
   const inventoryUnitById = new Map(
     moduleBindingIdentityContext.inventory.allUnits.map((unit) => [unit.id, unit] as const),
   );
@@ -1108,55 +1031,14 @@ export function compileIrPathFunctions(
   const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
-  const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
-    if (parameter.type || !overrides) return false;
-    const declaration = parameter.parent;
-    if (!ts.isFunctionDeclaration(declaration)) return false;
-    const index = declaration.parameters.indexOf(parameter);
-    const declarationUnitId = moduleBindingIdentityContext.unitIdByDeclaration.get(declaration);
-    const projectedName = declarationUnitId
-      ? activeOwnerProjection?.getByUnitId(declarationUnitId)?.legacyName
-      : declaration.name?.text;
-    const expected = index < 0 || !projectedName ? undefined : overrides.get(projectedName)?.params[index];
-    const valueType = expected ? asVal(expected) : null;
-    if (valueType?.kind !== "ref" && valueType?.kind !== "ref_null") return false;
-    return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
-  };
-  const declarationsByName = new Map<string, ts.FunctionDeclaration>();
-  for (const integrationSourceFile of integrationSourceFiles) {
-    for (const statement of integrationSourceFile.statements) {
-      if (ts.isFunctionDeclaration(statement) && statement.name) {
-        declarationsByName.set(statement.name.text, statement);
-      }
-    }
-  }
-  const effectiveOverride = (
-    name: string,
-  ): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined => {
-    const override = overrides?.get(name);
-    const projectedOwner = activeOwnerProjection?.getByLegacyName(name);
-    const declaration = projectedOwner
-      ? moduleBindingIdentityContext.declarationByUnitId.get(projectedOwner.unitId)
-      : declarationsByName.get(name);
-    const functionDeclaration = declaration && ts.isFunctionDeclaration(declaration) ? declaration : undefined;
-    const legacyFuncIdx = ctx.funcMap.get(name);
-    const legacyFunction = legacyFuncIdx === undefined ? undefined : definedFuncAt(ctx, legacyFuncIdx);
-    const legacySignature = legacyFunction === undefined ? undefined : ctx.mod.types[legacyFunction.typeIdx];
-    const legacySecondParam = legacySignature?.kind === "func" ? legacySignature.params[1] : undefined;
-    if (
-      !override ||
-      !functionDeclaration ||
-      override.params[1]?.kind !== "dynamic" ||
-      legacySecondParam?.kind !== "i32" ||
-      legacySecondParam.boolean !== true ||
-      !isExactDynamicStringReplaceNumberParser(functionDeclaration)
-    ) {
-      return override;
-    }
-    const params = [...override.params];
-    params[1] = irVal({ kind: "i32", boolean: true });
-    return { params, returnType: override.returnType };
-  };
+  const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
+  const { implicitParamUsesNumericVecAbi, effectiveOverride } = makeMultiSourceOverrideResolvers({
+    ctx,
+    overrides,
+    identityContext: moduleBindingIdentityContext,
+    ownerProjection: activeOwnerProjection,
+    declarationsByName,
+  });
   const selected =
     selection ??
     planIrCompilation(sourceFile, {
@@ -1198,14 +1080,6 @@ export function compileIrPathFunctions(
   const compatibilityUnitIdByDeclaration = compatibilityInventory
     ? indexIrTerminalDeclarations(sourceFile, compatibilityInventory)
     : undefined;
-  const activeOwnerProjection =
-    loweringPlans?.ownerProjection ??
-    buildIrLegacyUnitProjection(
-      compatibilityInventory?.terminalUnits.map((unit) => ({
-        unitId: unit.id,
-        legacyName: unit.legacyMatchName,
-      })) ?? [],
-    );
   const classIdByShape = new Map<IrClassShape, IrClassId>();
   if (loweringPlans?.classShapesById) {
     for (const [classId, shape] of loweringPlans.classShapesById) {
