@@ -1597,9 +1597,14 @@ export function objectLiteralIsStandaloneAnyObjectCarrier(
 function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (!ctx.standalone || ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
   for (const prop of expr.properties) {
-    const name = resolvePropertyNameText(ctx, prop);
-    if (name !== "toString" && name !== "valueOf") continue;
-    if (ts.isMethodDeclaration(prop)) return true;
+    if (ts.isMethodDeclaration(prop)) {
+      // Async-generator methods must keep their native lowering so parameter-
+      // default eval observes the generator body's own `arguments` binding.
+      const isAsyncGenerator =
+        prop.asteriskToken !== undefined && prop.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+      if (!isAsyncGenerator) return true;
+      continue;
+    }
     if (!ts.isPropertyAssignment(prop)) continue;
     const initializer = prop.initializer;
     if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) return true;
