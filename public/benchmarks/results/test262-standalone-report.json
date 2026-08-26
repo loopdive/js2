@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-26T14:08:18.265Z",
-  "baseline_generated_at": "2026-08-26T14:08:18.265Z",
-  "baseline_sha": "bb9ba0aa7e74f4912a0a9147c3df3242492934b6",
+  "timestamp": "2026-08-26T18:33:33.586Z",
+  "baseline_generated_at": "2026-08-26T18:33:33.586Z",
+  "baseline_sha": "087a4a4f66e243cf4cd4a314ce2a5bfcba0889fa",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1286,9 +1286,9 @@
           "Proposals": 4450
         },
         "sample_files": [
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
@@ -1327,8 +1327,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
+          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1532,8 +1532,8 @@
           "test/built-ins/RegExp/prototype/Symbol.split/length.js",
           "test/built-ins/RegExp/prototype/Symbol.match/coerce-global.js",
           "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-species-is-null-or-undefined.js",
-          "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-is-undefined.js",
-          "test/built-ins/RegExp/prototype/Symbol.match/u-advance-after-empty.js"
+          "test/built-ins/RegExp/prototype/Symbol.match/u-advance-after-empty.js",
+          "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-is-undefined.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot convert undefined or null to object",
@@ -1916,15 +1916,15 @@
           "test/built-ins/isFinite/toprimitive-result-is-object-throws.js",
           "test/built-ins/isNaN/toprimitive-valid-result.js",
           "test/language/expressions/left-shift/bigint-toprimitive.js",
-          "test/built-ins/Error/error-message-tostring-symbol.js",
-          "test/built-ins/isNaN/toprimitive-call-abrupt.js"
+          "test/built-ins/isNaN/toprimitive-call-abrupt.js",
+          "test/built-ins/Error/error-message-tostring-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: toPrimitive is called - non-NaN number Expected SameValue(«NaN», «#») to be true",
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
-          "assertion_fail:Test262Error: If _message_ is a Symbol, Error must throw TypeError Expected a TypeError to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: If _message_ is a Symbol, Error must throw TypeError Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2954,8 +2954,8 @@
           "ES2022": 20
         },
         "sample_files": [
-          "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/xor/validate-arraytype-before-index-coercion.js",
+          "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/or/non-views.js",
           "test/built-ins/Atomics/notify/notify-nan.js",
           "test/built-ins/Atomics/add/non-views.js"
@@ -3015,8 +3015,8 @@
           "Unclassified (untagged)": 2
         },
         "sample_files": [
-          "test/built-ins/NativeErrors/TypeError/prototype/message.js",
           "test/built-ins/NativeErrors/URIError/prototype/message.js",
+          "test/built-ins/NativeErrors/TypeError/prototype/message.js",
           "test/language/expressions/function/arguments-with-arguments-lex.js",
           "test/built-ins/Error/the-initial-value-of-errorprototypemessage-is-the-empty-string.js",
           "test/built-ins/NativeErrors/RangeError/prototype/message.js"
