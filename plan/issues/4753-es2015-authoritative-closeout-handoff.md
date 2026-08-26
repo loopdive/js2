@@ -19,8 +19,8 @@ related: [4444, 4751, 4752]
 
 ## Objective
 
-Prove and, where necessary, complete 100% ES2015 Test262 conformance on the
-combined implementation branch represented by upstream PR #4974:
+Prove and, where necessary, complete 100% ES2015 Test262 conformance after the
+combined implementation foundation merged through upstream PR #4974:
 
 <https://github.com/loopdive/js2/pull/4974>
 
@@ -30,8 +30,10 @@ benchmark artifacts are supporting evidence only; they cannot close this issue.
 
 ## Current state
 
-- Combined branch: `codex/es6-conformance-combined` on the `ttraenkler/js2`
-  fork, targeting `loopdive/js2:main` in PR #4974.
+- PR #4974 merged into `loopdive/js2:main` on 2026-08-26. Continued close-out
+  work uses `codex/es6-conformance-closeout` on the `ttraenkler/js2` fork and a
+  successor upstream draft PR #5008 so checkpoints remain reviewable:
+  <https://github.com/loopdive/js2/pull/5008>.
 - Handoff head before this issue commit: `df70faa5e`.
 - The first combined CI run found one integration-only dead helper. Issue
   #4752 deleted it; the dead-export gate now reports 23 known entries and 0
@@ -68,9 +70,9 @@ benchmark artifacts are supporting evidence only; they cannot close this issue.
 4. Rerun every non-passing row alone before attribution. Partition confirmed
    residuals into narrow semantic clusters, allocate one issue markdown per
    cluster, and dispatch Luna/max agents in separate git worktrees. Agents must
-   commit clean branch tips for integration into PR #4974; do not open separate
-   component PRs.
-5. Integrate each branch into `codex/es6-conformance-combined`, rerun its exact
+   commit clean branch tips for integration into the successor close-out PR;
+   do not open separate component PRs.
+5. Integrate each branch into `codex/es6-conformance-closeout`, rerun its exact
    pins and controls plus repository gates, then repeat both complete 11,704-row
    lanes. Continue until both authoritative reports contain zero non-passing
    rows.
@@ -98,8 +100,8 @@ from focused tests.
 - Fresh host report: 11,704/11,704 pass, 0 fail, 0 compile error, 0 skip.
 - Fresh standalone report: 11,704/11,704 pass, 0 fail, 0 compile error, 0 skip.
 - Every implementation cluster has an issue plan and exact regression tests.
-- Combined PR #4974 is green and remains the sole upstream ES6 implementation
-  PR, with `loopdive/js2:main` as its base.
+- The successor close-out PR is green and remains the sole active upstream ES6
+  implementation PR, with `loopdive/js2:main` as its base.
 
 ## Handoff
 
@@ -152,3 +154,33 @@ Resume by rerunning the same complete host command from the measurement
 worktree; do not append to or infer from the interrupted report. After the host
 lane completes, run the standalone lane sequentially, solo-confirm every
 non-pass, then allocate issue-backed Luna/max worktrees by semantic cluster.
+
+### Successor close-out checkpoint — 2026-08-26
+
+PR #4974 is merged. Its former head `dc5619b62` is an ancestor of current
+upstream `main` (`16dd8ad48`), so the old branch has no diff and cannot back a
+new PR. A successor integration worktree was created at
+`/private/tmp/js2-es6-conformance-closeout` on branch
+`codex/es6-conformance-closeout`, based on that current upstream head.
+Draft PR #5008 carries this branch against `loopdive/js2:main`; all further
+measurement and implementation checkpoints are pushed there.
+
+A current-branch host measurement had started at `dc5619b62` before the newer
+upstream head was discovered. It was stopped gracefully because completing an
+obsolete-head denominator would not prove current conformance. Run
+`20260826-174658` preserved 2,363 partial rows:
+
+```text
+1,882 pass
+457 fail
+14 compile_error
+10 compile_timeout
+0 skip
+```
+
+Those artifacts remain in
+`/private/tmp/js2-es6-authoritative-measure2/benchmarks/results/`; they are a
+diagnostic checkpoint only and must not be treated as the current baseline.
+The immediate next measurement must start from `16dd8ad48` or the newer
+successor PR head, regenerate and validate the 11,704-row `test/`-prefixed
+filter, and complete all rows without interruption.
