@@ -1379,7 +1379,12 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       case "fnctor.new": {
         const lowering = resolver.resolveFnctor?.(instr.shape);
-        if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+        if (
+          !lowering ||
+          !lowering.supportsConstruction ||
+          lowering.resultIsExternref ||
+          lowering.constructorResultType.kind !== "ref"
+        ) {
           throw new Error(
             `ir/lower: fnctor.new ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
           );
@@ -1402,7 +1407,12 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "fnctor.get": {
         const lowering = resolver.resolveFnctor?.(instr.shape);
-        if (!lowering || lowering.structTypeIdx === undefined || lowering.carrierType.kind === "externref") {
+        if (
+          !lowering ||
+          !lowering.supportsFieldGet ||
+          lowering.structTypeIdx === undefined ||
+          lowering.instanceCarrierType.kind === "externref"
+        ) {
           throw new Error(
             `ir/lower: fnctor.get ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
           );
@@ -1416,11 +1426,18 @@ export function lowerIrFunctionBody<S, Slot>(
         // struct.get follows the validated nominal layout/field handle and
         // WasmGC backend checks above.
         // pushraw-ok(#3521): validated fnctor struct field read
+        const field = lowering.field(instr.fieldName);
         emitter.pushRaw(out, {
           op: "struct.get",
           typeIdx: lowering.structTypeIdx,
-          fieldIdx: lowering.fieldIdx(instr.fieldName),
+          fieldIdx: field.fieldIdx,
         });
+        if (field.refinement === "nullable-native-string") {
+          if (field.logicalType.kind !== "string" || field.physicalType.kind !== "ref_null") {
+            throw new Error(`ir/lower: fnctor.get ${instr.fieldName} has an invalid field refinement (${func.name})`);
+          }
+          emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#3521): exact nullable native-string field refinement
+        }
         return;
       }
       case "call": {
@@ -4124,10 +4141,10 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
   }
   if (t.kind === "fnctor") {
     const lowering = resolver.resolveFnctor?.(t.shape);
-    if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+    if (!lowering || lowering.resultIsExternref || lowering.instanceCarrierType.kind === "externref") {
       throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no exact struct ABI resolver (${funcName})`);
     }
-    return lowering.carrierType;
+    return lowering.instanceCarrierType;
   }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell

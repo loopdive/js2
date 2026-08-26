@@ -164,4 +164,38 @@ describe("fnctor ABI contract", () => {
     expect(() => irTypeKey(irFnctor(recursive))).toThrow(/recursive/);
     expect(verifyIrFunction({ ...fn, resultTypes: [irFnctor(shape)] })).not.toEqual([]);
   });
+
+  it("keeps get-only fnctor capability distinct from construction", () => {
+    const shape: IrFnctorShape = {
+      ...parserShape(),
+      userParamTypes: [],
+      hiddenIdentity: false,
+      constructorIdentity: { unitId, paramIndex: 0 },
+    };
+    const getBuilder = new IrFunctionBuilder(
+      { unitId: "ir-unit:test:fnctor-get-only" as IrUnitId, name: "fnctorGetOnly" },
+      [{ kind: "string" }],
+    );
+    const receiver = getBuilder.addParam("parser", irFnctor(shape));
+    getBuilder.openBlock();
+    const field = getBuilder.emitFnctorGet(receiver, shape, "input");
+    getBuilder.terminate({ kind: "return", values: [field] });
+    const getOnlyResolver = {
+      resolveFnctor: () => ({ supportsConstruction: false, supportsFieldGet: true }),
+    };
+    expect(verifyIrBackendLegality(getBuilder.finish(), "wasmgc", getOnlyResolver)).toEqual([]);
+
+    const newBuilder = new IrFunctionBuilder(
+      { unitId: "ir-unit:test:fnctor-new-declined" as IrUnitId, name: "fnctorNewDeclined" },
+      [irFnctor(shape)],
+    );
+    newBuilder.openBlock();
+    const instance = newBuilder.emitFnctorNew(shape, [], [], null);
+    newBuilder.terminate({ kind: "return", values: [instance] });
+    expect(
+      verifyIrBackendLegality(newBuilder.finish(), "wasmgc", getOnlyResolver).some(
+        (error) => error.instr === "fnctor.new" && error.message.includes("validated resolver"),
+      ),
+    ).toBe(true);
+  });
 });

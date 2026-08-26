@@ -2405,6 +2405,36 @@ Land a second independently reviewed PR with no selector consumer.
    capability, allocator, source/unit, and support binding. Existing host
    observation tests must remain byte-for-byte valid.
 
+#### L2 implementation evidence (2026-08-26)
+
+The dormant logical-to-physical contract is now implemented without enabling
+the selector or standalone AST producer. `IrFnctorField.ordinal` is the exact
+physical reserved-layout index, and every logical field has one unique mapping
+to its physical name/carrier plus an explicit refinement. The bounded
+standalone shape is exactly mutable `input: ref null $AnyString`, immutable
+`$constructor: externref`, then mutable `$bag: externref`; the latter two use
+the shared field factories, and presence words, padding, splits, cold tails,
+reordering, and extra fields reject.
+
+The resolved handle now distinguishes the synthesized constructor's non-null
+`ref $__fnctor_Parser` result from the nullable
+`ref null $__fnctor_Parser` instance carrier used by the legacy caller slot.
+It also carries separate construction and field-read capabilities. The
+standalone Parser observation is deliberately get-only: its semantic
+constructor parameter is `string`, while the live synthesized constructor
+still takes physical `externref`, so `fnctor.new` remains illegal and only the
+validated `fnctor.get input` path can later activate. Lowering emits
+`ref.as_non_null` only for the exact certified
+`ref null $AnyString -> string` field refinement.
+
+The focused fnctor ABI/admission/argument-projection/producer matrix passes
+90/90, including mutations for physical field order and extras, ordinals,
+carriers, refinements, semantic and physical parameters, result/instance
+carriers, source identity, split/cold-tail/fast/host lanes, and capability
+drift. TypeScript 7 and scoped formatting pass. No selection, compiler/runtime
+A/B, emitted outcome, bundle relock, or R2 replay is claimed by this L2
+checkpoint; L3 remains the first production consumer.
+
 ### Checkpoint L3 — late-overlay selector and `fnctor.get` activation
 
 Only after L1 and L2 are merged and independently approved may the production

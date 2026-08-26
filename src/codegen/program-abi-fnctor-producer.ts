@@ -15,7 +15,7 @@
 
 import { irFnctorLayoutTypeRef } from "../ir/abi-bindings.js";
 import { irFnctorConstructorFuncRef } from "../ir/callable-bindings.js";
-import type { IrFnctorShape } from "../ir/fnctor-abi.js";
+import { validateIrFnctorShape, type IrFnctorShape } from "../ir/fnctor-abi.js";
 import type { IrFnctorAdmission } from "../ir/propagate.js";
 import type { FieldDef, FuncHandle, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -23,6 +23,8 @@ import { makeIrFnctorAdmissionResolver } from "./ir-fnctor-admission.js";
 import type { FnctorCaptureLayout } from "./fnctor-constructor-identity.js";
 import type { ProgramAbiFnctorObservation } from "./program-abi-fnctor-planning.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
+import { fnctorConstructorField } from "./fnctor-identity-fields.js";
+import { closureBagField } from "./closures/closure-header-layout.js";
 
 export interface ObserveIrFnctorProducerInput {
   readonly ctx: CodegenContext;
@@ -102,8 +104,12 @@ function makeBoundedObservation(
   const constructorName = `${input.structName}_new`;
   const constructorTarget = irFnctorConstructorFuncRef(admission.constructorUnitId, constructorName);
   const reservedLayout = irFnctorLayoutTypeRef(admission.constructorUnitId, input.structName);
+  const shape = makeBoundedShape(admission, input.functionName, input.structName, constructorName, hiddenIdentity);
+  const constructorResultType = input.resultIsExternref
+    ? ({ kind: "externref" } as const)
+    : ({ kind: "ref", typeIdx: input.structTypeIdx } as const);
   return {
-    shape: makeBoundedShape(admission, input.functionName, input.structName, constructorName, hiddenIdentity),
+    shape,
     sourceId: admission.sourceId,
     constructorUnitId: admission.constructorUnitId,
     reservedLayout,
@@ -112,12 +118,130 @@ function makeBoundedObservation(
     constructorFunction: input.constructorFunction,
     structTypeIdx: input.structTypeIdx,
     fields: input.fields,
+    fieldMappings: [
+      {
+        name: "input",
+        physicalIndex: shape.fields[0]!.ordinal,
+        logicalType: shape.fields[0]!.type,
+        physicalType: input.fields[0]!.type,
+        refinement: "none",
+      },
+    ],
     captureParamTypes: input.captureLayout.valueParamTypes,
     tdzFlagParamTypes: input.captureLayout.tdzFlagParamTypes,
     userParamTypes: input.userParamTypes,
     hiddenIdentity,
     constructorIdentityParamIndex: hiddenIdentity ? 1 : null,
     resultIsExternref: input.resultIsExternref,
+    constructorResultType,
+    instanceCarrierType: constructorResultType,
+    supportsConstruction: !input.resultIsExternref,
+    supportsFieldGet: !input.resultIsExternref,
+  };
+}
+
+function exactField(actual: FieldDef | undefined, expected: FieldDef): boolean {
+  return (
+    actual !== undefined &&
+    actual.name === expected.name &&
+    actual.mutable === expected.mutable &&
+    canonicalProgramAbiValType(actual.type) === canonicalProgramAbiValType(expected.type) &&
+    actual.presenceTracked !== true &&
+    actual.dynamicObjectCarrier !== true &&
+    actual.jsBoolean !== true &&
+    actual.presenceBit === undefined
+  );
+}
+
+/**
+ * Build the exact get-only standalone observation used by the late #3521
+ * overlay. This is intentionally pure with respect to ProgramAbiSession: L2
+ * tests the physical contract without enabling the AST producer.
+ */
+export function buildStandaloneIrFnctorObservation(
+  input: ObserveIrFnctorProducerInput,
+  shape: IrFnctorShape,
+): ProgramAbiFnctorObservation | undefined {
+  const { ctx } = input;
+  if (
+    !ctx.standalone ||
+    ctx.wasi ||
+    !ctx.nativeStrings ||
+    ctx.fast ||
+    input.resultIsExternref ||
+    validateIrFnctorShape(shape) !== null ||
+    shape.sourceId !== ctx.irPlanningIdentityContext?.sourceIdBySourceFile.get(input.declaration.getSourceFile()) ||
+    shape.constructorUnitId !== ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(input.declaration) ||
+    shape.constructorUnitId !== shape.constructorIdentity.unitId ||
+    shape.constructorIdentity.paramIndex !== 1 ||
+    shape.hiddenIdentity !== true ||
+    shape.captures.length !== 0 ||
+    shape.userParamTypes.length !== 1 ||
+    shape.userParamTypes[0]?.kind !== "string" ||
+    shape.fields.length !== 1 ||
+    shape.fields[0]?.name !== "input" ||
+    shape.fields[0]?.ordinal !== 0 ||
+    shape.fields[0]?.type.kind !== "string" ||
+    input.captureLayout.captures.length !== 0 ||
+    input.captureLayout.valueParamTypes.length !== 0 ||
+    input.captureLayout.tdzFlagParamTypes.length !== 0 ||
+    input.userParamTypes.length !== 1 ||
+    input.userParamTypes[0]?.kind !== "externref" ||
+    ctx.anyStrTypeIdx < 0 ||
+    ctx.fnctorReservedTypeIdx.get(input.functionName) !== input.structTypeIdx ||
+    ctx.structMap.get(input.structName) !== input.structTypeIdx ||
+    ctx.fnctorLayoutInfo?.has(input.structName) ||
+    ctx.fnctorColdTailTypeIdx?.has(input.functionName)
+  ) {
+    return undefined;
+  }
+  const inputField = input.fields[0];
+  if (
+    input.fields.length !== 3 ||
+    !inputField ||
+    inputField.name !== "input" ||
+    inputField.mutable !== true ||
+    inputField.type.kind !== "ref_null" ||
+    inputField.type.typeIdx !== ctx.anyStrTypeIdx ||
+    inputField.presenceTracked === true ||
+    inputField.dynamicObjectCarrier === true ||
+    inputField.jsBoolean === true ||
+    inputField.presenceBit !== undefined ||
+    !exactField(input.fields[1], fnctorConstructorField()) ||
+    !exactField(input.fields[2], closureBagField())
+  ) {
+    return undefined;
+  }
+  const constructorResultType = { kind: "ref" as const, typeIdx: input.structTypeIdx };
+  return {
+    shape,
+    sourceId: shape.sourceId,
+    constructorUnitId: shape.constructorUnitId,
+    reservedLayout: shape.reservedLayout,
+    constructorFunc: shape.constructorTarget,
+    constructorFuncIdx: input.constructorFuncIdx,
+    constructorFunction: input.constructorFunction,
+    structTypeIdx: input.structTypeIdx,
+    fields: input.fields,
+    fieldMappings: [
+      {
+        name: "input",
+        physicalIndex: 0,
+        logicalType: { kind: "string" },
+        physicalType: inputField.type,
+        refinement: "nullable-native-string",
+      },
+    ],
+    captureParamTypes: [],
+    tdzFlagParamTypes: [],
+    userParamTypes: input.userParamTypes,
+    hiddenIdentity: true,
+    constructorIdentityParamIndex: 1,
+    resultIsExternref: false,
+    constructorResultType,
+    instanceCarrierType: { kind: "ref_null", typeIdx: input.structTypeIdx },
+    supportsConstruction: false,
+    supportsFieldGet: true,
   };
 }
 
