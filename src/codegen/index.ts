@@ -48,7 +48,7 @@ import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule 
 import { createEmptyModule } from "../ir/types.js";
 import { planCountedStringAppend } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
-import { irSupportGlobalRef } from "../ir/abi-bindings.js";
+import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -96,6 +96,8 @@ import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
   reconcileIrModuleInitPlan,
+  type IrModuleInitBindingIntent,
+  type IrModuleInitEvaluationEntry,
   type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
@@ -105,6 +107,7 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  type IrSourceId,
   type IrUnitKind,
   type IrUnitId,
 } from "../ir/identity.js";
@@ -3793,15 +3796,181 @@ interface IrFirstBodyRouting {
 }
 
 /**
- * R4's intentionally bounded module-init owner: an ordered sequence of
- * initialized top-level lexical declarations. The selector proves a one-to-one
- * Program ABI projection while the semantic plan proves exact source order,
- * binding identity, TDZ intent, and exactly-once invocation parity.
+ * R4's intentionally bounded module-init owner: initialized top-level lexical
+ * declarations followed by exact scalar self-increment assignments. The
+ * selector proves a one-to-one Program ABI projection while the semantic plan
+ * proves exact source order, binding identity, TDZ intent, and exactly-once
+ * invocation parity.
  */
 interface PreparedLexicalModuleInitEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<IrBindingId>;
   readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export">;
+}
+
+function preparedModuleInitEvaluationMatchesStatement(
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.Statement,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  kind: Extract<IrModuleInitEvaluationEntry["kind"], "variable-initializer" | "statement">,
+  bindingIds: readonly IrBindingId[],
+): boolean {
+  const statementOrdinal = sourceFile.statements.indexOf(statement);
+  const start = statement.getStart(sourceFile);
+  return (
+    statement.getSourceFile() === sourceFile &&
+    statementOrdinal >= 0 &&
+    evaluation.key === `${sourceId}:eval:${sourceOrdinal}` &&
+    evaluation.kind === kind &&
+    evaluation.sourceOrdinal === sourceOrdinal &&
+    evaluation.statementOrdinal === statementOrdinal &&
+    evaluation.nestedOrdinal === 0 &&
+    evaluation.start === start &&
+    evaluation.end === statement.end &&
+    evaluation.classId === null &&
+    evaluation.legacyKey === `statement:${start}:${statement.end}` &&
+    evaluation.bindingIds.length === bindingIds.length &&
+    evaluation.bindingIds.every((bindingId, index) => bindingId === bindingIds[index])
+  );
+}
+
+function preparedExactLexicalDeclaration(
+  ctx: CodegenContext,
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.VariableStatement,
+  binding: IrModuleInitBindingIntent,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  declarationOrdinal: number,
+  sourceExecutableDeclarations: ReadonlySet<ts.Declaration>,
+): ts.VariableDeclaration | undefined {
+  const declarations = statement.declarationList.declarations;
+  const declaration = declarations[0];
+  const declarationKind =
+    statement.declarationList.flags & ts.NodeFlags.Const
+      ? "const"
+      : statement.declarationList.flags & ts.NodeFlags.Let
+        ? "let"
+        : undefined;
+  const globalBindingId = irModuleGlobalBindingId(sourceId, declarationOrdinal);
+  const tdzBindingId = irModuleTdzGlobalBindingId(sourceId, declarationOrdinal);
+  if (
+    !declarationKind ||
+    declarations.length !== 1 ||
+    !declaration ||
+    declaration.getSourceFile() !== sourceFile ||
+    !ts.isIdentifier(declaration.name) ||
+    !declaration.initializer ||
+    binding.declarationOrdinal !== declarationOrdinal ||
+    binding.names.length !== 1 ||
+    binding.names[0] !== declaration.name.text ||
+    binding.declarationKind !== declarationKind ||
+    binding.mutable !== (declarationKind === "let") ||
+    binding.initialization !== "tdz" ||
+    binding.globalBindingId !== globalBindingId ||
+    binding.tdzBindingId !== tdzBindingId ||
+    binding.start !== declaration.getStart(sourceFile) ||
+    binding.end !== declaration.end ||
+    !preparedModuleInitEvaluationMatchesStatement(
+      sourceId,
+      sourceFile,
+      statement,
+      evaluation,
+      sourceOrdinal,
+      "variable-initializer",
+      [globalBindingId],
+    )
+  ) {
+    return undefined;
+  }
+
+  let reachesSourceFunction = false;
+  const visitInitializer = (node: ts.Node): void => {
+    if (reachesSourceFunction) return;
+    if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      reachesSourceFunction = true;
+      return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      ctx.oracle.declarationsOf(node).some((candidate) => sourceExecutableDeclarations.has(candidate))
+    ) {
+      reachesSourceFunction = true;
+      return;
+    }
+    ts.forEachChild(node, visitInitializer);
+  };
+  visitInitializer(declaration.initializer);
+  return reachesSourceFunction ? undefined : declaration;
+}
+
+function isPreparedExactScalarModuleAssignment(
+  ctx: CodegenContext,
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.Statement,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  admittedBindings: ReadonlyMap<ts.VariableDeclaration, IrModuleInitBindingIntent>,
+): boolean {
+  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return false;
+  const assignment = statement.expression;
+  if (
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isIdentifier(assignment.left) ||
+    !ts.isBinaryExpression(assignment.right)
+  ) {
+    return false;
+  }
+  const increment = assignment.right;
+  if (
+    increment.operatorToken.kind !== ts.SyntaxKind.PlusToken ||
+    !ts.isIdentifier(increment.left) ||
+    !ts.isNumericLiteral(increment.right) ||
+    !preparedModuleInitEvaluationMatchesStatement(
+      sourceId,
+      sourceFile,
+      statement,
+      evaluation,
+      sourceOrdinal,
+      "statement",
+      [],
+    )
+  ) {
+    return false;
+  }
+
+  const targetDeclarations = ctx.oracle.declarationsOf(assignment.left);
+  const readDeclarations = ctx.oracle.declarationsOf(increment.left);
+  const declaration = targetDeclarations[0];
+  if (
+    targetDeclarations.length !== 1 ||
+    readDeclarations.length !== 1 ||
+    declaration !== readDeclarations[0] ||
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.getSourceFile() !== sourceFile ||
+    !ts.isIdentifier(declaration.name) ||
+    assignment.left.text !== declaration.name.text ||
+    increment.left.text !== declaration.name.text
+  ) {
+    return false;
+  }
+
+  const binding = admittedBindings.get(declaration);
+  return (
+    binding !== undefined &&
+    binding.declarationKind === "let" &&
+    binding.mutable &&
+    binding.initialization === "tdz" &&
+    binding.globalBindingId !== null &&
+    binding.tdzBindingId !== null &&
+    binding.start === declaration.getStart(sourceFile) &&
+    binding.end === declaration.end
+  );
 }
 
 function preparedExactLexicalModuleInit(
@@ -3852,7 +4021,6 @@ function preparedExactLexicalModuleInit(
   if (
     population.length === 0 ||
     selection.moduleInit.stmtCount !== population.length ||
-    planning.plan.bindings.length !== population.length ||
     planning.plan.evaluations.length !== population.length ||
     planning.parity.plannedEntryCount !== population.length ||
     planning.parity.legacyEntryCount !== population.length
@@ -3866,67 +4034,69 @@ function preparedExactLexicalModuleInit(
         (ts.isFunctionDeclaration(statement) && !!statement.body) || ts.isClassDeclaration(statement),
     ),
   );
-  const globalBindingIds = new Set<IrBindingId>();
-  for (let ordinal = 0; ordinal < population.length; ordinal++) {
-    const statement = population[ordinal];
-    const binding = planning.plan.bindings[ordinal];
-    const evaluation = planning.plan.evaluations[ordinal];
-    if (!statement || !binding || !evaluation || !ts.isVariableStatement(statement)) return undefined;
-    const declarations = statement.declarationList.declarations;
-    const declaration = declarations[0];
-    const declarationKind =
-      statement.declarationList.flags & ts.NodeFlags.Const
-        ? "const"
-        : statement.declarationList.flags & ts.NodeFlags.Let
-          ? "let"
-          : undefined;
+  const bindingByDeclarationOrdinal = new Map<number, IrModuleInitBindingIntent>();
+  for (const binding of planning.plan.bindings) {
     if (
-      !declarationKind ||
-      declarations.length !== 1 ||
-      !declaration ||
-      !ts.isIdentifier(declaration.name) ||
-      !declaration.initializer ||
-      binding.declarationOrdinal !== ordinal ||
-      binding.names.length !== 1 ||
-      binding.names[0] !== declaration.name.text ||
-      binding.declarationKind !== declarationKind ||
-      binding.mutable !== (declarationKind === "let") ||
-      binding.initialization !== "tdz" ||
-      binding.globalBindingId === null ||
-      binding.tdzBindingId === null ||
-      binding.start !== declaration.getStart(sourceFile) ||
-      binding.end !== declaration.end ||
-      evaluation.kind !== "variable-initializer" ||
-      evaluation.sourceOrdinal !== ordinal ||
-      evaluation.statementOrdinal !== sourceFile.statements.indexOf(statement) ||
-      evaluation.nestedOrdinal !== 0 ||
-      evaluation.start !== statement.getStart(sourceFile) ||
-      evaluation.end !== statement.end ||
-      evaluation.classId !== null ||
-      evaluation.bindingIds.length !== 1 ||
-      evaluation.bindingIds[0] !== binding.globalBindingId
+      !Number.isSafeInteger(binding.declarationOrdinal) ||
+      binding.declarationOrdinal < 0 ||
+      bindingByDeclarationOrdinal.has(binding.declarationOrdinal)
     ) {
       return undefined;
     }
-    globalBindingIds.add(binding.globalBindingId);
+    bindingByDeclarationOrdinal.set(binding.declarationOrdinal, binding);
+  }
 
-    let reachesSourceFunction = false;
-    const visitInitializer = (node: ts.Node): void => {
-      if (reachesSourceFunction) return;
-      if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        reachesSourceFunction = true;
-        return;
-      }
-      if (ts.isIdentifier(node)) {
-        if (ctx.oracle.declarationsOf(node).some((declaration) => sourceExecutableDeclarations.has(declaration))) {
-          reachesSourceFunction = true;
-          return;
-        }
-      }
-      ts.forEachChild(node, visitInitializer);
-    };
-    visitInitializer(declaration.initializer);
-    if (reachesSourceFunction) return undefined;
+  const globalBindingIds = new Set<IrBindingId>();
+  const admittedBindings = new Map<ts.VariableDeclaration, IrModuleInitBindingIntent>();
+  let declarationOrdinal = 0;
+  let sawAssignment = false;
+  for (let ordinal = 0; ordinal < population.length; ordinal++) {
+    const statement = population[ordinal];
+    const evaluation = planning.plan.evaluations[ordinal];
+    if (!statement || !evaluation) return undefined;
+    if (ts.isVariableStatement(statement)) {
+      if (sawAssignment) return undefined;
+      const binding = bindingByDeclarationOrdinal.get(declarationOrdinal);
+      if (!binding) return undefined;
+      const declaration = preparedExactLexicalDeclaration(
+        ctx,
+        sourceId,
+        sourceFile,
+        statement,
+        binding,
+        evaluation,
+        ordinal,
+        declarationOrdinal,
+        sourceExecutableDeclarations,
+      );
+      if (!declaration || !binding.globalBindingId || globalBindingIds.has(binding.globalBindingId)) return undefined;
+      globalBindingIds.add(binding.globalBindingId);
+      admittedBindings.set(declaration, binding);
+      declarationOrdinal++;
+      continue;
+    }
+
+    sawAssignment = true;
+    if (
+      !isPreparedExactScalarModuleAssignment(
+        ctx,
+        sourceId,
+        sourceFile,
+        statement,
+        evaluation,
+        ordinal,
+        admittedBindings,
+      )
+    ) {
+      return undefined;
+    }
+  }
+  if (
+    admittedBindings.size === 0 ||
+    declarationOrdinal !== planning.plan.bindings.length ||
+    declarationOrdinal !== bindingByDeclarationOrdinal.size
+  ) {
+    return undefined;
   }
   const invocationKind = planning.plan.invocation.kind;
   if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") return undefined;
