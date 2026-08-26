@@ -218,8 +218,45 @@ The measurement used `TEST262_WORKERS=5`, `COMPILER_POOL_SIZE=5`,
 `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, `TEST262_TARGET=gc`,
 `TEST262_REPORTER=dot`, and `TEST262_PUBLISH_HISTORY=0`. The host checkpoint was
 committed and pushed. PR #5008 subsequently auto-merged at `39f279650`;
-successor draft PR #5010 now carries commits `0bed210fd` and `3fb21eb37`.
-Standalone run `20260826-194014` is active at exact code head `0bed210fd` with
-the pinned QuickJS artifact. Issues #4758, #4759, and #4760 track the first
-three residual clusters in separate Luna/max worktrees for integration into
-#5010.
+successor draft PR #5010 now carries the continuing checkpoints.
+
+### Complete standalone baseline — 2026-08-26
+
+The first uninterrupted exact-bucket standalone measurement completed at exact
+code head `0bed210fd` (run `20260826-194014`). It used the same verified
+11,704-row filter and all 16 maintained-runner shards completed. The exact
+report summary is:
+
+```text
+8,402 pass
+2,728 fail
+571 compile_error
+2 compile_timeout
+1 skip
+11,704 total
+```
+
+This is the complete standalone baseline, not acceptance evidence: 3,302 rows
+remain non-passing. The two compile timeouts are
+`TypedArray/prototype/byteOffset/detached-buffer.js` and
+`TypedArray/prototype/Symbol.toStringTag/detached-buffer.js`; the skip is
+`language/statements/for-of/body-put-error.js`. All three require fresh solo
+confirmation. Artifacts are preserved at:
+
+```text
+/private/tmp/js2-es6-authoritative-measure4/benchmarks/results/test262-standalone-report-20260826-194014.json
+/private/tmp/js2-es6-authoritative-measure4/benchmarks/results/test262-standalone-results-20260826-194014.jsonl
+```
+
+The run used `TEST262_WORKERS=5`, `COMPILER_POOL_SIZE=5`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, `TEST262_TARGET=standalone`,
+`TEST262_REPORTER=dot`, and `TEST262_PUBLISH_HISTORY=0`. The isolated QuickJS
+artifact at `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` was built from
+the pinned submodule using Homebrew LLVM 18 (`clang-18`, `llvm-ar`,
+`llvm-ranlib`, and `llvm-nm`) and verified by the standalone provider before
+the run.
+
+Draft PR #5010 currently includes issue #4760 checkpoint `01eae69d7` (four
+host Promise reaction thenable regressions fixed) and issue #4759 checkpoint
+`1c1ba7574` (module-namespace self-import binding linked in both lanes). Issues
+#4758, #4759, #4760, and #4761 retain exact dispositions and follow-up work.
