@@ -9466,13 +9466,13 @@ function _temporalPlainTimeAddField(...args: any[]): number {
 }
 
 /**
- * Keep intrinsic constructor identity inside a supplied per-test sandbox.
- * Host objects naturally expose host-realm constructors; compiled code in the
- * isolated realm resolves the corresponding bare identifier from the sandbox.
- * Only canonical host intrinsics are substituted, so user constructors pass
- * through unchanged.
+ * Normalize values read into a supplied per-test sandbox. Realm-global
+ * callable facades stay callable across child modules; other values are
+ * unwrapped, with host intrinsic constructors mapped to sandbox identities.
  */
-function _sandboxConstructorValue(value: any, key: any, globalSandbox?: Record<string, any>): any {
+function _sandboxConstructorValue(obj: any, value: any, key: any, globalSandbox?: Record<string, any>): any {
+  if (globalSandbox && obj === globalSandbox && typeof value === "function") return value;
+  value = _unwrapForHost(value);
   if (globalSandbox && key === "constructor" && typeof value === "function") {
     const name = (value as { name?: string }).name;
     if (name && value === (globalThis as any)[name]) {
@@ -9481,18 +9481,6 @@ function _sandboxConstructorValue(value: any, key: any, globalSandbox?: Record<s
     }
   }
   return value;
-}
-
-/**
- * Preserve callable bindings read from the supplied realm global object.
- *
- * A standalone `Function` body runs in a child module and resolves parent-realm
- * globals through this object. Unwrapping a compiled callable facade there
- * would expose the parent module's raw WasmGC closure, which the child module
- * cannot invoke. Ordinary host-object reads still restore raw Wasm values.
- */
-function _externGetValue(obj: any, value: any, globalSandbox?: Record<string, any>): any {
-  return obj === globalSandbox && typeof value === "function" ? value : _unwrapForHost(value);
 }
 
 function _wrapRawCallableHostValue(
@@ -11041,7 +11029,7 @@ assert._isSameValue = isSameValue;
                 // code must restore the raw Wasm value, otherwise private-field
                 // dispatch cannot ref.cast the proxy to its declaring class and
                 // reads such as `child.#methods` collapse to null.
-                return _externGetValue(obj, v, globalSandbox);
+                return _sandboxConstructorValue(obj, v, key, globalSandbox);
               }
             } catch (e) {
               // #2180/#2617 — a revoked-proxy TypeError, OR any exception from a
@@ -11052,7 +11040,7 @@ assert._isSameValue = isSameValue;
             }
           }
           const val = _safeGet(obj, key, callbackState);
-          if (val !== undefined) return _externGetValue(obj, val, globalSandbox);
+          if (val !== undefined) return _sandboxConstructorValue(obj, val, key, globalSandbox);
           // (#4618) A property read off a BARE closure bridge (the plain host
           // function `_wrapWasmClosureUnknownArity` mints): the bridge drops
           // the closure's sidecar surface, so `console.log.mock` /
@@ -17058,7 +17046,7 @@ assert._isSameValue = isSameValue;
                 const rawVec = _abHostBufferReverse.get(v);
                 if (rawVec !== undefined) return rawVec;
               }
-              return _sandboxConstructorValue(_externGetValue(obj, v, globalSandbox), key, globalSandbox);
+              return _sandboxConstructorValue(obj, v, key, globalSandbox);
             }
           } catch {
             /* fall through to the generic path */
@@ -17072,7 +17060,7 @@ assert._isSameValue = isSameValue;
           // `sandbox.Array`, but `obj.constructor` for host JS arrays
           // returns `globalThis.Array`. Substitute the sandbox version so
           // `arr.constructor === Array` holds. No-op without a sandbox.
-          return _sandboxConstructorValue(_externGetValue(obj, val, globalSandbox), key, globalSandbox);
+          return _sandboxConstructorValue(obj, val, key, globalSandbox);
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {
