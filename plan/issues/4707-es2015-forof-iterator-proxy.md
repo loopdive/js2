@@ -114,3 +114,9 @@ After merging `upstream/main` at `2ac130ac4e` (merge commit
 | `head-expr-obj-iterator-method.js` | pass (`8d5ae71ef7a6`) | pass (`04df90f9ac4d`) |
 
 The TypeScript 5 typecheck and scoped Prettier/Biome checks also pass.
+
+The merge queue later exposed that the module-global Proxy carrier override
+also widened proxies passed to native generic operations. The module path now
+uses the existing call/new escape gate: the exact iterator row and all four
+reported Proxy regressions pass in the host lane, while two focused WAT pins
+cover the escaping target-shaped slot and non-escaping externref slot.
