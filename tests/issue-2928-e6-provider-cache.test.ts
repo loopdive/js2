@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   RUNTIME_EVAL_IMPORT_MODULE,
+  RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
   buildRuntimeEvalProviderSource,
   readCachedRuntimeEvalProvider,
   runtimeEvalProviderCacheKey,
@@ -33,6 +34,13 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(source).toContain("function createDynamicFunction(");
     expect(source).toContain("function executeIndirectEval(");
     expect(source).toContain("function executeDirectEval(");
+    // The closed AOT provider unshadows the top-level Acorn binding instead of
+    // transporting it through the standalone generic-callable carrier or a
+    // result-bearing trampoline.
+    expect(source).toContain("__runtime_eval_provider_injected_parse: DynamicParser");
+    expect(source).toContain("const ast = parse(source, options)");
+    expect(source).toContain("const ast: JSValue = parse(dynamicFunctionSource(paramString, bodyString), options)");
+    expect(source).not.toContain("function __runtime_eval_provider_parse(");
     // Build-time positive controls must be present so the prebuild can refuse
     // a broken provider before caching it.
     expect(source).toContain("function __runtime_eval_canary(");
@@ -46,6 +54,10 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
 
   it("namespace constant matches the codegen import module", () => {
     expect(RUNTIME_EVAL_IMPORT_MODULE).toBe("js2wasm:runtime-eval");
+  });
+
+  it("does not require optimization for portable engine execution", () => {
+    expect(RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS.optimize).toBeUndefined();
   });
 
   it("cache key is stable and sensitive to source + bundle hash", () => {
