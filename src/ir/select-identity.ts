@@ -13,6 +13,7 @@ import {
 import type { IrFnctorAdmission, IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
+import { retainIrFnctorArgumentProjections, type IrFnctorArgumentProjection } from "./fnctor-argument-projection.js";
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
 import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
@@ -89,6 +90,8 @@ export interface IrIdentitySelection {
   readonly localCallees?: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
   /** Exact admitted fnctor allocation sites owned by claimed function units. */
   readonly fnctorAdmissions?: ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>>;
+  /** Dormant exact call-argument evidence collected from the complete function population. */
+  readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
   /** Exact counted-string plans owned by claimed function units. */
   readonly countedStringAppendPlans?: ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]>;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
@@ -140,6 +143,8 @@ export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveType
   readonly nestedClassMemberCallableAvailable?: (unitId: IrUnitId) => boolean;
   /** Checker/AST/use proof for the one compiler-owned setTimeout wrapper slice. */
   readonly isPreparedInjectedTimerShim?: (declaration: ts.FunctionDeclaration) => boolean;
+  /** Precomputed dormant fnctor argument edges; structural planning revalidates every identity join. */
+  readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
 };
 
 export interface IrLegacySelectionProjection {
@@ -743,6 +748,37 @@ function validateLegacyProjectionInput(structural: IrIdentitySelection): void {
       }
     }
   }
+  for (const projection of structural.fnctorArgumentProjections ?? []) {
+    if (
+      requireProjectedUnit(structural, projection.callerUnitId).kind !== "function" ||
+      requireProjectedUnit(structural, projection.calleeUnitId).kind !== "function" ||
+      requireProjectedUnit(structural, projection.constructorUnitId).kind !== "function"
+    ) {
+      selectorIdentityInvariant("terminal-record-mismatch", "fnctor argument projection has a non-function owner");
+    }
+  }
+}
+
+function selectionFunctionPopulation(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  identityContext: IrPlanningIdentityContext,
+  options: IrIdentitySelectionOptions,
+) {
+  const functions = collectFunctions(sourceFile, sourceId, identityContext);
+  const fnctorArgumentProjections = retainIrFnctorArgumentProjections(
+    sourceFile,
+    sourceId,
+    identityContext,
+    options.fnctorArgumentProjections,
+  );
+  const functionsByName = new Map<string, IndexedFunction[]>();
+  const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
+  for (const indexed of functions) {
+    units.set(indexed.unit.unitId, indexed.unit);
+    if (indexed.declaration.name) addNameIndex(functionsByName, indexed.declaration.name.text, indexed);
+  }
+  return { functions, fnctorArgumentProjections, functionsByName, units };
 }
 
 /** Select one exact source using source-qualified unit and class identities. */
@@ -760,13 +796,8 @@ export function planIrCompilationByIdentity(
     );
   }
   if (!options?.experimentalIR) return { units: new Map(), funcs: new Map() };
-  const functions = collectFunctions(sourceFile, sourceId, identityContext);
-  const functionsByName = new Map<string, IndexedFunction[]>();
-  const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
-  for (const indexed of functions) {
-    units.set(indexed.unit.unitId, indexed.unit);
-    if (indexed.declaration.name) addNameIndex(functionsByName, indexed.declaration.name.text, indexed);
-  }
+  const population = selectionFunctionPopulation(sourceFile, sourceId, identityContext, options);
+  const { functions, fnctorArgumentProjections, functionsByName, units } = population;
 
   const classes = collectClasses(sourceFile, sourceId, identityContext);
   populateClassMemberUnits(sourceId, classes, identityContext, units);
@@ -1226,6 +1257,7 @@ export function planIrCompilationByIdentity(
     ...(fallbacks ? { fallbacks } : {}),
     ...(localCallees ? { localCallees } : {}),
     ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
+    ...(fnctorArgumentProjections ? { fnctorArgumentProjections } : {}),
     ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },

@@ -10,7 +10,11 @@ import {
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
+import {
+  collectIrFnctorArgumentProjectionsForPlanning,
+  makeIrFnctorAdmissionResolver,
+  makeIrFnctorPropagationAdmissionResolver,
+} from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -2582,6 +2586,16 @@ function planIrOverlay(
       error,
     );
   }
+  const fnctorArgumentProjections =
+    (ctx.fnctorEscapeGate?.approved.size ?? 0) === 0
+      ? []
+      : collectIrFnctorArgumentProjectionsForPlanning(
+          ctx,
+          ast.checker,
+          identityContext,
+          ast.sourceFile,
+          identityMaps.unitTypeMap,
+        );
   // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS is set, request the
   // selector to track every top-level FunctionDeclaration that didn't
   // make it into `funcs` along with the rejection reason. Logged to
@@ -2807,6 +2821,7 @@ function planIrOverlay(
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
       resolveFnctorAdmission,
+      ...(fnctorArgumentProjections.length > 0 ? { fnctorArgumentProjections } : {}),
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,
