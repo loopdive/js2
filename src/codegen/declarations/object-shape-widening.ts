@@ -1106,6 +1106,29 @@ export function collectGrowableObjectLiterals(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  const markRealmGlobalWithTargets = (node: ts.Node): void => {
+    if (ts.isWithStatement(node)) {
+      let target: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) {
+        const declaration = ctx.oracle.valueDeclarationOf(target);
+        if (
+          declaration !== undefined &&
+          ts.isBinaryExpression(declaration) &&
+          declaration.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(declaration.left) &&
+          declaration.left.expression.kind === ts.SyntaxKind.ThisKeyword &&
+          declaration.left.name.text === target.text &&
+          ts.isObjectLiteralExpression(declaration.right)
+        ) {
+          ctx.redeclaredObjectIdentityLiterals.add(declaration.right);
+          ctx.growableObjectLiteralVars.add(target.text);
+        }
+      }
+    }
+    forEachChild(node, markRealmGlobalWithTargets);
+  };
+  markRealmGlobalWithTargets(sourceFile);
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
   collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);

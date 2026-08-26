@@ -261,6 +261,7 @@ import {
 } from "../object-ops.js";
 import {
   BUILTIN_CTOR_NAMES,
+  chainRootIsGrowable,
   emitArrayIsArrayExternrefPredicate,
   emitNullCheckThrow,
   isIrWithOpenObjectTargetReceiver,
@@ -7290,7 +7291,11 @@ function compileCallExpression(
     // method provider instead of resolving the literal's stale static method;
     // this retains both post-with replacement, repeated-read identity, and
     // the full argument list in both lanes.
-    if (!ts.isPrivateIdentifier(propAccess.name) && isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression)) {
+    if (
+      !ts.isPrivateIdentifier(propAccess.name) &&
+      (isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression) ||
+        (ctx.standalone && chainRootIsGrowable(ctx, propAccess.expression)))
+    ) {
       const openTargetCall = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
       if (openTargetCall !== undefined) return openTargetCall;
     }

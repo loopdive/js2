@@ -1435,13 +1435,24 @@ export function compileIdentifierCall(
     const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
+    const bindingInitializer =
+      calleeBindingDecl !== undefined && ts.isVariableDeclaration(calleeBindingDecl)
+        ? calleeBindingDecl.initializer
+        : undefined;
+    const bindingClosureRecord =
+      bindingInitializer !== undefined &&
+      (ts.isFunctionExpression(bindingInitializer) || ts.isArrowFunction(bindingInitializer))
+        ? ctx.closureStructByNode?.get(bindingInitializer)
+        : undefined;
+    const bindingClosureInfo =
+      bindingClosureRecord !== undefined ? ctx.closureInfoByTypeIdx.get(bindingClosureRecord.structTypeIdx) : undefined;
     let closureInfo =
       isLocallyShadowed ||
       nestedBindingVisible ||
       calleeIsParameterBinding ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
-        : ctx.closureMap.get(funcName);
+        : (bindingClosureInfo ?? ctx.closureMap.get(funcName));
 
     if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
