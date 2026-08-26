@@ -1,10 +1,10 @@
 ---
 id: 2765
 title: "instanceof hard residuals: Function.prototype getter / WasmGC array proto-chain + undeclared-global ReferenceError"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-06-28
-updated: 2026-07-02
+updated: 2026-08-26
 priority: low
 horizon: l
 feasibility: hard
@@ -92,3 +92,20 @@ Re-verified against current main (baseline jsonl + probes):
   read throws — the two must be designed together).
 
 This issue now tracks ONLY cluster 5.
+
+## ES2015 closeout correction (2026-08-26)
+
+Cluster 4 is observable again once #4762 prevents the Test262 realm canary from
+invoking the poisoned `Function.prototype.prototype` getter during cleanup.
+The exact maintained host run `20260826-232826` no longer times out, but
+`prototype-getter-with-object.js` fails because `[] instanceof
+Function.prototype` is false after the getter runs. The authoritative
+standalone run `20260826-194014` reports the same semantic failure. The throwing
+and primitive sibling controls pass in the current host lane; standalone still
+fails the throwing-object sibling because the expected abrupt completion is
+lost.
+
+Cluster 4 is therefore reopened. Its next checkpoint must pin getter count,
+abrupt propagation, and the Array prototype-chain result in both lanes; it may
+not restore the old cleanup timeout or treat a canary recycle as semantic
+success.

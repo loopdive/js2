@@ -1,7 +1,7 @@
 ---
 id: 4762
 title: "ES2015 host Test262 residual compile timeouts"
-status: in_progress
+status: done
 created: 2026-08-26
 updated: 2026-08-26
 priority: critical
@@ -90,3 +90,34 @@ Artifacts:
 The #4758 worker-lifecycle fix therefore closes two of this issue's original
 six rows. The implementation slice now owns exactly the remaining 4/6 rows;
 the two newly passing rows remain regression controls.
+
+## Mutation-safe realm-canary checkpoint
+
+Tracing localized the remaining four host timeouts after test execution, in
+the realm-canary comparison and cleanup path. The canary read
+`constructor.prototype` directly, which invoked an inherited accessor after
+the `instanceof` tests installed `Function.prototype.prototype`. Its drift
+arrays also used inherited numeric writes, spread, and `filter`, all observable
+after tests mutate Array intrinsics.
+
+`scripts/test262-worker.mjs` now reads only own data descriptors for constructor
+prototype snapshots, appends drift entries with `Object.defineProperty`, and
+combines/filters drift through indexed loops. No timeout, retry, filter, fixture,
+or skip policy changed.
+
+Scoped maintained-runner host run `20260826-233131` on the final combined head and exact same six paths
+produced **4 pass / 2 fail / 0 compile error / 0 compile timeout / 0 skip**:
+
+- pass: `prototype-getter-with-object-throws.js`,
+  `prototype-getter-with-primitive.js`, `for-in/head-lhs-let.js`, and
+  `Array/prototype/Symbol.iterator.js`;
+- fail: `prototype-getter-with-object.js` (getter/prototype-chain semantics,
+  handed back to #2765) and `Set/set-get-add-method-failure.js` (abrupt Set
+  adder lookup/call semantics, handed to #4763).
+
+Artifacts are
+`benchmarks/results/test262-report-20260826-233131.json` and
+`benchmarks/results/test262-results-20260826-233131.jsonl`. The authoritative standalone baseline has 3/6 pass and 3/6 fail, with
+zero timeout: the object and throwing-object `instanceof` rows plus the Set row
+remain semantic failures there. This issue's timeout objective is complete;
+the explicit semantic handoffs remain open.
