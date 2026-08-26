@@ -193,7 +193,11 @@ import {
   type IrCountedStringAppendLoweringPlan,
   type PreparedCountedStringAppendReceipt,
 } from "./ast-lowering-plans.js";
-import { digestIrInstructions } from "./instruction-digest.js";
+import {
+  associateFinalIrCountedStringAppendSites,
+  collectFinalIrCountedStringAppendInstructions,
+  requireValidPreparedCountedStringAppendReceipt,
+} from "./counted-string-append-provenance.js";
 import {
   irGlobalBindingKey,
   irSourceGlobalRef,
@@ -3429,53 +3433,44 @@ export function compileIrPathFunctions(
     }
   }
 
-  const countedReceiptsByArtifact = new Map<IrUnitId, readonly PreparedCountedStringAppendReceipt[]>();
-  for (const patch of pendingPatches) {
-    if (failedOwners.has(patch.entry.terminalOwnerUnitId) || !patch.entry.countedStringAppendPlans?.length) continue;
-    if (patch.entry.artifactUnitId !== patch.entry.terminalOwnerUnitId) {
+  const successfulPatches = pendingPatches.filter((patch) => !failedOwners.has(patch.entry.terminalOwnerUnitId));
+  const authoritativeCountedPlans = [...(loweringPlans?.countedStringAppends?.values() ?? [])];
+  for (const patch of successfulPatches) {
+    if (
+      patch.entry.countedStringAppendPlans?.length &&
+      patch.entry.artifactUnitId !== patch.entry.terminalOwnerUnitId
+    ) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
         `counted-string plans cannot attach to synthetic artifact ${patch.entry.artifactUnitId}`,
       );
     }
-    const repeats: Extract<IrInstr, { kind: "string.repeat" }>[] = [];
-    const finalInstructions = [
-      ...patch.entry.fn.blocks.flatMap((block) => block.instrs),
-      ...(patch.entry.fn.asyncPlan?.states.flatMap((state) => state.body) ?? []),
-    ];
-    for (const instr of finalInstructions) {
-      forEachInstrDeep(instr, (nested) => {
-        if (nested.kind === "string.repeat") repeats.push(nested);
-      });
-    }
-    const expectedRepeatPlans = patch.entry.countedStringAppendPlans.filter((plan) => plan.syntaxPlan.tripCount >= 2);
-    if (
-      repeats.length !== expectedRepeatPlans.length ||
-      repeats.some(
-        (repeat, index) =>
-          !repeat.provider ||
-          !sameIrCallableBinding(repeat.provider.binding, expectedRepeatPlans[index]!.provider.binding),
-      )
-    ) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `counted-string provider/final-instruction census drift for ${patch.entry.artifactUnitId}`,
-      );
-    }
-    const finalInstructionDigest = digestIrInstructions(finalInstructions);
-    countedReceiptsByArtifact.set(
-      patch.entry.artifactUnitId,
-      Object.freeze(
-        patch.entry.countedStringAppendPlans.map((plan) => Object.freeze({ plan, finalInstructionDigest })),
-      ),
+  }
+  const observedCountedPlans = successfulPatches.flatMap((patch) => patch.entry.countedStringAppendPlans ?? []);
+  if (
+    observedCountedPlans.length !== authoritativeCountedPlans.length ||
+    authoritativeCountedPlans.some((plan) => !observedCountedPlans.includes(plan)) ||
+    observedCountedPlans.some((plan) => !authoritativeCountedPlans.includes(plan))
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "counted-string authoritative retained-plan/final-artifact census drift",
     );
   }
-
+  const associatedCountedReceipts = associateFinalIrCountedStringAppendSites(
+    authoritativeCountedPlans,
+    successfulPatches.map((patch) => ({
+      artifactUnitId: patch.entry.artifactUnitId,
+      terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
+      instructions: collectFinalIrCountedStringAppendInstructions(patch.entry.fn),
+    })),
+  );
   // Patch only after every artifact lowered successfully. A lifted/clone
   // failure invalidates its whole source owner, including an already-lowered
   // main artifact, so the ledger can never report emitted+fatal for one row.
+  const installedArtifactUnitIds = new Set<IrUnitId>();
   for (const patch of pendingPatches) {
     if (failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
     const replacement = {
@@ -3492,6 +3487,7 @@ export function compileIrPathFunctions(
       patch.existing,
       replacement,
     );
+    installedArtifactUnitIds.add(patch.entry.artifactUnitId);
     settlePreparedDerivedCallable(ctx, patch.entry, installed, unitCallableSlots.get(patch.entry.artifactUnitId));
     compiled.push(patch.entry.name);
     compiledArtifactEvidence.push({
@@ -3507,8 +3503,18 @@ export function compileIrPathFunctions(
     if (patch.entry.artifactUnitId === patch.entry.terminalOwnerUnitId) {
       compiledOwners.push(patch.entry.ownerName);
     }
-    preparedCountedStringAppendReceipts.push(...(countedReceiptsByArtifact.get(patch.entry.artifactUnitId) ?? []));
   }
+  for (const receipt of associatedCountedReceipts) {
+    const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+    if (!installedArtifactUnitIds.has(identity.ownerUnitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `counted-string receipt ${receipt.siteId} has no installed exact terminal artifact`,
+      );
+    }
+  }
+  preparedCountedStringAppendReceipts.push(...associatedCountedReceipts);
 
   // (#3551) Stub orphaned empty slots. Two slot families can be stranded
   // BODYLESS when their owner fails after allocation (at lower time or via
@@ -3568,7 +3574,9 @@ export function compileIrPathFunctions(
         retainedCompiledOwners,
         failures.terminalFailureEvents.filter((event) => event.unitId !== owner.unitId),
         retainedCompiledArtifacts,
-        preparedCountedStringAppendReceipts.filter((receipt) => receipt.plan.ownerUnitId !== owner.unitId),
+        preparedCountedStringAppendReceipts.filter(
+          (receipt) => requireValidPreparedCountedStringAppendReceipt(receipt).ownerUnitId !== owner.unitId,
+        ),
       );
     }
   }

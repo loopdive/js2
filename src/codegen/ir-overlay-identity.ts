@@ -27,6 +27,7 @@ import {
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import { IR_STRING_REPEAT_FN } from "../ir/string-runtime.js";
+import { createIrCountedStringAppendSiteId } from "../ir/counted-string-append-provenance.js";
 import {
   buildIrUnitTypeMap,
   projectIrUnitTypeMapToLegacy,
@@ -367,11 +368,18 @@ export function projectIrIntegrationLoweringPlans(
         mismatch(`counted-string loop for ${ownerUnitId} was planned more than once`);
       }
       const sourceFile = syntaxPlan.sourceFile;
+      const sourceId = requireIrPlanningSourceId(plan.identityPlan.identityContext, sourceFile);
       countedStringAppends.set(
         syntaxPlan.loop,
         Object.freeze({
           ownerUnitId,
-          sourceId: requireIrPlanningSourceId(plan.identityPlan.identityContext, sourceFile),
+          sourceId,
+          siteId: createIrCountedStringAppendSiteId({
+            sourceId,
+            ownerUnitId,
+            loopStart: syntaxPlan.loop.getStart(sourceFile),
+            loopEnd: syntaxPlan.loop.getEnd(),
+          }),
           sourceFile,
           syntaxPlan,
           provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),

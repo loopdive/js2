@@ -65,10 +65,15 @@ import {
   type IrDirectCallTarget,
   type PreparedCountedStringAppendReceipt,
 } from "../ast-lowering-plans.js";
-import { irIntrinsicFuncRef, irUnitFuncRef, sameIrCallableBinding } from "../callable-bindings.js";
+import {
+  associateFinalIrCountedStringAppendSites,
+  collectFinalIrCountedStringAppendInstructions,
+  createIrCountedStringAppendSiteId,
+  requireValidPreparedCountedStringAppendReceipt,
+} from "../counted-string-append-provenance.js";
+import { irIntrinsicFuncRef, irUnitFuncRef } from "../callable-bindings.js";
 import { attachIrStringSupport } from "../string-support.js";
 import { planCountedStringAppend } from "../analysis/counted-string-append.js";
-import { digestIrInstructions } from "../instruction-digest.js";
 import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
 import { AllocSiteRegistry } from "../alloc-registry.js";
 import {
@@ -446,11 +451,18 @@ function planLinearIrOverlay(
           `linear-ir: counted-string plan for ${ownerUnitId} lost exact loop/source identity`,
         );
       }
+      const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
       countedStringAppends.set(
         syntaxPlan.loop,
         Object.freeze({
           ownerUnitId,
-          sourceId: requireIrPlanningSourceId(identityContext, sourceFile),
+          sourceId,
+          siteId: createIrCountedStringAppendSiteId({
+            sourceId,
+            ownerUnitId,
+            loopStart: syntaxPlan.loop.getStart(sourceFile),
+            loopEnd: syntaxPlan.loop.getEnd(),
+          }),
           sourceFile,
           syntaxPlan,
           provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
@@ -694,15 +706,6 @@ function prepareLinearStringRepeatFunctions(
       "linear-ir: repeat reservation receipt exists without a requiring counted-string plan",
     );
   }
-  if (!usesRepeat) {
-    if (prepared.requiresStringRepeat) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        "linear-ir: counted-string preparation lost its final string.repeat instruction",
-      );
-    }
-  }
   if (usesRepeat && !prepared.reservationReceipt) {
     const reservation = linearStringRepeatReservation(ctx.mod);
     if (!reservation) throw new Error("linear-ir: string.repeat provider was not reserved before user slots");
@@ -745,49 +748,14 @@ function prepareLinearStringRepeatFunctions(
       );
     }
   }
-  const receipts: PreparedCountedStringAppendReceipt[] = [];
-  const observedPlanOwners = new Set<IrUnitId>();
-  for (const fn of providerBoundFunctions) {
-    const expectedPlans = expectedPlansByUnitId.get(fn.unitId) ?? [];
-    if (expectedPlans.length === 0) continue;
-    observedPlanOwners.add(fn.unitId);
-    const finalInstructions = [
-      ...fn.blocks.flatMap((block) => block.instrs),
-      ...(fn.asyncPlan?.states.flatMap((state) => state.body) ?? []),
-    ];
-    const repeats: Extract<IrInstr, { kind: "string.repeat" }>[] = [];
-    for (const instr of finalInstructions) {
-      forEachInstrDeep(instr, (nested) => {
-        if (nested.kind === "string.repeat") repeats.push(nested);
-      });
-    }
-    const expectedRepeatPlans = expectedPlans.filter((plan) => plan.syntaxPlan.tripCount >= 2);
-    if (
-      repeats.length !== expectedRepeatPlans.length ||
-      repeats.some(
-        (repeat, index) =>
-          !repeat.provider ||
-          !sameIrCallableBinding(repeat.provider.binding, expectedRepeatPlans[index]!.provider.binding),
-      )
-    ) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `linear-ir: counted-string provider/final-instruction census drift for ${fn.unitId}`,
-      );
-    }
-    const finalInstructionDigest = digestIrInstructions(finalInstructions);
-    for (const plan of expectedPlans) receipts.push(Object.freeze({ plan, finalInstructionDigest }));
-  }
-  for (const ownerUnitId of expectedPlansByUnitId.keys()) {
-    if (!observedPlanOwners.has(ownerUnitId)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `linear-ir: counted-string owner ${ownerUnitId} did not reach final preparation`,
-      );
-    }
-  }
+  const receipts = associateFinalIrCountedStringAppendSites(
+    [...prepared.countedStringAppends.values()],
+    providerBoundFunctions.map((fn) => ({
+      artifactUnitId: fn.unitId,
+      terminalOwnerUnitId: fn.unitId,
+      instructions: collectFinalIrCountedStringAppendInstructions(fn),
+    })),
+  );
   return { functions: providerBoundFunctions, receipts: Object.freeze(receipts) };
 }
 
@@ -1199,11 +1167,12 @@ export function compileLinearIrFunctions(
 
   const compiledOwnerUnitIds = new Set(funcs.keys());
   for (const receipt of preparedCountedStringAppendReceiptCandidates) {
-    if (!compiledOwnerUnitIds.has(receipt.plan.ownerUnitId)) {
+    const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+    if (!compiledOwnerUnitIds.has(identity.ownerUnitId)) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "lower",
-        `linear-ir: prepared counted-string receipt has no compiled owner ${receipt.plan.ownerUnitId}`,
+        `linear-ir: prepared counted-string receipt has no compiled owner ${identity.ownerUnitId}`,
       );
     }
   }

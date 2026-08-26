@@ -22,8 +22,10 @@ import { AllocSiteRegistry } from "../src/ir/alloc-registry.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import { verifyIrBackendLegality } from "../src/ir/backend/legality.js";
+import { asAsyncStateId, canonicalPromiseAbi, type IrAsyncPlan } from "../src/ir/async-plan.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
 import { irIntrinsicFuncRef } from "../src/ir/callable-bindings.js";
+import { createIrCountedStringAppendSiteId } from "../src/ir/counted-string-append-provenance.js";
 import { widenNonDefaultableTypes } from "../src/compiler/output.js";
 import { digestIrInstructions } from "../src/ir/instruction-digest.js";
 import { emitBinary } from "../src/emit/binary.js";
@@ -43,13 +45,25 @@ const identities = createTestIrFunctionIdentityFactory("issue-3518-string-repeat
 const STRING: IrType = { kind: "string" };
 const F64: IrType = irVal({ kind: "f64" });
 
-function repeatFunction(encodingEvidence: "ascii" | "utf8-guaranteed" | "wtf16" = "ascii"): IrFunction {
+function repeatFunction(
+  encodingEvidence: "ascii" | "utf8-guaranteed" | "wtf16" = "ascii",
+  withCountedSite = false,
+): IrFunction {
   const registry = new AllocSiteRegistry();
-  const builder = new IrFunctionBuilder(identities.next(`repeat-${encodingEvidence}`), [STRING], false, registry);
+  const identity = identities.next(`repeat-${encodingEvidence}`);
+  const builder = new IrFunctionBuilder(identity, [STRING], false, registry);
   const value = builder.addParam("value", STRING);
   const count = builder.addParam("count", F64);
   builder.openBlock();
-  const result = builder.emitStringRepeat(value, count, encodingEvidence);
+  const countedStringAppendSite = withCountedSite
+    ? createIrCountedStringAppendSiteId({
+        sourceId: identities.sourceId,
+        ownerUnitId: identity.unitId,
+        loopStart: 17,
+        loopEnd: 43,
+      })
+    : undefined;
+  const result = builder.emitStringRepeat(value, count, encodingEvidence, countedStringAppendSite);
   builder.terminate({ kind: "return", values: [result] });
   return attachIrStringSupport(builder.finish(), {
     storageForConst: () => undefined,
@@ -120,7 +134,7 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
   });
 
   it("builds verifier-clean allocation/provider evidence and rejects tampering", () => {
-    const fn = repeatFunction();
+    const fn = repeatFunction("ascii", true);
     const node = repeatNode(fn);
     expect(node).toMatchObject({
       kind: "string.repeat",
@@ -129,6 +143,7 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
       resultType: STRING,
     });
     expect(node.alloc).toBeDefined();
+    expect(node.countedStringAppendSite).toBeDefined();
     expect(verifyIrFunction(fn)).toEqual([]);
 
     const wrongCount: IrFunction = {
@@ -146,6 +161,126 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
       ],
     };
     expect(verifyIrFunction(wrongProvider).some((error) => /canonical.*provider/.test(error.message))).toBe(true);
+
+    const malformedSite: IrFunction = {
+      ...fn,
+      blocks: [
+        {
+          ...fn.blocks[0]!,
+          instrs: [
+            {
+              ...node,
+              countedStringAppendSite: `${node.countedStringAppendSite}:suffix` as NonNullable<
+                typeof node.countedStringAppendSite
+              >,
+            },
+          ],
+        },
+      ],
+    };
+    expect(verifyIrFunction(malformedSite).some((error) => /malformed or foreign-owner/.test(error.message))).toBe(
+      true,
+    );
+
+    const foreignIdentity = identities.next("foreign-repeat-owner");
+    const foreignSite = createIrCountedStringAppendSiteId({
+      sourceId: identities.sourceId,
+      ownerUnitId: foreignIdentity.unitId,
+      loopStart: 17,
+      loopEnd: 43,
+    });
+    const foreignOwnerSite: IrFunction = {
+      ...fn,
+      blocks: [{ ...fn.blocks[0]!, instrs: [{ ...node, countedStringAppendSite: foreignSite }] }],
+    };
+    expect(verifyIrFunction(foreignOwnerSite).some((error) => /malformed or foreign-owner/.test(error.message))).toBe(
+      true,
+    );
+  });
+
+  it("authenticates counted provenance inside semantic async state bodies", () => {
+    const base = repeatFunction("ascii", true);
+    const node = repeatNode(base);
+    if (node.result === null) throw new Error("fixture lost string.repeat result");
+    const repeatResult = node.result;
+    const stateId = asAsyncStateId(0);
+    const asyncPlan: IrAsyncPlan = {
+      schemaVersion: 1,
+      ownerUnitId: base.unitId,
+      kind: "async-function",
+      abi: canonicalPromiseAbi(STRING),
+      entry: stateId,
+      params: base.params.map(({ value, type }) => ({ value, type })),
+      values: [...base.params.map(({ value, type }) => ({ value, type })), { value: repeatResult, type: STRING }],
+      spills: [],
+      states: [{ id: stateId, body: [node], terminator: { kind: "resolve", value: repeatResult } }],
+      handlers: [],
+      runtimeIntents: ["promise.capability.create", "promise.settle.fulfill"],
+    };
+    const asyncFn: IrFunction = {
+      ...base,
+      funcKind: "async",
+      blocks: [
+        {
+          ...base.blocks[0]!,
+          instrs: [],
+          terminator: { kind: "unreachable" },
+        },
+      ],
+      asyncPlan,
+    };
+    expect(verifyIrFunction(asyncFn)).toEqual([]);
+
+    const foreignIdentity = identities.next("async-foreign-repeat-owner");
+    const foreignSite = createIrCountedStringAppendSiteId({
+      sourceId: identities.sourceId,
+      ownerUnitId: foreignIdentity.unitId,
+      loopStart: 17,
+      loopEnd: 43,
+    });
+    for (const countedStringAppendSite of [
+      `${node.countedStringAppendSite}:suffix` as NonNullable<typeof node.countedStringAppendSite>,
+      foreignSite,
+    ]) {
+      const tampered: IrFunction = {
+        ...asyncFn,
+        asyncPlan: {
+          ...asyncPlan,
+          states: [
+            {
+              ...asyncPlan.states[0]!,
+              body: [{ ...node, countedStringAppendSite }],
+            },
+          ],
+        },
+      };
+      expect(
+        verifyIrFunction(tampered).some((error) =>
+          /malformed or foreign-owner counted-string provenance/.test(error.message),
+        ),
+      ).toBe(true);
+    }
+
+    const runtimeTampered: IrFunction = {
+      ...asyncFn,
+      asyncRuntime: {
+        kind: "standalone-native-wasmgc",
+        adapters: [],
+        states: [
+          {
+            ...asyncPlan.states[0]!,
+            body: [{ ...node, countedStringAppendSite: foreignSite }],
+          },
+        ],
+      },
+    };
+    expect(
+      verifyIrFunction(runtimeTampered).some((error) =>
+        /^asyncRuntime state 0: string\.repeat carries malformed or foreign-owner counted-string provenance$/.test(
+          error.message,
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("is never DCE'd or reordered as a pure allocation", () => {
@@ -188,7 +323,8 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
   });
 
   it("preserves provider/evidence through cloning and detects every semantic digest tamper", () => {
-    const node = repeatNode(repeatFunction());
+    const fn = repeatFunction("ascii", true);
+    const node = repeatNode(fn);
     const renamed = renameInstrOperands(node, new Map([[node.value, node.count]]));
     expect(renamed).toMatchObject({
       kind: "string.repeat",
@@ -197,6 +333,55 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
       provider: node.provider,
       encodingEvidence: node.encodingEvidence,
       alloc: node.alloc,
+      countedStringAppendSite: node.countedStringAppendSite,
+    });
+
+    const unpreparedNested = { ...node, provider: undefined };
+    const nestedFn: IrFunction = {
+      ...fn,
+      resultTypes: [],
+      blocks: [
+        {
+          ...fn.blocks[0]!,
+          instrs: [
+            {
+              kind: "if.stmt",
+              cond: node.count,
+              then: [unpreparedNested],
+              else: [],
+              result: null,
+              resultType: null,
+            },
+          ],
+          terminator: { kind: "return", values: [] },
+        },
+      ],
+    };
+    const preparedNested = attachIrStringSupport(nestedFn, {
+      storageForConst: () => undefined,
+      providerForLength: () => undefined,
+    });
+    const conditional = preparedNested.blocks[0]!.instrs[0]!;
+    expect(conditional.kind).toBe("if.stmt");
+    if (conditional.kind !== "if.stmt") throw new Error("fixture lost nested string.repeat");
+    expect(conditional.then[0]).toMatchObject({
+      kind: "string.repeat",
+      provider: node.provider,
+      countedStringAppendSite: node.countedStringAppendSite,
+    });
+
+    const changedSite = createIrCountedStringAppendSiteId({
+      sourceId: identities.sourceId,
+      ownerUnitId: fn.unitId,
+      loopStart: 18,
+      loopEnd: 44,
+    });
+    const foreignIdentity = identities.next("digest-foreign-owner");
+    const borrowedSite = createIrCountedStringAppendSiteId({
+      sourceId: identities.sourceId,
+      ownerUnitId: foreignIdentity.unitId,
+      loopStart: 17,
+      loopEnd: 43,
     });
     const digest = digestIrInstructions([node]);
     for (const tampered of [
@@ -204,6 +389,9 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
       { ...node, encodingEvidence: "wtf16" as const },
       { ...node, provider: irIntrinsicFuncRef("__tampered_repeat_provider") },
       { ...node, alloc: undefined },
+      { ...node, countedStringAppendSite: undefined },
+      { ...node, countedStringAppendSite: changedSite },
+      { ...node, countedStringAppendSite: borrowedSite },
     ]) {
       expect(digestIrInstructions([tampered])).not.toBe(digest);
     }
