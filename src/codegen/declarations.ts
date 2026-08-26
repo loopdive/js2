@@ -32,6 +32,7 @@ import {
   collectOrRecordUnnamedExpressionStatement,
   createsGlobalObjectBinding,
   isAssignmentOperator,
+  isSynchronousTopLevelAwaitRecovery,
 } from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
@@ -2986,7 +2987,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         ctx.moduleInitStatements.push(stmt);
         continue;
       }
-      if (ts.isNewExpression(expr) || ts.isCallExpression(expr)) {
+      if (
+        ts.isNewExpression(expr) ||
+        ts.isCallExpression(expr) ||
+        (ts.isTaggedTemplateExpression(expr) && !isSynchronousTopLevelAwaitRecovery(expr))
+      ) {
         ctx.moduleInitStatements.push(stmt);
         continue;
       }

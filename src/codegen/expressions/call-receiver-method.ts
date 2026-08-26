@@ -158,6 +158,7 @@ import {
   emitKnownRestMethodArguments,
   knownMethodRestInfo,
 } from "./object-method-rest-abi.js";
+import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -1623,6 +1624,42 @@ export function compileReceiverMethodCall(
     let funcIdx = hasReceiverMember
       ? ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind))
       : undefined; // (#1983)
+    if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
+      // Route the dynamic-prototype object-literal method through
+      // compileCallablePropertyCall, which installs its actual call-time
+      // receiver. The static `__anon_*_method` stub cannot do that.
+      funcIdx = undefined;
+    }
+    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexInline" || methodName === "lex")) {
+      console.error(
+        "[marked-call-receiver]",
+        fctx.name,
+        receiverClassName,
+        methodName,
+        "construct",
+        receiverIsClassObject,
+        "mappedStaticReceiver",
+        mappedStaticReceiver,
+        "receiverClassName",
+        receiverClassName,
+        "fullName",
+        fullName,
+        "hasStatic",
+        ctx.staticMethodSet.has(fullName),
+        "hasInstance",
+        ctx.classMethodSet.has(fullName),
+        "key",
+        classMemberFuncKey(ctx, fullName, receiverMemberKind),
+        "funcIdx",
+        funcIdx,
+        "base",
+        ctx.funcMap.get(fullName),
+        "staticKey",
+        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")),
+        "instanceKey",
+        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
+      );
+    }
     // Walk inheritance chain to find the method in a parent class
     if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
       let ancestor = ctx.classParentMap.get(receiverClassName);
@@ -1990,13 +2027,18 @@ export function compileReceiverMethodCall(
       const restInfoNn = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
       const handledRestNn =
         restInfoNn !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNn, 1);
+      const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
       const handledSpreadNn =
         !handledRestNn && methodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
       if (handledSpreadNn) {
         compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
       } else if (!handledRestNn) {
         for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+          const sourceParam =
+            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+          const forceArrayLiteralVec =
+            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1], forceArrayLiteralVec); // +1 to skip self
         }
       }
       if (!handledRestNn && !handledSpreadNn && expr.arguments.length > methodParamCount) {
@@ -2050,6 +2092,9 @@ export function compileReceiverMethodCall(
       const methodName = propAccess.name.text;
       const fullName = `${structTypeName}_${methodName}`;
       let funcIdx = ctx.funcMap.get(fullName);
+      if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
+        funcIdx = undefined;
+      }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);

@@ -118,6 +118,14 @@ export function ensureProxyRuntime(
     { op: "call", funcIdx: typeErrorCtorIdx },
     { op: "throw", tagIdx: exnTagIdx },
   ];
+  const getTrapNotCallableMsg = "Proxy get trap is not callable";
+  addStringConstantGlobal(ctx, getTrapNotCallableMsg);
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const throwGetTrapNotCallable = (): Instr[] => [
+    ...stringConstantExternrefInstrs(ctx, getTrapNotCallableMsg),
+    { op: "call", funcIdx: typeErrorCtorIdx },
+    { op: "throw", tagIdx: exnTagIdx },
+  ];
 
   // Reserve the open-`any` closure-call bridge `__apply_closure` (filled at
   // FINALIZE by `fillApplyClosure`). The proxy trap-invoke drivers
@@ -336,8 +344,19 @@ export function ensureProxyRuntime(
                 ...(trapFieldIdx === TRAP_GET ? ([{ op: "local.get", index: 2 }] satisfies Instr[]) : []),
                 { op: "call", funcIdx: forwardIdx },
               ],
-        // trap present → invoke it through the closure-call bridge driver.
-        else: trapArm,
+        // trap present → GetMethod requires a callable trap before invoking it.
+        // The other Proxy trap slices retain their existing deferred invariant
+        // posture; this check is the bounded ES2015 [[Get]] distinction (#4721).
+        else:
+          trapFieldIdx === TRAP_GET && typeofFunctionIdx !== undefined
+            ? [
+                { op: "local.get", index: 4 },
+                { op: "call", funcIdx: typeofFunctionIdx },
+                { op: "i32.eqz" },
+                { op: "if", blockType: { kind: "empty" }, then: throwGetTrapNotCallable() },
+                ...trapArm,
+              ]
+            : trapArm,
       },
     ];
     return body;

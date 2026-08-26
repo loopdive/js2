@@ -7,10 +7,14 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { emitLazyNativeProtoGet } from "../native-proto.js";
+import { tryEnsureNativeProtoBrand } from "../property-access.js";
 import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
+
+const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
 const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
   "Object",
@@ -55,6 +59,26 @@ function isTopLevelThis(expr: ts.Expression): boolean {
   if (expr.kind !== ts.SyntaxKind.ThisKeyword) return false;
   for (let parent = expr.parent; parent; parent = parent.parent) {
     if (ts.isFunctionLike(parent)) return false;
+  }
+  return true;
+}
+
+/** Emit the identity-stable standalone prototype for a native collection. */
+export function tryNativeCollectionGpo(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  argTsType: ts.Type,
+): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  const collectionName = argTsType.getSymbol()?.name;
+  if (collectionName === undefined || !NATIVE_COLLECTION_NAMES.has(collectionName)) return false;
+
+  const argType = compileExpression(ctx, fctx, arg);
+  if (argType) fctx.body.push({ op: "drop" });
+  const brand = tryEnsureNativeProtoBrand(ctx, collectionName);
+  if (brand === undefined || !emitLazyNativeProtoGet(ctx, fctx, brand)) {
+    fctx.body.push({ op: "ref.null.extern" });
   }
   return true;
 }

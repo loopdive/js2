@@ -174,7 +174,7 @@ import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
-import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
+import { buildObjectEnumerationHelpers, fillObjectAssignProxySourceArm } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
@@ -1123,6 +1123,44 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // Look up an already-emitted native string helper.
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals")!;
+  // A tagged-template callback written in JavaScript commonly leaves its
+  // `strings` parameter as `any`, so its `.raw` read reaches this dynamic
+  // property helper rather than the statically typed vec dispatcher. The
+  // template object is a WasmGC subtype of the ordinary vec; recognize only
+  // the exact `raw` key and return the extra field when the runtime value has
+  // that subtype. Other keys and other receivers continue through the normal
+  // object/vec/closure lookup ladder.
+  const templateVecTypeIdx = ctx.templateVecTypeIdx;
+  const templateRawGetArm: Instr[] =
+    templateVecTypeIdx >= 0 && strFlattenIdx !== undefined && strEqualsIdx !== undefined
+      ? [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+          { op: "call", funcIdx: strFlattenIdx },
+          ...nativeStringLiteralInstrs(ctx, "raw"),
+          { op: "call", funcIdx: strEqualsIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 4 },
+              { op: "ref.test", typeIdx: templateVecTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 4 },
+                  { op: "ref.cast", typeIdx: templateVecTypeIdx },
+                  { op: "struct.get", typeIdx: templateVecTypeIdx, fieldIdx: 2 },
+                  { op: "extern.convert_any" },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+        ]
+      : [];
 
   // ── (#2896) Reserved builtin-fn metadata natives (standalone only) ────────
   //
@@ -2031,6 +2069,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 4 },
+      ...templateRawGetArm,
       // Plain `$Object` starts its walk at itself. An approved native fnctor
       // instance starts at its per-fnctor prototype `$Object`, but param 0 stays
       // the ORIGINAL instance so an accessor found on that prototype receives
@@ -4975,6 +5014,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propEntryTypeIdx,
     propMapTypeIdx,
     objectTypeIdx,
+    proxyTypeIdx,
+    proxyTrapsTypeIdx,
     objRefNull,
     propMapRef,
     boundaryObjectGetPrototypeIdx,
@@ -6103,6 +6144,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // them when a trap is absent) and only adds DEFINED functions, so no index
   // shift (same invariant as the rest of this runtime).
   ensureProxyRuntime(ctx, types, registerNative);
+
+  // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
+  // arm now that descriptor helpers and Proxy dispatch front-guards exist.
+  fillObjectAssignProxySourceArm(ctx, types.proxyTypeIdx, types.objectTypeIdx);
 
   // (#4223) Mint the primitive-wrapper `.constructor` carriers, when the module
   // was pre-scanned as reading a `constructor` property. Hung HERE — the tail of

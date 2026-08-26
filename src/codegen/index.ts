@@ -4713,15 +4713,18 @@ export function generateModule(
       ctx.topLevelFunctionNames.add(stmt.name.text);
     }
   }
-  // (#2179) Pre-scan for `delete <member>` so `any`-receiver property reads can
+  // (#2179/#4745) Pre-scan for `delete <member>` and Reflect.deleteProperty so
+  // `any`-receiver property reads can
   // be routed through the tombstone-aware `__extern_get` host helper instead of
   // the inline struct.get fast-path (which reads the live field and ignores the
   // runtime delete tombstone). Delete-free modules keep byte-identical output.
   // (#4187) ONE walk answers both: the #2179 boolean above and the receiver
-  // names the standalone hasOwnProperty const-fold gate needs (it only diverges
+  // names the hasOwnProperty const-fold gate needs (it only diverges
   // from runtime state for a receiver that is both defineProperty-widened and
-  // deleted from). Only standalone reads names; collecting forfeits the boolean
-  // short-circuit (+3,847 on #3437), so host mode keeps main's exact traversal.
+  // deleted from). Host modules containing Reflect.deleteProperty also collect
+  // receiver names so closed-struct hasOwnProperty folds consult the host
+  // tombstone sidecar. Other host modules still ask for the boolean alone and
+  // keep main's exact traversal.
   // (#4223) Demand gate for the primitive-wrapper `.constructor` carriers. Set
   // BEFORE anything can call `ensureObjectRuntime` (which is where the mint
   // hangs), and only for standalone — the gc/host lane keeps its genuine
@@ -4730,7 +4733,9 @@ export function generateModule(
   // (#4232) Narrower gate for the ordinary-object arm alone — see
   // `moduleMentionsObjectIdentifier` for why it cannot ride the flag above.
   ctx.plainCtorCarrierDemanded = ctx.wrapperCtorCarrierDemanded && moduleMentionsObjectIdentifier(ast.sourceFile);
-  const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, ctx.standalone === true);
+  const collectMemberDeleteReceivers =
+    ctx.standalone === true || ast.sourceFile.text.includes("Reflect.deleteProperty");
+  const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, collectMemberDeleteReceivers);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
   ctx.deletedBuiltinPrototypeMembers = memberDeletes.builtinPrototypeMembers;

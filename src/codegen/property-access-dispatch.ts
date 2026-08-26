@@ -194,6 +194,7 @@ import {
 } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`; (#4484) `<Builtin>.constructor`
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
+import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -3235,14 +3236,10 @@ export function tryNamespaceConstantAndSymbolReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
-  // Handle .raw on tagged template strings arrays (template vec struct)
-  // The strings parameter is typed as a base vec, but at runtime it's a
-  // template vec (subtype with an extra raw field). We ref.cast to the
-  // template vec type and then struct.get field 2.
   if (propName === "raw" && ctx.templateVecTypeIdx >= 0) {
     const templateVecTypeIdx = ctx.templateVecTypeIdx;
-    // Check if the object is a vec-like type (base vec or template vec)
     let isVecLike = false;
+    let inlineTemplateParam = false;
     if (ts.isIdentifier(expr.expression)) {
       const localIdx = fctx.localMap.get(expr.expression.text);
       if (localIdx !== undefined) {
@@ -3260,6 +3257,8 @@ export function tryNamespaceConstantAndSymbolReads(
           ) {
             isVecLike = true;
           }
+        } else if (localType?.kind === "externref" && isInlineTaggedTemplateParameter(ctx, expr.expression)) {
+          inlineTemplateParam = isVecLike = true;
         }
       }
     }
@@ -3274,10 +3273,8 @@ export function tryNamespaceConstantAndSymbolReads(
       }
     }
     if (isVecLike) {
-      // Compile the object expression, cast to template vec, and get raw field
-      // Guard with ref.test to avoid illegal cast trap if the runtime type
-      // is a base vec (not a template vec with the extra raw field).
-      compileExpression(ctx, fctx, expr.expression);
+      const receiverType = compileExpression(ctx, fctx, expr.expression);
+      if (inlineTemplateParam && receiverType?.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
       const baseVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
       const rawTmp = allocLocal(fctx, `__raw_tmp_${fctx.locals.length}`, { kind: "ref_null", typeIdx: baseVecTypeIdx });
       const rawObj = allocLocal(fctx, `__raw_obj_${fctx.locals.length}`, { kind: "anyref" });

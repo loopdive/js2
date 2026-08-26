@@ -482,11 +482,10 @@ const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
  *      from `buildLazyNativeProtoGetInstrs`, so a brand nobody reads never
  *      pays for its ~15-30 member closures.
  *
- * Symbol-keyed members (`@@<id>` CSV sentinels) are SKIPPED here: the store's
- * key normalizer (`__protoidx_norm_key`) deliberately refuses symbol keys so no
- * user `toString` runs twice, so a symbol entry in the companion would be
- * unreachable. They stay with the syntactic surface; V2-S5 owns the symbol
- * dispatch tier.
+ * Symbol-keyed members (`@@<id>` CSV sentinels) use their boxed well-known
+ * Symbol as the companion key. The proto-index normalizer accepts native Symbol
+ * carriers directly (without property-key coercion), so reads, writes, deletes,
+ * and descriptor probes share the same identity-stable entry.
  *
  * A member whose glue body REFUSES is skipped rather than failing the seeder —
  * the companion is a best-effort own-member view, and a partially populated
@@ -558,7 +557,6 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   for (const rawMember of glue.memberCsv.split(",")) {
     const member = rawMember.trim();
     if (member.length === 0) continue;
-    if (member.startsWith("@@")) continue; // symbol keys do not participate (see doc)
     const kind = glue.memberKind(member);
     // Annex B requires Date.prototype.toGMTString and toUTCString to be the
     // same function object. Seed the alias key with the canonical closure
@@ -585,9 +583,17 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     if (defineIdx === undefined) continue;
 
     const body = seedFctx.body;
-    body.push({ op: "local.get", index: 0 });
-    addStringConstantGlobal(ctx, member);
-    for (const instr of stringConstantExternrefInstrs(ctx, member)) body.push(instr);
+    if (member.startsWith("@@")) {
+      const symbolId = Number(member.slice(2));
+      const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+      if (!Number.isInteger(symbolId) || boxSymbolIdx === undefined) continue;
+      body.push({ op: "local.get", index: 0 });
+      body.push({ op: "i32.const", value: symbolId }, { op: "call", funcIdx: boxSymbolIdx });
+    } else {
+      body.push({ op: "local.get", index: 0 });
+      addStringConstantGlobal(ctx, member);
+      for (const instr of stringConstantExternrefInstrs(ctx, member)) body.push(instr);
+    }
 
     for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, closure)) body.push(instr);
     body.push({ op: "extern.convert_any" });

@@ -1,10 +1,10 @@
 ---
 id: 4535
-title: "three.js: MathUtils module validates but 0/18 tests pass in Wasm, all silently — including trivial clamp/euclideanModulo"
+title: "three.js: MathUtils.damp differs from Node in the final floating result (17/18 pass)"
 status: ready
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-26
 priority: medium
 horizon: m
 feasibility: medium
@@ -19,27 +19,23 @@ files:
   - tests/dogfood/upstream-suite-runner.mjs
 ---
 
-# three.js MathUtils: one validated module, 18 uniform silent failures
+# three.js MathUtils: isolate the remaining `damp` numeric mismatch
 
 ## Problem
 
-The three.js pinned slice (`test/unit/src/math/MathUtils.tests.js`, 18 QUnit
-tests): the single generated module **compiles and validates** (138 KB), all
-18 pass natively, and **0/18 pass in Wasm** — with `wasmError: null` on
-every row (2026-08-16, `a9b20d4c`, matches the npm-compat card).
+The pinned upstream slice (`test/unit/src/math/MathUtils.tests.js`) now compiles,
+validates, and passes **17/18** tests in Wasm. Node passes **18/18**. The earlier
+uniform 0/18 result was a runner-observability defect fixed by the merged
+per-test runner work; it is not the current compiler problem.
 
-Two observations that shape the diagnosis:
+Only `damp` remains. The exact result is:
 
-1. **`clamp` and `euclideanModulo` fail too.** Those bodies are 1–2 lines of
-   pure `Math.min/max` arithmetic. 18/18 uniform failure across trivial and
-   non-trivial bodies points at a *shared* defect — the QUnit
-   assert-adapter, the `runUpstreamTests` export path, or the module's
-   shared prelude — not 18 independent math bugs.
-2. **No error text.** The generic runner's status array comes back all-zero
-   with empty error strings. The in-flight PR #4619 rewrites
-   `upstream-suite-compile-worker.mjs` / `upstream-suite-runner.mjs` to a
-   per-test entry point (`runUpstreamTest(index)`) with real error capture —
-   after it lands, this suite should produce per-test messages for free.
+```text
+number:1.1478562110442545 !== number:1.1478562110337887
+```
+
+This is a real numeric parity failure on the same runtime-owned inputs, not an
+unavailable test or a reason to relax the upstream assertion.
 
 ## Reproduction
 
@@ -49,24 +45,20 @@ node --import tsx tests/dogfood/three-upstream-suite.mjs --json
 
 ## Implementation Plan (Fable; implement per the plan/implement split)
 
-1. **Wait for / rebase on PR #4619** (upstream-suite runner error capture),
-   then re-run — with real error text this issue may reduce to an existing
-   bucket (typeof-on-boxed #4529, assert-shim mismatch, etc.). Do not
-   hand-roll a parallel error-capture mechanism; #4619 already does it.
-2. If #4619's text shows a shared prelude/adapter failure: reduce the QUnit
-   `assert` object flow — the shim passes an `assert` object into each
-   callback (`__upstreamTests[i].body(__qunitAssert)`); a single defect in
-   calling method-on-parameter-object (`assert.ok(...)` where `assert` is a
-   boxed parameter) would fail all 18 uniformly. Cross-check #4123
-   (prototype method on parameter receiver returns null).
-3. Reduce to `.tmp/` probe, fix at the identified compiler site, commit the
-   reduction as `tests/issue-4535.test.ts`.
-4. **Validation gates**: three slice 0/18 → ≥16/18 (record exact); the two
-   sibling QUnit-style suites (webpack, stylelint — same generic runner)
-   re-measured for collateral movement; equivalence green.
+1. Reduce the exact `damp` inputs and record every intermediate value in Node
+   and Wasm, especially the `Math.exp` result, subtraction, multiplication,
+   and final addition.
+2. Determine whether the divergence comes from a generic numeric lowering,
+   evaluation-order, host `Math.exp`, or unintended `f32` conversion boundary.
+3. Fix the generic compiler/runtime path. Do not special-case three.js, change
+   the expected value, precompute the answer, or add a package-only tolerance.
+4. Commit a focused regression as `tests/issue-4535.test.ts`, then re-run the
+   unchanged pinned upstream suite and adjacent numeric/equivalence tests.
 
 ## Acceptance criteria
 
-- [ ] Root cause named with per-test error evidence (post-#4619).
-- [ ] three MathUtils slice ≥ 16/18, residual named.
+- [x] Root cause of the obsolete uniform 0/18 result is named and fixed.
+- [x] The remaining failure is isolated to `MathUtils.damp` at **17/18**.
+- [ ] The exact upstream slice passes **18/18** with unchanged inputs and
+      expectations.
 - [ ] Reduction test committed.

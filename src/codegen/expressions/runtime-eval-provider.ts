@@ -3,7 +3,7 @@
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { ensureAnyHelpers } from "../any-helpers.js";
-import { emitCachedFuncClosureAccess } from "../closures.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
 import { emitBuiltinNamespaceObject } from "../builtin-static-globals.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -217,8 +217,10 @@ function runtimeEvalGlobalBindingNames(ctx: CodegenContext): string[] {
   };
   for (const name of ctx.globalObjectVarBindings ?? []) append(name);
   for (const name of ctx.topLevelFunctionNames) append(name);
-  for (const name of RUNTIME_EVAL_INTRINSIC_GLOBALS) append(name);
-  for (const name of RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS) append(name);
+  if (ctx.standalone) {
+    for (const name of RUNTIME_EVAL_INTRINSIC_GLOBALS) append(name);
+    for (const name of RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS) append(name);
+  }
   return names;
 }
 
@@ -282,12 +284,16 @@ function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
     ctx.funcMap.set(name, funcIdx);
   }
   ctx.runtimeEvalGlobalSyncReserved = true;
-  refreshRuntimeEvalCallableTrampolines(ctx);
+  if (ctx.standalone) refreshRuntimeEvalCallableTrampolines(ctx);
 }
 
-function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: FunctionContext): void {
+function emitRuntimeEvalGlobalBindingPushBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  includeLexicals = true,
+): void {
   const names = runtimeEvalGlobalBindingNames(ctx);
-  const lexicalNames = runtimeEvalGlobalLexicalBindingNames(ctx);
+  const lexicalNames = includeLexicals ? runtimeEvalGlobalLexicalBindingNames(ctx) : [];
   if (names.length === 0 && lexicalNames.length === 0) return;
   if (lexicalNames.length > 0) {
     addStringConstantGlobal(ctx, RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY);
@@ -365,7 +371,7 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
     );
   }
 
-  const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+  const wrapCallableIdx = ctx.standalone ? ensureRuntimeEvalCallableWrapHelper(ctx) : undefined;
   for (const name of names) {
     let valueType: ValType | null = null;
     let needsAotAdapter = false;
@@ -382,7 +388,9 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
           const isOrdinary =
             declaration.asteriskToken === undefined &&
             !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
-          valueType = emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary);
+          valueType = ctx.standalone
+            ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary)
+            : emitFuncRefAsClosure(ctx, fctx, name, funcIdx, isOrdinary);
           needsAotAdapter = true;
         }
       }
@@ -400,7 +408,7 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
         // its carrier in the module global permanently (declarations.ts, #2928).
         // Externref-typed globals only — a typed closure global would reject the
         // store, and its AOT reads are static enough not to need the carrier.
-        if (valueType.kind === "externref") wrapGlobalName = name;
+        if (ctx.standalone && valueType.kind === "externref") wrapGlobalName = name;
       } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name) || RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS.includes(name)) {
         // Provider-originated native Error payloads cross as externrefs. Give
         // this module the structurally canonical `$Error_struct` and register
@@ -421,11 +429,26 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
     }
     if (valueType === null) continue;
     if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
-    if (needsAotAdapter) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+    if (needsAotAdapter) {
+      if (ctx.standalone) {
+        emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+      } else {
+        const wrapIdx = ensureLateImport(
+          ctx,
+          "__wrap_callable_for_host",
+          [{ kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (wrapIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wrap_callable_for_host") ?? wrapIdx });
+        }
+      }
+    }
     const liveWrapGlobalIdx = wrapGlobalName === undefined ? undefined : ctx.moduleGlobals.get(wrapGlobalName);
     if (liveWrapGlobalIdx !== undefined) {
       fctx.body.push(
-        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_WRAP_CALLABLE) ?? wrapCallableIdx },
+        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_WRAP_CALLABLE) ?? wrapCallableIdx! },
         { op: "global.set", index: liveWrapGlobalIdx },
         { op: "global.get", index: liveWrapGlobalIdx },
       );
@@ -541,6 +564,24 @@ export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Func
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
   if (activate) emitRuntimeEvalProviderActive(ctx, fctx, true);
+}
+
+/** Publish AOT script bindings before a captured host `%eval%` can run. */
+export function emitHostEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (ctx.standalone || ctx.wasi) return;
+  reserveRuntimeEvalGlobalBindingSync(ctx);
+  if (!ctx.runtimeEvalGlobalSyncFilled) {
+    const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+    emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx, false);
+    const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
+    if (pushFn) {
+      pushFn.locals = pushFctx.locals;
+      pushFn.body = pushFctx.body;
+    }
+    ctx.runtimeEvalGlobalSyncFilled = true;
+  }
+  const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
+  if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
 }
 
 /** Mark whether carrier calls are executing across the provider boundary. */

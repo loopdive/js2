@@ -536,7 +536,8 @@ function maybeEmitVecLengthGrowth(
 /**
  * Check if the first argument to Object.defineProperty / defineProperties
  * is statically known to be a non-object type (undefined, null, boolean,
- * number, string).  If so, emit `throw TypeError` and return true.
+ * number, string, bigint, or Symbol).  If so, emit `throw TypeError` and
+ * return true.
  *
  * Per ES spec (19.1.2.4 step 1): "If Type(O) is not Object, throw a TypeError."
  */
@@ -557,7 +558,8 @@ export function emitNonObjectArgGuard(
     ts.TypeFlags.BooleanLike |
     ts.TypeFlags.NumberLike |
     ts.TypeFlags.StringLike |
-    ts.TypeFlags.BigIntLike;
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.ESSymbolLike;
 
   if (flags & NON_OBJECT_FLAGS) {
     // Compile the argument for side effects (it might have side effects)
@@ -1278,7 +1280,11 @@ export function compileObjectDefineProperty(
   ) {
     const idxKey = propName ?? (ts.isNumericLiteral(propArg) ? propArg.text : undefined);
     const argIndex = idxKey !== undefined ? Number(idxKey) : NaN;
-    if (Number.isInteger(argIndex) && argIndex >= 0 && argIndex < fctx.mappedArgsInfo.paramCount) {
+    if (
+      Number.isInteger(argIndex) &&
+      argIndex >= 0 &&
+      (argIndex < fctx.mappedArgsInfo.paramCount || getNode || setNode || getExpr || setExpr)
+    ) {
       const info = fctx.mappedArgsInfo;
       const isAccessor =
         getNode !== undefined || setNode !== undefined || getExpr !== undefined || setExpr !== undefined;
@@ -1296,6 +1302,9 @@ export function compileObjectDefineProperty(
       const applyAttributeState = (): void => {
         if (breaksLink) {
           (info.unmappedIndices ??= new Set<number>()).add(argIndex);
+        }
+        if (isAccessor) {
+          (info.accessorIndices ??= new Set<number>()).add(argIndex);
         }
         // (#2667) Track non-configurable / non-writable attribute state so the
         // delete + element-write emitters can apply §10.4.4 semantics for the
@@ -4952,6 +4961,13 @@ export function compilePropertyIntrospection(
       // from the same mechanism. See `scanModuleMemberDeletes`.
       const standaloneDeleteObserved =
         ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
+      // (#4745) Host Reflect.deleteProperty mutates the runtime sidecar, while
+      // a closed-struct hasOwnProperty call would otherwise fold from its
+      // immutable shape. Route that receiver through the host predicate even
+      // when no Object.defineProperty widening is present.
+      const hostReflectDeleteObserved =
+        !ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
+      if (hostReflectDeleteObserved) needsRuntime = true;
       if (!needsRuntime && (!ctx.standalone || standaloneDeleteObserved)) {
         for (const k of ctx.definePropertyReceiverKeys) {
           if (k.startsWith(prefix)) {

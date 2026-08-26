@@ -49,6 +49,22 @@ function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   const parent = outer.parent;
   if ((!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) || parent.arguments === undefined) return false;
 
+  // Object.assign's native and host providers both consume Proxy carriers as
+  // externrefs and deliberately dispatch their MOP operations at runtime. A
+  // source (or target) passed here therefore does not need the nominal target
+  // struct that generic typed consumers require. Keeping that struct would
+  // guarded-cast the actual `$Proxy`/host Proxy to its TypeScript target type,
+  // replace it with null, and skip the getOwnPropertyDescriptor trap entirely.
+  if (
+    ts.isCallExpression(parent) &&
+    ts.isPropertyAccessExpression(parent.expression) &&
+    ts.isIdentifier(parent.expression.expression) &&
+    parent.expression.expression.text === "Object" &&
+    parent.expression.name.text === "assign"
+  ) {
+    return false;
+  }
+
   // This includes argument zero of `.call` / `.apply`, the generic-method
   // receiver that motivated #2615. A member receiver (`p.method()`) is not in
   // the argument list and therefore remains non-escaping.

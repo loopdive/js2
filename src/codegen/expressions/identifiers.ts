@@ -77,6 +77,7 @@ import {
   resolvePromiseSubclassIdentifier,
   tryEmitPromiseSubclassValue,
 } from "./promise-subclass.js";
+import { emitLiveIdentifierGlobalRead, tryEmitAmbientRegistryCollisionRead } from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -88,6 +89,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
+import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
@@ -234,7 +236,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 }
 
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
-function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
+export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
   if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
     const shorthand = (
       ctx.checker as typeof ctx.checker & {
@@ -369,7 +371,11 @@ function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node
  * legitimately resolve cross-file and stay untouched, as do synthetic
  * compiler-minted identifiers (no parent / no source position).
  */
-function moduleGoalReadIsUndeclared(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
+export function moduleGoalIdentifierIsUndeclared(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
   if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
   // (#4249) A direct eval body is parsed as a foreign SourceFile, so its
   // identifiers have no checker symbol and would otherwise look like a
@@ -396,7 +402,7 @@ function moduleGoalReadIsUndeclared(ctx: CodegenContext, fctx: FunctionContext, 
  * - 'throw': access is before declaration in straight-line code — guaranteed TDZ error
  * - 'check': can't determine statically — keep runtime flag check
  */
-function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
+export function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
   // A shorthand property name (`{ value }`) has two symbols in TypeScript:
   // the property being declared and the lexical binding whose value is read.
   // `getSymbolAtLocation(id)` answers the former, whose declaration range is
@@ -805,7 +811,6 @@ function compileCapturedGlobalRead(
   fctx: FunctionContext,
   id: ts.Identifier,
   name: string,
-  capturedIdx: number,
 ): ValType {
   const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
   if (tdzResult === "check") {
@@ -813,9 +818,7 @@ function compileCapturedGlobalRead(
   } else if (tdzResult === "throw") {
     emitStaticTdzThrow(ctx, fctx, id.text);
   }
-  fctx.body.push({ op: "global.get", index: capturedIdx });
-  const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
-  const gType = globalDef?.type ?? { kind: "f64" };
+  const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
   if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
     fctx.body.push({ op: "ref.as_non_null" });
     return { kind: "ref", typeIdx: gType.typeIdx };
@@ -1304,6 +1307,8 @@ function compileIdentifierCore(
     ? compileExactAmbientShadowedModuleBinding(ctx, fctx, id)
     : undefined;
   if (ambientShadowType) return ambientShadowType;
+  const ambientCollisionType = tryEmitAmbientRegistryCollisionRead(ctx, fctx, id, skipRuntimeEvalState);
+  if (ambientCollisionType) return ambientCollisionType;
 
   // (#4618) A class declaration is already represented by its canonical,
   // identity-stable class-object singleton, so it never needs a value-copy
@@ -1347,14 +1352,14 @@ function compileIdentifierCore(
 
   // (#3505) Graph-wide name-keyed registries (capturedGlobals, moduleGlobals,
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
-  // for THIS module's environment record — see moduleGoalReadIsUndeclared.
-  const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, fctx, id);
+  // for THIS module's environment record — see moduleGoalIdentifierIsUndeclared.
+  const unresolvedInModuleGoal = moduleGoalIdentifierIsUndeclared(ctx, fctx, id);
   const graphNameRegistryUnavailable = unresolvedInModuleGoal || readsAmbientDeclaration;
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
   const capturedIdx = graphNameRegistryUnavailable ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
-    return compileCapturedGlobalRead(ctx, fctx, id, name, capturedIdx);
+    return compileCapturedGlobalRead(ctx, fctx, id, name);
   }
 
   if (shouldUseRuntimeEvalGlobalLexicalRead(ctx, skipRuntimeEvalState, unresolvedInModuleGoal)) {
@@ -1372,9 +1377,7 @@ function compileIdentifierCore(
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
-    fctx.body.push({ op: "global.get", index: moduleIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
-    const mType = globalDef?.type ?? { kind: "f64" };
+    const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
       fctx.body.push({ op: "ref.as_non_null" });
@@ -1431,6 +1434,34 @@ function compileIdentifierCore(
     if (isGlobalIntrinsic) {
       const valueType = emitStandaloneIntrinsicEvalValue(ctx, fctx);
       if (valueType !== undefined) return valueType;
+    }
+  }
+  // Host/gc: expose the sandbox realm's genuine, non-constructible `%eval%`.
+  // Seed compiled script globals first so an alias performs indirect eval in
+  // the same GlobalEnvironmentRecord as the AOT module.
+  if (!ctx.standalone && !ctx.wasi && name === "eval") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      emitHostEvalGlobalBindingSeed(ctx, fctx);
+      const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (gtFuncIdx !== undefined && getIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
+        addStringConstantGlobal(ctx, name);
+        const strGlobalIdx = ctx.stringGlobalMap.get(name);
+        fctx.body.push(
+          strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+        );
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
     }
   }
   // `%Function%` is a genuine realm-owned callable in runtime-eval builds.

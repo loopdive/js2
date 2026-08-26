@@ -85,6 +85,7 @@ function buildOriginalHarnessSandbox(consoleProxy) {
     } catch {}
   }
   Object.defineProperties(sandbox, {
+    eval: { value: runInContext("eval", context), writable: true, enumerable: false, configurable: true },
     undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
     Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
     NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },

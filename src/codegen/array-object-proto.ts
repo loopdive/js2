@@ -104,6 +104,7 @@ import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } 
  * the symbol member is resolved by the computed-access path).
  */
 const ARRAY_PROTO_METHODS = [
+  "@@1", // Symbol.iterator — identity alias of `values`
   "at",
   "concat",
   "copyWithin",
@@ -1736,6 +1737,9 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     memberCsv: [...members, "size"].join(","),
     memberKind: (member) => (member === "size" ? "getter" : "method"),
     memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
+    // object (and Set.prototype[@@iterator] aliases that object as well).
+    memberAliasOf: (member) => (name === "Set" && member === "keys" ? "values" : undefined),
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
@@ -1774,13 +1778,15 @@ function makeGlue(
     // closure identity, not the member set: each spelling stays in its own
     // proto CSV entry for hasOwnProperty/gOPD.
     memberAliasOf: (member) =>
-      name === "Date" && member === "toGMTString"
-        ? "toUTCString"
-        : name === "String" && member === "trimLeft"
-          ? "trimStart"
-          : name === "String" && member === "trimRight"
-            ? "trimEnd"
-            : undefined,
+      name === "Array" && member === "@@1"
+        ? "values"
+        : name === "Date" && member === "toGMTString"
+          ? "toUTCString"
+          : name === "String" && member === "trimLeft"
+            ? "trimStart"
+            : name === "String" && member === "trimRight"
+              ? "trimEnd"
+              : undefined,
     // (#2193 PR-B) Array.prototype.slice is now a real native closure body;
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
@@ -2506,9 +2512,15 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
   if (brand === undefined) return null;
 
   ensureObjectRuntime(ctx);
+  // `%GeneratorPrototype%[@@toStringTag]` is an own ES2015 data property.
+  // Materialize it on this `$Object` singleton (rather than relying on the
+  // `$NativeProto` member CSV, which only models string-keyed members). The
+  // native iterator prototypes use the same symbol-id path.
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
-  if (newObjectIdx === undefined || defineIdx === undefined) return null;
+  if (boxSymbolIdx === undefined || newObjectIdx === undefined || defineIdx === undefined) return null;
 
   const globalName = "__native_generator_prototype_obj";
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
@@ -2558,6 +2570,16 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
       fctx.body.push({ op: "drop" }); // helper returns the target; discard
     }
     if (ok) {
+      // Symbol.toStringTag = "Generator", with {writable:false,
+      // enumerable:false, configurable:true} (§27.5.1.5).
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "i32.const", value: 4 }); // Symbol.toStringTag
+      fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+      addStringConstantGlobal(ctx, "Generator");
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, "Generator"));
+      fctx.body.push({ op: "f64.const", value: 0x04 });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "local.get", index: objLocal });
       fctx.body.push({ op: "global.set", index: globalIdx });
     }
@@ -2876,8 +2898,15 @@ export function emitIteratorPrototypeSingleton(
   kind: NativeIteratorPrototypeKind,
 ): ValType | null {
   ensureObjectRuntime(ctx);
+  // `%XIteratorPrototype%[@@toStringTag]` is an own data property in ES2015.
+  // Materialize it on the same `$Object` singleton returned by
+  // `Object.getPrototypeOf(arrayIterator)`, rather than relying on the
+  // generic `$Object` fallback (which has no symbol-keyed property).
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   if (newObjectIdx === undefined) return null;
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
 
   const globalName = `__native_${kind.toLowerCase()}_iterator_prototype`;
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
@@ -2892,10 +2921,27 @@ export function emitIteratorPrototypeSingleton(
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
 
+  const objLocal = allocLocal(fctx, `__${kind.toLowerCase()}_iter_proto_${fctx.locals.length}`, {
+    kind: "externref",
+  });
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
-    { op: "global.set", index: globalIdx },
+    { op: "local.set", index: objLocal },
   ];
+  if (boxSymbolIdx !== undefined && defineValueIdx !== undefined) {
+    const tag = `${kind} Iterator`;
+    addStringConstantGlobal(ctx, tag);
+    initBody.push(
+      { op: "local.get", index: objLocal },
+      { op: "i32.const", value: 4 }, // Symbol.toStringTag
+      { op: "call", funcIdx: boxSymbolIdx },
+      ...stringConstantExternrefInstrs(ctx, tag),
+      { op: "f64.const", value: 0x04 }, // writable:false, enumerable:false, configurable:true
+      { op: "call", funcIdx: defineValueIdx },
+      { op: "drop" },
+    );
+  }
+  initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });

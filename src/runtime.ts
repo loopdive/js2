@@ -4831,24 +4831,7 @@ const _symbolIdToKeys: Map<number, { wasm: string; sym: symbol }> = new Map([
   [15, { wasm: "@@matchAll", sym: Symbol.matchAll }],
 ]);
 
-/**
- * (#3676) Resolve the per-instance symbol-id → JS Symbol cache, seeding the
- * well-known ids on first use.
- *
- * Extracted from `__box_symbol` because it now has a SECOND consumer
- * (`__symbol_for_id`), and the seeding guard is `size === 0`. Left inline, a
- * `Symbol.for(...)` call that ran before the first `__box_symbol` would put an
- * entry in the map, making it non-empty, so the well-known seeding would be
- * skipped forever and `__box_symbol(1)` would hand back `Symbol("wasm_1")`
- * instead of the real `Symbol.iterator`. React's module init does exactly that
- * ordering (twelve `Symbol.for` calls on line 12 before anything else), so this
- * is a live hazard, not a theoretical one. Seeding through one shared helper
- * makes the order irrelevant.
- *
- * Seeds ids 1..14 exactly as the original inline block did — id 15
- * (`@@matchAll`) was NOT seeded there and is deliberately still not, to keep
- * this a pure refactor of the existing behaviour.
- */
+/** Resolve and seed the per-instance well-known symbol cache (#3676). */
 function _resolveSymbolCache(instanceState?: InstanceState): Map<number, symbol> {
   const symbolCache =
     instanceState?.symbolCache ??
@@ -4914,6 +4897,9 @@ function _safeGet(
   rawCallable = false,
 ): any {
   if (obj == null) return undefined;
+  const scAccessor = typeof key === "string" ? _wasmStructProps.get(obj) : undefined;
+  if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__get_${key}`] === "function")
+    return (scAccessor[`__get_${key}`] as Function).call(obj);
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090, #1716).
   // Passing callbackState lets a key with a WasmGC-closure valueOf / toString /
   // @@toPrimitive be dispatched (ToPropertyKey §7.1.19 → ToPrimitive §7.1.1);
@@ -4957,7 +4943,12 @@ function _safeGet(
       typeof vecGet === "function"
     ) {
       try {
-        if (isVec(obj) === 1) return index < vecLen(obj) ? vecGet(obj, index) : undefined;
+        if (isVec(obj) === 1) {
+          const own = _readOwnDescriptor(obj, String(index), exports);
+          if (_argumentsObjects.has(obj) && own && ("get" in own || "set" in own))
+            return typeof own.get === "function" ? own.get.call(_hostProxyCache.get(obj) ?? obj) : undefined;
+          return index < vecLen(obj) ? vecGet(obj, index) : undefined;
+        }
       } catch {
         // Not a compatible live vec; continue through the ordinary struct path.
       }
@@ -5225,6 +5216,12 @@ function _safeSet(
   // view. Numeric writes must target the canonical raw WasmGC vec so the
   // module's element-set dispatcher can mutate the backing array.
   obj = _unwrapForHost(obj);
+  const accessorKey = typeof key === "number" && Number.isInteger(key) ? String(key) : key;
+  const scAccessor = typeof accessorKey === "string" ? _wasmStructProps.get(obj) : undefined;
+  if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
+    (scAccessor[`__set_${accessorKey}`] as Function).call(obj, val);
+    return;
+  }
   // #2847: dynamic writes can cross a generic bridge after the Wasm boolean
   // carrier was widened to an unbranded numeric externref. The compiler emits
   // a marker only for property names whose complete visible write set is
@@ -6891,33 +6888,8 @@ const _SC_ELEM_DEFAULT = _SC_DEFINED | _SC_WRITABLE | _SC_ENUMERABLE | _SC_CONFI
 // so use half). Defines beyond this fall back to the generic sidecar arm.
 const _VEC_DEFINE_GROW_LIMIT = 8388608;
 
-/**
- * (#3116) §10.4.2 Array exotic [[DefineOwnProperty]] for a native WasmGC vec
- * receiver in JS-host mode.
- *
- * Root cause this implements: defineProperty/defineProperties on a compiled
- * array reaches the runtime with the RAW vec struct; the generic opaque-struct
- * arm could only store values in the host-side sidecar, but element/length
- * reads compile to direct vec accesses (struct.get / array.get / __vec_get)
- * that never consult the sidecar — so defined values were invisible and the
- * `length` machinery (§10.4.2.1 ArraySetLength: RangeError validation, shrink
- * honoring non-configurable elements, non-writable length) did not exist.
- *
- * Split representation: VALUES live in the vec itself (written through the
- * `__vec_set_elem` / `__vec_set_len` exports so both static and dynamic read
- * lanes observe them); ATTRIBUTES live in the per-object sidecar descriptor
- * table (`_getSidecarDescs`), with "no entry" meaning the §10.4.2 default
- * (data, writable+enumerable+configurable). `_validatePropertyDescriptor`
- * provides the §10.1.6.3 rejection matrix; existing in-bounds elements are
- * seeded with the default flags first so redefinition validation sees a data
- * property, not a first definition.
- *
- * Returns true when fully handled. Returns false → caller falls through to
- * the generic struct arm (receiver is not a vec / mutation exports missing /
- * unsupported element kind / non-index non-length key / grow limit exceeded).
- * Ordering: throws (TypeError/RangeError) only fire on genuine vec receivers,
- * before any mutation, matching DefinePropertyOrThrow.
- */
+/** §10.4.2 [[DefineOwnProperty]] for a native WasmGC vec (#3116).
+ * Values stay in the vec, attributes in the descriptor sidecar. */
 function _vecDefineOwnProperty(
   obj: any,
   key: any,
@@ -7028,7 +7000,11 @@ function _vecDefineOwnProperty(
   // synthesis (_readOwnDescriptor) still reports w/e/c=true for untouched
   // in-bounds elements, which matches §10.4.2 defaults for literal elements.
   const nKey = _normalizeDescKey(keyStr);
-  const hadEntry = sDescs.has(nKey);
+  let hadEntry = sDescs.has(nKey);
+  if (!hadEntry && _argumentsObjects.has(obj) && idx < oldLen) {
+    sDescs.set(nKey, _SC_ELEM_DEFAULT);
+    hadEntry = true;
+  }
 
   let existingVal: any;
   let existingDesc: PropertyDescriptor | undefined;
@@ -7094,39 +7070,18 @@ function _vecDefineOwnProperty(
   return true;
 }
 
-// (#2801) Present a WasmGC vec (array) to the host as a REAL JS array view.
-//
-// Root cause this fixes: when a host reads an array-typed field through the
-// `_wrapForHost` proxy (e.g. acorn `CallExpression.arguments`,
-// `ArrayExpression.elements`), the value is a WasmGC vec struct. The previous
-// code wrapped it with the *generic* object proxy (`_wrapForHost`), which has
-// no `length` / numeric-index surface, so it marshalled as an empty object
-// `{}` (`Array.isArray` false, `length` undefined) — the parsed AST was
-// structurally wrong. A vec must instead present as an array.
-//
-// This returns a Proxy whose TARGET is a real `[]` (so `Array.isArray` is
-// true and `instanceof Array` holds) and whose traps serve `length` + numeric
-// indices LIVE from the underlying vec (`__vec_len` / `__vec_get`, elements
-// recursively `_wrapForHost`-wrapped). Native generic Array.prototype methods
-// (`map`, `forEach`, `slice`, `indexOf`, iteration, spread, `JSON.stringify`)
-// work because they read `length` + indices through these traps. The proxy is
-// registered in `_hostProxyReverse` → raw vec, so the existing
-// `__extern_method_call` mutation path (`scopeStack.push(...)` →
-// `_unwrapForHost` → `__vec_push`) still recovers the live vec and grows it;
-// because reads are live (not a snapshot), a later push is reflected.
+// Present a WasmGC vec through a live real-array Proxy (#2801).
 function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
   const cached = _hostProxyCache.get(vec);
   if (cached) return cached;
   const lenFn = exports.__vec_len as ((v: any) => number) | undefined;
   const getFn = exports.__vec_get as ((v: any, i: number) => any) | undefined;
+  const mappedArguments = _argumentsObjects.has(vec);
+  const vecState = { getExports: () => exports };
   // Defensive: if the read exports are missing, fall back to the generic
   // object proxy rather than producing a broken array view.
   if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
-  // Keep the real-array target's non-configurable `length` slot aligned with
-  // the live vec. Engines and assertion/inspection tooling may consult the
-  // target's array exotic state directly instead of invoking every Proxy trap;
-  // a permanently-empty target therefore made a valid live vec appear as `[]`.
-  // Elements remain trap-backed—only the target's shape length is mirrored.
+  // Keep the target's non-configurable length aligned with the live vec.
   const target: any[] = [];
   const liveLen = (): number => {
     try {
@@ -7145,6 +7100,36 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
     } catch {
       return undefined;
     }
+  };
+  const rawDesc = (key: string): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, exports);
+  const hostDesc = (key: string): PropertyDescriptor | undefined => {
+    const desc = rawDesc(key);
+    if (!desc) return undefined;
+    if ("value" in desc) desc.value = _wrapForHost(desc.value, exports);
+    return desc;
+  };
+  const materializeNonConfigurable = (key: string, desc: PropertyDescriptor | undefined): void => {
+    if (!desc || desc.configurable !== false) return;
+    try {
+      Object.defineProperty(target, key, desc);
+    } catch {
+      /* The target may already carry the matching non-configurable slot. */
+    }
+  };
+  const markDeleted = (key: string): void => {
+    const sc = _wasmStructProps.get(vec);
+    if (sc) {
+      delete sc[key];
+      delete sc[`__get_${key}`];
+      delete sc[`__set_${key}`];
+    }
+    _wasmPropDescs.get(vec)?.delete(key);
+    let tomb = _wasmStructDeletedKeys.get(vec);
+    if (!tomb) {
+      tomb = new Set<string | symbol>();
+      _wasmStructDeletedKeys.set(vec, tomb);
+    }
+    tomb.add(key);
   };
   liveLen();
   // (#3201) Expando sidecar lookup. Compiled writes of non-index properties
@@ -7175,7 +7160,13 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (key === "length") return liveLen();
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
-        if (idx !== undefined) return idx < liveLen() ? elemAt(idx) : undefined;
+        if (idx !== undefined) {
+          if (!mappedArguments) return idx < liveLen() ? elemAt(idx) : undefined;
+          const desc = rawDesc(key);
+          if (!desc) return undefined;
+          if ("get" in desc || "set" in desc) return typeof desc.get === "function" ? desc.get.call(proxy) : undefined;
+          return idx < liveLen() ? elemAt(idx) : undefined;
+        }
       }
       const sc = sidecarGet(key);
       if (sc.hit) return sc.value;
@@ -7187,7 +7178,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (key === "length") return true;
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
-        if (idx !== undefined) return idx < liveLen();
+        if (idx !== undefined) return mappedArguments ? rawDesc(key) !== undefined : idx < liveLen();
       }
       if (sidecarGet(key).hit) return true;
       return key in target;
@@ -7195,21 +7186,64 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
     ownKeys() {
       const n = liveLen();
       const keys: (string | symbol)[] = [];
-      for (let i = 0; i < n; i++) keys.push(String(i));
+      for (let i = 0; i < n; i++) {
+        if (!mappedArguments || rawDesc(String(i)) !== undefined) keys.push(String(i));
+      }
       keys.push("length");
       return keys;
     },
     getOwnPropertyDescriptor(_t, key) {
       if (key === "length") {
-        return { value: liveLen(), writable: true, enumerable: false, configurable: false };
+        if (!mappedArguments) return { value: liveLen(), writable: true, enumerable: false, configurable: false };
+        const desc = hostDesc("length") ?? { value: liveLen(), writable: true, enumerable: false, configurable: false };
+        materializeNonConfigurable("length", desc);
+        return desc;
       }
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
         if (idx !== undefined && idx < liveLen()) {
-          return { value: elemAt(idx), writable: true, enumerable: true, configurable: true };
+          if (!mappedArguments) return { value: elemAt(idx), writable: true, enumerable: true, configurable: true };
+          const desc = hostDesc(key);
+          materializeNonConfigurable(key, desc);
+          return desc;
         }
       }
       return undefined;
+    },
+    defineProperty(_t, key, descriptor) {
+      if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
+        const desc: PropertyDescriptor = { ...descriptor };
+        if ("value" in desc) desc.value = _unwrapForHost(desc.value);
+        if (_vecDefineOwnProperty(vec, key, desc, vecState)) {
+          const current = hostDesc(key);
+          if (current?.configurable === false) materializeNonConfigurable(key, current);
+          else {
+            const targetDesc = Reflect.getOwnPropertyDescriptor(_t, key);
+            if (targetDesc?.configurable) Reflect.deleteProperty(_t, key);
+          }
+          return true;
+        }
+      }
+      return Reflect.defineProperty(_t, key, descriptor);
+    },
+    deleteProperty(_t, key) {
+      if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
+        if (key === "length") return false;
+        const desc = rawDesc(key);
+        if (!desc || desc.configurable === false) return desc === undefined;
+        markDeleted(key);
+        try {
+          const setElem = exports.__vec_set_elem as ((v: any, i: number, x: any) => number) | undefined;
+          const idx = _asArrayIndex(key);
+          if (idx !== undefined && typeof setElem === "function") setElem(vec, idx, undefined);
+        } catch {
+          /* Tombstone state still hides the deleted slot from host MOPs. */
+        }
+        const targetDesc = Reflect.getOwnPropertyDescriptor(_t, key);
+        if (targetDesc?.configurable) Reflect.deleteProperty(_t, key);
+        return true;
+      }
+      return Reflect.deleteProperty(_t, key);
     },
     // Keep the array facade live in both directions. The target stays a shape
     // facade; values and length are written through the generated vec bridge so
@@ -7224,6 +7258,15 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         return typeof setLen === "function" && setLen(vec, uint32) === 1;
       }
       if (typeof key === "string" && _asArrayIndex(key) !== undefined) {
+        if (mappedArguments) {
+          const desc = rawDesc(key);
+          if (desc && ("get" in desc || "set" in desc)) {
+            if (typeof desc.set !== "function") return false;
+            desc.set.call(proxy, _unwrapForHost(value));
+            return true;
+          }
+          if (desc?.writable === false) return false;
+        }
         return _trySetWasmVecElement(vec, key, value, exports);
       }
       _safeSet(vec, key, value, exports);
@@ -7674,11 +7717,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
           }
         }
       }
-      // Always report success — Array.prototype.pop etc. call
-      // `delete O[len-1]` on sparse arrayLikes where the index may not be
-      // present in the sidecar. Returning false here throws a Proxy
-      // invariant TypeError. Sidecar delete is best-effort.
-      _sidecarDelete(obj, key);
+      if (
+        !wsh.deleteStructProperty(obj, key, liveExports, {
+          hasOwn: _wasmStructHasOwn,
+          sidecarDelete: _sidecarDelete,
+          propDescs: _wasmPropDescs,
+          accessors: _wasmStructAccessors,
+          deletedKeys: _wasmStructDeletedKeys,
+          integrity: [_wasmFrozenObjs, _wasmSealedObjs],
+        })
+      )
+        return false;
       // #1364b — if `obj` is a registered class prototype or class object and
       // `key` is a method/static name from its allowlist, mark it deleted so
       // subsequent `Object.getOwnPropertyDescriptor(obj, key)` returns
@@ -8294,29 +8343,8 @@ function _wrapCallableForHost(
   return proxy;
 }
 
-// ── #2180 — host-mode user `new Proxy` / `Proxy.revocable` construction ──────
-//
-// A compiled `new Proxy(target, handler)` reaches the host with `target` and
-// `handler` as raw WasmGC structs (object literals compile to opaque structs).
-// Two problems must be solved for the host's native Proxy MOP to behave per
-// §10.5 / §28.2:
-//
-//  1. **Trap discovery.** The host reads `handler[trapName]` to find each trap.
-//     On a raw struct every read returns `undefined` (opaque), so NO trap ever
-//     fires and every operation silently falls through to the target. We build
-//     a plain-object *bridge handler* whose trap methods forward to the Wasm
-//     closures stored on the struct, invoked via `_wrapForHost`'s closure
-//     bridge (which threads `this` = the original handler struct).
-//
-//  2. **Identity.** Spec trap signatures hand the user `target`/`handler`
-//     identities (`get(t, p, recv)` with `t === target`, `this === handler`).
-//     The user's source holds the *raw* structs, so the values the trap sees
-//     must compare equal to those raw structs. We therefore use the raw struct
-//     as the host `[[ProxyTarget]]` (preserving `t === target`) and re-thread
-//     `this`/the target arg back to the raw handler/target inside each bridge.
-//
-// Construction also enforces the §28.2.1.1 step-1/2 `TypeError`s: both target
-// and handler must be objects (a WasmGC struct counts as an object).
+// Host Proxy construction bridges raw Wasm targets/handlers while preserving
+// trap discovery, target/handler identity, and §28.2 validation (#2180).
 const _PROXY_TRAP_NAMES = [
   "apply",
   "construct",
@@ -8386,30 +8414,16 @@ function _hostProxyConstruct(
   if (!_isObjectLike(handler)) {
     throw new TypeError(`Cannot create ${ctor} with a non-object as handler`);
   }
-  // (#2618) A Proxy whose target is CALLABLE is itself callable / constructable
-  // (§10.5.12 / §10.5.13). The host engine derives the proxy's [[Call]] /
-  // [[Construct]] exotic-ness from its [[ProxyTarget]] — but a raw wasm-closure
-  // struct is NOT callable to V8, so `new Proxy(rawClosure, h)()` fails the host
-  // IsCallable check ("... is not a function" / "call is not a function"). When
-  // the user's target is a wasm closure, use its JS-callable wrapper as the
-  // [[ProxyTarget]] so the proxy gains [[Call]]/[[Construct]] and host-side
-  // `p(...)` / `p.call(...)` dispatch correctly. The bridge handler substitutes
-  // the RAW struct back as the `target` argument of the apply/construct traps
-  // (see `rawTarget` in `_buildProxyBridgeHandler`) so the user-observable trap
-  // `target` is identity-equal to the value the program passed to `new Proxy`
-  // (`assert.sameValue(t, target)` in apply/construct/call-parameters.js). A
-  // non-callable target keeps the raw struct as before (identity-preserving, no
-  // behavior change).
+  // Callable Wasm targets need a host-callable proxy target; the bridge maps
+  // trap arguments back to the raw struct so user-visible identity is stable.
   const { proxyTarget, rawTarget } = _proxyTargetFor(target, callbackState);
-  // (#3127) When the [[ProxyTarget]] stays the RAW WasmGC struct (non-callable
-  // target, no wrapper substitution), the host engine's ordinary internal
-  // methods cannot see its fields — the struct is opaque to V8, so a
-  // trap-ABSENT `p.x` read `undefined` for every field (`new Proxy(t, {}).x`
-  // === 0 after unbox). Hand the struct to the bridge builder so it can
-  // install a struct-aware default `get` forwarder for that case.
+  // Preserve raw struct access through trap-absent get/ownKeys forwarding.
   const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
-  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
-  const proxy = new Proxy(proxyTarget, bridgeHandler);
+  const hostStructTarget =
+    structTarget === undefined ? undefined : _wrapForHost(structTarget, callbackState?.getExports());
+  const trapTarget = hostStructTarget === undefined ? undefined : structTarget;
+  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget, trapTarget);
+  const proxy = new Proxy(hostStructTarget ?? proxyTarget, bridgeHandler);
   _userProxies.add(proxy);
   return proxy;
 }
@@ -8426,14 +8440,13 @@ function _hostProxyConstructRevocable(
   if (!_isObjectLike(handler)) {
     throw new TypeError("Cannot create proxy with a non-object as handler");
   }
-  // (#2618) Mirror `_hostProxyConstruct`: a callable target makes the revocable
-  // proxy callable/constructable; use its JS wrapper as [[ProxyTarget]] and
-  // restore the raw struct in the apply/construct traps.
   const { proxyTarget, rawTarget } = _proxyTargetFor(target, callbackState);
-  // (#3127) Same struct-aware trap-absent `get` forwarding as `_hostProxyConstruct`.
   const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
-  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
-  const rv = Proxy.revocable(proxyTarget, bridgeHandler);
+  const hostStructTarget =
+    structTarget === undefined ? undefined : _wrapForHost(structTarget, callbackState?.getExports());
+  const trapTarget = hostStructTarget === undefined ? undefined : structTarget;
+  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget, trapTarget);
+  const rv = Proxy.revocable(hostStructTarget ?? proxyTarget, bridgeHandler);
   if (rv && typeof rv.proxy === "object" && rv.proxy !== null) _userProxies.add(rv.proxy);
   return rv;
 }
@@ -8482,6 +8495,12 @@ function _structFieldRaw(obj: any, name: string, exports: Record<string, Functio
   return _sidecarGet(obj, name);
 }
 
+function _syncProxyPreventExtensionsInvariant(name: string, trapTarget: any, nativeTarget: any, result: any): any {
+  if (name === "preventExtensions" && result && trapTarget !== undefined && _wasmNonExtensibleObjs.has(trapTarget)) {
+    Reflect.preventExtensions(nativeTarget);
+  }
+  return result;
+}
 /**
  * #2180 — translate a (possibly WasmGC-struct) user handler into a plain-object
  * handler the host engine can read trap functions from. Each present trap is
@@ -8513,6 +8532,8 @@ function _buildProxyBridgeHandler(
   // the trap-absent case. `undefined` ⇒ non-struct target (host default is
   // already correct) or substituted callable wrapper (readable by the host).
   structTarget?: any,
+  // Raw target substituted when the native Proxy target is its live host mirror.
+  trapTarget?: any,
 ): any {
   // Plain JS handler (created host-side, not a WasmGC struct) already exposes
   // its traps directly. BUT if the [[ProxyTarget]] is a substituted callable
@@ -8553,24 +8574,19 @@ function _buildProxyBridgeHandler(
   // a proxy built inside an exported function) is unchanged: the eager branch
   // below is byte-for-byte the prior logic.
   if (!exports) {
-    return _buildLazyProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
+    return _buildLazyProxyBridgeHandler(handler, callbackState, rawTarget, structTarget, trapTarget);
   }
 
   const bridge: Record<string, any> = {};
   for (const name of _PROXY_TRAP_NAMES) {
     const rawTrap = _structFieldRaw(handler, name, exports);
     if (rawTrap == null) {
-      // undefined/null → genuine absence, host forwards to target (§7.3.10).
-      // (#3127) EXCEPT `get` on a raw WasmGC-struct [[ProxyTarget]]: the host's
-      // ordinary [[Get]] cannot see the opaque struct's fields, so forward the
-      // read through the canonical struct-field resolution (`_resolveHostField`
-      // — accessor getter → sidecar → `__sget_*` field getter → well-known-
-      // symbol sidecar → vivified prototype; the same precedence `_wrapForHost`
-      // uses). Invariant validation still runs against the opaque target, which
-      // exposes no own descriptors — so no §10.5.8 conflicts arise.
+      // Missing traps use struct-aware defaults where V8 cannot inspect WasmGC.
       if (name === "get" && structTarget !== undefined) {
         bridge[name] = (_t: any, key: any, _receiver: any): any =>
           _resolveHostField(structTarget, key, callbackState?.getExports());
+      } else if (name === "ownKeys" && structTarget !== undefined) {
+        bridge[name] = () => _ownStructKeys(structTarget, callbackState?.getExports());
       }
       continue;
     }
@@ -8602,8 +8618,11 @@ function _buildProxyBridgeHandler(
     // value the program passed to `new Proxy` (apply/construct/call-parameters).
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
-      if (substituteTarget && args.length > 0) args[0] = rawTarget;
-      return (callable as Function).apply(handler, args);
+      const nativeTarget = args[0];
+      if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
+      else if (substituteTarget && args.length > 0) args[0] = rawTarget;
+      const result = (callable as Function).apply(handler, args);
+      return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
   return bridge;
@@ -8653,11 +8672,13 @@ function _buildLazyProxyBridgeHandler(
   // (#3127) See `_buildProxyBridgeHandler` — the raw WasmGC-struct target kept
   // as [[ProxyTarget]], for struct-aware trap-absent `get` forwarding.
   structTarget?: any,
+  trapTarget?: any,
 ): any {
   const bridge: Record<string, any> = {};
   for (const name of _PROXY_TRAP_NAMES) {
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
+      const nativeTarget = args[0];
       const lateExports = callbackState?.getExports();
       const rawTrap = _structFieldRaw(handler, name, lateExports);
       if (rawTrap == null) {
@@ -8670,18 +8691,22 @@ function _buildLazyProxyBridgeHandler(
         // struct-field resolution (see the eager builder).
         if (name === "get" && structTarget !== undefined) {
           return _resolveHostField(structTarget, args[1], lateExports);
+        } else if (name === "ownKeys" && structTarget !== undefined) {
+          return _ownStructKeys(structTarget, lateExports);
         }
         return _proxyForwardDefault(name, args);
       }
       // (#2618) restore the raw target for apply/construct (see eager path) only
       // when actually invoking the user trap, so the trap's `target` parameter
       // is identity-equal to what the program passed to `new Proxy`.
-      if (substituteTarget && args.length > 0) args[0] = rawTarget;
+      if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
+      else if (substituteTarget && args.length > 0) args[0] = rawTarget;
       const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
       }
-      return (callable as Function).apply(handler, args);
+      const result = (callable as Function).apply(handler, args);
+      return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
   return bridge;
@@ -10488,6 +10513,8 @@ function resolveImport(
     }
     case "builtin": {
       const name = intent.name;
+      if (name === "__wrap_callable_for_host")
+        return (value: any) => _maybeWrapCallableUnknownArity(value, callbackState);
       const fixedMethodArity = fixedExternMethodCallArity(name);
       if (fixedMethodArity !== undefined) {
         const canonical = resolveImport(
@@ -15204,52 +15231,14 @@ assert._isSameValue = isSameValue;
         }
         return [arr]; // Fallback: wrap single value
       };
-      // (#1368, #1465) Spec-compliant Promise combinators.
-      //
-      // Signature is `(thisArg, iterable)`:
-      //   1. Direct call `Promise.all(iter)` passes thisArg = null → helper
-      //      defaults to global Promise (codegen emits `ref.null.extern`).
-      //   2. `Sub.all(iter)` (subclass) routes thisArg = Sub through the helper
-      //      (blocked on #1382 — wasm class identifiers don't bridge to JS yet).
-      //   3. `Promise.all.call(C, iter)` is detected in codegen and forwarded
-      //      with thisArg = C.
-      //
-      // We delegate to the native engine's `Promise.all.call(C, …)` etc., which
-      // are spec-compliant for `[[AlreadyCalled]]`, `IteratorClose`, custom-this
-      // resolve/reject capability, `Get(C, "resolve")` lookup, and the full
-      // GetIterator protocol when given any JS iterable (string, arguments,
-      // Set, Map, custom Symbol.iterator).
-      //
-      // Per spec (PerformPromiseAll step 4): GetIterator(iterable) MUST drive
-      // the iterator protocol. So we must NOT silently wrap non-iterables in
-      // an array — `Promise.all(123)` must reject with TypeError, not resolve
-      // to [123]. The previous `_vecToArray` fallback violated this.
-      //
-      // (#1465) Iterable handling:
-      //   - null/undefined → pass through; native rejects with TypeError (spec).
-      //   - string → pass through; native iterates code units.
-      //   - JS Array / object with Symbol.iterator → pass through.
-      //   - WasmGC vec (detected via __vec_len/__vec_get accessors) → convert
-      //     to a real JS array so native can iterate it.
-      //   - Other primitives (number, boolean, symbol) → pass through; native
-      //     rejects with TypeError per spec.
-      // (#2671) A USER THENABLE element — a wasm object-literal `{ then:
-      // function (onFulfilled, onRejected) {…} }` — must cross into the native
-      // combinator with a host-visible callable `then`: V8's PerformPromiseAll
-      // does `Invoke(C.resolve(elem), "then", «resolveElement, reject»)`, and a
-      // RAW WasmGC struct exposes no properties, so the Invoke threw TypeError
-      // and the aggregate rejected (the `call-resolve-element` / `new-resolve-
-      // function` / `resolve-before-loop-exit` test262 family — the combinator
-      // resolve-element protocol was unreachable). Wrap ONLY structs whose own
-      // `then` resolves to a callable (host fn or wasm closure) in the
-      // `_wrapForHost` live-mirror proxy — its `get` bridges the closure field
-      // to a host-callable, and the #2015 receiver-unwrap in the method bridge
-      // restores the raw struct as wasm-side `this`. Everything else passes
-      // through RAW, exactly as before, preserving fulfilled-value identity
-      // for non-thenable elements (`Promise.all([obj]) → values[0] === obj`).
-      // A thenable's pre-fix behavior was an unconditional reject, so there is
-      // no working identity to preserve for the wrapped class.
-      const _wrapThenableElement = (v: any): any => {
+      // Promise combinators delegate spec iteration/capabilities to the host;
+      // only opaque Wasm vecs and callable thenables need boundary views.
+      // (#2671/#4736) Wasm object-literal thenables need a host-callable `then` at
+      // native Promise boundaries; raw structs expose none. Wrap only structs whose
+      // own `then` is callable in the live mirror: its get bridges the closure and
+      // #2015 receiver unwrapping restores raw `this`. Non-thenables stay raw to
+      // preserve fulfilled-value identity.
+      const _wrapThenable = (v: any): any => {
         if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
         const exports = callbackState?.getExports();
         if (!exports) return v;
@@ -15289,12 +15278,12 @@ assert._isSameValue = isSameValue;
           if (_nativeIsArray(iter)) {
             let needsWrap = false;
             for (const v of iter) {
-              if (v !== _wrapThenableElement(v)) {
+              if (v !== _wrapThenable(v)) {
                 needsWrap = true;
                 break;
               }
             }
-            return needsWrap ? iter.map(_wrapThenableElement) : iter;
+            return needsWrap ? iter.map(_wrapThenable) : iter;
           }
           // Detect WasmGC vec first via accessors (they return 0/null for
           // non-vec externrefs, so we materialize only when the round-trip
@@ -15324,7 +15313,7 @@ assert._isSameValue = isSameValue;
                   for (let i = 0; i < len; i++) {
                     // (#2671) Thenable struct elements get the live-mirror
                     // proxy so V8's resolve-element Invoke sees `.then`.
-                    result[i] = _wrapThenableElement(vecGet(iter, i));
+                    result[i] = _wrapThenable(vecGet(iter, i));
                   }
                   return result;
                 }
@@ -15509,7 +15498,10 @@ assert._isSameValue = isSameValue;
       // historical `any/invoke-then` regression). Both stay HOST; the
       // prototyped sandbox-first unification leaked cross-builtin and was
       // reverted (see the __get_builtin design note).
-      if (name === "Promise_resolve") return (val: any) => Promise.resolve(val);
+      // (#4736) Promise.resolve has the same host boundary as the combinators:
+      // a Wasm object-literal thenable must be mirrored before V8 performs
+      // PromiseResolve, while ordinary objects remain raw for === identity.
+      if (name === "Promise_resolve") return (val: any) => Promise.resolve(_wrapThenable(val));
       if (name === "Promise_reject")
         return (val: any) => {
           // (#2978) Pre-mark the rejection as handled. Compiled code holds the
@@ -16080,6 +16072,14 @@ assert._isSameValue = isSameValue;
           }
           const exports = callbackState?.getExports();
           if (!exports) return obj;
+          const argumentDescriptors = _argumentsObjects.has(obj) ? _wasmPropDescs.get(obj) : undefined;
+          const needsIndexedDescriptorView =
+            argumentDescriptors !== undefined &&
+            [...argumentDescriptors.keys()].some((key) => typeof key === "string" && _asArrayIndex(key) !== undefined);
+          if (needsIndexedDescriptorView) {
+            const view = _wrapVecForHost(obj, exports);
+            if (view !== undefined) return view;
+          }
           // A compiler-created TypedArray and an ordinary Array share the same
           // Wasm vec carrier. Codegen brands only the former. Preserve that
           // concrete host identity when it is nested inside a heterogeneous
