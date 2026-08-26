@@ -57,7 +57,12 @@ async function main(): Promise<void> {
   console.log(`compile: success=${result.success} errors=${errors.length} warnings=${diags.length - errors.length}`);
   for (const d of diags.slice(0, 5)) console.log(`  ${d.severity} @${d.line ?? "?"}: ${d.message}`);
 
-  if (!result.binary?.length) {
+  // Mirror the runner's own criterion (tests/test262-runner.ts): an
+  // error-SEVERITY diagnostic is a compile_error row even when a binary came
+  // out. Judging by `binary.length` alone reports "pass" for a row the real
+  // runner still counts as failing — which is exactly how a downgrade that
+  // forgot the severity map looks green locally.
+  if (!result.success || errors.length > 0 || !result.binary?.length) {
     // Note: an empty binary with ZERO errors is itself a defect worth chasing —
     // the compile refused without saying why.
     console.log("RESULT: compile_error");

@@ -1,7 +1,18 @@
 import type ts from "typescript";
-import type { CodegenContext, FunctionContext, ValType } from "../types.js";
+import type { ValType } from "../ir/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression } from "./expressions.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+
+/**
+ * Can a value with this static `typeof` tag ever BE an element of a numeric
+ * (i32/f64) element vec? SameValueZero (§7.2.12) compares Type(x) first, so a
+ * search value of any other tag can never match — no matter what it coerces to.
+ *
+ * "number" and "mixed" are absent deliberately: both may match, so they take the
+ * ordinary compile-into-`valTmp` path.
+ */
+const NEVER_A_NUMBER = new Set(["string", "boolean", "bigint", "symbol", "undefined", "object", "function"]);
 
 /**
  * Emit the `searchElement` operand for `Array.prototype.includes` into `valTmp`.
@@ -28,8 +39,22 @@ export function emitIncludesSearchValue(
   valType: ValType,
   valTmp: number,
 ): boolean {
-  if (callExpr.arguments.length > 0) {
-    compileExpression(ctx, fctx, callExpr.arguments[0]!, valType);
+  const searchArg = callExpr.arguments[0];
+  if (searchArg !== undefined) {
+    // §7.2.12 SameValueZero compares Type(x) BEFORE value, so a search value
+    // that is statically not a number can never equal an element of a numeric
+    // vec. Compiling it into `valType` anyway would COERCE it — that is how
+    // `[42, 0, 1, NaN].includes("42")` answered true (test262
+    // `includes/samevaluezero.js`): "42" became f64 42 and matched. The
+    // argument is still evaluated (it may have side effects) and dropped.
+    if (
+      (valType.kind === "f64" || valType.kind === "i32") &&
+      NEVER_A_NUMBER.has(ctx.oracle.staticJsTypeOf(searchArg))
+    ) {
+      if (compileExpression(ctx, fctx, searchArg) !== null) fctx.body.push({ op: "drop" });
+      return true;
+    }
+    compileExpression(ctx, fctx, searchArg, valType);
     fctx.body.push({ op: "local.set", index: valTmp });
     return false;
   }
