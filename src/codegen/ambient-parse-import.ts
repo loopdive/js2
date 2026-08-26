@@ -11,7 +11,11 @@ export function registerAmbientParseImport(
   name: string,
   typeIdx: number,
 ): void {
-  const imported = addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+  const linked = ctx.linkedPackageBindings.get(name);
+  const imported = addImport(ctx, linked?.module ?? ctx.externImportModule ?? "env", linked?.field ?? name, {
+    kind: "func",
+    typeIdx,
+  });
   // Prepared IR parse calls must reuse this exact default-library slot.
   // Without the sidecar, collectParseImports mistakes it for a source shadow
   // and emits a duplicate adapter binding (#4585). Both the syntactic and

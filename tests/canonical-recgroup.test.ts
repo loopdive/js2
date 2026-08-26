@@ -18,20 +18,23 @@
 //       real drift gate.
 
 import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
 import type { StructTypeDef, TypeDef, WasmModule } from "../src/ir/types.js";
+import { emitBinary } from "../src/emit/binary.js";
 import {
   canonicalHashOfTypeGroup,
   extractRuntimeGroup,
   fingerprintRuntimeGroup,
   RUNTIME_RECGROUP_ABI_VERSION,
   RUNTIME_RECGROUP_TYPE_NAMES,
+  verifyRuntimeRecGroupBinary,
 } from "../src/emit/canonical-recgroup.js";
 
 function modOf(source: string): WasmModule {
   const ast = analyzeSource(source);
-  const { module } = generateModule(ast, { nativeStrings: true });
+  const { module } = generateModule(ast, { nativeStrings: true, canonicalRuntimeTypes: true });
   return module;
 }
 
@@ -168,5 +171,91 @@ describe("#2527 canonical runtime rec-group identity primitive", () => {
     for (let i = 1; i < members.length; i++) {
       expect(members[i]!.absIndex).toBeGreaterThan(members[i - 1]!.absIndex);
     }
+  });
+
+  it("verifies the emitted recursive group from raw Wasm bytes", () => {
+    const mod = modOf(STRING_HEAVY);
+    const fingerprint = fingerprintRuntimeGroup(mod);
+    const verification = verifyRuntimeRecGroupBinary(emitBinary(mod), fingerprint);
+    expect(verification.valid, verification.detail).toBe(true);
+    expect(verification.abiVersion).toBe(RUNTIME_RECGROUP_ABI_VERSION);
+    expect(verification.count).toBe(fingerprint.count);
+    expect(verification.end! - verification.start! + 1).toBe(fingerprint.count);
+
+    // A provider/consumer drift must be observable even when the Wasm bytes
+    // remain otherwise parseable. This is the fail-safe gate used after
+    // optional Binaryen optimization.
+    const drifted = verifyRuntimeRecGroupBinary(emitBinary(mod), {
+      ...fingerprint,
+      hash: fingerprint.hash.replace(/^./, fingerprint.hash[0] === "0" ? "1" : "0"),
+    });
+    expect(drifted.valid).toBe(false);
+  });
+
+  it("keeps the frozen group scoped to explicit core-Wasm link boundaries", async () => {
+    const legacy = await compile(`export function value(): string { return "legacy"; }`, {
+      target: "standalone",
+      emitWat: false,
+    });
+    expect(legacy.success, legacy.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(legacy.runtimeRecGroupFingerprint).toBeUndefined();
+
+    const linked = await compile(`export function value(): string { return "linked"; }`, {
+      target: "standalone",
+      canonicalRuntimeTypes: true,
+      emitWat: false,
+    });
+    expect(linked.success, linked.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(linked.runtimeRecGroupFingerprint?.abiVersion).toBe(RUNTIME_RECGROUP_ABI_VERSION);
+  });
+
+  it("publishes and consumes the explicit js2wasm:runtime number ABI", async () => {
+    const provider = await compile("", {
+      target: "standalone",
+      nativeStrings: true,
+      runtimeProvider: true,
+      emitWat: false,
+    });
+    expect(provider.success, provider.errors.map((error) => error.message).join("; ")).toBe(true);
+    const providerModule = new WebAssembly.Module(provider.binary);
+    expect(WebAssembly.Module.imports(providerModule)).toHaveLength(0);
+    const providerExports = new Set(WebAssembly.Module.exports(providerModule).map((entry) => entry.name));
+    for (const name of [
+      "number_toString",
+      "number_toString_radix",
+      "number_toFixed",
+      "number_toPrecision",
+      "number_toExponential",
+    ]) {
+      expect(providerExports.has(name), `provider export ${name} missing`).toBe(true);
+    }
+
+    const consumer = await compile(`export function format(value: number): string { return value.toString(); }`, {
+      nativeStrings: true,
+      link: ["js2wasm:runtime"],
+      emitWat: false,
+    });
+    expect(consumer.success, consumer.errors.map((error) => error.message).join("; ")).toBe(true);
+    const consumerModule = new WebAssembly.Module(consumer.binary);
+    expect(WebAssembly.Module.imports(consumerModule)).toContainEqual({
+      module: "js2wasm:runtime",
+      name: "number_toString",
+      kind: "function",
+    });
+    expect(consumer.runtimeRecGroupFingerprint?.abiVersion).toBe(RUNTIME_RECGROUP_ABI_VERSION);
+
+    // The import/export signatures and canonical rec-group must agree in the
+    // engine, not merely in the metadata. Instantiation is the link-time ABI
+    // check used by the provider build canary.
+    const providerInstance = new WebAssembly.Instance(providerModule, {});
+    const consumerImports = consumer.importObject ?? {};
+    consumerImports["js2wasm:runtime"] = providerInstance.exports;
+    const consumerInstance = new WebAssembly.Instance(consumerModule, consumerImports);
+    expect(typeof consumerInstance.exports.format).toBe("function");
+    // Execute the cross-module path as well: the provider returns a native
+    // string object through externref and the consumer casts it to its local
+    // `$AnyString`. A mismatch in the canonical rec group traps here.
+    const formatted = (consumerInstance.exports.format as (value: number) => unknown)(42);
+    expect(formatted).toBeDefined();
   });
 });

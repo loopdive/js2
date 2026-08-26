@@ -115,6 +115,11 @@ Options:
                     console.log / process.std*.write lower to writeSync(1|2, ...),
                     stdin is readSync(0, ...). Off by default — every namespace is
                     inline-lowered into a self-contained module.
+  --package-linking <mode>
+                    npm package output for project compilation: separate
+                    (default) caches and instantiates provider Wasm modules;
+                    merge statically combines them with Binaryen wasm-merge;
+                    off retains monolithic source compilation.
   --emulate <env>   Emulate a host runtime's globals so they type-check without
                     @types/node. 'node' = ambient process/etc.; 'none' = off.
                     Auto-enabled (type-level only) when the source imports a
@@ -188,6 +193,7 @@ let strictNoHostImports: boolean | undefined;
 // alias was removed, not deprecated). WASI only; default empty keeps the
 // self-contained inline path for every namespace.
 const linkedNamespaces = new Set<string>();
+let packageLinking: false | "separate" | "merge" | undefined;
 // #2603 — `--emulate node`: opt into Node API emulation (ambient `process` typing).
 // `emulateExplicit` records that the user passed `--emulate`/`--no-emulate`, so a
 // `node:` import won't auto-enable over an explicit choice.
@@ -277,6 +283,16 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     linkedNamespaces.add(ns);
+  } else if (arg === "--package-linking" || arg.startsWith("--package-linking=")) {
+    const mode = arg.startsWith("--package-linking=") ? arg.slice("--package-linking=".length) : args[++i];
+    if (mode === "separate" || mode === "merge") {
+      packageLinking = mode;
+    } else if (mode === "off") {
+      packageLinking = false;
+    } else {
+      console.error(`Unknown --package-linking mode: ${mode ?? "(missing)"} (expected separate, merge, or off)`);
+      process.exit(1);
+    }
   } else if (arg === "--emulate" || arg.startsWith("--emulate=")) {
     // #2603 — opt into (or out of) Node API emulation. `--emulate node` gives the
     // checker an ambient `process` typing so Node globals type-check without
@@ -421,6 +437,7 @@ const compileOptions = {
   ...(hostBridge !== "auto" ? { hostBridge } : {}),
   ...(semanticProviders !== "auto" ? { semanticProviders } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
+  ...(packageLinking !== undefined ? { packageLinking } : {}),
   ...(emulateNode ? { emulateNode: true } : {}),
   ...(platform ? { platform } : {}),
   fileName: absInput,
@@ -436,9 +453,10 @@ const compileOptions = {
 // relative deps from disk through the TS program AND lowers cross-file
 // `node:fs`/WASI fd IO (compileMultiSource, #2771). Entries with no relative
 // import stay on the single-source path — byte-identical to before.
-const result = entryHasRelativeImports(source)
-  ? await compileProject(absInput, compileOptions)
-  : await compile(source, compileOptions);
+const result =
+  packageLinking !== undefined || entryHasRelativeImports(source)
+    ? await compileProject(absInput, compileOptions)
+    : await compile(source, compileOptions);
 
 if (!result.success) {
   for (const e of result.errors) {
