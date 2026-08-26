@@ -22,6 +22,7 @@ export {
   compileDynamicFunctionMeta,
   createDynamicFunction,
   dynamicFunctionSource,
+  executeGlobalScript,
   executeIndirectEval,
   type DynamicParser,
 } from "./dynamic-function.js";

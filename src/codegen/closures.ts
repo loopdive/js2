@@ -26,6 +26,7 @@ import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
+import { widenClosureReturnForDynamicModuleBinding } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { recordClosureBody } from "./context/body-route-audit.js";
 import { reportError } from "./context/errors.js";
@@ -209,6 +210,7 @@ import {
   enclosingFunctionOwnScopeMayReachDirectEval,
   functionMayReachDirectEval,
   RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
+  widenClosureReturnForDirectEval as widenEvalReturn,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
@@ -1631,6 +1633,16 @@ function unboundClosureReturnsAValue(fn: ts.ArrowFunction | ts.FunctionExpressio
   return found;
 }
 
+function inferUnboundCallbackReturnType(fn: ts.ArrowFunction | ts.FunctionExpression): ValType | null {
+  if (ts.isFunctionDeclaration(fn) || !declarationIsUnbound(fn)) return null;
+  return unboundClosureReturnsAValue(fn) ? { kind: "externref" } : null;
+}
+
+function inheritDirectEvalSloppyThis(fctx: FunctionContext, callback: FunctionContext): FunctionContext {
+  callback.directEvalSloppyThisFallback = fctx.directEvalSloppyThisFallback;
+  return callback;
+}
+
 /**
  * (#2939) Compute the funcref-wrapper signature (user param ValTypes + return
  * ValType) of an arrow / function-expression closure, WITHOUT emitting anything.
@@ -1673,6 +1685,14 @@ export function computeClosureWrapperSig(
   }
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
+  // An ordinary function expression that uses its implicit `arguments` object
+  // must retain the raw JavaScript value at each unannotated parameter
+  // boundary. TypeScript may infer a scalar ABI (for example, `string`), but
+  // the arguments vec is observable and must contain the original value rather
+  // than a numeric conversion. Keep the closure wrapper dynamic just like the
+  // declaration lowering path does.
+  const preservesRawArguments =
+    (ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && needsImplicitArgumentsObject(arrow);
   const arrowParams: ValType[] = [];
   const runtimeParams = runtimeParameters(arrow);
   for (let runtimeIndex = 0; runtimeIndex < runtimeParams.length; runtimeIndex++) {
@@ -1695,6 +1715,14 @@ export function computeClosureWrapperSig(
       jsdocType !== undefined
         ? ts.isJSDocOptionalType(jsdocType)
         : ts.getJSDocParameterTags(p).some((tag) => tag.isBracketed === true);
+    if (
+      preservesRawArguments &&
+      p.type === undefined &&
+      ts.getJSDocType(p) === undefined &&
+      (wasmType.kind === "f64" || wasmType.kind === "i32")
+    ) {
+      wasmType = { kind: "externref" };
+    }
     if (p.type === undefined && p.initializer === undefined && jsdocOptional) {
       wasmType = { kind: "externref" };
     }
@@ -1792,7 +1820,11 @@ export function computeClosureWrapperSig(
       // externref — the runtime value is a HOST plain object; a struct-typed
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
-      const resolvedReturn = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
+      const resolvedReturn = widenClosureReturnForDynamicModuleBinding(
+        ctx,
+        arrow,
+        widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+      );
       // (#4707) Proxy/host-object bindings retain their externref carrier when
       // returned from a closure, despite TypeScript's structural return type.
       closureReturnType = closureReturnsExternrefBinding(ctx, arrow)
@@ -1830,8 +1862,7 @@ export function computeClosureWrapperSig(
       }
     }
   }
-
-  return { params: arrowParams, returnType: closureReturnType, hasRestParam };
+  return { params: arrowParams, returnType: widenEvalReturn(ctx, arrow, closureReturnType), hasRestParam };
 }
 
 /**
@@ -2300,6 +2331,8 @@ export function compileLiftedClosureBody(
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  const preservesRawArguments =
+    ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && needsImplicitArgumentsObject(arrow, reachesDirectEval);
   if (reachesDirectEval) {
     liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
     liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(arrow);
@@ -2310,6 +2343,17 @@ export function compileLiftedClosureBody(
     }
   }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
+
+  // Keep the source value visible through identifier reads as well as through
+  // the arguments vec. Checker narrowing can otherwise turn this widened
+  // externref parameter back into a scalar before `+`/`typeof` observes it.
+  if (preservesRawArguments) {
+    liftedFctx.rawArgumentsParamNames = new Set(
+      runtimeParameters(arrow)
+        .filter((p, i) => arrowParams[i]?.kind === "externref" && ts.isIdentifier(p.name))
+        .map((p) => (p.name as ts.Identifier).text),
+    );
+  }
 
   // Track the body before capture/TDZ prologues so late imports can shift
   // their call indices before the saved-function swap exposes it (#1384).
@@ -3812,7 +3856,7 @@ export function compileArrowAsCallback(
       }
     }
   } catch {
-    cbReturnType = null;
+    cbReturnType = inferUnboundCallbackReturnType(arrow);
   }
 
   const cbResults: ValType[] = cbReturnType ? [cbReturnType] : [];
@@ -3834,7 +3878,7 @@ export function compileArrowAsCallback(
     });
   }
 
-  const cbFctx: FunctionContext = {
+  const cbFctx: FunctionContext = inheritDirectEvalSloppyThis(fctx, {
     name: cbName,
     params: cbFctxParams,
     locals: [],
@@ -3858,7 +3902,7 @@ export function compileArrowAsCallback(
     // localMap index 1, so the fallback is never reached for that path.)
     readsCurrentThis: true,
     captureExternrefNames: new Set(captures.filter((cap) => cap.type.kind === "externref").map((cap) => cap.name)),
-  };
+  });
 
   // (#1384) Track cbFctx.body in liveBodies BEFORE any emission so addUnionImports
   // / shiftLateImportIndices can shift any `call funcIdx` instructions that get

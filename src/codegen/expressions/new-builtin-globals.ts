@@ -54,6 +54,7 @@ import {
   isStringTypedArg,
   resolvesToAmbientGlobal,
 } from "./new-super.js";
+import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
@@ -268,6 +269,7 @@ export function tryCompileBuiltinGlobalNew(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.NewExpression,
+  builtinNameOverride?: string,
 ): ValType | null | typeof NEW_GLOBAL_FALLTHROUGH {
   // Handle `new Promise(executor)`.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Promise") {
@@ -342,8 +344,9 @@ export function tryCompileBuiltinGlobalNew(
   // Handle `new Number(x)`, `new String(x)`, `new Boolean(x)` — wrapper constructors
   // Return externref so typeof returns "object" (wrapper semantics).
   // Number/Boolean: box to externref via __box_number. String: already externref.
-  if (ts.isIdentifier(expr.expression)) {
-    const ctorName = expr.expression.text;
+  const builtinName = builtinNameOverride ?? (ts.isIdentifier(expr.expression) ? expr.expression.text : undefined);
+  if (builtinName !== undefined) {
+    const ctorName = builtinName;
     if (ctorName === "Number" || ctorName === "String" || ctorName === "Boolean") {
       const args = expr.arguments ?? [];
 
@@ -390,12 +393,12 @@ export function tryCompileBuiltinGlobalNew(
       }
 
       if (ctorName === "Boolean") {
-        // new Boolean(x) → create real JS Boolean wrapper object via __new_Boolean host import
-        // (typeof new Boolean(false) === "object", not "boolean")
-        if (args.length >= 1) {
-          // ToBoolean never throws on Symbol (a Symbol is truthy), but this path
-          // coerces the arg to f64 first, which would silently lose the Symbol.
-          // A Symbol arg should produce a truthy wrapper: box 1.0.
+        // new Boolean(x) → JS Boolean wrapper object via __new_Boolean (typeof is "object").
+        // Standalone uses shared ToBoolean so object and Symbol arguments remain truthy.
+        if (ctx.standalone) {
+          emitStandaloneBooleanConstructorValue(ctx, fctx, args);
+        } else if (args.length >= 1) {
+          // Host's f64 ABI preserves the existing Symbol-truthy special case.
           if (ctx.oracle.staticJsTypeOf(args[0]!) === "symbol") {
             const t = compileExpression(ctx, fctx, args[0]!);
             if (t !== null) fctx.body.push({ op: "drop" });
@@ -420,8 +423,8 @@ export function tryCompileBuiltinGlobalNew(
   // Handle `new Error(msg)`, `new TypeError(msg)`, `new RangeError(msg)` — create real Error objects
   // via host import so .name, .message, .stack are correct and instanceof works.
   // Standalone fallback: the thrown value is just the message string (as before).
-  if (ts.isIdentifier(expr.expression)) {
-    const ctorName = expr.expression.text;
+  if (builtinName !== undefined) {
+    const ctorName = builtinName;
     // (#4394) `Test262Error` is deliberately NOT shadow-guarded: the harness
     // always declares it (sta.js) and the ctor-carrying lowering below exists
     // precisely to reconcile that. The intrinsic names ARE guarded — claiming
@@ -663,7 +666,7 @@ export function tryCompileBuiltinGlobalNew(
   // "Cannot convert object to primitive value" instead of producing
   // "[object Object]". Falls back to `ref.null.extern` only if the import
   // can't be registered.
-  if (ts.isIdentifier(expr.expression) && expr.expression.text === "Object") {
+  if (builtinName === "Object") {
     // (#3118) `new Object(v)` is spec-identical to `Object(v)` (§20.1.1.1:
     // return ToObject(v)). This arm previously ignored its arg and built an
     // empty object; delegate to the shared coercion so a primitive boxes to its

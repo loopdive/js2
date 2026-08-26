@@ -107,8 +107,19 @@ export function buildStrictSetHelper(ctx: CodegenContext, s: StrictSetHelperStat
   addStringConstantGlobal(ctx, message);
 
   // params: 0=obj 1=key 2=value
-  const legacyBody: Instr[] = [
-    // Non-$Object receiver → the ordinary (side-table aware) write, no throw.
+  // Most non-$Object carriers (notably ordinary vectors) have no native
+  // `__reflect_set` representation.  Descriptor-dirty vector modules do,
+  // however, publish the result of their overlay [[Set]] attempt through the
+  // shared result channel used by the native `$Object` path.  Observe that
+  // channel here after the ordinary setter has run so strict indexed writes
+  // can report a getter-only accessor refusal without turning every ordinary
+  // vector assignment into a throw in modules that do not arm the channel.
+  const throwReadonly = (): Instr[] => [
+    ...stringConstantExternrefInstrs(ctx, message),
+    { op: "call", funcIdx: typeErrorCtorIdx },
+    { op: "throw", tagIdx: exnTagIdx },
+  ];
+  const nonObjectSet: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: s.objectTypeIdx },
@@ -117,13 +128,30 @@ export function buildStrictSetHelper(ctx: CodegenContext, s: StrictSetHelperStat
       op: "if",
       blockType: { kind: "empty" },
       then: [
+        ...(s.externSetResultGlobalIdx === undefined
+          ? []
+          : ([
+              { op: "i32.const", value: 0 },
+              { op: "global.set", index: s.externSetResultGlobalIdx },
+            ] satisfies Instr[])),
         { op: "local.get", index: 0 },
         { op: "local.get", index: 1 },
         { op: "local.get", index: 2 },
         { op: "call", funcIdx: externSetIdx },
+        ...(s.externSetResultGlobalIdx === undefined
+          ? []
+          : ([
+              { op: "global.get", index: s.externSetResultGlobalIdx },
+              { op: "i32.const", value: 2 }, // SET_RESULT_REFUSED
+              { op: "i32.eq" },
+              { op: "if", blockType: { kind: "empty" }, then: throwReadonly() },
+            ] satisfies Instr[])),
         { op: "return" },
       ],
     },
+  ];
+  const legacyBody: Instr[] = [
+    ...nonObjectSet,
     // $Object receiver: perform the write and observe the [[Set]] boolean.
     { op: "local.get", index: 0 },
     { op: "local.get", index: 1 },
@@ -133,11 +161,7 @@ export function buildStrictSetHelper(ctx: CodegenContext, s: StrictSetHelperStat
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [
-        ...stringConstantExternrefInstrs(ctx, message),
-        { op: "call", funcIdx: typeErrorCtorIdx },
-        { op: "throw", tagIdx: exnTagIdx },
-      ],
+      then: [...throwReadonly()],
     },
   ];
   const body: Instr[] =

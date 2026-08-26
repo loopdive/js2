@@ -103,6 +103,48 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["call=function", "in=true", "id=true", "invoke=TypeError"]);
   });
 
+  it("pins test262 S15.3.4.3_A1_T1: Function() prototype inherits apply", async () => {
+    // Keep the upstream row's source shape: the prototype is the RESULT of a
+    // zero-argument Function() call, not the named Function.prototype value.
+    const lines = await runLines(`
+      var proto = Function();
+      function FACTORY() {}
+      FACTORY.prototype = proto;
+      var obj = new FACTORY;
+      LOG("type=" + (typeof obj.apply));
+      var verdict = "no-throw";
+      try {
+        obj.apply();
+        verdict = "no-throw";
+      } catch (e) {
+        verdict = e instanceof TypeError ? "TypeError" : "other";
+      }
+      LOG("invoke=" + verdict);
+    `);
+    expect(lines).toEqual(["type=function", "invoke=TypeError"]);
+  });
+
+  it("pins test262 S15.3.4.4_A1_T1: Function() prototype inherits call", async () => {
+    // This is the sibling upstream row, kept separate so either exact failure
+    // remains diagnosable if apply and call ever diverge again.
+    const lines = await runLines(`
+      var proto = Function();
+      function FACTORY() {}
+      FACTORY.prototype = proto;
+      var obj = new FACTORY;
+      LOG("type=" + (typeof obj.call));
+      var verdict = "no-throw";
+      try {
+        obj.call();
+        verdict = "no-throw";
+      } catch (e) {
+        verdict = e instanceof TypeError ? "TypeError" : "other";
+      }
+      LOG("invoke=" + verdict);
+    `);
+    expect(lines).toEqual(["type=function", "invoke=TypeError"]);
+  });
+
   it("a COMPUTED key reaches the same members (the runtime walk, not a fold)", async () => {
     // Written as a loop-carried key so no compile-time fold can bypass the
     // dynamic read this pin exists to exercise.
@@ -154,6 +196,20 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["arr=[object Array]", "obj=[object Object]", "np=[object Object]"]);
   });
 
+  it("Object.prototype.toString is callable but not constructable", async () => {
+    const lines = await runLines(`
+      LOG("call=" + Object.prototype.toString());
+      var verdict = "no-throw";
+      try {
+        new Object.prototype.toString();
+      } catch (e) {
+        verdict = e instanceof TypeError ? "TypeError" : "other";
+      }
+      LOG("construct=" + verdict);
+    `);
+    expect(lines).toEqual(["call=[object Object]", "construct=TypeError"]);
+  });
+
   // ── GUARDS: shapes that must NOT move. These pass on both arms by design. ──
 
   it("GUARD an ordinary object prototype still links, and Object.create(null) still has none", async () => {
@@ -199,14 +255,23 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["m=function", "mval=7"]);
   });
 
+  it("GUARD an ordinary null prototype does not inherit Function.prototype methods", async () => {
+    const lines = await runLines(`
+      function FACTORY() {}
+      FACTORY.prototype = Object.create(null);
+      var obj = new FACTORY;
+      LOG("apply=" + (typeof obj.apply));
+      LOG("call=" + (typeof obj.call));
+    `);
+    expect(lines).toEqual(["apply=undefined", "call=undefined"]);
+  });
+
   // ── RESIDUALS: measured, still failing, root recorded in the issue file. ──
 
-  it.fails("RESIDUAL the T1 spelling needs `protoMemberDirty` arming (no builtin proto named)", async () => {
-    // `built-ins/Function/prototype/{call,apply}/S15.3.4.{4,3}_A1_T1`: the
-    // prototype is `Function()`'s RESULT, so the module never names a builtin
-    // prototype, `protoMemberDirty` stays clear, the proto-index store is never
-    // reserved and the companion is never seeded. Identical to the pin above
-    // MINUS the `var arm = Function.prototype` line — which is exactly the axis.
+  it.fails("RESIDUAL a function-valued prototype with no builtin brand remains unsupported", async () => {
+    // This is deliberately distinct from the exact Function() rows above:
+    // assigning an arbitrary user function as a prototype still has no
+    // Function.prototype companion link in the generic callable path.
     const lines = await runLines(`
       function G() {}
       function H() {}
@@ -217,11 +282,10 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["call=function"]);
   });
 
-  it.fails("RESIDUAL a runtime `delete` on a builtin proto member is invisible to the static call", async () => {
-    // The second half of `built-ins/Object/prototype/S15.2.4_A1_T2`. The delete
-    // IS recorded (`hasOwnProperty` and the dynamic read both go absent) but the
-    // syntactic member call keeps its compile-time answer. Routed to the
-    // three-op-agreement family (#4596), not to this change-set.
+  it("a runtime delete removes Object.prototype.toString from the direct call path", async () => {
+    // The second half of `built-ins/Object/prototype/S15.2.4_A1_T2`. The
+    // source-level delete must be observed by the syntactic call just as it is
+    // by hasOwnProperty and the dynamic property read.
     const lines = await runLines(`
       LOG("before=" + Object.prototype.toString());
       delete Object.prototype.toString;
@@ -237,7 +301,7 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["before=[object Object]", "hasOwn=false", "after=TypeError"]);
   });
 
-  it.fails("RESIDUAL Array.prototype.concat has no reflective body", async () => {
+  it("RESIDUAL Array.prototype.concat has no reflective body", async () => {
     // `built-ins/Array/prototype/concat/S15.4.4.4_A2_T{1,2}`. Unrelated to the
     // prototype link: `emitArrayProtoMemberBody` has a native core for `slice`
     // and the HOF family only, so every other member degrades to a catchable
@@ -252,7 +316,7 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["len=1", "zero=true"]);
   });
 
-  it.fails("RESIDUAL `new <Builtin>.prototype.constructor` is classified non-constructable", async () => {
+  it("RESIDUAL `new <Builtin>.prototype.constructor` is classified non-constructable", async () => {
     // `built-ins/{Object,String}/prototype/constructor/S15.*_A1_T2`. The
     // `isNewOnNonConstructablePrototype` / `classifyNonConstructableValue`
     // predicates read every `X.prototype.<name>` as a prototype METHOD;

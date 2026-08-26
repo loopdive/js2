@@ -140,6 +140,7 @@ import {
 } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
+import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
@@ -317,10 +318,12 @@ import {
   fillExternArrayLikeStructArms,
   fillExternGetIdxVecArms,
   fillExternSetVecArms,
+  fillConcatNativeHoleArms,
   fillFnctorPrototypeDispatchArms,
   fillExternIsArray,
   fillProxyDispatch,
   unshiftExternGetProtoCacheArm,
+  unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
@@ -334,13 +337,13 @@ import { fillAsyncClosurePromiseWrappers } from "./async-closure-promise.js"; //
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
-// import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F) — DISABLED, see call sites
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
+import { fillNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js"; // shared dynamic HasInstance identity probes
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -501,6 +504,7 @@ import {
   irNativeNumberToStringAvailable,
 } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
+import { fillStandaloneObjectProtoToStringFnctorArms } from "./object-proto-tostring-native.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
   hasExportModifier,
@@ -4734,6 +4738,7 @@ export function generateModule(
   const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, collectMemberDeleteReceivers);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
+  ctx.deletedBuiltinPrototypeMembers = memberDeletes.builtinPrototypeMembers;
   // (#2660 S1) Whole-program escape / dynamic-use classification of `new F()`
   // fnctor instances. INERT: the result is stored for the future S3
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
@@ -5864,14 +5869,6 @@ export function generateModule(
     // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
     unshiftRegExpAccessorSetGuard(ctx);
-    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
-    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
-    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
-    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
-    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
-    // this call commented. Re-enable only with a fix for the descriptor
-    // side-effect and a control run over Object/defineProperty prop-desc rows.
-    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -5941,6 +5938,10 @@ export function generateModule(
     // reads (`arr[k]`, `arr["length"]`) instead of empty / undefined. Standalone
     // only (no-op otherwise).
     fillDynamicForinVecArms(ctx);
+    // Dynamic descriptor helpers read String-wrapper index properties through
+    // __extern_get; answer the String-exotic virtual character before the
+    // ordinary $Object numeric adapter can box its miss as 0.
+    unshiftExternGetStringExoticArm(ctx);
 
     // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
     // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
@@ -6041,6 +6042,10 @@ export function generateModule(
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
     fillF64HoleHasIdxArms(ctx);
+    // (#4446) Native concat preserves absent source indices in `$ObjVec` via
+    // the shared `$Hole` marker. Patch its dynamic readers and add the sparse
+    // physical-backing HasProperty guard after every competing vec fill.
+    fillConcatNativeHoleArms(ctx);
 
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
@@ -6097,6 +6102,17 @@ export function generateModule(
     // closure wrapper structs (closures registered after the typeof helpers were
     // synthesised mid-compile). Edits the helper bodies in place — no funcIdx churn.
     fillStandaloneTypeofClosureArms(ctx);
+
+    // Function-constructor instances use nominal `$__fnctor_<Name>` carriers;
+    // their Object.prototype.toString classifier may have been probed before
+    // the late carrier reservation completed. Fill those ref.test arms in the
+    // existing classifier/closure bodies without changing function indices.
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
+
+    // Fill the reserve/fill identity probes used by the fully-dynamic
+    // `instanceof` substrate after all builtin carrier globals and native
+    // prototype types have been published.
+    fillNativeDynamicInstanceOf(ctx);
 
     // (#4492 wave-5) …then the CALLABLE OrdinaryToPrimitive consult in front of
     // the #3540 closure arm that call just installed, so an own / inherited
@@ -9563,14 +9579,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
     unshiftRegExpAccessorSetGuard(ctx);
-    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
-    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
-    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
-    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
-    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
-    // this call commented. Re-enable only with a fix for the descriptor
-    // side-effect and a control run over Object/defineProperty prop-desc rows.
-    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -9621,6 +9629,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // fill, the backing vec contains the right values but every indexed read
     // silently returns the undefined sentinel.
     fillExternGetIdxVecArms(ctx);
+    unshiftExternGetStringExoticArm(ctx);
     // (#3666/#3251) Multi-source parity after every carrier/dynamic reader is complete.
     fillObjVecReflectionHelpers(ctx);
     // (#4098) Multi-source parity: the helper bodies were filled above; now
@@ -9644,6 +9653,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
     fillF64HoleHasIdxArms(ctx);
+    // (#4446) Multi-source parity for concat's `$Hole`-aware ObjVec readers
+    // and sparse-tail HasProperty guard.
+    fillConcatNativeHoleArms(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 
@@ -9731,6 +9743,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).
     fillStandaloneTypeofClosureArms(ctx);
+
+    // Same late fnctor-carrier fill on the multi-source finalize path.
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
+
+    // Same reserve/fill identity probes as the single-source pipeline.
+    fillNativeDynamicInstanceOf(ctx);
 
     // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
     fillSymbolAnyToStringArm(ctx);
@@ -11039,6 +11057,25 @@ function typeMayCarryObjectValue(type: ts.Type): boolean {
   return false;
 }
 
+function widenObjectLiteralFieldType(
+  wasmType: ValType,
+  receivesIndexedCarrier: boolean,
+  receivesObjectCarrier: boolean,
+  nullishScalarSeed: boolean,
+): ValType {
+  if (
+    receivesIndexedCarrier ||
+    (receivesObjectCarrier &&
+      (wasmType.kind === "ref" ||
+        wasmType.kind === "ref_null" ||
+        (wasmType.kind === "i32" && wasmType.boolean === true) ||
+        nullishScalarSeed))
+  ) {
+    return { kind: "externref" };
+  }
+  return wasmType;
+}
+
 /**
  * Ensure a ts.Type that's an object type is registered as a struct.
  * For named types already in structMap, this is a no-op.
@@ -11214,20 +11251,20 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         if (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return false;
         return typeMayCarryObjectValue(rhsType) && !ctx.checker.isTypeAssignableTo(rhsType, propType);
       }) ?? false;
+    const indexedPropertyDeclaration = prop.valueDeclaration ?? prop.declarations?.[0];
+    const assignedIndexedWrites = indexedPropertyDeclaration
+      ? ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedPropertyDeclaration)
+      : undefined;
+    const hasIncompatibleIndexedWrite =
+      assignedIndexedWrites?.some((rhsType) => !ctx.checker.isTypeAssignableTo(rhsType, propType)) ?? false;
     const receivesObjectCarrier =
       ctx.objectLiteralAssignedPropertyNames.has(prop.name) &&
       ((propType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
         hasIncompatibleObjectWrite ||
         nullishScalarSeed);
-    if (
-      receivesObjectCarrier &&
-      (wasmType.kind === "ref" ||
-        wasmType.kind === "ref_null" ||
-        (wasmType.kind === "i32" && wasmType.boolean === true) ||
-        nullishScalarSeed)
-    ) {
-      wasmType = { kind: "externref" };
-    }
+    const receivesIndexedCarrier = assignedIndexedWrites !== undefined && hasIncompatibleIndexedWrite;
+    if (receivesIndexedCarrier && indexedPropertyDeclaration) markIndexedPropertyStale(ctx, indexedPropertyDeclaration);
+    wasmType = widenObjectLiteralFieldType(wasmType, receivesIndexedCarrier, receivesObjectCarrier, nullishScalarSeed);
     // (#1468) `{ k: undefined }` makes TS infer the property's type as the
     // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for
     // function return types `undefined`/`void` indicate "no result". For a
@@ -11734,6 +11771,9 @@ function hoistVarDecl(
     let initForcesExternref = false;
     if (decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
       if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) {
+        initForcesExternref = true;
+      }
+      if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) {
         initForcesExternref = true;
       }
       // (#802 Slice A) A proto-receiver object literal is built as an open
@@ -12496,11 +12536,14 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.growableObjectLiteralVars.has(name);
         const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+        const initIsRedeclaredObjectIdentityLiteral =
+          ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
           initIsHostSpreadLiteral ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
+          initIsRedeclaredObjectIdentityLiteral ||
           initIsProtoReceiverLiteral;
         if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);

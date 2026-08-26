@@ -22,8 +22,8 @@
  * the four console.log-based assertions silently rotted (a #3558-class stale
  * guard test, invisible outside required checks). The leak-scan MECHANISM was
  * never broken (verified: a synthetic `env::__str_from_mem` and an end-to-end
- * user extern class both still warn; `Math_random` is correctly
- * allowlisted-silent). The leak example is now a **user-declared extern class**
+ * user extern class both still warn). The leak example is now a
+ * **user-declared extern class**
  * (`declare class Widget` → non-allowlisted `env::Widget_*`), which — unlike a
  * builtin — is NEVER auto-allowlisted, so it cannot drift host-free and stop
  * exercising the scan. A positive assertion pins that console.log is now
@@ -33,7 +33,7 @@
  *   1. A standalone program that leaks a NON-allowlisted host import (extern
  *      class) warns, but still succeeds AND still emits the env imports
  *      (floor-neutral).
- *   2. An ALLOWLISTED host import (`Math_random`) is emitted but NOT flagged.
+ *   2. Native standalone `Math.random` emits ZERO host imports and warnings.
  *   3. `console.log` is now fully host-free under standalone (zero leak).
  *   4. A host-free standalone program produces ZERO leak warnings.
  *   5. `JS2WASM_STANDALONE_LEAK_SCAN=0` disables the scan (A/B control).
@@ -71,8 +71,8 @@ declare class Widget {
 export function test(): number { const w = new Widget(3); return w.render(); }`;
 /** `console.log` — now FULLY host-free under standalone (native console + strings). */
 const CONSOLE_HOSTFREE_SRC = `export function test(): number { console.log("hello"); return 1; }`;
-/** `Math.random` — still a host import, but ALLOWLISTED (`Math_` prefix) → tolerated silently. */
-const ALLOWLISTED_SRC = `export function test(): number { return Math.random() >= 0 ? 1 : 0; }`;
+/** `Math.random` — now native and fully host-free under standalone. */
+const MATH_RANDOM_HOSTFREE_SRC = `export function test(): number { return Math.random() >= 0 ? 1 : 0; }`;
 /** A pure-arithmetic program: host-free under standalone. */
 const HOST_FREE_SRC = `export function test(): number { let x = 0; for (let i = 0; i < 10; i++) x += i * 2; return x; }`;
 
@@ -112,13 +112,11 @@ describe("#2961 — standalone host-import leak scan (phase 1, warning-first; #3
     });
   });
 
-  describe("allowlisted host imports are tolerated silently — no warning", () => {
-    it("Math.random emits the allowlisted env.Math_random but is NOT flagged as a leak", async () => {
-      const result = await compile(ALLOWLISTED_SRC, { target: "standalone" });
+  describe("Math.random is now host-free under standalone", () => {
+    it("emits no env.Math_random import and no leak warning", async () => {
+      const result = await compile(MATH_RANDOM_HOSTFREE_SRC, { target: "standalone" });
       expect(result.success).toBe(true);
-      // `Math_random` is emitted (still a host import)…
-      expect(envImportNames(result.wat)).toContain("Math_random");
-      // …but the `Math_` allowlist prefix means it is NOT flagged as a leak.
+      expect(envImportNames(result.wat)).toEqual([]);
       expect(leakWarnings(result.errors)).toEqual([]);
     });
   });

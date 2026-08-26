@@ -34,6 +34,12 @@ import {
 } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  emitImplicitGlobalRead,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
 import { EMIT_COMPOUND_OP_HANDLES, tryEmitTypedThisCompound } from "../typed-this.js"; // (#3683 S2) typed-`this` compound
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js";
 import {
@@ -1671,6 +1677,71 @@ function hasStringAssignmentInParentScopes(name: string, fromExpr: ts.Node): boo
   return found;
 }
 
+/**
+ * (#3966) Read-modify-write a pre-scanned sloppy implicit global through the
+ * realm global object. Its plain read/write paths already use that storage;
+ * compound assignment previously auto-allocated or fell through a no-store
+ * string lane, so `acc += value` left the global property unchanged.
+ */
+function compileImplicitGlobalCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  rhs: ts.Expression,
+  op: ts.SyntaxKind,
+): ValType | null | undefined {
+  if (!ctx.sloppyImplicitGlobals?.has(id.text)) return undefined;
+
+  if (!emitImplicitGlobalRead(ctx, fctx, id.text)) {
+    reportError(ctx, id, `Failed to read implicit global ${id.text} for compound assignment`);
+    return null;
+  }
+  const lhsTmp = allocLocal(fctx, `__implicit_global_compound_lhs_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: lhsTmp });
+
+  const rhsType = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+  if (!rhsType) {
+    reportError(ctx, rhs, "Failed to compile implicit-global compound-assignment RHS");
+    return null;
+  }
+  if (rhsType.kind !== "externref") coerceType(ctx, fctx, rhsType, { kind: "externref" });
+  const rhsTmp = allocLocal(fctx, `__implicit_global_compound_rhs_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: rhsTmp });
+
+  if (op === ts.SyntaxKind.PlusEqualsToken) {
+    const resultType = emitAnyAddFromExternTemps(ctx, fctx, lhsTmp, rhsTmp);
+    if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+  } else {
+    fctx.body.push({ op: "local.get", index: lhsTmp });
+    coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+    fctx.body.push({ op: "local.get", index: rhsTmp });
+    coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+    emitCompoundOp(ctx, fctx, op);
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+  }
+
+  const resultTmp = allocLocal(fctx, `__implicit_global_compound_result_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: resultTmp });
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined || !emitGlobalEnvironmentObject(ctx, fctx)) {
+    reportError(ctx, id, `Failed to write implicit global ${id.text} after compound assignment`);
+    return null;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push(
+    { op: "local.get", index: resultTmp },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx },
+    { op: "local.get", index: resultTmp },
+  );
+  return { kind: "externref" };
+}
+
 function compoundBinaryOperator(op: ts.SyntaxKind): ts.BinaryOperator | undefined {
   switch (op) {
     case ts.SyntaxKind.PlusEqualsToken:
@@ -1784,6 +1855,9 @@ export function compileCompoundAssignment(
   // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
   const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
   if (hostBigIntCompound !== undefined) return hostBigIntCompound;
+
+  const implicitGlobal = compileImplicitGlobalCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (implicitGlobal !== undefined) return implicitGlobal;
 
   // (#3039) Boxed captured global compound-assign (`c += 1` in a method-
   // shorthand / class-method / accessor body reading a transitively-captured

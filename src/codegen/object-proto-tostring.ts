@@ -42,6 +42,7 @@
  * | `[object String]`      | `__typeof_string`                             |
  * | `[object Number]`      | `__typeof_number`                             |
  * | `[object Boolean]`     | `__typeof_boolean`                            |
+ * | `[object Date]`        | `ref.test $__Date`                            |
  * | `[object Object]`      | `ref.test $Object` (§20.1.3.6 step 13 default) |
  *
  * Using `__typeof_function` rather than an inline closure `ref.test` is
@@ -61,7 +62,7 @@
  * The chain is deliberately NOT exhaustive, and the fallthrough is the
  * pre-existing `emitThrowTypeError` refusal — not a default `[object Object]`.
  * Receivers this classifier cannot prove (nominal class-instance structs,
- * `$Proxy`, primitive-wrapper OBJECTS, Date/RegExp/Error carriers, boxed
+ * `$Proxy`, primitive-wrapper OBJECTS, RegExp/Error carriers, boxed
  * symbols/bigints) keep throwing exactly as they do today. Widening the last
  * arm to "anything else is an ordinary object" would convert a loud refusal
  * into a silent mis-tag, which the acceptance bar counts as negative value —
@@ -84,6 +85,8 @@ import { emitThrowTypeError } from "./expressions/helpers.js";
 import { resolveArrayInfo } from "./array-methods.js";
 import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import { TYPED_ARRAY_NAMES, resolveWasmType } from "./index.js";
+import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
+import { ensureDateStruct } from "./expressions/builtins.js";
 
 /** §20.1.3.6 result string for a builtin tag. */
 const tagString = (tag: string): string => `[object ${tag}]`;
@@ -344,6 +347,23 @@ export function emitObjectProtoToStringClassifier(
     );
   }
 
+  // Date instances are native `__Date` carriers, not `$Object`s.  The
+  // standalone runtime classifier must brand them before its `$Object`
+  // fallback, otherwise an any-typed value such as the result of a bound
+  // constructor is silently reported as `[object Object]`.
+  if (ctx.builtinObjectGlobals.has("ctor:Date")) {
+    const dateTypeIdx = ensureDateStruct(ctx);
+    const dateAnyLocal = allocLocal(fctx, `__opts_date_${fctx.locals.length}`, { kind: "anyref" });
+    fctx.body.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: dateAnyLocal },
+      { op: "local.get", index: dateAnyLocal },
+      { op: "ref.test", typeIdx: dateTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag("Date") },
+    );
+  }
+
   // ── §21.1.3 / §22.1.3 / §20.3.3 / §23.1.3: a builtin PROTOTYPE object that
   // carries its instances' exotic slot. See NATIVE_PROTO_BRAND_TAGS for the
   // four and for why this is not a catch-all. Placed after the primitive
@@ -486,6 +506,22 @@ export function emitObjectProtoToStringClassifier(
     );
   }
 
+  // User function-constructor instances are ordinary ECMAScript objects, but
+  // the standalone fnctor lowering carries them in their nominal
+  // `$__fnctor_<F>` structs rather than in the open `$Object` carrier above.
+  // They have no callable/array/wrapper exotic slot, so §20.1.3.6 step 13 is
+  // the correct `[object Object]` answer. Keep this arm keyed to the compiler's
+  // registered fnctor carrier types; a blanket "anything not classified is an
+  // object" would silently mis-tag proxies and future exotic carriers.
+  for (const fnctorTypeIdx of ctx.fnctorReservedTypeIdx.values()) {
+    fctx.body.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: fnctorTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag("Object") },
+    );
+  }
+
   return emittedAnyArm;
 }
 
@@ -614,6 +650,67 @@ function nativeProtoTagOf(ctx: CodegenContext, argExpr: ts.PropertyAccessExpress
 }
 
 /**
+ * Resolve the one ES5 shape where `Object.getPrototypeOf` returns a builtin
+ * wrapper prototype through a local binding:
+ *
+ *     var numberProto = Object.getPrototypeOf(new Number(42));
+ *     Object.prototype.toString.call(numberProto);
+ *
+ * The ordinary static type of that binding is just `any`/`Object`, while the
+ * value is the intrinsic `Number.prototype` object and therefore carries the
+ * Number brand.  Keep this proof deliberately semantic and narrow: the oracle
+ * must identify both constructors as ambient bindings, and the alias must be
+ * a single-assignment variable.  A shadowed constructor or a later write
+ * declines to the existing path rather than baking a possibly stale tag.
+ */
+function numberPrototypeAliasTag(ctx: CodegenContext, argExpr: ts.Expression): string | undefined {
+  if (!ctx.standalone) return undefined;
+  if (!ts.isIdentifier(argExpr) || !bindingIsSingleAssignment(ctx, argExpr)) return undefined;
+  const initializer = ctx.oracle.variableInitializerOf(argExpr);
+  if (!initializer) return undefined;
+
+  let init: ts.Expression = initializer;
+  while (
+    ts.isParenthesizedExpression(init) ||
+    ts.isAsExpression(init) ||
+    ts.isNonNullExpression(init) ||
+    ts.isSatisfiesExpression(init) ||
+    ts.isTypeAssertionExpression(init)
+  ) {
+    init = init.expression;
+  }
+  if (
+    !ts.isCallExpression(init) ||
+    init.arguments.length !== 1 ||
+    !ts.isPropertyAccessExpression(init.expression) ||
+    init.expression.name.text !== "getPrototypeOf" ||
+    !ts.isIdentifier(init.expression.expression) ||
+    init.expression.expression.text !== "Object"
+  ) {
+    return undefined;
+  }
+  const objectDecl = ctx.oracle.valueDeclarationOf(init.expression.expression);
+  if (objectDecl !== undefined && !objectDecl.getSourceFile().isDeclarationFile) return undefined;
+
+  let target: ts.Expression = init.arguments[0]!;
+  while (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isNonNullExpression(target) ||
+    ts.isSatisfiesExpression(target) ||
+    ts.isTypeAssertionExpression(target)
+  ) {
+    target = target.expression;
+  }
+  if (!ts.isNewExpression(target) || !ts.isIdentifier(target.expression) || target.expression.text !== "Number") {
+    return undefined;
+  }
+  const numberDecl = ctx.oracle.valueDeclarationOf(target.expression);
+  if (numberDecl !== undefined && !numberDecl.getSourceFile().isDeclarationFile) return undefined;
+  return "Number";
+}
+
+/**
  * (#2501) Resolve the §20.1.3.6 `Object.prototype.toString` builtin tag for a
  * statically-known receiver, returning the tag name (e.g. "Array", "Date") or
  * `undefined` when it can't be classified (caller falls back / refuses).
@@ -719,6 +816,14 @@ export function resolveObjectToStringTag(
     if (protoTag !== undefined) return protoTag;
     return deferOrStandalone("Object");
   }
+
+  // A `getPrototypeOf(new Number(...))` result is an intrinsic Number
+  // prototype even though the local binding's checker type is only Object/any.
+  // This must come after the direct `<Builtin>.prototype` case above and
+  // before the generic type-based fallback, which would otherwise emit
+  // `[object Object]` for this exact ES5 alias shape.
+  const numberAliasTag = numberPrototypeAliasTag(ctx, argExpr);
+  if (numberAliasTag !== undefined) return numberAliasTag;
 
   const t = ctx.checker.getTypeAtLocation(argExpr);
   const nn = ctx.checker.getNonNullableType(t);

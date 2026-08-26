@@ -5,6 +5,7 @@ import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
+import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
@@ -19,6 +20,7 @@ import { functionReturnsThroughWithScope } from "../declarations.js";
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
+  functionReturnsPreInitVarValue,
   observesHoistedFunctionValueBinding,
   observesOnlyHoistedFunctionValue,
   prepareHoistedFunctionBindings,
@@ -771,7 +773,8 @@ function compileNestedFunctionDeclarationInScope(
       retType = unwrapPromiseType(retType, ctx.checker);
     }
     if (!isVoidType(retType)) {
-      returnType = resolveWasmType(ctx, retType);
+      const inferredReturn = resolveWasmType(ctx, retType);
+      returnType = functionReturnsPreInitVarValue(ctx, stmt) ? { kind: "externref" } : inferredReturn;
     }
   }
   if (asyncDecision !== null) {
@@ -1058,12 +1061,10 @@ function compileNestedFunctionDeclarationInScope(
       labelMap: new Map(),
       savedBodies: [],
       isGenerator,
-      // #2152 — a nested function declaration whose body references its own
-      // `this` may be passed by reference as an array-HOF callback
-      // (`arr.filter(callbackfn, thisArg)`), which installs the spec `thisArg`
-      // into `__current_this` before the `call_ref`. Allow its `this` to read
-      // that global; for direct calls the global is null and the null-guarded
-      // read (#1702) falls back to `undefined` — behaviour-preserving.
+      // #2152 — a nested function whose body references its own `this` may be
+      // passed by reference as an array-HOF callback, which installs the spec
+      // `thisArg` into `__current_this`; direct calls retain the null-guarded
+      // undefined fallback (#1702).
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
     if (reachesDirectEval) {
@@ -1075,6 +1076,7 @@ function compileNestedFunctionDeclarationInScope(
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
     }
+    normalizeSloppyExplicitThisParameter(ctx, liftedFctx, stmt);
     liftedFctx.liftedCaptureNames = new Set(captures.map((capture) => capture.name));
 
     const savedFunc = ctx.currentFunc;

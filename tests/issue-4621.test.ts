@@ -190,10 +190,8 @@ describe.skipIf(!TEST262)("#4621 H — a property named `eval` must not poison t
   pinRow("language/statements/throw/S12.13_A2_T6.js", "throw an object with an `eval` property");
 });
 
-describe.skipIf(!TEST262)("#4621 G — the issue's map was stale; the row already passes", () => {
-  // Filed as a standalone `env::Math_random` host-import compile error. It does
-  // not reproduce: re-measured on this branch's base BEFORE any edit.
-  pinRow("built-ins/Math/random/S15.8.2.14_A1.js", "G control — Math.random standalone");
+describe.skipIf(!TEST262)("#4621 G — Math.random is host-free standalone", () => {
+  pinRow("built-ins/Math/random/S15.8.2.14_A1.js", "native standalone generator");
 
   // F (`language/comments/S7.4_A{5,6}`) is DELIBERATELY NOT PINNED HERE, and the
   // reason is a measurement, not squeamishness. Both rows pass at the 10 s CI
@@ -219,18 +217,16 @@ describe.skipIf(!TEST262)("#4621 — measured residuals (must still fail)", () =
   // Family E — was pinned residual ("static with-scope delete is a no-op"),
   // HEALED by #4519 in the same merge cycle (its member-get guard corpus sweep
   // lists this exact row fail→pass). The pin tripped at merge time — the
-  // designed mechanism — and is flipped positive. The _T5 twin below is still
-  // failing (array-valued property, different shape).
+  // designed mechanism — and is flipped positive. Aggregate composition also
+  // healed the array-valued _T5 twin, so both are positive pins now.
   pinRow("language/statements/with/S12.10_A5_T4.js", "healed by #4519 member-get guard");
-  pinResidualRow("language/statements/with/S12.10_A5_T5.js", "same, array-valued property");
+  pinRow("language/statements/with/S12.10_A5_T5.js", "array-valued twin healed in the aggregate branch");
 
-  // `in` does not walk a REASSIGNED prototype (`Robin.prototype = __proto`),
-  // while the value read, `hasOwnProperty` and the own-name `in` are all correct.
-  pinResidualRow("language/expressions/in/S8.12.6_A2_T2.js", "in misses a reassigned prototype");
+  // The composed prototype work now walks a reassigned prototype for `in`.
+  pinRow("language/expressions/in/S8.12.6_A2_T2.js", "reassigned prototype is visible to in");
 
-  // Family A. Not a `.source` bug alone: the `_T2` rows run ~65,500 runtime
-  // evals, and a loop of that size does not finish inside the 10 s budget even
-  // with every `.source` read removed (measured: still running past 290 s).
-  // Owner: runtime-eval throughput, not the regexp literal path.
-  pinResidualRow("language/literals/regexp/S7.8.5_A1.1_T2.js", "65k-eval loop exceeds the timeout");
+  // The aggregate runtime-eval work has removed the old throughput wall for
+  // this exact 65k-loop row; keep it positive so the stale residual cannot
+  // return unnoticed.
+  pinRow("language/literals/regexp/S7.8.5_A1.1_T2.js", "65k eval loop now completes");
 });

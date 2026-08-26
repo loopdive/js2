@@ -77,6 +77,7 @@ import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394)
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
+import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -155,6 +156,12 @@ export function compileTailDispatch(
       // shape inline would either expose caller bindings or omit IIFE-owned
       // bindings from the eval environment. Use the normal closure path.
       const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
+      // Likewise, a function expression that reads its own `arguments` needs
+      // the argc/extras carrier. The inline path can materialize only the
+      // values it chooses to bind and cannot preserve the call-site ABI (in
+      // particular surplus strings/objects), so route it through a real
+      // closure activation.
+      const observesOwnArguments = ts.isFunctionExpression(callee) && needsImplicitArgumentsObject(callee);
       // A genuinely-suspending async IIFE needs its own Promise/frame
       // activation. Inlining its statements into a synchronous caller makes
       // `await` use the legacy identity lowering, so a pending Promise is
@@ -167,6 +174,7 @@ export function compileTailDispatch(
         isGeneratorIIFE ||
         isRecursiveNamedFnExprIIFE ||
         reachesDirectEval ||
+        observesOwnArguments ||
         argumentsEscapesIife(callee, expr) ||
         isDrivenAsyncIIFE
       ) {
@@ -660,6 +668,21 @@ export function compileTailDispatch(
       const leftType = compileExpression(ctx, fctx, callee.left);
       if (leftType) {
         fctx.body.push({ op: "drop" });
+      }
+      // Preserve the absent receiver when the right side is a builtin
+      // prototype method. Rebuilding `Object.prototype.valueOf()` here would
+      // turn the detached call into a receiver call and hide its required
+      // nullish-`this` TypeError.
+      if (ts.isPropertyAccessExpression(callee.right)) {
+        const detached = tryDetachedBuiltinPrototypeNullishThisThrow(
+          ctx,
+          fctx,
+          expr,
+          callee.right,
+          (arg) => compileExpression(ctx, fctx, arg),
+          expectedType,
+        );
+        if (detached !== undefined) return detached;
       }
       // Create a synthetic call with the right side as callee
       const syntheticCall = ts.factory.createCallExpression(

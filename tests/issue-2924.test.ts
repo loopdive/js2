@@ -86,6 +86,19 @@ describe("#2924 — new Function('<const>') compile-away (standalone)", () => {
     ).toBe(3);
   });
 
+  it("gives a constant-AOT Function value its ordinary own prototype descriptor", async () => {
+    expect(
+      await runStandalone(`export function test(): number {
+        const f = new Function("", "null");
+        const p = f.prototype;
+        const d = Object.getOwnPropertyDescriptor(f, "prototype");
+        return f.hasOwnProperty("prototype") && typeof p === "object" &&
+          d !== undefined && d.value === p && d.writable === true &&
+          d.enumerable === false && d.configurable === false && f.prototype === p ? 1 : 0;
+      }`),
+    ).toBe(1);
+  });
+
   it("f64-resolved body result coerces (return 42 checker-resolves to number)", async () => {
     expect(
       await runStandalone(`export function test(): number { return new Function("return 42")() as number; }`),

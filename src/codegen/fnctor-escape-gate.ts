@@ -402,8 +402,15 @@ export function resolveLiftedMethodThisStruct(
  * body (`this.x = …`). A typed `instance.x` read of one of these lowers to a
  * `struct.get` on the `$__fnctor_<Name>` struct — clause (B)'s hot path.
  */
-function collectFnctorOwnFields(ctorSym: ts.Symbol): Set<string> {
+interface FnctorOwnFields {
+  readonly names: Set<string>;
+  /** Own fields initialized from a built-in String.prototype method value. */
+  readonly borrowedStringMethods: Set<string>;
+}
+
+function collectFnctorOwnFields(ctorSym: ts.Symbol): FnctorOwnFields {
   const fields = new Set<string>();
+  const borrowedStringMethods = new Set<string>();
   const decls = ctorSym.getDeclarations() ?? [];
   for (const decl of decls) {
     let body: ts.Block | undefined;
@@ -422,13 +429,27 @@ function collectFnctorOwnFields(ctorSym: ts.Symbol): Set<string> {
         ts.isPropertyAccessExpression(node.left) &&
         node.left.expression.kind === ts.SyntaxKind.ThisKeyword
       ) {
-        fields.add(node.left.name.text);
+        const fieldName = node.left.name.text;
+        fields.add(fieldName);
+        let rhs: ts.Expression = node.right;
+        while (ts.isParenthesizedExpression(rhs) || ts.isAsExpression(rhs) || ts.isNonNullExpression(rhs)) {
+          rhs = rhs.expression;
+        }
+        if (
+          ts.isPropertyAccessExpression(rhs) &&
+          ts.isPropertyAccessExpression(rhs.expression) &&
+          ts.isIdentifier(rhs.expression.expression) &&
+          rhs.expression.name.text === "prototype" &&
+          rhs.expression.expression.text === "String"
+        ) {
+          borrowedStringMethods.add(fieldName);
+        }
       }
       forEachChild(node, walk);
     };
     walk(body);
   }
-  return fields;
+  return { names: fields, borrowedStringMethods };
 }
 
 /**
@@ -451,6 +472,7 @@ function classifyUse(
   checker: ts.TypeChecker,
   useNode: ts.Expression,
   ownFields: ReadonlySet<string>,
+  borrowedStringMethods: ReadonlySet<string>,
   standalone?: boolean,
 ): "typed" | "dynamic" | "neutral" {
   const parent = useNode.parent;
@@ -462,7 +484,18 @@ function classifyUse(
     // dynamic ONLY when `inst` is the receiver ARG, not the method holder; a bare
     // `inst.method` access of a fnctor-prototype method is the dynamic-dispatch
     // case the substrate needs. A static OWN field read is typed.
-    if (ownFields.has(name)) return "typed";
+    if (ownFields.has(name)) {
+      // A constructor may store a built-in generic method (for example
+      // `this.slice = String.prototype.slice`) as an own field. Calling that
+      // value still performs the method's receiver ToString, which must see
+      // inherited user overrides such as `F.prototype.toString`. Keep this
+      // use on the dynamic path so the fnctor prototype substrate remains
+      // live; ordinary user-owned fields retain the typed hot path. The
+      // receiver-representation repair is standalone-only: the host lane
+      // already performs this coercion through its native MOP.
+      if (standalone === true && borrowedStringMethods.has(name)) return "dynamic";
+      return "typed";
+    }
     // A non-own-field named access on a fnctor instance is an inherited /
     // prototype-chain read — the dynamic case (resolved at runtime via the
     // $proto walk). This is exactly what reconstruction enables.
@@ -537,6 +570,16 @@ function classifyUse(
   // the externref `$Object` runtime — a user call's object-literal argument is
   // untouched.
   if (ts.isPropertyAssignment(parent) && parent.initializer === useNode) {
+    // `{ length: new F() }` feeds the value to LengthOfArrayLike/ToLength once
+    // the containing object is consumed by a borrowed Array method. The field
+    // boundary erases the direct constructor expression, so keeping `F` on its
+    // closed struct would make the later runtime ToPrimitive walk unable to see
+    // methods installed on `F.prototype`. Treat this canonical ES5 array-like
+    // slot as the same dynamic escape as `table.length = inst` above. Clause B
+    // still wins for constructors with typed own-field consumers.
+    const propertyName = ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name) ? parent.name.text : undefined;
+    if (standalone === true && propertyName === "length") return "dynamic";
+
     const lit = parent.parent;
     if (ts.isObjectLiteralExpression(lit) && ts.isCallExpression(lit.parent) && lit.parent.arguments.includes(lit)) {
       const outerCallee = lit.parent.expression;
@@ -1678,7 +1721,7 @@ export function analyzeFnctorEscapeGate(
     // (#4235) A name refused above is not classified at all — leaving it out of
     // `sites` keeps it off every downstream path.
     if (refusedNames.has(ctorSym.name)) continue;
-    const ownFields = collectFnctorOwnFields(ctorSym);
+    const { names: ownFields, borrowedStringMethods } = collectFnctorOwnFields(ctorSym);
     let sawDynamic = false;
     let sawTyped = false;
 
@@ -1689,7 +1732,7 @@ export function analyzeFnctorEscapeGate(
       const uses = bindSym ? (usesBySymbol.get(canonicalSymbol(bindSym)) ?? []) : [];
       for (const use of uses) {
         if (use === bind) continue; // the declaration name itself
-        const c = classifyUse(checker, use, ownFields, standalone);
+        const c = classifyUse(checker, use, ownFields, borrowedStringMethods, standalone);
         if (c === "typed") sawTyped = true;
         else if (c === "dynamic") sawDynamic = true;
       }
@@ -1715,7 +1758,7 @@ export function analyzeFnctorEscapeGate(
         inner = parent;
         parent = parent.parent;
       }
-      const c = classifyUse(checker, inner, ownFields, standalone);
+      const c = classifyUse(checker, inner, ownFields, borrowedStringMethods, standalone);
       if (c === "typed") sawTyped = true;
       else if (c === "dynamic") sawDynamic = true;
       // any other inline use → neither; stays keep-static.

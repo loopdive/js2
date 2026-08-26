@@ -256,24 +256,10 @@ describe("#4655 — Array.prototype.concat and the prototype chain", () => {
   );
 });
 
-describe("#4655 — measured residuals in this bucket (not fixed here)", () => {
-  // ── R-P: presence on a dynamic concat result ───────────────────────────────
-  // `concat/S15.4.4.4_A3_T{1,2,3}` now report the right VALUES and the wrong
-  // PRESENCE. §23.1.3.1 step 5.c.ii is CreateDataPropertyOrThrow, so a copied
-  // index is an OWN property of the result.
-  //
-  // Measured on BOTH arms (`.tmp/probes/c11-objvec-hasown.js`,
-  // `c14-hasown-controls.js`): `hasOwnProperty` answers **false for every
-  // index** of the result, including one holding a live `0`, on base and on fix
-  // alike — so this is a PRE-EXISTING gap that the carrier fix routes more
-  // values into, not one it introduces. `__hasOwnProperty` (object-runtime.ts)
-  // has `$Object`, string-exotic, builtin-fn-meta and carrier-bag arms and no
-  // DENSE-ELEMENT arm; a non-`$Object` receiver falls to `bagHasIfAbsent` and
-  // answers 0. Deliberately not fixed here: that native is what the whole
-  // test262 `propertyHelper` harness runs through, which is a blast radius this
-  // issue has no measurement for.
-  // Owner: vec/ObjVec own-index presence (value-rep), NOT the concat lowering.
-  failSource(
+describe("#4655 — retired concat carrier residuals", () => {
+  // §23.1.3.1 step 5.c.ii uses CreateDataPropertyOrThrow: copied indices are
+  // own properties, while holes remain absent. Keep both halves pinned.
+  pinSource(
     "presence-on-a-concat-result",
     `${LOOP_CARRIED}
      Array.prototype[2] = __n;
@@ -282,7 +268,7 @@ describe("#4655 — measured residuals in this bucket (not fixed here)", () => {
      var b = a.concat();
      assert.sameValue(b.hasOwnProperty("2"), true, "a copied index is an OWN property of the result");
      assert.sameValue(b.hasOwnProperty("1"), false, "a genuinely absent index is not");`,
-    "hasOwnProperty answers false for every index of a dynamic concat result",
+    "copied indices are visible as own properties on the dynamic concat result",
   );
   pinSource(
     "control-presence-residual-values-are-right",
@@ -293,27 +279,12 @@ describe("#4655 — measured residuals in this bucket (not fixed here)", () => {
      var b = a.concat();
      assert.sameValue(b[2], __n, "the VALUE half of the same row is fixed");
      assert.sameValue(b[1], undefined, "and the absent index still reads absent");`,
-    // NOT a both-arms control — measured 7-failed/7-passed on the base arm, this
-    // is one of the five that fail there. It is the VALUE half of the residual's
-    // own corpus row, repaired by C2, kept beside the residual so a later
-    // presence fix cannot be credited for it.
-    "the VALUE half of the residual's row — fails on base, passes here",
+    "the value half agrees with the own-property observation",
   );
 
-  // ── R-H: an all-elisions array literal as a concat operand ─────────────────
-  // `concat/S15.4.4.4_A1_T4` (`[,1].concat([], [,])`). Measured axis
-  // (`.tmp/probes/c12`, `c15`, `c16`): whether the elision has a NON-HOLE
-  // SIBLING in the literal.
-  //   [, 5]  spread through concat  →  element reads back absent      ✓
-  //   [,]    spread through concat  →  reads back a number (inline)
-  //                                    or an object (via a `var`)     ✗
-  // The direct read of `[,][0]` is correct on both arms, so the static element
-  // read knows and some dynamic path does not. I did NOT isolate WHICH path —
-  // `Array.prototype.indexOf.call([,], undefined)` answers 0 on both arms,
-  // which is inconsistent with the simplest "the dynamic chokepoint returns the
-  // raw marker" story, so that story is UNPROVEN and is not recorded as the
-  // root. Owner: value-rep hole-marker carrier selection (#4491 T11 family).
-  failSource(
+  // A lone elision and an elision with a populated sibling must both remain
+  // holes when their arrays are spread into the concat result.
+  pinSource(
     "lone-elision-literal-as-a-concat-operand",
     `${LOOP_CARRIED}
      var x = [];
@@ -323,7 +294,7 @@ describe("#4655 — measured residuals in this bucket (not fixed here)", () => {
      assert.sameValue(arr[0], undefined, "arr[0]");
      assert.sameValue(arr[1], __n, "arr[1]");
      assert.sameValue(arr[2], undefined, "arr[2] — the lone elision");`,
-    "an operand literal whose ONLY element is an elision loses its absence crossing concat",
+    "an operand literal whose only element is an elision preserves its absence crossing concat",
   );
   pinSource(
     "control-elision-with-a-non-hole-sibling",
@@ -332,9 +303,6 @@ describe("#4655 — measured residuals in this bucket (not fixed here)", () => {
      assert.sameValue(r.length, 4, "length: " + r.length);
      assert.sameValue(r[1], undefined, "the elision spreads as absent when it has a sibling");
      assert.sameValue(r[2], __n, "and the sibling itself survives");`,
-    // Also NOT a both-arms control: it has TWO arguments, so it needs C1's slot
-    // widening and fails on base. It discriminates the residual's axis on THIS
-    // arm — same elision, same concat, one non-hole sibling added.
-    "the SAME elision with a non-hole sibling spreads correctly here — the axis is the literal, not concat",
+    "an elision with a non-hole sibling follows the same absence rule",
   );
 });
