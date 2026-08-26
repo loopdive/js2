@@ -107,7 +107,7 @@ import { emitStandaloneIntrinsicFunctionValue } from "./expressions/eval-inline.
 import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { objectCoercionPreservesFunction } from "./object-ctor-primitive-receiver.js";
-import { moduleTouchesConstructorProp } from "./property-access.js";
+import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
 import { compileExpression } from "./shared.js";
 
 /**

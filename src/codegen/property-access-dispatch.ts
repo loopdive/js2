@@ -81,6 +81,8 @@ import {
 import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constructor.js"; // (#2875 w4-F)
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
   tryCompileStandaloneRegExpMatchResultRead,
@@ -171,7 +173,6 @@ import {
   isGeneratorIteratorResultLike,
   isGetProtoOfWiredViewProtoCall,
   isProvablyNonNull,
-  moduleTouchesConstructorProp,
   receiverIsCatchClauseBinding,
   receiverIsNativeStringValType,
   resolveInheritedStaticProp,
@@ -284,6 +285,9 @@ export function tryConstructorPrototypeIdentity(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  const ctorProto = tryEmitBuiltinInstanceConstructorPrototype(ctx, fctx, expr);
+  if (ctorProto !== undefined) return ctorProto;
+
   // #3371: the original Test262 realm shim deliberately aliases
   // `$262.createRealm().global` to the current native global. Therefore
   // `other[TA.name]` is the same first-class `$__ta_ctor` value as `TA`, and
@@ -476,14 +480,9 @@ export function tryConstructorPrototypeIdentity(
   if (fnValueCtor !== undefined) return fnValueCtor;
 
   // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`
-  // → the GENUINE, identity-stable reified builtin-constructor object (supersedes
-  // the #2537 null-fold). Reading `.constructor` on a builtin extern-class receiver
-  // otherwise walks the inheritance chain (`compileExternPropertyGet`) to the
-  // `Object` base extern class — the only declarer of `constructor`,
-  // `importPrefix: "Object"` — and emits an `env::Object_get_constructor` host
-  // import (the leak the #2999 round-5 analysis flagged: 9 standalone passes for
-  // Set/WeakMap/WeakRef/WeakSet/RegExp/FinalizationRegistry/DisposableStack/
-  // SuppressedError plus instance forms). Route it to the SAME per-name
+  // must return the genuine identity-stable builtin-constructor object. The
+  // generic inherited read leaks `env::Object_get_constructor`; route it to the
+  // same per-name
   // `__builtin_ctor_<Name>` singleton the bare identifier now resolves to
   // (identifiers.ts), so `<Builtin>.prototype.constructor === <Builtin>` is
   // GENUINELY true (same object) and the swap-wrong-builtin cross-check
