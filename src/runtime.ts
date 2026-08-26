@@ -8347,8 +8347,21 @@ function _hostProxyConstruct(
   // === 0 after unbox). Hand the struct to the bridge builder so it can
   // install a struct-aware default `get` forwarder for that case.
   const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
-  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
-  const proxy = new Proxy(proxyTarget, bridgeHandler);
+  // (#4749) WasmGC structs are non-extensible and opaque to the host Proxy
+  // invariant checker. Use the live host mirror as [[ProxyTarget]] for raw
+  // struct targets; the bridge still substitutes the raw struct into every
+  // user trap argument, preserving target identity while allowing the mirror
+  // to carry the compiler-visible own-key set.
+  const hostStructTarget =
+    structTarget === undefined ? undefined : _wrapForHost(structTarget, callbackState?.getExports());
+  const bridgeHandler = _buildProxyBridgeHandler(
+    handler,
+    callbackState,
+    rawTarget,
+    structTarget,
+    hostStructTarget === undefined ? undefined : structTarget,
+  );
+  const proxy = new Proxy(hostStructTarget ?? proxyTarget, bridgeHandler);
   _userProxies.add(proxy);
   return proxy;
 }
@@ -8371,8 +8384,19 @@ function _hostProxyConstructRevocable(
   const { proxyTarget, rawTarget } = _proxyTargetFor(target, callbackState);
   // (#3127) Same struct-aware trap-absent `get` forwarding as `_hostProxyConstruct`.
   const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
-  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
-  const rv = Proxy.revocable(proxyTarget, bridgeHandler);
+  // (#4749) Keep the native Proxy's invariant target extensible by using the
+  // live mirror for raw WasmGC structs; trap arguments remain raw via the
+  // bridge substitution below.
+  const hostStructTarget =
+    structTarget === undefined ? undefined : _wrapForHost(structTarget, callbackState?.getExports());
+  const bridgeHandler = _buildProxyBridgeHandler(
+    handler,
+    callbackState,
+    rawTarget,
+    structTarget,
+    hostStructTarget === undefined ? undefined : structTarget,
+  );
+  const rv = Proxy.revocable(hostStructTarget ?? proxyTarget, bridgeHandler);
   if (rv && typeof rv.proxy === "object" && rv.proxy !== null) _userProxies.add(rv.proxy);
   return rv;
 }
@@ -8452,6 +8476,11 @@ function _buildProxyBridgeHandler(
   // the trap-absent case. `undefined` ⇒ non-struct target (host default is
   // already correct) or substituted callable wrapper (readable by the host).
   structTarget?: any,
+  // (#4749) Optional raw target to substitute into ALL user trap argument
+  // lists when the host Proxy uses a live mirror as its native target. With a
+  // raw WasmGC target this preserves `target` identity while avoiding the
+  // non-extensible opaque-struct invariant failure in V8.
+  trapTarget?: any,
 ): any {
   // Plain JS handler (created host-side, not a WasmGC struct) already exposes
   // its traps directly. BUT if the [[ProxyTarget]] is a substituted callable
@@ -8492,7 +8521,7 @@ function _buildProxyBridgeHandler(
   // a proxy built inside an exported function) is unchanged: the eager branch
   // below is byte-for-byte the prior logic.
   if (!exports) {
-    return _buildLazyProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
+    return _buildLazyProxyBridgeHandler(handler, callbackState, rawTarget, structTarget, trapTarget);
   }
 
   const bridge: Record<string, any> = {};
@@ -8510,6 +8539,12 @@ function _buildProxyBridgeHandler(
       if (name === "get" && structTarget !== undefined) {
         bridge[name] = (_t: any, key: any, _receiver: any): any =>
           _resolveHostField(structTarget, key, callbackState?.getExports());
+      } else if (name === "ownKeys" && structTarget !== undefined) {
+        // (#4749) A raw WasmGC struct is opaque to the host's ordinary
+        // [[OwnPropertyKeys]].  Expose its compiler fields and sidecar
+        // properties when a Proxy omits ownKeys, so Object.assign can reach
+        // the descriptor trap for each source property.
+        bridge[name] = () => _ownStructKeys(structTarget, callbackState?.getExports());
       }
       continue;
     }
@@ -8541,7 +8576,8 @@ function _buildProxyBridgeHandler(
     // value the program passed to `new Proxy` (apply/construct/call-parameters).
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
-      if (substituteTarget && args.length > 0) args[0] = rawTarget;
+      if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
+      else if (substituteTarget && args.length > 0) args[0] = rawTarget;
       return (callable as Function).apply(handler, args);
     };
   }
@@ -8592,6 +8628,9 @@ function _buildLazyProxyBridgeHandler(
   // (#3127) See `_buildProxyBridgeHandler` — the raw WasmGC-struct target kept
   // as [[ProxyTarget]], for struct-aware trap-absent `get` forwarding.
   structTarget?: any,
+  // (#4749) Raw target to substitute into every trap when the native target is
+  // the live host mirror of a WasmGC struct.
+  trapTarget?: any,
 ): any {
   const bridge: Record<string, any> = {};
   for (const name of _PROXY_TRAP_NAMES) {
@@ -8609,13 +8648,19 @@ function _buildLazyProxyBridgeHandler(
         // struct-field resolution (see the eager builder).
         if (name === "get" && structTarget !== undefined) {
           return _resolveHostField(structTarget, args[1], lateExports);
+        } else if (name === "ownKeys" && structTarget !== undefined) {
+          // (#4749) Mirror the eager bridge for top-level proxies built before
+          // exports are wired: the raw struct's fields must be enumerable by
+          // the host Proxy's default ownKeys operation.
+          return _ownStructKeys(structTarget, lateExports);
         }
         return _proxyForwardDefault(name, args);
       }
       // (#2618) restore the raw target for apply/construct (see eager path) only
       // when actually invoking the user trap, so the trap's `target` parameter
       // is identity-equal to what the program passed to `new Proxy`.
-      if (substituteTarget && args.length > 0) args[0] = rawTarget;
+      if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
+      else if (substituteTarget && args.length > 0) args[0] = rawTarget;
       const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
