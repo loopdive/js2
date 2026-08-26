@@ -10,7 +10,13 @@ import {
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
+import {
+  collectIrFnctorArgumentProjectionsForPlanning,
+  makeIrFnctorArgumentProjectionAuthority,
+  makeIrFnctorAdmissionResolver,
+  makeIrFnctorPropagationAdmissionResolver,
+  type IrFnctorArgumentProjectionRoute,
+} from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -2560,6 +2566,8 @@ function planIrOverlay(
     readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
     /** Transaction B2 is single-source only; Transaction C owns graph composition. */
     readonly enableCountedStringAppendProof?: boolean;
+    /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
+    readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
@@ -2586,6 +2594,17 @@ function planIrOverlay(
       error,
     );
   }
+  const fnctorArgumentProjections =
+    !options.fnctorArgumentProjectionRoute || (ctx.fnctorEscapeGate?.approved.size ?? 0) === 0
+      ? []
+      : collectIrFnctorArgumentProjectionsForPlanning(
+          ctx,
+          ast.checker,
+          identityContext,
+          ast.sourceFile,
+          identityMaps.unitTypeMap,
+          options.fnctorArgumentProjectionRoute,
+        );
   // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS is set, request the
   // selector to track every top-level FunctionDeclaration that didn't
   // make it into `funcs` along with the rejection reason. Logged to
@@ -2811,6 +2830,12 @@ function planIrOverlay(
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
       resolveFnctorAdmission,
+      ...(fnctorArgumentProjections.length > 0
+        ? {
+            fnctorArgumentProjections,
+            fnctorArgumentProjectionAuthority: makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker),
+          }
+        : {}),
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,
@@ -3535,6 +3560,7 @@ function planMultiIrOverlaySource(
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
+  fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3546,6 +3572,7 @@ function planMultiIrOverlaySource(
   return planIrOverlay(ctx, sourceAst, identityContext, {
     resolveModuleBindings: false,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
+    ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
   });
 }
 
@@ -3679,7 +3706,12 @@ function compileMultiIrOverlaySource(
   early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
 ): void {
   const plan =
-    early?.plan ?? planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions);
+    early?.plan ??
+    planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions, {
+      experimentalIR: true,
+      postLegacyPhysicalReservation: true,
+      irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+    });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
@@ -5157,7 +5189,15 @@ export function generateModule(
       // planning code verbatim (typeMap → selection → STRICT_IR_REASONS →
       // classShapes → overrideMap → safeSelection → new.target gate).
       const plan =
-        irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
+        irPlan ??
+        planIrOverlay(ctx, ast, irPlanningIdentityContext!, {
+          enableCountedStringAppendProof: true,
+          fnctorArgumentProjectionRoute: {
+            experimentalIR: true,
+            postLegacyPhysicalReservation: true,
+            irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+          },
+        });
       const { classShapes, overrideMap } = plan;
       const safeSelection = preparedSelection ?? finalizePreparedIrSelection(ctx, ast.sourceFile, plan);
       const report = completePreparedIrIntegration({
