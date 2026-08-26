@@ -37,17 +37,6 @@ export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, e
     emitUnboundThis(ctx, fctx, expr);
     return { kind: "externref" };
   }
-  // A folded direct-eval body is a foreign AST, and its `this` is evaluated in
-  // the caller's function code. In a compiled closure the host dispatcher may
-  // leave `__current_this` populated with its own receiver (often the realm
-  // global), but that is not the caller's bare-call thisArg. Honor the
-  // explicit eval override before the dispatched-receiver rung. Script
-  // top-level `this` remains the global object; only module top level (whose
-  // this is undefined) and non-top-level function code take this path.
-  if (fctx.directEvalSloppyThisFallback !== undefined && (fctx.name !== "__module_init" || ctx.sourceIsModule)) {
-    emitUnboundThis(ctx, fctx, expr);
-    return { kind: "externref" };
-  }
   // A typed-this twin receives its exact runtime receiver in param/local 0.
   // Reuse that value for bare/non-field `this` expressions too, rather than
   // round-tripping through the ambient `__current_this` global. This makes
@@ -96,6 +85,41 @@ export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, e
   // (the `10.4.3-1-*gs` family). An inlined callee falls through instead.
   if (fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(expr)) {
     return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+  }
+  // A folded direct-eval body is a foreign AST, but its `this` still belongs
+  // to the caller's activation (§10.4.4). Lexical receiver rungs above have
+  // already handled class/typed-this callers. For an ordinary function the
+  // caller's receiver is the non-null `__current_this` marker when it was
+  // invoked through a receiver-aware trampoline; only the null arm uses the
+  // eval caller-strictness override (sloppy → global, strict → undefined).
+  // This ordering is load-bearing: the old early override discarded a real
+  // constructor receiver and made `eval("this")` return `undefined` in strict
+  // `new F()` bodies.
+  if (fctx.directEvalSloppyThisFallback !== undefined && (fctx.name !== "__module_init" || ctx.sourceIsModule)) {
+    if (ctx.currentThisGlobalIdx >= 0) {
+      if (emitCachedResolvedThis(ctx, fctx, expr)) return { kind: "externref" };
+      const thisTmp = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
+      fctx.body.push({ op: "local.tee", index: thisTmp });
+      fctx.body.push({ op: "ref.is_null" });
+      const elseBody: Instr[] = buildCurrentThisNonNullArm(ctx, fctx, expr, thisTmp);
+      const savedBody = fctx.body;
+      const thenBody: Instr[] = [];
+      fctx.body = thenBody;
+      emitUnboundThis(ctx, fctx, expr);
+      fctx.body = savedBody;
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: thenBody,
+        else: elseBody,
+      });
+      releaseTempLocal(fctx, thisTmp);
+      recordResolvedThis(ctx, fctx, expr);
+      return { kind: "externref" };
+    }
+    emitUnboundThis(ctx, fctx, expr);
+    return { kind: "externref" };
   }
   // (#1636-S1) Host-dispatched-closure fallback: when no local `this`
   // binding exists and we're not in a static-class context, read the

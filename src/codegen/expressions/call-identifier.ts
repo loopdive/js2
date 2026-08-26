@@ -105,6 +105,7 @@ import {
   calleeIsPromiseExecutorParam,
   calleeMayBeHostCallable,
   compileCallExpression,
+  emitBareCallReceiverReset,
   ensureFuncValueWrappersRegistered,
   emitBoundFunctionCall,
   emitDynamicSpreadCall,
@@ -1934,6 +1935,14 @@ export function compileIdentifierCall(
             argLocals.push(argLocal);
           }
 
+          // The code below emits only the actual invocation. Argument evaluation
+          // above must retain the surrounding receiver, but the call itself is
+          // a bare identifier call and therefore runs with an absent
+          // Reference base (§13.3.6.2). Keep this offset so the receiver marker
+          // can wrap the invocation after the optional foreign-call split is
+          // assembled.
+          const callableInvocationStart = fctx.body.length;
+
           // (#1712/#2928) Foreign-callable fallback: when the callee arrived as externref
           // and the guarded cast to the wrapper struct failed (closureLocal is
           // null) while the raw value is non-null, the callee is callable but
@@ -2418,6 +2427,9 @@ export function compileIdentifierCall(
               else: dispatchInstrs,
             });
           }
+
+          const callableInvocation = fctx.body.splice(callableInvocationStart);
+          fctx.body.push(...emitBareCallReceiverReset(ctx, fctx, callableInvocation, expectedReturn));
 
           return expectedReturn ?? VOID_RESULT;
         }

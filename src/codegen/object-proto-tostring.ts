@@ -506,6 +506,22 @@ export function emitObjectProtoToStringClassifier(
     );
   }
 
+  // User function-constructor instances are ordinary ECMAScript objects, but
+  // the standalone fnctor lowering carries them in their nominal
+  // `$__fnctor_<F>` structs rather than in the open `$Object` carrier above.
+  // They have no callable/array/wrapper exotic slot, so §20.1.3.6 step 13 is
+  // the correct `[object Object]` answer. Keep this arm keyed to the compiler's
+  // registered fnctor carrier types; a blanket "anything not classified is an
+  // object" would silently mis-tag proxies and future exotic carriers.
+  for (const fnctorTypeIdx of ctx.fnctorReservedTypeIdx.values()) {
+    fctx.body.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: fnctorTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag("Object") },
+    );
+  }
+
   return emittedAnyArm;
 }
 

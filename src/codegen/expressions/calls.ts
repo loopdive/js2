@@ -99,10 +99,111 @@ import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge, tryBindApp
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
+import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
+import { buildStandardTryTable } from "../../ir/try-table.js";
 
 // (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
 // because call sites import it from `calls.ts`.
 export { emitVirtualMethodDispatchByTag };
+
+/**
+ * Install the unbound-call receiver marker around a dynamically dispatched
+ * callable invocation.
+ *
+ * A closure body that reads `this` uses `__current_this` when it has no lexical
+ * receiver.  Member-call dispatchers deliberately install their receiver in
+ * that global, but a bare call has no Reference base (§13.3.6.2), so its
+ * thisArgument is `undefined` and the global must be empty while the callee
+ * runs.  Leaving an enclosing member receiver in place made
+ * `assert.throws(TypeError, function () { this.missing(); })` observe the
+ * outer `assert` function as `this` and skip the expected TypeError.
+ *
+ * The body is parked in a local before restoring the previous receiver.  The
+ * target-tagged scaffold restores it on both normal and tagged-exception exits
+ * so a caught throw cannot leak the unbound marker into the surrounding call.
+ */
+export function emitBareCallReceiverReset(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  body: Instr[],
+  resultType: ValType | null,
+): Instr[] {
+  const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
+  const previousThisLocal = allocLocal(fctx, `__bare_prev_this_${fctx.locals.length}`, { kind: "externref" });
+  const resultLocal =
+    resultType === null ? undefined : allocLocal(fctx, `__bare_result_${fctx.locals.length}`, resultType);
+  const restoreOnException = (fctx.tryCatchDepth ?? 0) > 0;
+  const exceptionLocal =
+    restoreOnException && (ctx.standalone || ctx.wasi)
+      ? allocLocal(fctx, `__bare_exception_${fctx.locals.length}`, { kind: "externref" })
+      : undefined;
+
+  const restore: Instr[] = [
+    { op: "local.get", index: previousThisLocal },
+    { op: "global.set", index: currentThisGlobalIdx },
+  ];
+  const parkedBody = [...body];
+  if (resultLocal !== undefined) parkedBody.push({ op: "local.set", index: resultLocal });
+
+  const protectedCall: Instr | undefined = !restoreOnException
+    ? undefined
+    : exceptionLocal !== undefined
+      ? buildStandardTryTable({ kind: "empty" }, parkedBody, [
+          {
+            kind: "catch",
+            tagIdx: ensureExnTag(ctx),
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: exceptionLocal },
+              ...restore,
+              { op: "local.get", index: exceptionLocal },
+              { op: "throw", tagIdx: ensureExnTag(ctx) },
+            ],
+          },
+        ])
+      : {
+          op: "try",
+          blockType: { kind: "empty" },
+          body: parkedBody,
+          catches: [],
+          catchAll: [...restore, { op: "rethrow", depth: 0 }],
+        };
+
+  return [
+    { op: "global.get", index: currentThisGlobalIdx },
+    { op: "local.set", index: previousThisLocal },
+    { op: "ref.null.extern" },
+    { op: "global.set", index: currentThisGlobalIdx },
+    ...(protectedCall === undefined ? parkedBody : [protectedCall]),
+    ...restore,
+    ...(resultLocal === undefined ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
+  ];
+}
+
+function emitDynamicCallDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  dispatch: Instr[],
+): Instr[] {
+  // A property/element reference carries an explicit receiver and must retain
+  // any receiver installed by its caller. Every other dynamic callee is a
+  // value call: its Reference base is absent, so clear `__current_this` while
+  // the selected closure runs (§13.3.6.2). Parenthesized/type-asserted forms
+  // are still bare calls after their transparent wrappers are removed.
+  let bareCallee: ts.Expression = expr.expression;
+  while (
+    ts.isParenthesizedExpression(bareCallee) ||
+    ts.isAsExpression(bareCallee) ||
+    ts.isSatisfiesExpression(bareCallee) ||
+    ts.isNonNullExpression(bareCallee) ||
+    ts.isTypeAssertionExpression(bareCallee)
+  ) {
+    bareCallee = bareCallee.expression;
+  }
+  const isBareCall = !ts.isPropertyAccessExpression(bareCallee) && !ts.isElementAccessExpression(bareCallee);
+  return isBareCall ? emitBareCallReceiverReset(ctx, fctx, dispatch, { kind: "externref" }) : dispatch;
+}
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -4555,7 +4656,7 @@ export function tryEmitInlineDynamicCall(
     }
   }
 
-  fctx.body.push(...dispatch);
+  fctx.body.push(...emitDynamicCallDispatch(ctx, fctx, expr, dispatch));
   return { kind: "externref" };
 }
 

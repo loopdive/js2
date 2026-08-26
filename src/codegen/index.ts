@@ -491,6 +491,7 @@ import {
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
 import { irNativeNumberToFixedAvailable, irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
+import { fillStandaloneObjectProtoToStringFnctorArms } from "./object-proto-tostring-native.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
   hasExportModifier,
@@ -5837,6 +5838,12 @@ export function generateModule(
     // synthesised mid-compile). Edits the helper bodies in place — no funcIdx churn.
     fillStandaloneTypeofClosureArms(ctx);
 
+    // Function-constructor instances use nominal `$__fnctor_<Name>` carriers;
+    // their Object.prototype.toString classifier may have been probed before
+    // the late carrier reservation completed. Fill those ref.test arms in the
+    // existing classifier/closure bodies without changing function indices.
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
+
     // Fill the reserve/fill identity probes used by the fully-dynamic
     // `instanceof` substrate after all builtin carrier globals and native
     // prototype types have been published.
@@ -9174,6 +9181,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).
     fillStandaloneTypeofClosureArms(ctx);
+
+    // Same late fnctor-carrier fill on the multi-source finalize path.
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
 
     // Same reserve/fill identity probes as the single-source pipeline.
     fillNativeDynamicInstanceOf(ctx);
