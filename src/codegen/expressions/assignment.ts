@@ -4171,6 +4171,19 @@ function compilePropertyAssignment(
     return externSetTy;
   }
 
+  // A Script's top-level `this` is the same realm global object as
+  // `globalThis`. Keep callable values written through that spelling in the
+  // shared runtime-eval AOT carrier too; otherwise a caller-private closure
+  // stored on the native standalone global reaches QuickJS as an opaque
+  // non-callable object. The `globalThis` arm above already does this for its
+  // spelling, and this is the corresponding §10.4.1.1 receiver path.
+  if (receiverIsRealmGlobalObject(ctx, fctx, target.expression)) {
+    const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
+    const wrapRuntimeEvalCallable =
+      ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
+  }
+
   // Handle externref property set
   if (isExternalDeclaredClass(objType, ctx.checker)) {
     const externSetResult = compileExternPropertySet(ctx, fctx, target, value, objType);

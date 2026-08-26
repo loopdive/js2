@@ -101,6 +101,7 @@ import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative
 import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
+import { installableReceiverInstrs } from "../helpers/undefined-receiver.js"; // (#4555) runtime-eval receiver seam
 
 // (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
 // because call sites import it from `calls.ts`.
@@ -6048,9 +6049,21 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   }
 
   const externref: ValType = { kind: "externref" };
-  for (const arg of expr.arguments) {
+  for (let i = 0; i < expr.arguments.length; i += 1) {
+    const arg = expr.arguments[i]!;
     const type = compileExpression(ctx, fctx, arg, externref);
     if (type && type.kind !== "externref") coerceType(ctx, fctx, type, externref);
+    if (i === 1) {
+      // The provider's undefined singleton is private to that module. If it
+      // crosses the seam as an opaque externref, the caller's carrier cannot
+      // recognize it as an absent receiver and a sloppy callee observes that
+      // foreign object instead of applying §10.4.3. Normalize at the seam
+      // while the value is still in the provider's own representation; null
+      // is the caller's established unbound spelling, and the callee's own
+      // strictness still selects undefined versus the realm global.
+      const receiverLocal = allocLocal(fctx, `__runtime_eval_receiver_${fctx.locals.length}`, externref);
+      fctx.body.push({ op: "local.set", index: receiverLocal }, ...installableReceiverInstrs(ctx, receiverLocal));
+    }
   }
   ensureObjectRuntime(ctx);
   const applyIdx = reserveApplyClosure(ctx);

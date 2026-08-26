@@ -35,6 +35,7 @@ const CONTROLS = [
   "test/language/expressions/this/S11.1.1_A3.1.js",
   "test/language/function-code/10.4.3-1-82-s.js",
   "test/language/function-code/10.4.3-1-85-s.js",
+  "test/language/function-code/10.4.3-1-86-s.js",
 ] as const;
 
 const HOST_ROWS = [...EXACT_ROWS, ...CONTROLS];
@@ -74,6 +75,7 @@ describe.skipIf(!TEST262)("ES5 receiver/this residual quad", () => {
       "test/language/expressions/this/S11.1.1_A3.1.js",
       "test/language/function-code/10.4.3-1-82-s.js",
       "test/language/function-code/10.4.3-1-85-s.js",
+      "test/language/function-code/10.4.3-1-86-s.js",
     ]) {
       it(file, { timeout: 60_000 }, async () => {
         const result = await runRow(file, "standalone");
