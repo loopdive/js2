@@ -55,6 +55,7 @@ import {
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
 import { declarationReadsStructuralObjectFromRealmGlobal } from "../analysis/realm-global-structural-carrier.js";
+import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "../analysis/proxy-binding-escape.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -779,7 +780,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
-    if (isProxyConstruction(init)) return { kind: "externref" };
+    if (isDirectProxyConstruction(init)) return { kind: "externref" };
     // Representations the var-decl path computes from a decl/receiver-driven
     // inference that diverges from resolveWasmType — defer to the host path.
     if (inferStandaloneRegExpMatchArrayType(ctx, init) !== null) return null;
@@ -1095,19 +1096,6 @@ function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
  * `isBindCarrierCall` / `isPromiseHostCall` slot-type overrides. Mode-agnostic:
  * both host and standalone emit a Proxy externref, so both need the override.
  */
-function isProxyConstruction(expr: ts.Expression): boolean {
-  if (ts.isNewExpression(expr)) {
-    return ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy";
-  }
-  return (
-    ts.isCallExpression(expr) &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.name.text === "revocable" &&
-    ts.isIdentifier(expr.expression.expression) &&
-    expr.expression.expression.text === "Proxy"
-  );
-}
-
 /**
  * Does this binding become the target of a native Proxy in its lexical scope?
  * A Proxy can mutate that target through a trap or an absent-trap forward, so
@@ -1161,60 +1149,6 @@ function bindingIsProxyTarget(ctx: CodegenContext, decl: ts.VariableDeclaration)
   };
   visit(scope);
   return found;
-}
-
-/**
- * (#2615 narrowing) Does the Proxy-bound variable `name` ever ESCAPE into a
- * call/new as a by-value argument, or get used as a generic-method receiver
- * (`Array.prototype.X.call(p, …)` / `Object.getPrototypeOf(p)` /
- * `Object.prototype.toString.call(p)`) anywhere in the enclosing function?
- *
- * Why this matters: forcing the slot to `externref` (so member READS route
- * through `__extern_get` — the read-trap fix) breaks the regression cases where
- * the Proxy is handed to a host generic-method / global. For a struct-typed
- * slot those host paths received a wasm struct they could introspect (IsArray,
- * getPrototypeOf, the Array.prototype.* spec walk); the bare externref Proxy
- * goes through a different host path that loses Array-ness / prototype identity
- * (regressed `Object/prototype/toString/proxy-array`, `copyWithin/*-proxy-*`,
- * `getOwnPropertySymbols/proxy-invariant-*`, `getPrototypeOf/*-target-is-proxy`).
- *
- * So: only flip the slot to externref when the Proxy stays LOCAL and is used
- * purely in member position (`p.x` / `p[k]` / `delete p.x` / `k in p`). If it
- * escapes into a call argument, keep the struct typing — the keystone read-trap
- * fix still lands for the common direct-read case, and the escaping-into-host
- * paths keep working. A receiver of `p.method()` (member-then-call) is NOT an
- * escape; only `p` appearing as a CALL/NEW ARGUMENT (incl. `.call`/`.apply`
- * first arg) counts.
- */
-function proxyResultEscapesToCall(decl: ts.VariableDeclaration, name: string): boolean {
-  const fn = findEnclosingFunctionOrSource(decl);
-  if (!fn) return false;
-  let escapes = false;
-  const visit = (node: ts.Node): void => {
-    if (escapes) return;
-    if (ts.isIdentifier(node) && node.text === name) {
-      const p = node.parent;
-      // `f(…, p, …)` or `new C(…, p, …)` — p is a by-value argument.
-      if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.arguments?.some((a) => a === node)) {
-        escapes = true;
-        return;
-      }
-      // `<receiver>.call(p, …)` / `<receiver>.apply(p, …)` — p is the `this`
-      // arg of a generic-method dispatch (Array.prototype.X.call(p), etc.).
-      if (
-        ts.isCallExpression(p) &&
-        ts.isPropertyAccessExpression(p.expression) &&
-        (p.expression.name.text === "call" || p.expression.name.text === "apply") &&
-        p.arguments?.[0] === node
-      ) {
-        escapes = true;
-        return;
-      }
-    }
-    node.forEachChild(visit);
-  };
-  visit(fn);
-  return escapes;
 }
 
 function findEnclosingFunctionOrSource(node: ts.Node): ts.Node | undefined {
@@ -1821,9 +1755,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Array.prototype.* spec walk) still work on a wasm-struct receiver.
     const initIsProxy =
       decl.initializer !== undefined &&
-      isProxyConstruction(decl.initializer) &&
+      isDirectProxyConstruction(decl.initializer) &&
       ts.isIdentifier(decl.name) &&
-      !proxyResultEscapesToCall(decl, decl.name.text);
+      !proxyBindingEscapesToCall(ctx, decl);
     const isProxyTargetBinding = bindingIsProxyTarget(ctx, decl);
     if (isProxyTargetBinding) ctx.externrefAccessorVars.add(name);
     const initIsPropertyDescriptorResult = isPropertyDescriptorResultExpression(decl.initializer);

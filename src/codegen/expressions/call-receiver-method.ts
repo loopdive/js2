@@ -169,7 +169,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { resolveStructName } from "./misc.js";
+import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 
 /**
  * A source-level delete removes the builtin prototype member before the call
@@ -753,6 +753,14 @@ export function compileReceiverMethodCall(
     const recovered = resolveAssignedNominalType(ctx, propAccess.expression);
     if (recovered) receiverType = recovered;
   }
+  // Object literals with runtime computed keys are deliberately represented as
+  // open `$Object` externrefs, even when TypeScript still describes the binding
+  // as its inferred closed shape. Keep calls on those bindings on the dynamic
+  // property path; the closed method arm would cast the open object to the
+  // stale inferred struct and invoke the method with a null receiver.
+  const receiverTagExpr = skipTransparentExpressions(propAccess.expression);
+  const receiverIsExternrefTagged =
+    ts.isIdentifier(receiverTagExpr) && ctx.externrefAccessorVars.has(receiverTagExpr.text);
 
   // TextEncoder/TextDecoder under no-JS-host targets. These are standard
   // Web/Node APIs, but WASI/standalone cannot rely on env.TextEncoder_* host
@@ -2060,7 +2068,9 @@ export function compileReceiverMethodCall(
 
   // Check if receiver is a struct type (e.g. object literal with methods)
   {
-    const structTypeName = resolveStructName(ctx, receiverType);
+    const structTypeName = receiverIsExternrefTagged
+      ? undefined
+      : resolveStructNameForExpr(ctx, fctx, propAccess.expression, propAccess.name);
     if (structTypeName) {
       const methodName = propAccess.name.text;
       const fullName = `${structTypeName}_${methodName}`;
@@ -2070,7 +2080,13 @@ export function compileReceiverMethodCall(
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
-      if ((funcIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx)) !== undefined) {
+      // Keep a per-literal method handle selected by directObjectMethodFuncIdx
+      // through the late re-lookup below. A deduped sibling may leave the
+      // name-keyed placeholder pointing at a different (empty) body.
+      const nameMethodFuncIdx = funcIdx;
+      const directMethodFuncIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx);
+      const hasLiteralMethodOverride = directMethodFuncIdx !== undefined && directMethodFuncIdx !== nameMethodFuncIdx;
+      if ((funcIdx = directMethodFuncIdx) !== undefined) {
         // Push self (the receiver) as first argument, with type hint from method's first param
         const structMethodPTypes = getFuncParamTypes(ctx, funcIdx);
         const recvType = compileExpression(ctx, fctx, propAccess.expression, structMethodPTypes?.[0]);
@@ -2134,7 +2150,7 @@ export function compileReceiverMethodCall(
           }
           // Set __argc before the call so the callee knows the actual arg count
           maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
-          const finalStructMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
+          const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
           fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
           const elseInstrs = fctx.body;
           fctx.body = savedBody;
@@ -2199,7 +2215,7 @@ export function compileReceiverMethodCall(
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-        const finalStructMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
+        const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
         fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
 
         const sig = ctx.checker.getResolvedSignature(expr);
@@ -3481,7 +3497,8 @@ export function compileReceiverMethodCall(
     );
   }
   {
-    const isAnyOrExternref = (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref";
+    const isAnyOrExternref =
+      (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref" || receiverIsExternrefTagged;
 
     if (isAnyOrExternref) {
       const methodName = propAccess.name.text;

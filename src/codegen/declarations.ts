@@ -59,6 +59,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -140,6 +141,7 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
+import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "./analysis/proxy-binding-escape.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -936,6 +938,18 @@ function lowerParamType(
   ) {
     wasmType = { kind: "externref" };
   }
+  // #4701: an inferred numeric formal in a mapped-arguments function can be
+  // written through Object.defineProperty/arguments[i] with a nonnumeric JS
+  // value. Keep ordinary numeric ABIs unchanged; widen only this measured
+  // direct-write shape so reverse sync can preserve the exact externref value.
+  if (
+    !param.type &&
+    ts.getJSDocType(param) === undefined &&
+    (wasmType.kind === "f64" || wasmType.kind === "i32") &&
+    mappedFormalNeedsExternref(ctx, stmt, index)
+  ) {
+    wasmType = { kind: "externref" };
+  }
   return wasmType;
 }
 
@@ -1491,6 +1505,10 @@ function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Ex
 }
 
 export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile, isEntryFile = true): void {
+  // (#4754) Snapshot once for this declaration collector. The exact token `0`
+  // restores #4931's unconditional module-Proxy widening for same-tree A/B.
+  const proxyModuleEscapeGateEnabled = process.env.JS2WASM_PROXY_MODULE_ESCAPE_GATE !== "0";
+
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
 
@@ -2273,6 +2291,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
     if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return true;
+    // (#4707/#4754) `new Proxy` returns an externref carrier even though
+    // TypeScript gives it the target's structural type. Keep a member-only
+    // module binding dynamic, but preserve the structural slot when that exact
+    // binding is handed to a typed/generic consumer: widening it would make the
+    // consumer cast a host Proxy externref back to the target struct and trap.
+    // The default-on gate is the sole attribution seam; `=0` restores #4931.
+    if (isDirectProxyConstruction(decl.initializer)) {
+      return !proxyModuleEscapeGateEnabled || !proxyBindingEscapesToCall(ctx, decl);
+    }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
     // module init receives a genuine host externref. Keep the storage and all

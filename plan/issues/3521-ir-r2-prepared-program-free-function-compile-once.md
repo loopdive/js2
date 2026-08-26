@@ -2242,3 +2242,304 @@ ref-cell ABI, standalone internal fields, cold tails, layout families, and
 foreign-return constructors remain explicit follow-up work requiring a
 logical-to-physical layout map. Focused producer/admission/ABI tests, static
 TypeScript 7 typecheck, and formatting pass.
+
+## 2026-08-26 remaining implementation plan — linked Parser parameter projection
+
+This repair stays on #3521. It is not a #3522 reconciler change and it does
+not create a new issue. The retained full-32 R2 evidence establishes the
+failure before integration: on candidate standalone/prepared/native-strings/
+enabled, `stringToNumber` is emitted, `readNumber` is rejected at selection as
+`param-type-not-resolvable`, and `run` remains
+`constructor-resolution-unsupported`. The later
+`projectIrIntegrationLoweringPlans`/AST direct-call-plan projection cannot
+repair an owner that the identity selector never claimed.
+
+The exact source shape explains that outcome. `run` passes
+`new Parser(string)` directly to unannotated `readNumber(parser)`. Under this
+`.mjs` fixture's `allowJs`/`checkJs` program, the checker sees the constructor
+parameter as `any`. `buildIrUnitTypeMap` therefore sees the allocation as
+dynamic, while the legacy caller slot is
+`(ref null $__fnctor_Parser)`; #4612 correctly blocks a dynamic-carrier claim.
+The existing `IrFnctorAdmission` cannot help: its fixed-input proof first
+requires a checker-`StringLike` constructor parameter, `hasNoEscape` then
+rejects the call-argument transfer, and the retained admission map is keyed
+only by an already-claimed owner containing the allocation. A selector bypass,
+a relaxation of that existing admission, a generic object projection, or a
+direct-call-map-only edit is unsound.
+
+### Immutable scope and non-goals
+
+The only positive route is the existing `entry.mjs` identity graph:
+
+- one source-local `Parser(input)` with one unconditional
+  `this.input = input` write;
+- one direct, non-optional, non-generic, non-spread call
+  `readNumber(new Parser(<string>))`;
+- exact, distinct `Parser`, `readNumber`, `stringToNumber`, and `run`
+  terminal `IrUnitId`s in the same source;
+- `readNumber` only reads `parser.input` in the selected
+  `.slice(0, parser.input.length)` topology; and
+- standalone + native strings + non-fast + experimental IR with
+  `JS2WASM_IR_FIRST=0`, after legacy direct bodies have produced the physical
+  constructor/layout observation.
+
+`run` stays on its current legacy body. This checkpoint needs `fnctor.get` for
+the `readNumber` parameter; it does not need to lower `new Parser`, emit
+`fnctor.new`, or claim `run`. Default IR-first/pre-body planning remains
+Unsupported because no physical observation exists yet. WASI, host, captures,
+TDZ cells, aliases, stored/returned instances, optional calls, more than one
+allocation/caller, field writes outside the constructor, layout families,
+cold tails, presence words, pad slots, foreign constructor results, and
+generic fnctor inference remain unsupported. No code may key authority by
+`Parser`, `readNumber`, or an `entry.mjs` suffix.
+
+### Checkpoint L1 — dormant source-qualified argument edge
+
+Land a small independently reviewed PR before the routing change.
+
+1. Split the current constructor evidence without widening its consumers. Add
+   a pure, source-qualified syntax proof for one constructor declaration with
+   one required parameter and one unconditional
+   `this.input = <that exact parameter>` statement. Keep the existing
+   `IrFnctorAdmission` path unchanged: it still additionally requires the
+   checker parameter to be `StringLike` and the allocation to satisfy its
+   member-only `hasNoEscape` rule. L1 must not make the unannotated fixture an
+   admission or alter propagation/selection.
+2. Add a separate allocation-shape proof for the exact unique
+   `new Parser(<string>)` AST. Its logical-string authority comes from the exact
+   source-qualified allocation argument and the existing expression/call-graph
+   lattice, not from the constructor parameter's checker-`any` type. Join it
+   to the pure constructor syntax proof, constructor declaration/UnitId,
+   allocation AST, source ID/file, and exact physical reservation identity.
+   A dynamic, union, foreign, ambiguous, or non-string argument rejects.
+3. Add a frozen `IrFnctorArgumentProjection` owned by the structural planning
+   layer. It records that allocation-shape proof, containing caller UnitId
+   (`run`), direct call AST, callee UnitId (`readNumber`), parameter declaration
+   and index, constructor declaration/UnitId, and every forward/reverse AST,
+   declaration, UnitId, and source join. It is deliberately not an
+   `IrFnctorAdmission` and must never forge the admission's literal
+   `noEscape: true`.
+4. Keep `hasNoEscape`'s generic call-argument rejection. The separate edge
+   resolver permits only the direct same-source argument transfer above and
+   proves the instance has no second use, alias, assignment, capture, return,
+   property write, or second call edge. Checker declaration identity, not the
+   callee spelling, resolves the call.
+5. Collect this edge from the complete identity inventory/call graph rather
+   than from the already-claimed owner set. Retain it on the identity plan as
+   evidence only; do not feed `resolveImplicitParamType`, change selection, or
+   alter an override in L1. This real production retention avoids a test-only
+   dead export while keeping emitted code and outcomes unchanged.
+6. Mutate the checker-`any`/logical-string distinction, every proof key/join,
+   and the direct-call restrictions. Include duplicate, missing,
+   wrong-parameter, cross-source, same-spelled constructor/callee,
+   optional/generic/spread, alias, stored/returned, reassigned, captured,
+   second-use, second-allocation, and non-string allocation cases. Canonical
+   source ordering must not change the projection.
+
+### Checkpoint L2 — dormant logical-to-physical fnctor layout contract
+
+Land a second independently reviewed PR with no selector consumer.
+
+1. Replace `ProgramAbiFnctorRegistry`'s current
+   `observation.fields.length === shape.fields.length` assumption with a full
+   logical-to-physical proof. `IrFnctorField.ordinal` is the physical reserved-
+   layout index. Each logical field must have one unique in-range ordinal and
+   exact name plus certified physical carrier; `fieldIdx(name)` is derived only
+   from that validated ordinal mapping, never the logical-array position. The
+   complete physical `StructTypeDef` remains byte-exact against the
+   observation.
+2. Add a pure standalone Parser observation builder/test fixture, but do not
+   enable the existing AST producer yet. Its only valid physical layout is the
+   authoritative reservation result: logical mutable `input` at its exact
+   ordinal, followed only by the exact compiler-owned `$constructor` and
+   `$bag` fields with their canonical types/mutability. Reject any presence,
+   padding, split/cold-tail, reordered, duplicated, unknown, or user-visible
+   extra field. Reuse `closureBagField()` and the shared `$constructor`
+   constant; add one shared `$constructor` field factory rather than restating
+   its layout.
+3. Keep the semantic and physical constructor ABIs distinct. The shape has one
+   semantic `IrType.string` user parameter, while the real synthesized
+   constructor's checker-`any` user parameter is physical `externref`. Require
+   no captures/TDZ flags, hidden identity as the exact trailing `externref`
+   parameter, a non-foreign exact non-null struct-ref result, and the same
+   source/unit/support bindings and live allocator objects already enforced by
+   the registry. The physical `input` field is exactly
+   `ref null $AnyString` while its logical field is non-null `IrType.string`;
+   record that exact field refinement explicitly. Do not pretend the physical
+   constructor argument is native string and do not add a string-to-externref
+   constructor adapter in this slice.
+4. Split the resolved handle's carriers and capabilities. Retain the exact
+   non-null `ref` constructor result separately from the nullable
+   `ref_null $__fnctor_Parser` instance/value carrier used by legacy function
+   positions. Each resolved field carries its validated physical index,
+   physical carrier, logical type, and optional exact refinement. The
+   standalone handle is explicitly `supportsConstruction: false` and
+   `supportsFieldGet: true`; a non-null resolver must no longer authorize both
+   `fnctor.new` and `fnctor.get` implicitly.
+5. Add mutations for every physical field, ordinal, carrier/refinement,
+   semantic/physical constructor parameter, result/instance carrier,
+   capability, allocator, source/unit, and support binding. Existing host
+   observation tests must remain byte-for-byte valid.
+
+### Checkpoint L3 — late-overlay selector and `fnctor.get` activation
+
+Only after L1 and L2 are merged and independently approved may the production
+route land.
+
+1. During direct legacy compilation, enable the bounded standalone producer
+   after `compileNewFunctionDeclaration` has finalized the reserved struct and
+   synthesized constructor. It consumes the shared pure constructor/allocation
+   shape proof from L1, not the later argument-edge projection and not full
+   `IrFnctorAdmission`, and records the exact L2 physical observation. It does
+   not select an owner or alter emitted code. Missing/ambiguous proofs and every
+   unsupported physical layout remain no-ops.
+2. Only in the explicit non-IR-first late overlay
+   (`JS2WASM_IR_FIRST=0`), collect L1 from the complete identity inventory and
+   join its argument edge to the current L2 registry resolution. Before
+   selection, compare the resolution's nullable instance carrier with the live
+   `readNumber` parameter slot through `ProgramAbiSourceCallableRegistry`, not
+   `funcMap`. Preselection authority is exactly the UnitId, stable `FuncHandle`
+   from `handleForUnit`, exact current `WasmFunction` object from
+   `functionForUnit`, `definedFuncAt(handle) === function`, and its current
+   `typeIdx`/`FuncTypeDef`. A Program ABI unit binding/locator does not exist at
+   this point and must not be invented. If the edge, observation, source
+   callable, physical slot, handle, function object, or function type is absent
+   or stale, preserve Unsupported. Default IR-first/pre-body planning must
+   still decline because it precedes the observation.
+3. Build one immutable parameter lowering plan keyed by callee UnitId plus
+   parameter index and retain its parameter/allocation/call AST identities.
+   Consult this exact plan in `makeIrImplicitParamTypeResolver` before the
+   generic projection-candidate gate, because `parser` as the receiver of
+   `.input` is not a current generic candidate. The plan may classify only that
+   unannotated parameter as the selector's structural `object` category, while
+   its override type is nominal `irFnctor(shape)`, never an anonymous
+   `IrType.object`, raw `ref_null`, or name-keyed fallback. Carry it
+   copy-on-write through `IrOverlayPlan`, identity selection, and
+   `IrIntegrationLoweringPlans`; do not mutate shared signature or callee maps.
+4. Collect exact permitted field-read AST sites for the owner. In
+   `lowerPropertyAccess`, an `IrType.fnctor` receiver is accepted only when the
+   projected plan owns that exact access, source, owner, shape, and field, and
+   emits semantic `fnctor.get`. Extend the backend handle so
+   `src/ir/lower.ts` resolves the certified field index/carrier and emits raw
+   `struct.get` followed by `ref.as_non_null` only for the exact
+   `ref_null $AnyString -> IrType.string` refinement. Do not introduce a
+   backend-neutral generic ref refinement. The legality gate checks
+   `supportsFieldGet` separately and must reject `fnctor.new` because this
+   handle has `supportsConstruction: false`.
+5. Use the current source-qualified APIs—`projectIrIntegrationLoweringPlans`
+   and the AST-lowering direct-call-plan collector—to retain the exact
+   `readNumber` call edge to `stringToNumber`. The current parameter-1 repair
+   is a late `effectiveOverride` keyed through a display name/`funcMap`, while
+   `projectIrIntegrationLoweringPlans` has already projected raw UnitId
+   signatures. It is not authority for this route and may borrow a colliding
+   source slot.
+
+   Before projection and selection, build one full copy-on-write effective-
+   signature plan against the exact callee UnitId, source, current live
+   callable slots, and AST topology. It applies both semantic parameter 0 as
+   string and parameter 1 as i32-boolean, yielding
+   `[string, i32-boolean] -> f64`. The same plan must feed the selector
+   override, `signaturesByUnitId`, `calleeTypes`, exact direct-call AST plan,
+   function lowering, parity, and patching; the exact route must not consult
+   the old name/`funcMap` repair. The measured parameter-0 live slot is
+   physically `(ref null $AnyString)`, while ordinary semantic-string lowering
+   is non-null `ref $AnyString`; those are different function carriers and may
+   not be conflated.
+
+   Add an immutable owner/UnitId/parameter-index-qualified semantic-to-physical
+   parameter plan. It retains semantic `IrType.string`, copies the exact
+   certified physical carrier from the current live source-callable slot
+   (`ref` or `ref_null` for the same current `$AnyString` type), and records the
+   exact nullable-to-non-null refinement when required. Function-type lowering
+   must consult that plan instead of the global string carrier for only this
+   parameter; parameter materialization/reads emit `ref.as_non_null` only for
+   the exact certified nullable carrier before semantic string operations. The
+   plan's preselection handle/function-object/type proof is mandatory for
+   direct-call planning.
+
+   Only after `preparedUnitProgramAbiBinding` binds the exact unit may the plan
+   require its Program ABI binding, locator, and resolved current index.
+   Revalidate those records and the retained handle/function/type immediately
+   before lowering, parity, and patching. The existing
+   `replaceDefinedFunctionLocator` transfer is the only allowed locator update;
+   a missing, foreign, or stale post-binding locator/current-index proof
+   withdraws.
+
+   Semantic parameter-0 adoption also changes the parser body's two builtin
+   arguments from dynamic to string, while the exact `parseInt`/`parseFloat`
+   runtime targets retain `val(externref)` parameter zero. Add two bounded
+   native-string-to-externref boundary plans keyed by the exact
+   `stringToNumber` owner UnitId, source, call/argument AST, and authenticated
+   builtin target for the already-validated parser topology. Build and retain
+   them before identity selection. The selector's external-call
+   classification may treat only those exact planned sites as internal runtime
+   providers; an absent or stale plan must keep `external-call`/Unsupported.
+   This exact-site authority replaces the old dynamic-parser predicate only for
+   those sites and must not relax parse builtins by name.
+
+   `from-ast` consumes the same plans and calls
+   `builder.emitCoerceToExternref` before each runtime call; do not widen
+   `irTypeAssignable` or the current name-based dynamic exception. The full
+   effective-signature plan, boundary plans, semantic-to-physical parameter
+   plan, and direct-call plan travel copy-on-write through both #4608 hooks.
+   Mutating either parameter (including parameter 1), current live slot, call,
+   owner, site, argument index, target, source, carrier, handle, function
+   object, function type, post-binding locator/index, or currentness—or
+   substituting a same-spelled source—rejects and restores
+   external-call/Unsupported. None of these plans may hard-code a display name,
+   borrow a same-spelled unit, mutate raw signature maps, or claim this ABI
+   already exists. Preserve distinct owner UnitIds.
+6. Keep the prepared-component dependency fnctor blocks unchanged. The exact
+   `IR_FIRST=0` late-overlay route calls `completePreparedIrIntegration`
+   without `sealPreparedComponents: true`; it does not need to widen early
+   prepared sealing. Default IR-first/pre-body planning therefore remains
+   Unsupported as scoped above.
+
+   The final candidate selection contains `stringToNumber` and `readNumber`,
+   not `run`. In this late-overlay checkpoint each selected owner has exactly
+   one direct emission followed by one IR emission/patch (`direct=1`, `IR=1`),
+   with exact legacy/IR outcome evidence. This is intentionally not the final
+   compile-once checkpoint and must not claim that either body compiled only
+   once.
+
+### Acceptance and replay gates
+
+The focused test file must be repaired/ported from reviewed semantics rather
+than copied from an untracked draft. Static tests first prove the exact
+constructor syntax/allocation/argument-edge projections, selection, early
+implicit-parameter plan, nominal override, get-only `fnctor.get`, physical
+field index/refinement, semantic-string versus physical-externref constructor
+ABI, non-null result versus nullable instance carrier, the parser's semantic-
+string versus exact live nullable parameter carrier and entry refinement,
+exact function type-index parity, and source/owner/currentness records. Add
+fail-closed mutations for
+missing/stale observations; either parameter or live slot; call, field-read,
+source, owner, shape, effective signature, preselection handle/function/type,
+post-binding Program ABI binding/locator/current index, capability, refinement,
+builtin-boundary, or direct-call-plan drift; alternate or same-spelled-source
+constructors/callers; extra writes/uses; wrong physical constructor/field
+carrier; changed `parseInt`/`parseFloat` site, target, or argument carrier; and
+every L1/L2 negative. `fnctor.new` stays negative, and the existing early
+prepared-component fnctor blockers must remain byte-unchanged.
+
+Then run the normal focused compile/runtime matrix: decimal `12_3 -> 123` and
+octal `17 -> 15`; exact candidate standalone/prepared/enabled route movement
+under `JS2WASM_IR_FIRST=0`; and exact `direct=1`, `IR=1` parser/caller outcome
+accounting with `run` retained as legacy. Default IR-first must retain the
+pre-observation Unsupported route. Base, disabled, direct, host,
+non-native-string, and forced-fast controls remain unchanged with exact
+parser/caller `irOutcomes`; fast-mode checker-`any` uses
+`ref null $AnyValue`, so it must not satisfy the physical-externref proof. A
+changed binary is observational only, not an acceptance requirement, and this
+checkpoint makes no compile-once claim. Run TypeScript 7 and 5, formatting, IR
+layering, dialect/fallback/oracle/coercion/optimization checks, the LOC and
+function ratchets, all normal commit hooks, and all normal pre-push hooks.
+
+After the compiler PR merges, relock the R2 validation bundle in a separate
+checkpoint and obtain an independent read-only static audit. Preserve both
+prior load-failure envelopes untouched. The full 16-pair/32-child collector is
+then run exactly once at a new output root; every child and raw stream is
+retained before semantic assertions. Its strict gate remains finite,
+non-negative one-minute load strictly below `logical cores - 2` (10 cores means
+`< 8`). C36/C37 stay scheduled for the final aggregate rerun, and the unchanged
+#4035 size ceiling is not reported as a new regression.

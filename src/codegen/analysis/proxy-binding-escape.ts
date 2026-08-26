@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { forEachChild, ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
+
+/** The two direct initializer shapes whose result carrier is Proxy-owned. */
+export function isDirectProxyConstruction(expression: ts.Expression): boolean {
+  if (ts.isNewExpression(expression)) {
+    return ts.isIdentifier(expression.expression) && expression.expression.text === "Proxy";
+  }
+  return (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    expression.expression.name.text === "revocable" &&
+    ts.isIdentifier(expression.expression.expression) &&
+    expression.expression.expression.text === "Proxy"
+  );
+}
+
+function enclosingExecutableOrSource(node: ts.Node): ts.Node | undefined {
+  let current: ts.Node | undefined = node.parent;
+  while (current !== undefined) {
+    if (ts.isFunctionLike(current) || ts.isSourceFile(current)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function isTransparentWrapperOf(parent: ts.Node, child: ts.Expression): parent is ts.Expression {
+  return (
+    (ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)) &&
+    parent.expression === child
+  );
+}
+
+function outermostTransparentExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (current.parent !== undefined && isTransparentWrapperOf(current.parent, current)) {
+    current = current.parent;
+  }
+  return current;
+}
+
+function expressionIsEscapingArgument(expression: ts.Expression): boolean {
+  const outer = outermostTransparentExpression(expression);
+  const parent = outer.parent;
+  if ((!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) || parent.arguments === undefined) return false;
+
+  // This includes argument zero of `.call` / `.apply`, the generic-method
+  // receiver that motivated #2615. A member receiver (`p.method()`) is not in
+  // the argument list and therefore remains non-escaping.
+  return parent.arguments.some((argument) => argument === outer);
+}
+
+function nestedExecutableMayReferenceBinding(
+  ctx: CodegenContext,
+  executable: ts.SignatureDeclaration,
+  declaration: ts.VariableDeclaration,
+  bindingName: string,
+): boolean {
+  let mayReference = false;
+  const visit = (node: ts.Node): void => {
+    if (mayReference) return;
+    if (ts.isIdentifier(node) && node.text === bindingName) {
+      const resolved = ctx.oracle.valueDeclarationOf(node);
+      // An unresolved same-spelled reference cannot prove non-escape. Descend
+      // and let the main classifier fail closed if it is in argument position.
+      if (resolved === declaration || resolved === undefined) {
+        mayReference = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(executable, visit);
+  return mayReference;
+}
+
+/**
+ * Whether one exact Proxy result binding escapes into a call/new argument.
+ *
+ * The check deliberately proves declaration identity through the shared type
+ * oracle instead of comparing display names. Transparent TypeScript wrappers
+ * preserve the same binding. Assignment aliases and
+ * `Proxy.revocable(...).proxy` declarations are outside this direct-flow
+ * predicate; callers decide which initializer families are eligible.
+ *
+ * Unsupported binding patterns and unresolved same-spelled argument uses are
+ * conservative escapes: when identity cannot be proved, storage widening must
+ * decline rather than risk an externref-to-struct cast at a typed consumer.
+ */
+export function proxyBindingEscapesToCall(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return true;
+  const scope = enclosingExecutableOrSource(declaration);
+  if (scope === undefined) return true;
+
+  const bindingName = declaration.name.text;
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+
+    if (
+      node !== scope &&
+      ts.isFunctionLike(node) &&
+      !nestedExecutableMayReferenceBinding(ctx, node, declaration, bindingName)
+    ) {
+      return;
+    }
+
+    if (ts.isIdentifier(node) && node.text === bindingName && expressionIsEscapingArgument(node)) {
+      const resolved = ctx.oracle.valueDeclarationOf(node);
+      if (resolved === declaration || resolved === undefined) {
+        escapes = true;
+        return;
+      }
+    }
+
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  return escapes;
+}
