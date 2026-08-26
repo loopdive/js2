@@ -35,4 +35,11 @@ describe("#4713 — for-of head var scope without a variable environment", () =>
       expect(result.status, `${file}: ${JSON.stringify(result)}`).toBe("pass");
     }
   });
+
+  it("keeps inlined-IIFE vars local when their names collide with globals", async () => {
+    for (const file of ["language/expressions/call/scope-var-close.js", "language/statements/variable/S12.2_A3.js"]) {
+      const result = await runTest262File(join(TEST262, file), "issue-4713-iife-var-shadow", 30_000);
+      expect(result.status, `${file}: ${JSON.stringify(result)}`).toBe("pass");
+    }
+  });
 });
