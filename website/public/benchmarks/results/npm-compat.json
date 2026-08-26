@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-26T12:06:22.851Z",
+  "generatedAt": "2026-08-26T12:35:59.196Z",
   "measuredRange": {
-    "oldest": "2026-08-26T05:11:35.847Z",
-    "newest": "2026-08-26T12:04:59.689Z"
+    "oldest": "2026-08-26T09:21:00.002Z",
+    "newest": "2026-08-26T12:35:01.515Z"
   },
   "correctness": {
     "definition": {
@@ -68,10 +68,30 @@
   "refresh": {
     "status": "partial",
     "stalePackages": [
-      "lit",
-      "react-dom"
+      "acorn",
+      "axios",
+      "clsx",
+      "cookie",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "lodash-es",
+      "marked",
+      "moment",
+      "prettier",
+      "react",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
     ],
-    "freshCount": 22,
+    "freshCount": 2,
     "totalCount": 24
   },
   "packages": [
@@ -564,7 +584,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:54:22.096Z",
-      "weeklyDownloads": 275892096
+      "weeklyDownloads": 275892096,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:54:22.096Z"
+      }
     },
     {
       "name": "typescript",
@@ -2005,7 +2030,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T12:04:32.613Z",
-      "weeklyDownloads": 250686863
+      "weeklyDownloads": 250686863,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T12:04:32.613Z"
+      }
     },
     {
       "name": "acorn",
@@ -2413,7 +2443,12 @@
         }
       ],
       "measuredAt": "2026-08-26T11:58:31.271Z",
-      "weeklyDownloads": 240886853
+      "weeklyDownloads": 240886853,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:58:31.271Z"
+      }
     },
     {
       "name": "cookie",
@@ -2792,7 +2827,12 @@
         }
       ],
       "measuredAt": "2026-08-26T11:54:58.423Z",
-      "weeklyDownloads": 173435452
+      "weeklyDownloads": 173435452,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:54:58.423Z"
+      }
     },
     {
       "name": "lodash",
@@ -3212,7 +3252,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:55:35.333Z",
-      "weeklyDownloads": 164859858
+      "weeklyDownloads": 164859858,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:55:35.333Z"
+      }
     },
     {
       "name": "react",
@@ -4305,7 +4350,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:57:12.009Z",
-      "weeklyDownloads": 162687688
+      "weeklyDownloads": 162687688,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:57:12.009Z"
+      }
     },
     {
       "name": "eslint",
@@ -4442,7 +4492,12 @@
         }
       ],
       "measuredAt": "2026-08-26T11:57:10.695Z",
-      "weeklyDownloads": 152308132
+      "weeklyDownloads": 152308132,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:57:10.695Z"
+      }
     },
     {
       "name": "react-dom",
@@ -4452,17 +4507,17 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 21734711,
+        "durationMs": 5547301,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 202955255,
+        "binaryBytes": 60469057,
         "categories": {},
         "error": null
       },
       "validation": {
         "validates": false,
-        "firstError": "CompileError: WebAssembly.compile(): Compiling function #290:\"trackValueOnNode\" failed: ref.is_null[0] expected reference type, found global.get of type f64 @+534907"
+        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
       },
       "capabilities": {
         "nodeFs": false
@@ -4471,53 +4526,53 @@
         "kind": "upstream-suite",
         "status": "measured",
         "reason": null,
-        "passed": 18,
-        "total": 194,
-        "passRatePct": 9.28,
+        "passed": 82,
+        "total": 338,
+        "passRatePct": 24.26,
         "admitted": 1923,
         "upstreamTestsSeen": 2003,
         "harnessIncompatible": 984,
         "unavailableInfra": 0,
-        "implementationInvalidTests": 533,
+        "implementationInvalidTests": 389,
         "implementationError": null,
         "server": {
-          "passed": 17,
-          "total": 78,
-          "passRatePct": 21.79,
+          "passed": 0,
+          "total": 79,
+          "passRatePct": 0,
           "admitted": 115,
           "selected": 115,
           "upstreamTestsSeen": 115,
           "harnessIncompatible": 36,
-          "implementationInvalidTests": 1,
+          "implementationInvalidTests": 0,
           "compile": {
-            "success": false,
-            "durationMs": 714080,
-            "binaryBytes": 21865665,
-            "invalidBatches": 2
+            "success": true,
+            "durationMs": 109310,
+            "binaryBytes": 5084790,
+            "invalidBatches": 1
           },
           "validation": {
             "validates": false,
-            "firstError": "Codegen error: stack-balance invariant (entry): 'Child_render' references local 4, but only 1 params + 2 locals are declared (locals: 1:__dynm_args_0, 2:__fnmemo_Grandchild_1; body: [{\"op\":\"global.get\",\"index\":3321},{\"op\":\"global.get\",\"index\":1095},{\"op\":\"call\",\"funcIdx\":77},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.get\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2098431},{\"op\":\"i32.const\",\"value\":2},{\"op\":\"ref.null.extern\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":547},{\"op\":\"local.set\",\"index\":2}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"ref.as_non_null\"},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":78},{\"op\":\"local.get\",\"index\":1},{\"op\":\"ref.null.extern\"},{\"op\":\"call\",\"funcIdx\":78},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+            "firstError": "CompileError: WebAssembly.compile(): Compiling function #601:\"__async_resume_fanon_61915\" failed: struct.set[1] expected type externref, found local.get of type (ref null 81) @+250449"
           }
         },
         "fizz": {
           "passed": 0,
-          "total": 0,
+          "total": 14,
           "passRatePct": 0,
           "admitted": 60,
           "selected": 60,
           "upstreamTestsSeen": 60,
           "harnessIncompatible": 46,
-          "implementationInvalidTests": 14,
+          "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 5788868,
-            "binaryBytes": 0,
-            "invalidBatches": 28
+            "durationMs": 1193885,
+            "binaryBytes": 3712181,
+            "invalidBatches": 16
           },
           "validation": {
             "validates": false,
-            "firstError": "compile timeout after 300000ms"
+            "firstError": "__JS2WASM_COMPILE_COMPLETE__:5316\n/home/runner/work/js2/js2/src/runtime.ts:10118\n          return new Ctor(...args);\n                 ^\n\nTypeError: Cannot access property on null or undefined\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10118:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17729:20)\n    at startWork (wasm://wasm/0042a296:wasm-function[303]:0x72677)\n    at __closure_187 (wasm://wasm/0042a296:wasm-function[821]:0x8c2d1)\n    at __call_fn_2 (wasm://wasm/0042a296:wasm-function[1332]:0x9d4e0)\n    at wasmClosureDispatch (/home/runner/work/js2/js2/src/runtime.ts:1901:17)\n    at wasmClosureBridge (/home/runner/work/js2/js2/src/runtime.ts:1906:22)\n    at new Promise (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:15530:61)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17729:20)\n\nNode.js v25.9.0"
           }
         },
         "nodeFizz": {
@@ -4531,8 +4586,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 761240,
-            "binaryBytes": 7874773,
+            "durationMs": 364923,
+            "binaryBytes": 1545408,
             "invalidBatches": 3
           },
           "validation": {
@@ -4551,8 +4606,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 49694,
-            "binaryBytes": 1490034,
+            "durationMs": 21014,
+            "binaryBytes": 251054,
             "invalidBatches": 0
           },
           "validation": {
@@ -4575,7 +4630,7 @@
             "status": "fail",
             "passed": 1,
             "total": 3,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -4612,7 +4667,7 @@
             "status": "fail",
             "passed": 2,
             "total": 44,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -4778,7 +4833,7 @@
             "status": "fail",
             "passed": 1,
             "total": 9,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -4842,7 +4897,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "log is not a function",
+            "error": "Objects are not valid as a React child (found: object with keys {}). If you meant to render a collection of children, use an array instead.",
             "tests": [
               {
                 "status": "fail"
@@ -4855,7 +4910,7 @@
             "status": "fail",
             "passed": 2,
             "total": 8,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -4919,48 +4974,43 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactComponentLifeCycle-test.js",
-            "status": "skip",
-            "passed": 0,
+            "status": "fail",
+            "passed": 2,
             "total": 12,
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
-              },
-              {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "skipped"
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "skipped"
-              },
-              {
-                "status": "skipped"
-              },
-              {
-                "status": "skipped"
-              },
-              {
-                "status": "skipped"
-              },
-              {
-                "status": "skipped"
+                "status": "pass"
               },
               {
                 "status": "harness-incompatible"
               },
               {
                 "status": "harness-incompatible"
+              },
+              {
+                "status": "fail"
+              },
+              {
+                "status": "pass"
+              },
+              {
+                "status": "fail"
+              },
+              {
+                "status": "fail"
+              },
+              {
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
@@ -4981,16 +5031,22 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "skipped"
+                "status": "harness-incompatible"
               },
               {
-                "status": "skipped"
+                "status": "harness-incompatible"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
+              },
+              {
+                "status": "fail"
+              },
+              {
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
@@ -5144,7 +5200,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -5163,7 +5219,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -5173,24 +5229,25 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactCompositeComponentState-test.js",
-            "status": "skip",
-            "passed": 0,
+            "status": "fail",
+            "passed": 1,
             "total": 5,
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
@@ -5275,34 +5332,34 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "module init: RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __module_init (wasm://wasm/00a5b32a:wasm-function[2414]:0x217953)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:225:39)",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "trapped"
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "trapped"
+                "status": "fail"
               },
               {
-                "status": "trapped"
-              },
-              {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "trapped"
-              },
-              {
-                "status": "trapped"
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "trapped"
+                "status": "fail"
+              },
+              {
+                "status": "fail"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
@@ -5777,7 +5834,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -5799,7 +5856,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -5935,9 +5992,10 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMEventPropagation-test.js",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 83,
+            "error": "expected toEqual to match",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -5949,184 +6007,184 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
                 "status": "skipped"
@@ -7195,9 +7253,10 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMFloat-test.js",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 3,
+            "error": "Minified React error #299; visit https://react.dev/errors/299 for the full message or use the non-minified dev environment for full errors and additional helpful warnings.",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -7560,7 +7619,7 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMFloat-test.js"
@@ -7893,7 +7952,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -8281,7 +8340,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -8463,7 +8522,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -8497,7 +8556,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -8556,7 +8615,7 @@
             "status": "fail",
             "passed": 6,
             "total": 9,
-            "error": "TypeError: Cannot access property on null or undefined at 2227:8",
+            "error": "Cannot access property on null or undefined at 2231:8",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -8647,7 +8706,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -8669,7 +8728,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -8945,171 +9004,171 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMServerIntegrationReconnecting-test.js",
-            "status": "skip",
-            "passed": 0,
+            "status": "pass",
+            "passed": 54,
             "total": 54,
             "tests": [
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMServerIntegrationReconnecting-test.js"
@@ -9119,7 +9178,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "hydrateRoot is not a function",
             "tests": [
               {
                 "status": "fail"
@@ -9156,7 +9215,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -9456,22 +9515,22 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "module init: RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __module_init (wasm://wasm/00905dda:wasm-function[2324]:0x1c8a1d)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:225:39)",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "trapped"
+                "status": "fail"
               },
               {
-                "status": "trapped"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "trapped"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "fail"
               },
               {
                 "status": "harness-incompatible"
@@ -9741,7 +9800,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "module init: [object WebAssembly.Exception] payload=TypeError: Cannot access property on null or undefined at 1518:23",
+            "error": "module init: [object WebAssembly.Exception] payload=TypeError: Cannot access property on null or undefined at 1522:23",
             "tests": [
               {
                 "status": "trapped"
@@ -9784,39 +9843,40 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactIdentity-test.js",
-            "status": "skip",
-            "passed": 0,
+            "status": "fail",
+            "passed": 7,
             "total": 10,
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "pass"
               },
               {
                 "status": "harness-incompatible"
@@ -9826,9 +9886,10 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactLegacyCompositeComponent-test.js",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 2,
+            "error": "module init: [object WebAssembly.Exception] payload=TypeError: Cannot access property on null or undefined at 1460:22",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9870,10 +9931,10 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
                 "status": "harness-incompatible"
@@ -10087,7 +10148,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -10103,7 +10164,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -10122,7 +10183,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -10441,7 +10502,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -10589,7 +10650,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "TypeError: Cannot access property on null or undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
@@ -10663,18 +10724,18 @@
           }
         ],
         "summary": {
-          "pass": 18,
-          "fail": 176,
+          "pass": 82,
+          "fail": 281,
           "compile_error": 0,
-          "skip": 561,
+          "skip": 392,
           "total": 755
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 18,
-        "total": 194,
-        "reason": "176 of 194 operations diverged from native node"
+        "passed": 82,
+        "total": 338,
+        "reason": "256 of 338 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "react-dom package import + text.length",
@@ -10709,13 +10770,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T11:15:19.546Z",
-      "weeklyDownloads": 139740993,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T11:15:19.546Z"
-      }
+      "measuredAt": "2026-08-26T12:35:01.515Z",
+      "weeklyDownloads": 139740993
     },
     {
       "name": "prettier",
@@ -10844,7 +10900,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T12:02:17.174Z",
-      "weeklyDownloads": 117242232
+      "weeklyDownloads": 117242232,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T12:02:17.174Z"
+      }
     },
     {
       "name": "tailwindcss",
@@ -11217,7 +11278,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:56:19.150Z",
-      "weeklyDownloads": 117155768
+      "weeklyDownloads": 117155768,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:56:19.150Z"
+      }
     },
     {
       "name": "axios",
@@ -12642,7 +12708,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:58:32.411Z",
-      "weeklyDownloads": 112353408
+      "weeklyDownloads": 112353408,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:58:32.411Z"
+      }
     },
     {
       "name": "clsx",
@@ -12985,7 +13056,12 @@
         }
       ],
       "measuredAt": "2026-08-26T11:54:37.980Z",
-      "weeklyDownloads": 104930549
+      "weeklyDownloads": 104930549,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:54:37.980Z"
+      }
     },
     {
       "name": "jsdom",
@@ -13201,7 +13277,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:57:18.399Z",
-      "weeklyDownloads": 89317829
+      "weeklyDownloads": 89317829,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:57:18.399Z"
+      }
     },
     {
       "name": "marked",
@@ -13367,7 +13448,12 @@
         }
       ],
       "measuredAt": "2026-08-26T12:04:59.689Z",
-      "weeklyDownloads": 60496071
+      "weeklyDownloads": 60496071,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T12:04:59.689Z"
+      }
     },
     {
       "name": "webpack",
@@ -14038,7 +14124,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:56:27.712Z",
-      "weeklyDownloads": 55617769
+      "weeklyDownloads": 55617769,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:56:27.712Z"
+      }
     },
     {
       "name": "hono",
@@ -16131,7 +16222,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:57:36.419Z",
-      "weeklyDownloads": 53123258
+      "weeklyDownloads": 53123258,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:57:36.419Z"
+      }
     },
     {
       "name": "jest",
@@ -19011,7 +19107,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:57:21.402Z",
-      "weeklyDownloads": 46631732
+      "weeklyDownloads": 46631732,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:57:21.402Z"
+      }
     },
     {
       "name": "lodash-es",
@@ -19462,7 +19563,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T12:01:27.501Z",
-      "weeklyDownloads": 42294984
+      "weeklyDownloads": 42294984,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T12:01:27.501Z"
+      }
     },
     {
       "name": "redux",
@@ -19984,7 +20090,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:55:46.470Z",
-      "weeklyDownloads": 40344956
+      "weeklyDownloads": 40344956,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:55:46.470Z"
+      }
     },
     {
       "name": "moment",
@@ -21104,7 +21215,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:59:07.346Z",
-      "weeklyDownloads": 34294671
+      "weeklyDownloads": 34294671,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:59:07.346Z"
+      }
     },
     {
       "name": "three",
@@ -22445,7 +22561,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:57:27.588Z",
-      "weeklyDownloads": 12487515
+      "weeklyDownloads": 12487515,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:57:27.588Z"
+      }
     },
     {
       "name": "styled-components",
@@ -22803,7 +22924,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:55:04.618Z",
-      "weeklyDownloads": 11029759
+      "weeklyDownloads": 11029759,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:55:04.618Z"
+      }
     },
     {
       "name": "stylelint",
@@ -24863,7 +24989,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-26T11:58:57.875Z",
-      "weeklyDownloads": 10427988
+      "weeklyDownloads": 10427988,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-26T11:58:57.875Z"
+      }
     },
     {
       "name": "lit",
@@ -24873,16 +25004,16 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7712,
+        "durationMs": 7651,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 189834,
+        "binaryBytes": 185306,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #128:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 108), found global.get of type i32 @+54440"
+        "firstError": "WebAssembly.Module(): Compiling function #128:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 108), found global.get of type i32 @+50137"
       },
       "capabilities": {
         "nodeFs": false
@@ -24890,14 +25021,14 @@
       "entryIsBarrel": true,
       "tests": {
         "kind": "upstream-suite",
-        "passed": 13,
+        "passed": 0,
         "total": 151,
-        "passRatePct": 8.61,
+        "passRatePct": 0,
         "admitted": 583,
         "upstreamTestsSeen": 587,
-        "harnessIncompatible": 420,
+        "harnessIncompatible": 432,
         "unavailableInfra": 0,
-        "implementationInvalidTests": 49,
+        "implementationInvalidTests": 398,
         "sourceIssue": 3977
       },
       "playground": {
@@ -24935,36 +25066,37 @@
           },
           {
             "path": "packages/lit-html/src/test/directive-helpers_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 9,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directive-helpers_test.ts"
@@ -25073,33 +25205,34 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/cache_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 8,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/cache_test.ts"
@@ -25107,15 +25240,15 @@
           {
             "path": "packages/lit-html/src/test/directives/choose_test.ts",
             "status": "fail",
-            "passed": 1,
+            "passed": 0,
             "total": 3,
-            "error": "expected null to strictly equal undefined",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
                 "status": "fail"
@@ -25126,12 +25259,36 @@
           {
             "path": "packages/lit-html/src/test/directives/class-map_test.ts",
             "status": "fail",
-            "passed": 3,
+            "passed": 0,
             "total": 12,
-            "error": "Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.",
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "fail"
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
               },
               {
                 "status": "fail"
@@ -25141,108 +25298,86 @@
               },
               {
                 "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "pass"
-              },
-              {
-                "status": "pass"
-              },
-              {
-                "status": "pass"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/class-map_test.ts"
           },
           {
             "path": "packages/lit-html/src/test/directives/guard_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 6,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/guard_test.ts"
           },
           {
             "path": "packages/lit-html/src/test/directives/if-defined_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 14,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/if-defined_test.ts"
@@ -25273,12 +25408,13 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/keyed_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 1,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/keyed_test.ts"
@@ -25352,24 +25488,25 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/range_test.ts",
-            "status": "pass",
-            "passed": 5,
+            "status": "fail",
+            "passed": 0,
             "total": 5,
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/range_test.ts"
@@ -25379,145 +25516,146 @@
             "status": "fail",
             "passed": 0,
             "total": 18,
-            "error": "Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.",
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
+              },
+              {
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
+                "status": "trapped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/ref_test.ts"
           },
           {
             "path": "packages/lit-html/src/test/directives/repeat_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 25,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/repeat_test.ts"
@@ -25563,21 +25701,22 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/template-content_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 4,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/template-content_test.ts"
@@ -25589,33 +25728,34 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/unsafe-html_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 8,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/unsafe-html_test.ts"
@@ -25655,33 +25795,34 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/unsafe-svg_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 8,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/unsafe-svg_test.ts"
@@ -25692,6 +25833,9 @@
             "passed": 0,
             "total": 0,
             "tests": [
+              {
+                "status": "harness-incompatible"
+              },
               {
                 "status": "harness-incompatible"
               },
@@ -25856,12 +26000,13 @@
           },
           {
             "path": "packages/lit-html/src/test/is-server_test.ts",
-            "status": "pass",
-            "passed": 1,
+            "status": "fail",
+            "passed": 0,
             "total": 1,
+            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "pass"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/is-server_test.ts"
@@ -25882,6 +26027,12 @@
             "passed": 0,
             "total": 0,
             "tests": [
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
               {
                 "status": "harness-incompatible"
               },
@@ -26542,9 +26693,9 @@
           {
             "path": "packages/reactive-element/src/test/css-tag_test.ts",
             "status": "fail",
-            "passed": 3,
+            "passed": 0,
             "total": 7,
-            "error": "No dependency provided for extern class \"CSSStyleSheet\"",
+            "error": "null",
             "tests": [
               {
                 "status": "fail"
@@ -26556,16 +26707,16 @@
                 "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
                 "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               },
               {
-                "status": "pass"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/reactive-element/src/test/css-tag_test.ts"
@@ -26821,6 +26972,9 @@
               },
               {
                 "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/reactive-element/src/test/reactive-element-controllers_test.ts"
@@ -27052,24 +27206,48 @@
               },
               {
                 "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "harness-incompatible"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/reactive-element/src/test/reactive-element_test.ts"
           }
         ],
         "summary": {
-          "pass": 13,
-          "fail": 34,
+          "pass": 0,
+          "fail": 130,
           "compile_error": 0,
-          "skip": 127,
+          "skip": 44,
           "total": 174
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 13,
+        "passed": 0,
         "total": 151,
-        "reason": "138 of 151 operations diverged from native node"
+        "reason": "151 of 151 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "select one of two runtime-owned callbacks",
@@ -27079,54 +27257,54 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.5242063485773585,
-            "nodeUs": 0.005320445776050685,
-            "wasmStdUs": 0.0007762919885883515,
-            "nodeStdUs": 0.000043297939403264266,
-            "ratio": 0.010135152465397422,
-            "ratioStd": 0.00007402189494406559,
+            "wasmUs": 0.5109110931354283,
+            "nodeUs": 0.005296329706119861,
+            "wasmStdUs": 0.0015441691960146413,
+            "nodeStdUs": 0.00003510897402012888,
+            "ratio": 0.010368802553943651,
+            "ratioStd": 0.00008179026312903359,
             "ratioSamples": [
-              0.010102206035604973,
-              0.010296452522812895,
-              0.01009152036362207,
-              0.010078712144978604,
-              0.01016093375502287,
-              0.010259524757227986,
-              0.010135152465397422,
-              0.010081101745132342,
-              0.010150533373884456
+              0.010338283591479872,
+              0.010368802553943651,
+              0.010364347453104673,
+              0.010372795951045054,
+              0.01037921936582356,
+              0.01042946875302818,
+              0.01034216073588241,
+              0.010274318264712284,
+              0.010587723805802524
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 428915,
+            "iters": 440101,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.5241965028036614,
-              0.5241302589090646,
-              0.5245226093750963,
-              0.5238750218578304,
-              0.5242063485773585,
-              0.526549920147392,
-              0.5249497522820007,
-              0.523943492300394,
-              0.5246998169801879
+              0.5123709671189312,
+              0.5109110931354283,
+              0.5102410605747162,
+              0.5105980808950801,
+              0.5101833533665869,
+              0.5113681836669175,
+              0.5112433895855687,
+              0.5153436870172757,
+              0.5102891631693643
             ],
             "nodeSamplesUs": [
-              0.005295541074466167,
-              0.005396682326626814,
-              0.005293230593688969,
-              0.005279985545249447,
-              0.0053264259818569665,
-              0.005402151941668587,
-              0.005320445776050685,
-              0.005281927654580236,
-              0.005325983003528463
+              0.005297036362116319,
+              0.005297536247340771,
+              0.005288315636636987,
+              0.005296329706119861,
+              0.005295304941383284,
+              0.005333298492846892,
+              0.005287361310251303,
+              0.005294805056125767,
+              0.005402800720731327
             ],
-            "compileDurationMs": 4001.238112999825,
-            "binaryBytes": 1484,
-            "moduleImportCount": 5,
-            "functionImportCount": 5,
+            "compileDurationMs": 4152.889482999992,
+            "binaryBytes": 1516,
+            "moduleImportCount": 6,
+            "functionImportCount": 6,
             "expectedChecksum": 7,
             "actualChecksum": 7,
             "testCompiledToWasm": false,
@@ -27148,59 +27326,54 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.5242063485773585,
-        "nodeUs": 0.005320445776050685,
-        "wasmStdUs": 0.0007762919885883515,
-        "nodeStdUs": 0.000043297939403264266,
-        "ratio": 0.010135152465397422,
-        "ratioStd": 0.00007402189494406559,
+        "wasmUs": 0.5109110931354283,
+        "nodeUs": 0.005296329706119861,
+        "wasmStdUs": 0.0015441691960146413,
+        "nodeStdUs": 0.00003510897402012888,
+        "ratio": 0.010368802553943651,
+        "ratioStd": 0.00008179026312903359,
         "ratioSamples": [
-          0.010102206035604973,
-          0.010296452522812895,
-          0.01009152036362207,
-          0.010078712144978604,
-          0.01016093375502287,
-          0.010259524757227986,
-          0.010135152465397422,
-          0.010081101745132342,
-          0.010150533373884456
+          0.010338283591479872,
+          0.010368802553943651,
+          0.010364347453104673,
+          0.010372795951045054,
+          0.01037921936582356,
+          0.01042946875302818,
+          0.01034216073588241,
+          0.010274318264712284,
+          0.010587723805802524
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 428915,
+        "iters": 440101,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.5241965028036614,
-          0.5241302589090646,
-          0.5245226093750963,
-          0.5238750218578304,
-          0.5242063485773585,
-          0.526549920147392,
-          0.5249497522820007,
-          0.523943492300394,
-          0.5246998169801879
+          0.5123709671189312,
+          0.5109110931354283,
+          0.5102410605747162,
+          0.5105980808950801,
+          0.5101833533665869,
+          0.5113681836669175,
+          0.5112433895855687,
+          0.5153436870172757,
+          0.5102891631693643
         ],
         "nodeSamplesUs": [
-          0.005295541074466167,
-          0.005396682326626814,
-          0.005293230593688969,
-          0.005279985545249447,
-          0.0053264259818569665,
-          0.005402151941668587,
-          0.005320445776050685,
-          0.005281927654580236,
-          0.005325983003528463
+          0.005297036362116319,
+          0.005297536247340771,
+          0.005288315636636987,
+          0.005296329706119861,
+          0.005295304941383284,
+          0.005333298492846892,
+          0.005287361310251303,
+          0.005294805056125767,
+          0.005402800720731327
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T05:11:35.847Z",
-      "weeklyDownloads": 6829692,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T05:11:35.847Z"
-      }
+      "measuredAt": "2026-08-26T09:21:00.002Z",
+      "weeklyDownloads": 6829692
     }
   ]
 }
