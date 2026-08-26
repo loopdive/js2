@@ -29,7 +29,6 @@ export const SANDBOX_GLOBAL_NAMES = Object.freeze([
   "Array",
   "Object",
   "Function",
-  "eval",
   "String",
   "Number",
   "Boolean",

@@ -87,6 +87,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
+import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
@@ -1384,13 +1385,14 @@ function compileIdentifierCore(
       if (valueType !== undefined) return valueType;
     }
   }
-  // Host/gc: a first-class read of the unshadowed global `%eval%` must expose
-  // the realm's actual function object. Direct calls are lowered separately;
-  // this is the value path used by Reflect.construct and aliases.
+  // Host/gc: expose the sandbox realm's genuine, non-constructible `%eval%`.
+  // Seed compiled script globals first so an alias performs indirect eval in
+  // the same GlobalEnvironmentRecord as the AOT module.
   if (!ctx.standalone && !ctx.wasi && name === "eval") {
     const declaration = ctx.oracle.valueDeclarationOf(id);
     const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
     if (isGlobalIntrinsic) {
+      emitHostEvalGlobalBindingSeed(ctx, fctx);
       const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
       const getIdx = ensureLateImport(
         ctx,
@@ -1400,13 +1402,13 @@ function compileIdentifierCore(
       );
       flushLateImportShifts(ctx, fctx);
       if (gtFuncIdx !== undefined && getIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
         addStringConstantGlobal(ctx, name);
         const strGlobalIdx = ctx.stringGlobalMap.get(name);
         fctx.body.push(
           strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
         );
-        fctx.body.push({ op: "call", funcIdx: getIdx });
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
         return { kind: "externref" };
       }
     }

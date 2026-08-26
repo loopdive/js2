@@ -8403,20 +8403,8 @@ function _hostProxyConstruct(
   if (!_isObjectLike(handler)) {
     throw new TypeError(`Cannot create ${ctor} with a non-object as handler`);
   }
-  // (#2618) A Proxy whose target is CALLABLE is itself callable / constructable
-  // (§10.5.12 / §10.5.13). The host engine derives the proxy's [[Call]] /
-  // [[Construct]] exotic-ness from its [[ProxyTarget]] — but a raw wasm-closure
-  // struct is NOT callable to V8, so `new Proxy(rawClosure, h)()` fails the host
-  // IsCallable check ("... is not a function" / "call is not a function"). When
-  // the user's target is a wasm closure, use its JS-callable wrapper as the
-  // [[ProxyTarget]] so the proxy gains [[Call]]/[[Construct]] and host-side
-  // `p(...)` / `p.call(...)` dispatch correctly. The bridge handler substitutes
-  // the RAW struct back as the `target` argument of the apply/construct traps
-  // (see `rawTarget` in `_buildProxyBridgeHandler`) so the user-observable trap
-  // `target` is identity-equal to the value the program passed to `new Proxy`
-  // (`assert.sameValue(t, target)` in apply/construct/call-parameters.js). A
-  // non-callable target keeps the raw struct as before (identity-preserving, no
-  // behavior change).
+  // Callable Wasm targets need a host-callable proxy target; the bridge maps
+  // trap arguments back to the raw struct so user-visible identity is stable.
   const { proxyTarget, rawTarget } = _proxyTargetFor(target, callbackState);
   // Preserve raw struct access through trap-absent get/ownKeys forwarding.
   const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
@@ -8496,6 +8484,12 @@ function _structFieldRaw(obj: any, name: string, exports: Record<string, Functio
   return _sidecarGet(obj, name);
 }
 
+function _syncProxyPreventExtensionsInvariant(name: string, trapTarget: any, nativeTarget: any, result: any): any {
+  if (name === "preventExtensions" && result && trapTarget !== undefined && _wasmNonExtensibleObjs.has(trapTarget)) {
+    Reflect.preventExtensions(nativeTarget);
+  }
+  return result;
+}
 /**
  * #2180 — translate a (possibly WasmGC-struct) user handler into a plain-object
  * handler the host engine can read trap functions from. Each present trap is
@@ -8613,9 +8607,11 @@ function _buildProxyBridgeHandler(
     // value the program passed to `new Proxy` (apply/construct/call-parameters).
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
+      const nativeTarget = args[0];
       if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
       else if (substituteTarget && args.length > 0) args[0] = rawTarget;
-      return (callable as Function).apply(handler, args);
+      const result = (callable as Function).apply(handler, args);
+      return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
   return bridge;
@@ -8671,6 +8667,7 @@ function _buildLazyProxyBridgeHandler(
   for (const name of _PROXY_TRAP_NAMES) {
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
+      const nativeTarget = args[0];
       const lateExports = callbackState?.getExports();
       const rawTrap = _structFieldRaw(handler, name, lateExports);
       if (rawTrap == null) {
@@ -8697,7 +8694,8 @@ function _buildLazyProxyBridgeHandler(
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
       }
-      return (callable as Function).apply(handler, args);
+      const result = (callable as Function).apply(handler, args);
+      return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
   return bridge;
@@ -10492,6 +10490,8 @@ function resolveImport(
     }
     case "builtin": {
       const name = intent.name;
+      if (name === "__wrap_callable_for_host")
+        return (value: any) => _maybeWrapCallableUnknownArity(value, callbackState);
       const fixedMethodArity = fixedExternMethodCallArity(name);
       if (fixedMethodArity !== undefined) {
         const canonical = resolveImport(

@@ -2477,6 +2477,9 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // chains), checking whether any reachable left operand is a host builtin.
   const initMayBeHost = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
+    if (ts.isNewExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "Proxy") {
+      return !ctx.standalone && !ctx.wasi;
+    }
     if (isHostBuiltinMember(inner) || isDeclaredHostGlobal(inner)) return true;
     if (isReflectiveAccessorExtraction(inner)) return true;
     if (ts.isConditionalExpression(inner)) {
