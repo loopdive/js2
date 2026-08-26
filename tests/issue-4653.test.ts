@@ -27,10 +27,11 @@
 // the fnctor recogniser admits only a TOP-LEVEL `var F; F = function(){}`, and
 // the redeclared-function slot is a MODULE global. A pin wrapped in a function
 // would compile a different program from the one the defect lives in.
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
-import { extractWasmExceptionMessage } from "./test262-runner.js";
+import { extractWasmExceptionMessage, runTest262File } from "./test262-runner.js";
 
 /**
  * Compile `source` as a standalone SCRIPT and run its top-level initializer.
@@ -466,25 +467,17 @@ describe("#4653 residuals — measured standalone", () => {
     ).toBe(null);
   });
 
-  // ROW 13.2-18-1. Root is NOT this issue's: a function EXPRESSION has no OWN
-  // `prototype` property once the descriptor MOP runtime is live, so with an
-  // accessor installed on `Function.prototype.prototype` the read walks the
-  // chain and answers `undefined` (base error: "Cannot destructure 'null' or
-  // 'undefined'" at `fun.prototype.toString()`). Owner: #4491.
+  // ROW 13.2-18-1. Keep this sentinel on the exact upstream file: smaller
+  // `runScript` approximations now pass and would falsely report this row as
+  // closed, while the propertyHelper-backed Test262 program remains red.
   it.fails("(#4491) `fun.prototype` is an own property, not an inherited accessor", async () => {
-    expect(
-      await runScript(`
-        Object.defineProperty(Function.prototype, "prototype", {
-          get: function () { return 100; },
-          set: function (v) { },
-          configurable: true
-        });
-        var fun = function () {};
-        if (fun.prototype === 100) throw new Error("fun.prototype came from the inherited getter");
-        if (String(fun.prototype) !== "[object Object]") throw new Error("fun.prototype === " + String(fun.prototype));
-        if (!Object.prototype.hasOwnProperty.call(fun, "prototype")) throw new Error("prototype is not an own property");
-      `),
-    ).toBe(null);
+    const result = await runTest262File(
+      resolve("test262/test/language/statements/function/13.2-18-1.js"),
+      "issue-4653-residual",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error).toBe("pass");
   });
 
   // Adjacent to F, and NOT closed by it: `new F()` now links the assigned
