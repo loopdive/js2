@@ -164,6 +164,15 @@ import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-fun
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
+/**
+ * Synthetic closure binding used by standalone object-literal method lowering
+ * to retain the method's [[HomeObject]].  It is deliberately not a source
+ * spelling: object-literal methods capture the object being constructed, so a
+ * borrowed call can resolve `super` against that object rather than against
+ * the call-time `this` receiver.
+ */
+export const SUPER_HOME_OBJECT_CAPTURE_NAME = "__js2_super_home_object";
+
 function emitClosureDefaultReturnValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3056,11 +3065,21 @@ export function compileArrowAsClosure(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
+  /** Object-literal [[HomeObject]] to carry for standalone `super` reads. */
+  homeObjectLocal?: number,
 ): ValType | null {
   const closureId = ctx.closureCounter++;
   const closureName = `__closure_${closureId}`;
   const body = recordClosureBody(ctx, "compileArrowAsClosure", closureName, arrow);
   reportClosureNameMap(arrow, closureName);
+
+  // Native callback paths install an explicit receiver in this global before
+  // `call_ref`. Ensure a function expression that reads its own `this` emits
+  // the dynamic read even when the closure is created before the callback
+  // method call (for example `const cb = function () { return this; }`).
+  if (ts.isFunctionExpression(arrow) && bodyReferencesOwnThis(body)) {
+    ensureCurrentThisGlobal(ctx);
+  }
 
   // Check if this is a generator function expression (function*() { ... })
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
@@ -3145,6 +3164,21 @@ export function compileArrowAsClosure(
     fctx.body.push({ op: "local.set", index: thisLocal });
   }
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
+  // Object-literal method closures need a stable [[HomeObject]] for `super`.
+  // Capture the freshly allocated object itself, rather than using
+  // `__current_this`: a detached/borrowed call is allowed to supply a
+  // different this-value while the method's home object remains unchanged.
+  if (homeObjectLocal !== undefined && !captures.some((capture) => capture.name === SUPER_HOME_OBJECT_CAPTURE_NAME)) {
+    captures.push({
+      name: SUPER_HOME_OBJECT_CAPTURE_NAME,
+      type: { kind: "externref" },
+      localIdx: homeObjectLocal,
+      mutable: false,
+      alreadyBoxed: false,
+      hasTdzFlag: false,
+      eagerDominatingBox: false,
+    });
+  }
   captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
@@ -3617,6 +3651,8 @@ export function compileArrowAsCallback(
      * callback creations (per-iteration `let` semantics need fresh cells).
      */
     sharedRefCells?: SharedRefCellMap;
+    /** Preserve arbitrary host values passed to an accessor setter. */
+    forceExternrefParams?: boolean;
   },
 ): ValType | null {
   const cbId = ctx.callbackCounter++;
@@ -3749,7 +3785,7 @@ export function compileArrowAsCallback(
     cbResolvedParams.push(resolved);
     // JS host passes all values as externref for GC ref types — they cannot
     // be passed as (ref N) or (ref null N) directly from JS
-    if (resolved.kind === "ref" || resolved.kind === "ref_null") {
+    if (options?.forceExternrefParams || resolved.kind === "ref" || resolved.kind === "ref_null") {
       cbParams.push({ kind: "externref" });
     } else {
       cbParams.push(resolved);

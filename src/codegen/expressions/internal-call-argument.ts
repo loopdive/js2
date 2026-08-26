@@ -27,7 +27,27 @@ export function compileInternalCallArgument(
   fctx: FunctionContext,
   expression: ts.Expression,
   expectedType: ValType | undefined,
+  forceArrayLiteralVec = false,
 ): ValType | null {
+  // Class bodies are emitted before their call sites. When an unannotated class
+  // method parameter is an externref binding pattern, a contextual tuple at the
+  // call site can therefore be a type the callee never saw while building its
+  // tuple fast path. Re-enter the established lowering under the narrow array
+  // carrier override; the default path below stays exactly unchanged.
+  if (
+    forceArrayLiteralVec &&
+    expectedType?.kind === "externref" &&
+    (ctx.standalone || ctx.wasi) &&
+    ts.isArrayLiteralExpression(expression)
+  ) {
+    const previous = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+    (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+    try {
+      return compileInternalCallArgument(ctx, fctx, expression, expectedType, false);
+    } finally {
+      (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = previous;
+    }
+  }
   // A native `externref` parameter is an open JavaScript-value boundary. A
   // plain object literal must therefore use the runtime `$Object` carrier,
   // even when TypeScript gives the literal a concrete contextual object type.

@@ -1219,6 +1219,7 @@ export interface FunctionContext {
      * index is additionally added to `unmappedIndices`.)
      */
     nonWritableIndices?: Set<number>;
+    accessorIndices?: Set<number>;
     /**
      * Argument indices whose `Object.defineProperty(arguments, "<i>", …)` was
      * routed to the RUNTIME define (#4491) — an accessor, a `writable:false`
@@ -3606,9 +3607,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  runs it after `setExports` (symmetric with the standalone `_start` model).
    *  Default false. WASI is unaffected. */
   deferTopLevelInit: boolean;
-  /** (#2179) True when the module body contains any `delete` of a property or
-   *  element access (e.g. `delete o.a` / `delete o[k]`). Pre-scanned once at
-   *  module setup. When true, `any`/`unknown`-typed property READS in JS-host
+  /** (#2179/#4745) True when the module body contains any `delete` of a
+   *  property or element access (e.g. `delete o.a` / `delete o[k]`) or
+   *  `Reflect.deleteProperty(o, k)`. Pre-scanned once at module setup. When
+   *  true, `any`/`unknown`-typed property READS in JS-host
    *  mode are routed through the tombstone-aware `__extern_get` host helper
    *  instead of the inline `ref.test`+`struct.get` fast-path — the fast-path
    *  reads the live WasmGC field and bypasses the runtime delete tombstone, so
@@ -3633,13 +3635,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  module reading `.constructor` anywhere, including ones only ever asking
    *  about a primitive wrapper (#4034's unconditional-pull-in hazard). */
   plainCtorCarrierDemanded?: boolean;
-  /** (#4187) Identifier names appearing as the receiver of a member delete
-   *  (`delete r.k` / `delete r[e]`), pre-scanned by
-   *  `scanModuleMemberDeletes`. Consulted ONLY by the standalone arm of
-   *  the `hasOwnProperty`/`propertyIsEnumerable` routing gate in
-   *  `compilePropertyIntrospection`: a receiver that saw `Object.defineProperty`
-   *  AND appears here can have its const-fold disagree with runtime state, so it
-   *  routes to the runtime helper. Empty for nearly every module. */
+  /** (#4187/#4745) Identifier names appearing as the receiver of a member
+   *  delete (`delete r.k` / `delete r[e]`) or Reflect.deleteProperty(r, …),
+   *  pre-scanned by `scanModuleMemberDeletes`. Consulted by the
+   *  `hasOwnProperty`/`propertyIsEnumerable` routing gate in
+   *  `compilePropertyIntrospection`: a receiver that may have been deleted from
+   *  can have its const-fold disagree with runtime state, so it routes to the
+   *  runtime helper. Empty for nearly every module. */
   memberDeleteReceiverNames?: ReadonlySet<string>;
   /** (#1472 Phase A) Set of dynamic-shape object/property host-import names
    *  already refused under `--target standalone`, used to deduplicate the

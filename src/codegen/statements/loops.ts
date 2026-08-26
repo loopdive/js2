@@ -11,7 +11,12 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
-import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
+import {
+  buildThrowJsErrorInstrs,
+  emitCoercedLocalSet,
+  emitWebCompatCallAssignmentTarget,
+  updateLocalType,
+} from "../expressions/helpers.js";
 import { emitAssignToTarget } from "../expressions/assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
@@ -112,6 +117,11 @@ function emitForOfAssignmentTarget(
     return;
   }
   emitWebCompatCallAssignmentTarget(ctx, fctx, target);
+}
+
+/** Build the canonical TypeError for synchronous for-of's ToObject(nullish) guard. */
+function forOfToObjectTypeError(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
+  return buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", { flush: fctx });
 }
 
 /**
@@ -1664,14 +1674,16 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   // Null guard: if string ref is nullable, throw TypeError on null (#775)
   // In JS, `for (const c of null)` throws TypeError
   if (strType.kind === "ref_null") {
+    // Register the throw's string global while the guarded body is still live
+    // in fctx.body, so a new import-global shift repairs those instructions.
+    const nullThrow = forOfToObjectTypeError(ctx, fctx);
     const guardedInstrs = fctx.body.splice(strNullGuardStart);
-    const tagIdx = ensureExnTag(ctx);
     fctx.body.push({ op: "local.get", index: strLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+      then: nullThrow,
       else: guardedInstrs,
     });
   }
@@ -1731,17 +1743,34 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
-/** #4700 — outer descriptors shadowed by a simple lexical for-of head. */
+/** Saved surrounding descriptors for a lexical for-of head. */
 interface ForOfHeadSaved {
   name: string;
   localMap: number | undefined;
   tdz: number | undefined;
   boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
-  boxedTdz: { localIdx: number; refCellTypeIdx: number } | undefined;
+  boxedTdz: { localIdx: number; refCellTypeIdx: number; srcFlagIdx?: number } | undefined;
   isConst: boolean;
 }
 
-/** Restore the binding descriptors that surround a bounded lexical for-of. */
+function saveForOfHeads(fctx: FunctionContext, stmt: ts.ForOfStatement): ForOfHeadSaved[] {
+  if (!ts.isVariableDeclarationList(stmt.initializer)) return [];
+  if (!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) return [];
+  const names = new Set<string>();
+  for (const decl of stmt.initializer.declarations) {
+    for (const name of collectPatternBindingNames(decl.name)) names.add(name);
+  }
+  return [...names].map((name) => ({
+    name,
+    localMap: fctx.localMap.get(name),
+    tdz: fctx.tdzFlagLocals?.get(name),
+    boxed: fctx.boxedCaptures?.get(name),
+    boxedTdz: fctx.boxedTdzFlags?.get(name),
+    isConst: fctx.constBindings?.has(name) ?? false,
+  }));
+}
+
+/** Restore descriptors shadowed by the loop head after its body is lowered. */
 function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
   fctx.localMap.delete(saved.name);
   fctx.tdzFlagLocals?.delete(saved.name);
@@ -1749,22 +1778,10 @@ function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
   fctx.boxedTdzFlags?.delete(saved.name);
   fctx.constBindings?.delete(saved.name);
   if (saved.localMap !== undefined) fctx.localMap.set(saved.name, saved.localMap);
-  if (saved.tdz !== undefined) {
-    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-    fctx.tdzFlagLocals.set(saved.name, saved.tdz);
-  }
-  if (saved.boxed !== undefined) {
-    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-    fctx.boxedCaptures.set(saved.name, saved.boxed);
-  }
-  if (saved.boxedTdz !== undefined) {
-    if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
-    fctx.boxedTdzFlags.set(saved.name, saved.boxedTdz);
-  }
-  if (saved.isConst) {
-    if (!fctx.constBindings) fctx.constBindings = new Set();
-    fctx.constBindings.add(saved.name);
-  }
+  if (saved.tdz !== undefined) (fctx.tdzFlagLocals ??= new Map()).set(saved.name, saved.tdz);
+  if (saved.boxed !== undefined) (fctx.boxedCaptures ??= new Map()).set(saved.name, saved.boxed);
+  if (saved.boxedTdz !== undefined) (fctx.boxedTdzFlags ??= new Map()).set(saved.name, saved.boxedTdz);
+  if (saved.isConst) (fctx.constBindings ??= new Set()).add(saved.name);
 }
 
 // (#2769) Does this for-of need the in-bounds undefined/hole sentinel preserved
@@ -1792,46 +1809,21 @@ function compileForOfArray(
   // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
   // before reporting. With `preVec` no compile happens, so rollback is a no-op.
   const snap = snapshotSpeculative(ctx, fctx);
-  // #4700 — a simple lexical ForDeclaration shadows the outer binding while
-  // the receiver is evaluated. Keep this reconstruction limited to the direct
-  // array/vec path; destructuring, collection materialization, and iterator
-  // paths remain outside the bounded TDZ slice.
-  const headDecl =
-    !preVec &&
-    !iterableOverride &&
-    ts.isVariableDeclarationList(stmt.initializer) &&
-    stmt.initializer.declarations.length === 1
-      ? stmt.initializer.declarations[0]!
-      : undefined;
-  const isLexicalIdentifierHead =
-    headDecl !== undefined &&
-    ts.isIdentifier(headDecl.name) &&
-    !!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-  const headName = isLexicalIdentifierHead ? (headDecl!.name as ts.Identifier).text : undefined;
-  const savedHead: ForOfHeadSaved | undefined =
-    headName === undefined
-      ? undefined
-      : {
-          name: headName,
-          localMap: fctx.localMap.get(headName),
-          tdz: fctx.tdzFlagLocals?.get(headName),
-          boxed: fctx.boxedCaptures?.get(headName),
-          boxedTdz: fctx.boxedTdzFlags?.get(headName),
-          isConst: fctx.constBindings?.has(headName) ?? false,
-        };
-  if (headName !== undefined) {
-    // The value slot only keeps identifier lowering well-typed; every receiver
-    // read checks the zero-initialized flag before that value can matter.
-    const headValueLocal = allocLocal(fctx, `__forof_hbind_${headName}_${fctx.locals.length}`, {
+  // #4700/#4710 — HeadEvaluation evaluates the receiver with every name in a
+  // lexical identifier or destructuring head uninitialized. Keep this limited
+  // to the direct synchronous vec path; iterator and materialized paths retain
+  // their separate environment machinery.
+  const receiverHeadSaved = !preVec && !iterableOverride ? saveForOfHeads(fctx, stmt) : [];
+  for (const saved of receiverHeadSaved) {
+    const headValueLocal = allocLocal(fctx, `__forof_hbind_${saved.name}_${fctx.locals.length}`, {
       kind: "externref",
     });
-    const headTdzLocal = allocLocal(fctx, `__forof_hflag_${headName}_${fctx.locals.length}`, { kind: "i32" });
-    fctx.localMap.set(headName, headValueLocal);
-    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-    fctx.tdzFlagLocals.set(headName, headTdzLocal);
-    fctx.boxedCaptures?.delete(headName);
-    fctx.boxedTdzFlags?.delete(headName);
-    fctx.constBindings?.delete(headName);
+    const headTdzLocal = allocLocal(fctx, `__forof_hflag_${saved.name}_${fctx.locals.length}`, { kind: "i32" });
+    fctx.localMap.set(saved.name, headValueLocal);
+    (fctx.tdzFlagLocals ??= new Map()).set(saved.name, headTdzLocal);
+    fctx.boxedCaptures?.delete(saved.name);
+    fctx.boxedTdzFlags?.delete(saved.name);
+    fctx.constBindings?.delete(saved.name);
   }
   // (#2769) Preserve in-bounds undefined/hole identity through the OUTER
   // array-literal construction for the spec'd for-of-dstr template family. The
@@ -1845,7 +1837,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    if (savedHead) restoreForOfHead(fctx, savedHead);
+    for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1855,7 +1847,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
-    if (savedHead) restoreForOfHead(fctx, savedHead);
+    for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1864,7 +1856,7 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    if (savedHead) restoreForOfHead(fctx, savedHead);
+    for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1873,7 +1865,11 @@ function compileForOfArray(
   // loop's per-iteration binding is installed. The emitted receiver reads
   // retain the temporary locals/flag; only the compiler's active descriptors
   // are restored here.
-  if (savedHead) restoreForOfHead(fctx, savedHead);
+  for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
+
+  // Save the restored outer view before per-iteration bindings are installed
+  // so body/default closures cannot leave the final head value active.
+  const savedLoopHeads = saveForOfHeads(fctx, stmt);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -2121,13 +2117,13 @@ function compileForOfArray(
   // If null from a failed guarded cast (wrong struct type), just skip the loop.
   // Only throw TypeError for genuinely null values (e.g. `for (const x of null)`).
   if (vecType.kind === "ref_null") {
+    const nullThrow = forOfToObjectTypeError(ctx, fctx);
     const guardedInstrs = fctx.body.splice(nullGuardStart);
     const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "ref.is_null" });
     if (backupLocal !== undefined) {
       // A guarded cast backup exists: distinguish "wrong type" from "genuinely null"
-      const tagIdx = ensureExnTag(ctx);
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
@@ -2137,25 +2133,24 @@ function compileForOfArray(
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+            then: nullThrow,
             else: [], // wrong struct type → skip loop
           },
         ],
         else: guardedInstrs,
       });
     } else {
-      const tagIdx = ensureExnTag(ctx);
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+        then: nullThrow,
         else: guardedInstrs,
       });
     }
   }
   // #4700 — lexical head bindings end with the loop and must not leak into
   // later code in the surrounding function.
-  if (savedHead) restoreForOfHead(fctx, savedHead);
+  for (const saved of savedLoopHeads) restoreForOfHead(fctx, saved);
 }
 
 /**
@@ -2458,14 +2453,14 @@ function emitArrayKeysEntriesLoop(
 
   // Null guard: throw TypeError for genuinely null receiver (`arr` is null).
   if (vecType.kind === "ref_null") {
+    const nullThrow = forOfToObjectTypeError(ctx, fctx);
     const guardedInstrs = fctx.body.splice(nullGuardStart);
-    const tagIdx = ensureExnTag(ctx);
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+      then: nullThrow,
       else: guardedInstrs,
     });
   }
@@ -2558,11 +2553,10 @@ function compileForOfDirectIterator(
   const nullTmp = allocLocal(fctx, `__forit_stmp_${fctx.locals.length}`, iterableType);
   fctx.body.push({ op: "local.tee", index: nullTmp });
   fctx.body.push({ op: "ref.is_null" });
-  const tagIdx = ensureExnTag(ctx);
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+    then: forOfToObjectTypeError(ctx, fctx),
     else: [],
   });
 
@@ -2966,7 +2960,6 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // If null from a failed guarded cast, skip instead of throw.
   {
     const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
-    const tagIdx = ensureExnTag(ctx);
     const iterTmp = allocLocal(fctx, `__forit_null_${fctx.locals.length}`, {
       kind: "externref",
     });
@@ -2982,7 +2975,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+            then: forOfToObjectTypeError(ctx, fctx),
             else: [],
           },
         ],
@@ -2992,7 +2985,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+        then: forOfToObjectTypeError(ctx, fctx),
         else: [],
       });
     }

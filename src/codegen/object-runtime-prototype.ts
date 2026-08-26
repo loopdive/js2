@@ -34,6 +34,10 @@ export interface ObjectPrototypeHelperState {
   propEntryTypeIdx: number;
   propMapTypeIdx: number;
   objectTypeIdx: number;
+  /** (#4721) standalone Proxy type, for receiver-preserving prototype reads. */
+  proxyTypeIdx?: number;
+  /** `$ProxyTraps` type paired with `proxyTypeIdx`. */
+  proxyTrapsTypeIdx?: number;
   objRefNull: ValType;
   propMapRef: ValType;
   boundaryObjectGetPrototypeIdx?: number;
@@ -178,6 +182,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     propEntryTypeIdx,
     propMapTypeIdx,
     objectTypeIdx,
+    proxyTypeIdx,
+    proxyTrapsTypeIdx,
     objRefNull,
     propMapRef,
     boundaryObjectGetPrototypeIdx,
@@ -192,14 +198,73 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   // stay byte-identical by construction.
   const protoFromFunctionIdx = ctx.funcMap.get(PROTO_FROM_FUNCTION);
   const functionFromProtoIdx = ctx.funcMap.get(FUNCTION_FROM_PROTO);
+  // A Proxy with no `get` trap has the same [[Get]] target operation as its
+  // target. Recursively unwrap that narrow case before storing the prototype;
+  // the recursive helper preserves nested proxy forwarding and leaves a
+  // present (including non-callable) trap intact (#4721).
+  let proxyGetTargetIdx: number | undefined;
+  if (proxyTypeIdx !== undefined && proxyTrapsTypeIdx !== undefined) {
+    const name = "__proxy_get_target_if_absent";
+    const getTargetIdx = s.registerNative(
+      name,
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+      [{ name: "any", type: { kind: "anyref" } }],
+      [],
+    );
+    proxyGetTargetIdx = getTargetIdx;
+    const target = (): Instr[] => [
+      { op: "local.get", index: 1 },
+      { op: "ref.cast", typeIdx: proxyTypeIdx! },
+      { op: "struct.get", typeIdx: proxyTypeIdx!, fieldIdx: 1 },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: getTargetIdx },
+    ];
+    const helper = ctx.mod.functions.find((f) => f.name === name)!;
+    helper.body = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: 1 },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: proxyTypeIdx },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: target(),
+            else: [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: proxyTypeIdx },
+              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: 0 },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: target(),
+                else: [{ op: "local.get", index: 0 }],
+              },
+            ],
+          },
+        ],
+        else: [{ op: "local.get", index: 0 }],
+      },
+    ];
+  }
   /** Map a callable in a `[[Prototype]]` POSITION to the `$Object` view of it. */
-  const canonicalizeProtoArg = (paramIdx: number): Instr[] =>
-    protoFromFunctionIdx === undefined
-      ? [{ op: "local.get", index: paramIdx }]
-      : [
-          { op: "local.get", index: paramIdx },
-          { op: "call", funcIdx: protoFromFunctionIdx },
-        ];
+  const canonicalizeProtoArg = (paramIdx: number): Instr[] => {
+    const proto: Instr[] = [{ op: "local.get", index: paramIdx }];
+    if (proxyGetTargetIdx !== undefined) proto.push({ op: "call", funcIdx: proxyGetTargetIdx });
+    if (protoFromFunctionIdx !== undefined) proto.push({ op: "call", funcIdx: protoFromFunctionIdx });
+    return proto;
+  };
   /** Map a proto-view `$Object` back to the callable it stands for, on the way OUT. */
   const devirtualizeProtoResult = (): Instr[] =>
     functionFromProtoIdx === undefined ? [] : [{ op: "call", funcIdx: functionFromProtoIdx }];

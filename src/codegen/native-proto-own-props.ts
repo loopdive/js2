@@ -69,7 +69,13 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { seededNativeProtoOwnMembersByBrand } from "./native-proto.js";
+import {
+  ensureStandaloneNativeMethodClosure,
+  getBuiltinBrand,
+  seededNativeProtoOwnMembersByBrand,
+} from "./native-proto.js";
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 
@@ -85,6 +91,114 @@ const STR_DATA = 2;
 const COMMA = 0x2c;
 
 export const NATIVE_PROTO_HASOWN_FN = "__nproto_hasown";
+
+function registerNativeProtoHasInstanceGopd(
+  ctx: CodegenContext,
+  protoTypeIdx: number,
+  functionBrand: number | undefined,
+  symbolType: number | undefined,
+): void {
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
+  if (createDescriptorIdx === undefined || symbolType === undefined || functionBrand === undefined) return;
+  // This splice runs during finalize, after reflective call exports have
+  // already captured their receiver-aware native-closure inventory. Do not
+  // mint the Function @@hasInstance closure here: doing so late adds a new
+  // closure family after those exports and can make an unrelated accessor
+  // getter (notably RegExp.prototype.global) miss its original receiver.
+  // Exact Function.prototype[Symbol.hasInstance] value reads reserve this
+  // closure during body compilation; descriptor synthesis may safely reuse it.
+  const funcName = `__proto_method_${functionBrand}_@@hasInstance`;
+  if (!ctx.funcMap.has(funcName)) return;
+  const brand = ensureFunctionNativeProtoGlue(ctx);
+  const closure =
+    brand === undefined
+      ? null
+      : ensureStandaloneNativeMethodClosure(ctx, brand, "@@hasInstance", "method", { refusalBodyFallback: true });
+  if (!closure) return;
+
+  const gopdTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  const gopdFuncIdx = mintDefinedFunc(ctx);
+  const gopdBody: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: 2 },
+    { op: "ref.test", typeIdx: protoTypeIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    { op: "local.get", index: 2 },
+    { op: "ref.cast", typeIdx: protoTypeIdx },
+    { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND },
+    { op: "i32.const", value: functionBrand },
+    { op: "i32.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: symbolType },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: symbolType },
+    { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+    { op: "extern.convert_any" },
+    { op: "i32.const", value: 0 },
+    { op: "call", funcIdx: createDescriptorIdx },
+  ];
+  pushDefinedFunc(ctx, gopdFuncIdx, {
+    name: "__nproto_gopd",
+    typeIdx: gopdTypeIdx,
+    locals: [{ name: "any", type: { kind: "anyref" } }],
+    body: gopdBody,
+    exported: false,
+  });
+  ctx.funcMap.set("__nproto_gopd", gopdFuncIdx);
+}
+
+function nativeProtoHasInstanceOwnArm(
+  protoTypeIdx: number,
+  functionBrand: number | undefined,
+  symbolType: number | undefined,
+  anyLocal: number,
+): Instr[] {
+  if (functionBrand === undefined || symbolType === undefined) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: symbolType },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: symbolType },
+        { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+        { op: "i32.const", value: 2 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: protoTypeIdx },
+            { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND },
+            { op: "i32.const", value: functionBrand },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
 
 /**
  * Register `__nproto_hasown(obj externref, key externref) -> i32`: 1 when `key`
@@ -109,6 +223,8 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
   const seededOwnMembers = seededNativeProtoOwnMembersByBrand(ctx);
   const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
   const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
+  const functionBrand = getBuiltinBrand(ctx, "Function");
+  const symbolType = ctx.symbolTypeIdx >= 0 ? ctx.symbolTypeIdx : undefined;
 
   // params: 0 obj, 1 key
   const L_ANY = 2;
@@ -159,7 +275,9 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "ref.cast", typeIdx: protoTypeIdx },
     { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_IS_CLASS },
     { op: "if", blockType: { kind: "empty" }, then: returnZero },
-    // A non-string key (symbol, boxed number) names no member of a prototype.
+    // Symbol.hasInstance is an own Function.prototype method.
+    ...nativeProtoHasInstanceOwnArm(protoTypeIdx, functionBrand, symbolType, L_ANY),
+    // A non-string key (other symbols, boxed number) names no member of a prototype.
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: anyStr },
@@ -350,6 +468,8 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     body,
     exported: false,
   });
+
+  registerNativeProtoHasInstanceGopd(ctx, protoTypeIdx, functionBrand, symbolType);
   return funcIdx;
 }
 
@@ -382,6 +502,23 @@ export function unshiftNativeProtoHasOwnArms(ctx: CodegenContext): void {
           { op: "i32.const", value: name === "__propertyIsEnumerable" ? 0 : 1 },
           { op: "return" },
         ],
+      },
+    );
+  }
+  const gopdFn = ctx.mod.functions.find((candidate) => candidate.name === "__getOwnPropertyDescriptor");
+  const gopdIdx = ctx.funcMap.get("__nproto_gopd");
+  if (gopdFn && gopdIdx !== undefined) {
+    gopdFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: gopdIdx },
+      { op: "local.tee", index: 6 },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "local.get", index: 6 }, { op: "return" }],
       },
     );
   }

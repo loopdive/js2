@@ -74,6 +74,11 @@ export function normalizeOrdinaryFunctionConstructibility(
   funcName: string,
   constructible: boolean,
 ): boolean {
+  // The synthetic indirect-eval adapter is callable but deliberately has no
+  // [[Construct]]. It is FunctionDeclaration-shaped only so the existing
+  // closure hoister can compile its body; do not expose that implementation
+  // detail through Reflect.construct(eval) in standalone output.
+  if (funcName === "__js2wasm_intrinsic_indirect_eval") return false;
   if (constructible) return true;
   // (#4661) Lane-INDEPENDENT (was gated to `noJsHost || native-first`). The
   // js-host lane needs the same nominal constructible subtype so

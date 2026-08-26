@@ -905,15 +905,16 @@ function buildCompanionSeedArms(ctx: CodegenContext, whichOffLocal: number, comp
  * #4160 canonical-integer gate protected nothing — a refused key was a
  * silent no-op on the proto singleton, not a store elsewhere). Boxed-number /
  * i31 keys canonicalise via `number_toString` so `p[1]` and `p["1"]` share a
- * slot. Symbols/objects return null-extern (do not participate — the
- * fall-through path coerces object keys exactly once, and running a user
- * `toString` twice would double its side effects).
+ * slot. Native Symbol carriers participate AS-IS, preserving identity without
+ * coercion. Other objects return null-extern so a user `toString` cannot run
+ * twice on the fall-through path.
  */
 function fillNormKeyBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_NORM_KEY);
   if (!fn || ctx.anyStrTypeIdx < 0) return;
   const anyStr = ctx.anyStrTypeIdx;
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  const symbolTypeIdx = ctx.symbolTypeIdx;
   // locals: 1=any(anyref)
   fn.locals = [{ name: "any", type: { kind: "anyref" } }];
   const miss = (): Instr[] => [{ op: "ref.null.extern" }, { op: "return" }];
@@ -927,6 +928,17 @@ function fillNormKeyBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: 0 }, { op: "return" }],
     },
+    ...(symbolTypeIdx >= 0
+      ? ([
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: 0 }, { op: "return" }],
+          },
+        ] satisfies Instr[])
+      : []),
     ...(boxNumTypeIdx >= 0
       ? ([
           { op: "local.get", index: 1 },
