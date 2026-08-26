@@ -104,11 +104,9 @@ import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) ind
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
-import {
-  buildArgumentsBrandBit,
-  buildArgumentsLengthDeletedBail,
-  fillArgumentsLengthBrand,
-} from "./arguments-length-brand.js"; // (#4658)
+import { buildVecGopdHoleBail } from "./vec-overlay-hole-bail.js"; // (#4491 T11) sparse marker descriptor guard
+import { buildLengthSeedFlags, buildVecLengthConfig } from "./vec-length-descriptor.js";
+import { buildArgumentsLengthDeletedBail, fillArgumentsLengthBrand } from "./arguments-length-brand.js"; // (#4658)
 import {
   allowedCarriers,
   carrierDefaultInstrs,
@@ -957,7 +955,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
               { op: "f64.convert_i32_s" },
               { op: "call", funcIdx: s3.boxNumIdx },
-              { op: "f64.const", value: LENGTH_SEED_FLAGS },
+              ...buildLengthSeedFlags(ctx, l.any, LENGTH_SEED_FLAGS),
               { op: "call", funcIdx: dpValueIdx },
               { op: "drop" },
             ],
@@ -1838,36 +1836,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               },
             ];
       const bailMiss = (): Instr[] => [...missExtern(), { op: "return" }];
-      // A backed externref `$Hole` is storage, not an implicit array-element
-      // descriptor. `__vec_gopd` feeds both getOwnPropertyDescriptor and the
-      // vec hasOwn prologue, so screening it here keeps the public own view in
-      // step with the active #4504 write decision. This runs only after the
-      // index has passed the backed-length test below.
-      const holeBail = (): Instr[] => {
-        if (!inheritedSetHolePresenceActive) return [];
-        const arms: Instr[] = [];
-        for (const carrier of carriers) {
-          if (carrier.kind !== "externref") continue;
-          arms.push(
-            { op: "local.get", index: 2 },
-            { op: "ref.test", typeIdx: carrier.vecTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 2 },
-                { op: "ref.cast", typeIdx: carrier.vecTypeIdx },
-                { op: "struct.get", typeIdx: carrier.vecTypeIdx, fieldIdx: 1 },
-                { op: "local.get", index: 4 },
-                { op: "array.get", typeIdx: carrier.arrTypeIdx },
-                ...holeTestInstrs(ctx),
-                { op: "if", blockType: { kind: "empty" }, then: bailMiss() },
-              ],
-            },
-          );
-        }
-        return arms;
-      };
+      // A backed sparse marker is storage, not an implicit array-element
+      // descriptor. Keep the public own view aligned with the live overlay.
+      const holeBail = (): Instr[] => buildVecGopdHoleBail(ctx, carriers, inheritedSetHolePresenceActive, bailMiss);
       const setKey = (key: string, valueInstrs: Instr[]): Instr[] => [
         { op: "local.get", index: 6 },
         ...nativeStringLiteralInstrs(ctx, key),
@@ -1949,10 +1920,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               // `arguments` object (§10.4.4) — ANDed with §7.3.14 integrity, so
               // a sealed/frozen arguments object stays non-configurable.
               ...setKey("configurable", [
-                ...buildArgumentsBrandBit(0, ctx.structMap.get("__arguments_vec")),
-                ...integrityBit(OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN),
-                { op: "i32.eqz" },
-                { op: "i32.and" },
+                ...buildVecLengthConfig(
+                  ctx.structMap.get("__arguments_vec"),
+                  7,
+                  propEntryTypeIdx,
+                  integrityBit,
+                  OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN,
+                ),
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
               { op: "local.get", index: 6 },

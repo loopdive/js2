@@ -54,7 +54,7 @@ async function bothLanes(src: string, expected: unknown): Promise<void> {
 }
 
 const FILTER_TEST262_ROOT = join(process.cwd(), "test262", "test", "built-ins", "Array", "prototype", "filter");
-const EXACT_ES5_FILTER_ROWS = ["15.4.4.20-5-7.js", "15.4.4.20-9-b-2.js", "15.4.4.20-9-b-15.js"] as const;
+const EXACT_ES5_FILTER_ROWS = ["15.4.4.20-9-b-5.js", "15.4.4.20-9-b-7.js", "15.4.4.20-9-b-11.js"] as const;
 
 describe.skipIf(!TEST262)("§15.4.4.20 exact ES5 standalone residual rows", () => {
   const previousEvalEngine = process.env.JS2WASM_EVAL_ENGINE;
@@ -234,6 +234,48 @@ describe("§15.4.4.20 filter — accessor indices installed by defineProperty", 
         "standalone",
       ),
     ).toBe(22);
+  });
+
+  it("preserves a sparse numeric hole across widening before a prototype add", async () => {
+    // An unannotated literal is widened to the externref carrier because its
+    // accessor makes filter's indexed reads dynamic.  The original f64 hole
+    // must remain an internal `$Hole`, so the callback sees the prototype
+    // accessor added while visiting index 0 rather than a boxed NaN value.
+    expect(
+      await run(
+        `var arr = [0, , 2];
+        Object.defineProperty(arr, "0", { get: function (): number {
+          Object.defineProperty(Array.prototype, "1", { get: function (): number { return 6.99; }, configurable: true });
+          return 0;
+        }, configurable: true });
+        export function test(): number {
+          var out = arr.filter(function (): boolean { return true; });
+          return out.length * 100 + (out[1] === 6.99 ? 1 : 0);
+        }`,
+        "standalone",
+      ),
+    ).toBe(301);
+  });
+
+  it("preserves a sparse numeric hole across widening before a prototype delete", async () => {
+    // The same carrier conversion must not turn the deleted prototype slot
+    // into an own value.  Once the callback removes Array.prototype[1], index
+    // 1 is absent and filter copies only indices 0 and 2.
+    expect(
+      await run(
+        `var arr = [0, , 2];
+        Object.defineProperty(arr, "0", { get: function (): number {
+          delete Array.prototype[1];
+          return 0;
+        }, configurable: true });
+        Array.prototype[1] = 1;
+        export function test(): number {
+          var out = arr.filter(function (): boolean { return true; });
+          return out.length * 10 + (out[1] === 2 ? 1 : 0);
+        }`,
+        "standalone",
+      ),
+    ).toBe(21);
   });
 });
 

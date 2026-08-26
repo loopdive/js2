@@ -58,6 +58,7 @@ import { definedFuncAt } from "./func-space.js";
 import { protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
+import { holeCompanionNoOwnDescriptor } from "./vec-hole-companion.js";
 
 /**
  * The single demand gate for the whole presence half. See the module header:
@@ -170,47 +171,18 @@ export function fillF64HoleHasIdxArms(ctx: CodegenContext): void {
   // the overlay's own prologue and the dense tail then answer as they always
   // did. `__vec_overlay_lookup` returns null for a vec with no companion —
   // the common case, one call.
-  const types = ctx.objectRuntimeTypes;
-  const lookupIdx = ctx.funcMap.get("__vec_overlay_lookup");
-  const objFindIdx = ctx.funcMap.get("__obj_find");
-  const numToStringIdx = ctx.funcMap.get("number_toString");
-  const overlayConsult =
-    types !== undefined && lookupIdx !== undefined && objFindIdx !== undefined && numToStringIdx !== undefined;
-
   const anyLocal = 2 + fn.locals.length;
   const indexLocal = anyLocal + 1;
   const compLocal = anyLocal + 2;
+  const types = ctx.objectRuntimeTypes;
+  const noOwnDescriptor = holeCompanionNoOwnDescriptor(ctx, anyLocal, compLocal);
   fn.locals.push(
     { name: "__f64hole_has_any", type: { kind: "anyref" } },
     { name: "__f64hole_has_i", type: { kind: "i32" } },
   );
-  if (overlayConsult) {
-    fn.locals.push({ name: "__f64hole_has_comp", type: { kind: "ref_null", typeIdx: types.objectTypeIdx } });
+  if (noOwnDescriptor !== undefined) {
+    fn.locals.push({ name: "__f64hole_has_comp", type: { kind: "ref_null", typeIdx: types!.objectTypeIdx } });
   }
-
-  /** `[] → [i32]` — 1 iff the companion has NO entry for this index. */
-  const noOwnDescriptor = (): Instr[] =>
-    overlayConsult
-      ? [
-          { op: "local.get", index: anyLocal },
-          { op: "call", funcIdx: lookupIdx },
-          { op: "local.tee", index: compLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "i32.const", value: 1 }],
-            else: [
-              { op: "local.get", index: compLocal },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: numToStringIdx },
-              { op: "call", funcIdx: objFindIdx },
-              { op: "ref.is_null" },
-            ],
-          },
-        ]
-      : [{ op: "i32.const", value: 1 }];
 
   // An own hole is NOT the end of HasProperty: §7.3.11 walks the prototype
   // chain, so `[0, , 2]` with `Array.prototype[1]` defined answers TRUE at
@@ -277,7 +249,7 @@ export function fillF64HoleHasIdxArms(ctx: CodegenContext): void {
               { op: "local.get", index: indexLocal },
               { op: "array.get", typeIdx: arrTypeIdx },
               ...f64HoleTestInstrs(),
-              ...noOwnDescriptor(),
+              ...(noOwnDescriptor ?? [{ op: "i32.const", value: 1 }]),
               { op: "i32.and" },
               {
                 op: "if",
