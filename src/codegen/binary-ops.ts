@@ -3461,6 +3461,67 @@ export function emitToInt32(fctx: FunctionContext): void {
 }
 
 /**
+ * Emit the element conversion for an integer TypedArray whose host/gc backing
+ * array is f64. Packed standalone/WASI arrays get the same conversion from
+ * their i8/i16/i32 `array.set`; the f64 representation must make the width and
+ * signedness explicit before storing. The input is f64 and the result remains
+ * f64 so callers can use it with the ordinary host/gc vec store path.
+ */
+export function emitHostTypedArrayElementCoercion(fctx: FunctionContext, viewName: string): boolean {
+  let width: 8 | 16 | 32 | undefined;
+  let signed = false;
+
+  switch (viewName) {
+    case "Int8Array":
+      width = 8;
+      signed = true;
+      break;
+    case "Uint8Array":
+      width = 8;
+      break;
+    case "Uint8ClampedArray":
+      emitToUint8Clamp(fctx);
+      fctx.body.push({ op: "f64.convert_i32_u" });
+      return true;
+    case "Int16Array":
+      width = 16;
+      signed = true;
+      break;
+    case "Uint16Array":
+      width = 16;
+      break;
+    case "Int32Array":
+      width = 32;
+      signed = true;
+      break;
+    case "Uint32Array":
+      width = 32;
+      break;
+    default:
+      return false;
+  }
+
+  // ToInt32 supplies the ECMAScript NaN/infinity/truncation/modulo-2^32
+  // semantics shared by every non-clamped integer view.
+  emitToInt32(fctx);
+  if (width !== 32) {
+    fctx.body.push({ op: "i32.const", value: width === 8 ? 0xff : 0xffff });
+    fctx.body.push({ op: "i32.and" });
+    if (signed) {
+      // Sign-extend the masked low byte/word without requiring a dedicated
+      // extend8/extend16 instruction in the IR.
+      const shift = width === 8 ? 24 : 16;
+      fctx.body.push({ op: "i32.const", value: shift });
+      fctx.body.push({ op: "i32.shl" });
+      fctx.body.push({ op: "i32.const", value: shift });
+      fctx.body.push({ op: "i32.shr_s" });
+    }
+  }
+  fctx.body.push({ op: signed ? "f64.convert_i32_s" : "f64.convert_i32_u" });
+  return true;
+}
+
+/**
  * (#2593) ToUint8Clamp (§7.1.x, the `Uint8ClampedArray` element conversion). Input
  * f64 on the stack → clamped i32 in [0, 255]. NOT modulo: NaN→0, ≤0→0, ≥255→255,
  * else round-HALF-TO-EVEN (1.5→2, 2.5→2, 0.5→0). Differs from every other integer

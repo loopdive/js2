@@ -18,7 +18,7 @@ import { HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
-import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
+import { emitAnyAdd, emitHostTypedArrayElementCoercion, emitModulo, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
@@ -5332,14 +5332,12 @@ function compileElementAssignment(
     // routes through `emitToUint8Clamp` below instead of the plain i32 truncation.
     const taViewName = elementAccessTypedArrayName(ctx, target.expression);
     const isUint8Clamped = taViewName === "Uint8ClampedArray";
-    // (#2729) On the WasmGC host/gc backend a `new Uint8Array(n)` element is
-    // stored in an `f64` vec (the i8 packed storage is wasi/standalone-only —
-    // see `typedArrayVecStorage`). The f64 store path applied NO conversion, so
-    // out-of-range / non-integer values read back raw (`u[0]=257`→257,
-    // `u[0]=-1`→-1, `u[0]=NaN`→NaN). When the backing element is f64 we must
-    // apply ToUint8 (§7.1.10) explicitly before the store. The wasi/standalone
-    // i8-packed path is handled by the `array.set` re-truncation branch below.
-    const isHostUint8 = taViewName === "Uint8Array" && arrDef.element.kind === "f64";
+    // (#4757) Host/gc keeps numeric TypedArray elements in f64 vec storage.
+    // Unlike the packed standalone/WASI arrays, that representation does not
+    // apply the view's width or signedness at `array.set`; retain the f64
+    // representation but perform the generic integer-view conversion explicitly.
+    // The packed path below continues to rely on the array element width.
+    const isHostTypedArray = arrDef.element.kind === "f64" && taViewName !== undefined;
     const valueHint: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
         ? isUint8Clamped
@@ -5351,21 +5349,16 @@ function compileElementAssignment(
       reportError(ctx, target, "Failed to compile element value");
       return null;
     }
-    if (isUint8Clamped) {
+    if (isHostTypedArray) {
+      if (elemValResult.kind !== "f64") coerceType(ctx, fctx, elemValResult, { kind: "f64" });
+      // Host/gc f64 storage needs the same width/signedness conversion that
+      // packed i8/i16/i32 array.set applies in standalone/WASI.
+      emitHostTypedArrayElementCoercion(fctx, taViewName!);
+    } else if (isUint8Clamped) {
       // ToUint8Clamp: f64 → clamped i32 in [0,255], round-half-even. Ensure the
       // value is f64 first (a literal/i32 may have compiled to i32).
       if (elemValResult.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       emitToUint8Clamp(fctx);
-    } else if (isHostUint8) {
-      // (#2729) ToUint8 for the f64-backed host store: ToInt32 (NaN/±Inf→0,
-      // truncate toward zero, reduce mod 2^32) then mask the low byte (& 0xFF),
-      // then widen back to f64 for the f64 vec element. This matches the linear
-      // backend's ToUint8 (#2715) and the wasi/standalone i8-packed truncation.
-      if (elemValResult.kind !== "f64") coerceType(ctx, fctx, elemValResult, { kind: "f64" });
-      emitToInt32(fctx); // f64 → i32
-      fctx.body.push({ op: "i32.const", value: 0xff });
-      fctx.body.push({ op: "i32.and" });
-      fctx.body.push({ op: "f64.convert_i32_u" });
     } else if ((arrDef.element.kind === "i8" || arrDef.element.kind === "i16") && elemValResult.kind === "f64") {
       // (#2593) Other packed i8/i16 views: truncate the f64 store value to i32
       // (ToInt32 modulo); `array.set` re-packs to the element width.

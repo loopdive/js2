@@ -1,7 +1,7 @@
 ---
 id: 4757
 title: "TypeScript parsePseudoBigInt: octal and large literals return 0x11ffff instead of 0xfffff"
-status: ready
+status: in-progress
 created: 2026-08-26
 updated: 2026-08-26
 priority: high
@@ -15,8 +15,14 @@ goal: npm-library-support
 sprint: current
 related: [3994, 3995, 4756]
 files:
+  - src/codegen/binary-ops.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/operator-assignment.ts
   - tests/dogfood/typescript-upstream-suite.mjs
   - tests/issue-4757.test.ts
+loc-budget-allow:
+  - src/codegen/binary-ops.ts
+  - src/codegen/expressions/operator-assignment.ts
 ---
 
 # TypeScript `parsePseudoBigInt` octal and large-literal mismatch
@@ -80,11 +86,58 @@ it with a harness implementation or expected-value table.
 
 ## Acceptance criteria
 
-- [ ] The exact original `parsePseudoBigInt.ts` file reaches **5/5 Wasm** and
+- [x] The exact original `parsePseudoBigInt.ts` file reaches **5/5 Wasm** and
       remains **5/5 Node**.
-- [ ] The full selected TypeScript lane reaches **11/11 Wasm** and **11/11
+- [x] The full selected TypeScript lane reaches **11/11 Wasm** and **11/11
       Node**, with the same three modules compiling and validating.
-- [ ] The fix is generic and covered by a runtime-input regression; no cached or
+- [x] The fix is generic and covered by a runtime-input regression; no cached or
       precomputed answer and no upstream callback/expectation rewrite is used.
-- [ ] The 1,750 unavailable TypeScript registrations and the full package-entry
+- [x] The 1,750 unavailable TypeScript registrations and the full package-entry
       timeout remain reported separately rather than being inferred fixed.
+
+## Resolution (2026-08-26)
+
+The first divergence is the host/gc representation of numeric TypedArray
+elements, not string indexing, radix selection, or decimal conversion. Host/gc
+intentionally stores numeric views in f64 vec elements. The existing compound
+element write emitted `segments[segment] |= shiftedDigit` directly to that f64
+array, so it did not apply the Uint16 width conversion. For the octal boundary
+digit, a value such as `7 << 15` retained bits above bit 15 instead of wrapping
+to the low 16 bits; the extra bits produced the observed `0x11ffff` result.
+Standalone/WASI packed arrays were already width-limited by their i16
+`array.set`.
+
+The generic fix adds one host/gc f64-backed integer-view coercion helper:
+ToInt32 first supplies JavaScript NaN/infinity/truncation/modulo semantics,
+then each Int8/Uint8/Int16/Uint16/Int32/Uint32 view applies its width and
+signedness (with the existing Uint8Clamp path preserved). Both simple and
+compound element stores use it; no TypeScript source, callback, expectation,
+literal, or cached result was changed.
+
+Post-fix exact harness output:
+
+| measure | Node | Wasm |
+| --- | ---: | ---: |
+| `parsePseudoBigInt.ts` callbacks | 5/5 | 5/5 |
+| full selected callbacks | 11/11 | 11/11 |
+| selected modules compile/validate | n/a | 3/3 |
+
+The same run still reports **1,750 unavailable registrations** and **253
+deferred files** from the extraction boundary. The separate full
+TypeScript package-entry **600-second timeout** remains an infrastructure /
+scope issue and is not counted as a parser failure.
+
+The focused runtime-input regression
+`tests/issue-4757.test.ts` passes **2/2**. Existing typed-array semantic
+controls pass **23/23** across
+`tests/issue-1787-packed-typedarray-semantics.test.ts`,
+`tests/issue-1829.test.ts`, and `tests/issue-2903-r4b.test.ts`. Both
+repository typechecks pass.
+
+## Handoff
+
+Implementation is on branch `codex/4757-typescript-pseudobigint`, stacked on
+the ready planning PR #5001 only because the issue file originated there.
+Before merge, rebase/retarget this branch onto `origin/main` after #5001 lands.
+No open PR currently overlaps the generic f64-backed integer TypedArray store
+site; the implementation is ready for a non-draft PR.

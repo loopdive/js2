@@ -11,12 +11,14 @@ import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { elementAccessTypedArrayName } from "../array-nonindex-key.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
 import {
   bigIntHostBinopOpcode,
   emitAnyAdd,
   emitAnyAddFromExternTemps,
   emitModulo,
+  emitHostTypedArrayElementCoercion,
   emitToInt32,
 } from "../binary-ops.js";
 import { compileWithCompoundAssignment } from "../with-rmw.js";
@@ -3122,7 +3124,13 @@ function compileVecElementCompoundAssignment(
       { op: "local.get", index: idxTmp },
       { op: "local.get", index: resultTmp },
     ];
-    if (elemType.kind !== "f64") {
+    const taViewName = elementAccessTypedArrayName(ctx, target.expression);
+    if (elemType.kind === "f64" && taViewName !== undefined) {
+      const savedBody = fctx.body;
+      fctx.body = setInstrs as any;
+      emitHostTypedArrayElementCoercion(fctx, taViewName);
+      fctx.body = savedBody;
+    } else if (elemType.kind !== "f64") {
       const savedBody = fctx.body;
       fctx.body = setInstrs as any;
       coerceType(ctx, fctx, { kind: "f64" }, elemType);
