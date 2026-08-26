@@ -7,15 +7,15 @@ import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
-const indexedStaleProperties = new WeakMap<CodegenContext, Set<string>>();
+const indexedStaleProperties = new WeakMap<CodegenContext, Set<ts.Symbol>>();
 
-export function markIndexedPropertyStale(ctx: CodegenContext, propertyName: string): void {
+export function markIndexedPropertyStale(ctx: CodegenContext, property: ts.Symbol): void {
   let stale = indexedStaleProperties.get(ctx);
   if (stale === undefined) {
-    stale = new Set<string>();
+    stale = new Set<ts.Symbol>();
     indexedStaleProperties.set(ctx, stale);
   }
-  stale.add(propertyName);
+  stale.add(property);
 }
 
 /** Whether equality must inspect the runtime carrier instead of checker type. */
@@ -55,8 +55,11 @@ export function equalityOperandHasStaleStaticType(
     }
     receiver = expr.expression;
   }
-  const stale = key !== undefined && indexedStaleProperties.get(ctx)?.has(key) === true;
-  if (!stale || receiver === undefined || key === undefined) return false;
+  if (receiver === undefined || key === undefined) return false;
+  const receiverType = ctx.checker.getTypeAtLocation(receiver);
+  const property = receiverType.getProperty(key);
+  const stale = property !== undefined && indexedStaleProperties.get(ctx)?.has(property) === true;
+  if (!stale) return false;
   const propertyKey = key;
   const propertyReceiver = receiver;
   return (

@@ -177,11 +177,12 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         // may start as a string/number and receive a different primitive on a
         // later `obj["key"] = rhs`. Record every concrete RHS type so the
         // field-registration pass can widen the slot before any body emits.
-        if ((rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
-          ctx.objectLiteralIndexedAssignedPropertyNames.add(indexedName);
-          const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedName) ?? [];
+        const receiverType = getTypeAtLocationBounded(ctx.checker, node.left.expression);
+        const indexedProperty = receiverType.getProperty(indexedName);
+        if (indexedProperty && (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
+          const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedProperty) ?? [];
           writes.push(rhsType);
-          ctx.objectLiteralIndexedAssignedPropertyTypes.set(indexedName, writes);
+          ctx.objectLiteralIndexedAssignedPropertyTypes.set(indexedProperty, writes);
         }
       } else if (mayCarryObject && ts.isPropertyAccessExpression(node.left)) {
         const name = node.left.name.text;

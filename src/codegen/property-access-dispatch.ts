@@ -4255,7 +4255,8 @@ export function finalizeStructAndDynamicMemberGet(
           }
         }
         const receiverExpr = skipTransparentExpressions(expr.expression);
-        const isUndefinedIdx = ts.isIdentifier(receiverExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+        const isUndefinedIdx =
+          ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
         flushLateImportShifts(ctx, fctx);
         // Null check: throw TypeError for property access on null/undefined.
         // (#4157) Skipped when the receiver is PROVABLY non-null.

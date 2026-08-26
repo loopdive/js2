@@ -52,8 +52,7 @@ function createObjectShapeAssignmentState() {
   return {
     objectLiteralAssignedPropertyNames: new Set<string>(),
     objectLiteralAssignedPropertyTypes: new Map<string, ts.Type[]>(),
-    objectLiteralIndexedAssignedPropertyNames: new Set<string>(),
-    objectLiteralIndexedAssignedPropertyTypes: new Map<string, ts.Type[]>(),
+    objectLiteralIndexedAssignedPropertyTypes: new Map<ts.Symbol, ts.Type[]>(),
   };
 }
 

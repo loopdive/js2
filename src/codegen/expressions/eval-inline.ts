@@ -920,11 +920,17 @@ function inheritedStrictEvalSource(
   call: ts.CallExpression,
   directEval: boolean,
   src: string,
-): string {
-  if (!directEval || !isStrictContext(call, false)) return src;
+): { source: string; injected: boolean } {
+  if (!directEval || !isStrictContext(call, false)) return { source: src, injected: false };
   // Foreign eval nodes have no parent chain back to the caller. A directive is
   // equivalent to inherited strictness and lets every nested emitter observe it.
-  return `"use strict";\n${src}`;
+  return { source: `"use strict";\n${src}`, injected: true };
+}
+
+function evalSourceStatements(sf: ts.SourceFile, injectedStrictDirective: boolean): ts.NodeArray<ts.Statement> {
+  // The synthetic directive makes strictness observable through foreign-node
+  // parents, but it is not source text and cannot become a completion value.
+  return injectedStrictDirective ? ts.factory.createNodeArray(sf.statements.slice(1)) : sf.statements;
 }
 
 /**
@@ -968,7 +974,7 @@ export function tryStaticEvalInline(
   const evalSource = inheritedStrictEvalSource(ctx, expr, directEval, src);
   const sf = ts.createSourceFile(
     EVAL_SOURCE_FILENAME,
-    evalSource,
+    evalSource.source,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ true,
     ts.ScriptKind.JS,
@@ -984,7 +990,7 @@ export function tryStaticEvalInline(
     return { kind: "externref" };
   }
 
-  const stmts = sf.statements;
+  const stmts = evalSourceStatements(sf, evalSource.injected);
 
   // PerformEval parses the string as a fresh Script and applies that Script's
   // early errors before executing any statement. The foreign AST splice used
