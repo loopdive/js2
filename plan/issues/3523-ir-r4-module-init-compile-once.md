@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-22
+updated: 2026-08-26
 assignee: ttraenkler/codex-ir-lead
 branch: codex/3523-r4-statement-module-init
 priority: critical
@@ -790,6 +790,109 @@ Prettier, LOC/function/oracle gates, and all **eight** equivalence shards in
 fresh processes. Require no new regression and do not rewrite shared Test262,
 equivalence, LOC, or function baselines. Full Test262 remains a merge-queue
 gate.
+
+## 2026-08-26 current-main execution lock — scalar assignment statement
+
+This section re-grounded the preceding scalar-assignment plan on `main`
+`01a2487abad826a1d75f8c58aef5b58ac332d745`. It is an execution lock for the
+bounded slice, not a scope expansion and not evidence that R4 as a whole is
+complete.
+
+### Current root cause and authority boundary
+
+The measured failure remains local to
+`src/codegen/index.ts::preparedExactLexicalModuleInit`:
+
+- `collectModuleInitPopulation` returns the declaration and assignment, so the
+  selector's population is already exhaustive;
+- `buildIrModuleInitPlan` correctly records one binding and two ordered
+  evaluations; and
+- the Prepared predicate still requires `bindings.length ===
+  population.length`, indexes a binding by population ordinal, and rejects
+  every non-`VariableStatement` population row.
+
+The existing IR lowering already owns the declaration initialization/TDZ
+transition and the later module-global read, numeric addition, and write. The
+existing integration already lowers every population statement in source
+order through one source-owned module-init unit. Therefore this slice changes
+no selector, inference, identity, integration, lowering, Program ABI,
+declaration-emitter, or runtime-provider file. Its only production owner is
+`src/codegen/index.ts`; its only planned test owner is
+`tests/issue-3523-ir-module-init-compile-once.test.ts` (with #3142,
+**IR module-init overlay adoption (claimability milestone; compile-once
+remains)**, and the existing adjacent matrix as read-only controls).
+
+### Exact implementation contract
+
+Retain every existing lane, source/unit identity, invocation, parity, gap,
+live-seed, and executable gate. Keep evaluations population-exhaustive, but
+consume binding intents independently by `declarationOrdinal`:
+
+1. An admitted declaration remains one initialized, single-Identifier
+   `let`/`const` declaration with exact range, kind, mutability, TDZ intent,
+   global/TDZ binding IDs, and one exact `variable-initializer` evaluation.
+2. The only new statement grammar is
+   `Identifier = Identifier + NumericLiteral`. Both identifiers must each
+   resolve through `ctx.oracle.declarationsOf` to exactly the same earlier
+   admitted declaration. The target must be the initialized mutable `let`;
+   textual name equality alone is never evidence.
+3. Its evaluation must be the exact next source row: `kind: "statement"`,
+   matching source/evaluation and source-file statement ordinals and range,
+   `classId: null`, and an empty binding-ID list. Every population row,
+   evaluation, and binding is consumed exactly once.
+4. Zero or more assignments may follow admitted declarations. No
+   parenthesis-normalization, compound/update operator, alternative arithmetic,
+   property/element access, alias, call, constructor, await/yield, or generalized
+   expression/type inference enters this slice.
+5. Const/`var` targets, forward/unknown/ambiguous/different declarations,
+   destructuring, multiple/missing initializers, nonnumeric RHS values, plan or
+   parity drift, live seeds, WASI, fast, and strict-no-host lanes fail closed on
+   the existing route. A post-preparation mismatch remains fatal and may not
+   resurrect legacy emission.
+
+This is the smallest honest retirement step: the four already-supported
+host/standalone start/deferred lanes must move from `legacy=1, IR=1` and
+direct pass1/pass2 `1/1` to `legacy=0, IR=1` and `0/0`. WASI remains the exact
+unchanged overlay control. No legacy emitter is deleted in this slice; the
+measured removal of four direct invocations is deletion evidence for the later
+R4 closeout.
+
+### Publication and overlap protocol
+
+The slice may be developed and committed now in an isolated worktree. These
+open PRs are file-collision risks, not semantic prerequisites:
+
+- #4976, **feat(ir): retain dormant #3521 fnctor argument projection ✓**,
+  modifies `src/codegen/index.ts` outside this module-init predicate;
+- #4974, **fix(es6): combine Test262 conformance wave**, is held and has broad
+  `src/codegen/index.ts`/declaration/module-init-collection changes; and
+- #4898, **feat(linker): compile npm packages once as linked Wasm providers**,
+  is held and also modifies `src/codegen/index.ts`.
+
+At publication, fetch current `main`, inspect an exact merge tree and the
+function-local diff, then append current main without rewriting the signed
+semantic commit. Any semantic conflict is a HOLD for root review. Held PRs may
+not strand the signed checkpoint indefinitely, but if one lands first the
+candidate must merge current main append-only and repeat the focused, route,
+runtime, ratchet, and hook evidence before enqueue.
+
+The scalar-only source has no class, closure, provider, or import dependency:
+#3522, **IR-only R3: compile-once classes, members, and closures**, F1 field
+ownership; #3521, **IR-only R2: prepare-before-emit free-function ownership**,
+linked-Parser projection; and #4260, **Prepared callable-provider plans leak
+across an aborted component seal**, are not prerequisites for this bounded
+route. Full R4 still retains the issue's declared R3 dependency and cannot be
+called complete from this slice.
+
+Before every heavy command and commit/push boundary, require a fresh finite,
+nonnegative one-minute load strictly below `logical cores - 2`. Run the focused
+module-init and #3142 overlay-adoption files plus the adjacent matrix, hybrid
+and strict IR-only reports, fallback,
+typechecks, formatting/lint, all eight equivalence shards, and LOC/function/
+oracle ratchets with denominators. Run `pnpm run check:loc-budget` immediately
+before every signed commit, and never skip pre-commit or pre-push hooks. Publish
+only after an independent exact-head audit proves the bounded two-file semantic
+scope and its mutation controls.
 
 
 ## File ownership and locks
