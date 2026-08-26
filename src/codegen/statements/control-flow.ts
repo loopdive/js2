@@ -101,7 +101,7 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = fctx.returnType;
-  if (calleeRet.kind === "externref" || callerRet.kind === "externref") return false;
+  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
   if (calleeRet.kind === callerRet.kind) return true;
   if (
     (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
@@ -126,7 +126,7 @@ function canTailCallRef(ctx: CodegenContext, fctx: FunctionContext, typeIdx: num
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = fctx.returnType;
-  if (calleeRet.kind === "externref" || callerRet.kind === "externref") return false;
+  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
   if (calleeRet.kind === callerRet.kind) return true;
   if (
     (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&

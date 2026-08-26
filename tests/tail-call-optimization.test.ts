@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, type CompileOptions } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
   const result = await compile(source);
@@ -16,8 +16,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-async function compileWat(source: string): Promise<string> {
-  const result = await compile(source);
+async function compileWat(source: string, options: CompileOptions = {}): Promise<string> {
+  const result = await compile(source, options);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -94,7 +94,7 @@ describe("tail call optimization", () => {
     // (We can't easily distinguish which function has return_call in WAT output)
   });
 
-  it("keeps an ordinary call boundary for externref results", async () => {
+  it("keeps only host-free externref boundaries as ordinary calls", async () => {
     const src = `
       function makeObject(depth: number): any {
         if (depth <= 0) return { value: 42 };
@@ -107,13 +107,20 @@ describe("tail call optimization", () => {
         return objectTrampoline(1).value;
       }
     `;
-    const wat = await compileWat(src);
+    const wat = await compileWat(src, { target: "standalone" });
     const start = wat.indexOf("(func $objectTrampoline");
     const end = wat.indexOf("\n(func $", start + 1);
     const body = wat.slice(start, end < 0 ? undefined : end);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(body).toMatch(/\bcall (?:\$makeObject|\d+)\b/);
     expect(body).not.toContain("return_call");
+
+    const hostWat = await compileWat(src);
+    const hostStart = hostWat.indexOf("(func $objectTrampoline");
+    const hostEnd = hostWat.indexOf("\n(func $", hostStart + 1);
+    const hostBody = hostWat.slice(hostStart, hostEnd < 0 ? undefined : hostEnd);
+    expect(hostStart).toBeGreaterThanOrEqual(0);
+    expect(hostBody).toContain("return_call");
   });
 
   it("deep recursion does not overflow stack with tail calls", async () => {
