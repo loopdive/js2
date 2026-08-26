@@ -44,6 +44,27 @@ describe("#4206 — module-slot widening agrees with IR selection", () => {
     expect((instance.exports as { result: () => number }).result()).toBe(1);
   });
 
+  it("keeps a write-only pre-declaration assignment on the primitive IR slot", async () => {
+    const result = await compile(
+      `
+        value = 1;
+        var value = 2;
+        export function getValue(): number { return value; }
+      `,
+      {
+        fileName: "issue-4206-module-var-preinit-write.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        emitWat: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect(moduleGlobalLine(result, "value")).toContain("(mut f64)");
+    expect(outcome(result, "getValue")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
   it("keeps an explicitly annotated number slot on f64 and its reader on IR", async () => {
     const result = await compile(
       `

@@ -167,11 +167,17 @@ function collectPreInitReadVarDecls(
     if (skipNestedFunctions && ts.isFunctionLike(node)) return;
     if (ts.isIdentifier(node)) {
       const decl = readDeclarationOf(ctx, node, container, byName);
+      const parent = node.parent;
+      const isWriteOnlyAssignment =
+        ts.isBinaryExpression(parent) &&
+        parent.left === node &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
       if (
         decl !== undefined &&
         decl.initializer !== undefined &&
         ts.isIdentifier(decl.name) &&
         decl.name !== node &&
+        !isWriteOnlyAssignment &&
         node.getStart() < decl.name.getStart()
       ) {
         observed.add(decl);
