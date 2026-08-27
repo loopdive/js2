@@ -61,10 +61,9 @@
  * `struct.get` with no conversion.
  *
  * ## Scope
- * WasmGC targets with a host-visible value bridge. In the standalone lane the
- * carrier is consumed by the native reflective helpers; in the JS-host lane
- * the resolver is exported for `runtime.ts` to consume. Linear and WASI lanes
- * keep the historical no-op path.
+ * Standalone only. In gc/host mode the `env::__extern_*` imports own the
+ * reflective property path, so the extra field would be pure cost; every entry
+ * point here is a no-op unless `ctx.standalone`.
  */
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -72,8 +71,6 @@ import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /** The closure-struct slot name. `$`-prefixed to stay out of name enumeration. */
 export const FN_META_FIELD = "$fnmeta";
@@ -87,16 +84,6 @@ export const FN_META_LENGTH_FIELD_IDX = 1;
 export interface FnInstanceMeta {
   readonly name: string;
   readonly length: number;
-}
-
-/**
- * Whether this target can carry the nominal metadata through a WasmGC
- * closure. The JS host needs the resolver export, while standalone consumes
- * the same carrier from its native reflective helpers. Linear and WASI do not
- * use this WasmGC bridge.
- */
-export function functionInstanceMetadataEnabled(ctx: CodegenContext): boolean {
-  return ctx.standalone || (ctx.targetProfile.target === "gc" && ctx.emitHostBridge);
 }
 
 /**
@@ -154,17 +141,6 @@ function pushFnInstanceMetaValueInstrs(ctx: CodegenContext, meta: FnInstanceMeta
   // digits-only, so the first `:` is always the separator even when the name
   // itself contains one (a computed key like `{ "a:b": function () {} }`).
   const key = `${meta.length}:${meta.name}`;
-  // Register/import the name BEFORE allocating the metadata global. In the
-  // host lane string constants are imported globals, and their insertion shifts
-  // every previously allocated global index; calculating the metadata index
-  // first would leave the lazy initializer pointing at its predecessor.
-  let nameInstrs: Instr[];
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
-    nameInstrs = [...nativeStringLiteralInstrs(ctx, meta.name), { op: "extern.convert_any" }];
-  } else {
-    addStringConstantGlobal(ctx, meta.name);
-    nameInstrs = stringConstantExternrefInstrs(ctx, meta.name);
-  }
   const cache = (ctx.fnInstanceMetaGlobalByKey ??= new Map<string, number>());
   let globalIdx = cache.get(key);
   if (globalIdx === undefined) {
@@ -184,7 +160,8 @@ function pushFnInstanceMetaValueInstrs(ctx: CodegenContext, meta: FnInstanceMeta
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        ...nameInstrs,
+        ...nativeStringLiteralInstrs(ctx, meta.name),
+        { op: "extern.convert_any" },
         { op: "i32.const", value: meta.length },
         { op: "struct.new", typeIdx: structTypeIdx },
         { op: "global.set", index: globalIdx },
@@ -220,7 +197,7 @@ export function registerFnMetaFamily(ctx: CodegenContext, typeIdx: number, field
  * reflective `.call` recovery resolve it exactly like the base.
  */
 export function ensureFnMetaSubtype(ctx: CodegenContext, baseTypeIdx: number): number | undefined {
-  if (!functionInstanceMetadataEnabled(ctx)) return undefined;
+  if (!ctx.standalone) return undefined;
   const cache = (ctx.fnInstanceMetaSubtypeByBase ??= new Map<number, number>());
   const existing = cache.get(baseTypeIdx);
   if (existing !== undefined) return existing;
@@ -341,16 +318,7 @@ export function fnInstanceNameOf(decl: ts.Node): string {
  * observable value, so the fold and the descriptor cannot disagree.
  */
 export function fnInstanceMetaOf(ctx: CodegenContext, decl: ts.Node | undefined): FnInstanceMeta | undefined {
-  if (!functionInstanceMetadataEnabled(ctx) || decl === undefined) return undefined;
-  if (ts.isClassDeclaration(decl) || ts.isClassExpression(decl)) {
-    const ctor = decl.members.find(ts.isConstructorDeclaration);
-    return {
-      name: fnInstanceNameOf(decl),
-      // A class without an explicit constructor has the spec-synthesized
-      // constructor whose `length` is zero, including derived classes.
-      length: ctor === undefined ? 0 : expectedArgumentCountOfParams(ctor.parameters),
-    };
-  }
+  if (!ctx.standalone || decl === undefined) return undefined;
   if (!ts.isFunctionLike(decl)) return undefined;
   // A method/accessor's own `name` has spec subtleties (`get `/`set ` prefixes,
   // symbol keys) that this slice does not measure; declarations, function

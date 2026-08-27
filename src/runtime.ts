@@ -949,7 +949,7 @@ function _validatePropertyDescriptor(
   existingValue?: any,
   existingDesc?: PropertyDescriptor,
 ): number {
-  let existing = descs.get(_normalizeDescKey(prop));
+  const existing = descs.get(_normalizeDescKey(prop));
   const hasValue = _hasOwn(desc, "value");
   const hasWritable = _hasOwn(desc, "writable");
   const hasEnumerable = _hasOwn(desc, "enumerable");
@@ -957,19 +957,6 @@ function _validatePropertyDescriptor(
   const hasGet = _hasOwn(desc, "get");
   const hasSet = _hasOwn(desc, "set");
 
-  // A generated intrinsic (for example a function's `name`/`length` metadata)
-  // has a real own descriptor but no sidecar descriptor-table entry until the
-  // first defineProperty override. Seed the validation flags from that
-  // descriptor so a partial redefine preserves omitted attributes exactly as
-  // ValidateAndApplyPropertyDescriptor requires. This also keeps ordinary
-  // generated struct fields consistent when they are first redefined.
-  if (existing === undefined && existingDesc !== undefined) {
-    existing = _SC_DEFINED;
-    if (existingDesc.writable) existing |= _SC_WRITABLE;
-    if (existingDesc.enumerable) existing |= _SC_ENUMERABLE;
-    if (existingDesc.configurable) existing |= _SC_CONFIGURABLE;
-    if ("get" in existingDesc || "set" in existingDesc) existing |= _SC_ACCESSOR;
-  }
   // Compute new flags. ECMA-262 §10.1.6.3 ValidateAndApplyPropertyDescriptor:
   // a *redefine* keeps every attribute the descriptor omits — only fields
   // explicitly present in `desc` overwrite the existing descriptor (#1831).
@@ -2075,21 +2062,21 @@ function _wrapWasmClosureUnknownArity(
   // `err.constructor.name`, etc). Best-effort: absent metadata leaves the
   // bridge's default name untouched.
   if (closure != null && typeof closure === "object") {
-    const sidecar = _wasmStructProps.get(closure);
-    const name = sidecar && "name" in sidecar ? sidecar.name : _fninstMetaValue(closure, "name", exports);
-    const length = sidecar && "length" in sidecar ? sidecar.length : _fninstMetaValue(closure, "length", exports);
-    if (typeof name === "string") {
-      try {
-        Object.defineProperty(wrapped, "name", { value: name, configurable: true });
-      } catch {
-        /* Function.name redefinition is best-effort. */
+    const meta = _wasmStructProps.get(closure);
+    if (meta) {
+      if (typeof meta.name === "string") {
+        try {
+          Object.defineProperty(wrapped, "name", { value: meta.name, configurable: true });
+        } catch {
+          /* Function.name redefinition is best-effort. */
+        }
       }
-    }
-    if (typeof length === "number") {
-      try {
-        Object.defineProperty(wrapped, "length", { value: length, configurable: true });
-      } catch {
-        /* Function.length redefinition is best-effort. */
+      if (typeof meta.length === "number") {
+        try {
+          Object.defineProperty(wrapped, "length", { value: meta.length, configurable: true });
+        } catch {
+          /* Function.length redefinition is best-effort. */
+        }
       }
     }
   }
@@ -3953,59 +3940,6 @@ function _structHasOwnFieldName(obj: any, key: string, exports: Record<string, F
 }
 
 /**
- * (#4770) Read a user-closure's generated per-declaration metadata through the
- * host-lane scalar projections. The metadata struct itself is intentionally
- * opaque to JS, so runtime reflection uses the projections rather than a
- * shape-colliding `__sget_name`/`__sget_length` probe. `_MISS` distinguishes a
- * missing carrier from a legitimate empty name or zero length.
- */
-function _fninstMetaValue(obj: any, key: string, exports: Record<string, Function> | undefined): any {
-  if (obj == null || (key !== "name" && key !== "length")) return _MISS;
-  const getter = exports?.[`__fninst_meta_${key}`] as ((value: any) => any) | undefined;
-  if (typeof getter !== "function") return _MISS;
-  try {
-    const value = getter(obj);
-    return value == null ? _MISS : value;
-  } catch {
-    return _MISS;
-  }
-}
-
-/**
- * (#4770) Intrinsic own properties of a registered class constructor. Class
- * objects reuse their instance carrier, so `__sget_*` cannot expose the
- * constructor's standard `name`/`length`/`prototype` values. Static methods
- * named after one of those keys replace the intrinsic and remain sidecar-first.
- */
-function _classIntrinsicValue(obj: any, key: string, exports: Record<string, Function> | undefined): any {
-  const staticMethods = _staticMethodNames.get(obj);
-  if (staticMethods === undefined || staticMethods.includes(key)) return _MISS;
-  if (key === "name") {
-    const fromCtor = _fninstMetaValue(_classCtorClosures.get(obj), "name", exports);
-    if (fromCtor !== _MISS) return fromCtor;
-    const className = _classNamesByObj.get(obj);
-    if (className !== undefined) return className;
-    const sidecarName = _sidecarGet(obj, "name");
-    return typeof sidecarName === "string" ? sidecarName : _MISS;
-  }
-  if (key === "length") {
-    const fromCtor = _fninstMetaValue(_classCtorClosures.get(obj), "length", exports);
-    // A class with an implicit constructor has length 0. Explicit
-    // constructors carry the generated metadata; retaining this fallback
-    // keeps the standard own key visible if a legacy class registration did
-    // not include the constructor closure.
-    return fromCtor !== _MISS ? fromCtor : 0;
-  }
-  if (key === "prototype") {
-    const cached = _hostProxyCache.get(obj);
-    if (cached !== undefined && typeof cached === "function") return cached.prototype;
-    const proto = _classProtoStructs.get(obj);
-    if (proto != null && typeof proto === "object") return _wrapForHost(proto, exports);
-  }
-  return _MISS;
-}
-
-/**
  * (#2130) Shared own-property presence predicate for a WasmGC struct receiver.
  * This is the single source of truth for "does `obj` have its OWN property
  * `key`", combining — in spec order — the runtime delete tombstone, the sidecar
@@ -4028,11 +3962,6 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
   // (§7.3.12) is value-independent, so `o.x = undefined; "x" in o` is true (A8).
   const sc = _wasmStructProps.get(obj);
   if (sc && key in sc) return true;
-  // (#4770) User closures carry the immutable name/length metadata outside
-  // the sidecar. The host lane reads it through the generated scalar
-  // projections; keep hasOwnProperty/in agreement with gOPD and property
-  // reads before the structural/class-field fallbacks below.
-  if (typeof key === "string" && _fninstMetaValue(obj, key, exports) !== _MISS) return true;
   // Descriptor map (accessor properties set via Object.defineProperty, #929).
   const descs = _wasmPropDescs.get(obj);
   if (descs && descs.has(String(key))) return true;
@@ -4045,7 +3974,6 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
   const staticMethods = _staticMethodNames.get(obj);
   if (staticMethods !== undefined) {
     const prop = String(key);
-    if (_classIntrinsicValue(obj, prop, exports) !== _MISS) return true;
     return staticMethods.includes(prop) && !_isDeletedClassProp(obj, prop);
   }
   // Static struct field shape (the per-receiver oracle, A1 — NOT a module-global
@@ -5056,18 +4984,7 @@ function _safeGet(
     // Accessor descriptors take precedence over any stale data-sidecar value
     // retained while the receiver's static shape was widened.
     const sc = _sidecarGet(obj, key);
-    const wasmSidecar = typeof key === "string" ? _wasmStructProps.get(obj) : undefined;
-    if (sc !== undefined || (wasmSidecar !== undefined && key in wasmSidecar)) return sc;
-    // (#4770) Host-readable projections of a closure's intrinsic `name` and
-    // `length`, after sidecar overrides/tombstones but before struct fields or
-    // prototype lookup. Class constructor standard keys use the same helper;
-    // static methods with those names were already handled by the sidecar.
-    if (typeof key === "string") {
-      const metaValue = _fninstMetaValue(obj, key, callbackState?.getExports());
-      if (metaValue !== _MISS) return metaValue;
-      const classValue = _classIntrinsicValue(obj, key, callbackState?.getExports());
-      if (classValue !== _MISS) return classValue;
-    }
+    if (sc !== undefined) return sc;
     // A declared own field shadows a prototype method with the same spelling
     // (§9.4.2 [[Get]]). This matters when an untyped host call reaches a
     // compiled class whose field stores a callable closure (Marked's
@@ -6097,30 +6014,6 @@ function _readOwnDescriptor(
     };
   }
   const propStr = String(prop);
-  // (#4770) Generated user-closure metadata is an own, non-enumerable data
-  // property. Keep it behind the sidecar branch so an explicit assignment or
-  // defineProperty override wins, and behind the tombstone check above so a
-  // deleted intrinsic does not reappear from the immutable carrier.
-  if (typeof prop === "string") {
-    const metaValue = _fninstMetaValue(obj, prop, exports);
-    if (metaValue !== _MISS) {
-      return _clampFrozenDescriptor(obj, {
-        value: metaValue,
-        writable: false,
-        enumerable: false,
-        configurable: true,
-      });
-    }
-    const classValue = _classIntrinsicValue(obj, prop, exports);
-    if (classValue !== _MISS) {
-      return _clampFrozenDescriptor(obj, {
-        value: classValue,
-        writable: false,
-        enumerable: false,
-        configurable: prop !== "prototype",
-      });
-    }
-  }
   // 2a. Registered class prototype method (#1364a): spec non-enumerable,
   // configurable, writable.
   const protoMethods = _prototypeMethodNames.get(obj);
@@ -6240,13 +6133,6 @@ function _ownStructKeys(obj: any, exports: Record<string, Function> | undefined)
   } else if (staticMethods !== undefined) {
     for (const n of _classObjectOwnPropertyNames.get(obj) ?? staticMethods) if (!_isDeletedClassProp(obj, n)) push(n);
   } else {
-    // (#4770) `$fnmeta` is deliberately hidden from the generated struct
-    // field-name registry. Publish its two intrinsic own keys in creation
-    // order, while honoring the same delete tombstones as every other source.
-    const tomb = _wasmStructDeletedKeys.get(obj);
-    for (const key of ["length", "name"] as const) {
-      if (!(tomb?.has(key) ?? false) && _fninstMetaValue(obj, key, exports) !== _MISS) push(key);
-    }
     for (const n of _getStructFieldNames(obj, exports) ?? []) push(n);
   }
   const sc = _wasmStructProps.get(obj);
@@ -8325,21 +8211,21 @@ function _wrapCallableForHost(
   // Surface .name / .length when the codegen stamped them on the closure
   // sidecar, so Function.prototype.toString / .name stay spec-shaped.
   // Best-effort; non-fatal if absent.
-  const sidecar = _wasmStructProps.get(closure);
-  const name = sidecar && "name" in sidecar ? sidecar.name : _fninstMetaValue(closure, "name", exports);
-  const length = sidecar && "length" in sidecar ? sidecar.length : _fninstMetaValue(closure, "length", exports);
-  if (typeof name === "string") {
-    try {
-      Object.defineProperty(fnTarget, "name", { value: name, configurable: true });
-    } catch {
-      /* Function.name redefinition is best-effort. */
+  const meta = _wasmStructProps.get(closure);
+  if (meta) {
+    if (typeof meta.name === "string") {
+      try {
+        Object.defineProperty(fnTarget, "name", { value: meta.name, configurable: true });
+      } catch {
+        /* Function.name redefinition is best-effort. */
+      }
     }
-  }
-  if (typeof length === "number") {
-    try {
-      Object.defineProperty(fnTarget, "length", { value: length, configurable: true });
-    } catch {
-      /* Function.length redefinition is best-effort. */
+    if (typeof meta.length === "number") {
+      try {
+        Object.defineProperty(fnTarget, "length", { value: meta.length, configurable: true });
+      } catch {
+        /* Function.length redefinition is best-effort. */
+      }
     }
   }
 
@@ -13276,17 +13162,7 @@ assert._isSameValue = isSameValue;
             }
             return names;
           }
-          const fieldNames: string[] = [];
-          // (#4770) User-closure intrinsic keys are carried by `$fnmeta`, not
-          // by a visible struct field. Keep their spec creation order and let
-          // the sidecar pass below deduplicate explicit overrides.
-          const tomb = _wasmStructDeletedKeys.get(obj);
-          for (const key of ["length", "name"] as const) {
-            if (!(tomb?.has(key) ?? false) && _fninstMetaValue(obj, key, exports) !== _MISS) fieldNames.push(key);
-          }
-          for (const key of _getStructFieldNames(obj, exports) ?? []) {
-            if (!fieldNames.includes(key)) fieldNames.push(key);
-          }
+          const fieldNames: string[] = _getStructFieldNames(obj, exports) ?? [];
           // Also include sidecar property names (string keys only)
           // Filter out internal accessor keys (__get_<prop>, __set_<prop>) stored by
           // __defineProperty_accessor — these are implementation artifacts, not own property names.

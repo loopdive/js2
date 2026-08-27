@@ -9,7 +9,6 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
-import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
 
 /** The own keys created by a class constructor before static declarations. */
 export const CLASS_CONSTRUCTOR_OWN_KEYS = ["length", "name", "prototype"] as const;
@@ -57,11 +56,4 @@ export function classStaticOwnPropertyNames(ctx: CodegenContext, className: stri
  */
 export function hasClassStaticMethod(ctx: CodegenContext, className: string, propertyName: string): boolean {
   return ctx.staticMethodSet.has(`${className}_${propertyName}`);
-}
-
-/** §15.7.14 class constructor `length`, including the implicit zero-arg form. */
-export function classConstructorLength(ctx: CodegenContext, className: string): number {
-  const decl = ctx.classDeclarationMap.get(className);
-  const ctor = decl?.members.find(ts.isConstructorDeclaration);
-  return ctor === undefined ? 0 : expectedArgumentCountOfParams(ctor.parameters);
 }

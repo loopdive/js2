@@ -104,13 +104,11 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { exportFunc } from "./emit-helpers.js";
 import { addFuncType } from "./registry/types.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 // (#4437) the per-declaration `name` / §15.1.5 `length` carrier — read surface
 import { fnMetaArms, type FnMetaArms } from "./function-instance-meta-arms.js";
-import { functionInstanceMetadataEnabled } from "./function-instance-meta.js";
 import { fillFnIntrinsicSeed } from "./fn-intrinsic-seed.js"; // (#4562) intrinsic length/name record
 
 /** `(externref fn, externref key) -> i32` — 1 iff fn's bag holds ANY entry for key. */
@@ -128,10 +126,6 @@ export const FNINST_TOMBSTONE = "__fninst_tombstone";
  * consumers cast back — one `any.convert_extern` + `ref.cast` each.
  */
 export const FNINST_META = "__fninst_meta";
-/** Host-readable projection of the metadata name (null for a non-metadata value). */
-export const FNINST_META_NAME = "__fninst_meta_name";
-/** Host-readable projection of the metadata length (boxed number or null). */
-export const FNINST_META_LENGTH = "__fninst_meta_length";
 
 const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 const CLOSURE_BAG_ENSURE = "__closure_bag_ensure";
@@ -148,41 +142,14 @@ const I32: ValType = { kind: "i32" };
 const FLAG_CONFIGURABLE = 0x04;
 
 /**
- * Reserve the natives as placeholder defined funcs so the spliced arms can
+ * Reserve the two natives as placeholder defined funcs so the spliced arms can
  * bake a `call <idx>` before the fill knows their bodies. Append-only mint (no
- * funcIdx shifts), idempotent. Standalone reserves the bag/tombstone helpers;
- * the JS-host lane reserves only the metadata resolver and its two scalar
- * projections, which runtime.ts consumes without exposing the standalone
- * side-table substrate.
+ * funcIdx shifts), idempotent, and a no-op outside standalone — in gc/host mode
+ * the `env::__extern_*` imports own the dynamic-property path and registering
+ * these would only shift `funcMap` indices.
  */
 export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
-  if (!functionInstanceMetadataEnabled(ctx)) return;
-
-  const reserveMetaProjection = (name: string): void => {
-    const typeIdx = addFuncType(ctx, [EXT], [EXT], `$${name}_type`);
-    const funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, {
-      name,
-      typeIdx,
-      locals: [],
-      body: [{ op: "ref.null.extern" }],
-      // The host runtime reads these through callbackState.getExports(). The
-      // standalone native consumers use the resolver internally and retain
-      // the previous export surface.
-      exported: ctx.targetProfile.target === "gc",
-    });
-    ctx.funcMap.set(name, funcIdx);
-    if (ctx.targetProfile.target === "gc") exportFunc(ctx.mod, name, funcIdx);
-  };
-
-  if (!ctx.standalone) {
-    if (ctx.funcMap.get(FNINST_META) !== undefined) return;
-    reserveMetaProjection(FNINST_META);
-    reserveMetaProjection(FNINST_META_NAME);
-    reserveMetaProjection(FNINST_META_LENGTH);
-    return;
-  }
-
+  if (!ctx.standalone) return;
   if (ctx.funcMap.get(FNINST_BAG_OWNS) !== undefined) return;
 
   const reserve = (name: string): void => {
@@ -227,54 +194,7 @@ export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
  * skipped fill degrades to exactly today's behaviour instead of trapping.
  */
 export function fillFunctionInstanceProps(ctx: CodegenContext): void {
-  if (!functionInstanceMetadataEnabled(ctx)) return;
-
-  // The JS-host lane needs only the metadata resolver and scalar projections.
-  // Its reflective property path remains in runtime.ts; do not enable the
-  // standalone bag/tombstone arms or the builtin-function splice here.
-  if (!ctx.standalone) {
-    const setMetaFn = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
-      const idx = ctx.funcMap.get(name);
-      if (idx === undefined) return;
-      const fn = definedFuncAt(ctx, idx);
-      if (!fn) return;
-      fn.locals = locals;
-      fn.body = body;
-    };
-    const meta = fnMetaArms(ctx);
-    meta.fillResolver(setMetaFn);
-    const boxNumIdx = ctx.funcMap.get("__box_number");
-    if (!meta.available || boxNumIdx === undefined) return;
-
-    setMetaFn(
-      FNINST_META_NAME,
-      [{ name: "meta", type: EXT }],
-      [
-        ...meta.present(1),
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [...meta.name(1), { op: "return" }],
-        },
-        { op: "ref.null.extern" },
-      ],
-    );
-    setMetaFn(
-      FNINST_META_LENGTH,
-      [{ name: "meta", type: EXT }],
-      [
-        ...meta.present(1),
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [...meta.boxedLength(1, boxNumIdx), { op: "return" }],
-        },
-        { op: "ref.null.extern" },
-      ],
-    );
-    return;
-  }
-
+  if (!ctx.standalone) return;
   const bagOwnsIdx = ctx.funcMap.get(FNINST_BAG_OWNS);
   const tombstoneIdx = ctx.funcMap.get(FNINST_TOMBSTONE);
   if (bagOwnsIdx === undefined || tombstoneIdx === undefined) return;

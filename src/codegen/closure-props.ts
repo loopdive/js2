@@ -72,7 +72,6 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
-import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js"; // (#4194) hide self-referential tombstones on reads
 // (#4491 T9) one spelling of the #4008 builtin-instance carrier set, shared with
 // the fold-routing predicates so the two cannot drift apart.
 import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
@@ -816,29 +815,15 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // Without the predicate the emitted body is byte-identical to the pre-#4563
     // one, so a module that cannot resolve it keeps today's answer.
     const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
-    const carrierBagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
     const bagOwnGuardedRead: Instr[] =
-      carrierBagHasIdx !== undefined
-        ? [
-            // The deleted-property marker is the bag itself. The generic
-            // `__hasOwnProperty` predicate deliberately sees that internal
-            // entry, but a closure read must treat it as a miss; otherwise
-            // `delete f.name; f.name` leaks the private bag object. Reuse the
-            // canonical carrier visibility predicate, which filters the
-            // marker for all carrier kinds, before consulting the bag value.
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: carrierBagHasIdx },
+      hasOwnIdx === undefined
+        ? [...bagRead, { op: "return" }]
+        : [
+            { op: "local.get", index: 2 }, // bag
+            { op: "local.get", index: 1 }, // key
+            { op: "call", funcIdx: hasOwnIdx },
             { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
-          ]
-        : hasOwnIdx === undefined
-          ? [...bagRead, { op: "return" }]
-          : [
-              { op: "local.get", index: 2 }, // bag
-              { op: "local.get", index: 1 }, // key
-              { op: "call", funcIdx: hasOwnIdx },
-              { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
-            ];
+          ];
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isClosureIdx },

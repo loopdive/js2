@@ -323,6 +323,211 @@ export interface ObjectRuntimeTypes {
   proxyTypeIdx: number;
 }
 
+interface ClassObjectNameMetadata {
+  className: string;
+  displayName: string;
+  structTypeIdx: number;
+  classObjectGlobalIdx: number;
+}
+
+/**
+ * (#4770) Return the compiled class objects whose standard `name` property has
+ * not been replaced by a declared static member.  Class objects reuse their
+ * instance struct as a carrier, so the singleton global is the only reliable
+ * runtime identity test; a bare `ref.test` would also match class instances.
+ */
+function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[] {
+  const entries: ClassObjectNameMetadata[] = [];
+  for (const [className, classObjectGlobalIdx] of ctx.classObjectGlobals) {
+    const structTypeIdx = ctx.structMap.get(className);
+    if (structTypeIdx === undefined) continue;
+    const staticNameKey = `${className}_name`;
+    if (
+      ctx.staticMethodSet.has(staticNameKey) ||
+      ctx.staticAccessorSet.has(staticNameKey) ||
+      ctx.staticProps.has(staticNameKey)
+    ) {
+      continue;
+    }
+    entries.push({
+      className,
+      displayName: ctx.functionNameMap.get(className) ?? className,
+      structTypeIdx,
+      classObjectGlobalIdx,
+    });
+  }
+  return entries;
+}
+
+/**
+ * (#4770) Add the dynamic native-MOP view of a compiled class constructor's
+ * standard own `name` property.  The ordinary call-site fold already handles
+ * literal keys; this late arm covers the primordial `verifyProperty` helper,
+ * whose captured `Object.getOwnPropertyDescriptor`/`hasOwnProperty` functions
+ * pass both the receiver and key through the externref boundary.
+ *
+ * The arm is standalone-only and additive.  It is keyed by the initialized
+ * class-object singleton rather than its shared class/instance struct type,
+ * screens the existing instance tombstone marker, and declines declared
+ * static overrides.  The setter refusal is needed because the generic
+ * non-`$Object` path otherwise stores an attempted write into the class
+ * object's instance-property bag, making a non-writable intrinsic appear
+ * writable to `verifyProperty`.
+ */
+export function fillClassObjectNameArms(ctx: CodegenContext): void {
+  if (!ctx.standalone || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  const entries = classObjectNameMetadata(ctx);
+  if (entries.length === 0) return;
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (flattenIdx === undefined || equalsIdx === undefined) return;
+
+  const deletedIdx = ctx.funcMap.get(INSTANCE_FIELD_DELETED);
+  const absent = (answer: Instr[]): Instr[] =>
+    deletedIdx === undefined
+      ? answer
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: deletedIdx },
+          { op: "if", blockType: { kind: "empty" }, then: answer },
+        ];
+
+  /** `if (obj === initializedClassObject) { hit }`, with a shared any local. */
+  const classIdentityArms = (receiverAnyLocal: number, hit: (entry: ClassObjectNameMetadata) => Instr[]): Instr[] => {
+    const arms: Instr[] = [];
+    for (const entry of entries) {
+      arms.push(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: receiverAnyLocal },
+        { op: "ref.test", typeIdx: entry.structTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "global.get", index: entry.classObjectGlobalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast_null", typeIdx: entry.structTypeIdx },
+            { op: "local.get", index: receiverAnyLocal },
+            { op: "ref.cast_null", typeIdx: entry.structTypeIdx },
+            { op: "ref.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: hit(entry),
+            },
+          ],
+        },
+      );
+    }
+    return arms;
+  };
+
+  /** Build a `key === "name"` guard around class identity arms. */
+  const prependNameKeyArm = (
+    fn: { locals: { name: string; type: ValType }[]; body: Instr[] },
+    paramCount: number,
+    hit: (entry: ClassObjectNameMetadata) => Instr[],
+  ): void => {
+    const receiverAnyLocal = paramCount + fn.locals.length;
+    const keyAnyLocal = receiverAnyLocal + 1;
+    const flatKeyLocal = receiverAnyLocal + 2;
+    fn.locals.push(
+      { name: "__class_name_recv", type: { kind: "anyref" } },
+      { name: "__class_name_key", type: { kind: "anyref" } },
+      { name: "__class_name_flat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    );
+    fn.body.unshift(
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: keyAnyLocal },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: keyAnyLocal },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: flattenIdx },
+          { op: "local.set", index: flatKeyLocal },
+          { op: "local.get", index: flatKeyLocal },
+          { op: "ref.as_non_null" },
+          ...nativeStringLiteralInstrs(ctx, "name"),
+          { op: "call", funcIdx: equalsIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: classIdentityArms(receiverAnyLocal, hit),
+          },
+        ],
+      },
+    );
+  };
+
+  const descriptorIdx = ctx.funcMap.get("__create_descriptor");
+  const descriptorFn = ctx.mod.functions.find((candidate) => candidate.name === "__getOwnPropertyDescriptor");
+  if (descriptorIdx !== undefined && descriptorFn) {
+    prependNameKeyArm(descriptorFn, 2, (entry) => [
+      ...absent([{ op: "ref.null.extern" }, { op: "return" }]),
+      ...nativeStringLiteralInstrs(ctx, entry.displayName),
+      { op: "extern.convert_any" },
+      { op: "i32.const", value: FLAG_CONFIGURABLE },
+      { op: "call", funcIdx: descriptorIdx },
+      { op: "return" },
+    ]);
+  }
+
+  const ownAnswer = (fnName: string, value: number): void => {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === fnName);
+    if (!fn) return;
+    prependNameKeyArm(fn, 2, () => [
+      ...absent([{ op: "i32.const", value: 0 }, { op: "return" }]),
+      { op: "i32.const", value },
+      { op: "return" },
+    ]);
+  };
+  ownAnswer("__hasOwnProperty", 1);
+  ownAnswer("__object_hasOwn", 1);
+  ownAnswer("__propertyIsEnumerable", 0);
+  ownAnswer("__extern_has", 1);
+
+  const getFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
+  if (getFn) {
+    prependNameKeyArm(getFn, 2, (entry) => [
+      ...absent([...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]), { op: "return" }]),
+      ...nativeStringLiteralInstrs(ctx, entry.displayName),
+      { op: "extern.convert_any" },
+      { op: "return" },
+    ]);
+  }
+
+  const setFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_set");
+  if (setFn) {
+    const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
+    const refusal: Instr[] = [];
+    if (setResultGlobalIdx !== undefined) {
+      refusal.push({ op: "i32.const", value: 2 }, { op: "global.set", index: setResultGlobalIdx });
+    }
+    refusal.push({ op: "return" });
+    const setHit: Instr[] =
+      deletedIdx === undefined
+        ? refusal
+        : [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: deletedIdx },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: refusal,
+            },
+          ];
+    prependNameKeyArm(setFn, 3, () => setHit);
+  }
+}
+
 /**
  * Idempotently register the open-object runtime types + helper functions as
  * defined Wasm functions in `ctx.funcMap` (under the host-import names the call
@@ -1107,13 +1312,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // construction). Same reserve-before-arms-bake discipline as above.
     reserveProtoIndexStore(ctx);
   }
-
-  // (#4770) The JS-host lane keeps reflective property ownership in
-  // runtime.ts, but it still needs a generated read-only view of a closure's
-  // per-declaration `$fnmeta` carrier. Reserve that resolver after the
-  // standalone-only side-table substrate above; the host path must not pull in
-  // bag/tombstone helpers or their splice arms.
-  if (ctx.targetProfile.target === "gc") reserveFunctionInstanceProps(ctx);
 
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
   //

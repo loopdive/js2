@@ -332,6 +332,7 @@ import {
   fillClosedStructExternGetArms,
   fillClosedStructHasOwnArms,
   fillClosedStructOwnPropertyNamesArms,
+  fillClassObjectNameArms,
   fillDynamicForinVecArms,
   fillExternArrayLikeStructArms,
   fillExternGetIdxVecArms,
@@ -363,7 +364,7 @@ import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
 import { fillNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js"; // shared dynamic HasInstance identity probes
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
-import { fillFunctionInstanceProps, reserveFunctionInstanceProps } from "./function-instance-props.js"; // (#4436/#4770) user-closure own metadata
+import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
 import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
@@ -5971,12 +5972,6 @@ export function generateModule(
     // funcref-wrapper-root descendant, and the builtin arms always `return`
     // (including the deleted case), so this generic arm can never shadow a
     // builtin's own metadata with a raw `$arity`.
-    // (#4770) Host object runtime is imported rather than emitted, so its
-    // standalone-only reservation hook above never runs in the gc lane. The
-    // metadata projections are still needed by runtime.ts for WasmGC closure
-    // descriptors; reserve them only after body codegen has discovered every
-    // metadata family, immediately before their finalize-time fill.
-    if (ctx.targetProfile.target === "gc") reserveFunctionInstanceProps(ctx);
     fillFunctionInstanceProps(ctx);
     fillBuiltinFnMeta(ctx);
 
@@ -6115,6 +6110,13 @@ export function generateModule(
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch (#866)
     emitToPrimitiveMethodExports(ctx);
+
+    // (#4770) A dynamic `verifyProperty` helper passes a compiled class
+    // constructor through the native MOP boundary. Its singleton `name`
+    // property is not part of the shared class/instance struct fields, so
+    // install the identity-guarded standalone view after all competing MOP
+    // prefixes have been finalized.
+    fillClassObjectNameArms(ctx);
 
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
@@ -9811,6 +9813,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch.
     emitToPrimitiveMethodExports(ctx);
+
+    // (#4770) Multi-source parity for the dynamic class-constructor `name`
+    // property view; see the single-source placement above.
+    fillClassObjectNameArms(ctx);
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /

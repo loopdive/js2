@@ -1,6 +1,6 @@
 ---
 id: 4770
-title: "Compiled functions have no own `name` or `length` property (ES2015, ~85 rows)"
+title: "Compiled class constructors lose dynamic own `name` descriptors (ES2015, 1 row)"
 status: in-progress
 sprint: current
 created: 2026-08-27
@@ -13,20 +13,14 @@ reasoning_effort: high
 task_type: bug
 area: codegen
 loc-budget-allow:
-  - src/runtime.ts
   - src/codegen/expressions/call-builtin-static.ts
-  - src/codegen/object-runtime-descriptors.ts
-  - src/codegen/registry/imports.ts
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
 func-budget-allow:
-  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
-  - src/codegen/closure-props.ts::fillClosurePropHelpers
-  - src/runtime.ts::resolveImport
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/index.ts::generateModule
-  - src/codegen/function-instance-props.ts::fillFunctionInstanceProps
+  - src/codegen/index.ts::generateMultiModule
 es_edition: es6
 language_feature: function-properties, descriptors
 goal: core-semantics
@@ -36,7 +30,7 @@ origin: "ES2015 failure bucketing against the merged baseline, 2026-08-27"
 
 # #4770 — compiled functions have no own `name` / `length`
 
-## Checkpoint plan (Codex, 2026-08-27)
+## Historical checkpoint plan (superseded by the reduced scope below)
 
 The claimed cohort is the measured 85-row floor in the official ES2015
 standalone population (11,704 rows): 66 `name` descriptor/value rows and 19
@@ -57,6 +51,58 @@ already-passing standalone closure carrier:
 The first pushed checkpoint records this plan and the exact baseline command
 before any production source change. The PR remains draft until both seams,
 full focused controls, and current-main/CI gates are complete.
+
+## Reduced scope and measured handoff (Codex, 2026-08-27)
+
+The original function `name`/`length` hypothesis is not the shipped scope. The
+official edition map has `ES2015` at index 2; its 11,778 labels include 74
+`intl402/` rows excluded by the maintained official runner, leaving the exact
+11,704-row denominator. Filtering that cohort leaves exactly one row for this
+defect: `test/language/statements/class/name.js`.
+The nearby class-expression row is untagged and is not counted in this cohort.
+
+The maintained `harness-flip-probe.ts` was run with the pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`, LLVM18, and a maximum of
+two local workers. The exact local A/B outputs are
+`/private/tmp/4770-exact-base-host.jsonl`,
+`/private/tmp/4770-final2-host.jsonl`,
+`/private/tmp/4770-exact-base-standalone.jsonl`, and
+`/private/tmp/4770-final2-standalone.jsonl`. The two final lanes were run in
+parallel with one worker each, preserving the two-worker cap.
+
+- Host lane: baseline `fail: 1`; after `fail: 1`; partition `unchanged: 1`,
+  `fail -> pass: 0`, `pass -> fail: 0`.
+- Standalone lane: baseline `fail: 1`; after `pass: 1`; partition
+  `fail -> pass: 1`, `pass -> fail: 0`. The flipped row is exactly
+  `test/language/statements/class/name.js`.
+- The standalone function/class/redefinition controls (`4770-fn.js`,
+  `4770-class.js`, and `4770-debug-redef.js`) are `pass: 3` after the reduced
+  implementation. The class control retains literal `name`, `length`, and
+  `prototype` descriptor coverage.
+- The cumulative reduced checkpoint is five files: three source files,
+  this issue record, and one focused regression test (450 additions and four
+  deletions against the claimed base).
+
+The implementation is deliberately standalone-only. `fillClassObjectNameArms`
+adds identity-guarded native MOP arms for a compiled class-object singleton's
+dynamic `name` key, including descriptor flags, read, own checks,
+enumerability, setter refusal, and the existing instance tombstone screen.
+The compact literal-key fold in `compileBuiltinStaticCall` remains only to keep
+the already passing class control for `name`, `length`, and `prototype`; it does
+not widen the claimed dynamic cohort or alter host behavior. The broad
+closure/function metadata prototype was discarded from the final source diff.
+
+Focused regression coverage is in
+`tests/issue-4770-class-name-descriptor.test.ts`; it uses parameterized dynamic
+keys and checks the descriptor, read, write, enumerable, and delete behavior.
+The focused Vitest test passes. A full TypeScript check still reports the
+repository's pre-existing missing `@types/node` diagnostics; no diagnostics
+were introduced in the changed helper or call-site code after filtering those
+known errors.
+
+Handoff: keep PR #5056 draft with `hold` and `mergeQueueEntry: null`. Do not
+mark ready or enqueue until the reduced checkpoint is pushed, rebased onto
+current `main`, and its CI is green/mergeable.
 
 ## What is confirmed
 
@@ -436,30 +482,3 @@ Reproduce any row in this issue with a test262-shaped probe under `.tmp/` run
 through `runTest262File` — the runner's `wrapTest` is what makes `verifyProperty`
 and the `Test262Error` channel available, and judging by anything else is how
 #4764 shipped a regression.
-
-## Implementation checkpoint (2026-08-27)
-
-The metadata bridge now has an unfinished source prototype (14 production files,
-518 added lines). It widens the existing `$fnmeta` carrier to the host/gc lane,
-exports host-readable name/length projections, routes host reflection through
-those projections, synthesizes class literal descriptors, and keeps standalone
-closure bags/tombstones coherent. The checkpoint is intentionally not ready:
-the PR remains draft+hold.
-
-Exact maintained-runner probe results from this worktree, with positive controls
-verified on every invocation:
-
-| probe | host | standalone |
-| --- | --- | --- |
-| `.tmp/probe/4770-fn.js` (five closure shapes, literal descriptors) | pass | pass |
-| `.tmp/probe/4770-class.js` (class literal name/length/prototype) | pass | pass |
-| `.tmp/probe/4770-class-surfaces.js` (dynamic class keys) | pass | fail at dynamic class `name` descriptor |
-| `.tmp/probe/4770-surfaces.js` (dynamic function keys, delete/redefine, class) | pass | fails before the initial dynamic function `name` assertion with the dedicated define-lookup path; reverting that call reaches the later known redefine-attribute mismatch (`writable: true`, expected `false`) |
-| `.tmp/probe/4770-debug-redef.js` (non-delete redefine) | pass | pass |
-
-The smallest remaining implementation slice is standalone dynamic-key dispatch
-for class constructor `name`/`length`/`prototype`, plus resolution of the
-standalone harness interaction in the combined dynamic function/delete probe.
-Do not broaden the cohort or run a suite sweep until those two exact probes are
-green; retain the existing host/standalone literal closure and class checks as
-regressions.

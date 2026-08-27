@@ -120,11 +120,11 @@ import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
-  classConstructorLength,
   classIdentityFromExpression,
   classStaticOwnPropertyNames,
   hasClassStaticMethod,
 } from "../class-static-metadata.js";
+import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
@@ -141,6 +141,12 @@ import {
   staticToBoolean,
   tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
+
+function classConstructorLength(ctx: CodegenContext, className: string): number {
+  const decl = ctx.classDeclarationMap.get(className);
+  const ctor = decl?.members.find(ts.isConstructorDeclaration);
+  return ctor === undefined ? 0 : expectedArgumentCountOfParams(ctor.parameters);
+}
 
 /**
  * Reified builtin method closures are ordinary function objects whose
@@ -2765,11 +2771,6 @@ export function compileBuiltinStaticCall(
         // `verifyProperty(C, "m", {...})` lookups need the runtime arm to
         // fire instead of returning `ref.null.extern` here.
         if (!sidecarDefinedKey) {
-          const methodNames = ctx.classMethodNames.get(structName);
-          const staticMethodNames = ctx.classStaticMethodNames.get(structName);
-          const isMethodLookup =
-            (methodNames && methodNames.includes(propLiteral)) ||
-            (staticMethodNames && staticMethodNames.includes(propLiteral));
           const classIdentity = classIdentityFromExpression(ctx, arg0);
           const isClassIntrinsicLookup =
             classIdentity !== undefined &&
@@ -2777,10 +2778,14 @@ export function compileBuiltinStaticCall(
             !hasClassStaticMethod(ctx, classIdentity, propLiteral) &&
             !ctx.staticAccessorSet.has(`${classIdentity}_${propLiteral}`) &&
             !ctx.staticProps.has(`${classIdentity}_${propLiteral}`);
+          const methodNames = ctx.classMethodNames.get(structName);
+          const staticMethodNames = ctx.classStaticMethodNames.get(structName);
+          const isMethodLookup =
+            (methodNames && methodNames.includes(propLiteral)) ||
+            (staticMethodNames && staticMethodNames.includes(propLiteral));
           if (isMethodLookup || isClassIntrinsicLookup) {
             // Skip the fast-path null-return; let the dynamic fallback below
-            // handle the method case via the host import, or let the class
-            // intrinsic synthesis immediately below produce its descriptor.
+            // handle the method case via the host import.
           } else {
             // Property not found in struct — return undefined
             // (own property doesn't exist on this shape). (#3319/#3321) The
@@ -2798,13 +2803,11 @@ export function compileBuiltinStaticCall(
             return { kind: "externref" };
           }
         }
-
         // (#4770) A class constructor's standard own properties are not part
         // of the `$ClassName` instance carrier. Synthesize their descriptors
-        // at the literal-key fold so this path agrees with Reflect's class
-        // mirror on BOTH lanes and never returns the old null miss. A declared
-        // static method/accessor/field with one of these names replaces the
-        // intrinsic and intentionally remains on the existing dynamic path.
+        // at the literal-key fold so the class control surface remains
+        // aligned with the dynamic native-MOP view below. A declared static
+        // member with one of these names replaces the intrinsic.
         const classIdentity = classIdentityFromExpression(ctx, arg0);
         const classOwnKey =
           classIdentity !== undefined &&

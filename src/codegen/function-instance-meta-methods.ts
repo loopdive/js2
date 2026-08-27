@@ -55,7 +55,7 @@ import type { Instr, FieldDef } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
-import { fnMetaSlotOfMeta, functionInstanceMetadataEnabled, type FnInstanceMeta } from "./function-instance-meta.js";
+import { fnMetaSlotOfMeta, type FnInstanceMeta } from "./function-instance-meta.js";
 
 /** A member declaration that can carry `name` / `length` metadata. */
 type MetaBearingMember =
@@ -80,7 +80,7 @@ function registry(ctx: CodegenContext): Map<string, MetaBearingMember> {
  * entry at its own parameter list.
  */
 export function recordFnMetaMemberDeclaration(ctx: CodegenContext, physicalName: string, decl: ts.Node): void {
-  if (!functionInstanceMetadataEnabled(ctx)) return;
+  if (!ctx.standalone) return;
   if (!isMetaBearingMember(decl)) return;
   const map = registry(ctx);
   if (map.has(physicalName)) return;
@@ -137,7 +137,7 @@ export function fnMetaSlotForMemberDecl(
   ctx: CodegenContext,
   decl: ts.Node | undefined,
 ): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } | undefined {
-  if (!functionInstanceMetadataEnabled(ctx) || decl === undefined || !isMetaBearingMember(decl)) return undefined;
+  if (!ctx.standalone || decl === undefined || !isMetaBearingMember(decl)) return undefined;
   const meta = fnMetaOfMember(decl);
   return meta === undefined ? undefined : fnMetaSlotOfMeta(ctx, meta);
 }
@@ -152,6 +152,6 @@ export function fnMetaSlotForMemberName(
   ctx: CodegenContext,
   physicalName: string,
 ): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } | undefined {
-  if (!functionInstanceMetadataEnabled(ctx)) return undefined;
+  if (!ctx.standalone) return undefined;
   return fnMetaSlotForMemberDecl(ctx, ctx.fnMetaMemberDecls?.get(physicalName));
 }
