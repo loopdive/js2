@@ -126,3 +126,26 @@ success.
    the abrupt case, and `false` for the primitive control in both lanes.
 5. Rerun the exact 3/3 rows in host and standalone and record the measured
    denominator in this issue before handing the commit to draft PR #5010.
+
+## 2026-08-27 Luna/max handoff — cluster 4 remains open
+
+The isolated `codex/2765-es2015-instanceof` worktree explored shared dynamic
+`instanceof`, prototype reads/stores, closure dispatch, and runtime prototype
+classification. The experiment did not converge to a verified checkpoint and
+was stopped without integrating or pushing its uncommitted source edits.
+
+The last completed exact three-row measurements were host run
+`20260827-021225` at 2/3 and standalone run `20260827-030437` at 1/3. Both had
+zero compile errors, compile timeouts, or skips. The host object case still
+failed its true result after one getter call. Standalone still failed both the
+object result and the throwing-object abrupt-completion case; only the
+primitive control passed. These measurements are diagnostic only because the
+worker continued editing afterward; they are not acceptance evidence for the
+uncommitted experiment.
+
+Handoff: restart from combined draft-PR commit `4e752a7f4`, reduce the object
+prototype-chain result and throwing getter completion as separate mechanisms,
+and add permanent focused coverage before widening shared prototype storage or
+runtime classification. Do not reuse the isolated worktree's broad edits as a
+checkpoint without first splitting and re-proving them. Cluster 4 and cluster
+5 both remain open; no regression is claimed fixed by this handoff.
