@@ -139,6 +139,30 @@ pending; no ready or merge-queue action has been taken. The final handoff
 requires refreshed CI to be fully green and the PR to be clean/mergeable,
 with `mergeQueueEntry: null` verified before any ready/enqueue change.
 
+## Current-upstream verification (2026-08-27)
+
+After upstream PR #5060 merged, the branch was refreshed to
+`upstream/main` `8896b73f238f544afa818f0137ad7eb171bc8d5c` through the
+non-rewriting merge commit `9378bf8b02f86feeb98f51a8d3477f441f08b62f`. Its
+delta from that upstream tip remains limited to the four files listed in this
+issue; the behavior fix remains `a8e36e8ce3119cd754e277adf0dac22856c8a3ea`.
+
+The exact two-row cohort was rerun on this current branch with structural
+harness controls: host **2/2 pass** and standalone **2/2 pass**, with 0
+failures, compile errors, compile timeouts, or skips in either lane. The
+focused regression again reports **8/8 passed** with `TEST262_WORKERS=2`.
+The current harness artifacts are:
+
+- host: `.tmp/issue-4776-after-refresh2-host.jsonl`
+  (`049c3294a6df45e227dd613e42d4824bb9470c2e95070ca937ca3f373993754a`)
+- standalone: `.tmp/issue-4776-after-refresh2-standalone.jsonl`
+  (`314597e80e43844d023467c8e8c0efeb17390b8cae1d07bd49b6e222d1c09b83`)
+
+PR #5065 remains draft with `hold`; refreshed upstream CI and branch
+synchronization are still pending on the remote. No ready or merge-queue
+action has been taken, and the handoff still requires clean/mergeable status
+with `mergeQueueEntry: null` before any ready/enqueue change.
+
 ## Acceptance
 
 - Both exact rows pass in host and standalone after the change.
