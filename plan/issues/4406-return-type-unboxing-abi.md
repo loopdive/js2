@@ -598,7 +598,14 @@ does.** The plan's exact probe (`pp.eat = function (x) { return this.n === x; }`
 then `("" + p.eat(5)).length`) now answers **4**, matching node. A predicate
 whose body is a bare comparison already carries a boolean-branded i32 through
 its DECLARED signature, so `refinedTwinReturnType` declines on it
-(`declared.kind !== "externref"`). The `&&`-of-calls shape — which is acorn's
+(`declared.kind !== "externref"`). Cause of the drift: #4414 (done 2026-08-14)
+fixed the three stringification consumers that decided boolean-ness from the
+static TS type alone and ignored the i32 brand (`compileNativeConcatOperand`
+and the template-literal span path in `src/codegen/string-ops.ts`, plus the
+`String(x)` i32 arm in `src/codegen/expressions/call-identifier.ts`) — #4414's
+own measurement of this repro shows `refined=undefined`, so the twin refinement
+was never the producer there, and `JS2WASM_NUMERIC_TWINS=0` fixes this slice's
+surviving witness while #4414 measured it as not fixing theirs. The `&&`-of-calls shape — which is acorn's
 own idiom (`eatContextual`, `shouldParseArrow`, every `regexp_eat*`) — still
 reaches the refinement and still miscompiles:
 
