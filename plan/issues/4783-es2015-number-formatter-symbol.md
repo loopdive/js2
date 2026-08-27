@@ -115,14 +115,15 @@ The implementation routes the statically known Symbol argument through
 all three direct-call branches.  Receiver and argument evaluation order is
 unchanged, and dynamic/element-access calls remain on their existing paths.
 
-The post-change authoritative runs used the same pinned Test262 checkout,
-QuickJS artifact, exact six-row filter, and two compiler workers as the
-baseline.  They reached every row with no skip, compile error, or timeout:
+The post-change authoritative runs on the final synchronized branch used the
+same pinned Test262 checkout, QuickJS artifact, exact six-row filter, and two
+compiler workers as the baseline.  They reached every row with no skip,
+compile error, or timeout:
 
 | lane | run | target result | controls | report JSONL SHA-256 |
 | --- | --- | --- | --- | --- |
-| JS-host | `20260827-193607` | 3/3 pass | 3/3 pass | `3f5c605c72a0ff1b2284d054c3b5c0948d27d0c3e63e4b6c4f7eb109c11046a9` |
-| standalone | `20260827-193728` | 3/3 pass | 3/3 pass | `5cf62ce45edffb240eb57f01ab4cc4a806658c55bd0424b17b02cd358d1d0283` |
+| JS-host | `20260827-205002` | 3/3 pass | 3/3 pass | `9c27b2f9d65c1137d2eb2b9404e0e4c53fef7f61a42a299a77b895aa77eec740` |
+| standalone | `20260827-205116` | 3/3 pass | 3/3 pass | `840d477b79d93b66ad0ecc12132017f386415b360a3985358f29a51fecfe74b5` |
 
 Compared with the baseline artifacts above, this is exactly two host
 fail-to-pass flips and three standalone fail-to-pass flips, with zero
@@ -134,13 +135,13 @@ Repeat runs with the same filter and worker limit were also clean:
 
 | lane | repeat run | result | report JSONL SHA-256 |
 | --- | --- | --- | --- |
-| JS-host | `20260827-194701` | 6/6 pass | `16a448062e72256a434424b028fe3e65f0031ded3b71cbbd78ec74983756b0d9` |
-| standalone | `20260827-195645` | 6/6 pass | `4ee2c4319d0ec33b525a723a0c5bba6c7aee3c206a25aab6c671950ab7582bc3` |
+| JS-host | `20260827-205314` | 6/6 pass | `9762bdc286b715163201add940bdcc25fadab475754bdfe1fa49f6c19125b8aa` |
+| standalone | `20260827-205454` | 6/6 pass | `0c76b1bc7f3b14b884782a983a74c429133b1b8b0f46054108fb48ff620d217a` |
 
-Focused regression coverage passed `13/13` (six authoritative rows in each
-lane plus three standalone no-host-import probes).  The focused source gates
-also passed: Prettier, Biome, TypeScript 7, and TypeScript 5.  `git diff
---check` is clean.
+Focused regression coverage passed `13/13` after the final sync (six
+authoritative rows in each lane plus three standalone no-host-import probes).
+The focused source gates also passed: Prettier, Biome, TypeScript 7, and
+TypeScript 5.  `git diff --check` is clean.
 
 ## Handoff
 
@@ -148,7 +149,7 @@ also passed: Prettier, Biome, TypeScript 7, and TypeScript 5.  `git diff
 - Branch: `codex/es2015-next-bounded-fix-7`
 - Plan checkpoint: `2fad13936`
 - Implementation checkpoint: `1dcffcdb0`
-- Current-upstream sync checkpoint: `a43dc325b` (merged `upstream/main` at `4d1001a8`)
+- Current-upstream sync checkpoint: `00fd1834c` (contains upstream `main` at `db872cf39ffcda8775fa11b0385c896337ab611e`)
 - Upstream PR: [#5079](https://github.com/loopdive/js2/pull/5079), from `ttraenkler:codex/es2015-next-bounded-fix-7` against `loopdive/js2:main`
 - PR state at handoff: open, ready/non-draft, `MERGEABLE`/`CLEAN`, head `a5be883a22742d89b69a04e299ccb9a02eec8a68`; all visible required checks and ARM passed, with no comments, reviews, or hold labels observed
 - Merge/queue state: ready for the one-time auto-merge arm and merge-queue enqueue; no queue mutation was made from this context because that consequential remote action requires explicit parent/user authorization
