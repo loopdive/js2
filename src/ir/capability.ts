@@ -62,11 +62,12 @@ export type IrOpCapability = "claim" | "claim-partial" | "defer";
 //     operand pairs demote to legacy's dynamic `+`;
 //   - `??` is claim-partial: `lowerNullish` handles a reference-shaped lhs
 //     with same-typed arms; other operand types demote (#1131);
-//   - `%`, `**`, `in`, `instanceof` were claimed shape-only with NO lowering
-//     ("slice 11 shape-only acceptance") — the exact selector↔builder drift
-//     #2135 retires. They are now DEFERRED: the selector rejects them
-//     up-front. Implementing a lowering (e.g. #2945 for `%`) flips the row
-//     to "claim" in the same PR as the lowering.
+//   - `%` was the old slice-11 shape-only over-claim and is now claimed by its
+//     #2945 lowering; `in` and `instanceof` remain deferred because their
+//     property/prototype semantics have no IR producer. `**` is the bounded
+//     #4787 exception: its exact numeric, prepared-body selector gate and
+//     `math.pow` lowering are complete, so its row is claimed while unsupported
+//     operand/provider shapes stay typed Unsupported before claim.
 const BINARY_OP_CAPABILITY: ReadonlyMap<ts.SyntaxKind, IrOpCapability> = new Map<ts.SyntaxKind, IrOpCapability>([
   // Numeric arithmetic (f64; i32 via propagation rules).
   [ts.SyntaxKind.MinusToken, "claim"],
@@ -107,8 +108,10 @@ const BINARY_OP_CAPABILITY: ReadonlyMap<ts.SyntaxKind, IrOpCapability> = new Map
   // only; i32-typed / string operands demote via the type-resolution lane
   // (legacy's i32 fast mode keeps `emitSafeI32Rem`). Claimed via #2945.
   [ts.SyntaxKind.PercentToken, "claim"],
-  // Deferred — no IR lowering exists. Selector rejects; builder asserts.
-  [ts.SyntaxKind.AsteriskAsteriskToken, "defer"], // needs Math.pow-equivalent lowering
+  // #4787 — exact checker-proven numeric exponentiation lowers through the
+  // semantic `math.pow` intrinsic. The selector owns the bounded shape and
+  // provider gates; non-exact forms remain pre-claim Unsupported.
+  [ts.SyntaxKind.AsteriskAsteriskToken, "claim"],
   [ts.SyntaxKind.InKeyword, "defer"], // needs property/prototype-chain probe
   [ts.SyntaxKind.InstanceOfKeyword, "defer"], // needs class-shape / brand check
 ]);
