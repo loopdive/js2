@@ -323,6 +323,9 @@ interface UserCarrierDeps {
 interface ObjCarrierDeps {
   /** `__extern_get(externref obj, externref key) -> externref` (object runtime). */
   externGetIdx: number;
+  /** `__extern_has(externref obj, externref key) -> i32`; distinguishes a
+   * present-but-null `@@iterator` from a missing method. */
+  externHasIdx?: number;
   /** `__apply_closure(externref fn, externref recv, externref args) -> externref`. */
   applyClosureIdx: number;
   /** `__box_symbol(i32 id) -> externref` — interned `$Symbol` carrier (#2866). */
@@ -778,7 +781,7 @@ function buildArrayFromIterNBody(
   // post-hoc `o[Symbol.iterator] = fn` install) is admitted to the drain —
   // the ladder's OBJ arm can drive it. `@@iterator`-less sources keep the
   // indexed pass-through (#2904 rationale).
-  objGuard?: Pick<ObjCarrierDeps, "externGetIdx" | "boxSymbolIdx" | "isTruthyIdx">,
+  objGuard?: Pick<ObjCarrierDeps, "externGetIdx" | "externHasIdx" | "boxSymbolIdx" | "isTruthyIdx">,
 ): Instr[] {
   const { vecTypeIdx, arrTypeIdx } = types;
   const { iteratorIdx, iteratorNextIdx, iteratorReturnIdx } = funcs;
@@ -891,6 +894,18 @@ function buildArrayFromIterNBody(
       { op: "call", funcIdx: objGuard.isTruthyIdx },
       { op: "i32.or" },
     );
+    // A present-but-null/undefined @@iterator is still a method lookup hit;
+    // admit it to the native GetIterator path so `__iterator` can raise the
+    // required TypeError instead of treating the source as array-like.
+    if (objGuard.externHasIdx !== undefined) {
+      drainTest.push(
+        { op: "local.get", index: 0 },
+        { op: "i32.const", value: 1 },
+        { op: "call", funcIdx: objGuard.boxSymbolIdx },
+        { op: "call", funcIdx: objGuard.externHasIdx },
+        { op: "i32.or" },
+      );
+    }
   }
 
   return [
@@ -1267,6 +1282,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   let objDeps: ObjCarrierDeps | undefined;
   if (ctx.standalone || ctx.wasi) {
     const externGetIdx = ctx.funcMap.get("__extern_get");
+    const externHasIdx = ctx.funcMap.get("__extern_has");
     const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
     const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
     if (
@@ -1278,6 +1294,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     ) {
       objDeps = {
         externGetIdx,
+        externHasIdx,
         boxSymbolIdx,
         objectTypeIdx,
         proxyTypeIdx: ctx.objectRuntimeTypes?.proxyTypeIdx,
@@ -2000,6 +2017,22 @@ function buildIteratorBody(
             ...emptyArgsVecInstrs(types),
             { op: "call", funcIdx: objDeps.applyClosureIdx },
             { op: "local.set", index: 2 },
+            // §7.4.1 requires the result of calling @@iterator to be an
+            // Object. A callable method returning null must throw instead of
+            // being wrapped as an empty OBJ iterator (which would make the
+            // spread silently contribute zero arguments).
+            ...(nonIterableThrow
+              ? [
+                  { op: "local.get", index: 2 } satisfies Instr,
+                  { op: "ref.is_null" } satisfies Instr,
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: nonIterableThrow.map((instr) => ({ ...instr })),
+                    else: [],
+                  } satisfies Instr,
+                ]
+              : []),
             // $IterRec{OBJ, vec:null, idx:0, userIter:iterObj}
             { op: "i32.const", value: ITER_KIND_OBJ },
             { op: "ref.null", typeIdx: vecTypeIdx },
@@ -2011,6 +2044,27 @@ function buildIteratorBody(
           ],
           else: [],
         },
+        // `GetIterator` must not silently fall through when an own or
+        // inherited @@iterator property is present but null/undefined. The
+        // value read above is intentionally truthiness-tested to keep the
+        // ordinary no-property path available for bare `{ next() {} }`
+        // iterator carriers; consult HasProperty here to distinguish that
+        // path from a present-but-non-callable method (e.g. a getter returning
+        // null), which is a catchable TypeError under §7.4.1.
+        ...(objDeps.externHasIdx !== undefined && nonIterableThrow
+          ? [
+              { op: "local.get", index: 0 } satisfies Instr,
+              { op: "i32.const", value: 1 } satisfies Instr,
+              { op: "call", funcIdx: objDeps.boxSymbolIdx } satisfies Instr,
+              { op: "call", funcIdx: objDeps.externHasIdx } satisfies Instr,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: nonIterableThrow.map((instr) => ({ ...instr })),
+                else: [],
+              } satisfies Instr,
+            ]
+          : []),
         // (#3146) next-property fallback: obj itself is the iterator.
         { op: "local.get", index: 0 },
         ...objDeps.keyInstrs("next"),
