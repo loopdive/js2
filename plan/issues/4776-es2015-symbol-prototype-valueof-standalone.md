@@ -163,6 +163,25 @@ pending remote push and CI. No ready or merge-queue action has been taken, and
 the handoff still requires clean/mergeable status with `mergeQueueEntry: null`
 before any ready/enqueue change.
 
+## Final ancestry verification (2026-08-27)
+
+Upstream main advanced once more through the artifact-only npm-compat refresh
+PR #5066. The branch merged its tip
+`03ebf325013a241d5609a457fbdfea78bdf48ee2` without rewriting history at
+`a6d3b8a08f0de2b97e68dec0adf0f74ffb7e8d83`. The exact cohort remains host
+**2/2 pass** and standalone **2/2 pass**, with zero failures, compile errors,
+compile timeouts, or skips. Focused coverage remains **8/8 pass** with at most
+two workers. The final artifacts are:
+
+- host: `.tmp/issue-4776-after-refresh4-host.jsonl`
+  (`049c3294a6df45e227dd613e42d4824bb9470c2e95070ca937ca3f373993754a`)
+- standalone: `.tmp/issue-4776-after-refresh4-standalone.jsonl`
+  (`314597e80e43844d023467c8e8c0efeb17390b8cae1d07bd49b6e222d1c09b83`)
+
+The remaining landing gates are the evidence commit's normal hooks, refreshed
+upstream CI, and final CLEAN/MERGEABLE verification before removing `hold` and
+marking PR #5065 ready.
+
 ## Acceptance
 
 - Both exact rows pass in host and standalone after the change.
