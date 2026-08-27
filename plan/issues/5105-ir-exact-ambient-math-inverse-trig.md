@@ -1,7 +1,7 @@
 ---
 id: 5105
 title: "IR: own exact ambient Math.asin/Math.acos calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -92,6 +92,31 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
 - Each rollback withdraws only its corresponding method.
 - Excluded shapes decline before claim without invariants or post-claim errors.
 - Affected #3526 suites, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.asin` and `math.acos` are now the fifteenth and sixteenth closed
+  source-level Math intrinsics. Both reuse the shared table, generic selector,
+  call-graph walker, and from-AST intrinsic emitter.
+- The frozen manifest attaches the existing `Math_asin` and `Math_acos`
+  callables, declares `math.atan` as each provider's sole dependency, and
+  materializes that dependency once. No Math algorithm or direct-codegen file
+  changed.
+- Independent `JS2WASM_IR_MATH_ASIN=0` and
+  `JS2WASM_IR_MATH_ACOS=0` controls withdraw only their corresponding claim.
+  Shadowed, aliased, wrong-arity, spread, and non-number forms decline before
+  claim for both methods.
+- Four focused/affected suites pass 30/30. They cover host and zero-import
+  standalone ownership, semantic/provider evidence, exact dependency closure,
+  direct parity across domain boundaries, NaN, infinities and signed zero,
+  an independent native-Math oracle over fifteen boundary/interior samples per
+  method (at most `1e-9` absolute error plus explicit ULP ratchets), independent
+  rollbacks, exhaustive integration, every target/backend manifest policy, and
+  linear-backend legality.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max re-review after the numerical-oracle fix returned GO
+  with no P0/P1 finding.
 
 ## Non-goals
 
