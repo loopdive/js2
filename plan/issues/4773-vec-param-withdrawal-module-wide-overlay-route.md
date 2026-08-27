@@ -276,15 +276,29 @@ failure count would have been unreadable.
 | `issue-4491-wave4` + `wave7` + `t4-add-parity` + `function-binding-widening` + `proto-index-constructor-shadow` | 4 failed / 50 passed | 4 failed / 50 passed | **byte-identical**, all pre-existing |
 | `issue-3251` + `-s2` + `-s3`, `issue-4159`, `issue-4159-4160-prescan-flags`, `issue-4160-*` | 13 failed / 67 passed | 13 failed / 67 passed | **byte-identical**, all pre-existing |
 | `es5-standalone-descriptors`, `-descriptor-bags`, `-getownpropertydescriptor`, `issue-2874`, `issue-3661-*` ×2, `issue-3663`, `issue-3037` | 9 failed / 36 passed | 9 failed / 36 passed | **byte-identical**, all pre-existing |
-| `issue-4773-provenance-closed-vec-param` (new) | 8 passed | 1 failed (the must-pass) | pins the fix |
+| `issue-4773-provenance-closed-vec-param` (new) | 9 passed | 1 failed (the must-pass) | pins the fix |
 
-**Pre-existing red worth flagging to the #4491 lane:**
-`tests/issue-4491-wave4.test.ts > vec identity at a monomorphic parameter >
-reads an array-index ACCESSOR through a narrowed parameter` — the test that pins
-the wave-4 invariant itself — **is already failing on main**, independently of
-this change. Also `issue-4159-4160-prescan-flags` fails 13/22 with
-`Cannot read properties of undefined (reading 'add')`, a harness error rather
-than a behaviour change.
+### For the #4491 lane (`ttraenkler/dev-4491`) — two pre-existing reds on main
+
+Recorded here rather than passed along in conversation, because #4491's lane was
+not reachable while this landed. **Neither is caused by this change** — both
+fail identically with and without it, measured by the file-copy A/B above.
+
+1. **The wave-4 invariant's own pin is red on main.**
+   `tests/issue-4491-wave4.test.ts > #4491 wave-4 — vec identity at a
+   monomorphic parameter > reads an array-index ACCESSOR through a narrowed
+   parameter` fails on current main. That is the test asserting the very
+   property the wave-4 withdrawal exists to protect, so the guard's regression
+   coverage is currently not green. #4773 did not touch it and does not fix it;
+   it is called out because a red invariant pin is easy to mistake for
+   collateral from a later change.
+2. **`tests/issue-4159-4160-prescan-flags.test.ts` fails 13 of 22** with
+   `Cannot read properties of undefined (reading 'add')` — a harness/setup
+   error (sub-millisecond failures), not a behaviour change in the pre-scan.
+
+The three suites #4773 leaned on for validation are otherwise stable, and the
+six MUST-WITHDRAW tests added here (below) are additional protection for the
+wave-4 rule — they pass on the parent commit too.
 
 | gate | result |
 | --- | --- |
@@ -299,7 +313,7 @@ than a behaviour change.
 
 ### Tests
 
-`tests/issue-4773-provenance-closed-vec-param.test.ts` — 8 tests, both
+`tests/issue-4773-provenance-closed-vec-param.test.ts` — 9 tests, both
 directions, every one asserted by EXECUTING the operation rather than by
 inspecting a type. All fixtures carry the same unrelated accessor descriptor and
 assert `hostHidden() === 42`, so the module is provably descriptor-dirty in every
@@ -308,8 +322,9 @@ case — otherwise the must-withdraw tests would be vacuous.
 - **must-pass** — the closed literal keeps its narrowing (`EMITTED`) and still
   computes `[1,1,1,0,1]`, which is what Node computes. Fails on the parent
   commit with `select:param-type-not-resolvable`.
-- **must-withdraw ×6** — a descriptor on the array, an alias, a second callee, a
-  store through the parameter, a non-literal element, and an `eval` anywhere in
+- **must-withdraw ×7** — a descriptor on the array, an alias, an EXPORTED
+  binding, a second callee, a store through the parameter, a non-literal
+  element, and an `eval` anywhere in
   the file (`eval("Object.defineProperty(a, …)")` names a binding inside a
   string, where no identifier scan can see it; `with` is excluded on the same
   grounds). Each withdraws. The

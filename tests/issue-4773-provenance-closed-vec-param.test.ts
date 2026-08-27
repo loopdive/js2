@@ -187,6 +187,29 @@ export function hostHidden() { return host.hidden }
     expect(compiled.outcome).toBe("select:param-type-not-resolvable");
   });
 
+  it("MUST-WITHDRAW: an EXPORTED array withdraws it", async () => {
+    const source = `${DIRTY_PRELUDE}
+export var astralStart = [0, 11, 2, 25, 2, 18];
+function isInSet(code, set) {
+  var pos = 0;
+  for (var i = 0; i < set.length; i += 2) {
+    pos += set[i];
+    if (pos > code) { return false }
+    pos += set[i + 1];
+    if (pos >= code) { return true }
+  }
+  return false
+}
+export function probe(c) { return isInSet(c, astralStart) ? 1 : 0 }
+export function hostHidden() { return host.hidden }
+`;
+    const compiled = await compileFixture(source);
+    expect(compiled.hostHidden).toBe(42);
+    // An exported binding is reachable from OUTSIDE the module, so nothing in
+    // this file can prove a descriptor never lands on it.
+    expect(compiled.outcome).toBe("select:param-type-not-resolvable");
+  });
+
   it("MUST-WITHDRAW: an `eval` anywhere in the file withdraws it", async () => {
     const source = `${DIRTY_PRELUDE}${CLOSED_LITERAL}
 export function evalKind() { return typeof eval === "function" ? 1 : 0 }
