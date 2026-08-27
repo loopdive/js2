@@ -14,6 +14,10 @@ es_edition: es2015
 goal: standalone-gap
 related: [1320, 2773, 3008]
 origin: "2026-07-24 bounded standalone-test audit (dev-opus / #3565 lane): tests/issue-1320-standalone.test.ts silently red on main — outside required checks (#3008), like #680/#3562/#2047."
+loc-budget-allow:
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
 ---
 
 # #3566 — standalone `arr.entries()` for-of yields NaN `pair.length`
@@ -130,3 +134,63 @@ so it is no longer invisible.
 post-merge (issue-tests.yml) but is NOT enforced. It **cannot** be folded into
 the required guard suite (#3552) while red — a red entry blocks every PR. Fold
 it once the substrate fix greens it.
+
+## 2026-08-27 resumed implementation plan
+
+1. Add the tuple-typed helper probe as a permanent standalone and WASI
+   regression before changing dispatch.
+2. Route only tuple/array `.length` values whose runtime carrier may be
+   `$ObjVec` through the existing native length reader; preserve statically
+   known string/function length paths and evaluate the receiver once.
+3. Verify pair contents and length through both direct loop use and a
+   tuple-typed function boundary, with zero host imports in standalone/WASI.
+4. Rerun `tests/issue-1320-standalone.test.ts` and the exact maintained
+   `Array.prototype.entries` Test262 row. Mark draft PR #5026 ready only when
+   every owned regression passes and the exact row remains 1/1 with zero
+   non-passes.
+
+## 2026-08-27 resumed implementation checkpoint (complete)
+
+The narrow tuple dispatch seam and permanent coverage are implemented and the
+owned acceptance is **complete**. The exact maintained official Test262 row
+was rerun after the source change and is green.
+
+- `src/codegen/property-access-dispatch.ts` now recognizes fixed tuple
+  receivers in standalone/WASI before the generic array/property fallback.
+  The receiver is compiled exactly once; fixed tuple arity comes from the
+  existing TypeScript tuple target metadata (`minLength`/`fixedLength`), and a
+  value-producing receiver is dropped before the scalar result. If an
+  externref reaches this narrow arm, it delegates to the existing native
+  `$ObjVec`/vec `__extern_length` reader. Optional/rest tuples are left on the
+  prior path because their runtime length is variable. String/function length
+  paths are untouched.
+- `tests/issue-1320-standalone.test.ts` adds standalone and WASI tuple-helper
+  regressions checking both pair contents and fixed length, while retaining
+  direct stored-iterator length checks and zero iterator-host-import checks.
+- Focused maintained Vitest command, max two fork workers:
+
+  ```text
+  node node_modules/vitest/vitest.mjs run tests/issue-1320-standalone.test.ts \
+    --pool=forks --poolOptions.forks.maxForks=2 --no-file-parallelism --reporter=verbose
+  ```
+
+  Result: **12 passed / 12 total**, including tuple-helper values **69** in
+  standalone and **35** in WASI; zero test failures or compile/instantiate
+  errors.
+- Exact maintained official standalone acceptance after the source change:
+  run id `20260827-054015`, filter
+  `test/language/statements/for-of/Array.prototype.entries.js`, **1 pass / 1
+  total**, zero failures/compile errors/timeouts/skips. Target was standalone,
+  `COMPILER_POOL_SIZE=2`, and the pinned QuickJS artifact was used.
+- The required `pnpm run test:262 --official-scope-only` wrapper had already
+  been blocked in this environment by pnpm's no-network/no-TTY module-status
+  install attempt (`ERR_PNPM_META_FETCH_FAIL`, then
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). The maintained wrapper later
+  ran successfully with the pinned pnpm PATH and produced the exact row above.
+- Read-only pre-push gates after the fix all passed: TypeScript 7 typecheck,
+  Biome lint, full Prettier `format:check`, oracle ratchet, coercion-site
+  ratchet, issue integrity, and numeric-local parity (**18/18**).
+
+The timestamped Test262 report JSONL/JSON and standalone report symlinks from
+run `20260827-054015` were removed after recording evidence; committed report
+mirrors remain unchanged. PR #5026 can be marked ready from this checkpoint.
