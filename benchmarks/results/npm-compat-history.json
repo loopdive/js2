@@ -9770,6 +9770,22 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-27T09:59:52.935Z",
+      "sourceRevision": "486e58d336059dbe18457918e450423b93a14a5d",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009757879339797213
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
