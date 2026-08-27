@@ -92,6 +92,35 @@ export function dynamicFixtureSpecifiers(source) {
   return [...new Set(specifiers)];
 }
 
+/** Return relative static module specifiers (imports and export-from edges). */
+export function staticRelativeModuleSpecifiers(source) {
+  const masked = maskCommentsAndTemplates(source);
+  const declaration =
+    /(?:^|[;\r\n])\s*(?:import\s+(?!\s*[.(])(?:(?:(?!;).)*?\bfrom\s*)?|export\s+(?:(?!;).)*?\bfrom\s*)(['"])(\.\.?\/[^'"]+)\1/gms;
+  const specifiers = [];
+  let match;
+  while ((match = declaration.exec(masked)) !== null) specifiers.push(match[2]);
+  return [...new Set(specifiers)];
+}
+
+/**
+ * Whether an entry statically imports itself through a relative specifier.
+ *
+ * Test262's module-namespace tests deliberately use this shape to obtain the
+ * current module's namespace object. The ordinary single-source compiler has
+ * no module graph to resolve that edge; callers can use this predicate to
+ * provide the entry under its pinned virtual path without rewriting the test.
+ */
+export function hasSelfModuleImport(testPath, entrySource, { test262Root = TEST262_ROOT } = {}) {
+  const normalizedEntry = normalizeTestPath(testPath);
+  const testRoot = resolve(test262Root, "test");
+  const entryAbsolute = resolve(testRoot, normalizedEntry);
+  return staticRelativeModuleSpecifiers(entrySource).some((specifier) => {
+    const target = resolve(testRoot, dirname(normalizedEntry), specifier);
+    return target === entryAbsolute || `${target}.js` === entryAbsolute;
+  });
+}
+
 function resolveFixture(testRoot, importerPath, specifier, required = true) {
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
     throw new Error(`fixture specifier must be relative in ${importerPath}: ${specifier}`);

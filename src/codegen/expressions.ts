@@ -219,14 +219,17 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
     return false;
   }
   if (
-    isStandalonePromiseActive(ctx) &&
     ts.isPropertyAccessExpression(expr.expression) &&
     (expr.expression.name.text === "then" ||
-      // (#2165) `.catch` lowers to the same native `$Promise` then-machinery
-      // in standalone mode (`.catch(f)` ≡ `.then(undefined, f)`); it already
-      // returns a `$Promise`, so it must NOT be re-wrapped by `wrapAsyncReturn`
-      // (double-wrapping yields a Promise-of-Promise → illegal cast / NaN when
-      // the chained result is consumed).
+      // (#2165) `.catch` lowers to the same native then-machinery in standalone
+      // mode (`.catch(f)` ≡ `.then(undefined, f)`); it already returns a
+      // `$Promise`, so it must NOT be re-wrapped by `wrapAsyncReturn` (double-
+      // wrapping yields a Promise-of-Promise → illegal cast / NaN when the
+      // chained result is consumed). The host Promise_then/Promise_catch
+      // imports likewise return the receiver's native Promise directly. The
+      // old host wrap converted their synchronous constructor/species errors
+      // into rejected promises, violating §27.2.5.4's abrupt-completion
+      // contract (`p.then()` must throw before returning a promise).
       expr.expression.name.text === "catch")
   ) {
     const receiverType = ctx.checker.getTypeAtLocation(expr.expression.expression);

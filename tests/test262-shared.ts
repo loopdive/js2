@@ -24,7 +24,7 @@ import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
-import { discoverFixtureGraph } from "../scripts/test262-fixture-graph.mjs";
+import { discoverFixtureGraph, hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-runner.ts.
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
@@ -692,12 +692,25 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
 
             // Multi-file compilation for FIXTURE imports (handled in-process)
             const fixtureGraph = resolveFixtureGraph(source, filePath);
+            // Test262's module-namespace cases intentionally self-import the
+            // entry (`import * as ns from './<own-file>.js'`). The single-file
+            // worker has no module record for that edge: preprocessing leaves
+            // an unresolved namespace binding, which becomes `ns is not
+            // defined`. Scope this route to the issue's namespace tree so
+            // unrelated self-import rows retain their measured path. Preserve
+            // the literal source and route only this graph shape through
+            // compileMulti under its pinned virtual key. This is not a fixture
+            // rewrite; ordinary relative imports and every non-self
+            // single-source test retain their existing path.
+            const isModuleNamespaceTest = relPath.startsWith("test/language/module-code/namespace/");
+            const selfModuleImport =
+              isModuleNamespaceTest && hasSelfModuleImport(relative(join(TEST262_ROOT, "test"), filePath), source);
             // #3509 — Dynamic fixture metadata alone does not mean this test
             // executes import(). Compiler capability validation rejects eager
             // #3494 cases while allowing an uncalled ordinary closure to reach
             // the test with a host-free runtime trap in its body. Do not turn
             // dynamic fixtures into eager compileMulti inputs.
-            if (Object.keys(fixtureGraph.fixtureFiles).length > 0) {
+            if (Object.keys(fixtureGraph.fixtureFiles).length > 0 || selfModuleImport) {
               // Fixture tests are rare — compile in-process
               try {
                 const vfiles: Record<string, string> = {

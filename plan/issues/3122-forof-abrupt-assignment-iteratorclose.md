@@ -70,3 +70,13 @@ should be deleted. The #3119 entry uses the matching `test/` shape.
 2. Remove the `HANGING_TESTS` entry.
 3. Sibling shapes (`body-dstr-assign-error.js`, put-error variants across
    for-of/for-await) re-checked.
+
+## Bounded probe handoff (2026-08-26)
+
+During the #4761 investigation the exemption was bypassed in fresh bounded
+processes. `body-put-error.js` reported `1/1 pass` in both lanes:
+`.tmp/4761-forof-host-resume.jsonl` and
+`.tmp/4761-forof-standalone-resume.jsonl`. This does not close #3122: the
+probe did not independently assert the throwing setter and IteratorClose
+sub-parts, and the `HANGING_TESTS` exemption is consequently restored. Keep
+this issue in progress until those focused regressions and sibling shapes pass.

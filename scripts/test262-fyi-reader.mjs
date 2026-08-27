@@ -9,7 +9,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { discoverFixtureGraph } from "./test262-fixture-graph.mjs";
 
-export { discoverFixtureGraph, dynamicFixtureSpecifiers, staticFixtureSpecifiers } from "./test262-fixture-graph.mjs";
+export {
+  discoverFixtureGraph,
+  dynamicFixtureSpecifiers,
+  hasSelfModuleImport,
+  staticFixtureSpecifiers,
+  staticRelativeModuleSpecifiers,
+} from "./test262-fixture-graph.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FYI_ROOT = join(ROOT, "test262-fyi", "data");

@@ -538,6 +538,7 @@ sprint: 0
 | 3652 | 2026-07-26 | Compact Unicode RegExp code-point classes recover the four remaining step-limited property rows without relaxing the ReDoS budget (462/469 current generated rows pass) | Current |
 | 3924 | 2026-08-09 | Sound opt-in linear call-arena reset reclaims primitive-only exported calls while aggregate boundaries and heap-backed globals fall back to monotonic allocation | Current |
 | 4747 | 2026-08-26 | ES2015 StringIteratorPrototype now has the exact Symbol.toStringTag value and descriptor in standalone, with host Test262 realm restoration parity | Current |
+| 4758 | 2026-08-26 | ES2015 destructuring residual compile-timeout cluster now survives deleted Array iterators in worker cleanup and host callback dispatch; exact 40/40 host pins pass and standalone parity is recorded for integration into #5010 | Current |
 
 > **IR retirement checkpoint:** #3518 remains in progress; #3520 is ready as
 > the next R1 slice. R2–R8 remain blocked on the dependency spine.
