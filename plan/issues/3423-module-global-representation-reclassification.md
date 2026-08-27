@@ -195,3 +195,11 @@ slice #4763, combined commit `f1aaaca7d` independently passed the focused
 regression at 2/2, host run `20260827-030825` at 11/11, and standalone run
 `20260827-030955` at 11/11. Both maintained-runner Test262 runs had zero
 failures, compile errors, compile timeouts, or skips.
+
+The async-frame binding classification was then routed through the existing
+oracle facts instead of adding a raw checker query. The oracle ratchet reports
+zero raw-query growth, the focused regression remains 2/2, and the final code
+was re-measured with the exact 11-row filter: host run `20260827-031536` and
+standalone run `20260827-031714` both pass 11/11 with zero failures, compile
+errors, compile timeouts, or skips. These final run IDs supersede the earlier
+combined-head measurements above.

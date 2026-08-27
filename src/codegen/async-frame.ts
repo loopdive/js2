@@ -1435,9 +1435,20 @@ function collectUndefWidenedPatternBindings(
       if (!ts.isBindingElement(element)) continue;
       if (ts.isIdentifier(element.name)) {
         const name = element.name.text;
+        const fact = ctx.oracle.typeFactOf(element);
+        const nonNullish =
+          fact.kind === "union"
+            ? fact.parts.filter((part) => part.kind !== "null" && part.kind !== "undefined" && part.kind !== "void")
+            : [];
+        const resolvesToF64 =
+          fact.kind === "number" ||
+          (fact.kind === "union" &&
+            fact.parts.length === 2 &&
+            nonNullish.length === 1 &&
+            nonNullish[0]?.kind === "number");
         if (
           materialized.has(name) &&
-          isUndefWidenedBindingElement(element, resolveWasmType(ctx, ctx.checker.getTypeAtLocation(element)))
+          isUndefWidenedBindingElement(element, resolvesToF64 ? { kind: "f64" } : { kind: "externref" })
         ) {
           out.add(name);
         }
