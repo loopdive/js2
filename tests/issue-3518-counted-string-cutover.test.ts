@@ -58,7 +58,11 @@ function exactLoop(declaration: ts.FunctionDeclaration): ts.ForStatement {
   return loop;
 }
 
-function fixture(tripCount: number): {
+function fixture(
+  tripCount: number,
+  fragmentExpression = '"xy"',
+  declarations = "",
+): {
   readonly checker: ts.TypeChecker;
   readonly oracle: TsCheckerOracle;
   readonly declaration: ts.FunctionDeclaration;
@@ -70,7 +74,8 @@ function fixture(tripCount: number): {
     `
       export function test(): string {
         let value = "seed";
-        for (let index = 0; index < ${tripCount}; index++) value = value + "xy";
+        ${declarations}
+        for (let index = 0; index < ${tripCount}; index++) value = value + ${fragmentExpression};
         return value;
       }
     `,
@@ -103,8 +108,8 @@ function fixture(tripCount: number): {
   return { checker, oracle, declaration, ownerUnitId, identityContext, loweringPlan };
 }
 
-function lowerCounted(tripCount: number) {
-  const exact = fixture(tripCount);
+function lowerCounted(tripCount: number, fragmentExpression?: string, declarations?: string) {
+  const exact = fixture(tripCount, fragmentExpression, declarations);
   const lowered = lowerFunctionAstToIr(exact.declaration, {
     ownerUnitId: exact.ownerUnitId,
     exported: true,
@@ -188,8 +193,25 @@ describe("#3518 Transaction B2 counted-string Prepared cutover", () => {
     expect(
       aggregate.instructions.find((instruction) => instruction.kind === "string.repeat")?.countedStringAppendSite,
     ).toBe(aggregate.exact.loweringPlan.siteId);
+    expect(
+      aggregate.instructions.find((instruction) => instruction.kind === "string.repeat")?.countedStringAppendTripCount,
+    ).toBe(3);
     expect(aggregate.lowered.main.blocks).toHaveLength(1);
     expect(aggregate.lowered.countedStringAppendPlans).toEqual([aggregate.exact.loweringPlan]);
+  });
+
+  it("canonicalizes const aliases to a bounded literal proof and keeps oversized results generic", () => {
+    const alias = lowerCounted(3, "fragment", 'const fragment = "xy";');
+    const repeat = alias.instructions.find((instruction) => instruction.kind === "string.repeat");
+    expect(repeat?.countedStringAppendTripCount).toBe(3);
+    const fragment = alias.instructions.find((instruction) => instruction.result === repeat?.value);
+    expect(fragment).toMatchObject({ kind: "string.const", value: "xy" });
+    expect(alias.exact.loweringPlan.syntaxPlan.fragmentValue).toBe("xy");
+
+    const oversized = lowerCounted(0x2000_0001);
+    expect(
+      oversized.instructions.find((instruction) => instruction.kind === "string.repeat")?.countedStringAppendTripCount,
+    ).toBeUndefined();
   });
 
   it("fails closed on provider, owner, and consumption drift", () => {

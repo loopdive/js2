@@ -1589,7 +1589,12 @@ function makeLinearIrResolver(
       }
       return [{ op: "call", funcIdx: resolveLinearRuntimeOperation(ctx, operation) }];
     },
-    emitStringRepeat(_alloc?: AllocSiteId, _inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[] {
+    emitStringRepeat(
+      _alloc?: AllocSiteId,
+      _inputEncoding?: IrStringEncoding,
+      provider?: IrFuncRef,
+      _countedStringAppendTripCount?: number,
+    ): readonly Instr[] {
       return [
         {
           op: "call",

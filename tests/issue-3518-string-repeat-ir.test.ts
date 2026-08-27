@@ -9,9 +9,12 @@ import {
   hasExactIrStringRepeatProviderAbi,
 } from "../src/codegen/ir-host-string-repeat.js";
 import {
+  ensureIrNativeCountedStringRepeatProvider,
   ensureIrNativeStringRepeatProvider,
+  hasExactIrNativeCountedStringRepeatProviderAbi,
   IR_NATIVE_STRING_REPEAT_MAX_RESULT_CODE_UNITS,
   IR_NATIVE_STRING_REPEAT_PROVIDER_FN,
+  IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE,
 } from "../src/codegen/ir-native-string-repeat.js";
 import { addRuntime } from "../src/codegen-linear/runtime.js";
 import {
@@ -35,7 +38,12 @@ import { irVal, type IrFunction, type IrInstr, type IrType } from "../src/ir/nod
 import { deadCode } from "../src/ir/passes/dead-code.js";
 import { renameInstrOperands } from "../src/ir/passes/inline-small.js";
 import { attachIrStringSupport } from "../src/ir/string-support.js";
-import { IR_STRING_REPEAT_FN, repeatString } from "../src/ir/string-runtime.js";
+import {
+  IR_COUNTED_STRING_REPEAT_I32_MAX,
+  IR_STRING_REPEAT_COUNTED_NATIVE_FN,
+  IR_STRING_REPEAT_FN,
+  repeatString,
+} from "../src/ir/string-runtime.js";
 import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";
 import { verifyIrFunction } from "../src/ir/verify.js";
@@ -72,9 +80,34 @@ function repeatFunction(
 }
 
 function repeatNode(fn: IrFunction): Extract<IrInstr, { kind: "string.repeat" }> {
-  const instruction = fn.blocks[0]!.instrs[0]!;
-  if (instruction.kind !== "string.repeat") throw new Error("fixture lost string.repeat");
+  const instruction = fn.blocks[0]!.instrs.find(
+    (candidate): candidate is Extract<IrInstr, { kind: "string.repeat" }> => candidate.kind === "string.repeat",
+  );
+  if (!instruction) throw new Error("fixture lost string.repeat");
   return instruction;
+}
+
+function exactCountedRepeatFunction(tripCount = 3, proof = tripCount): IrFunction {
+  const registry = new AllocSiteRegistry();
+  const identity = identities.next(`counted-repeat-${tripCount}-${proof}`);
+  const builder = new IrFunctionBuilder(identity, [STRING], false, registry);
+  builder.addParam("dynamicValue", STRING);
+  builder.openBlock();
+  const value = builder.emitStringConst("ab");
+  const count = builder.emitConst({ kind: "f64", value: tripCount }, F64);
+  const site = createIrCountedStringAppendSiteId({
+    sourceId: identities.sourceId,
+    ownerUnitId: identity.unitId,
+    loopStart: 17,
+    loopEnd: 43,
+  });
+  const result = builder.emitStringRepeat(value, count, "ascii", site, proof);
+  builder.terminate({ kind: "return", values: [result] });
+  return attachIrStringSupport(builder.finish(), {
+    storageForConst: () => undefined,
+    providerForLength: () => undefined,
+    providerForRepeat: () => irIntrinsicFuncRef(IR_STRING_REPEAT_COUNTED_NATIVE_FN),
+  });
 }
 
 function resolver(stringType: ValType, callIndex: number): IrLowerResolver {
@@ -196,6 +229,63 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     expect(verifyIrFunction(foreignOwnerSite).some((error) => /malformed or foreign-owner/.test(error.message))).toBe(
       true,
     );
+  });
+
+  it("authenticates the exact counted-native trip proof and rejects every mismatch", () => {
+    const fn = exactCountedRepeatFunction();
+    const node = repeatNode(fn);
+    expect(node).toMatchObject({
+      countedStringAppendTripCount: 3,
+      provider: irIntrinsicFuncRef(IR_STRING_REPEAT_COUNTED_NATIVE_FN),
+    });
+    expect(verifyIrFunction(fn)).toEqual([]);
+
+    const mutate = (replacement: Partial<typeof node>): IrFunction => ({
+      ...fn,
+      blocks: [
+        {
+          ...fn.blocks[0]!,
+          instrs: fn.blocks[0]!.instrs.map((instruction) =>
+            instruction.kind === "string.repeat" ? { ...instruction, ...replacement } : instruction,
+          ),
+        },
+      ],
+    });
+    expect(
+      verifyIrFunction(mutate({ countedStringAppendTripCount: 4 })).some((error) =>
+        /does not match.*f64/.test(error.message),
+      ),
+    ).toBe(true);
+    expect(
+      verifyIrFunction(mutate({ countedStringAppendTripCount: 1 })).some((error) =>
+        /invalid counted trip-count/.test(error.message),
+      ),
+    ).toBe(true);
+    expect(
+      verifyIrFunction(mutate({ countedStringAppendTripCount: IR_COUNTED_STRING_REPEAT_I32_MAX + 1 })).some((error) =>
+        /invalid counted trip-count/.test(error.message),
+      ),
+    ).toBe(true);
+    expect(
+      verifyIrFunction(mutate({ countedStringAppendSite: undefined })).some((error) =>
+        /requires counted-loop provenance/.test(error.message),
+      ),
+    ).toBe(true);
+    expect(
+      verifyIrFunction(mutate({ countedStringAppendTripCount: undefined })).some((error) =>
+        /provider requires.*proof/.test(error.message),
+      ),
+    ).toBe(true);
+    expect(
+      verifyIrFunction(mutate({ value: fn.params[0]!.value })).some((error) =>
+        /requires an exact string\.const/.test(error.message),
+      ),
+    ).toBe(true);
+    expect(
+      verifyIrFunction(exactCountedRepeatFunction(0x2000_0001)).some((error) =>
+        /result-length bound/.test(error.message),
+      ),
+    ).toBe(true);
   });
 
   it("authenticates counted provenance inside semantic async state bodies", () => {
@@ -551,6 +641,28 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     const signature = funcSignatureOf(ctx, index)!;
     signature.params[1] = { kind: "i32" };
     expect(() => ensureIrNativeStringRepeatProvider(ctx)).toThrow(/lost its exact ABI/);
+  });
+
+  it("reuses the exact native i32 kernel for authenticated counted repeats", async () => {
+    await import("../src/codegen/expressions.js");
+    const ctx = createCodegenContext(createEmptyModule(), {} as ts.TypeChecker, {
+      target: "standalone",
+      nativeStrings: true,
+    });
+    const index = ensureIrNativeCountedStringRepeatProvider(ctx);
+    expect(index).toBe(nativeStrHelperHandle(ctx, "__str_repeat"));
+    expect(hasExactIrNativeCountedStringRepeatProviderAbi(ctx, index)).toBe(true);
+    expect(funcSignatureOf(ctx, index)).toMatchObject({
+      params: [{ kind: "ref", typeIdx: ctx.anyStrTypeIdx }, { kind: "i32" }],
+      results: [{ kind: "ref", typeIdx: ctx.anyStrTypeIdx }],
+    });
+    expect(ctx.mod.functions.some((fn) => fn.name === IR_NATIVE_STRING_REPEAT_PROVIDER_FN)).toBe(false);
+    expect(ctx.mod.stringPool).toContain(IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE);
+
+    const signature = funcSignatureOf(ctx, index)!;
+    signature.params[1] = { kind: "f64" };
+    expect(hasExactIrNativeCountedStringRepeatProviderAbi(ctx, index)).toBe(false);
+    expect(() => ensureIrNativeCountedStringRepeatProvider(ctx)).toThrow(/malformed __str_repeat ABI/);
   });
 
   it("executes the reserved linear provider with validation before empty handling", async () => {

@@ -108,7 +108,7 @@ describe("five-part contract surface (#3029-S1)", () => {
 
 describe("IR interchange contract surface (#3030-T1)", () => {
   it("exports the frozen format version", () => {
-    expect(IR_FORMAT_VERSION).toBe("5.3");
+    expect(IR_FORMAT_VERSION).toBe("5.4");
     expect(IR_FORMAT_VERSION).toMatch(/^\d+\.\d+$/);
   });
 
@@ -120,8 +120,8 @@ describe("IR interchange contract surface (#3030-T1)", () => {
     const kinds: string[] = schema.$defs.instrKind.enum;
     // D4: raw.wasm is never serialized.
     expect(kinds).not.toContain("raw.wasm");
-    // v5.2 appended string.repeat; v5.3 adds only its optional counted-site
-    // field, so the frozen instruction-kind ordering is unchanged.
+    // v5.2 appended string.repeat; v5.3/v5.4 add only optional counted-proof
+    // fields, so the frozen instruction-kind ordering is unchanged.
     expect(kinds.slice(-2)).toEqual(["async.throw", "string.repeat"]);
     expect(kinds.filter((kind) => kind === "string.repeat")).toHaveLength(1);
     const repeatRule = schema.$defs.instr.allOf.find(
@@ -130,11 +130,17 @@ describe("IR interchange contract surface (#3030-T1)", () => {
     );
     expect(repeatRule.then.required).toEqual(["value", "count", "encodingEvidence", "provider", "alloc"]);
     expect(repeatRule.then.properties.countedStringAppendSite.$ref).toBe("#/$defs/countedStringAppendSiteId");
+    expect(repeatRule.then.properties.countedStringAppendTripCount).toMatchObject({
+      type: "integer",
+      minimum: 2,
+      maximum: 0x7fff_ffff,
+    });
     expect(schema.$defs.countedStringAppendSiteId).toMatchObject({
       type: "string",
       pattern: expect.stringContaining("ir-counted-string-append-site:v1"),
     });
     expect(repeatRule.then.required).not.toContain("countedStringAppendSite");
+    expect(repeatRule.then.required).not.toContain("countedStringAppendTripCount");
     const countedSiteGrammar = new RegExp(schema.$defs.countedStringAppendSiteId.pattern);
     const canonicalSite =
       "ir-counted-string-append-site:v1:" +

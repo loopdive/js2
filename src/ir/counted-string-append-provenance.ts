@@ -6,7 +6,11 @@ import type { IrSourceId, IrSourceKind, IrUnitId, IrUnitKind } from "./identity.
 import { digestIrInstructions } from "./instruction-digest.js";
 import { forEachInstrDeep, type IrInstr } from "./nodes.js";
 import { IrInvariantError } from "./outcomes.js";
-import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
+import {
+  IR_STRING_REPEAT_COUNTED_NATIVE_FN,
+  IR_STRING_REPEAT_FN,
+  irCountedStringRepeatFitsNativeKernel,
+} from "./string-runtime.js";
 
 declare const irCountedStringAppendSiteIdBrand: unique symbol;
 
@@ -351,7 +355,22 @@ export function associateFinalIrCountedStringAppendSites(
         ) {
           associationMismatch(`site ${siteId} is borrowed by final artifact ${artifact.artifactUnitId}`);
         }
-        if (!nested.provider || !sameIrCallableBinding(nested.provider.binding, plan.provider.binding)) {
+        const expectedTripCount = irCountedStringRepeatFitsNativeKernel(
+          plan.syntaxPlan.tripCount,
+          plan.syntaxPlan.fragmentValue.length,
+        )
+          ? plan.syntaxPlan.tripCount
+          : undefined;
+        if (nested.countedStringAppendTripCount !== expectedTripCount) {
+          associationMismatch(`site ${siteId} carries a mismatched counted trip-count proof`);
+        }
+        const providerSymbol =
+          nested.provider?.binding.kind === "intrinsic" ? nested.provider.binding.symbol : undefined;
+        const hasCanonicalProvider =
+          nested.provider !== undefined &&
+          (sameIrCallableBinding(nested.provider.binding, plan.provider.binding) ||
+            (expectedTripCount !== undefined && providerSymbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN));
+        if (!hasCanonicalProvider) {
           associationMismatch(`site ${siteId} carries a non-canonical final provider`);
         }
         if (observedSites.has(siteId)) associationMismatch(`site ${siteId} occurs more than once in final IR`);
