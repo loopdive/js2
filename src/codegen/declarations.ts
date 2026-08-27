@@ -88,6 +88,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
+import { transferredArrayLikeResultNeedsExternref } from "./statements/variables.js";
 import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
 import {
   ensureNativeDynamicBoundaryTag,
@@ -2550,6 +2551,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    if (transferredArrayLikeResultNeedsExternref(ctx, decl.initializer)) return { kind: "externref" };
     // A source-file `var` is initialized to `undefined` before its initializer
     // runs. When that value is actually observed, a checker-inferred primitive
     // slot would expose the Wasm zero value instead (`false`, `0`, or an empty

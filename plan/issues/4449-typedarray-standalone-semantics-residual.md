@@ -4,7 +4,7 @@ title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflec
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-25
+updated: 2026-08-27
 priority: high
 horizon: l
 feasibility: hard
@@ -16,10 +16,13 @@ related: [4444, 2159, 2175]
 loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
+  - src/codegen/ta-dyn-mop.ts
   - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
 ---
 
 # #4449 — TypedArray.prototype standalone semantics residual
@@ -126,7 +129,6 @@ clusters satisfy the acceptance criteria below.
 - Sub-bucket counts above driven to zero (or re-attributed to #2175 with
   evidence) with scoped-run measurements
   (`TEST262_TARGET=standalone TEST262_PATH_FILTER="built-ins/TypedArray"`).
-
 ## 2026-08-27 Luna/max wave plan — exact species cohort
 
 The cached ES2015 baseline joins exactly 11,704 paths. Within it, the exact
@@ -146,3 +148,124 @@ and after its change.
 4. Rerun the exact 55 paths in host and standalone. Record every denominator,
    any losses, and residual handoff here; integrate only a net-correct proven
    slice into draft PR #5010.
+
+## 2026-08-27 exact-cohort control and handoff
+
+The exact cohort is frozen at `/private/tmp/js2-4449-species-55.txt` (55
+non-BigInt ES2015 paths covering `map`, `filter`, `slice`, and `subarray`
+`speciesctor-*`, `get-ctor-*`, and `get-species-*` cases). Fresh controls were
+run from combined-PR base `114f8a95a` with
+`pnpm run test:262 --official-scope-only`, two workers, and the pinned
+standalone artifact directory
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`:
+
+| Lane | Run | Pass | Fail | Compile errors | Timeouts | Skips | Denominator |
+|---|---|---:|---:|---:|---:|---:|---:|
+| host | `20260827-035118` | 52 | 3 | 0 | 0 | 0 | 55 |
+| standalone | `20260827-035511` | 0 | 55 | 0 | 0 | 0 | 55 |
+
+The host failures are the two `slice`/`subarray` custom-constructor identity
+cases (the ordinary array result is rejected by the TypedArray receiver path)
+and the `subarray` custom invocation-arguments case. The standalone failures
+are assertion failures rather than compile/runtime errors: constructor and
+`@@species` getters are not observed, custom constructors receive no calls,
+default results have the wrong identity, and custom result lengths/values are
+not honored.
+
+### Root cause
+
+The standalone test262 shim passes each `TA` constructor through the dynamic
+`$__ta_ctor`/`$__ta_dyn_view` carrier. `compileArrayMethodCall` currently
+materializes that carrier to an ordinary f64 vector and routes `map`, `filter`,
+and `slice` through ordinary vector allocation; `subarray` creates a shared
+dynamic view directly. None of these producer paths performs
+`Get(O, "constructor")`, `Get(C, @@species)`, defaulting, `Construct`, or
+returned-view validation. In addition, the dynamic MOP's intrinsic named
+`constructor` arm precedes expando lookup, so an own `sample.constructor`
+override cannot reliably reach the species object. This is a shared
+TypedArraySpeciesCreate gap, not a reflection-only metadata failure.
+
+### Handoff
+
+No source or test change is claimed in this checkpoint. Implementers should
+first make dynamic-view own `constructor` shadowing observable, then add one
+shared species-create helper for the four producer methods. The helper must
+preserve lookup/abrupt-completion order, invoke custom constructors with the
+method-specific argument tuple, reject incompatible/non-TypedArray results,
+and write producer values into the returned view. Rerun the exact 55-row host
+and pinned standalone controls before claiming a gain; host's 52/55 result is
+the regression floor. Detached-buffer and reflection work remain out of scope.
+
+## 2026-08-27 clean-delivery resumed species plan
+
+This branch is the clean upstream delivery branch behind draft PR #5022.
+
+1. Add focused dynamic-view controls for own `constructor` shadowing and
+   `constructor[Symbol.species]` lookup/defaulting, including original abrupt
+   value propagation, before modifying producer algorithms.
+2. Implement one reusable TypedArraySpeciesCreate seam, then wire a single
+   producer method first. Preserve method-specific constructor arguments and
+   validate returned dynamic views before widening to the other methods.
+3. Land only independently proven producer slices; keep detached-buffer,
+   reflection metadata, and BigInt carriers out of scope.
+4. Rerun the frozen 55-row cohort in standalone and host after every completed
+   slice. Draft PR #5022 may be marked ready only when the owned implementation
+   is complete, standalone is 55/55 with zero non-passes, and host is 55/55.
+
+### 2026-08-27 dynamic constructor control checkpoint
+
+The dynamic-view MOP now checks an own `constructor` expando before walking the
+selected prototype, preserving original getter abrupt completions and explicit
+own values. The focused standalone controls in
+`tests/issue-4449-species-controls.test.ts` pass 5/5 with zero `env` imports:
+own constructor shadowing, abrupt constructor getter, inherited constructor
+getter, own `Symbol.species`, and abrupt `Symbol.species` getter. The existing
+`issue-3058-dyn-view-proto-methods` regression suite remains green (11/11).
+
+This checkpoint intentionally does not claim producer-method progress; the
+55-row species cohort remains at the 0/55 standalone baseline until the shared
+species-create seam is wired.
+
+## 2026-08-27 clean-delivery producer checkpoint (partial)
+
+The resumed branch wires one shared standalone `TypedArraySpeciesCreate` seam
+for dynamic-view `map`, `filter`, `slice`, and `subarray`. It now performs the
+constructor/`@@species` lookup and nullish defaulting, preserves abrupt getter
+completion, invokes custom constructors with the method-specific argument
+tuple, validates a returned dynamic view and minimum length, and copies the
+ordinary producer vector into the species result. The dynamic MOP own
+`constructor` shadow path remains in front of prototype lookup. Detached
+buffers, reflection metadata, and BigInt value carriers remain out of scope.
+
+Focused evidence from this worktree:
+
+- `tests/issue-4449-species-controls.test.ts` plus
+  `tests/issue-4449-species-producers.test.ts`: **12/12 passed**, zero
+  standalone `env` imports.
+- An all-nine non-BigInt-constructor pin covering custom `map`, `filter`,
+  `slice`, and shared-buffer `subarray` passed **36/36**.
+- Tracked source delta at checkpoint: `array-methods.ts` +318 lines,
+  `dataview-native.ts` +366 lines, `call-receiver-method.ts` +13/-2, and
+  `ta-dyn-mop.ts` +41/-7; the added focused producer test is 197 lines. The
+  dataview addition is the single shared protocol and dynamic-kind copy seam;
+  the array-method addition is the four producer-specific argument/order arms
+  plus one runtime two-arm wrapper. No debug instrumentation is retained.
+
+The exact frozen cohort remains `/private/tmp/js2-4449-species-55.txt` (55
+rows). Fresh bounded runs used `COMPILER_POOL_SIZE=2`,
+`--official-scope-only`, and the exact path-file filter:
+
+| Lane | Run | Pass | Fail | Compile errors | Timeouts | Skips | Denominator |
+|---|---|---:|---:|---:|---:|---:|---:|
+| standalone (pinned QuickJS artifact `2e2d7736713beeda`) | `20260827-074318` | 20 | 35 | 0 | 0 | 0 | 55 |
+| host | `20260827-075040` | 52 | 3 | 0 | 0 | 0 | 55 |
+
+The standalone run is a **partial improvement only**, not an acceptance
+claim. Its 35 residuals are concentrated in constructor/default identity (8),
+invalid constructor/species and returned-view handling (11), custom invocation
+`this`/result copying (12), and the same-buffer offset/subarray cases (4), with
+method totals `map 9`, `filter 8`, `slice 10`, `subarray 8`. Host remains at
+the 52/55 control floor; its three failures are the pre-existing Float64
+`slice`/`subarray` custom-constructor receiver and invocation-argument rows.
+Draft PR #5022 must remain draft and this issue remains in progress until a
+future checkpoint reaches standalone 55/55 and host 55/55 with zero nonpasses.
