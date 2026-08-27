@@ -1,7 +1,7 @@
 ---
 id: 5099
 title: "fix(standalone): expose StringIteratorPrototype.next metadata"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-27
 updated: 2026-08-28
@@ -44,8 +44,9 @@ A previous broad experiment in `/private/tmp/js2-es2015-next-bounded-fix-9` chan
 five call/dispatch modules and added a temporary debug script; it remained
 standalone `0/4` for a larger iterator cohort and is intentionally preserved as
 failed-experiment evidence. This fix remains metadata-only and does not change
-iterator stepping or generic assert/call dispatch. Issue #5099 was closed by the
-user after the draft checkpoint; this markdown is the only tracking record.
+iterator stepping or generic assert/call dispatch. The transient GitHub issue
+#5099 was closed by the user after the draft checkpoint; this markdown file is
+the sole canonical issue record for this work.
 
 ## Implementation plan
 
@@ -96,5 +97,7 @@ baseline-summary sync at `5321bfbbfa9193c6b55a7558126b88b003a03719`:
   host/standalone repeats remained `2/2` with both controls and
   `nondeterministic: 0`.
 
-Draft PR #5103 remains held and outside the merge queue until repository
-quality gates and CI are green; then it can be marked ready and enqueued.
+Post-sync CI for PR #5103 head `e0159876d6` is fully green (all required jobs
+successful or intentionally skipped), and the branch is mergeable against
+`upstream/main` `5321bfbbfa`. The PR remains draft and held outside the merge
+queue pending the parent’s readiness/queue operation.
