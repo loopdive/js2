@@ -169,3 +169,31 @@ coercion-site-ratchet, numeric-local IR parity, and issue-integrity checks are
 the repository gates for the pushed checkpoint. PR #5077 remains draft with
 `hold` until its final pushed head is current-main, mergeable, and CI-green;
 the queue entry is intentionally null until then.
+
+## Final current-main verification (2026-08-27)
+
+Upstream advanced again after the preceding verification. This branch now
+includes `upstream/main` at `db872cf39ffcda8775fa11b0385c896337ab611e`
+through non-rewriting merge commit `228f028fb`. From that merge, the exact
+eight-row A/B slice and focused regression were rerun with at most two
+workers:
+
+- host: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0 skips**
+- standalone: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0
+  skips**, with **0 host-import rows**
+- focused Vitest: **16/16 passed**, including both target rows and all six
+  object/symbol/probe controls in both lanes
+
+Final current-main artifacts:
+
+- host report/results: `benchmarks/results/test262-report-20260827-204836.json`,
+  `benchmarks/results/test262-results-20260827-204836.jsonl`
+- standalone report/results: `benchmarks/results/test262-standalone-report-20260827-205557.json`,
+  `benchmarks/results/test262-standalone-results-20260827-205557.jsonl`
+
+The prior CI quality failure was solely the stale issue-ID collision between
+this branch's original #4782 plan and open PR #5076. Atomic allocation moved
+this cohort to #4785; the local `--against-open-prs` gate passes with no
+collisions. The final pushed checkpoint is now ready for a fresh CI run;
+leave PR #5077 draft+`hold` with no queue entry until that run is green and
+GitHub reports current, mergeable, and thread-clean.
