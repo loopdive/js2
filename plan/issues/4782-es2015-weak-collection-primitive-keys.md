@@ -109,4 +109,34 @@ guard issue if they remain after this fix.
 
 ## Implementation
 
-Pending exact implementation and post-fix evidence.
+`src/codegen/weak-collections-runtime.ts` now classifies only statically known
+invalid insertion expressions after compiling them: missing arguments,
+nullish/boolean/numeric/string/bigint literals, and the global `Symbol.for`
+call shape. It drops the evaluated key/value operands and emits the existing
+standalone/WASI native `TypeError` constructor, preserving argument evaluation
+order. The guard is not enabled for JS-host lowering. Dynamic aliases and
+plain `Symbol()` remain on the existing map-backed path, so the compact fix
+does not change valid-symbol storage or primitive lookup behavior.
+
+## Post-fix evidence (2026-08-27)
+
+The exact eight-row A/B slice was rerun with `--official-scope-only`,
+QuickJS standalone evaluation, and `COMPILER_POOL_SIZE=2`:
+
+- host: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0 skips**
+- standalone: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0 skips**
+
+The slice contains the two target rows plus six controls (object and
+unregistered-symbol insertion and primitive `has` probes). The standalone
+rows report no `env::*` host imports. Raw artifacts are:
+
+- host report/results: `benchmarks/results/test262-report-20260827-193643.json`,
+  `benchmarks/results/test262-results-20260827-193643.jsonl`
+- standalone report/results: `benchmarks/results/test262-standalone-report-20260827-193835.json`,
+  `benchmarks/results/test262-standalone-results-20260827-193835.jsonl`
+
+The focused Vitest regression `tests/issue-4782-weak-collection-primitive-keys.test.ts`
+reports **16/16 passed** with at most two compiler workers. Prettier checks,
+TypeScript 7 typecheck, and `git diff --check` pass. The final implementation
+commit and upstream PR handoff remain to be recorded after the repository
+push gates complete.
