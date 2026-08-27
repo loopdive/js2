@@ -118,6 +118,22 @@ describe("#3177 — dyn-view integer-indexed MOP arms (§10.4.5)", () => {
     ).toBe(1);
   });
 
+  it("detach makes direct dynamic byteOffset reads zero, including an empty view", async () => {
+    expect(
+      await run(
+        `const buffer: any = new ArrayBuffer(16); const t: any = new TA(buffer, 8, 1); const empty: any = new TA(buffer, 8, 0); const before = t.byteOffset; const emptyBefore = empty.byteOffset; (buffer as any).__detached__ = true; const after = t.byteOffset; const emptyAfter = empty.byteOffset; return before * 1000 + emptyBefore * 100 + after * 10 + emptyAfter;`,
+      ),
+    ).toBe(8800);
+  });
+
+  it("detach makes direct static byteOffset reads zero while retaining the attached offset", async () => {
+    expect(
+      await run(
+        `const buffer: ArrayBuffer = new ArrayBuffer(16); const view: Uint8Array = new Uint8Array(buffer, 8, 1); const before = view.byteOffset; (buffer as any).__detached__ = true; const after = view.byteOffset; return before * 10 + after;`,
+      ),
+    ).toBe(80);
+  });
+
   it("inline OOB element read is the undefined SINGLETON, not null", async () => {
     expect(await run(`const v: any = s[7]; return (v === undefined && !(v === null)) ? 1 : 0;`)).toBe(1);
   });

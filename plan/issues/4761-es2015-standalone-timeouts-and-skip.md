@@ -1,7 +1,7 @@
 ---
 id: 4761
 title: "ES2015 standalone Test262 compile timeouts and compiler-hang skip"
-status: in_progress
+status: complete
 created: 2026-08-26
 updated: 2026-08-27
 priority: critical
@@ -19,6 +19,12 @@ files:
   - scripts
   - tests
   - plan/issues/4761-es2015-standalone-timeouts-and-skip.md
+loc-budget-allow:
+  - src/codegen/dataview-native.ts
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
 ---
 
 # #4761 — ES2015 standalone Test262 timeouts and skip
@@ -171,3 +177,150 @@ This checkpoint is unfinished: the exact maintained standalone slice is not
 skip-list changes were retained. The timestamped artifacts above are the
 authoritative handoff evidence; generated report files and symlinks are
 restored/removed before handoff.
+
+## 2026-08-27 resumed implementation plan
+
+1. Build focused detached-view controls that distinguish the static typed-array
+   accessor path from the dynamic constructor/view carrier and prove detachment
+   state, byte offset before detachment, and the required zero afterward.
+2. Fix the dynamic view `byteOffset` read at its owning runtime/property seam;
+   do not raise the runner timeout. Re-run the exact row solo before the
+   three-row slice so semantic success is not hidden by compilation timing.
+3. Independently reduce `body-put-error.js` with focused setter-throw and
+   IteratorClose counters. Remove its `HANGING_TESTS` entry only if both
+   behaviors pass under the maintained standalone path in a bounded process.
+4. Preserve `Symbol.toStringTag/detached-buffer.js` as a must-pass control and
+   require exact standalone acceptance of 3/3 with zero fail, compile error,
+   timeout, or skip before marking draft PR #5027 ready.
+
+## 2026-08-27 resumed implementation checkpoint (unfinished)
+
+The focused reduction identified two separate accessor seams and retained the
+narrow semantic fix:
+
+- `src/codegen/ta-dyn-mop.ts` now returns `0` for a detached dynamic view's
+  named `.byteOffset`, checking the shared backing byte-vector's negative length
+  marker. Attached nonzero-offset and attached empty views still return their
+  stored offset.
+- `src/codegen/property-access-dispatch.ts` now routes direct
+  `.byteOffset` reads on dynamic `any`/union receivers through a runtime
+  `$__ta_dyn_view` arm. `src/codegen/dataview-native.ts` supplies that arm.
+- `src/codegen/dataview-native.ts` also applies the same detached-marker rule
+  to the static `$__ta_view` accessor seam. `tests/issue-3177.test.ts` adds
+  dynamic (including an attached empty view) and static controls.
+
+Focused standalone compiler controls (directly compiled source, no Test262
+fixture or timeout changes) returned:
+
+- dynamic windowed view: before detach `8`, after detach `0` (`80`);
+- attached empty windowed view: `8`;
+- static windowed view: before detach `8`, after detach `0` (`80`).
+- plain `any` object in the same module keeps its own `.byteOffset` (`7`),
+  proving the dynamic arm falls through to ordinary property lookup.
+
+The exact maintained official-scope solo rerun after the fix was
+`20260827-054438`, with `COMPILER_POOL_SIZE=2` and the pinned QuickJS/LLVM
+environment. It wrote:
+
+- JSONL: `benchmarks/results/test262-standalone-results-20260827-054438.jsonl`
+- report: `benchmarks/results/test262-standalone-report-20260827-054438.json`
+- denominator: exactly 1 official standard row
+- summary: `0 pass`, `1 fail`, `0 compile_error`, `0 compile_timeout`, `0 skip`
+- row: `test/built-ins/TypedArray/prototype/byteOffset/detached-buffer.js`,
+  `fail`, `RangeError: RangeError: Invalid typed array length`,
+  `reached_test=true`, `compile_ms=7961`, `exec_ms=432`, `retried=true`,
+  `retry_count=1`.
+
+This failure occurs while the untouched Test262 `makeArrayBuffer(TA, 128)`
+setup constructs the intermediate dynamic TypedArray from its `Array` carrier;
+the standalone dynamic constructor's current carrier dispatch does not recover
+that Wasm array as a source view, so the subsequent `(buffer, 8, 1)` construction
+sees an invalid/empty buffer and throws before `$DETACHBUFFER`. This is a
+separate constructor/array-carrier root cause from the now-proven byteOffset
+detachment rule. The exact row therefore does not yet provide a maintained
+conformance pass for this change.
+
+The authoritative maintained three-row control remains run `20260827-050810`
+from clean upstream head `fcded6410`: exactly 3 official rows, `1 pass`, `0
+fail`, `0 compile_error`, `1 compile_timeout`, and `1 skip`. Its artifacts are
+`benchmarks/results/test262-standalone-results-20260827-050810.jsonl` and
+`benchmarks/results/test262-standalone-report-20260827-050810.json`. The pass
+was `Symbol.toStringTag/detached-buffer.js`; `byteOffset/detached-buffer.js`
+was a 10-second compile timeout (`retried=true`, `retry_count=1`), and
+`for-of/body-put-error.js` remained the `HANGING_TESTS` skip.
+
+`body-put-error.js` remains exempt. No independent maintained standalone proof
+of both setter-abrupt propagation and IteratorClose behavior exists, so the
+exemption must not be removed. This checkpoint is explicitly unfinished: the
+exact standalone denominator is not 3/3 and still has a timeout/failure path
+plus one skip; the next owner should reduce the dynamic Array carrier in the
+constructor setup before remeasuring the exact row.
+
+## 2026-08-27 completion checkpoint
+
+The bounded constructor reduction is now retained. `emitTaDynCtorConstructFromLocals`
+recognizes the object-runtime `$ObjVec` carrier produced by standalone
+`Array.from(source, mapFn)`, allocates the destination view from its length,
+and copies each externref element through the existing numeric coercion path.
+This is the intermediate carrier used by `makeArrayBuffer(TA, 128)` in the
+owned Test262 fixture; the focused standalone control constructs a dynamic
+`Uint8Array` from four string elements and returns `407` (length `4`, first
+element `7`).
+
+The detached-view semantic fix remains narrow and covers both accessor seams:
+
+- dynamic named `.byteOffset` reads and direct dynamic property dispatch check
+  the shared backing byte-vector's negative detach marker and return zero only
+  when detached; attached windowed and attached empty views retain their
+  stored offset;
+- the static `$__ta_view` accessor uses the same marker rule; ordinary dynamic
+  objects still use their own `byteOffset` property through the fallback;
+- `tests/issue-3177.test.ts` retains dynamic/static detached and attached-empty
+  controls, and `tests/issue-4761.test.ts` adds the constructor-carrier and
+  for-of abrupt-close controls.
+
+Before removing the exemption, the bounded standalone control for the
+`body-put-error.js` shape returned `1111`: the thrown object retained
+`name === "Test262Error"` (`1000`), the setter ran once (`100`), the iterator
+`next` method ran once (`10`), and IteratorClose called `return` once (`1`).
+The control instantiated with zero Wasm imports and never entered the loop
+body. With that setter-abrupt plus IteratorClose proof in place, the former
+`HANGING_TESTS` entry was removed; the set remains empty so future reproduced
+hangs can still be bounded by the existing runner checks.
+
+The exact maintained official-scope standalone slice was then run with
+`COMPILER_POOL_SIZE=2`, the pinned LLVM path, and
+`JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`.
+Run `20260827-055904` wrote:
+
+- JSONL: `benchmarks/results/test262-standalone-results-20260827-055904.jsonl`
+- report: `benchmarks/results/test262-standalone-report-20260827-055904.json`
+- denominator: exactly 3 official standard rows
+- summary: `3 pass`, `0 fail`, `0 compile_error`, `0 compile_timeout`, `0 skip`
+
+The authoritative rows were:
+
+- `test/built-ins/TypedArray/prototype/Symbol.toStringTag/detached-buffer.js`:
+  `pass`, reached test, `compile_ms=13950`, `exec_ms=1199`;
+- `test/language/statements/for-of/body-put-error.js`: `pass`, reached test,
+  `compile_ms=2831`, `exec_ms=26`;
+- `test/built-ins/TypedArray/prototype/byteOffset/detached-buffer.js`:
+  `pass`, reached test, `compile_ms=14572`, `exec_ms=983`.
+
+The runner emitted empty-suite diagnostics for filtered local shard files, but
+the maintained JSONL/report contain exactly the three official rows above and
+the command completed with the authoritative `3 pass / 3 total` result. This
+closes the timeout, dynamic detached-byteOffset mismatch, and body-put-error
+exemption tracked by this issue; no timeout increase or denominator change was
+used.
+
+The follow-up coercion-site ratchet correction keeps this fallback on the
+shared semantic path: the stored `$anyref` is converted to `externref` before
+`__extern_get`, and its result is converted to `f64` with `coerceType` rather
+than a direct `__unbox_number` call. Re-running the three bounded standalone
+controls after that correction returned `[407, 15, 1111]` with zero imports:
+the `$ObjVec` constructor carrier, the ordinary object's own `byteOffset` plus
+an attached view offset, and the setter-abrupt/IteratorClose proof,
+respectively. The maintained Test262 `20260827-055904` 3/3 evidence is
+unchanged because this only replaces equivalent fallback instruction
+construction.

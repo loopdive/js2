@@ -100,6 +100,7 @@ import {
   emitTaCtorBytesPerElement,
   emitTaCtorValue,
   emitTaViewAccessor,
+  emitTaViewDynamicByteOffset,
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
@@ -256,6 +257,18 @@ export function tryDynamicReceiverRuntimeDispatchReads(
     const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
     if (isDynamicReceiver) {
       const r = emitTaViewDynamicByteLength(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
+      if (r) return r;
+    }
+  }
+
+  // (#4761) `.byteOffset` on a dynamic constructor/view receiver. The direct
+  // property spelling does not go through the standalone string-key MOP, so
+  // use the same runtime `$__ta_dyn_view` test as `.byteLength` and apply the
+  // detached-buffer zero rule at the owning view seam.
+  if (propName === "byteOffset" && noJsHost(ctx) && ctx.taDynViewTypeIdx >= 0) {
+    const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
+    if (isDynamicReceiver) {
+      const r = emitTaViewDynamicByteOffset(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
       if (r) return r;
     }
   }
