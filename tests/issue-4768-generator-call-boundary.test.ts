@@ -107,4 +107,24 @@ describe("#4768 native generator ordinary-call boundary", () => {
         export function test(): number { consume(g()); return steps; }`),
     ).toBe(2);
   });
+
+  it("completes a native generator after an abrupt iterator step", async () => {
+    expect(
+      await runStandalone(`
+        let following = 0;
+        function* g() { throw new Error("boom"); following += 1; }
+        function consume([,]: any): void {}
+        const iter: any = g();
+        export function test(): number {
+          let first = 0;
+          try { consume(iter); } catch (_) { first = 1; }
+          let second = 0;
+          try {
+            const result = iter.next();
+            second = result.done ? 1 : 2;
+          } catch (_) { second = 3; }
+          return first * 10 + second * 100 + following;
+        }`),
+    ).toBe(110);
+  });
 });
