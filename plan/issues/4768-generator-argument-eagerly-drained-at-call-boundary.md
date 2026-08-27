@@ -1,6 +1,6 @@
 ---
 id: 4768
-title: "A generator passed as a function argument is eagerly drained to the 1e6 cap (breaks infinite generators; 375+ ES2015 rows)"
+title: "Aliasing a generator to a second binding eagerly drains it to the 1e6 cap (breaks infinite generators; 375+ ES2015 rows)"
 status: ready
 created: 2026-08-27
 updated: 2026-08-27
@@ -8,14 +8,14 @@ priority: critical
 feasibility: hard
 reasoning_effort: high
 task_type: bugfix
-area: runtime
+area: codegen
 language_feature: generators
 goal: spec-completeness
 sprint: current
 horizon: l
 ---
 
-# #4768 — a generator argument is drained at the call boundary
+# #4768 — aliasing a generator drains it
 
 ## Problem
 
@@ -73,23 +73,33 @@ The destructuring machinery itself is **correct**, which is why the bug hid:
 
 None of those produce 1,000,001. The drain happens **before** any of them.
 
-## Where the 1e6 comes from
+## The trigger, measured — aliasing, not the call
 
-`_drainClosureIterableToArray` (`src/runtime.ts:2964`) is the only 1e6 site:
+A generator is perfectly lazy until it is bound to a **second** name:
 
-```ts
-return _stepClosureIterator(iterator, exports, { cap: 1_000_000, nullOnMalformedNext: true });
-```
+| source | iterator steps |
+| --- | ---: |
+| `var it = g();` | **0** ✓ |
+| `var it = g(); it.next();` | **1** ✓ |
+| `var it = g(); var u = it;` | **1,000,001** ✗ |
 
-It takes **no `limit` argument at all** — it is an unbounded drainer whose
-comment assumes "the test262 cases that reach here yield a single value". It is
-reached from `_materializeIterable` (`src/runtime.ts:3017`) when the value's
-`[Symbol.iterator]` is a wasm closure struct, which is exactly what a compiled
-generator is.
+A parameter is an alias, which is why *every* call drains — `plain(g())` binds
+the generator to `x`. The call boundary is a symptom of the aliasing rule, not
+the rule itself.
 
-So an argument-position generator is materialised through the unbounded path,
-and the carefully bounded destructuring path downstream then slices an
-already-exhausted array. The bound is applied one layer too late.
+## What this is NOT — two attributions measured and discarded
+
+Recorded so the next attempt does not repeat them:
+
+- **`_drainClosureIterableToArray` (`runtime.ts:2964`)** is the only 1e6 site in
+  the runtime, and an earlier draft of this issue blamed it. Instrumented with a
+  stack dump, it is **never reached** for `plain(g())`.
+- **`_stepClosureIterator`** is not reached either (same method). Its cap is
+  `1 << 16`, not 1e6, so it could not have produced 1,000,001 regardless.
+
+So the drain is not in either runtime drainer. It happens on the compiled side,
+at whatever lowering handles binding a generator value to a new name. The 1e6
+constant should be located there rather than assumed to be the runtime's.
 
 ## Implementation Plan
 
@@ -98,18 +108,16 @@ already-exhausted array. The bound is applied one layer too late.
    `grep elision` over the ES2015 path list). Isolation is mandatory — the
    `*-array-prototype.js` variants poison the realm, and an in-process run
    reports garbage for everything after the first one.
-2. **Find the caller that materialises an argument.** The drain is upstream of
-   `__array_from_iter_n`; trace `_materializeIterable`'s callers
-   (`src/runtime.ts:578`, `:691`, `:10023`) and the argument-marshalling path
-   for a wasm-struct value reaching a JS-host boundary. The question to answer
-   is why an ordinary parameter materialises its argument at all — `plain(x)`
-   never reads `x`.
-3. **Make laziness the default at that boundary.** A generator argument should
-   stay a live iterator; only a consumer that genuinely needs an array
-   (destructuring with a known step count, spread, rest) should materialise, and
-   then with its bound. Threading a `limit` into
-   `_drainClosureIterableToArray` is the smaller change but only papers over
-   step 2 if the eager call itself is unnecessary.
+2. **Find the 1e6 on the COMPILED side.** Both runtime drainers are ruled out by
+   instrumentation (see above), so start from the lowering for `var u = it`
+   where `it` holds a generator — the minimal three-line reproduction — rather
+   than from the argument path. `plain(x)` never reads `x`, so nothing about the
+   callee can justify materialising.
+3. **Make laziness the default for an alias.** Binding a generator to a new name
+   must copy the reference, not materialise. Only a consumer that genuinely
+   needs an array (destructuring with a known step count, spread, rest) should
+   materialise, and then with its bound. Note `it.next()` already stays lazy, so
+   a lazy path exists — the question is why the alias does not take it.
 4. **Guard the zero case explicitly.** `function f([]) {}` must consume **no**
    iterator steps (§8.5.3 `ArrayBindingPattern : [ ]` returns
    NormalCompletion without an IteratorStep). It currently drains. This is the
