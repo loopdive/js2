@@ -266,7 +266,31 @@ human to make.** Options, cheapest first:
 3. Route all escaped declared-field reads through `__extern_get`. Simplest,
    most correct, worst for performance.
 
-Option 2 is the principled one; option 1 buys the conformance row now.
+Option 2 is the principled one. **Option 1 was built and does NOT buy the row** —
+correcting what an earlier draft of this section claimed. It was implemented
+(`tryCompileEscapedArrayLikeElementRead`, gated on `identifierEscapesToCall` plus
+`propertyFactOf(recv,"length").kind === "number"` and an integer literal key —
+note `typeFactOf(...).shape` is NOT populated for these anonymous object types,
+so the per-property question is the only one the oracle answers here). It
+demonstrably fixed the wrong answer:
+
+```
+var a = { "0": "zero", "2": "two", length: 3 };
+Array.prototype.unshift.call(a, "new");
+  a["2"]   "two" before  →  undefined after   ✓
+```
+
+…and moved **zero** conformance rows, so it was reverted rather than shipped: a
+hot-path change with a perf trade-off, bought with no measured conformance, is
+not a trade worth making unilaterally.
+
+`unshift/length-near-integer-limit.js` still fails on its `in` assertion, not on
+a read — so slice 2's escape route did not fire for THAT receiver. The
+distinguishing feature is that its object literal declares a **getter**
+(`get "9007199254740986"() { throw … }`), which almost certainly moves the
+receiver off the `ref`/`ref_null` struct type that `escapedReceiverRoute`
+requires. Widening that gate is the next thing to try for this row, and it is
+cheap — but it must be measured, not assumed.
 
 **Genuinely separate from all of the above** — `reverse` ×2 need host
 observation of a throwing accessor on the wrapped struct; `slice` and
