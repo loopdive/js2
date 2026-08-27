@@ -15,8 +15,12 @@ es_edition: es6
 language_feature: isNaN, ToPrimitive, Symbol.toPrimitive
 goal: standalone-mode
 assignee: "ttraenkler/codex/es2015-next-lane-c"
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 files:
-  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/object-runtime.ts
   - tests/issue-5102-isnan-toprimitive.test.ts
   - plan/issues/5102-es2015-isnan-toprimitive-abrupt.md
 ---
@@ -26,12 +30,12 @@ files:
 ## Problem
 
 The global `isNaN` call lowering coerces its argument to an f64 and then tests
-the result for NaN. On the standalone path, an object with an exotic
-`Symbol.toPrimitive` is represented by a lossy numeric placeholder before the
-required `ToPrimitive` call can throw. That turns required `TypeError` or
-`Test262Error` completions into ordinary boolean results. The host lane already
-passes the target rows, so the fix must stay standalone-only at the narrowest
-global-call/coercion site and preserve the existing numeric fast path.
+the result for NaN. On the standalone path, the native `ToPrimitive` helper did
+not probe an object's own `Symbol.toPrimitive` data property, so it fell
+through to `valueOf`/`toString` and eventually produced a normal NaN/result
+instead of propagating the required `TypeError` or `Test262Error`. The host lane
+already passes the target rows, so the fix stays in the standalone native
+object runtime and preserves the existing numeric fast path.
 
 ## Exact cohort and authoritative baseline (2026-08-27)
 
@@ -64,11 +68,14 @@ No full-corpus census is part of this issue.
    worktree and inspect the emitted standalone coercion path. Confirm that a
    positive numeric/string control still reaches the existing `f64.ne` NaN
    test and that the host lane remains green.
-2. Make the smallest standalone-only change that keeps object arguments on the
-   throwing `ToPrimitive`/`ToNumber` path instead of substituting NaN. Preserve
-   evaluation order, catchability, static numeric fast paths, and host-mode
-   lowering. Do not broaden the change to `Number.isNaN`, unrelated coercions,
-   or the getter-abrupt row whose host baseline is already red.
+2. Make the smallest standalone-only change that probes the well-known Symbol
+   carrier through the native object's own data-property table, invokes a
+   callable method through the existing receiver-aware closure bridge with the
+   "number" hint, and throws for non-callable/object or Symbol results.
+   Preserve evaluation order, catchability, static numeric fast paths, and
+   host-mode lowering. Deliberately leave accessor entries on the existing
+   ordinary path so the getter-abrupt row whose host baseline is already red
+   remains an excluded control; do not broaden the change to `Number.isNaN`.
 3. Add a focused compiler regression test covering all four target shapes plus
    numeric, string, nullish, and ordinary-object controls. Re-run the exact
    Test262 cohort in host and standalone modes and record per-row statuses.
