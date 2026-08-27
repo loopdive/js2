@@ -1,9 +1,10 @@
 {
   "id": "3481",
-  "assignee": "ttraenkler/senior-dev",
-  "status": "released",
-  "branch": "issue-3481-value-rep-coercion",
-  "claimed_at": "2026-07-21T00:00:42Z",
-  "updated_at": "2026-07-21T00:22:06Z",
-  "released_at": "2026-07-21T00:22:06Z"
+  "assignee": "ttraenkler/opus-3481",
+  "requested_by": "ttraenkler/opus-3481",
+  "status": "in-progress",
+  "branch": "claude/issue-3481-toprimitive-unwrap",
+  "claimed_at": "2026-08-27T12:06:04Z",
+  "updated_at": "2026-08-27T12:06:04Z",
+  "write_id": "10507-bejvnko7"
 }
