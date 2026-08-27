@@ -1,7 +1,8 @@
 ---
 id: 4768
 title: "Compiled generators are buffer-backed: one host-side next() runs the whole body (elision + every iterator-step row)"
-status: ready
+status: in-progress
+assignee: ttraenkler/codex-4768-es6-step-errors
 created: 2026-08-27
 updated: 2026-08-27
 priority: high
@@ -115,6 +116,88 @@ Measured after the repair on branch `codex/audit-5044-regressions`:
 3. Keep the original full 375-row ES2015 `dstr` sweep acceptance item below
    open; the 77-row official-edition regression cohort is complete, but that
    broader historical sweep was not claimed by this audit.
+
+## Residual follow-up: abrupt iterator-step cohort (2026-08-27)
+
+The first implementation for this issue landed in upstream `main`, but its
+acceptance record left the abrupt-completion family unmeasured. This follow-up
+owns exactly the 40 official ES2015 rows whose path ends in
+`dstr/*ary-ptrn-elision-step-err.js` (the complete list is below). These rows
+exercise the same array-pattern IteratorStep boundary with a throwing
+generator, while avoiding the active yield-star delegation work in #1691 and
+the function `name`/`length` work in #4770.
+
+The authoritative source is a fresh fetch of both JSONL lanes from
+`loopdive/js2wasm-baselines` `main` on 2026-08-27, classified with
+`scripts/generate-editions.ts` against the pinned test262 checkout. The full
+official ES2015 population is **11,704 rows**:
+
+| lane | pass | fail | compile error | compile timeout | total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| host | 9,565 | 2,083 | 55 | 1 | 11,704 |
+| standalone (host-free) | 8,568 | 2,625 | 510 | 1 | 11,704 |
+
+The selected cohort is **host 40/40 pass, standalone 0/40 pass**. Every
+standalone failure is a reached `assertion_fail` from the abrupt iterator-step
+fixture; no row is a skip or an unmeasured compile failure. The exact local
+baseline was rerun through `scripts/harness-flip-probe.ts` with both positive
+controls reporting the expected pass and fail directions, the pinned QuickJS
+artifact `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`, and at most two
+workers.
+
+Exact cohort paths:
+
+```text
+language/expressions/arrow-function/dstr/ary-ptrn-elision-step-err.js
+language/expressions/arrow-function/dstr/dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-static-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-static-dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-static-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-static-dflt-ary-ptrn-elision-step-err.js
+language/expressions/function/dstr/ary-ptrn-elision-step-err.js
+language/expressions/function/dstr/dflt-ary-ptrn-elision-step-err.js
+language/expressions/generators/dstr/ary-ptrn-elision-step-err.js
+language/expressions/generators/dstr/dflt-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/gen-meth-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/meth-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/meth-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-static-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-static-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-static-dflt-ary-ptrn-elision-step-err.js
+language/statements/const/dstr/ary-ptrn-elision-step-err.js
+language/statements/for-of/dstr/const-ary-ptrn-elision-step-err.js
+language/statements/for-of/dstr/let-ary-ptrn-elision-step-err.js
+language/statements/for-of/dstr/var-ary-ptrn-elision-step-err.js
+language/statements/for/dstr/const-ary-ptrn-elision-step-err.js
+language/statements/for/dstr/let-ary-ptrn-elision-step-err.js
+language/statements/for/dstr/var-ary-ptrn-elision-step-err.js
+language/statements/function/dstr/ary-ptrn-elision-step-err.js
+language/statements/function/dstr/dflt-ary-ptrn-elision-step-err.js
+language/statements/generators/dstr/ary-ptrn-elision-step-err.js
+language/statements/generators/dstr/dflt-ary-ptrn-elision-step-err.js
+language/statements/let/dstr/ary-ptrn-elision-step-err.js
+language/statements/try/dstr/ary-ptrn-elision-step-err.js
+language/statements/variable/dstr/ary-ptrn-elision-step-err.js
+```
+
+Plan: first reproduce these 40 rows on both targets; then trace why the
+standalone generator path fails to propagate a throwing `next()` through the
+bounded destructuring call; make the narrowest native-generator boundary fix
+that preserves unknown/reassignable callees on the conservative path; and
+rerun the exact 40-row A/B plus native-generator and iterator-close controls.
+The issue is complete only when both lanes pass all 40 rows, the full focused
+regression set is unchanged, and the current-main CI/mergeability gates are
+green.
 
 
 > **Root cause CONFIRMED** (see the section below), and the fix is **bounded**:
