@@ -25,6 +25,12 @@ func-budget-allow:
   # Same +4: resolveImport is the single switch every host import is registered
   # in, so a new import necessarily grows it.
   - src/runtime.ts::resolveImport
+  # 2026-08-27 slice 2 (escape-aware `in`). +14 in compileInOperator: one route
+  # predicate and its rationale, joining the five sibling route flags that
+  # already live there (vecNamedKeyRoute, reassignedReceiverRoute,
+  # fnctorProtoRoute, growableReceiver, inheritsFromObjectPrototype). The scan
+  # itself is a leaf module, src/codegen/in-escaped-receiver.ts.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # #4765 — `Array.prototype` method values and the generic array-like algorithm
@@ -190,7 +196,42 @@ The escape is the crux: the deletion happens **inside host code**
 narrow fix on (checked). An object handed to an unknown host callee can have
 its shape mutated, so its later reads cannot be answered from the static shape.
 
-The real fix is **per-instance property presence for statically-shaped structs**
+## Slice 2 — DONE (host lane): escape-aware `in`
+
+**Measured: 109/124 → 113/124**, no regressions. Four rows flipped
+(`pop/length-near-integer-limit`, `splice/length-and-deleteCount-exceeding-integer-limit`,
+`splice/length-exceeding-integer-limit-shrink-array`,
+`splice/length-near-integer-limit-grow-array`).
+
+The fix is not a presence bit after all — it is scoping the FOLD. `in` answers
+§7.3.12 from the receiver's compile-time struct shape, which is sound only while
+the compiler owns that shape. It stops owning it the moment the object is passed
+to a callee it cannot see through: the callee may delete a key, and the field
+list does not shrink. `src/codegen/in-escaped-receiver.ts` asks the cheap
+value-independent question — "is this binding ever handed to a call?" — and a
+`true` suppresses the fold and takes the existing `__extern_has` arm, which
+consults the tombstone and was right all along.
+
+That predicate joins five sibling route flags already in `compileInOperator`
+(`vecNamedKeyRoute`, `reassignedReceiverRoute`, `fnctorProtoRoute`,
+`growableReceiver`, `inheritsFromObjectPrototype`) — each one an existing case of
+"the static type is not a fact about this site". It is deliberately conservative:
+being permissive costs one `__extern_has` call on an `in`, never a wrong answer.
+
+`growableReceiver` is the closest sibling and was tried first — it is exactly
+this guard for standalone's growable `$Object` receivers. Ungating it does
+nothing in the host lane, because the shape-widening pass that populates
+`growableObjectLiteralVars` does not run there. That is why the host lane needs
+its own question.
+
+**Still open in this family** (`reverse` ×2, `slice`, `splice/create-species`,
+`unshift` ×2): these assert on the READ (`arrayLike[i]`), on a Proxy receiver, or
+on species construction — the property read has the same static-shape
+unsoundness as `in` did, but routing every escaped read through `__extern_get`
+is a much larger perf question than routing `in`. `unshift/clamps-to-integer-limit.js`
+remains the one genuinely arithmetic row.
+
+The read-side fix is where **per-instance property presence for statically-shaped structs**
 — the struct field physically exists, so deletion needs a presence bit consulted
 by the compiled read and `in`, not just a host-side tombstone. The precedent is
 `bfnstate` in `src/codegen/builtin-fn-meta.ts`, which carries exactly this kind

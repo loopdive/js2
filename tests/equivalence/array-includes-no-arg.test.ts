@@ -196,3 +196,47 @@ describe("Array.prototype methods read as values (host lane)", () => {
     );
   });
 });
+
+// (#4765 slice 2) `in` answers §7.3.12 from the receiver's compile-time struct
+// shape. That is sound only while the compiler owns the shape — and it stops
+// owning it once the object is handed to a callee it cannot see through, which
+// may delete a key. The field list does not shrink on delete, so the fold kept
+// reporting deleted keys as present. `hasOwnProperty` was always correct here
+// (it consults the tombstone), which is what made the disagreement visible.
+describe("`in` on a receiver that escaped to a host call", () => {
+  it("reports a host-deleted key as absent", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var a: any = { 0: "x", 1: "y", length: 2 };
+        Array.prototype.pop.call(a);
+        return (("1" in a) ? 4 : 0) + (("0" in a) ? 2 : 0) + (a.length === 1 ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
+  it("agrees with hasOwnProperty after the deletion", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var a: any = { 0: "x", 1: "y", length: 2 };
+        Array.prototype.pop.call(a);
+        var inSays: boolean = "1" in a;
+        var ownSays: boolean = Object.prototype.hasOwnProperty.call(a, "1");
+        return inSays === ownSays ? 1 : 0;
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
+  it("still answers present keys correctly on an escaped receiver", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var a: any = { p: 1, q: 2 };
+        function touch(o: any): number { return 0; }
+        touch(a);
+        return (("p" in a) ? 4 : 0) + (("q" in a) ? 2 : 0) + (("zz" in a) ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+});
