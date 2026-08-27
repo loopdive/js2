@@ -99,11 +99,28 @@ Three facts bound the design:
    makes it wrong for `length` exactly where the failing rows live (a default
    parameter changes spec length but not wasm arity: `function* (x = 42) {}` must
    report `length === 0`).
-3. **The read-back path is ready for it.** `_readOwnDescriptor`
-   (`src/runtime.ts:5894`) is the single source for both
+3. **The read-back path is ready for it — for CLOSURES, and only for closures.**
+   `_readOwnDescriptor` (`src/runtime.ts:5894`) is the single source for both
    `Object.getOwnPropertyDescriptor` and `getOwnPropertyDescriptors`, and already
-   has per-shape arms (vec, sidecar, class allowlists). A closure arm slots in
-   there once the metadata exists.
+   has per-shape arms (vec, sidecar, class proto-/static-method allowlists with
+   spec flags at 2a/2b). **Verified by instrumentation:** a
+   `getOwnPropertyDescriptor(f, "name")` on a compiled closure DOES reach it —
+   all five function shapes in the first table hit the arm — so a closure arm
+   placed just before step 3 is a confirmed insertion point once the metadata
+   exists.
+
+   **The class object does NOT reach it.** The same instrumented run shows the
+   `class C {}` read never enters `_readOwnDescriptor` at all; its descriptor is
+   produced somewhere else (the `_wrapForHost` mirror / proxy path around
+   `runtime.ts:7954`, where `Object.defineProperty(fnTarget, "name", …)` already
+   passes spec-shaped attributes). So the class row and the closure rows need
+   TWO different insertion points, and the class one has to be located first.
+
+   An arm keyed on `_classNamesByObj` was written and measured against this: the
+   class descriptor was unchanged (`w=true e=true c=true`), and the probe showed
+   `registered=false` for every receiver that did arrive. Reverted. Do not
+   re-attempt it from `_classNamesByObj` in `_readOwnDescriptor` — find the
+   mirror path instead.
 
 ## Candidate designs (none evaluated — pick one deliberately)
 
@@ -136,10 +153,12 @@ source name and `countSpecLength`, which is the cross-cutting part of the work.
 3. Emit the chosen lookup, and add the closure arm to `_readOwnDescriptor` plus
    the matching `[[Get]]`/`ownKeys` paths so `f.name`, `f.length`,
    `getOwnPropertyDescriptor`, and `Object.keys`-style enumeration all agree.
-4. Fix the class case separately and first — it is the one shape that HAS `name`,
-   with all three attributes wrong (`w=true e=true c=true` vs spec
-   `false/false/true`). It may be a much smaller change than the closure case and
-   is independently verifiable.
+4. Fix the class case separately — it is the one shape that HAS `name`, with all
+   three attributes wrong (`w=true e=true c=true` vs spec `false/false/true`).
+   It is independently verifiable, but it is NOT the cheap warm-up it looks like:
+   see fact 3 — the class descriptor does not come from `_readOwnDescriptor`, and
+   the obvious `_classNamesByObj` arm there has already been tried and reverted.
+   Start by locating which path actually answers that read.
 5. Re-measure with `scripts/run-test262-paths.mts --isolate` over the two
    families before and after.
 
