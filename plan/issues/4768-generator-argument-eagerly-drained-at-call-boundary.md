@@ -20,6 +20,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/destructuring-params.ts::destructureParamArray
   - src/codegen/generators-native.ts::hostLaneGeneratorUsesAreSafe
+  - src/codegen/generators-native.ts::ensureNativeGeneratorResumeFunction
 ---
 
 # #4768 — compiled generators run to completion on first host-side next()
@@ -750,3 +751,52 @@ integration, required CI, and mergeability are verified by the handoff owner.
 Infinite generators are currently unusable as arguments in compiled code — the
 call hangs for a million steps and then silently truncates. That is a
 correctness and a performance bug independent of test262.
+
+## Residual follow-up result — abrupt iterator-step completion (2026-08-27)
+
+The remaining ES2015 `dstr/*ary-ptrn-elision-step-err.js` failures were traced
+to the standalone/WASI native generator resume boundary. The bounded native
+destructuring path correctly performed the required `IteratorStep`, but an
+exception raised by the generator body escaped the resume trampoline without
+advancing its state to `done`. A later `.next()` therefore re-entered the
+throwing state and surfaced the same exception again. The host lane already
+used its established exception path and was not changed.
+
+The follow-up implementation in `src/codegen/generators-native.ts` wraps only
+the standalone/WASI native resume trampoline in the existing target-specific
+exception scaffold. On an escaping `__exn`, it writes `STATE_FIELD = doneState`
+and rethrows the original payload; the normal result is carried through the
+wrapper unchanged. Existing explicit return/throw/yield* paths and the host
+lowering remain untouched.
+
+Evidence was collected from the dedicated branch with the pinned QuickJS
+artifact `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` (libquickjs SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`, QuickJS
+0.16.1), using the assembled harness, structural pass/fail controls, and two
+lane processes at most:
+
+- The exact 40-row cohort (`.tmp/4768-step-err-es2015.txt`, SHA-256
+  `17be685df22453c486af7ec1fb2155df960ae3ecb7472dc2b718b5ddd19f6ec2`) moved
+  from standalone **0/40 pass** (`fail: 40`) to **40/40 pass** (`pass: 40`).
+  The local A/B partition is 40 fail→pass, 0 pass→fail, 0 other changes.
+- Host stayed **40/40 pass** before and after; the host A/B partition is 40
+  unchanged, 0 lost. The before/after host artifact SHA-256 is
+  `fd0979b6de3197a235de5409f148c2a50235be248f694286b5f60eceae276f0a`.
+- Standalone artifact SHA-256 changed from
+  `eba6364bc08d4f05922fa80f6af62c8433186d9aab6f3aaaadfc108343f3d1e7` to
+  `f80a8b8bfd00ebca6eaba93f04cbc229caf712a4cb8ab046453fdc5f69a99e43`.
+- Focused #4768 coverage is **12/12 pass**, including a direct abrupt-step
+  regression that catches the first `next()` error and verifies the following
+  `next()` returns `{ done: true }` without rethrowing.
+- Adjacent native-generator and IteratorClose controls are green: **43/43**
+  (#4718, #3023, #3040, #3100 S5), **23/23** (#1665, #2169, #2170, #2035),
+  **24/24** (#3164, #3271, #3302; three expected skips), and **51/51**
+  (#2864 carrier, #2941, #2169 destructure/spread).
+
+### Handoff
+
+The implementation and test evidence are on branch
+`codex/4768-es6-step-errors`, with upstream PR **#5060** kept draft and on
+hold while current-main integration, required CI, and mergeability are
+checked. The queue entry remains null until those gates are green; only then
+should the hold be removed and the PR marked ready.
