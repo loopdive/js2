@@ -3,6 +3,7 @@
 // #4786 — standalone WeakMap/WeakSet prototypes own their ES2015
 // Symbol.toStringTag data properties.
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -15,6 +16,8 @@ const EXACT_FILES = [
   "built-ins/WeakMap/prototype/Symbol.toStringTag.js",
   "built-ins/WeakSet/prototype/Symbol.toStringTag.js",
 ] as const;
+
+const TEST262_AVAILABLE = existsSync(join("test262", "harness", "assert.js"));
 
 const CONTROL_SOURCE = `
   export function test(): number {
@@ -59,7 +62,7 @@ async function runControl(lane: Lane): Promise<number> {
   return (instance.exports as { test: () => number }).test();
 }
 
-describe("#4786 — WeakMap/WeakSet prototype Symbol.toStringTag", () => {
+describe.skipIf(!TEST262_AVAILABLE)("#4786 — WeakMap/WeakSet prototype Symbol.toStringTag", () => {
   it.each(EXACT_FILES)("passes the exact host Test262 row %s", async (file) => {
     const result = await runTest262File(join("test262/test", file), "issue-4786", 120_000);
     expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
