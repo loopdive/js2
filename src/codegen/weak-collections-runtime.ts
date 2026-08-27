@@ -16,9 +16,10 @@
  * property, not an observable one: every spec test for get/set/has/delete /
  * add behaviour passes with strong retention (only `FinalizationRegistry` /
  * `WeakRef` liveness tests, which are skip-filtered, could tell the
- * difference). The object-key requirement (TypeError on a primitive key) is a
- * host-mode early-error concern; standalone callers that pass a primitive get
- * the Map's SameValueZero handling, which is out of scope for this slice.
+ * difference). The object-key requirement is enforced for statically known
+ * invalid insertion literals in standalone/WASI lowering; dynamic aliases
+ * retain the Map's existing SameValueZero handling until a later runtime type
+ * guard can cover them without changing valid-symbol representation.
  *
  * Backing representation: the native `$Map` struct (`ctx.mapTypeIdx`) — the Map
  * runtime already compares object keys by `ref.eq` identity, exactly WeakMap
@@ -38,6 +39,8 @@ import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import type { InnerResult } from "./shared.js";
 import { compileExpression, VOID_RESULT } from "./shared.js";
+import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { compileCollectionElementArg, ensureMapHelpers } from "./map-runtime.js";
 
 /**
@@ -81,6 +84,66 @@ function castReceiverToMap(ctx: CodegenContext, fctx: FunctionContext, recvType:
     return false;
   }
   return true;
+}
+
+/**
+ * Peel the type-only wrappers that can surround a statically known weak-key
+ * argument. The emitted argument still gets evaluated before a rejection, so
+ * this classifier only chooses the post-evaluation error path.
+ */
+function unwrapWeakKeyExpr(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (
+    ts.isAsExpression(current) ||
+    ts.isParenthesizedExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * Return true only for expressions whose runtime value is definitely not
+ * weakly holdable. This deliberately remains a static fast path: dynamic
+ * aliases and plain `Symbol()` values retain the existing native collection
+ * representation and are outside this compact ES2015 cohort.
+ */
+function isDefinitelyNotWeakKey(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression | undefined): boolean {
+  if (expr === undefined) return true;
+  const unwrapped = unwrapWeakKeyExpr(expr);
+  if (
+    isNullOrUndefinedLiteral(unwrapped) ||
+    ts.isNumericLiteral(unwrapped) ||
+    ts.isStringLiteralLike(unwrapped) ||
+    ts.isBigIntLiteral(unwrapped) ||
+    unwrapped.kind === ts.SyntaxKind.TrueKeyword ||
+    unwrapped.kind === ts.SyntaxKind.FalseKeyword
+  ) {
+    return true;
+  }
+
+  // `Symbol.for(...)` returns a registered symbol, which is not a valid weak
+  // key. Keep the global-binding check local to this leaf module so a user
+  // variable named `Symbol` does not get hijacked by the native fast path.
+  if (ts.isCallExpression(unwrapped) && ts.isPropertyAccessExpression(unwrapped.expression)) {
+    const callee = unwrapped.expression;
+    if (
+      callee.name.text === "for" &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Symbol" &&
+      !fctx.localMap.has("Symbol") &&
+      !fctx.boxedCaptures?.has("Symbol")
+    ) {
+      const declarations = ctx.oracle.declarationsOf(callee.expression);
+      return (
+        declarations.length === 0 || declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+      );
+    }
+  }
+  return false;
 }
 
 /**
@@ -135,6 +198,16 @@ export function tryCompileNativeWeakMethodCall(
     }
     case "set": {
       compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
+      const rejectsKey = ctx.standalone || ctx.wasi ? isDefinitelyNotWeakKey(ctx, fctx, args[0]) : false;
+      if (rejectsKey) {
+        fctx.body.push({ op: "drop" });
+        // Arguments are evaluated left-to-right before the method body can
+        // reject the key; preserve the second argument's side effects too.
+        compileCollectionElementArg(ctx, fctx, args.length > 1 ? args[1]! : undefined);
+        fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "TypeError: Invalid value used as weak map key");
+        return { kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType;
+      }
       compileCollectionElementArg(ctx, fctx, args.length > 1 ? args[1]! : undefined);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // __map_set returns ref $Map (the collection) — chainable.
@@ -142,6 +215,12 @@ export function tryCompileNativeWeakMethodCall(
     }
     case "add": {
       compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
+      const rejectsValue = ctx.standalone || ctx.wasi ? isDefinitelyNotWeakKey(ctx, fctx, args[0]) : false;
+      if (rejectsValue) {
+        fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "TypeError: Invalid value used as weak set value");
+        return { kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType;
+      }
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // __weakset_add returns ref $Map — chainable.
       return { kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType;
