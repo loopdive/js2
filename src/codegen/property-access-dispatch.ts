@@ -4082,9 +4082,15 @@ export function finalizeStructAndDynamicMemberGet(
   // The receiver already resolves externref (resolveWasmType degrade); this
   // keeps the RESULT representation equally honest.
   const foreignReturnReceiver = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(objType);
-  const accessWasm: ValType = foreignReturnReceiver
-    ? { kind: "externref" }
-    : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+  // #2573 — an empty object pinned to the open `$Object` carrier has a
+  // checker-evolved shape, but its runtime property values remain dynamic.
+  // Keep the read as externref so an absent property is not unboxed through
+  // the widened numeric field type before `=== undefined` / `typeof` sees it.
+  const openObjectReceiver = ts.isIdentifier(expr.expression) && ctx.objectHashConsumerVars.has(expr.expression.text);
+  const accessWasm: ValType =
+    foreignReturnReceiver || openObjectReceiver
+      ? { kind: "externref" }
+      : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
@@ -4205,6 +4211,7 @@ export function finalizeStructAndDynamicMemberGet(
       // representation stays honest.
       const preserveDynamicResultCarrier =
         isEvalAccessorReceiver ||
+        openObjectReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
         foreignReturnReceiver;

@@ -126,3 +126,47 @@ No source change was made without a bounded proof that it preserves explicit
 `null`, prototype lookup, and accessors; the next implementation slice must
 address that widened `length` representation and separately account for the
 standalone method-value prerequisite.
+
+## 2026-08-27 resumed implementation plan — widened `length` first
+
+1. Reduce the single `join/S15.4.4.5_A2_T1.js` row to the exact write/read
+   sequence that changes missing `length` from canonical undefined to numeric
+   zero. Preserve the four direct controls already committed.
+2. Fix only the shared widened-property carrier/read seam proven by that
+   reduction; explicit null must remain null and missing/inherited/accessor
+   values must remain distinct.
+3. Rerun the join row in standalone and host. Only after it passes, reduce the
+   seven push/reverse/unshift rows as the independently documented first-class
+   Array-method-value prerequisite.
+4. Keep PR #5033 draft until all eight exact rows pass with zero non-passes;
+   push each verified checkpoint to the same issue branch.
+
+## 2026-08-27 widened `length` checkpoint
+
+The first resumed slice is now implemented and bounded. Empty-object receivers
+with a direct `length = undefined`/`length = null` write stay on the open
+presence-aware object carrier; the dynamic read result remains `externref`, and
+`typeof obj.length` stays on the runtime read. This keeps missing, explicit
+null, and accessor results distinct while leaving ordinary primitive-only
+widening unchanged.
+
+Focused controls pass: `tests/issue-2573.test.ts` and
+`tests/issue-2573-missing-property.test.ts` report 3/3 tests (4/4 direct
+missing/null/inherited/getter assertions). A reduced `join` sequence passes in
+both host and standalone for the missing/typeof/undefined/null checks; the
+method-value call remains a standalone prerequisite limitation and passes in
+host.
+
+The exact surviving join row was rerun through the maintained official-scope
+runner at the pinned revision with the fixed Node/LLVM/artifact paths and
+`COMPILER_POOL_SIZE=2`:
+
+* Host: 1/1 pass.
+* Standalone: 0/1 pass; it stops at the pre-existing `Array.prototype.join is
+  not yet callable as a value in --target standalone` limitation, before the
+  missing-length assertion.
+
+This is a verified partial checkpoint only. PR #5033 remains draft because the
+standalone join row and the seven independent push/reverse/unshift method-value
+rows are not yet zero-nonpass. The source checkpoint preserves the four direct
+controls and is not an issue closure.
