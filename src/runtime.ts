@@ -153,19 +153,10 @@ function _getNodeRequire(): ((id: string) => any) | undefined {
  */
 const _wasmStructProps = new WeakMap<object, Record<string | symbol, any>>();
 
-// Closed f64 struct fields carry a genuinely-undefined value as the same
-// signaling-NaN payload used by codegen's identity-preserving f64 slots.  A
-// generated f64 getter must keep its numeric ABI, so recover the JS identity
-// only when that value crosses the host-side property boundary.  Compare the
-// raw bits instead of `Number.isNaN`: ordinary NaN is a real number and must
-// remain boxed as such.
-const _UNDEF_F64_BITS = 0x7ff00000deadc0den;
-const _closedStructF64Bits = new DataView(new ArrayBuffer(8));
-function _restoreClosedStructUndefined(value: unknown): unknown {
-  if (typeof value !== "number" || !Number.isNaN(value)) return value;
-  _closedStructF64Bits.setFloat64(0, value, false);
-  return _closedStructF64Bits.getBigUint64(0, false) === _UNDEF_F64_BITS ? undefined : value;
-}
+// Restore the dedicated f64 undefined sentinel at the host property boundary.
+const _f64 = new DataView(new ArrayBuffer(8));
+const _restoreF64Undefined = (v: unknown): unknown =>
+  typeof v === "number" && (_f64.setFloat64(0, v) ?? _f64.getBigUint64(0)) === 0x7ff00000deadc0den ? undefined : v;
 
 // (#2739) Host-recorded [[Prototype]] link for an opaque WasmGC struct. A struct
 // exported to JS has no host-observable [[Prototype]] (`Object.getPrototypeOf`
@@ -1678,10 +1669,7 @@ const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
-// Keep runtime bookkeeping independent of a user-mutated Set.prototype. The
-// Set constructor intentionally reads Set.prototype.add after user code has
-// installed an abrupt getter, so every internal `.add` on a live bookkeeping
-// set must retain the primordial method captured while this module loads.
+// Keep internal Set bookkeeping safe from user-mutation of Set.prototype.add.
 const _nativeSetAdd = Set.prototype.add;
 const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
@@ -5010,7 +4998,7 @@ function _safeGet(
       const fieldExports = callbackState?.getExports();
       if (_structHasOwnFieldName(obj, key, fieldExports)) {
         const getter = fieldExports?.[`__sget_${key}`];
-        if (typeof getter === "function") return _restoreClosedStructUndefined(getter(obj));
+        if (typeof getter === "function") return _restoreF64Undefined(getter(obj));
       }
     }
     // For JS Symbols, check the accessor map (for Symbol-keyed defineProperty accessors)
@@ -11114,7 +11102,7 @@ assert._isSameValue = isSameValue;
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
             const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
-            if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreClosedStructUndefined(fieldValue);
+            if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
             // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
             if (key === "byteLength") {
               const bl = _byteVecByteLength(obj, exports);
@@ -17101,7 +17089,7 @@ assert._isSameValue = isSameValue;
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
           const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
-          if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreClosedStructUndefined(fieldValue);
+          if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
           // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
           if (key === "byteLength") {
             const bl = _byteVecByteLength(obj, exports);
