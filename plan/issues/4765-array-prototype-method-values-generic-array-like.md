@@ -462,7 +462,28 @@ Exactly one row flips — `slice/length-exceeding-integer-limit-proxied-array.js
 `reverse/…-with-proxy.js` do NOT flip, so they fail for reasons beyond the
 materialisation.
 
-**The cost side is unmeasured and is the whole question.** The gate exists
+**Cost side, now measured too.** The gate only affects module-level bindings
+initialised with `new Proxy`, so the affected population is enumerable: 450
+test262 files matching a top-level `var|let|const x = new Proxy(`. Both ways:
+
+| escape gate | pass | fail | skip |
+| --- | --- | --- | --- |
+| on (default) | 179 | 196 | 75 |
+| off | **196** | 179 | 75 |
+
+Diffing the two fail sets: **18 rows fixed, 1 regressed.** The single regression
+is `built-ins/Object/getOwnPropertySymbols/proxy-invariant-not-extensible-absent-string-key.js`
+— almost certainly the invariant #4931 was introduced to protect.
+
+So the real trade is **+18 / −1 inside the Proxy population, plus +1 in ES2016**,
+against one proxy-invariant row. That looks strongly favourable, and it is still
+not mine to flip: the −1 is a genuine conformance regression, the number was
+measured on a subset rather than the full suite, and the gate has been tuned by
+three prior issues. Run the full suite both ways in CI and let #4931's owner
+decide; this at least makes it a decision with numbers on both sides instead of
+one.
+
+**The earlier cost note (now superseded):** The gate exists
 because of #4707/#4754/#4931; turning it off restores #4931's behaviour by the
 code's own account. Nobody should flip the default on the strength of +1 ES2016
 row without running the full suite both ways — that measurement is the actual
