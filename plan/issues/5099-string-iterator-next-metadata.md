@@ -77,7 +77,9 @@ the exact pristine bootstrap query:
   standalone plus a descriptor/metadata regression control in each lane.
 
 Validation on `220ce6c4913ddb10e6af0417dcf4d3aef6470220` plus this patch, and
-repeated after synchronizing with `upstream/main` at `857b343f344d566f3f382168a8538dd8dca26f2c`:
+repeated after synchronizing with `upstream/main` at `857b343f344d566f3f382168a8538dd8dca26f2c`.
+The focused suite and exact rows were rerun after the latest sync at
+`fd36446c46358734900b7ab207e05b0ef8f7bf39`:
 
 - authoritative standalone first run: `2/2` pass; host first run: `2/2` pass;
   each run's positive controls reported both pass and fail outcomes;
@@ -85,8 +87,10 @@ repeated after synchronizing with `upstream/main` at `857b343f344d566f3f382168a8
   repeat: `2/2` pass, `nondeterministic: 0`;
 - focused Vitest regression: `6/6` tests passed with one fork (max two workers).
 
-- synchronized-tree repeat: host `2/2` and standalone `2/2`, each with both
-  structural controls and `nondeterministic: 0`.
+- synchronized-tree repeat at `857b343f34`: host `2/2` and standalone `2/2`,
+  each with both structural controls and `nondeterministic: 0`;
+- latest-tree focused suite: `6/6` tests passed, and exact host/standalone
+  repeats remained `2/2` with both controls and `nondeterministic: 0`.
 
 Draft PR #5103 remains held and outside the merge queue until repository
 quality gates and CI are green; then it can be marked ready and enqueued.
