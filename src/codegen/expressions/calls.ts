@@ -1366,6 +1366,24 @@ export function emitReflectiveNativeProtoClosureCall(
   fctx.body.push({ op: "local.get", index: closureLocal });
 
   const paramTypes = closureInfo.paramTypes; // excludes the self param
+  // Receiver-aware native-prototype variadic methods keep the receiver in the
+  // first user slot and carry the *actual* call-site arguments in one typed
+  // externref vector.  Treat that vector as an ABI boundary here rather than
+  // feeding the first user argument to the vector parameter positionally.  A
+  // positional marshal would attempt to cast (for example) `-1` to
+  // `$vec_externref`, which either traps or silently takes the refusal path;
+  // it also cannot represent a five-argument `push`/`unshift` call because
+  // their JavaScript `.length` is only one.
+  const nativeProtoVariadic = kind === "method" && closureInfo.nativeProtoVariadic === true;
+  let nativeProtoVariadicVec: { vecTypeIdx: number; arrTypeIdx: number } | undefined;
+  if (nativeProtoVariadic) {
+    const vecParam = paramTypes[1];
+    if (!vecParam || (vecParam.kind !== "ref" && vecParam.kind !== "ref_null")) return undefined;
+    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecParam.typeIdx);
+    const arrDef = ctx.mod.types[arrTypeIdx];
+    if (arrDef?.kind !== "array" || arrDef.element.kind !== "externref") return undefined;
+    nativeProtoVariadicVec = { vecTypeIdx: vecParam.typeIdx, arrTypeIdx };
+  }
   // ArrayBufferCopyAndDetach must distinguish an omitted/undefined newLength
   // from explicit null. This native-proto call surface normally pads optional
   // externrefs with null, so use the canonical standalone undefined singleton
@@ -1375,6 +1393,25 @@ export function emitReflectiveNativeProtoClosureCall(
     getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
+    if (nativeProtoVariadic && i === 1) {
+      // `userArgs[0]` is the receiver/thisValue.  Every remaining expression
+      // is a real JavaScript argument and must be packed without padding.
+      // `array.new_fixed` accepts zero elements, so an omitted argument list
+      // still reaches the body as an empty vector.
+      const variadicArgs = userArgs.slice(1);
+      for (const arg of variadicArgs) {
+        const aType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+        if (aType === null) fctx.body.push({ op: "ref.null.extern" });
+        else if (aType.kind !== "externref") coerceType(ctx, fctx, aType, { kind: "externref" });
+      }
+      fctx.body.push({
+        op: "array.new_fixed",
+        typeIdx: nativeProtoVariadicVec!.arrTypeIdx,
+        length: variadicArgs.length,
+      });
+      fctx.body.push({ op: "struct.new", typeIdx: nativeProtoVariadicVec!.vecTypeIdx });
+      continue;
+    }
     if (i < userArgs.length) {
       const aType = compileExpression(ctx, fctx, userArgs[i]!, pType);
       if (aType !== null && !valTypesMatch(aType, pType)) {
