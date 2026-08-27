@@ -6,7 +6,7 @@
  * block/loop/if/try sub-bodies. This module provides a single implementation
  * so callers don't each duplicate the recursion logic.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, WasmModule } from "../ir/types.js";
 
 /**
  * Walk all instructions in `instrs`, calling `visitor` on each one.
@@ -36,6 +36,16 @@ export function walkInstructions(instrs: Instr[], visitor: (instr: Instr) => voi
       stack.push({ arr: children[j]!, i: 0 });
     }
   }
+}
+
+/** Struct types that have a concrete allocation site in the completed module. */
+export function allocatedStructTypeIndices(mod: WasmModule): ReadonlySet<number> {
+  const out = new Set<number>();
+  for (const body of [...mod.functions.map((fn) => fn.body), ...mod.globals.map((global) => global.init)])
+    walkInstructions(body, (instr) => {
+      if (instr.op === "struct.new" && typeof instr.typeIdx === "number") out.add(instr.typeIdx);
+    });
+  return out;
 }
 
 /**

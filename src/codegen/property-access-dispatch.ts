@@ -60,7 +60,7 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
-import { nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
@@ -100,6 +100,7 @@ import {
   emitTaCtorBytesPerElement,
   emitTaCtorValue,
   emitTaViewAccessor,
+  emitTaViewDynamicByteOffset,
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
@@ -108,6 +109,7 @@ import {
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
 import {
+  isTupleType,
   addUnionImports,
   resolveWasmType,
   TYPED_ARRAY_NAMES,
@@ -256,6 +258,18 @@ export function tryDynamicReceiverRuntimeDispatchReads(
     const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
     if (isDynamicReceiver) {
       const r = emitTaViewDynamicByteLength(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
+      if (r) return r;
+    }
+  }
+
+  // (#4761) `.byteOffset` on a dynamic constructor/view receiver. The direct
+  // property spelling does not go through the standalone string-key MOP, so
+  // use the same runtime `$__ta_dyn_view` test as `.byteLength` and apply the
+  // detached-buffer zero rule at the owning view seam.
+  if (propName === "byteOffset" && noJsHost(ctx) && ctx.taDynViewTypeIdx >= 0) {
+    const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
+    if (isDynamicReceiver) {
+      const r = emitTaViewDynamicByteOffset(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
       if (r) return r;
     }
   }
@@ -2232,6 +2246,14 @@ function emitClassStaticMemberRead(
       const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
       return retType ?? { kind: "externref" };
     }
+    // A setter-only accessor still owns the property, but reading it returns
+    // the canonical `undefined` value (§10.4.2 [[Get]]). Without this arm the
+    // class-object carrier falls through to its constructor-name/length
+    // metadata, so `static set name(_) {}` incorrectly reads "Class".
+    if (ctx.staticAccessorSet.has(accessorKey)) {
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+      return { kind: "externref" };
+    }
   }
   return PA_FALLTHROUGH;
 }
@@ -2545,6 +2567,43 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
     fctx.body.push({ op: "drop" }, { op: "i32.const", value: 0 });
   }
   if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+/**
+ * (#3566) Emit `.length` for a fixed tuple in the host-free targets.
+ *
+ * Array.entries() yields an `$ObjVec`, but a tuple-typed function parameter
+ * crosses the call boundary as a tuple struct. Its fixed arity is therefore
+ * available statically; sending that struct through `__extern_get("length")`
+ * loses the tuple shape and unboxes `undefined` as NaN. Keep the receiver
+ * evaluation (and any carrier conversion) exactly once. A dynamic externref
+ * reaching this arm still uses the native `$ObjVec`/vec length reader.
+ */
+function emitStandaloneTupleLength(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ts.Type,
+): PADispatchResult {
+  if (!(ctx.standalone || ctx.wasi) || !isTupleType(objType)) return PA_FALLTHROUGH;
+
+  const tupleTarget = ((objType as ts.TypeReference).target ?? objType) as ts.TupleType;
+  const tupleArity = tupleTarget.fixedLength;
+  // Optional/rest tuples have a runtime-dependent length. Restrict this seam
+  // to the fixed [T0, T1, ...] shape used by entries() pairs.
+  if (!Number.isFinite(tupleArity) || tupleTarget.minLength !== tupleArity) {
+    return PA_FALLTHROUGH;
+  }
+
+  const exprResult = compileExpression(ctx, fctx, expr.expression);
+  if (!exprResult) return null;
+  if (exprResult.kind === "externref") return emitStandaloneAnyLength(ctx, fctx);
+
+  // The statically typed tuple value was only needed to prove the tuple shape;
+  // discard it before producing the scalar length result.
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: tupleArity });
   return ctx.fast ? { kind: "i32" } : { kind: "f64" };
 }
 
@@ -2926,6 +2985,9 @@ export function tryLengthAndNameReads(
 
   // Handle array.length (vec struct: field 0 is the logical length)
   if (propName === "length") {
+    const tupleLength = emitStandaloneTupleLength(ctx, fctx, expr, objType);
+    if (tupleLength !== PA_FALLTHROUGH) return tupleLength;
+
     // (#1742) `this.length` where `this` is the host-supplied `__current_this`
     // externref but may carry a compiled vec at runtime (a closure body dispatched
     // via `__call_fn_method_N`). The override `this` is typically `any` → externref,

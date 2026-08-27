@@ -253,8 +253,8 @@ function ensureRuntimeEvalGlobalLexicalCell(
   return { globalIdx, refCellTypeIdx };
 }
 
-function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
-  return {
+function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string): FunctionContext {
+  const fctx: FunctionContext = {
     name,
     params: [],
     locals: [],
@@ -267,6 +267,14 @@ function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
     labelMap: new Map(),
     savedBodies: [],
   };
+  // Attach the reserved body before populating it. Global-string imports may
+  // be registered by later names while this helper is still being built;
+  // fixupModuleGlobalIndices walks module function bodies, so keeping this
+  // array reachable makes earlier global.get/set instructions shift with them.
+  const funcIdx = ctx.funcMap.get(name);
+  const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+  if (func) func.body = fctx.body;
+  return fctx;
 }
 
 function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
@@ -534,9 +542,9 @@ function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: Functio
 function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   reserveRuntimeEvalGlobalBindingSync(ctx);
   if (ctx.runtimeEvalGlobalSyncFilled) return;
-  const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+  const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
   emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx);
-  const pullFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PULL_GLOBALS);
+  const pullFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PULL_GLOBALS);
   emitRuntimeEvalGlobalBindingPullBody(ctx, pullFctx);
   const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
   const pullFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS)!);
@@ -571,7 +579,7 @@ export function emitHostEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Functio
   if (ctx.standalone || ctx.wasi) return;
   reserveRuntimeEvalGlobalBindingSync(ctx);
   if (!ctx.runtimeEvalGlobalSyncFilled) {
-    const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+    const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
     emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx, false);
     const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
     if (pushFn) {

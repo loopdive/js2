@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4206,
+      "passCount": 4207,
       "totalCount": 4581
     },
     {
@@ -162,7 +162,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 91,
+      "passCount": 101,
       "totalCount": 165
     },
     {
@@ -179,7 +179,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2087,
+      "passCount": 2091,
       "totalCount": 3161
     },
     {
@@ -197,7 +197,7 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1127,
+      "passCount": 1128,
       "totalCount": 1131
     },
     {
@@ -239,7 +239,7 @@
     {
       "name": "for-of",
       "testCategories": ["language/statements/for-of"],
-      "passCount": 2,
+      "passCount": 3,
       "totalCount": 4
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1848,
+      "passCount": 1852,
       "totalCount": 2486
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 880,
+      "passCount": 881,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 528,
+      "passCount": 530,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 623,
+      "passCount": 632,
       "totalCount": 1072
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 301,
+      "passCount": 304,
       "totalCount": 1048
     },
     {
@@ -420,7 +420,7 @@
     {
       "name": "Array.prototype.includes",
       "testCategories": ["built-ins/Array/prototype/includes"],
-      "passCount": 16,
+      "passCount": 19,
       "totalCount": 29
     },
     {
