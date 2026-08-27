@@ -101,6 +101,35 @@ No full-corpus census is part of this issue.
 
 ## Evidence and handoff
 
-Implementation and validation evidence will be appended here before the PR is
-handed off. Until then this issue intentionally records only the measured
-baseline and bounded plan above.
+Implementation is in `src/codegen/object-runtime.ts`. The standalone native
+`__to_primitive` helper now probes the well-known Symbol carrier through
+`__obj_find`, reads only own data entries, invokes callable values through the
+existing receiver-aware `__apply_closure` bridge with the "number" hint, and
+throws for non-callable, object, and Symbol results. Accessor entries continue
+through the prior ordinary path so the excluded getter-abrupt control remains
+unchanged; host-mode codegen is not touched.
+
+Final validation ran after merging and retaining upstream/main at
+`698ecb8f1661454037eaed810cb2a6770f6acf7f` (merge commit
+`6d407b9c67`) and after pushing implementation commit `8f1d2a06f7`:
+
+- The exact four-row authoritative baseline was host **4/4 pass** and
+  standalone **0/4 pass, 4/4 assertion_fail**. The synchronized final tree is
+  host **4/4 pass** and standalone **4/4 pass**.
+- Two complete repeats produced the same result for every approved row (16/16
+  host/standalone executions passed). The diagnostic
+  `toprimitive-get-abrupt.js` control remained **fail** in both modes on both
+  repeats, as required by its host-red baseline and this lane's bounded scope.
+- With `JS2WASM_FUSED_TONUMBER=0` and `JS2WASM_SMI_FASTPATH=0`, the standalone
+  four-row cohort remained **4/4 pass**.
+- Focused `tests/issue-5102-isnan-toprimitive.test.ts`: **10/10 passed**,
+  covering the exact host and standalone rows, numeric/string/nullish/
+  ordinary-object controls, a host-free standalone module, and the excluded
+  getter control.
+- The normal pre-push gates passed on `8f1d2a06f7`: typecheck, lint, Prettier,
+  oracle/coercion-site ratchets, numeric-local IR parity (18/18), and issue
+  integrity, with `TEST262_WORKERS=2`. No full 11,704-row census was run.
+
+The plan checkpoint is `df96e0d86b`; implementation checkpoint is
+`8f1d2a06f7`. The upstream PR handoff URL will be appended after opening the
+single compliant PR; no GitHub issue is created or linked.
