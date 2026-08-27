@@ -44,6 +44,8 @@ async function compileBenchString(options: { optimize?: 4 } = {}): Promise<Compi
     experimentalIR: true,
     target: "standalone",
     trackIrOutcomes: true,
+    emitWat: true,
+    emitWatOnlyFunctions: [TARGET, "__ir_string_repeat_native", "__str_repeat"],
     ...options,
   });
 }
@@ -54,6 +56,22 @@ function wasmSurface(binary: Uint8Array) {
     imports: WebAssembly.Module.imports(module),
     exports: WebAssembly.Module.exports(module),
   };
+}
+
+function watFunction(wat: string, name: string): string {
+  const sameLine = wat.indexOf(`(func $${name} `);
+  const start = sameLine >= 0 ? sameLine : wat.indexOf(`(func $${name}\n`);
+  if (start < 0) throw new Error(`missing WAT function ${name}`);
+  let depth = 0;
+  for (let index = start; index < wat.length; index++) {
+    if (wat[index] === "(") depth++;
+    else if (wat[index] === ")" && --depth === 0) return wat.slice(start, index + 1);
+  }
+  throw new Error(`unterminated WAT function ${name}`);
+}
+
+function watOpCount(body: string, op: string): number {
+  return body.split("\n").filter((line) => line.trimStart().startsWith(op)).length;
 }
 
 async function benchStringRuntime(result: CompileResult): Promise<number> {
@@ -137,6 +155,16 @@ describe("#3518 bench_string Prepared C2 cutover", () => {
     expect(prepared.imports).toEqual(direct.imports);
     expect(new Set(prepared.stringPool)).toEqual(new Set(direct.stringPool));
     expect(wasmSurface(prepared.binary)).toEqual(wasmSurface(direct.binary));
+    expect(prepared.binary.length).toBeLessThanOrEqual(direct.binary.length);
+    expect(prepared.wat).not.toContain("(func $__ir_string_repeat_native");
+    expect(prepared.wat).toContain("(func $__str_repeat");
+    const preparedTarget = watFunction(prepared.wat, TARGET);
+    const directTarget = watFunction(direct.wat, TARGET);
+    expect(preparedTarget).toContain("i32.trunc_f64_s");
+    expect(preparedTarget).not.toContain("i32.trunc_sat_f64_s");
+    expect(watOpCount(preparedTarget, "call ")).toBeLessThanOrEqual(watOpCount(directTarget, "call "));
+    expect(watOpCount(preparedTarget, "array.new")).toBeLessThanOrEqual(watOpCount(directTarget, "array.new"));
+    expect(watOpCount(preparedTarget, "struct.new")).toBeLessThanOrEqual(watOpCount(directTarget, "struct.new"));
     await expect(benchStringRuntime(prepared)).resolves.toBe(5000);
     await expect(benchStringRuntime(direct)).resolves.toBe(5000);
 
@@ -150,6 +178,7 @@ describe("#3518 bench_string Prepared C2 cutover", () => {
     const optimizedDirect = await compileBenchString({ optimize: 4 });
     expectSuccess(optimizedDirect);
     expect(wasmSurface(optimizedPrepared.binary)).toEqual(wasmSurface(optimizedDirect.binary));
+    expect(optimizedPrepared.binary.length).toBeLessThanOrEqual(optimizedDirect.binary.length);
     await expect(benchStringRuntime(optimizedPrepared)).resolves.toBe(5000);
     await expect(benchStringRuntime(optimizedDirect)).resolves.toBe(5000);
 

@@ -287,7 +287,12 @@ export interface IrLowerResolver {
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
   emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
   /** Full-semantics `(string, f64) -> string` repeat provider call. */
-  emitStringRepeat?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
+  emitStringRepeat?(
+    alloc?: AllocSiteId,
+    inputEncoding?: IrStringEncoding,
+    provider?: IrFuncRef,
+    countedStringAppendTripCount?: number,
+  ): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
   emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
   /**
@@ -2121,7 +2126,13 @@ export function lowerIrFunctionBody<S, Slot>(
       case "string.repeat": {
         emitValue(instr.value, out);
         emitValue(instr.count, out);
-        emitter.emitStringRepeat(instr.alloc, instr.encodingEvidence, out, instr.provider);
+        emitter.emitStringRepeat(
+          instr.alloc,
+          instr.encodingEvidence,
+          out,
+          instr.provider,
+          instr.countedStringAppendTripCount,
+        );
         return;
       }
       case "string.eq": {

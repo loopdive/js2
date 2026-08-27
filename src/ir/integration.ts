@@ -81,7 +81,11 @@ import {
 } from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
 import { ensureIrNativePromiseDelayProvider } from "../codegen/ir-native-promise-delay.js";
 import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-runtime.js";
-import { ensureIrNativeStringRepeatProvider } from "../codegen/ir-native-string-repeat.js";
+import {
+  ensureIrNativeCountedStringRepeatProvider,
+  ensureIrNativeStringRepeatProvider,
+  hasExactIrNativeCountedStringRepeatProviderAbi,
+} from "../codegen/ir-native-string-repeat.js";
 import {
   ensureIrHostStringRepeatProvider,
   hasExactIrStringRepeatProviderAbi,
@@ -397,6 +401,7 @@ import {
   IR_STRING_EQUALS_FN,
   IR_STRING_ITERATOR_CHAR_AT_FN,
   IR_STRING_LITERAL_MATERIALIZE_FN,
+  IR_STRING_REPEAT_COUNTED_NATIVE_FN,
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 export {
@@ -5068,6 +5073,15 @@ function resolveAndObserveCallableProvider(
       const field = symbol === IR_STRING_EQUALS_FN ? "equals" : "concat";
       index = exactCallableImportIndex(ctx, "wasm:js-string", field);
     }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
+    index = ensureIrNativeCountedStringRepeatProvider(ctx);
+    if (index !== undefined && index !== null && !hasExactIrNativeCountedStringRepeatProviderAbi(ctx, index)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared counted-native string.repeat provider has a malformed physical ABI",
+      );
+    }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_REPEAT_FN) {
     index = ctx.nativeStrings ? ensureIrNativeStringRepeatProvider(ctx) : ensureIrHostStringRepeatProvider(ctx);
     if (index !== undefined && index !== null && !hasExactIrStringRepeatProviderAbi(ctx, index)) {
@@ -5437,9 +5451,15 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string concat not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringRepeat(_alloc, _inputEncoding, provider): readonly Instr[] {
+    emitStringRepeat(_alloc, _inputEncoding, provider, countedStringAppendTripCount): readonly Instr[] {
       if (!provider) throw new Error("ir/integration: string.repeat has no prepared provider");
       const call = { op: "call" as const, funcIdx: resolver.resolveFunc(provider) };
+      if (provider.binding.kind === "intrinsic" && provider.binding.symbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
+        if (!ctx.nativeStrings || countedStringAppendTripCount === undefined) {
+          throw new Error("ir/integration: counted-native string.repeat has no authenticated native proof");
+        }
+        return [{ op: "i32.trunc_f64_s" }, call];
+      }
       return ctx.nativeStrings ? [call, { op: "ref.as_non_null" }] : [call];
     },
     emitStringEquals(provider): readonly Instr[] {
@@ -5767,13 +5787,20 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   let usesStringOp = false;
   let usesStringLen = false;
   let usesStringCharAt = false;
-  let usesStringRepeat = false;
+  let usesGenericStringRepeat = false;
+  let usesNativeCountedStringRepeat = false;
   const visit = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
     if (instr.kind === "string.len") usesStringLen = true;
     if (instr.kind === "string.char_at") usesStringCharAt = true;
-    if (instr.kind === "string.repeat") usesStringRepeat = true;
+    if (instr.kind === "string.repeat") {
+      if (ctx.nativeStrings && instr.countedStringAppendTripCount !== undefined) {
+        usesNativeCountedStringRepeat = true;
+      } else {
+        usesGenericStringRepeat = true;
+      }
+    }
     // (#3156) The host guarded-charCodeAt helper wraps the `wasm:js-string`
     // charCodeAt/length builtins — its materialization (resolveFunc) reads
     // `ctx.jsStringImports`, so `addStringImports` must have run BEFORE
@@ -5836,13 +5863,19 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
         throw new Error("ir/integration: prepared string.char_at has no exact env.string_charAt import");
       }
     }
-    if (usesStringRepeat) {
+    if (usesGenericStringRepeat) {
       ensureIrHostStringRepeatProvider(ctx);
     }
-  } else if (usesStringRepeat) {
+  } else if (usesGenericStringRepeat) {
     const index = ensureIrNativeStringRepeatProvider(ctx);
     if (!hasExactIrStringRepeatProviderAbi(ctx, index)) {
       throw new Error("ir/integration: prepared native string.repeat provider has a malformed ABI");
+    }
+  }
+  if (usesNativeCountedStringRepeat) {
+    const index = ensureIrNativeCountedStringRepeatProvider(ctx);
+    if (!hasExactIrNativeCountedStringRepeatProviderAbi(ctx, index)) {
+      throw new Error("ir/integration: prepared counted-native string.repeat provider has a malformed ABI");
     }
   }
   // Native strings: nothing to pre-register here. The native-string struct
@@ -5917,6 +5950,12 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
       storageForConst,
       materializerForConst,
       providerForLength: () => lengthProvider,
+      providerForRepeat: (instr) =>
+        irIntrinsicFuncRef(
+          ctx.nativeStrings && instr.countedStringAppendTripCount !== undefined
+            ? IR_STRING_REPEAT_COUNTED_NATIVE_FN
+            : IR_STRING_REPEAT_FN,
+        ),
     });
     return fn === entry.fn ? entry : { ...entry, fn };
   });

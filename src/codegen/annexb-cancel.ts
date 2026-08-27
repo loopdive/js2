@@ -38,6 +38,7 @@
  * (`*-skip-param`, `*-skip-early-err` without a suffix).
  */
 import ts from "typescript";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 
 export interface AnnexBCancelSite {
   /** The cancelled function-declaration name. */
@@ -410,7 +411,26 @@ export function collectAnnexBCancelSites(sf: ts.SourceFile | undefined): AnnexBC
         // `hasInterveningLexicalBinder` walks only the ancestor chain and is
         // almost always false, so it gates the subtree-walking `scopeBindsName`.
         if (scope) {
-          if (!hasInterveningLexicalBinder(node.parent, name, scope)) {
+          // A FunctionDeclaration directly in a switch CaseBlock is a lexical
+          // declaration in strict code, not an Annex B web-compat var binding.
+          // The CaseBlock environment is active only while the switch runs, so
+          // reads before/after the switch must remain unresolved.  The ordinary
+          // hoist walk still needs to compile the declaration for in-switch
+          // references; record only the position-sensitive unbound read rule
+          // here.  Annex B's relaxed treatment is explicitly non-strict
+          // (ECMA-262 B.3.2.5/B.3.2.6), so preserve the existing eligible path
+          // for the sloppy primary variant.
+          const strictSwitchFunction =
+            isStrictContext(node) && (ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent));
+          if (strictSwitchFunction && !scopeBindsName(scope, name)) {
+            sites.push({
+              name,
+              scopeStart: scope.getStart(sf),
+              scopeEnd: scope.getEnd(),
+              blockStart: range.getStart(sf),
+              blockEnd: range.getEnd(),
+            });
+          } else if (!strictSwitchFunction && !hasInterveningLexicalBinder(node.parent, name, scope)) {
             eligible.add(`${scope.getStart(sf)}:${name}`);
           } else if (!scopeBindsName(scope, name)) {
             sites.push({

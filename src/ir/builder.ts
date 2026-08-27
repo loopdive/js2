@@ -380,6 +380,7 @@ export class IrFunctionBuilder {
     count: IrValueId,
     encodingEvidence: IrStringEncoding,
     countedStringAppendSite?: IrCountedStringAppendSiteId,
+    countedStringAppendTripCount?: number,
   ): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "string" };
@@ -394,6 +395,7 @@ export class IrFunctionBuilder {
       alloc,
       encodingEvidence,
       ...(countedStringAppendSite === undefined ? {} : { countedStringAppendSite }),
+      ...(countedStringAppendTripCount === undefined ? {} : { countedStringAppendTripCount }),
     });
     return result;
   }

@@ -86,7 +86,12 @@ import {
   irUnitFuncRef,
   sameIrCallableBinding,
 } from "./callable-bindings.js";
-import { IR_NUMBER_TO_FIXED_FN, IR_NUMBER_TO_STRING_FN, IR_STRING_REPEAT_FN } from "./string-runtime.js";
+import {
+  IR_NUMBER_TO_FIXED_FN,
+  IR_NUMBER_TO_STRING_FN,
+  IR_STRING_REPEAT_FN,
+  irCountedStringRepeatFitsNativeKernel,
+} from "./string-runtime.js";
 import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
@@ -9709,7 +9714,11 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
 
   if (plan.tripCount > 0) {
     const lhs = cx.builder.emitSlotReadAs(binding.slotIndex, logicalType);
-    const fragment = lowerExpr(plan.fragmentExpression, cx, logicalType);
+    const useCountedNativeRepeat = irCountedStringRepeatFitsNativeKernel(plan.tripCount, plan.fragmentValue.length);
+    const fragment =
+      plan.tripCount >= 2 && useCountedNativeRepeat
+        ? cx.builder.emitStringConst(plan.fragmentValue)
+        : lowerExpr(plan.fragmentExpression, cx, logicalType);
     const fragmentType = cx.builder.typeOf(fragment);
     if (fragmentType.kind !== "string") {
       throw new IrInvariantError(
@@ -9727,6 +9736,7 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
             cx.builder.emitConst({ kind: "f64", value: plan.tripCount }, irVal({ kind: "f64" })),
             fragmentEncoding,
             loweringPlan.siteId,
+            useCountedNativeRepeat ? plan.tripCount : undefined,
           );
     const proof = proveTypedStringAppend(
       typedValueEvidence(plan.accumulatorRead, logicalType, binding.stringEncoding ?? "wtf16", cx, logicalType),

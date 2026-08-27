@@ -23,6 +23,23 @@ export const IR_STRING_CONCAT_FN = "__ir_string_concat";
 export const IR_STRING_CONCAT_OWNED_FN = "__ir_string_concat_owned";
 /** Full `String.prototype.repeat` semantics over the backend's string carrier. */
 export const IR_STRING_REPEAT_FN = "__ir_string_repeat";
+/** Native provider for a checker-authenticated exact i32 repeat count. */
+export const IR_STRING_REPEAT_COUNTED_NATIVE_FN = "__ir_string_repeat_counted_native";
+/** Largest exact counted-repeat proof accepted by the native i32 kernel. */
+export const IR_COUNTED_STRING_REPEAT_I32_MAX = 0x7fff_ffff;
+/** Largest non-empty result whose rope-doubling intermediates stay signed-i32-safe. */
+export const IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS = 0x40000000;
+
+export function irCountedStringRepeatFitsNativeKernel(tripCount: number, fragmentCodeUnits: number): boolean {
+  return (
+    Number.isSafeInteger(tripCount) &&
+    tripCount >= 2 &&
+    tripCount <= IR_COUNTED_STRING_REPEAT_I32_MAX &&
+    Number.isSafeInteger(fragmentCodeUnits) &&
+    fragmentCodeUnits >= 0 &&
+    BigInt(tripCount) * BigInt(fragmentCodeUnits) <= BigInt(IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS)
+  );
+}
 /** Semantic prefix for an exact host-provided fixed-arity concat operation. */
 export const IR_STRING_CONCAT_MANY_PREFIX = "string.concat$arity";
 export const IR_STRING_EQUALS_FN = "__ir_string_equals";

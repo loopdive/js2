@@ -10,6 +10,7 @@ import {
   type IrInstr,
   type IrInstrStringConst,
   type IrInstrStringLen,
+  type IrInstrStringRepeat,
   type IrStringLengthProvider,
 } from "./nodes.js";
 import {
@@ -26,6 +27,7 @@ export interface IrStringSupportProviders {
   readonly storageForConst: (instr: IrInstrStringConst) => IrGlobalRef | undefined;
   readonly materializerForConst?: (instr: IrInstrStringConst) => IrFuncRef | undefined;
   readonly providerForLength: (instr: IrInstrStringLen) => IrStringLengthProvider | undefined;
+  readonly providerForRepeat?: (instr: IrInstrStringRepeat) => IrFuncRef | undefined;
 }
 
 function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
@@ -52,12 +54,15 @@ function sameLengthProvider(left: IrStringLengthProvider, right: IrStringLengthP
 }
 
 /** Semantic callable selected from final string IR, before backend binding. */
-export function irStringCallableProviderRef(instr: IrInstr): IrFuncRef | undefined {
+export function irStringCallableProviderRef(
+  instr: IrInstr,
+  providerForRepeat?: (instr: IrInstrStringRepeat) => IrFuncRef | undefined,
+): IrFuncRef | undefined {
   switch (instr.kind) {
     case "string.concat":
       return irIntrinsicFuncRef(instr.concatMode === "owned-append" ? IR_STRING_CONCAT_OWNED_FN : IR_STRING_CONCAT_FN);
     case "string.repeat":
-      return irIntrinsicFuncRef(IR_STRING_REPEAT_FN);
+      return providerForRepeat?.(instr) ?? irIntrinsicFuncRef(IR_STRING_REPEAT_FN);
     case "string.eq":
       return irIntrinsicFuncRef(IR_STRING_EQUALS_FN);
     case "string.char_at":
@@ -132,7 +137,7 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
       nested.kind === "string.char_code_at" ||
       nested.kind === "forof.string"
     ) {
-      const provider = irStringCallableProviderRef(nested)!;
+      const provider = irStringCallableProviderRef(nested, providers.providerForRepeat)!;
       if (nested.provider) {
         if (!sameIrCallableBinding(nested.provider.binding, provider.binding)) {
           throw new Error(`IR ${nested.kind} already carries a different prepared provider binding`);
