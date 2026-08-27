@@ -8,7 +8,8 @@
 // the demote-to-warning fallback (and becomes a hard error under #2138's
 // IR-first flag; #2945 is the filed instance). Slice 1 single-sources the
 // OPERATOR family in `src/ir/capability.ts`, consumed by both the selector
-// and the builder:
+// and the builder. #4787 now gives `**` a bounded exact numeric exception;
+// its broader legacy surface remains outside the claim:
 //
 //   - "claim"          selector accepts, builder lowers (shape-admitted operands)
 //   - "claim-partial"  selector accepts, builder lowers a documented subset
@@ -17,9 +18,10 @@
 //                      arriving post-claim is a compiler bug, not a fallback)
 //
 // Contract under test:
-//   1. Deferred ops (`%`, `**`, `in`, `instanceof`) are selector-REJECTED —
-//      zero post-claim errors (they used to be claim-then-build-throw), and
-//      programs using them still compile and run correctly via legacy.
+//   1. Deferred ops (`in`, `instanceof`) are selector-REJECTED. `**` is now a
+//      bounded #4787 claim, but this bare selector intentionally lacks the
+//      prepared checker/provider proof and therefore still rejects it. All
+//      rejected programs have zero post-claim errors and run via legacy.
 //   2. Claimed ops are selector-accepted AND IR-compile without any
 //      post-claim error — the table's claim is backed by a real lowering
 //      (this is the "one table row, not two predicates" acceptance).
@@ -51,17 +53,18 @@ function claims(source: string, fnName: string): boolean {
 
 describe("#2135 capability table — operator family single source", () => {
   it("deferred ops are selector-rejected (no more shape-only over-claim)", () => {
-    // (#2945 flipped `%` from defer → claim; `**` / `in` / `~` remain defer.)
+    // (#2945 flipped `%` from defer → claim; #4787 claims only the exact
+    // prepared numeric `**` subset, so this unconfigured selector rejects it.)
     expect(claims(`export function p(a: number, b: number): number { return a ** b; }`, "p")).toBe(false);
     expect(claims(`export function tld(o: any): boolean { return "x" in o; }`, "tld")).toBe(false);
-    expect(claims(`export function bnot(a: number): number { return ~a; }`, "bnot")).toBe(false);
+    expect(claims(`export function bnot(a: number): number { return ~a; }`, "bnot")).toBe(true);
   });
 
   it("deferred ops produce ZERO post-claim errors and run correctly via legacy", async () => {
     // Pre-#2135 these were claim-then-build-throw ("operator '**' not in
     // slice 11") — counted on irPostClaimErrors and, under JS2WASM_IR_FIRST,
-    // a hard compile error (the #2945 class). Now the selector never claims
-    // them. (`%` moved to the claimed side — see tests/issue-2945.test.ts.)
+    // a hard compile error (the #2945 class). The unconfigured control keeps
+    // `**` on legacy; the prepared exact claim is covered by #4787.
     const src = `export function p(a: number, b: number): number { return a ** b; }`;
     const r = await compile(src, { fileName: "issue-2135.ts" });
     expect(r.success).toBe(true);
@@ -108,7 +111,7 @@ describe("#2135 capability table — operator family single source", () => {
 
   it("table sanity: the retired over-claims are exactly defer; the accept set is unchanged otherwise", () => {
     expect(binaryOpCapability(ts.SyntaxKind.PercentToken)).toBe("claim"); // #2945 — __fmod lowering landed
-    expect(binaryOpCapability(ts.SyntaxKind.AsteriskAsteriskToken)).toBe("defer");
+    expect(binaryOpCapability(ts.SyntaxKind.AsteriskAsteriskToken)).toBe("claim"); // #4787 exact numeric subset
     expect(binaryOpCapability(ts.SyntaxKind.InKeyword)).toBe("defer");
     expect(binaryOpCapability(ts.SyntaxKind.InstanceOfKeyword)).toBe("defer");
     expect(binaryOpCapability(ts.SyntaxKind.QuestionQuestionToken)).toBe("claim-partial");
@@ -116,6 +119,6 @@ describe("#2135 capability table — operator family single source", () => {
     expect(binaryOpCapability(ts.SyntaxKind.MinusToken)).toBe("claim");
     expect(binaryOpCapability(ts.SyntaxKind.CommaToken)).toBe("defer"); // default: unknown → defer
     expect(prefixOpCapability(ts.SyntaxKind.ExclamationToken)).toBe("claim");
-    expect(prefixOpCapability(ts.SyntaxKind.TildeToken)).toBe("defer");
+    expect(prefixOpCapability(ts.SyntaxKind.TildeToken)).toBe("claim-partial");
   });
 });
