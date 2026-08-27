@@ -800,3 +800,13 @@ The implementation and test evidence are on branch
 hold while current-main integration, required CI, and mergeability are
 checked. The queue entry remains null until those gates are green; only then
 should the hold be removed and the PR marked ready.
+
+Current-main integration was completed at merge checkpoint `daea8728a` after
+upstream main advanced through PRs #5048, #5058, and #5059. The exact rerun on
+that checkpoint remained host **40/40 pass** and standalone **40/40 pass**;
+the refreshed artifacts are `.tmp/4768-host-current-main.jsonl` (SHA-256
+`fd0979b6de3197a235de5409f148c2a50235be248f694286b5f60eceae276f0a`) and
+`.tmp/4768-standalone-current-main.jsonl` (SHA-256
+`f80a8b8bfd00ebca6eaba93f04cbc229caf712a4cb8ab046453fdc5f69a99e43`).
+Focused #4768 coverage also remained **12/12 pass**. The remaining landing
+gates are the normal push hooks and refreshed required upstream CI.
