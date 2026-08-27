@@ -569,7 +569,6 @@ not rerun; that criterion intentionally remains unchecked. The exact 20-row
 scope, focused ordinary-call semantics, and same-base GeneratorPrototype
 regression proof are complete. Keep PR #5044 draft until current-main
 integration, required CI, and mergeability are verified by the handoff owner.
-
 ## Notes
 
 Infinite generators are currently unusable as arguments in compiled code — the

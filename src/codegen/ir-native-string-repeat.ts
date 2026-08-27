@@ -7,7 +7,7 @@
  * Typed IR deliberately keeps the JS count as f64, so this adapter owns the
  * observable ToIntegerOrInfinity validation before narrowing and delegation.
  */
-import { IR_STRING_REPEAT_FN } from "../ir/string-runtime.js";
+import { IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS, IR_STRING_REPEAT_FN } from "../ir/string-runtime.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import {
@@ -22,12 +22,13 @@ import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 
 export const IR_NATIVE_STRING_REPEAT_PROVIDER_FN = `${IR_STRING_REPEAT_FN}_native`;
+export const IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE = "RangeError: Invalid count value";
 /**
  * Keeps the rope-doubling kernel's intermediate signed-i32 length below 2^31.
  * A provider may reject a non-empty result at an implementation-size limit;
  * it must never let integer narrowing change the requested count.
  */
-export const IR_NATIVE_STRING_REPEAT_MAX_RESULT_CODE_UNITS = 0x40000000;
+export const IR_NATIVE_STRING_REPEAT_MAX_RESULT_CODE_UNITS = IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS;
 
 interface NativeStringRepeatState {
   readonly funcIdx: number;
@@ -37,6 +38,41 @@ interface NativeStringRepeatState {
 type NativeStringRepeatContext = CodegenContext & {
   __irNativeStringRepeat?: NativeStringRepeatState;
 };
+
+/** Verify the existing native `(string, i32) -> string` repeat kernel. */
+export function hasExactIrNativeCountedStringRepeatProviderAbi(ctx: CodegenContext, funcIdx: number): boolean {
+  const signature = funcSignatureOf(ctx, funcIdx);
+  return (
+    ctx.nativeStrings === true &&
+    ctx.anyStrTypeIdx >= 0 &&
+    nativeStrHelperHandle(ctx, "__str_repeat") === funcIdx &&
+    definedFuncAt(ctx, funcIdx)?.name === "__str_repeat" &&
+    signature?.params.length === 2 &&
+    signature.params[0]?.kind === "ref" &&
+    signature.params[0].typeIdx === ctx.anyStrTypeIdx &&
+    signature.params[1]?.kind === "i32" &&
+    signature.results.length === 1 &&
+    signature.results[0]?.kind === "ref" &&
+    signature.results[0].typeIdx === ctx.anyStrTypeIdx
+  );
+}
+
+/** Resolve the authenticated counted-repeat provider without creating an adapter. */
+export function ensureIrNativeCountedStringRepeatProvider(ctx: CodegenContext): number {
+  if (!ctx.nativeStrings) throw new Error("counted native IR string.repeat provider requires native strings");
+  ensureNativeStringHelpers(ctx);
+  const funcIdx = nativeStrHelperHandle(ctx, "__str_repeat");
+  if (funcIdx === undefined || !hasExactIrNativeCountedStringRepeatProviderAbi(ctx, funcIdx)) {
+    throw new Error("counted native IR string.repeat provider has a malformed __str_repeat ABI");
+  }
+  // Keep CompileResult/adapter-manifest metadata stable against the direct and
+  // generic-provider lanes. Native modules do not import this pool entry; the
+  // authenticated counted path merely removes its dead code materialization.
+  if (!ctx.mod.stringPool.includes(IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE)) {
+    ctx.mod.stringPool.push(IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE);
+  }
+  return funcIdx;
+}
 
 function hasExactProvider(ctx: CodegenContext, state: NativeStringRepeatState): boolean {
   const signature = funcSignatureOf(ctx, state.funcIdx);
@@ -73,7 +109,7 @@ export function ensureIrNativeStringRepeatProvider(ctx: CodegenContext): number 
   if (ctx.anyStrTypeIdx < 0) throw new Error("native IR string.repeat provider has no AnyString carrier");
   // This may register exception support/imports. Complete it before reading
   // the raw-helper handle or minting the adapter's stable handle.
-  const throwRangeError = buildThrowJsErrorInstrs(ctx, "RangeError", "RangeError: Invalid count value");
+  const throwRangeError = buildThrowJsErrorInstrs(ctx, "RangeError", IR_NATIVE_STRING_REPEAT_RANGE_ERROR_MESSAGE);
   // Each branch owns distinct instruction objects. Later import-index
   // relocation walks both buffers and must never patch a shared call twice.
   const throwInvalidCount = (): Instr[] => throwRangeError.map((instruction) => ({ ...instruction }));
