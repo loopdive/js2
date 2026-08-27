@@ -1,11 +1,12 @@
 import { performance } from "node:perf_hooks";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { compile, compileProject, instantiateLinkedProject } from "../../src/index.ts";
 import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
 import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.ts";
 import {
   configuredUpstreamTestTimeoutMs,
+  emitWorkerResult,
   runSequentialUpstreamTests,
   signalWorkerCompileComplete,
 } from "./upstream-suite-worker-protocol.mjs";
@@ -13,14 +14,7 @@ import {
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
 
-function emit(value, exitCode = 0) {
-  // Every invocation of this worker produces exactly one terminal result.
-  // Write it synchronously before exiting so abandoned upstream timers,
-  // streams, or scheduler handles cannot keep the disposable child alive and
-  // turn a completed test result into an outer worker timeout.
-  writeFileSync(process.stdout.fd, `${JSON.stringify(value)}\n`);
-  process.exit(exitCode);
-}
+const emit = emitWorkerResult;
 
 function errorText(error, instance) {
   let text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
