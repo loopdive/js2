@@ -24,13 +24,14 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.pow",
   "math.sin",
   "math.sqrt",
+  "math.tan",
   "math.trunc",
 ] as const);
 
 export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the thirteen intrinsic entry points.
+ * Provider requirements reachable from the fourteen intrinsic entry points.
  * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
@@ -47,6 +48,7 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.reduce-trig",
   "math.sin",
   "math.sqrt",
+  "math.tan",
   "math.trunc",
 ] as const);
 
@@ -137,6 +139,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.pow": definition("math.pow", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.sin": definition("math.sin", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sqrt": definition("math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.tan": definition("math.tan", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.trunc": definition("math.trunc", F64_UNARY_INTRINSIC_SIGNATURE),
 });
 

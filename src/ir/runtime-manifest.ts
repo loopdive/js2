@@ -60,6 +60,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.pow",
   "selfhost.math.reduce-trig",
   "selfhost.math.sin",
+  "selfhost.math.tan",
 ] as const);
 
 export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
@@ -180,6 +181,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.reduce-trig": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sin": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sqrt": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.tan": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.trunc": F64_UNARY_INTRINSIC_SIGNATURE,
 });
 
@@ -267,13 +269,20 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     kind: "backend-op",
     opcode: "f64.sqrt",
   }),
+  "math.tan": provider(
+    "selfhost.math.tan",
+    "math.tan",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_tan" },
+    ["math.cos", "math.sin"],
+  ),
   "math.trunc": provider("backend.f64.trunc", "math.trunc", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.trunc",
   }),
 });
 
-/** Canonically ordered default provider catalogue for the thirteen-method slice. */
+/** Canonically ordered default provider catalogue for the fourteen-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),
