@@ -10,6 +10,7 @@
  */
 
 import { irCallableBindingKey } from "../ir/callable-bindings.js";
+import { irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irTypeBindingKey } from "../ir/abi-bindings.js";
 import {
   retainIrFnctorArgumentProjections,
@@ -18,9 +19,10 @@ import {
 } from "../ir/fnctor-argument-projection.js";
 import { irFnctorShapeEquals, type IrFnctorShape } from "../ir/fnctor-abi.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
-import { irFnctor, type IrType } from "../ir/nodes.js";
-import type { FuncHandle, FuncTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import { irFnctor, irVal, type IrClosureSignature, type IrType } from "../ir/nodes.js";
+import type { ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
+import { resolveGlobalParseBuiltin } from "./global-builtin-resolution.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
 import {
@@ -29,39 +31,19 @@ import {
 } from "./ir-fnctor-admission.js";
 import { buildStandaloneIrFnctorShape } from "./program-abi-fnctor-producer.js";
 import { canonicalProgramAbiValType, cloneProgramAbiValType } from "./program-abi-signatures.js";
+import type {
+  IrFnctorFieldReadPlan,
+  IrFnctorNativeStringBoundaryPlan,
+  IrFnctorParameterPreselectionPlan,
+  IrFnctorSourceCallablePlan,
+} from "../ir/ast-lowering-plans.js";
 
-export interface IrFnctorFieldReadPlan {
-  readonly access: ts.PropertyAccessExpression;
-  readonly fieldName: "input";
-}
-
-export interface IrFnctorParameterPreselectionPlan {
-  readonly kind: "fnctor-parameter-preselection";
-  readonly projection: IrFnctorArgumentProjection;
-  readonly shape: IrFnctorShape;
-  readonly selectorKind: "object";
-  readonly overrideType: IrType;
-  readonly ownerUnitId: IrFnctorArgumentProjection["calleeUnitId"];
-  readonly parameterDeclaration: ts.ParameterDeclaration;
-  readonly parameterIndex: 0;
-  readonly fieldReads: readonly IrFnctorFieldReadPlan[];
-  /** Exact `.slice(0, parser.input.length)` call fed to the parser callee. */
-  readonly stringSliceCall: ts.CallExpression;
-  /** Exact direct consumer of the slice value; target identity is joined by the signature plan. */
-  readonly valueConsumerCall: ts.CallExpression;
-  readonly physical: {
-    readonly instanceCarrier: ValType;
-    readonly fieldCarrier: ValType;
-    readonly fieldIndex: number;
-    readonly fieldRefinement: "nullable-native-string";
-  };
-  readonly preselection: {
-    readonly handle: FuncHandle;
-    readonly func: WasmFunction;
-    readonly typeIdx: number;
-    readonly type: FuncTypeDef;
-  };
-}
+export type {
+  IrFnctorFieldReadPlan,
+  IrFnctorNativeStringBoundaryPlan,
+  IrFnctorParameterPreselectionPlan,
+  IrFnctorSourceCallablePlan,
+} from "../ir/ast-lowering-plans.js";
 
 export interface PlanIrFnctorParameterPreselectionInput {
   readonly ctx: CodegenContext;
@@ -243,8 +225,9 @@ function exactResolvedPhysicalContract(
 function exactSourceCallable(
   ctx: CodegenContext,
   ownerUnitId: IrFnctorArgumentProjection["calleeUnitId"],
-  physicalCarrier: ValType,
-): IrFnctorParameterPreselectionPlan["preselection"] | undefined {
+  physicalParams: readonly ValType[],
+  result: ValType,
+): IrFnctorSourceCallablePlan | undefined {
   const registry = ctx.programAbiSourceCallables;
   if (registry?.ctx !== ctx || registry.identityContext !== ctx.irPlanningIdentityContext) return undefined;
   const handle = registry.handleForUnit(ownerUnitId);
@@ -264,14 +247,161 @@ function exactSourceCallable(
     !type ||
     type.kind !== "func" ||
     ctx.mod.types[typeIdx] !== type ||
-    type.params.length !== 1 ||
-    !sameValType(type.params[0]!, physicalCarrier) ||
+    type.params.length !== physicalParams.length ||
+    type.params.some((param, index) => !sameValType(param, physicalParams[index]!)) ||
     type.results.length !== 1 ||
-    type.results[0]?.kind !== "f64"
+    !sameValType(type.results[0]!, result)
   ) {
     return undefined;
   }
   return Object.freeze({ handle, func, typeIdx, type });
+}
+
+interface ExactStringToNumberTopology {
+  readonly declaration: ts.FunctionDeclaration;
+  readonly stringParameter: ts.ParameterDeclaration;
+  readonly booleanParameter: ts.ParameterDeclaration;
+  readonly parseIntCall: ts.CallExpression;
+  readonly parseFloatCall: ts.CallExpression;
+}
+
+function exactStringToNumberTopology(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  consumerCall: ts.CallExpression,
+): ExactStringToNumberTopology | undefined {
+  if (!ts.isIdentifier(consumerCall.expression) || consumerCall.expression.text !== "stringToNumber") return undefined;
+  const oracle = ctx.oracle;
+  if (!oracle) return undefined;
+  const declaration = oracle.valueDeclarationOf(consumerCall.expression);
+  if (
+    !declaration ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.getSourceFile() !== sourceFile ||
+    declaration.parent !== sourceFile ||
+    !declaration.name ||
+    declaration.name.text !== "stringToNumber" ||
+    declaration.parameters.length !== 2 ||
+    declaration.parameters.some((parameter) => parameter.type !== undefined) ||
+    !ts.isIdentifier(declaration.parameters[0]!.name) ||
+    !ts.isIdentifier(declaration.parameters[1]!.name) ||
+    !declaration.body ||
+    declaration.body.statements.length !== 2
+  ) {
+    return undefined;
+  }
+  const stringParameter = declaration.parameters[0]!;
+  const booleanParameter = declaration.parameters[1]!;
+  const guard = declaration.body.statements[0]!;
+  const tail = declaration.body.statements[1]!;
+  if (
+    !ts.isIfStatement(guard) ||
+    guard.elseStatement !== undefined ||
+    !ts.isIdentifier(guard.expression) ||
+    !symbolOwnsParameter(ctx.checker, guard.expression, booleanParameter)
+  ) {
+    return undefined;
+  }
+  const guardedReturn = ts.isBlock(guard.thenStatement)
+    ? guard.thenStatement.statements.length === 1 && ts.isReturnStatement(guard.thenStatement.statements[0]!)
+      ? guard.thenStatement.statements[0]
+      : undefined
+    : ts.isReturnStatement(guard.thenStatement)
+      ? guard.thenStatement
+      : undefined;
+  const parseIntExpression = guardedReturn?.expression;
+  if (
+    !parseIntExpression ||
+    !ts.isCallExpression(parseIntExpression) ||
+    !ts.isIdentifier(parseIntExpression.expression) ||
+    resolveGlobalParseBuiltin(parseIntExpression.expression, oracle) !== "parseInt" ||
+    parseIntExpression.arguments.length !== 2 ||
+    !ts.isIdentifier(parseIntExpression.arguments[0]!) ||
+    !symbolOwnsParameter(ctx.checker, parseIntExpression.arguments[0]!, stringParameter) ||
+    !ts.isNumericLiteral(parseIntExpression.arguments[1]!) ||
+    parseIntExpression.arguments[1]!.text !== "8"
+  ) {
+    return undefined;
+  }
+  if (!ts.isReturnStatement(tail) || !tail.expression || !ts.isCallExpression(tail.expression)) return undefined;
+  const parseFloatCall = tail.expression;
+  if (
+    !ts.isIdentifier(parseFloatCall.expression) ||
+    resolveGlobalParseBuiltin(parseFloatCall.expression, oracle) !== "parseFloat" ||
+    parseFloatCall.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const replaceCall = parseFloatCall.arguments[0]!;
+  if (
+    !ts.isCallExpression(replaceCall) ||
+    !ts.isPropertyAccessExpression(replaceCall.expression) ||
+    replaceCall.expression.questionDotToken !== undefined ||
+    replaceCall.expression.name.text !== "replace" ||
+    !ts.isIdentifier(replaceCall.expression.expression) ||
+    !symbolOwnsParameter(ctx.checker, replaceCall.expression.expression, stringParameter) ||
+    replaceCall.questionDotToken !== undefined ||
+    (replaceCall.typeArguments?.length ?? 0) !== 0 ||
+    replaceCall.arguments.length !== 2 ||
+    replaceCall.arguments[0]!.kind !== ts.SyntaxKind.RegularExpressionLiteral ||
+    replaceCall.arguments[0]!.getText() !== "/_/g" ||
+    !ts.isStringLiteralLike(replaceCall.arguments[1]!) ||
+    replaceCall.arguments[1]!.text !== ""
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    declaration,
+    stringParameter,
+    booleanParameter,
+    parseIntCall: parseIntExpression,
+    parseFloatCall,
+  });
+}
+
+function exactNativeStringBoundaries(
+  sourceId: IrFnctorArgumentProjection["sourceId"],
+  sourceFile: ts.SourceFile,
+  ownerUnitId: IrFnctorArgumentProjection["calleeUnitId"],
+  topology: ExactStringToNumberTopology,
+  ctx: CodegenContext,
+): readonly IrFnctorNativeStringBoundaryPlan[] | undefined {
+  const rows = [
+    {
+      call: topology.parseIntCall,
+      builtin: "parseInt" as const,
+      signature: {
+        params: [irVal({ kind: "externref" }), irVal({ kind: "f64" })],
+        returnType: irVal({ kind: "f64" }),
+      } satisfies IrClosureSignature,
+    },
+    {
+      call: topology.parseFloatCall,
+      builtin: "parseFloat" as const,
+      signature: {
+        params: [irVal({ kind: "externref" })],
+        returnType: irVal({ kind: "f64" }),
+      } satisfies IrClosureSignature,
+    },
+  ];
+  if (!ctx.ambientBuiltinFuncMap || rows.some(({ builtin }) => !ctx.ambientBuiltinFuncMap.has(builtin)))
+    return undefined;
+  return Object.freeze(
+    rows.map(({ call, builtin, signature }) =>
+      Object.freeze({
+        kind: "fnctor-native-string-boundary" as const,
+        ownerUnitId,
+        sourceId,
+        sourceFile,
+        call,
+        builtin,
+        argumentIndex: 0 as const,
+        argument: call.arguments[0]!,
+        target: irRuntimeFuncRef(builtin),
+        signature,
+      }),
+    ),
+  );
 }
 
 function buildCurrentShape(projection: IrFnctorArgumentProjection): IrFnctorShape | undefined {
@@ -321,7 +451,7 @@ export function planIrFnctorParameterPreselection(
   if (!shape) return undefined;
   const physical = exactResolvedPhysicalContract(ctx, shape, projection);
   if (!physical) return undefined;
-  const preselection = exactSourceCallable(ctx, projection.calleeUnitId, physical.instanceCarrier);
+  const preselection = exactSourceCallable(ctx, projection.calleeUnitId, [physical.instanceCarrier], { kind: "f64" });
   if (!preselection) return undefined;
   const topology = exactFieldReadTopology(
     input.authority.checker,
@@ -329,6 +459,36 @@ export function planIrFnctorParameterPreselection(
     projection.calleeParameterDeclaration,
   );
   if (!topology) return undefined;
+  let valueConsumer: IrFnctorParameterPreselectionPlan["valueConsumer"];
+  let nativeStringBoundaries: readonly IrFnctorNativeStringBoundaryPlan[] | undefined;
+  const consumerTopology = exactStringToNumberTopology(ctx, sourceFile, topology.valueConsumerCall);
+  const consumerUnitId = consumerTopology
+    ? identityContext.unitIdByDeclaration.get(consumerTopology.declaration)
+    : undefined;
+  if (consumerTopology && consumerUnitId !== undefined) {
+    const consumerPreselection = exactSourceCallable(
+      ctx,
+      consumerUnitId,
+      [physical.fieldCarrier, { kind: "i32", boolean: true }],
+      { kind: "f64" },
+    );
+    const boundaries = exactNativeStringBoundaries(sourceId, sourceFile, consumerUnitId, consumerTopology, ctx);
+    if (consumerPreselection && boundaries) {
+      valueConsumer = Object.freeze({
+        unitId: consumerUnitId,
+        declaration: consumerTopology.declaration,
+        parameterDeclaration: consumerTopology.stringParameter,
+        parameterIndex: 0,
+        parameterPhysicalType: cloneProgramAbiValType(physical.fieldCarrier),
+        signature: {
+          params: [{ kind: "string" as const }, irVal({ kind: "i32", boolean: true })],
+          returnType: irVal({ kind: "f64" }),
+        },
+        preselection: consumerPreselection,
+      });
+      nativeStringBoundaries = boundaries;
+    }
+  }
   const frozenShape = Object.freeze({
     ...shape,
     fields: Object.freeze(shape.fields.map((field) => Object.freeze({ ...field }))),
@@ -350,6 +510,8 @@ export function planIrFnctorParameterPreselection(
     valueConsumerCall: topology.valueConsumerCall,
     physical,
     preselection,
+    ...(valueConsumer ? { valueConsumer } : {}),
+    ...(nativeStringBoundaries ? { nativeStringBoundaries } : {}),
   });
 }
 
@@ -370,12 +532,58 @@ export function irFnctorParameterPreselectionIsCurrent(
   ) {
     return false;
   }
-  const current = exactSourceCallable(ctx, plan.ownerUnitId, physical.instanceCarrier);
-  return (
-    current !== undefined &&
-    current.handle === plan.preselection.handle &&
-    current.func === plan.preselection.func &&
-    current.typeIdx === plan.preselection.typeIdx &&
-    current.type === plan.preselection.type
+  const current = exactSourceCallable(ctx, plan.ownerUnitId, [physical.instanceCarrier], { kind: "f64" });
+  if (
+    current === undefined ||
+    current.handle !== plan.preselection.handle ||
+    current.func !== plan.preselection.func ||
+    current.typeIdx !== plan.preselection.typeIdx ||
+    current.type !== plan.preselection.type
+  ) {
+    return false;
+  }
+  if (!plan.valueConsumer) return true;
+  const topology = exactStringToNumberTopology(ctx, plan.projection.sourceFile, plan.valueConsumerCall);
+  if (
+    !topology ||
+    topology.declaration !== plan.valueConsumer.declaration ||
+    topology.stringParameter !== plan.valueConsumer.parameterDeclaration
+  ) {
+    return false;
+  }
+  const consumer = exactSourceCallable(
+    ctx,
+    plan.valueConsumer.unitId,
+    [plan.physical.fieldCarrier, { kind: "i32", boolean: true }],
+    { kind: "f64" },
   );
+  if (
+    consumer === undefined ||
+    consumer.handle !== plan.valueConsumer.preselection.handle ||
+    consumer.func !== plan.valueConsumer.preselection.func ||
+    consumer.typeIdx !== plan.valueConsumer.preselection.typeIdx ||
+    consumer.type !== plan.valueConsumer.preselection.type
+  ) {
+    return false;
+  }
+  const boundaries = exactNativeStringBoundaries(
+    plan.projection.sourceId,
+    plan.projection.sourceFile,
+    plan.valueConsumer.unitId,
+    topology,
+    ctx,
+  );
+  if (!boundaries || boundaries.length !== (plan.nativeStringBoundaries?.length ?? 0)) return false;
+  return boundaries.every((boundary, index) => {
+    const previous = plan.nativeStringBoundaries?.[index];
+    return (
+      previous !== undefined &&
+      previous.call === boundary.call &&
+      previous.builtin === boundary.builtin &&
+      previous.target.binding.kind === boundary.target.binding.kind &&
+      previous.target.binding.kind === "runtime" &&
+      boundary.target.binding.kind === "runtime" &&
+      previous.target.binding.symbol === boundary.target.binding.symbol
+    );
+  });
 }

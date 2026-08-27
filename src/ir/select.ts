@@ -406,6 +406,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly resolveImplicitParamType?: (
     parameter: ts.ParameterDeclaration,
   ) => "f64" | "bool" | "string" | "object" | "dynamic" | undefined;
+  /** Exact #3521 parseInt/parseFloat native-string boundary call sites. */
+  readonly fnctorNativeStringBoundary?: (call: ts.CallExpression) => boolean;
   /**
    * Exact legacy callable-ABI proof for an unannotated parameter projected as
    * the ordinary non-fast numeric vec. General object/any evidence is not
@@ -9790,6 +9792,11 @@ export function buildLocalCallGraph(
           } else if (decls.has(callee)) {
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
+          } else if (currentSelectionOptions?.fnctorNativeStringBoundary?.(node) === true) {
+            if (node.arguments) {
+              for (const argument of node.arguments) visit(argument);
+            }
+            return;
           } else if (
             currentDynamicRuntimeBuildable &&
             callerName === "stringToNumber" &&

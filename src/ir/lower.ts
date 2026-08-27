@@ -93,6 +93,7 @@ import {
 import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag crossings at the frozen IrDynamicLowering contract
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import type { IrUnitId } from "./identity.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { stackifyMovableNestedValues } from "./nested-stackification.js";
 import { createIrDynamicScratchLocals } from "./lowering-dynamic-scratch.js";
@@ -192,6 +193,12 @@ export interface IrLowerResolver {
   resolveClass?(shape: IrClassShape): IrClassLowering | null;
   /** Resolve one source/unit-qualified fnctor against finalized ABI state. */
   resolveFnctor?(shape: import("./fnctor-abi.js").IrFnctorShape): IrFnctorLowering | null;
+  /** Exact semantic-to-physical parameter refinement for a prepared owner. */
+  resolveParamPhysicalType?(
+    unitId: IrUnitId,
+    parameterIndex: number,
+    logicalType: IrType,
+  ): { readonly type: ValType; readonly refineNonNull?: true } | undefined;
   /**
    * Slice 6 (#1169e): resolve a vec struct given its top-level Wasm
    * ValType. The IR carries the vec's value as a `ref`/`ref_null` to a
@@ -1351,6 +1358,17 @@ export function lowerIrFunctionBody<S, Slot>(
     const pi = paramIdx.get(v);
     if (pi !== undefined) {
       emitter.emitLocalGet(pi, out);
+      const physical = resolver.resolveParamPhysicalType?.(func.unitId, pi, paramTypeOf.get(v)!);
+      if (physical?.refineNonNull) {
+        if (emitter.backend !== "wasmgc" || physical.type.kind !== "ref_null") {
+          throw new IrInvariantError(
+            "backend-legality-failure",
+            "lower",
+            `ir/lower: non-null parameter refinement has no WasmGC nullable carrier in ${func.name}`,
+          );
+        }
+        emitter.pushRaw(out, { op: "ref.as_non_null" });
+      }
       return;
     }
     if (materialized.has(v)) {
@@ -3710,7 +3728,19 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
-  const convertSlots = (type: IrType, where: string): readonly Slot[] => {
+  const convertSlots = (type: IrType, where: string, parameterIndex?: number): readonly Slot[] => {
+    const physical =
+      parameterIndex === undefined ? undefined : resolver.resolveParamPhysicalType?.(func.unitId, parameterIndex, type);
+    if (physical) {
+      if (emitter.backend !== "wasmgc") {
+        throw new IrInvariantError(
+          "backend-legality-failure",
+          "lower",
+          `ir/lower: exact physical parameter refinement is only supported by WasmGC in ${func.name}`,
+        );
+      }
+      return [physical.type as unknown as Slot];
+    }
     const slots = typeConverter.convertType(type);
     if (slots.length === 0) {
       throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
@@ -3721,9 +3751,9 @@ export function lowerIrFunctionBody<S, Slot>(
   return {
     name: func.name,
     body,
-    params: func.params.map((param) => ({
+    params: func.params.map((param, index) => ({
       name: param.name,
-      slots: convertSlots(param.type, `param ${param.name}`),
+      slots: convertSlots(param.type, `param ${param.name}`, index),
     })),
     locals: locals.map((local) => ({
       name: local.name,

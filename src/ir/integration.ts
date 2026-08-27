@@ -189,6 +189,7 @@ import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
   type IrDirectCallTarget,
+  type IrFnctorParameterPreselectionPlan,
   type IrIntegrationLoweringPlans,
   type IrCountedStringAppendLoweringPlan,
   type PreparedCountedStringAppendReceipt,
@@ -1097,6 +1098,18 @@ export function compileIrPathFunctions(
   ): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined => {
     const override = overrides?.get(name);
     const declaration = declarationsByName.get(name);
+    const exactFnctorPlan = loweringPlans?.fnctorParameterPreselection;
+    if (
+      exactFnctorPlan &&
+      declaration &&
+      (declaration === exactFnctorPlan.parameterDeclaration.parent ||
+        declaration === exactFnctorPlan.valueConsumer?.declaration)
+    ) {
+      // The prepared codegen plan already contains the exact semantic view
+      // for the linked fnctor edge. Never re-derive it from display names or
+      // the legacy dynamic parser repair below.
+      return override;
+    }
     const legacyFuncIdx = ctx.funcMap.get(name);
     const legacyFunction = legacyFuncIdx === undefined ? undefined : definedFuncAt(ctx, legacyFuncIdx);
     const legacySignature = legacyFunction === undefined ? undefined : ctx.mod.types[legacyFunction.typeIdx];
@@ -1312,19 +1325,53 @@ export function compileIrPathFunctions(
       });
     }
   }
+  if (loweringPlans?.fnctorParameterPreselection && loweringPlans.fnctorParameterPreselectionIsCurrent) {
+    if (!loweringPlans.fnctorParameterPreselectionIsCurrent()) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "ir/integration: exact fnctor parameter preselection became stale before lowering",
+      );
+    }
+  }
   const externrefType = irVal({ kind: "externref" });
   const numberType = irVal({ kind: "f64" });
-  if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseFloat") && ctx.funcMap.has("parseFloat")) {
-    directCallTargets.set("parseFloat", {
-      target: irRuntimeFuncRef("parseFloat"),
-      signature: { params: [externrefType], returnType: numberType },
-    });
-  }
-  if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseInt") && ctx.funcMap.has("parseInt")) {
-    directCallTargets.set("parseInt", {
-      target: irRuntimeFuncRef("parseInt"),
-      signature: { params: [externrefType, numberType], returnType: numberType },
-    });
+  const exactFnctorBoundaries = loweringPlans?.fnctorNativeStringBoundaries;
+  if (loweringPlans && exactFnctorBoundaries) {
+    for (const boundary of exactFnctorBoundaries.values()) {
+      const previous = directCallTargets.get(boundary.builtin);
+      if (
+        previous &&
+        (previous.target.binding.kind !== "runtime" ||
+          previous.target.binding.symbol !== boundary.builtin ||
+          previous.target.name !== boundary.target.name)
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `ir/integration: exact fnctor boundary ${boundary.builtin} conflicts with another callable target`,
+        );
+      }
+      directCallTargets.set(boundary.builtin, {
+        target: boundary.target,
+        signature: boundary.signature,
+      });
+    }
+  } else if (!loweringPlans) {
+    // Compatibility-only callers do not have the production boundary plan.
+    // Preserve their historical name-keyed parser adapter behavior.
+    if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseFloat") && ctx.funcMap.has("parseFloat")) {
+      directCallTargets.set("parseFloat", {
+        target: irRuntimeFuncRef("parseFloat"),
+        signature: { params: [externrefType], returnType: numberType },
+      });
+    }
+    if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseInt") && ctx.funcMap.has("parseInt")) {
+      directCallTargets.set("parseInt", {
+        target: irRuntimeFuncRef("parseInt"),
+        signature: { params: [externrefType, numberType], returnType: numberType },
+      });
+    }
   }
   const preparedDirectCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>(loweringPlans?.directCalls);
   const directCallsFor = (
@@ -1467,6 +1514,8 @@ export function compileIrPathFunctions(
         exported: hasExportModifier(stmt),
         ownerUnitId,
         directCalls: directCallsFor(stmt, ownerUnitId),
+        fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+        fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
         paramTypeOverrides: o?.params,
         returnTypeOverride: o?.returnType,
         calleeTypes,
@@ -1884,6 +1933,8 @@ export function compileIrPathFunctions(
             funcName: memberName,
             ownerUnitId,
             directCalls: directCallsFor(member, ownerUnitId),
+            fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+            fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
             ...(isCtorMember
               ? { constructorInitClassShape: classShape, paramTypeOverrides }
               : isStaticMethod
@@ -2045,6 +2096,8 @@ export function compileIrPathFunctions(
         funcName: MODULE_INIT_UNIT_NAME,
         ownerUnitId: moduleInitUnitId,
         directCalls: directCallsFor(synthetic, moduleInitUnitId),
+        fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+        fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
         moduleBindings,
@@ -3072,6 +3125,8 @@ export function compileIrPathFunctions(
       importedCallableCatalog,
       preparedRuntimeManifest?.providers,
       fuseNativeNumberFormatCarriers,
+      loweringPlans?.fnctorParameterPreselection,
+      loweringPlans?.fnctorParameterPreselectionIsCurrent,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -5090,6 +5145,10 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && (symbol === "parseInt" || symbol === "parseFloat")) {
+    // Exact parser boundaries use the source-qualified ambient builtin map;
+    // a same-named source function in funcMap must never steal the call.
+    index = ctx.ambientBuiltinFuncMap.get(symbol);
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -5152,6 +5211,8 @@ function makeResolver(
   importedCallableCatalog: ReadonlyMap<string, Import>,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
   fuseNativeNumberFormatCarriers = false,
+  fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
+  fnctorParameterPreselectionIsCurrent?: () => boolean,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
@@ -5303,6 +5364,25 @@ function makeResolver(
     // the legacy name-keyed maps.
     resolveFnctor(shape: IrFnctorShape): IrFnctorLowering | null {
       return ctx.programAbiFnctors?.resolve(shape) ?? null;
+    },
+    resolveParamPhysicalType(unitId: IrUnitId, parameterIndex: number, logicalType: IrType) {
+      const consumer = fnctorParameterPreselection?.valueConsumer;
+      if (!consumer || consumer.unitId !== unitId || parameterIndex !== consumer.parameterIndex) return undefined;
+      if (logicalType.kind !== "string") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] lost its semantic string type`,
+        );
+      }
+      if (fnctorParameterPreselectionIsCurrent && !fnctorParameterPreselectionIsCurrent()) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] became stale during lowering`,
+        );
+      }
+      return { type: consumer.parameterPhysicalType, refineNonNull: true as const };
     },
     // -------------------------------------------------------------------
     // Vec dispatch (slice 6 part 2 — #1181).
