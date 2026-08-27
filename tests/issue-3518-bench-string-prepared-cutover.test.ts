@@ -10,15 +10,42 @@ import { instantiateWithRuntime } from "./equivalence/helpers.js";
 const ENTRY = resolve(import.meta.dirname, "../website/playground/examples/benchmarks/string.ts");
 const CUTOVER = "JS2WASM_MULTI_PREPARED_STRING_CUTOVER";
 const REQUIRE_ROUTE = "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_STRING_LEAF";
+const TAMPER = "JS2WASM_TEST_TAMPER_MULTI_PREPARED_STRING_LEAF";
 const DIRECT_POISON = "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY";
+const STRING_BUILDER = "JS2WASM_IR_STRING_BUILDER";
 const TARGET = "bench_string";
+
+const TAMPER_PHASES = [
+  "support",
+  "preparation-receipt",
+  "skip-report",
+  "post-direct-currentness",
+  "post-merge-receipt",
+] as const;
 
 function targetLegacyRows(result: CompileResult) {
   return result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === TARGET) ?? [];
 }
 
+function nonTargetLegacyRows(result: CompileResult) {
+  return result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName !== TARGET) ?? [];
+}
+
 function expectSuccess(result: CompileResult): void {
   expect(result.success, result.errors.map((error) => `${error.severity}: ${error.message}`).join("\n")).toBe(true);
+}
+
+function targetOutcome(result: CompileResult) {
+  return result.irOutcomes?.find((outcome) => outcome.displayName === TARGET);
+}
+
+async function compileBenchString(options: { optimize?: 4 } = {}): Promise<CompileResult> {
+  return compileProject(ENTRY, {
+    experimentalIR: true,
+    target: "standalone",
+    trackIrOutcomes: true,
+    ...options,
+  });
 }
 
 function wasmSurface(binary: Uint8Array) {
@@ -42,27 +69,55 @@ describe("#3518 bench_string Prepared C2 cutover", () => {
   it("bypasses exactly the target's two direct body entries", async () => {
     vi.stubEnv(REQUIRE_ROUTE, "1");
     vi.stubEnv(DIRECT_POISON, TARGET);
-    const prepared = await compileProject(ENTRY, {
-      experimentalIR: true,
-      target: "standalone",
-      trackIrOutcomes: true,
-    });
+    const prepared = await compileBenchString();
 
     expectSuccess(prepared);
     expect(targetLegacyRows(prepared)).toEqual([]);
-    expect(prepared.irOutcomes?.find((outcome) => outcome.displayName === TARGET)).toMatchObject({
+    expect(targetOutcome(prepared)).toMatchObject({
       kind: "emitted",
       legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
 
     vi.stubEnv(CUTOVER, "0");
     vi.stubEnv(DIRECT_POISON, "");
-    const direct = await compileProject(ENTRY, {
-      experimentalIR: true,
-      target: "standalone",
-      trackIrOutcomes: true,
+    const routeOff = await compileBenchString();
+
+    expectSuccess(routeOff);
+    expect(
+      targetLegacyRows(routeOff)
+        .map((row) => row.entryPoint)
+        .sort(),
+    ).toEqual(["compileFunctionBody", "compileStatement"]);
+    expect(targetOutcome(routeOff)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
     });
+    expect(prepared.dts).toBe(routeOff.dts);
+    expect(prepared.imports).toEqual(routeOff.imports);
+    expect(new Set(prepared.stringPool)).toEqual(new Set(routeOff.stringPool));
+    expect(wasmSurface(prepared.binary)).toEqual(wasmSurface(routeOff.binary));
+    await expect(benchStringRuntime(prepared)).resolves.toBe(5000);
+    await expect(benchStringRuntime(routeOff)).resolves.toBe(5000);
+
+    vi.stubEnv(DIRECT_POISON, TARGET);
+    const poisonedDirect = await compileBenchString();
+    expect(poisonedDirect.success).toBe(false);
+    expect(poisonedDirect.errors.map((error) => error.message).join("\n")).toContain(
+      `injected direct function-body poison: ${TARGET}`,
+    );
+  });
+
+  it("keeps builder-off as the true direct artifact for raw and optimized A/Bs", async () => {
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const prepared = await compileBenchString();
+    expectSuccess(prepared);
+
+    vi.stubEnv(REQUIRE_ROUTE, "0");
+    vi.stubEnv(STRING_BUILDER, "0");
+    const direct = await compileBenchString();
 
     expectSuccess(direct);
     expect(
@@ -70,11 +125,14 @@ describe("#3518 bench_string Prepared C2 cutover", () => {
         .map((row) => row.entryPoint)
         .sort(),
     ).toEqual(["compileFunctionBody", "compileStatement"]);
-    expect(direct.irOutcomes?.find((outcome) => outcome.displayName === TARGET)).toMatchObject({
-      kind: "emitted",
+    expect(targetOutcome(direct)).toMatchObject({
+      kind: "unsupported",
+      code: "string-builder-candidate",
       legacyBodyEmitted: true,
-      irBodyEmitted: true,
+      irBodyEmitted: false,
     });
+    expect(targetOutcome(prepared)?.unitId).toBe(targetOutcome(direct)?.unitId);
+    expect(nonTargetLegacyRows(prepared)).toEqual(nonTargetLegacyRows(direct));
     expect(prepared.dts).toBe(direct.dts);
     expect(prepared.imports).toEqual(direct.imports);
     expect(new Set(prepared.stringPool)).toEqual(new Set(direct.stringPool));
@@ -82,15 +140,56 @@ describe("#3518 bench_string Prepared C2 cutover", () => {
     await expect(benchStringRuntime(prepared)).resolves.toBe(5000);
     await expect(benchStringRuntime(direct)).resolves.toBe(5000);
 
+    vi.stubEnv(STRING_BUILDER, "1");
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const optimizedPrepared = await compileBenchString({ optimize: 4 });
+    expectSuccess(optimizedPrepared);
+
+    vi.stubEnv(STRING_BUILDER, "0");
+    vi.stubEnv(REQUIRE_ROUTE, "0");
+    const optimizedDirect = await compileBenchString({ optimize: 4 });
+    expectSuccess(optimizedDirect);
+    expect(wasmSurface(optimizedPrepared.binary)).toEqual(wasmSurface(optimizedDirect.binary));
+    await expect(benchStringRuntime(optimizedPrepared)).resolves.toBe(5000);
+    await expect(benchStringRuntime(optimizedDirect)).resolves.toBe(5000);
+
     vi.stubEnv(DIRECT_POISON, TARGET);
-    const poisonedDirect = await compileProject(ENTRY, {
-      experimentalIR: true,
-      target: "standalone",
-      trackIrOutcomes: true,
-    });
-    expect(poisonedDirect.success).toBe(false);
-    expect(poisonedDirect.errors.map((error) => error.message).join("\n")).toContain(
+    const poisoned = await compileBenchString();
+    expect(poisoned.success).toBe(false);
+    expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
       `injected direct function-body poison: ${TARGET}`,
     );
+  });
+
+  it("fails closed for every post-certification tamper phase and an unmatched UnitId", async () => {
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const control = await compileBenchString();
+    expectSuccess(control);
+    const unitId = targetOutcome(control)?.unitId;
+    expect(unitId).toBeTruthy();
+    vi.stubEnv(DIRECT_POISON, TARGET);
+
+    for (const phase of TAMPER_PHASES) {
+      vi.stubEnv(TAMPER, JSON.stringify({ unitId, phase }));
+      const result = await compileBenchString();
+      expect(result.success, `${phase} unexpectedly compiled`).toBe(false);
+      expect(targetLegacyRows(result), `${phase} retried the target direct body`).toEqual([]);
+      const diagnostics = result.errors.map((error) => error.message).join("\n");
+      expect(diagnostics, phase).toMatch(/multi-source string leaf|string route|route string|body skip/i);
+      expect(diagnostics, `${phase} reached the direct-body poison`).not.toContain(
+        `injected direct function-body poison: ${TARGET}`,
+      );
+    }
+
+    vi.stubEnv(TAMPER, JSON.stringify({ unitId: `${unitId}:foreign`, phase: "support" }));
+    const unmatched = await compileBenchString();
+    expect(unmatched.success).toBe(false);
+    expect(unmatched.errors.map((error) => error.message).join("\n")).toContain(
+      "test tamper selector did not match exact route",
+    );
+    expect(unmatched.errors.map((error) => error.message).join("\n")).not.toContain(
+      `injected direct function-body poison: ${TARGET}`,
+    );
+    expect(targetLegacyRows(unmatched)).toEqual([]);
   });
 });

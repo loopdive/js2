@@ -1861,3 +1861,52 @@ transaction. The expanded mutation matrix, builder-off artifact comparison,
 durable 30-sample ABBA runtime driver, optimization-ledger promotion, and final
 R9 switch deletion remain follow-up evidence and must not be inferred from the
 compile-once route landing.
+
+#### C2b checkpoint: true-direct control and phase-addressed fail-closed evidence (2026-08-27)
+
+The first follow-up closes a control-path defect exposed by the C2a landing.
+`JS2WASM_IR_STRING_BUILDER=0` correctly rejected the counted builder in the
+structural selector, but early multi-source orchestration still injected C1's
+counted-string proof into the legacy-name projection. The late overlay then saw
+`bench_string` in the compatibility selection without a matching structural
+owner and failed `selection-preparation-mismatch` instead of producing the
+required direct artifact. Early orchestration now withholds every string shape
+and proof when the builder switch is disabled. The resulting artifact has the
+two physical target legacy rows, a typed `string-builder-candidate` outcome,
+`legacyBodyEmitted: true`, `irBodyEmitted: false`, and returns `5000`.
+
+The string route also gains the parsed test-only
+`JS2WASM_TEST_TAMPER_MULTI_PREPARED_STRING_LEAF` selector. Its JSON object must
+contain only the exact target `unitId` and one explicit phase: `support`,
+`preparation-receipt`, `skip-report`, `post-direct-currentness`, or
+`post-merge-receipt`. Each phase corrupts a distinct authenticated record after
+the route's first mutation. Every corruption fails invariantly with zero target
+legacy rows; malformed or foreign selectors are themselves invariants, and the
+route requires an armed selector to match exactly once. This turns the C2a
+currentness checks into executable no-fallback evidence rather than relying on
+their success path alone.
+
+Focused raw and optimized A/B coverage now uses builder-off—not route-off—as
+the direct control. Both artifacts preserve the target UnitId, all non-target
+legacy audit rows, imports/exports, DTS, and string-pool membership, and both
+instantiate and return `5000`. The route-off lane remains separately covered as
+the rollback control with `legacyBodyEmitted: true` and `irBodyEmitted: true`.
+
+This checkpoint deliberately does **not** promote
+`IR-OPT-COUNTED-LITERAL-STRING-APPEND`. The first corrected optimized A/B on the
+current arm64 host measured 130,595 bytes Prepared versus 130,308 bytes direct:
+Prepared is 287 bytes larger, so the no-growth output gate is not yet met. The
+next implementation transaction must:
+
+1. attribute and remove that target/provider overhead while preserving the
+   generic `string.repeat` validation matrix and the counted-plan receipt;
+2. lock structural target helper/provider calls and allocations at direct or
+   better, without numeric function-index assertions;
+3. add and run the durable 30-valid-sample ABBA driver with the 5% direct/direct,
+   1.05 median, and 1.10 bootstrap-upper-bound gates; and
+4. only after all three evidence classes pass, promote the optimization ledger
+   row and synchronize the measured #3792 totals.
+
+The broader syntax/provider mutation matrix and final R9 switch deletion remain
+separate follow-ups. No performance, retirement-ready, linear cutover, or
+repository-wide IR-only claim follows from this checkpoint.
