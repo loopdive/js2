@@ -16,7 +16,8 @@ parent: 3518
 depends_on: [3520, 4260]
 required_by: [3522, 3523, 3525, 3526, 3792, 4601]
 assignee: ttraenkler/codex-ir-lead
-branch: codex/3521-r2-replay-4608-5d55
+pr: 5000
+branch: codex/3521-linked-owner-closure-current
 horizon: xl
 complexity: XL
 es_edition: n/a
@@ -27,11 +28,37 @@ loc-budget-allow:
   - src/ir/propagate.ts
   - src/ir/select.ts
   - src/codegen/expressions/new-super.ts
+  - src/codegen/index.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/lower.ts
+  - src/codegen/context/types.ts
+  - src/codegen/program-abi-session.ts
+  - src/ir/backend/porffor/assembler.ts
+  - src/ir/nodes.ts
+  - src/ir/verify.ts
+  - src/ir/builder.ts
+  - src/ir/prepared-component-dependencies.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts
   - src/codegen/program-abi-fnctor-producer.ts
+  - src/codegen/ir-fnctor-parameter-planning.ts
 func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/index.ts::generateModule
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
+  - src/ir/verify.ts::verifyInstrStructure
+  - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/codegen/context/create-context.ts::createCodegenContext
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -84,30 +111,6 @@ files:
   - tests/ir/fnctor-admission.test.ts
   - scripts/check-ir-kind-neutrality.mjs
   - scripts/ir-kind-neutrality-baseline.json
-loc-budget-allow:
-  - src/codegen/context/types.ts
-  - src/codegen/program-abi-session.ts
-  - src/codegen/index.ts
-  - src/ir/backend/porffor/assembler.ts
-  - src/ir/from-ast.ts
-  - src/ir/integration.ts
-  - src/ir/lower.ts
-  - src/ir/nodes.ts
-  - src/ir/verify.ts
-  - src/ir/builder.ts
-  - src/ir/prepared-component-dependencies.ts
-func-budget-allow:
-  - src/codegen/index.ts::planIrOverlay
-  - src/codegen/index.ts::generateModule
-  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
-  - src/ir/integration.ts::compileIrPathFunctions
-  - src/ir/integration.ts::makeFromAstResolver
-  - src/ir/integration.ts::makeResolver
-  - src/ir/lower.ts::lowerIrFunctionBody
-  - src/ir/lower.ts::emitInstrTree
-  - src/ir/verify.ts::verifyInstrStructure
-  - src/ir/passes/inline-small.ts::renameInstrOperands
-  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 

@@ -22,7 +22,7 @@
 
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
-import type { IrClassMemberKind, IrFuncRef, IrTypeRef } from "../nodes.js";
+import type { IrClassMemberKind, IrFuncRef, IrType, IrTypeRef } from "../nodes.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
@@ -154,7 +154,10 @@ export interface IrRefCellLowering {
  * been joined against one finalized ABI plan.
  */
 export interface IrFnctorLowering {
-  readonly carrierType: ValType;
+  /** Physical carrier accepted at fnctor-typed value/parameter positions. */
+  readonly instanceCarrierType: ValType;
+  /** Exact non-null result of the synthesized constructor callable. */
+  readonly constructorResultType: ValType;
   readonly reservedLayout: IrTypeRef;
   readonly constructorFunc: IrFuncRef;
   readonly captureParamTypes: readonly ValType[];
@@ -163,7 +166,15 @@ export interface IrFnctorLowering {
   readonly hiddenIdentity: boolean;
   readonly constructorIdentityParamIndex: number | null;
   readonly resultIsExternref: boolean;
+  readonly supportsConstruction: boolean;
+  readonly supportsFieldGet: boolean;
   readonly structTypeIdx?: number;
+  field(name: string): {
+    readonly fieldIdx: number;
+    readonly logicalType: IrType;
+    readonly physicalType: ValType;
+    readonly refinement: "none" | "nullable-native-string";
+  };
   fieldIdx(name: string): number;
 }
 

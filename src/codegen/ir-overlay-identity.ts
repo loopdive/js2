@@ -303,6 +303,9 @@ export function projectIrIntegrationLoweringPlans(
     readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"];
     readonly hostDateSnapshots?: IrIntegrationLoweringPlans["hostDateSnapshots"];
     readonly hostDateGetters?: IrIntegrationLoweringPlans["hostDateGetters"];
+    readonly fnctorParameterPreselection?: IrIntegrationLoweringPlans["fnctorParameterPreselection"];
+    readonly fnctorNativeStringBoundaries?: IrIntegrationLoweringPlans["fnctorNativeStringBoundaries"];
+    readonly fnctorParameterPreselectionIsCurrent?: IrIntegrationLoweringPlans["fnctorParameterPreselectionIsCurrent"];
   } & Pick<
     IrIntegrationLoweringPlans,
     "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
@@ -319,6 +322,20 @@ export function projectIrIntegrationLoweringPlans(
     ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId]),
   );
   const activeOwnerUnitIds = new Set(ownerProjection.entries.map(({ unitId }) => unitId));
+  const fnctorParameterPreselection =
+    plan.fnctorParameterPreselection &&
+    activeOwnerUnitIds.has(plan.fnctorParameterPreselection.ownerUnitId) &&
+    (plan.fnctorParameterPreselection.valueConsumer === undefined ||
+      activeOwnerUnitIds.has(plan.fnctorParameterPreselection.valueConsumer.unitId))
+      ? plan.fnctorParameterPreselection
+      : undefined;
+  const fnctorNativeStringBoundaries = fnctorParameterPreselection
+    ? new Map(
+        [...(plan.fnctorNativeStringBoundaries ?? [])].filter(([, boundary]) =>
+          activeOwnerUnitIds.has(boundary.ownerUnitId),
+        ),
+      )
+    : undefined;
   const signaturesByUnitId = new Map(plan.overrideMapByUnitId);
   const callableSignaturesByUnitId = new Map(signaturesByUnitId);
   for (const unitId of plan.suspendingAsyncUnitIds) {
@@ -389,6 +406,11 @@ export function projectIrIntegrationLoweringPlans(
   }
   return {
     identityContext: plan.identityPlan.identityContext,
+    ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
+    ...(fnctorNativeStringBoundaries && fnctorNativeStringBoundaries.size > 0 ? { fnctorNativeStringBoundaries } : {}),
+    ...(fnctorParameterPreselection && plan.fnctorParameterPreselectionIsCurrent
+      ? { fnctorParameterPreselectionIsCurrent: plan.fnctorParameterPreselectionIsCurrent }
+      : {}),
     ...(plan.classShapesById ? { classShapesById: plan.classShapesById } : {}),
     ownerProjection,
     ownerUnitIdByLegacyName,

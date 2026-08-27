@@ -6,6 +6,9 @@ import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append
 import type { IrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
+import type { IrFnctorArgumentProjection } from "./fnctor-argument-projection.js";
+import type { IrFnctorShape } from "./fnctor-abi.js";
+import type { FuncHandle, FuncTypeDef, ValType, WasmFunction } from "./types.js";
 import { ts } from "../ts-api.js";
 import { requireCompilerTimerShimPlan } from "./timer-shim-lowering.js";
 
@@ -71,6 +74,72 @@ export interface IrDirectCallLoweringPlan {
 export interface IrDirectCallTarget {
   readonly target: IrFuncRef;
   readonly signature: IrClosureSignature;
+}
+
+/** Exact source callable record retained by a prepared fnctor projection. */
+export interface IrFnctorSourceCallablePlan {
+  readonly handle: FuncHandle;
+  readonly func: WasmFunction;
+  readonly typeIdx: number;
+  readonly type: FuncTypeDef;
+}
+
+/** One authenticated native-string argument crossing into a runtime builtin. */
+export interface IrFnctorNativeStringBoundaryPlan {
+  readonly kind: "fnctor-native-string-boundary";
+  readonly ownerUnitId: IrUnitId;
+  readonly sourceId: IrSourceId;
+  readonly sourceFile: ts.SourceFile;
+  readonly call: ts.CallExpression;
+  readonly builtin: "parseInt" | "parseFloat";
+  readonly argumentIndex: 0;
+  readonly argument: ts.Expression;
+  readonly target: IrFuncRef;
+  readonly signature: IrClosureSignature;
+}
+
+export interface IrFnctorFieldReadPlan {
+  readonly access: ts.PropertyAccessExpression;
+  readonly fieldName: "input";
+}
+
+/**
+ * Exact late #3521 preparation joining retained syntax, the observed fnctor
+ * ABI, and the current source-callable slots. The optional consumer side is
+ * deliberately absent for the compatibility harness, which only provides
+ * the earlier readNumber-side records.
+ */
+export interface IrFnctorParameterPreselectionPlan {
+  readonly kind: "fnctor-parameter-preselection";
+  readonly projection: IrFnctorArgumentProjection;
+  readonly shape: IrFnctorShape;
+  readonly selectorKind: "object";
+  readonly overrideType: IrType;
+  readonly ownerUnitId: IrUnitId;
+  readonly parameterDeclaration: ts.ParameterDeclaration;
+  readonly parameterIndex: 0;
+  readonly fieldReads: readonly IrFnctorFieldReadPlan[];
+  readonly stringSliceCall: ts.CallExpression;
+  readonly valueConsumerCall: ts.CallExpression;
+  /** Exact `/\_/g` replacement inside the linked numeric parser. */
+  readonly nativeStringReplaceCall?: ts.CallExpression;
+  readonly physical: {
+    readonly instanceCarrier: ValType;
+    readonly fieldCarrier: ValType;
+    readonly fieldIndex: number;
+    readonly fieldRefinement: "nullable-native-string";
+  };
+  readonly preselection: IrFnctorSourceCallablePlan;
+  readonly valueConsumer?: {
+    readonly unitId: IrUnitId;
+    readonly declaration: ts.FunctionDeclaration;
+    readonly parameterDeclaration: ts.ParameterDeclaration;
+    readonly parameterIndex: 0;
+    readonly parameterPhysicalType: ValType;
+    readonly signature: IrClosureSignature;
+    readonly preselection: IrFnctorSourceCallablePlan;
+  };
+  readonly nativeStringBoundaries?: readonly IrFnctorNativeStringBoundaryPlan[];
 }
 
 /**
@@ -165,6 +234,12 @@ export interface ModuleBindingGlobal {
 
 export interface IrIntegrationLoweringPlans {
   readonly identityContext: IrPlanningIdentityContext;
+  /** Exact late #3521 fnctor parameter projection, when fully prepared. */
+  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
+  /** Exact native-string runtime boundaries owned by that projection. */
+  readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
+  /** Build-time callback that revalidates the mutable fnctor join. */
+  readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
   /** Exact projected classes used by class-member body integration. */
   readonly classShapesById?: ReadonlyMap<IrClassId, IrClassShape>;
   /** Exact active terminal owners behind the remaining name-keyed integration API. */
