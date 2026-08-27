@@ -281,7 +281,7 @@ assumed. `ad543a660e`'s own tests were run under this fix:
 `issue-4618` files, `issue-1279`, `issue-3097` — **131 passed, 1 failed**, and
 that one failure is **pre-existing red on clean `main`** with this fix absent
 (now tracked as
-[#4779](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4779-issue-4527-mixed-spread-arguments-red-on-main)).
+[#4782](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4782-issue-4527-mixed-spread-arguments-red-on-main)).
 The acorn standalone lane is byte-identical before and after. If the carrier
 fallback needs to widen further, this reorder does not stand in the way — it
 only asks that a proven fnctor receiver be offered devirtualization first.
@@ -298,13 +298,13 @@ only asks that a proven fnctor receiver be offered devirtualization first.
 | `check:coercion-sites` / `check:oracle-ratchet` / `check:dead-exports` | clean, no net growth |
 | `check:ir-fallbacks` | **unchanged** — no unintended/post-claim/module-level increases; baseline file untouched |
 | acorn standalone lane, fixed vs clean main | **byte-identical: 1,665,854 bytes both arms**, census identical, all four canaries pass, 0 imports |
-| `ad543a660e`'s own tests (7 files) | 131 passed / 1 failed, that 1 pre-existing red on clean main (#4779) |
+| `ad543a660e`'s own tests (7 files) | 131 passed / 1 failed, that 1 pre-existing red on clean main (#4782) |
 
 Test262 is not run locally; CI's `merge_group` re-validation owns conformance.
 
 ### Residuals filed
 
-- [#4779](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4779-issue-4527-mixed-spread-arguments-red-on-main)
+- [#4782](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4782-issue-4527-mixed-spread-arguments-red-on-main)
   — `tests/issue-4527-call-dyn-bridge.test.ts` mixed-spread row is red on clean
   `main` (expected 52, got 46; spread-sourced `arguments` elements read as 0).
   Another ungated suite.

@@ -1,5 +1,5 @@
 ---
-id: 4779
+id: 4782
 title: "tests/issue-4527-call-dyn-bridge.test.ts mixed-spread row is red on main and nothing gates it"
 status: ready
 sprint: current
@@ -11,14 +11,36 @@ task_type: bug
 area: codegen
 language_feature: spread
 related: [4527, 4775, 4780]
+# (2026-08-27) **Id renumbered from 4779.** Open PR #5073 (codex lane) also adds
+# an issue file under id 4779 — a different one, slug
+# `es2015-bigint-tostring-symbol-radix-standalone` — and the required
+# `check:issue-ids:against-open-prs` gate correctly failed PR #5076 on the
+# collision. (Written without the `plan/issues/<id>-<slug>.md` path shape on
+# purpose: the #1616 link gate resolves that shape anywhere under `plan/` and
+# would fail `quality` on a file this branch does not carry.) The ref tie-break actually favoured THIS side (our 4779 reservation
+# was recorded at 16:12:58Z on `origin/issue-assignments`; #5073's file carries
+# no reservation at all, and its PR opened at 16:27:21Z), but that lane is
+# unreachable and PR #5076 carries a 28.5x perf fix, so we yielded the id rather
+# than block on a lane that cannot answer.
+#
+# The 4779 reservation could NOT be withdrawn: `claim-issue.mjs --release`
+# operates on live CLAIMS only, and answers "not currently claimed — nothing to
+# release" for a `status=reserved` record, which then survives unchanged
+# (re-read after the attempt: still `RESERVED … 16:12:58Z`). So a yielded id
+# leaves a permanent reservation record behind. Harmless here — it only keeps
+# `--allocate` from re-handing out 4779, and #5073's file lands on `main` under
+# that id regardless, after which `check:issue-ids:against-main` is the arbiter
+# — but worth knowing before anyone plans a yield expecting a clean withdrawal.
+#
 # (2026-08-27) Reserved with `--allow-unscanned` — no `gh` in this container, so
 # `claim-issue.mjs`'s open-PR scan degrades unconditionally. The scan was run
-# directly against the REST API with curl instead: the 6 open PRs on
-# loopdive/js2 (#5056, #5063, #5067, #5069, #5070, #5072) add or modify issue
-# files {1691, 3481, 3525, 4770, 4777, 4778}. 4779 is above all of them.
+# directly against the REST API with curl instead: the 9 open PRs on
+# loopdive/js2 (#5063, #5067, #5069, #5070, #5072, #5073, #5074, #5075, #5076)
+# add or modify issue files {1691, 3481, 3525, 4775, 4777, 4778, 4779, 4780,
+# 4781}. 4782 collides with none of them.
 ---
 
-# #4779 — the `#4527` mixed-spread row is red on main
+# #4782 — the `#4527` mixed-spread row is red on main
 
 ## Problem
 
