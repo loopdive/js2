@@ -81,6 +81,8 @@ import {
 import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constructor.js"; // (#2875 w4-F)
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
   tryCompileStandaloneRegExpMatchResultRead,
@@ -152,6 +154,7 @@ import {
 import { tryEmitInstanceBuiltinProtoMethodValue } from "./instance-proto-method-identity.js"; // (#4481)
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
+import { tryObjectCoercionFnctorPrototypeIdentity } from "./object-coercion-fnctor-prototype.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   classExpressionDefinesOwnName,
@@ -171,7 +174,6 @@ import {
   isGeneratorIteratorResultLike,
   isGetProtoOfWiredViewProtoCall,
   isProvablyNonNull,
-  moduleTouchesConstructorProp,
   receiverIsCatchClauseBinding,
   receiverIsNativeStringValType,
   resolveInheritedStaticProp,
@@ -284,6 +286,9 @@ export function tryConstructorPrototypeIdentity(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  const ctorProto = tryEmitBuiltinInstanceConstructorPrototype(ctx, fctx, expr);
+  if (ctorProto !== undefined) return ctorProto;
+
   // #3371: the original Test262 realm shim deliberately aliases
   // `$262.createRealm().global` to the current native global. Therefore
   // `other[TA.name]` is the same first-class `$__ta_ctor` value as `TA`, and
@@ -456,12 +461,8 @@ export function tryConstructorPrototypeIdentity(
     if (t) return t.kind === "externref" ? t : { kind: "externref" };
   }
 
-  // (#2026 PR-2) `.constructor` on an externref / `any`-typed instance: recover
-  // class identity by reading the instance `__tag` and dispatching to the
-  // matching `__class_<Name>` singleton, so `a.constructor === A` holds even when
-  // `a` flowed through an `any` binding. Only fires for an `any`/`unknown`
-  // receiver — a concretely-typed class instance keeps the zero-overhead static
-  // arm in `compileInstanceMember`.
+  // (#2026 PR-2) Recover `.constructor` class identity from `__tag` on any/unknown
+  // receivers; concretely-typed class instances keep the static arm.
   if (propName === "constructor") {
     const isAnyOrUnknown = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     if (isAnyOrUnknown) {
@@ -470,25 +471,23 @@ export function tryConstructorPrototypeIdentity(
     }
   }
 
-  // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1); the arm and the
-  // emitter the bare `Function` read shares live in function-intrinsic-carrier.ts.
+  const objectFnctorPrototype = tryObjectCoercionFnctorPrototypeIdentity(
+    ctx,
+    fctx,
+    expr,
+    propName,
+    moduleTouchesConstructorProp(expr.getSourceFile()),
+  );
+  if (objectFnctorPrototype !== undefined) return objectFnctorPrototype;
+
+  // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1).
   const fnValueCtor = tryEmitObjectCoercionFunctionConstructorRead(ctx, fctx, expr, propName, objType);
   if (fnValueCtor !== undefined) return fnValueCtor;
 
-  // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`
-  // → the GENUINE, identity-stable reified builtin-constructor object (supersedes
-  // the #2537 null-fold). Reading `.constructor` on a builtin extern-class receiver
-  // otherwise walks the inheritance chain (`compileExternPropertyGet`) to the
-  // `Object` base extern class — the only declarer of `constructor`,
-  // `importPrefix: "Object"` — and emits an `env::Object_get_constructor` host
-  // import (the leak the #2999 round-5 analysis flagged: 9 standalone passes for
-  // Set/WeakMap/WeakRef/WeakSet/RegExp/FinalizationRegistry/DisposableStack/
-  // SuppressedError plus instance forms). Route it to the SAME per-name
-  // `__builtin_ctor_<Name>` singleton the bare identifier now resolves to
-  // (identifiers.ts), so `<Builtin>.prototype.constructor === <Builtin>` is
-  // GENUINELY true (same object) and the swap-wrong-builtin cross-check
-  // `Set.prototype.constructor === Map` is GENUINELY false — NOT the null≡null
-  // tautology #2537 relied on.
+  // (#3006) Route standalone builtin `.constructor` reads to the genuine,
+  // identity-stable `__builtin_ctor_<Name>` singleton rather than the old null
+  // fold or the `Object_get_constructor` host import. Same-builtin identity
+  // stays true while cross-builtin identity stays false.
   //
   // Placed HERE (before the builtin-specific `.prototype`/regexp/native-proto
   // member paths further down) so it fires UNIFORMLY for every target builtin:

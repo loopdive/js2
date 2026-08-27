@@ -1693,8 +1693,8 @@ export function compileTypeofExpression(
   if (realmGlobalTypeof !== undefined) return realmGlobalTypeof;
 
   // typeof Math.<constant> -> "number", typeof Math.<method> -> "function"
-  const mathTypeof = tf.tryCompileMathMemberTypeof(ctx, fctx, operand);
-  if (mathTypeof !== undefined) return mathTypeof;
+  const builtinTypeof = tf.tryCompileBuiltinMemberTypeof(ctx, fctx, operand);
+  if (builtinTypeof !== undefined) return builtinTypeof;
 
   // typeof import.meta -> "object"
   if (
@@ -2195,7 +2195,7 @@ export function compileTypeofComparison(
     const mathConstants = new Set(["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"]);
     staticTypeof = mathConstants.has(operand.name.text) ? "number" : "function";
   } else {
-    staticTypeof = staticTypeofForType(ctx, tsType);
+    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? staticTypeofForType(ctx, tsType);
   }
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
@@ -2204,7 +2204,6 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
   }
-  // (#4491) `typeof x <cmp> "…"` read before `var x = <init>` runs — the hoisted
   // binding still holds `undefined`, so the checker's initializer-derived fold is
   // wrong for that window. Emit the same one-sided live-ness guard the plain
   // `typeof` arm uses: a NULL backing global answers "undefined", anything else
@@ -2228,7 +2227,8 @@ export function compileTypeofComparison(
     staticTypeof !== null &&
     ctx.standalone === true &&
     overlayRouteActive(ctx) &&
-    ts.isElementAccessExpression(operand)
+    ts.isElementAccessExpression(operand) &&
+    tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) === null
   ) {
     staticTypeof = null;
   }

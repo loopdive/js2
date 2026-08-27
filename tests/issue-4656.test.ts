@@ -248,6 +248,46 @@ describe("#4656 F2 — calling a resolved callee that BRANDS as a primitive is a
 });
 
 describe("#4656 A — standalone Function call/apply preserves an explicit thisArg", () => {
+  it("call boxes a number primitive before running a dynamic Function body", async () => {
+    expect(
+      await run(`
+        var obj = 1;
+        var ret = Function("this.touched = true; return this;").call(obj);
+        return typeof obj.touched === "undefined" && ret.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("call boxes a boolean primitive before running a dynamic Function body", async () => {
+    expect(
+      await run(`
+        var obj = true;
+        var ret = new Function("this.touched = true; return this;").call(obj);
+        return typeof obj.touched === "undefined" && ret.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("apply boxes a number primitive before running a dynamic Function body", async () => {
+    expect(
+      await run(`
+        var obj = 1;
+        var ret = Function("this.touched = true; return this;").apply(obj);
+        return typeof obj.touched === "undefined" && ret.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("apply boxes a boolean primitive before running a dynamic Function body", async () => {
+    expect(
+      await run(`
+        var obj = true;
+        var ret = new Function("this.touched = true; return this;").apply(obj);
+        return typeof obj.touched === "undefined" && ret.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
   it("call writes an expando on a Function() receiver", async () => {
     expect(
       await run(`

@@ -113,6 +113,7 @@ import {
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
+import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -170,6 +171,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
+import { buildTemplateRawGetArm } from "./object-runtime-template-raw.js";
 import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983) strict [[Set]] TypeError
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -1123,44 +1125,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // Look up an already-emitted native string helper.
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals")!;
-  // A tagged-template callback written in JavaScript commonly leaves its
-  // `strings` parameter as `any`, so its `.raw` read reaches this dynamic
-  // property helper rather than the statically typed vec dispatcher. The
-  // template object is a WasmGC subtype of the ordinary vec; recognize only
-  // the exact `raw` key and return the extra field when the runtime value has
-  // that subtype. Other keys and other receivers continue through the normal
-  // object/vec/closure lookup ladder.
-  const templateVecTypeIdx = ctx.templateVecTypeIdx;
-  const templateRawGetArm: Instr[] =
-    templateVecTypeIdx >= 0 && strFlattenIdx !== undefined && strEqualsIdx !== undefined
-      ? [
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: anyStrTypeIdx },
-          { op: "call", funcIdx: strFlattenIdx },
-          ...nativeStringLiteralInstrs(ctx, "raw"),
-          { op: "call", funcIdx: strEqualsIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 4 },
-              { op: "ref.test", typeIdx: templateVecTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 4 },
-                  { op: "ref.cast", typeIdx: templateVecTypeIdx },
-                  { op: "struct.get", typeIdx: templateVecTypeIdx, fieldIdx: 2 },
-                  { op: "extern.convert_any" },
-                  { op: "return" },
-                ],
-              },
-            ],
-          },
-        ]
-      : [];
+  const templateRawGetArm = buildTemplateRawGetArm(ctx, ctx.templateVecTypeIdx, strFlattenIdx, strEqualsIdx);
 
   // ── (#2896) Reserved builtin-fn metadata natives (standalone only) ────────
   //
@@ -9589,15 +9554,15 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const applyClosureIdx = ctx.funcMap.get("__apply_closure");
   if (!fn || externGetIdx === undefined || applyClosureIdx === undefined) return;
 
-  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor
-  // arm. The slow path below calls `__extern_get`, which walks its prepended
-  // ladder + `__fnctor_proto_start` before reaching the round-9b cache — but
+  const fnctorMissingMethod = buildFnctorMissingMethodDispatch(ctx, fn, externGetIdx, applyClosureIdx);
+
+  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor arm.
+  // The slow path calls `__extern_get` before reaching the round-9b cache, but
   // HERE the fnctor's prototype is a KNOWN GLOBAL, so the cache check is a
-  // handful of loads with zero calls: interned key + generation match +
-  // owner `ref.eq` against `global.get <proto>` + live-DATA entry flags →
-  // apply the cached method closure directly. Any miss falls to the exact
-  // old `__extern_get` path (which also populates the cache). Locals for the
-  // key/entry scratch are appended once below.
+  // handful of loads with zero calls: interned key + generation match + owner
+  // `ref.eq` against `global.get <proto>` + live-DATA entry flags. Any miss
+  // falls to the exact old `__extern_get` path, which also populates the cache;
+  // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
@@ -9622,7 +9587,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         ? (objStructDef.type.fields[1].type as { typeIdx: number }).typeIdx
         : undefined;
 
-  const arms: Instr[] = [];
+  const arms: Instr[] = [...fnctorMissingMethod.noPrototypeArms];
   for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
     const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
     if (typeIdx === undefined) continue;
@@ -9716,9 +9681,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: externGetIdx },
-          ...(ctx.funcMap.has("__nullish_to_null")
-            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-            : []),
+          ...fnctorMissingMethod.missingMethodGuard,
+          { op: "local.get", index: fnctorMissingMethod.missingMethodLocal },
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
           { op: "call", funcIdx: applyClosureIdx },
