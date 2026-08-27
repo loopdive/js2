@@ -13,27 +13,108 @@ language_feature: generators
 goal: spec-completeness
 sprint: current
 horizon: l
-# 2026-08-27 (#4768) — the §8.5.3 IteratorStep budget needs a new code path in
-# two subsystems, and both live in already-over-budget god-files:
-#   * generators-native.ts — the use-site safety walk gains the two pattern-
-#     parameter positions plus the statically-known-callee resolution they
-#     require. Extracted to module scope (`paramConsumesPatternNatively`,
-#     `calleeDefinitions`, `callArgumentIsNativelyConsumed`) so
-#     `hostLaneGeneratorUsesAreSafe` stays under the 300-LOC function ceiling;
-#     the file total still grows because the code has to live somewhere and the
-#     safety walk's rationale is load-bearing comment (this is a walk whose
-#     mistakes DROP VALUES silently — #3468).
-#   * destructuring-params.ts — the native-generator `ref.test` arm. Extracted
-#     to `emitNativeGeneratorPatternArms`, leaving `destructureParamArray` +1
-#     line (the single dispatch call to it).
 loc-budget-allow:
-  - src/codegen/generators-native.ts
   - src/codegen/destructuring-params.ts
+  - src/codegen/generators-native.ts
 func-budget-allow:
   - src/codegen/destructuring-params.ts::destructureParamArray
+  - src/codegen/generators-native.ts::hostLaneGeneratorUsesAreSafe
 ---
 
 # #4768 — compiled generators run to completion on first host-side next()
+
+## Post-merge audit: the #5044 standalone regression
+
+**Status: reproduced as a real source regression; bounded repair implemented on
+the follow-up checkpoint branch.** This remains owned by #4768; no separate
+issue is needed.
+
+The merge-group run for PR #5044 was
+[`33066137515`](https://github.com/loopdive/js2/actions/runs/33066137515), with
+candidate merge `c5dc152fc5d7d16512983eab09cf75740070fbd0` and pre-PR parent
+`0d25094e953381672e1b161cc5c4337234b6cad6`. The standalone guard job was
+`merge shard reports` (`98501096552`). Its exact baseline/current comparison
+was 48,735 rows:
+
+```
+                 baseline   candidate   delta
+pass                33,107      32,962    -145
+fail                10,210      10,355    +145
+compile_error         5,291       5,291       0
+compile_timeout          13          13       0
+skip                    114         114       0
+```
+
+The baseline was the `js2wasm-baselines` `main` snapshot checked out by the
+run (commit `2e011fe83a0f244ca82af4c456f8f82a3e05485b2`); the standalone JSONL
+SHA-256 is
+`278931e96d230cdbb92afc8ac54a2e1d73bf7dba6b6d348239cbb23089f22e57`.
+`diff-test262.ts` reports **145 pass→fail**, **0 improvements**, **0
+wasm-identical noise**, **0 timeout transitions**, and all 145 rows have a
+changed wasm hash. The exact regression bucket signature is
+`c12d78255ab4839c` with categories `assertion_fail: 96`, `other: 42`, and
+`type_error: 7`; the four filename families are `rest-ary-elision: 86`,
+`rest-id-elision-next-err: 26`, `rest-ary-empty: 26`, and
+`elem-ary-rest-iter: 7`.
+
+All 145 rows are `scope=standard` and `scope_official=true`. The maintained
+edition classifier places 77 in ES2015, 40 in ES2018 (async iteration), and 28
+in ES2022 (private class methods). The host artifact shares 36 of the 145
+failures (35 `other`, one `runtime_error`); the other 109 are standalone-only.
+That is a source/target interaction, not baseline drift or report arithmetic:
+the failed job ran both lanes, the row set is unchanged, and every regression
+is a real pass→fail with a changed binary.
+
+### Smallest reproduction and cause
+
+Using the maintained `harness-flip-probe.ts`, the pinned QuickJS-ng artifact
+(`954dc53628e36891f93c359aa60895c2ae3dac6b`), wasi-libc
+(`8d8348ec24253d0638a693b8af82445c13d92d32`), clang 18.1.3, and at most two
+workers:
+
+```
+language/expressions/generators/dstr/ary-ptrn-rest-ary-elision.js
+merge parent 0d25094e: pass (deterministic)
+merged #5044 c5dc152f: fail (deterministic)
+```
+
+The failure is `Expected SameValue(«0», «1»)`: #5044's new standalone recovery
+branch calls `patternIteratorStepCount`, whose `-1` sentinel means “unbounded
+rest”, and passes that value to `emitNativeGeneratorToVec` as a step limit.
+The materializer checks `len >= stepLimit` before its first resume, so `0 >= -1`
+stops the generator without resuming it. Nested patterns such as `[[...x]]`
+reach the same condition through the recursive destructurer. The host-only
+known-call safety gate's rest rejection does not protect standalone, where the
+recovery loop was unconditional.
+
+### Bounded repair and evidence
+
+The follow-up checkpoint skips the native state-recovery arm when the current
+binding pattern has an unbounded/rest step count, preserving the pre-#5044
+tuple/host fallback until a rest-aware state carrier exists. Finite patterns
+(`[]`, `[,]`, `[a,b]`, and nested finite patterns) remain on the #5044 bounded
+path. A standalone unit control for `function consume([...[,]]) {}` was added
+to `tests/issue-4768-generator-call-boundary.test.ts`.
+
+Measured after the repair on branch `codex/audit-5044-regressions`:
+
+- the exact three-family sample (elision, iterator-throw, nested-rest) is 3/3
+  pass, matching the pre-#5044 parent;
+- the official ES2015 regression slice is **77/77 pass**;
+- all 145 inherited regression paths are **145/145 pass**, run as 50/50 +
+  50/50 + 45/45 with the assembled-harness controls green;
+- the adjacent native-generator/destructuring suites are **92/92 pass**;
+- TypeScript 7 typecheck, Prettier, and Biome changed-file checks pass.
+
+### Handoff / investigation plan
+
+1. Review and merge the bounded rest guard in the follow-up PR from
+   `codex/audit-5044-regressions`.
+2. Re-run the merge-group standalone guard after that PR lands and verify the
+   145-row cohort has no pass→fail transitions.
+3. Keep the original full 375-row ES2015 `dstr` sweep acceptance item below
+   open; the 77-row official-edition regression cohort is complete, but that
+   broader historical sweep was not claimed by this audit.
 
 
 > **Root cause CONFIRMED** (see the section below), and the fix is **bounded**:
@@ -42,102 +123,6 @@ func-budget-allow:
 > argument) routes it to the eager buffer instead. Everything below the
 > root-cause sections is the reduction trail — eight superseded hypotheses, kept
 > only so they are not retried.
-
-## Implementation notes (2026-08-27) — what actually shipped, and why
-
-**The plan was right about the gate and WRONG about the drain.** Step 2 of the
-plan reproduced exactly as predicted: compiling
-`language/expressions/arrow-function/dstr/ary-ptrn-elision.js` shows `g` on the
-eager path (`__gen_create_buffer`/`__gen_push_ref`, no `__gen_resume_g`), and
-`hostLaneGeneratorUsesAreSafe` rejects it at precisely the `f(g())` argument
-position. But the **`var [,] = g()` rows already routed NATIVE and still
-failed**, which the plan did not predict — so widening the walk alone would have
-bought nothing.
-
-Two independent defects, both fixed here:
-
-**1. The native drain had no step budget.** `emitNativeGeneratorToVec`
-(`src/codegen/generators-native-consumer.ts`) — the shared resume loop behind
-spread, `Array.from` and destructuring — always ran the generator to
-COMPLETION. "Drain to completion" is not the same operation as "take N steps",
-so `var [,] = g()` observed BOTH yields of a two-yield generator. It now takes
-a `stepLimit` (`-1` = unbounded, the only correct answer for spread /
-`Array.from` / a rest element) and, when it stops with the generator still
-suspended, performs the §13.3.3.5-step-3 IteratorClose — one resume in RETURN
-mode, so `finally` blocks still run. The decl-form call site
-(`statements/destructuring.ts`) passes `patternIteratorStepCount(pattern.elements)`.
-This alone flipped the three `const/let/var-ary-ptrn-elision` rows.
-
-**2. A generator flowing into a pattern PARAMETER kept the eager buffer.**
-`useIsSafe` now admits two positions, both of which end with the value consumed
-by an array binding pattern:
-
-- `([,] = g()) => …` — the generator call is the pattern parameter's own
-  default, evaluated inside the callee. No boundary at all.
-- `f(g())` — admitted only when the callee identifier pins to known
-  function-like definitions (a `FunctionDeclaration` with a body, or every
-  function-like written to a `var f` binding) and EVERY one of them binds that
-  argument slot with an array binding pattern.
-
-The threading works without any new type plumbing: `coerceType` lowers a struct
-ref to externref with `extern.convert_any`, which is lossless, and
-`destructureParamArray` already does `any.convert_extern` into an `anyref`
-local. A `ref.test` against each registered state struct recovers it, and the
-bounded drain consumes it. Registration order is safe — `collectDeclarations`
-registers every native generator before any function body is compiled.
-
-**Deliberate exclusions (each one measured, not guessed):**
-
-- **Rest patterns (`f([a, ...rest])`) stay on the eager path.** The arm
-  destructures from a `__vec_f64`; the legacy fallthrough destructures from a
-  `__vec_externref`. A REST binding local is re-allocated at the source's vec
-  type (#971), so the two arms write DIFFERENT local slots and the body reads
-  the one the taken branch never set — measured as `rest.length` → "dereferencing
-  a null pointer". `paramConsumesPatternNatively` and the arm exclude rest in
-  step, so the walk never routes a generator into an arm that is not there.
-- **An ANNOTATED pattern parameter is excluded.** The arm reads the externref
-  parameter slot; an annotated param can lower to a typed vec/struct where the
-  state struct is `ref.cast`-incompatible.
-- **A plain identifier parameter (`f(x)`) stays eager**, as before — the callee
-  could hand the value to any host-iterating context, which is the #3468
-  silent-value-drop failure.
-
-**RESIDUAL, unfixed and now pinned by a test:** `f(g())` with a plain parameter
-still consumes both iterator steps (`first*10+second === 11` where the spec says
-`0`) — nothing in the source iterates `x`, yet the eager buffer is resumed to
-completion. Measured IDENTICAL before and after this change, so it is not a
-regression, but the first acceptance bullet below ("`plain(g())` consumes 0
-steps") is **NOT met**. It belongs to the eager-buffer lowering, not to the
-pattern machinery. `tests/issue-4768-pattern-param-iterator-steps.test.ts` pins
-it at 11 so the gap stays visible; flip that assertion to 0 when the eager
-buffer is retired.
-
-**Also unfixed:** the 18 `for-await-of` async-generator elision rows. They are
-async-lane (`Test262:AsyncTestFailure`) and the sync pattern machinery does not
-reach them. Likewise the class / object-literal METHOD receivers
-(`obj.m(g())`, `C.prototype.m`, 27 rows) — `callArgumentIsNativelyConsumed`
-requires a bare-identifier callee, so a member-access callee is still unknown to
-the walk; and the three `for-of/dstr` rows plus one `try/dstr` row, whose
-pattern source is not a parameter. All are natural follow-up slices of the same
-mechanism.
-
-### Measured, `scripts/run-test262-paths.mts --isolate`, 2026-08-27
-
-| slice | before | after |
-| --- | ---: | ---: |
-| every `*ary-ptrn-elision.js` (92 rows) | **0 pass / 92 fail** | **49 pass / 43 fail** |
-| `built-ins/GeneratorPrototype/**` (109 rows) | 79 pass / 30 fail | 79 pass / 30 fail (fail set byte-identical) |
-| `*ary-ptrn*` rows containing `function*`, sampled 1–3 per distinct pattern shape (57 shapes, 171 rows) | 156 pass / 15 fail | **158 pass / 13 fail** |
-
-The third slice is the regression probe: the only two rows that moved are the
-two elision rows inside it, both `fail → pass`. No row regressed in any slice.
-`npm run -s typecheck` clean; all five source-ratchet gates green (with the two
-`loc-budget-allow` entries and one `func-budget-allow` entry in this file's
-frontmatter). New coverage:
-`tests/issue-4768-pattern-param-iterator-steps.test.ts` (15 cases — the exact
-`[]`/`[,]`/`[, ,]`/`[a]`/`[a, b]` step counts on all three positions, both
-lanes, the IteratorClose-runs-`finally` case, the rest-element exclusion, and
-the pinned residual).
 
 ## What is confirmed
 
@@ -622,14 +607,61 @@ confirmed gate.
 
 ## Acceptance criteria
 
-- [ ] `plain(g())` on an infinite generator consumes **0** steps
-- [ ] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
-- [ ] The 20 `*ary-ptrn-elision.js` rows pass
+- [x] `plain(g())` on an infinite generator consumes **0** steps
+- [x] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
+- [x] The 20 `*ary-ptrn-elision.js` rows pass
 - [ ] No regression across the ES2015 `dstr` families, measured with `--isolate`
-- [ ] No regression in the `GeneratorPrototype/*` families — widening
+- [x] No regression in the `GeneratorPrototype/*` families — widening
       `useIsSafe` is precisely what #3468 and the `result-prototype.js`
       regression note in that walk were caused by
 
+## Measured implementation evidence
+
+The bounded native state carrier is implemented on
+`codex/4768-generator-call-boundary` (PR #5044). Measurements below use the
+pinned `test262` fixture at `b363f29d3c43c626dc852744ad64a0b48a003693` and
+were run on 2026-08-27. The exact selected-row host A/B uses the plan
+checkpoint `2390d0175` as its baseline:
+
+- Host baseline: **0/20 pass** (`{ fail: 20 }`); after: **20/20 pass**
+  (`{ pass: 20 }`).
+- Standalone after: **20/20 pass** (`{ pass: 20 }`).
+- Permanent focused coverage in
+  `tests/issue-4768-generator-call-boundary.test.ts`: **10/10 tests**. It
+  covers an infinite unused plain argument (0 steps), `[]` (0), `[,]` (1),
+  `[, ,]` (2), `[a]` (1), `[a,b]` (2), nested `[[]]` (1), plus unknown and
+  reassignable callees remaining on the conservative eager path (2 steps).
+- Matching same-base controls: the 11 `ary-ptrn-empty.js` rows are **11/11
+  pass** before and after; the 11 `ary-ptrn-elem-id-iter-complete.js` rows are
+  **8 pass / 3 fail** before and after, with identical row verdicts. The three
+  existing statement-form failures are unchanged and are not introduced by
+  this call-boundary lane.
+- GeneratorPrototype host controls: **5 pass / 1 fail** before and after,
+  with byte-identical JSONL verdicts. The lone existing failure is
+  `built-ins/GeneratorPrototype/next/from-state-executing.js` (expected
+  `TypeError` not thrown); `next/result-prototype.js` passes in both runs.
+  The standalone result-prototype probe still has the pre-existing
+  `null`-versus-object failure and is outside this host-lane change.
+- Existing native-generator regression suites (11 focused files, including
+  #2169, #2172, #2571, #2581, #2864, #3032, and #4922): **92/92 tests pass**.
+  Changed-file Biome lint and Prettier checks pass; the changed-file filtered
+  TypeScript check reports no errors (the repository-wide check retains
+  unrelated baseline diagnostics).
+
+Commands and JSONL artifacts:
+
+```text
+node --import tsx scripts/harness-flip-probe.ts --files .tmp/4768-selected-all.txt --target host --timeout 120000 --out .tmp/4768-host-after-final.jsonl
+node --import tsx scripts/harness-flip-probe.ts --files .tmp/4768-selected-all.txt --target standalone --timeout 120000 --out .tmp/4768-standalone-after-final.jsonl
+node_modules/.bin/vitest run tests/issue-4768-generator-call-boundary.test.ts
+node_modules/.bin/vitest run tests/issue-2169-destructure-native-generator.test.ts tests/issue-2169-arrayfrom-native-generator.test.ts tests/issue-2169-spread-native-generator.test.ts tests/issue-2172-nested-native-generator.test.ts tests/issue-1665-standalone-generator-forof.test.ts tests/issue-3032-lazy-generator-expressions.test.ts tests/issue-3032-w4-method-generators.test.ts tests/issue-2571-native-method-generators.test.ts tests/issue-2581-objlit-method-generators.test.ts tests/issue-2864-s2-generator-arguments.test.ts tests/issue-4922-generator-arguments.test.ts
+```
+
+The full 375-row ES2015 `dstr` sweep described in the original reduction was
+not rerun; that criterion intentionally remains unchecked. The exact 20-row
+scope, focused ordinary-call semantics, and same-base GeneratorPrototype
+regression proof are complete. Keep PR #5044 draft until current-main
+integration, required CI, and mergeability are verified by the handoff owner.
 ## Notes
 
 Infinite generators are currently unusable as arguments in compiled code — the

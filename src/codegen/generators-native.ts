@@ -1773,110 +1773,6 @@ function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
 }
 
 /**
- * (#4768) A parameter that CONSUMES its argument through an array binding
- * pattern — `function f([,]) {}` / `([a, b] = g()) => …`.
- *
- * Such a parameter is a native-safe destination for a generator state struct:
- * `destructureParamArray`'s externref arm recovers the GC ref with
- * `any.convert_extern` + `ref.test` and drains it through the compile-time
- * resume loop with the §8.5.3 step budget. The pattern also CONSUMES the
- * value — it binds only the destructured element names, never the struct
- * itself — so the struct cannot escape onward from that position.
- *
- * Requirements, all load-bearing:
- *   - array binding pattern (an object pattern reads named properties off the
- *     struct, which the drain does not model);
- *   - no type ANNOTATION: the parameter must lower to externref, which is the
- *     slot the arm reads. An annotated param can lower to a typed vec/struct,
- *     where the state struct would be `ref.cast`-incompatible;
- *   - not a rest param (`...[a]` binds an array of arguments, not the arg);
- *   - no REST ELEMENT inside the pattern (`[a, ...rest]`). The param arm and
- *     the legacy externref fallthrough destructure from vecs of different
- *     element types, and a rest binding local is re-allocated at the source's
- *     vec type — so the two arms write different local slots and the body
- *     reads the unset one. `destructureParamArray` skips the arm for the same
- *     reason; keeping the walk in step keeps such a generator eager instead
- *     of routing it into an arm that is not there.
- */
-function paramConsumesPatternNatively(param: ts.ParameterDeclaration): boolean {
-  return (
-    ts.isArrayBindingPattern(param.name) &&
-    !param.type &&
-    !param.dotDotDotToken &&
-    !param.name.elements.some((el) => ts.isBindingElement(el) && !!el.dotDotDotToken)
-  );
-}
-
-/** The function-like definitions a callee identifier can resolve to, or undefined when unknown. */
-function calleeDefinitions(
-  ctx: CodegenContext,
-  sf: ts.SourceFile,
-  callee: ts.Identifier,
-): readonly ts.SignatureDeclaration[] | undefined {
-  const { checker } = ctx;
-  const decls = ctx.oracle.declarationsOf(callee);
-  if (decls.length !== 1) return undefined;
-  const decl = decls[0]!;
-  if (ts.isFunctionDeclaration(decl)) return decl.body ? [decl] : undefined;
-  if (!ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) return undefined;
-  const declName: ts.Identifier = decl.name;
-  // `var f = <fn>` / `var f; f = <fn>` — collect EVERY function-like written
-  // to the binding. Any non-function-like write (or none at all) is unknown.
-  const calleeSym = checker.getSymbolAtLocation(declName);
-  if (!calleeSym) return undefined;
-  const found: ts.SignatureDeclaration[] = [];
-  let unknownWrite = false;
-  const isFnLike = (e: ts.Expression): e is ts.ArrowFunction | ts.FunctionExpression =>
-    ts.isArrowFunction(e) || ts.isFunctionExpression(e);
-  const scanWrites = (node: ts.Node): void => {
-    if (unknownWrite) return;
-    if (ts.isVariableDeclaration(node) && node.name === declName) {
-      if (node.initializer) {
-        if (isFnLike(node.initializer)) found.push(node.initializer);
-        else unknownWrite = true;
-      }
-    } else if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === declName.text &&
-      checker.getSymbolAtLocation(node.left) === calleeSym
-    ) {
-      if (isFnLike(node.right)) found.push(node.right);
-      else unknownWrite = true;
-    }
-    ts.forEachChild(node, scanWrites);
-  };
-  ts.forEachChild(sf, scanWrites);
-  return unknownWrite || found.length === 0 ? undefined : found;
-}
-
-/**
- * (#4768) `f(g())` — a generator call in ARGUMENT position. Safe only when
- * the callee pins to known function-like definitions and EVERY one of them
- * consumes that argument slot through an array binding pattern (see
- * `paramConsumesPatternNatively`). An unknown callee, a spread anywhere at or
- * before the slot, or any definition that binds the slot to a plain
- * identifier keeps the generator on the eager host path — a raw state struct
- * reaching a host-iterating context is the #3468 silent-value-drop failure.
- */
-function callArgumentIsNativelyConsumed(ctx: CodegenContext, sf: ts.SourceFile, node: ts.Node): boolean {
-  const call = node.parent;
-  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return false;
-  const argIndex = call.arguments.indexOf(node as ts.Expression);
-  if (argIndex < 0) return false;
-  for (let i = 0; i <= argIndex; i++) {
-    if (ts.isSpreadElement(call.arguments[i]!)) return false;
-  }
-  const defs = calleeDefinitions(ctx, sf, call.expression);
-  if (!defs) return false;
-  return defs.every((def) => {
-    const param = def.parameters[argIndex];
-    return !!param && paramConsumesPatternNatively(param);
-  });
-}
-
-/**
  * (#3050) Conservative HOST-lane use-site safety walk. The native generator
  * state struct is a WasmGC ref the JS host cannot iterate, so it must never
  * escape to a host-iterating context. Walks every `<name>(…)` call in the
@@ -1989,6 +1885,169 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     };
     ts.forEachChild(sf, visitRef);
     return safe;
+  };
+
+  /**
+   * A native generator state may cross an ordinary call boundary only when
+   * the compiler can prove what receives that argument.  The closure ABI
+   * carries binding-pattern parameters as `externref`; the parameter
+   * destructurer below recognises the native state struct after that carrier
+   * conversion.  A plain parameter is safe only when its body never reads it
+   * (the call is observationally equivalent to passing an unused value).
+   *
+   * `getResolvedSignature` is deliberately used instead of a name-based
+   * lookup.  It resolves arrows assigned to variables, class/static methods,
+   * and private methods while declining unknown/dynamic callees.  A
+   * declaration from a different source file is also declined: the local
+   * source is the only body whose parameter consumption this walk can prove.
+   */
+  const knownCallArgumentConsumer = (call: ts.CallExpression, arg: ts.Node): boolean => {
+    const argIndex = call.arguments.indexOf(arg as ts.Expression);
+    if (argIndex < 0) return false;
+
+    // A checker signature is not, by itself, proof that an identifier still
+    // names the declaration it resolved to: `let f = known; f = other; f(g())`
+    // can retain the original contextual signature. Count writes to an
+    // identifier binding before accepting its resolved parameter body. A
+    // declaration initializer (or one later assignment for `var f; f = fn`)
+    // is the one stable write; a second write means the callee is
+    // reassignable/unknown and must keep the eager path.
+    if (ts.isIdentifier(call.expression)) {
+      const calleeSymbol = checker.getSymbolAtLocation(call.expression);
+      if (!calleeSymbol) return false;
+      let writes = 0;
+      const scanCalleeWrites = (node: ts.Node): void => {
+        if (
+          (ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node)) &&
+          node.name &&
+          checker.getSymbolAtLocation(node.name) === calleeSymbol
+        ) {
+          // Function declarations establish the initial binding even though
+          // they have no `initializer` expression.
+          if (ts.isFunctionDeclaration(node) || node.initializer) writes++;
+        } else if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+          ts.isIdentifier(node.left) &&
+          checker.getSymbolAtLocation(node.left) === calleeSymbol
+        ) {
+          writes++;
+        } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+          const operand = node.operand;
+          if (
+            ts.isIdentifier(operand) &&
+            checker.getSymbolAtLocation(operand) === calleeSymbol &&
+            (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+          ) {
+            writes++;
+          }
+        }
+        ts.forEachChild(node, scanCalleeWrites);
+      };
+      scanCalleeWrites(sf);
+      if (writes > 1) return false;
+    }
+
+    let signature: ts.Signature | undefined;
+    try {
+      signature = checker.getResolvedSignature(call) ?? undefined;
+    } catch {
+      return false;
+    }
+    let declaration = signature?.declaration;
+    // Untyped JavaScript-style assignment (`var f; f = ([,]) => {}`) has no
+    // resolved checker signature even though the source contains one exact
+    // function value. Recover that value by symbol identity and require every
+    // write to the slot to be this same function expression. This keeps a
+    // reassignable/unknown callee on the eager path.
+    if (!declaration && ts.isIdentifier(call.expression)) {
+      const calleeSymbol = checker.getSymbolAtLocation(call.expression);
+      const candidateFns: Array<ts.FunctionExpression | ts.ArrowFunction> = [];
+      let writes = 0;
+      let invalidWrite = false;
+      const scanWrites = (node: ts.Node): void => {
+        if (invalidWrite) return;
+        if (ts.isVariableDeclaration(node) && node.name === call.expression) {
+          if (node.initializer) {
+            writes++;
+            if (ts.isFunctionExpression(node.initializer) || ts.isArrowFunction(node.initializer)) {
+              candidateFns.push(node.initializer);
+            } else {
+              invalidWrite = true;
+            }
+          }
+        } else if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(node.left) &&
+          checker.getSymbolAtLocation(node.left) === calleeSymbol
+        ) {
+          writes++;
+          if (ts.isFunctionExpression(node.right) || ts.isArrowFunction(node.right)) {
+            candidateFns.push(node.right);
+          } else {
+            invalidWrite = true;
+          }
+        }
+        ts.forEachChild(node, scanWrites);
+      };
+      scanWrites(sf);
+      if (!invalidWrite && writes === 1 && candidateFns.length === 1) declaration = candidateFns[0];
+    }
+
+    if (!declaration || declaration.getSourceFile() !== sf) return false;
+    if (
+      !(
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isArrowFunction(declaration) ||
+        ts.isMethodDeclaration(declaration) ||
+        ts.isGetAccessorDeclaration(declaration) ||
+        ts.isSetAccessorDeclaration(declaration)
+      )
+    ) {
+      return false;
+    }
+
+    const bindingPatternHasRest = (name: ts.BindingName): boolean => {
+      if (!ts.isArrayBindingPattern(name) && !ts.isObjectBindingPattern(name)) return false;
+      return name.elements.some(
+        (element) =>
+          ts.isBindingElement(element) && (element.dotDotDotToken !== undefined || bindingPatternHasRest(element.name)),
+      );
+    };
+
+    const parameter = declaration.parameters[argIndex];
+    if (!parameter || parameter.dotDotDotToken) return false;
+    if (ts.isArrayBindingPattern(parameter.name)) {
+      // Rest parameters require an unbounded drain, whereas this slice's
+      // state materializer is deliberately bounded by the finite binding
+      // pattern. Keep those call sites conservative until a rest-aware state
+      // carrier exists.
+      return !bindingPatternHasRest(parameter.name);
+    }
+    if (!ts.isIdentifier(parameter.name)) return false;
+
+    const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
+    if (!parameterSymbol || !declaration.body) return false;
+    let used = false;
+    const visitParameterUse = (node: ts.Node): void => {
+      if (used) return;
+      if (ts.isIdentifier(node) && node !== parameter.name && node.text === (parameter.name as ts.Identifier).text) {
+        if (checker.getSymbolAtLocation(node) === parameterSymbol) used = true;
+      }
+      ts.forEachChild(node, visitParameterUse);
+    };
+    visitParameterUse(declaration.body);
+    // A later parameter default is evaluated in this function's parameter
+    // environment too; a read there is an observable use of the argument.
+    for (const otherParameter of declaration.parameters) {
+      if (otherParameter !== parameter && otherParameter.initializer) {
+        visitParameterUse(otherParameter.initializer);
+      }
+    }
+    return !used;
   };
 
   /**
@@ -2131,6 +2190,11 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       const p = node.parent;
       if (useIsSafe(node, /* viaBinding */ false)) {
         // safe direct consumer
+      } else if (ts.isCallExpression(p) && knownCallArgumentConsumer(p, node)) {
+        // (#4768) A statically resolved ordinary call can carry the native
+        // state through its externref parameter ABI when that parameter is an
+        // array binding pattern (or is provably unused). Unknown/dynamic
+        // callees remain rejected by knownCallArgumentConsumer.
       } else if (ts.isVariableDeclaration(p) && p.initializer === node) {
         if (ts.isIdentifier(p.name)) {
           if (!bindingUsesAreSafe(p.name)) allSafe = false;
@@ -2150,14 +2214,20 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
         ts.isArrayLiteralExpression(p.left)
       ) {
         // `[a, b] = g()` destructuring-assignment source — native path.
-      } else if (ts.isParameter(p) && p.initializer === node && paramConsumesPatternNatively(p)) {
-        // (#4768) `([,] = g()) => …` — the generator call IS the pattern
-        // parameter's default. It is evaluated inside the callee prologue and
-        // consumed by that same pattern, so the state struct never crosses a
-        // boundary the walk cannot see.
-      } else if (callArgumentIsNativelyConsumed(ctx, sf, node)) {
-        // (#4768) `f(g())` where every definition of `f` binds that slot with
-        // an array binding pattern — see callArgumentIsNativelyConsumed.
+      } else if (
+        ts.isBinaryExpression(p) &&
+        p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        p.right === node &&
+        ts.isArrayBindingPattern(p.left)
+      ) {
+        // (#4768) A parameter default such as `([,] = g())` feeds the native
+        // state directly into the binding-pattern destructurer. The
+        // externref parameter lane recovers the state and drains only the
+        // pattern's required iterator steps.
+      } else if (ts.isParameter(p) && p.initializer === node && ts.isArrayBindingPattern(p.name)) {
+        // (#4768) In the AST, a default parameter's `g()` is the Parameter's
+        // initializer (`p` is not the assignment expression shown by source
+        // text). It is consumed by the same binding-pattern lane above.
       } else {
         allSafe = false;
       }
