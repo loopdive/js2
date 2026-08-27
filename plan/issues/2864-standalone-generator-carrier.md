@@ -1800,3 +1800,11 @@ Static checks are green after the issue's intentional budget grants:
 This is a bounded acceptance checkpoint, not closure of the umbrella: C02's
 remaining 27 rows, C01's 102 native-plan refusals, and the other carrier groups
 remain routed to their documented follow-ups.
+
+Handoff: commit `aa5e2aef6b3cbbd6f6774dd351c14c2a0fd9c597` on
+`codex/2864-es2015-generator-closeout` contains this implementation and is
+intended for existing draft PR [#5035](https://github.com/loopdive/js2/pull/5035).
+The local push was attempted after verification but was denied by the execution
+environment's external-egress policy; the parent integration task must push this
+fast-forward checkpoint to the PR branch. The worktree has no tracked or
+dependency-artifact residue.
