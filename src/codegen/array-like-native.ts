@@ -15,6 +15,8 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { joinEmptyElementTest } from "./array-holes.js";
+import { allocJoinFoldLocals, emitStringJoinFold, nativeStringRepr } from "./builtin-scaffold.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -29,6 +31,8 @@ interface ArrayLikeDeps {
   set: number;
   deleteProperty: number;
   boxNumber: number;
+  toString: number;
+  isUndefined: number;
 }
 
 /** Register the shared dynamic-object helpers before their indices are used. */
@@ -45,6 +49,8 @@ function prepareArrayLikeDeps(ctx: CodegenContext, fctx: FunctionContext): Array
   ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
   ensureLateImport(ctx, "__delete_property", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   addStringConstantGlobal(ctx, "length");
   flushLateImportShifts(ctx, fctx);
 
@@ -54,17 +60,21 @@ function prepareArrayLikeDeps(ctx: CodegenContext, fctx: FunctionContext): Array
   const set = ctx.funcMap.get("__extern_set");
   const deleteProperty = ctx.funcMap.get("__delete_property");
   const boxNumber = ctx.funcMap.get("__box_number");
+  const toString = ctx.funcMap.get("__extern_toString");
+  const isUndefined = ctx.funcMap.get("__extern_is_undefined");
   if (
     length === undefined ||
     getIdx === undefined ||
     hasIdx === undefined ||
     set === undefined ||
     deleteProperty === undefined ||
-    boxNumber === undefined
+    boxNumber === undefined ||
+    toString === undefined ||
+    isUndefined === undefined
   ) {
     return undefined;
   }
-  return { length, getIdx, hasIdx, set, deleteProperty, boxNumber };
+  return { length, getIdx, hasIdx, set, deleteProperty, boxNumber, toString, isUndefined };
 }
 
 /** Append the Array.prototype ToObject guard shared by the three mutators. */
@@ -425,6 +435,102 @@ function emitArrayLikeReverse(fctx: FunctionContext, deps: ArrayLikeDeps): ValTy
   return { kind: "externref" };
 }
 
+/** Emit `Array.prototype.join` for a dynamic receiver and an args vector. */
+function emitArrayLikeJoin(ctx: CodegenContext, fctx: FunctionContext, deps: ArrayLikeDeps): ValType {
+  const repr = nativeStringRepr(ctx);
+  if (repr === undefined || ctx.anyStrTypeIdx < 0) {
+    // `emitArrayLikeNativeMemberBody` is only selected by the standalone
+    // native-proto path, so this is defensive. The caller treats `null` as an
+    // unwired body and keeps the established catchable refusal fallback.
+    return { kind: "externref" };
+  }
+
+  const argsLength = allocLocal(fctx, "__array_like_join_args_length", { kind: "i32" });
+  const separatorArg = allocLocal(fctx, "__array_like_join_separator_arg", { kind: "externref" });
+  const separator = allocLocal(fctx, "__array_like_join_separator", repr.resultType);
+  const foldLocals = allocJoinFoldLocals(fctx, repr, "array_like_join");
+  const { lenTmp, iTmp, resultTmp, sepTmp } = foldLocals;
+  const emptyElement = joinEmptyElementTest(ctx, fctx, () => deps.isUndefined);
+
+  // The variadic closure ABI gives join an externref vector in param 2. Read
+  // its optional separator through the same array-like boundary used for the
+  // receiver. An omitted argument and an explicit `undefined` both select the
+  // default comma; explicit `null` is converted to the string "null".
+  fctx.body.push(
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: deps.length },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: argsLength },
+    { op: "local.get", index: argsLength },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 2 },
+        { op: "f64.const", value: 0 },
+        { op: "call", funcIdx: deps.getIdx },
+        { op: "local.set", index: separatorArg },
+        { op: "local.get", index: separatorArg },
+        { op: "call", funcIdx: deps.isUndefined },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...repr.literal(","), { op: "local.set", index: separator }],
+          else: [
+            { op: "local.get", index: separatorArg },
+            { op: "call", funcIdx: deps.toString },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+            { op: "local.set", index: separator },
+          ],
+        },
+      ],
+      else: [...repr.literal(","), { op: "local.set", index: separator }],
+    },
+    { op: "local.get", index: separator },
+    { op: "local.set", index: sepTmp },
+  );
+
+  // ToLength(this.length) and the empty-string accumulator. A transferred
+  // generic join must not cast the receiver to a typed Wasm array.
+  fctx.body.push(
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: deps.length },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: lenTmp },
+    ...repr.literal(""),
+    { op: "local.set", index: resultTmp },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: iTmp },
+  );
+
+  const elementToString: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: iTmp },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: deps.getIdx },
+    { op: "local.set", index: emptyElement.elemLocal },
+    ...emptyElement.test,
+    {
+      op: "if",
+      blockType: { kind: "val", type: repr.resultType },
+      then: [...repr.literal("")],
+      else: [
+        { op: "local.get", index: emptyElement.elemLocal },
+        { op: "call", funcIdx: deps.toString },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+      ],
+    },
+  ];
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elementToString);
+
+  fctx.body.push({ op: "local.get", index: resultTmp }, { op: "extern.convert_any" });
+  return { kind: "externref" };
+}
+
 function f64IndexFromLocal(index: number): Instr[] {
   return [{ op: "local.get", index }, { op: "f64.convert_i32_s" }];
 }
@@ -442,10 +548,11 @@ export function emitArrayLikeNativeMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null | undefined {
-  if (member !== "push" && member !== "reverse" && member !== "unshift") return undefined;
+  if (member !== "join" && member !== "push" && member !== "reverse" && member !== "unshift") return undefined;
   const deps = prepareArrayLikeDeps(ctx, fctx);
   if (deps === undefined) return undefined;
   emitArrayLikeReceiverGuard(ctx, fctx, member);
+  if (member === "join") return emitArrayLikeJoin(ctx, fctx, deps);
   if (member === "push") return emitArrayLikePush(ctx, fctx, deps);
   if (member === "unshift") return emitArrayLikeUnshift(ctx, fctx, deps);
   return emitArrayLikeReverse(fctx, deps);

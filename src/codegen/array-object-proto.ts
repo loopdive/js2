@@ -1781,7 +1781,7 @@ function makeGlue(
     // arity), keeping their closure types byte-identical.
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
     memberIsVariadic: (member) =>
-      name === "Array" && (member === "push" || member === "unshift" || member === "concat")
+      name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true
         : name === "String" && member === "concat",
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.

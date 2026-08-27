@@ -196,3 +196,31 @@ inherited, and getter cases), and TypeScript typechecking passes. The exact
 requires the next shared join closure implementation. PR #5033 remains draft
 and this checkpoint is not an issue closure until the exact eight-row slice is
 8/8 with zero non-passes.
+
+## 2026-08-27 exact eight-row standalone acceptance
+
+The transferred `Array.prototype.join` value now uses the same receiver-aware
+variadic ABI as the other three generic methods. Its native body reads
+`length` and indexed values through the dynamic object substrate, converts
+non-nullish values with the native ToString helper, and renders missing,
+`undefined`, and `null` elements as empty strings. The optional separator is
+kept as a vector so omitted/`undefined` select the comma default while an
+explicit `null` remains distinguishable under the canonical undefined
+singleton.
+
+The maintained official-scope runner was run once over the exact eight
+surviving rows at the pinned Test262 revision with the fixed Node/LLVM/artifact
+paths and `COMPILER_POOL_SIZE=2`:
+
+* Standalone: denominator 8, pass 8, fail 0, compile errors 0, timeouts 0,
+  skips 0.
+
+The standalone harness controls also reported both directions as expected,
+and the focused issue tests remain green: 3/3 tests, including 4/4 direct
+missing, explicit-`null`, inherited, and getter assertions. TypeScript
+typechecking and `git diff --check` pass. The earlier host rerun of the exact
+slice remains 3/8 because five unrelated host-lane assertions fail (three
+reverse behavior rows and one push length/coercion row, plus the pre-fix join
+row); the owned standalone acceptance slice is now 8/8. This closes the
+resumed implementation scope; PR #5033 may leave draft status only at the
+parent agent's discretion after reviewing the host-lane residuals.
