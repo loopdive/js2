@@ -31,6 +31,10 @@ func-budget-allow:
   # fnctorProtoRoute, growableReceiver, inheritsFromObjectPrototype). The scan
   # itself is a leaf module, src/codegen/in-escaped-receiver.ts.
   - src/codegen/binary-ops-in.ts::compileInOperator
+  # 2026-08-27 slice 2b (the trap half of the same fix). +12 in _wrapForHost:
+  # the tombstone guard in its `has` trap plus the rationale for why that trap
+  # is the one an `in` on an externref-typed receiver reaches.
+  - src/runtime.ts::_wrapForHost
 ---
 
 # #4765 — `Array.prototype` method values and the generic array-like algorithm
@@ -304,8 +308,46 @@ the existing `__extern_has` arm is taken — **and the row still fails.** Measur
 across the full 124: still 113, no regressions, no gains. So it was reverted
 (hypothesis 2 wrong).
 
-That localises the real blocker one layer down: **`__extern_has` itself answers
-`true` for this key.** The earlier probe showed it answering correctly for a
+### Slice 2b — the missing half, found by probing the receiver shape
+
+Reproducing the row's own object shape (throwing getter, small indices) settled
+it:
+
+```
+function Stop() {}
+var a = { get "6"() { throw new Stop(); }, "7": "seven", "9": "nine", length: 12 };
+try { Array.prototype.unshift.call(a, null); } catch (e) {}
+  hasOwnProperty(a, "9")  false   ✓   tombstone IS in the JS WeakMap
+  a["9"]                  undefined ✓ the compiled READ is correct
+  "9" in a                true    ✗
+```
+
+So `_wasmStructHasOwn` and the read were both right; only `in` disagreed. With
+an **externref**-typed receiver the routed `__extern_has` does not take its
+`_isWasmStruct` arm — it falls through to `key in obj`, which hits the host
+wrapper's **`has` trap**, and that trap read the static struct shape without
+consulting the tombstone.
+
+Both halves are needed, which is why each looked like a no-op alone: dropping
+the `ref`/`ref_null` gate on `escapedReceiverRoute` (so the fold is suppressed
+and `in` actually routes), plus the tombstone guard in the `has` trap (so the
+routed question is answered correctly). Verified: `in9=false`, and
+`in`/`hasOwnProperty` now agree.
+
+**This is the vindication of the very first attempted fix in this issue.** The
+proxy-`has` tombstone guard was tried early, measured as a no-op, and reverted —
+correctly, on the evidence available, because the fold was short-circuiting
+before the trap was ever reached. Testing a fix whose precondition is not met
+reads exactly like testing a wrong fix.
+
+`unshift/length-near-integer-limit.js` still fails: with the mechanism working at
+small indices, what remains for that row is genuinely the 2^53 scale (keys near
+2^53, `length: 2**53-2`). Measured 113/124 with slice 2b — no rows gained, no
+regressions. Shipped anyway: it closes a real `in`-vs-`hasOwnProperty`
+disagreement any host mutation can produce, at zero measured cost, in the same
+class as slice 2 (which did gain rows).
+
+Superseded diagnosis, kept for the record: The earlier probe showed it answering correctly for a
 plain object literal, so something about THIS receiver puts the deletion
 somewhere `_wasmStructHasOwn` does not look — most likely the host `unshift`
 deleted through the native `__delete_property` path (an `_isNativeOpenObject`

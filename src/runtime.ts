@@ -7691,6 +7691,18 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         const sc = _wasmStructProps.get(obj);
         return !!sc && key in sc;
       }
+      // (#4765) A DELETED key is absent for HasProperty too. `fieldNamesForHost()`
+      // below is the STATIC struct shape and does not shrink on delete, so
+      // `"k" in wrapped` stayed true after the host's own
+      // `Array.prototype.{pop,splice,unshift}` removed `k` via
+      // DeletePropertyOrThrow — the "…is removed" test262 family.
+      // `_wasmStructHasOwn` (hasOwnProperty) and the compiled read already
+      // consult this set; the proxy's `has` trap was the one that did not, and
+      // it is what an `in` on an externref-typed receiver reaches.
+      {
+        const tomb = _wasmStructDeletedKeys.get(obj);
+        if (tomb?.has(typeof key === "symbol" ? key : String(key))) return false;
+      }
       if (safeGetField(key) !== undefined) return true;
       const sc = _wasmStructProps.get(obj);
       if (sc && key in sc) return true;

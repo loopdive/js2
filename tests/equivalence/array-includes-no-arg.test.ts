@@ -240,3 +240,37 @@ describe("`in` on a receiver that escaped to a host call", () => {
     );
   });
 });
+
+// (#4765 slice 2b) The other half of the escape-aware `in` fix. Suppressing the
+// fold routes the question to `__extern_has`, which for an externref-typed
+// receiver lands on the host wrapper's `has` trap — and that trap read the
+// STATIC struct shape, which does not shrink on delete. So `in` still answered
+// true for a key the host had removed, while `hasOwnProperty` (which consults
+// the tombstone) said false. Both halves are needed: the fold suppression alone
+// changes nothing, and the trap guard alone is never reached.
+describe("`in` agrees with hasOwnProperty after a host deletion", () => {
+  it("reports a key removed by a throwing-getter unshift as absent", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        function Stop() {}
+        var a: any = { get "1"() { throw new Stop(); }, "2": "two", length: 3 };
+        try { Array.prototype.unshift.call(a, null); } catch (e) {}
+        var inSays: boolean = "2" in a;
+        var ownSays: boolean = Object.prototype.hasOwnProperty.call(a, "2");
+        return (inSays === ownSays ? 2 : 0) + (inSays ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
+  it("keeps reporting keys the host did not touch", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var a: any = { "0": "zero", "1": "one", length: 2 };
+        Array.prototype.pop.call(a);
+        return (("0" in a) ? 2 : 0) + (("1" in a) ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+});

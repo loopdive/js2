@@ -429,7 +429,6 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     const escapedReceiverRoute =
       !ctx.standalone &&
       !ctx.wasi &&
-      (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") &&
       ts.isIdentifier(expr.right) &&
       identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
     const has =
