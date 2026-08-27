@@ -1,7 +1,7 @@
 ---
 id: 5099
 title: "fix(standalone): expose StringIteratorPrototype.next metadata"
-status: ready
+status: done
 sprint: current
 created: 2026-08-27
 updated: 2026-08-28
@@ -97,7 +97,9 @@ baseline-summary sync at `5321bfbbfa9193c6b55a7558126b88b003a03719`:
   host/standalone repeats remained `2/2` with both controls and
   `nondeterministic: 0`.
 
-Post-sync CI for PR #5103 head `e0159876d6` is fully green (all required jobs
-successful or intentionally skipped), and the branch is mergeable against
-`upstream/main` `5321bfbbfa`. The PR remains draft and held outside the merge
-queue pending the parent’s readiness/queue operation.
+Post-sync CI for PR #5103 head `e0159876d6` (Actions run `33123862203`) is
+fully green (all required jobs successful or intentionally skipped), and the
+branch is mergeable against `upstream/main` `5321bfbbfa`. The subsequent
+tracker-only handoff head is `a7fdb491e0`; it must receive its own fresh CI
+result before readiness changes. The PR remains draft and held outside the
+merge queue pending the parent’s readiness/queue operation.
