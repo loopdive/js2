@@ -552,6 +552,20 @@ export function compileNamespaceStaticCall(
     }
   }
 
+  // Handle ArrayBuffer.isView() — an omitted arg is undefined and therefore
+  // false. Keep this standalone-only arm separate from the argument-bearing
+  // implementation below so the host route remains unchanged (#4778).
+  if (
+    noJsHost(ctx) &&
+    ts.isIdentifier(propAccess.expression) &&
+    propAccess.expression.text === "ArrayBuffer" &&
+    propAccess.name.text === "isView" &&
+    expr.arguments.length === 0
+  ) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
   // Handle ArrayBuffer.isView(arg) — checks if arg is a TypedArray/DataView (#965)
   if (
     ts.isIdentifier(propAccess.expression) &&
