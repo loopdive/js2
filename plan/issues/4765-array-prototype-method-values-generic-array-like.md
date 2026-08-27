@@ -131,8 +131,50 @@ Remaining from the original 19, now 12:
   thrown but no exception was thrown"). Both point at argument marshalling
   coercing a WasmGC struct on its way to the host call, ahead of the host
   algorithm's own step order.
-- 10 rows in the 2^53-length family, which now genuinely need the length
-  arithmetic, not the method value.
+- 10 rows in the 2^53-length family. **Diagnosed 2026-08-27 — and it is not the
+  length arithmetic.** See the section below.
+
+## The 2^53 family is a `delete`-visibility problem, not an arithmetic one
+
+Probed through the real runner (a scratch file under `test262/test/`, run with
+`scripts/run-test262-paths.mts`, so the whole host-wrapper path is live):
+
+```
+var a = { length: 3, 0: "a", 1: "b", 2: "c" };
+delete a[2];
+  2 in a                                  →  true    (must be false)
+  Object.prototype.hasOwnProperty(a, "2") →  false    (correct)
+  a[2]                                    →  "c"      (must be undefined)
+```
+
+So a **direct `delete`** on a statically-shaped struct is already invisible to
+`in` and to the index read, while `hasOwnProperty` honours it. The host's
+`Array.prototype.pop` / `splice` / `unshift` remove elements with
+`DeletePropertyOrThrow`, and those removals are exactly what these rows assert
+("`arrayLike['9007199254740990']` is removed"). Nothing about 2^53 is involved —
+the same failure reproduces at index 2.
+
+**Dead end worth not repeating.** The obvious fixes do nothing:
+`_wasmStructDeletedKeys` (the tombstone set) is consulted by `_wasmStructHasOwn`,
+by gOPD, and by `__extern_has`, but adding the same guard to the host proxy's
+`has` trap, to `__extern_has_idx`, and to `__extern_get_idx` changes no
+behaviour — because a statically-typed receiver never reaches the indexed MOP
+at all. `a[2]` lowers to a direct struct-field read (`__sget_2`), and `2 in a`
+resolves statically from the struct shape. All three edits were tried and
+reverted.
+
+The real fix is **per-instance property presence for statically-shaped structs**
+— the struct field physically exists, so deletion needs a presence bit consulted
+by the compiled read and `in`, not just a host-side tombstone. The precedent is
+`bfnstate` in `src/codegen/builtin-fn-meta.ts`, which carries exactly this kind
+of per-instance deleted-bits mask for a builtin function's `name`/`length` so
+`verifyProperty`'s delete-then-`hasOwnProperty` round-trip works. Generalising
+that to open-object structs is the shape of the work.
+
+One separate row in the family is genuinely arithmetic:
+`unshift/clamps-to-integer-limit.js` — after `arrayLike.length = 2 ** 53`,
+`Array.prototype.unshift.call(arrayLike)` must write back `ToLength(len)` =
+2^53−1; measured, the length stays 2^53.
 
 **Standalone is untouched** — the intercept returns early under
 `ctx.standalone || ctx.wasi`. A native answer still needs the generic array-like
