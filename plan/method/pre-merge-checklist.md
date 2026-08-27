@@ -10,6 +10,11 @@ Devs do NOT do a direct ff-only merge to main. Instead:
    - Planning conflicts → `git checkout --theirs` + regen
    - Compiler source conflicts → dispatch to `senior-developer` (Opus) via priority TaskList item
 2. [ ] Run scoped local checks (issue-specific compile+run)
+   - ⚠ Local `quality`-style validation on Node ≤ 22 can show a **phantom red
+     main**: the guard-suite generator-resume path (`__gen_resume___closure_*`
+     `RuntimeError: unreachable`) is engine-version-dependent — fails on Node
+     20/22, passes on CI's Node 25 (#3481, 2026-08-27). Before diagnosing a
+     "red on main" locally, check `node --version` against CI's.
 3. [ ] `git push && gh pr create`
 4. [ ] Monitor `.claude/ci-status/pr-<N>.json` until SHA matches HEAD
 5. [ ] `net_per_test > 0`: `gh pr merge <N> --auto` (enqueues — NO `--merge`/strategy flag; the queue owns the strategy and rejects `--merge --auto`; queue re-runs checks against merged state then lands)
