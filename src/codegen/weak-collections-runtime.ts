@@ -137,8 +137,10 @@ function isDefinitelyNotWeakKey(ctx: CodegenContext, fctx: FunctionContext, expr
       !fctx.localMap.has("Symbol") &&
       !fctx.boxedCaptures?.has("Symbol")
     ) {
-      const symbol = ctx.checker.getSymbolAtLocation(callee.expression);
-      return symbol?.declarations?.every((declaration) => declaration.getSourceFile().isDeclarationFile) ?? true;
+      const declarations = ctx.oracle.declarationsOf(callee.expression);
+      return (
+        declarations.length === 0 || declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+      );
     }
   }
   return false;
