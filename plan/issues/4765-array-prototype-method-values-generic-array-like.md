@@ -224,11 +224,55 @@ nothing in the host lane, because the shape-widening pass that populates
 `growableObjectLiteralVars` does not run there. That is why the host lane needs
 its own question.
 
-**Still open in this family** (`reverse` ×2, `slice`, `splice/create-species`,
-`unshift` ×2): these assert on the READ (`arrayLike[i]`), on a Proxy receiver, or
-on species construction — the property read has the same static-shape
-unsoundness as `in` did, but routing every escaped read through `__extern_get`
-is a much larger perf question than routing `in`. `unshift/clamps-to-integer-limit.js`
+### The read side, measured — and the trade-off it forces
+
+`in` is fixed; the READ is narrower than "escaped reads are unsound", and the
+difference matters because it decides how expensive the fix is. Probed:
+
+```
+var a = { "0": "zero", "2": "two", length: 3 };
+Array.prototype.unshift.call(a, "new");
+  a.length  4          ✓
+  a["0"]    "new"      ✓   declared field, host WROTE it
+  a["1"]    "zero"     ✓   undeclared key, read routes dynamically
+  a["3"]    "two"      ✓   undeclared key, read routes dynamically
+  a["2"]    "two"      ✗   declared field, host DELETED it — must be undefined
+```
+
+So host **writes** are already visible, and undeclared keys already read
+dynamically. Exactly one case is wrong: **a read of a DECLARED struct field that
+the host deleted.** The write lands in the field; the delete only records a
+tombstone and leaves the field in place, and the compiled `struct.get` does not
+consult it.
+
+That is the same missing tombstone check the `in` fold had — but the remedy is
+not the same size. `in` could take an existing `__extern_has` arm, and `in` is
+rare. Making the read correct means routing declared-field reads on an escaped
+receiver through `__extern_get`, which deoptimises `obj.x` after any `f(obj)` —
+ordinary TypeScript code, not just array-likes.
+
+**This is a product trade-off, not a bug fix, and it is deliberately left for a
+human to make.** Options, cheapest first:
+
+1. Narrow the escape predicate for READS to array-like receivers only (static
+   type has `length` plus numeric-ish keys). Fixes
+   `unshift/length-near-integer-limit.js`; cannot deopt ordinary object code.
+   Ad hoc, but the population it targets is exactly the generic-array-algorithm
+   one.
+2. Per-instance presence bits on the struct (the `bfnstate` precedent in
+   `src/codegen/builtin-fn-meta.ts`), so the compiled `struct.get` can check a
+   deleted-bit without a host call. Correct everywhere, keeps reads native,
+   costs a field per open-object struct and a branch per read.
+3. Route all escaped declared-field reads through `__extern_get`. Simplest,
+   most correct, worst for performance.
+
+Option 2 is the principled one; option 1 buys the conformance row now.
+
+**Genuinely separate from all of the above** — `reverse` ×2 need host
+observation of a throwing accessor on the wrapped struct; `slice` and
+`splice/create-species` trap with "requested new array is too large" (the real
+2^53 arithmetic); `unshift/clamps-to-integer-limit.js` needs the `ToLength`
+write-back. `unshift/clamps-to-integer-limit.js`
 remains the one genuinely arithmetic row.
 
 The read-side fix is where **per-instance property presence for statically-shaped structs**
