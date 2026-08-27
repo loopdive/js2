@@ -360,6 +360,17 @@ interface ObjCarrierDeps {
   /** `__sget_throw(externref) -> externref` — the closed-struct iterator's
    *  `throw` method read used by the §14.4.14 delegation arm. */
   sgetThrowIdx?: number;
+  /** `__call_accessor_get(externref, externref) -> externref` — the shared
+   *  S5c driver for accessor-backed closed IteratorResult fields. */
+  accessorGetIdx?: number;
+  /** Accessor closure globals for closed `done`/`value` result fields. The
+   *  globals are nullable until their define-site executes, so each arm keeps
+   *  the ordinary generated field reader as its fallback. */
+  accessorGetArms?: Array<{
+    propName: "done" | "value";
+    structTypeIdx: number;
+    globalIdx: number;
+  }>;
   /** Fresh instrs pushing the string key `name` as externref. */
   keyInstrs: (name: string) => Instr[];
   /** Fresh instrs pushing the miss/undefined externref (matches `__extern_get`). */
@@ -1320,6 +1331,24 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         sgetNextIdx: ctx.funcMap.get("__sget_next"),
         sgetReturnIdx: externSgetIdx(ctx, "__sget_return"),
         sgetThrowIdx: externSgetIdx(ctx, "__sget_throw"),
+        accessorGetIdx: ctx.funcMap.get("__call_accessor_get"),
+        accessorGetArms: (() => {
+          const accessorGetIdx = ctx.funcMap.get("__call_accessor_get");
+          if (accessorGetIdx === undefined) return undefined;
+          const arms: NonNullable<ObjCarrierDeps["accessorGetArms"]> = [];
+          for (const [key, entry] of ctx.structAccessorClosure) {
+            if (entry.getGlobal === undefined) continue;
+            for (const propName of ["done", "value"] as const) {
+              const suffix = `_${propName}`;
+              if (!key.endsWith(suffix)) continue;
+              const structTypeIdx = ctx.structMap.get(key.slice(0, -suffix.length));
+              if (structTypeIdx !== undefined) {
+                arms.push({ propName, structTypeIdx, globalIdx: entry.getGlobal });
+              }
+            }
+          }
+          return arms.length > 0 ? arms : undefined;
+        })(),
         keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
         missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
       };
@@ -1869,11 +1898,56 @@ function buildIteratorThrowBody(
     { op: "extern.convert_any" },
   ];
 
+  // S5c accessor closures live in nullable module globals rather than in the
+  // closed struct's field slots. Prefer a live closure for `done`/`value`, but
+  // keep the generated static getter as the fallback for objects whose
+  // define-site has not executed (or which have no accessor at all).
+  const closedFieldRead = (name: "done" | "value", fallback: () => Instr[]): Instr[] => {
+    let result = fallback();
+    const accessorGetIdx = od.accessorGetIdx;
+    const arms = od.accessorGetArms?.filter((arm) => arm.propName === name) ?? [];
+    if (accessorGetIdx === undefined || arms.length === 0) return result;
+    for (const arm of [...arms].reverse()) {
+      result = [
+        { op: "local.get", index: 6 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: arm.structTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "global.get", index: arm.globalIdx },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: 6 },
+                { op: "global.get", index: arm.globalIdx },
+                { op: "call", funcIdx: accessorGetIdx },
+              ],
+              else: fallback(),
+            },
+          ],
+          else: result,
+        },
+      ];
+    }
+    return result;
+  };
+
+  const hasClosedAccessor = (name: "done" | "value"): boolean =>
+    od.accessorGetIdx !== undefined && (od.accessorGetArms?.some((arm) => arm.propName === name) ?? false);
+
   const closedResultRead: Instr[] =
-    od.sgetDoneIdx !== undefined && (od.sgetValueIdx !== undefined || od.sgetDoneIsExtern === true)
+    od.sgetDoneIdx !== undefined &&
+    (od.sgetValueIdx !== undefined || od.sgetDoneIsExtern === true || hasClosedAccessor("value"))
       ? [
-          { op: "local.get", index: 6 },
-          { op: "call", funcIdx: od.sgetDoneIdx },
+          ...closedFieldRead("done", () => [
+            { op: "local.get", index: 6 },
+            { op: "call", funcIdx: od.sgetDoneIdx! },
+          ]),
           { op: "call", funcIdx: od.isTruthyIdx },
           { op: "local.set", index: 7 },
           { op: "local.get", index: 7 },
@@ -1883,13 +1957,15 @@ function buildIteratorThrowBody(
             // A done throw result completes the delegation and therefore
             // reads `value`; a non-done result is forwarded without an
             // eager value read (the Test262 getter-observability case).
-            then:
+            then: closedFieldRead(
+              "value",
               od.sgetValueIdx !== undefined
-                ? [
+                ? () => [
                     { op: "local.get", index: 6 },
-                    { op: "call", funcIdx: od.sgetValueIdx },
+                    { op: "call", funcIdx: od.sgetValueIdx! },
                   ]
-                : od.missInstrs(),
+                : od.missInstrs,
+            ),
             else: od.missInstrs(),
           },
           { op: "local.set", index: 8 },

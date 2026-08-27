@@ -20,11 +20,15 @@ loc-budget-allow:
   - src/codegen/iterator-native.ts
   - src/codegen/registry/imports.ts
   - src/runtime.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/generators-native.ts::compileState
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
   - src/runtime.ts::resolveImport
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 ---
 # #1691 — yield* does not delegate throw()/return() to the inner iterator
 
@@ -277,6 +281,25 @@ the remaining semantic cases (primitive result/error propagation, lazy
 pre-existing native-host parity residuals. The generated reports are
 `benchmarks/results/test262-standalone-report-20260827-154226.json` and
 `benchmarks/results/test262-report-20260827-154404.json`.
+
+The next bounded checkpoint (2026-08-27, after the shared value/getter/return
+seam changes) used the same pinned 13-row list and the maintained assembled
+harness in both lanes. Host is now **13/13 pass, 0 assertion failures, 0
+compile errors, 0 timeouts, and 0 skips**; the local JSONL is
+`/private/tmp/js2-1691-host-exact-after-accessors.jsonl`. Standalone is
+**9/13 pass, 4 assertion failures, 0 compile errors, 0 timeouts, and 0
+skips**; the local JSONL is
+`/private/tmp/js2-1691-standalone-exact-after-accessors.jsonl`.
+
+The four standalone residuals are `thrw-call-non-obj` (the delegated
+non-object result's `value` observation), `violation-no-rtrn` (missing
+`throw` getter/fallback count), `violation-rtrn-call-non-obj` (caught
+TypeError visibility), and `violation-rtrn-invoke` (missing `throw` getter
+count). The `res-done-no-value` and `res-value-err` accessor-order rows now
+pass in standalone. The host lane's corresponding four rows pass after
+routing module-global externref receivers through the dynamic property path
+and constructing protocol TypeErrors in the test realm. This checkpoint is
+committed separately from the remaining standalone work.
 
 ### Resume acceptance
 
