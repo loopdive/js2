@@ -102,6 +102,25 @@ everything outside that contract.
   plus the `JS2WASM_IR_FIRST=0` control arm, runtime edge parity, typed
   pre-claim exclusions, and zero post-claim evidence.
 
+## Post-PR hardening follow-up
+
+Review of PR #5095 found one selection/preparation seam in the otherwise exact
+operand gate. A direct local call could satisfy the checker-number predicate
+and the ordinary Phase-1 call walk before direct-call plans existed. If later
+preparation could not produce the exact AST-site f64 call plan, lowering
+demoted the operand after the enclosing exponentiation had already claimed the
+body, turning a valid direct-fallback program into a post-claim build failure.
+
+The narrow follow-up rejects call expressions from this checkpoint until the
+selector can consume an exact prepared call plan. Generic call selection is
+unchanged. Regressions cover a type-alias numeric return and an overload whose
+implementation returns `any`; both now remain pre-claim unsupported, compile
+successfully through the direct path, and record no build post-claim error.
+
+- Focused #4787 coverage after the fix: 22/22 passed.
+- TypeScript 7 typecheck after the fix: passed.
+- Follow-up implementation commit: `db6e5605ade11d323a00a170cc25ab9ce8beaec1`.
+
 ## Risks and explicit non-goals
 
 - The full suite and Test262 were intentionally not run during this focused
