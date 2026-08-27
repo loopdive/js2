@@ -9636,6 +9636,30 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-27T03:33:06.498Z",
+      "sourceRevision": "de35a52d978e328d46a9929b5438837385ddea5b",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 654.2073359046598,
+            "dynamic": 0.2210910353938458
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.790907802560703,
+            "dynamic": 0.1509205159027059
+          }
+        }
+      }
     }
   ]
 }

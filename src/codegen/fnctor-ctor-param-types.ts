@@ -188,6 +188,51 @@ export function typeofFoldContradictedByFieldVerdict(
 }
 
 /**
+ * The linked Parser projection has one deliberate reference-field exception to
+ * the older numeric-only constructor-parameter inference. In an untyped
+ * JavaScript constructor the checker reports the parameter assignment as
+ * `externref`, even though the source-qualified constructor graph proves that
+ * every exact construction passes a native string. Keep this adapter limited
+ * to the one-field constructor syntax consumed by the #3521 projection; a
+ * failed graph or syntax proof leaves the historical boxed field unchanged.
+ */
+function exactNativeStringCtorParamField(
+  ctx: CodegenContext,
+  funcDecl: ts.FunctionDeclaration | ts.FunctionExpression,
+  fieldName: string,
+  rhsWasm: ValType,
+): ValType | null {
+  if (
+    !ctx.standalone ||
+    !ctx.nativeStrings ||
+    ctx.anyStrTypeIdx < 0 ||
+    process.env.JS2WASM_STRING_FIELDS === "0" ||
+    fieldName !== "input" ||
+    rhsWasm.kind !== "externref" ||
+    !ts.isFunctionDeclaration(funcDecl) ||
+    !funcDecl.name ||
+    funcDecl.parameters.length !== 1 ||
+    !ts.isIdentifier(funcDecl.parameters[0]!.name) ||
+    funcDecl.parameters[0]!.initializer !== undefined ||
+    funcDecl.parameters[0]!.dotDotDotToken !== undefined ||
+    !funcDecl.body ||
+    funcDecl.body.statements.length !== 1 ||
+    !ts.isExpressionStatement(funcDecl.body.statements[0]) ||
+    !ts.isBinaryExpression(funcDecl.body.statements[0].expression) ||
+    funcDecl.body.statements[0].expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isPropertyAccessExpression(funcDecl.body.statements[0].expression.left) ||
+    funcDecl.body.statements[0].expression.left.expression.kind !== ts.SyntaxKind.ThisKeyword ||
+    funcDecl.body.statements[0].expression.left.name.text !== "input" ||
+    !ts.isIdentifier(funcDecl.body.statements[0].expression.right) ||
+    ctx.oracle.valueDeclarationOf(funcDecl.body.statements[0].expression.right) !== funcDecl.parameters[0]
+  ) {
+    return null;
+  }
+  const fact = computeFnctorGraphCtorParamFacts(funcDecl.getSourceFile(), ctx).get(funcDecl.name.text)?.[0];
+  return fact?.kind === "string" ? { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } : null;
+}
+
+/**
  * The narrowed slot type for `this.<field> = <param>`, or null to leave the
  * existing checker-derived choice alone.
  */
@@ -198,6 +243,8 @@ export function inferFnctorFieldTypeFromCtorParam(
   valueExpr: ts.Expression,
   rhsWasm: ValType,
 ): ValType | null {
+  const nativeStringField = exactNativeStringCtorParamField(ctx, funcDecl, fieldName, rhsWasm);
+  if (nativeStringField !== null) return nativeStringField;
   if (!fnctorCtorParamTypesEnabled()) return null;
   // (#743 defaults flip, 2026-08-08; unblocked by #4250) The SLOT half types a
   // field from the constructor's write, so it is only sound together with the

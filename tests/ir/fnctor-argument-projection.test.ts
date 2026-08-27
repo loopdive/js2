@@ -10,6 +10,12 @@ import {
 } from "../../src/codegen/ir-fnctor-admission.js";
 import type { CodegenContext } from "../../src/codegen/context/types.js";
 import {
+  irFnctorParameterPreselectionIsCurrent,
+  planIrFnctorParameterPreselection,
+} from "../../src/codegen/ir-fnctor-parameter-planning.js";
+import type { IrFnctorLowering } from "../../src/ir/backend/handles.js";
+import type { IrFnctorShape } from "../../src/ir/fnctor-abi.js";
+import {
   collectIrFnctorArgumentProjections,
   proveIrFnctorInputConstructorSyntax,
   retainIrFnctorArgumentProjections,
@@ -19,6 +25,7 @@ import { buildIrUnitInventory } from "../../src/ir/identity.js";
 import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "../../src/ir/planning-identity.js";
 import { buildIrUnitTypeMap, type IrUnitTypeMap } from "../../src/ir/propagate.js";
 import { planIrCompilationByIdentity } from "../../src/ir/select-identity.js";
+import type { FuncTypeDef, ValType, WasmFunction } from "../../src/ir/types.js";
 import { ts } from "../../src/ts-api.js";
 
 const BASE_SOURCE = `
@@ -980,5 +987,269 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
         projection,
       ]),
     ).toBeUndefined();
+  });
+});
+
+interface PreselectionHarness {
+  readonly ctx: CodegenContext;
+  readonly projection: IrFnctorArgumentProjection;
+  readonly callable: WasmFunction;
+  readonly callableType: FuncTypeDef;
+  readonly sourceRegistry: {
+    ctx: CodegenContext;
+    identityContext: IrPlanningIdentityContext;
+    handle: number | undefined;
+    func: WasmFunction | undefined;
+    handleForUnit(unitId: string): number | undefined;
+    functionForUnit(unitId: string): WasmFunction | undefined;
+  };
+  readonly fnctorRegistry: {
+    ctx: CodegenContext;
+    identityContext: IrPlanningIdentityContext;
+    loweringPatch: Partial<IrFnctorLowering>;
+    fieldPatch: Partial<ReturnType<IrFnctorLowering["field"]>>;
+    resolveNull: boolean;
+    resolve(shape: IrFnctorShape): IrFnctorLowering | null;
+  };
+}
+
+function makePreselectionHarness(data: Fixture): PreselectionHarness {
+  const ctx = contextFor(data);
+  const projection = projections(data, ctx)[0]!;
+  const instanceCarrier = { kind: "ref_null" as const, typeIdx: 7 };
+  const callableType: FuncTypeDef = {
+    kind: "func",
+    params: [instanceCarrier],
+    results: [{ kind: "f64" }],
+  };
+  const callable: WasmFunction = {
+    name: "readNumber",
+    typeIdx: 8,
+    locals: [],
+    body: [],
+    exported: false,
+  };
+  Object.assign(ctx, {
+    irPlanningIdentityContext: data.identity,
+    anyStrTypeIdx: 9,
+    numImportFuncs: 0,
+    mod: {
+      types: [
+        { kind: "func", params: [], results: [] },
+        { kind: "func", params: [], results: [] },
+        { kind: "func", params: [], results: [] },
+        { kind: "func", params: [], results: [] },
+        { kind: "func", params: [], results: [] },
+        { kind: "func", params: [], results: [] },
+        { kind: "func", params: [], results: [] },
+        { kind: "struct", name: "__fnctor_Parser", fields: [] },
+        callableType,
+        { kind: "struct", name: "$AnyString", fields: [] },
+      ],
+      functions: [callable],
+      imports: [],
+      globals: [],
+      exports: [],
+      funcOrdinalToPosition: [],
+    },
+  });
+  const sourceRegistry: PreselectionHarness["sourceRegistry"] = {
+    ctx,
+    identityContext: data.identity,
+    handle: 0,
+    func: callable,
+    handleForUnit(unitId) {
+      return unitId === projection.calleeUnitId ? this.handle : undefined;
+    },
+    functionForUnit(unitId) {
+      return unitId === projection.calleeUnitId ? this.func : undefined;
+    },
+  };
+  const fnctorRegistry: PreselectionHarness["fnctorRegistry"] = {
+    ctx,
+    identityContext: data.identity,
+    loweringPatch: {},
+    fieldPatch: {},
+    resolveNull: false,
+    resolve(shapeValue) {
+      if (this.resolveNull) return null;
+      const shape = shapeValue;
+      const field = {
+        fieldIdx: 0,
+        logicalType: { kind: "string" as const },
+        physicalType: { kind: "ref_null" as const, typeIdx: 9 },
+        refinement: "nullable-native-string" as const,
+        ...this.fieldPatch,
+      };
+      return {
+        instanceCarrierType: instanceCarrier,
+        constructorResultType: { kind: "ref", typeIdx: 7 },
+        reservedLayout: shape.reservedLayout,
+        constructorFunc: shape.constructorTarget,
+        captureParamTypes: [],
+        tdzFlagParamTypes: [],
+        userParamTypes: [{ kind: "externref" }],
+        hiddenIdentity: true,
+        constructorIdentityParamIndex: 1,
+        resultIsExternref: false,
+        supportsConstruction: false,
+        supportsFieldGet: true,
+        structTypeIdx: 7,
+        field: () => field,
+        fieldIdx: () => field.fieldIdx,
+        ...this.loweringPatch,
+      };
+    },
+  };
+  Object.assign(ctx, {
+    programAbiSourceCallables: sourceRegistry,
+    programAbiFnctors: fnctorRegistry,
+  });
+  return { ctx, projection, callable, callableType, sourceRegistry, fnctorRegistry };
+}
+
+function preselectionPlan(data: Fixture, harness: PreselectionHarness = makePreselectionHarness(data)) {
+  return planIrFnctorParameterPreselection({
+    ctx: harness.ctx,
+    sourceFile: data.entry,
+    identityContext: data.identity,
+    route: EXACT_ROUTE,
+    authority: authorityFor(data, harness.ctx),
+    projections: [harness.projection],
+  });
+}
+
+describe("#3521 linked fnctor parameter preselection", () => {
+  it("joins the exact retained edge, get-only layout, and current source-callable slot", () => {
+    const data = fixture();
+    const harness = makePreselectionHarness(data);
+    const plan = preselectionPlan(data, harness);
+
+    expect(plan).toMatchObject({
+      kind: "fnctor-parameter-preselection",
+      ownerUnitId: harness.projection.calleeUnitId,
+      selectorKind: "object",
+      parameterDeclaration: harness.projection.calleeParameterDeclaration,
+      parameterIndex: 0,
+      overrideType: { kind: "fnctor" },
+      physical: {
+        instanceCarrier: { kind: "ref_null", typeIdx: 7 },
+        fieldCarrier: { kind: "ref_null", typeIdx: 9 },
+        fieldIndex: 0,
+        fieldRefinement: "nullable-native-string",
+      },
+      preselection: {
+        handle: 0,
+        func: harness.callable,
+        typeIdx: 8,
+        type: harness.callableType,
+      },
+    });
+    expect(plan!.fieldReads).toHaveLength(2);
+    expect(plan!.fieldReads.every((row) => row.access.name.text === "input")).toBe(true);
+    expect(plan!.stringSliceCall.expression.getText()).toBe("parser.input.slice");
+    expect(plan!.valueConsumerCall.arguments[0]).toBe(plan!.stringSliceCall);
+    expect(Object.isFrozen(plan)).toBe(true);
+    expect(Object.isFrozen(plan!.shape)).toBe(true);
+    expect(Object.isFrozen(plan!.fieldReads)).toBe(true);
+    expect(Object.isFrozen(plan!.physical.instanceCarrier)).toBe(true);
+    expect(irFnctorParameterPreselectionIsCurrent(harness.ctx, plan!)).toBe(true);
+  });
+
+  it.each([
+    ["missing rows", []],
+    ["duplicate rows", null],
+  ])("rejects %s before consulting mutable ABI state", (_label, rows) => {
+    const data = fixture();
+    const harness = makePreselectionHarness(data);
+    const projectionsValue = rows === null ? [harness.projection, harness.projection] : rows;
+    expect(
+      planIrFnctorParameterPreselection({
+        ctx: harness.ctx,
+        sourceFile: data.entry,
+        identityContext: data.identity,
+        route: EXACT_ROUTE,
+        authority: authorityFor(data, harness.ctx),
+        projections: projectionsValue,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects missing or stale fnctor/source-callable authorities", () => {
+    const data = fixture();
+    const mutations: readonly [string, (harness: PreselectionHarness) => void][] = [
+      ["unresolved fnctor", (harness) => (harness.fnctorRegistry.resolveNull = true)],
+      ["foreign fnctor context", (harness) => (harness.fnctorRegistry.ctx = {} as CodegenContext)],
+      ["foreign source registry", (harness) => (harness.sourceRegistry.ctx = {} as CodegenContext)],
+      ["missing handle", (harness) => (harness.sourceRegistry.handle = undefined)],
+      ["missing function", (harness) => (harness.sourceRegistry.func = undefined)],
+      [
+        "stale function object",
+        (harness) =>
+          (harness.sourceRegistry.func = {
+            ...harness.callable,
+            body: [],
+          }),
+      ],
+      ["stale type index", (harness) => (harness.callable.typeIdx = 6)],
+    ];
+    for (const [label, mutate] of mutations) {
+      const harness = makePreselectionHarness(data);
+      mutate(harness);
+      expect(preselectionPlan(data, harness), label).toBeUndefined();
+    }
+  });
+
+  it("rejects every get-only carrier/refinement capability mismatch", () => {
+    const data = fixture();
+    const mutations: readonly [string, (harness: PreselectionHarness) => void][] = [
+      ["construction enabled", (harness) => (harness.fnctorRegistry.loweringPatch = { supportsConstruction: true })],
+      ["field get disabled", (harness) => (harness.fnctorRegistry.loweringPatch = { supportsFieldGet: false })],
+      [
+        "wrong instance carrier",
+        (harness) => (harness.fnctorRegistry.loweringPatch = { instanceCarrierType: { kind: "ref", typeIdx: 7 } }),
+      ],
+      [
+        "wrong constructor result",
+        (harness) =>
+          (harness.fnctorRegistry.loweringPatch = { constructorResultType: { kind: "ref_null", typeIdx: 7 } }),
+      ],
+      ["wrong field index", (harness) => (harness.fnctorRegistry.fieldPatch = { fieldIdx: 1 })],
+      [
+        "wrong field carrier",
+        (harness) => (harness.fnctorRegistry.fieldPatch = { physicalType: { kind: "ref_null", typeIdx: 7 } }),
+      ],
+      ["missing refinement", (harness) => (harness.fnctorRegistry.fieldPatch = { refinement: "none" })],
+    ];
+    for (const [label, mutate] of mutations) {
+      const harness = makePreselectionHarness(data);
+      mutate(harness);
+      expect(preselectionPlan(data, harness), label).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ["another field", BASE_SOURCE.replaceAll("parser.input", "parser.value")],
+    ["optional field", BASE_SOURCE.replace("parser.input.slice", "parser?.input.slice")],
+    ["another method", BASE_SOURCE.replace(".slice(0, parser.input.length)", ".substring(0, parser.input.length)")],
+    ["another start", BASE_SOURCE.replace(".slice(0, parser.input.length)", ".slice(1, parser.input.length)")],
+    ["extra use", BASE_SOURCE.replace("var octal = false;", "var octal = parser.input === ''; ")],
+  ])("rejects the %s parameter-use topology", (_label, entryText) => {
+    const data = fixture({ entryText });
+    const harness = makePreselectionHarness(data);
+    expect(preselectionPlan(data, harness)).toBeUndefined();
+  });
+
+  it("detects callable and fnctor drift after construction", () => {
+    const data = fixture();
+    const harness = makePreselectionHarness(data);
+    const plan = preselectionPlan(data, harness)!;
+    expect(irFnctorParameterPreselectionIsCurrent(harness.ctx, plan)).toBe(true);
+
+    harness.callableType.params[0] = { kind: "ref", typeIdx: 7 } satisfies ValType;
+    expect(irFnctorParameterPreselectionIsCurrent(harness.ctx, plan)).toBe(false);
+    harness.callableType.params[0] = { kind: "ref_null", typeIdx: 7 };
+    harness.fnctorRegistry.fieldPatch = { refinement: "none" };
+    expect(irFnctorParameterPreselectionIsCurrent(harness.ctx, plan)).toBe(false);
   });
 });
