@@ -101,9 +101,9 @@ repository's pre-existing missing `@types/node` diagnostics; no diagnostics
 were introduced in the changed helper or call-site code after filtering those
 known errors.
 
-Handoff: keep PR #5056 draft with `hold` and `mergeQueueEntry: null`. Do not
-mark ready or enqueue until the reduced checkpoint is pushed, rebased onto
-current `main`, and its CI is green/mergeable.
+Historical handoff: keep PR #5056 draft with `hold` and `mergeQueueEntry: null`.
+This was superseded once the reduced checkpoint was pushed, synchronized, and
+validated; the current queue handoff is recorded below.
 
 Post-#5065 current-main verification merged upstream tip
 `2a7548ca819248df332986cde2cff81e65042bff` without rewriting history at
@@ -144,9 +144,36 @@ The final host and standalone JSONL outputs are
 - The three standalone function/class/redefinition controls remain `pass: 3`
   in `/private/tmp/4770-merge-controls.jsonl`.
 - `tests/issue-4770-class-name-descriptor.test.ts` passes under Vitest with one
-  worker. PR #5056 remains draft with `hold` and `mergeQueueEntry: null`; the
-  normal push is still pending because the environment refused source egress
-  to the unverified private `fork` remote.
+  worker. This historical checkpoint was still draft with `hold` and
+  `mergeQueueEntry: null`; the current queue handoff is recorded below.
+
+## Post-#5068 revalidation and queue handoff (Codex, 2026-08-27)
+
+The branch was synchronized without rebasing by fetching the actual upstream
+`loopdive/js2` `main` at `6e3fdf2166a33d76260791b8df0bb4bf5f503324` and merging
+it as `daca68733c60c2e17d7517f0ec419d098c94df97`. The reduced implementation
+and focused test remain unchanged; the upstream merge contains only the
+unrelated #5066/#5068 changes.
+
+The maintained `harness-flip-probe.ts` was rerun with LLVM18, the pinned
+QuickJS artifact directory `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`,
+and one worker per lane (two workers total):
+
+- Host exact cohort: `fail: 1` (`fail -> fail: 1`), unchanged known host-only
+  residual. Artifact: `.tmp/4770-post5068-host.jsonl`, SHA-256
+  `5f6d8001e8ace1428424c0416a48c7180d3f7b104e660abdbbc0e675ede79757`.
+- Standalone exact cohort: `pass: 1` (`fail -> pass: 1`), with the row exactly
+  `test/language/statements/class/name.js`. Artifact:
+  `.tmp/4770-post5068-standalone.jsonl`, SHA-256
+  `2ea832f2b69f6d78c260bed65fde618b406c49728217e470c65254cc5d791f68`.
+- Focused `tests/issue-4770-class-name-descriptor.test.ts`: 1/1 passed under
+  Vitest with one worker.
+
+PR #5056 is ready, mergeable, has no unresolved review threads, and is queued
+in `loopdive/js2` at position 4 with no `hold` label. Handoff: keep the queue
+entry intact and monitor its merge-group checks; if another upstream base
+change makes the PR behind again, repeat this exact synchronization and probe
+procedure before re-enqueuing.
 
 ## What is confirmed
 
