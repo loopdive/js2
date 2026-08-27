@@ -1,10 +1,11 @@
 ---
 id: 4785
 title: "ES2015 standalone WeakMap/WeakSet reject primitive insertion keys"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-27
 updated: 2026-08-27
+completed: 2026-08-27
 priority: high
 horizon: s
 feasibility: easy
@@ -166,9 +167,8 @@ Current-main artifacts:
 The focused Vitest regression remains **16/16 passed** after the merge. The
 scoped Biome lint, Prettier, TypeScript, diff, oracle-ratchet,
 coercion-site-ratchet, numeric-local IR parity, and issue-integrity checks are
-the repository gates for the pushed checkpoint. PR #5077 remains draft with
-`hold` until its final pushed head is current-main, mergeable, and CI-green;
-the queue entry is intentionally null until then.
+the repository gates for the pushed checkpoint. At this earlier checkpoint,
+PR #5077 remained draft with `hold` while awaiting current-main CI.
 
 ## Final current-main verification (2026-08-27)
 
@@ -194,6 +194,33 @@ Final current-main artifacts:
 The prior CI quality failure was solely the stale issue-ID collision between
 this branch's original #4782 plan and open PR #5076. Atomic allocation moved
 this cohort to #4785; the local `--against-open-prs` gate passes with no
-collisions. The final pushed checkpoint is now ready for a fresh CI run;
-leave PR #5077 draft+`hold` with no queue entry until that run is green and
-GitHub reports current, mergeable, and thread-clean.
+collisions. The final pushed checkpoint was ready and CI-green before the
+required done-status correction. PR #5077 was briefly dequeued via
+close/reopen to push this metadata-only handoff; it is ready, has no `hold`
+label, and is returning to the server-side auto-enqueue path after fresh
+checks. No manual enqueue was performed.
+
+## Final post-#5076 verification (2026-08-27)
+
+After #5076 advanced `upstream/main`, this branch merged
+`5bdc209f0de611808a701d9b08a0b971d689f12f` through merge commit
+`6500822b11f45dcf6f79192148fa2879a4001e55`. The exact eight-row A/B slice
+and focused regression were rerun from that final head with at most two
+workers:
+
+- focused Vitest: **16/16 passed**
+- host: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0 skips**
+- standalone: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0
+  skips**, with **0 host-import rows**
+
+Final-head artifacts:
+
+- host report/results: `benchmarks/results/test262-report-20260827-211608.json`,
+  `benchmarks/results/test262-results-20260827-211608.jsonl`
+- standalone report/results: `benchmarks/results/test262-standalone-report-20260827-211829.json`,
+  `benchmarks/results/test262-standalone-results-20260827-211829.jsonl`
+
+The implementation PR is status `done`, ready, current, mergeable, and
+thread-clean with all required PR checks green. It was briefly dequeued via
+close/reopen solely to add this required metadata handoff; the server-side
+auto-enqueue workflow is responsible for queue entry, with no manual enqueue.
