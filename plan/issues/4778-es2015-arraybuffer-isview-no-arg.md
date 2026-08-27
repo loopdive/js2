@@ -104,13 +104,14 @@ The implementation adds only the standalone zero-argument arm in
 argument-bearing arm are unchanged.
 
 The final exact post-change harness run on refreshed upstream
-`32a1b1d27f94395f00633193319d91d422a0a234` used the same pinned artifact,
-two-worker limit, and mandatory positive controls as the baseline:
+`fb4efeaa5cb2a374d9b6ff87b4eca217a2ab78f1` (including merged #5074) used the
+same pinned artifact, two-worker limit, and mandatory positive controls as the
+baseline:
 
 | lane | target cohort + controls | result | evidence |
 | --- | ---: | --- | --- |
-| JS-host | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/final-32a1b1d27/host.jsonl` |
-| standalone | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/final-32a1b1d27/standalone.jsonl` |
+| JS-host | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/final-fb4efeaa5/host.jsonl` |
+| standalone | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/final-fb4efeaa5/standalone.jsonl` |
 
 The target's local A/B partition is exactly one standalone `compile_error →
 pass` gain, zero losses, and zero other changes:
@@ -140,8 +141,8 @@ rerun with the new test and remained **16/16** green.  Repeated target probes
 reported `nondeterministic: 0` in both host and standalone lanes.
 
 The branch was refreshed with a non-rewriting upstream merge commit
-`4dfe91a65` before this rerun.  The evidence checkpoint below was then added
-as `d3b203091`; the final pushed head is recorded with the PR handoff.
+`7b2dcc224` before this rerun.  The final evidence checkpoint and pushed head
+are recorded with the PR handoff.
 
 ## Intended files
 
