@@ -12,6 +12,11 @@ task_type: bugfix
 area: codegen
 language_feature: iterators
 goal: spec-completeness
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/call-builtin-static.ts
+func-budget-allow:
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 files:
   - src/codegen/array-object-proto.ts
   - tests/issue-5099.test.ts
