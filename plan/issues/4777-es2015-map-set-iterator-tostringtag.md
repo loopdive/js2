@@ -139,3 +139,20 @@ Tränkler with the required Codex trailer. The requested push to
 sensitive-egress policy; no remote SHA or PR URL exists yet. Retry the push
 and create the draft upstream PR only after that external-write approval is
 granted.
+
+## Post-#5065 current-main verification
+
+The branch merged upstream tip
+`2a7548ca819248df332986cde2cff81e65042bff` without rewriting history at
+`440e00835644d90076201157d21e8a05220ff142`. The exact cohort remains host
+**2/2 pass** and standalone **2/2 pass**, and focused coverage remains **6/6
+pass** with at most two workers. Final artifacts are:
+
+- host `.tmp/4777-final-post5065-host.jsonl` (SHA-256
+  `3e2ff9993be821949f979d5ef46a155ee99980ada0480c860241e53b14dceda2`)
+- standalone `.tmp/4777-final-post5065-standalone.jsonl` (SHA-256
+  `c20e1a8d569e3a03a51beff1e2b6bebb9d676d6fc3cfc7ea86f719ca2b4a5e39`)
+
+PR #5069 remains draft with `hold` and a null merge-queue entry until the
+evidence checkpoint passes normal hooks and refreshed upstream CI is CLEAN and
+mergeable.
