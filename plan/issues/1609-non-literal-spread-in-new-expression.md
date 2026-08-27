@@ -14,21 +14,34 @@ goal: compiler-correctness
 sprint: Backlog
 related: [1320, 1620, 1633]
 es_edition: es2015
-test262_count: 18
+test262_count: 14
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/iterator-native.ts
+  - src/codegen/statements/nested-declarations.ts
+func-budget-allow:
+  - src/codegen/iterator-native.ts::buildIteratorBody
+  - src/codegen/expressions/new-super.ts::compileNewFunctionExpression
+  - src/codegen/statements/nested-declarations.ts::emitSetExtrasArgv
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
 ---
 # #1609 — Non-literal spread in `new` expression unsupported
 
 ## Problem
 
-18 test262 tests fail with:
+Historically, 18 test262 tests failed with:
 
 ```
 new FunctionExpression with non-literal spread not supported
 ```
 
-All are `language/expressions/new` spread tests where the constructor is
+Those historical rows were `language/expressions/new` spread tests where the constructor is
 invoked with `new F(...iterable)` and the spread operand is a non-array-literal
 (an iterator, a variable, an expression that throws mid-iteration).
+
+The exact maintained ES2015 census below is now the source of truth; it contains
+14 current paths (the old 18-row count included paths no longer present in the
+edition-filtered checkout).
 
 ## Failing test examples
 
@@ -125,3 +138,98 @@ verify-first implementation attempt.
   oracle shortcuts, or forced array-only semantics for arbitrary iterables.
 - The upstream PR uses the repository Description/CLA template and stays draft
   until the scoped fix is complete, current-main based, CI-green, and mergeable.
+
+## Verification checkpoint — 2026-08-27
+
+### Exact census and pinned setup
+
+The maintained edition index is
+`website/public/benchmarks/results/test262-file-editions.json` (sha256
+`492cf9f4c610f944c5d5946e1f6ba7aea59e8f99b264c25ab38c019694b68a91`). Filtering
+`files` for edition index `2` (`ES2015`) gives 11,778 paths; excluding 74
+`intl402` paths leaves the exact maintained denominator of 11,704. Filtering
+that index for `language/expressions/new/spread-*` gives 14 existing paths and
+no missing paths. The exact candidate list is captured at
+`/private/tmp/js2-1609-es2015-spread-paths.txt` (sha256
+`c04f97f743d5a660fd599cadb453e7dfa8778a80c9ae699c8da24cec315559c9`, 14
+lines).
+
+Both lanes used the pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda/libquickjs.wasm` (sha256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`), the
+LLVM 18 toolchain, and the fixed repository PATH. The final compiler bundle
+sha256 is `778030a1aab2beb287f1e395ec9d7a602fc059577ef5ae7297627446702c7131`;
+the final standalone provider is the pinned-artifact adapter cache entry
+`quickjs-eval-adapter-b75ba554a3f6ff49.wasm` (bundle key
+`778030a1aab2bebd`, QuickJS artifact key `2e2d7736713beeda`).
+
+### Fresh two-lane results
+
+The pre-change same-base commit was `d232d6dfd34d7c0238f77871e2f0d47f881124a9`.
+Authentic assembled-harness runs used structural pass/fail controls and a
+120,000 ms per-file timeout. Before the fix, both lanes reported exactly
+`{"fail":14}`: the two valid iterator rows observed zero constructor
+arguments, while the 12 abrupt-completion rows observed no expected throw
+(including the two TypeError rows for a null iterator result/property).
+
+After the fix, the complete 14-path cohort reported `{"pass":14}` in both
+host and standalone lanes, with no compile errors, timeouts, or skips. Each
+row was run twice; both lanes reported `nondeterministic: 0`. The local A/B
+partition was verified independently for each lane: 14 fail→pass, 0 pass→fail,
+0 other changes, 0 unchanged, union 14.
+
+The raw final result artifacts are `/private/tmp/js2-1609-host-final.jsonl`
+(sha256 `59890cece6993e2392c658f1475ecdc0ddf42fe6395989636b62fa1b4874f088`)
+and `/private/tmp/js2-1609-standalone-final.jsonl` (sha256
+`2ae861807d121c26e71a1336110b69930fd68c8903b2fab3d842ee68e73e52c3`). The
+same-base before artifacts are `/private/tmp/js2-1609-host-before.jsonl`
+(sha256 `23efacb214a9c2b47d1064db2c0ed598d172f998dd4b5d53e824aba86789919d`)
+and `/private/tmp/js2-1609-standalone-before.jsonl` (sha256
+`9c56db7098bcea28292d4a03dbaa196c2c181aa634de52bec8abd3fc8f35a6cb`).
+
+### Root cause and implementation
+
+The current constructor lowering had a static-only assumption: when the
+anonymous function expression had no formal parameters, it synthesized one
+fixed f64 parameter per compile-time-flattened argument. A non-literal spread
+could not provide that arity, so codegen reported
+`new FunctionExpression with non-literal spread not supported`; even the
+existing shared extras builder counted a spread source as one slot instead of
+expanding its iterator values.
+
+The fix keeps the shared constructor boundary and adds one dynamic lane:
+
+- `compileNewFunctionExpression` leaves the lifted anonymous constructor
+  zero-arity for a dynamic spread, publishes `__extras_argv` plus `__argc`, and
+  builds its `arguments` vector through the same `emitArgumentsVecBody` path
+  used by ordinary calls.
+- `emitSetExtrasArgv` evaluates fixed and spread operands once in source order,
+  expands vector/tuple carriers directly, uses the strict host iterator import
+  in the host lane, and uses native `__array_from_iter_n(source, -1)` plus
+  native indexed readers in standalone. The native call's `-1` bound denotes
+  the unbounded ArgumentListEvaluation drain.
+- The native iterator object arm now checks `__extern_has` so a present but
+  null/undefined `@@iterator` is not mistaken for a missing method; a callable
+  `@@iterator` returning null likewise raises the catchable TypeError required
+  by §7.4.1. Bare `{next(){…}}` iterator fallback remains available.
+
+No fixture rewrites, runner exemptions, host-oracle shortcuts, or forced
+array-only semantics were used. Focused coverage is in
+`tests/issue-1609-new-expression-spread.test.ts`: 8 tests (host and standalone)
+cover one custom iterable, mixed fixed/multiple spreads, dynamic
+`arguments.length` and indexed reads, constructor identity, abrupt iterator
+steps, and the adjacent literal-spread control.
+
+### Gates, residuals, and handoff
+
+Passed gates on this checkpoint: TypeScript 5 and TypeScript 7 typechecks,
+Biome lint, Prettier check, the focused 8-test suite, and the pinned exact
+14-path two-lane harness (including determinism and A/B partition checks).
+
+The scoped ES2015 cohort is complete. Dynamic spreads on a function expression
+with declared formal parameters still retain the existing diagnostic because
+they are outside this zero-formal cohort; WASI remains outside this host /
+standalone slice and keeps its prior best-effort route. Those are explicit
+follow-ups, not hidden residual failures. PR #5048 remains draft pending
+current-main reconciliation, full CI, and mergeability. Commit SHA and the
+final ownership handoff are recorded here once the checkpoint is committed.
