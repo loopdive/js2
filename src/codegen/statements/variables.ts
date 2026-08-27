@@ -1923,11 +1923,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
         : undefined;
     const filterResultDynamicCarrier = filterResultNeedsDynamicCarrier(ctx, decl.initializer);
-    const nativeGenBindingType = nativeGeneratorBindingType(ctx, decl.initializer);
+    const nativeGenBindingType: ValType | null = initIsTransferredArrayLikeResult
+      ? { kind: "externref" }
+      : nativeGeneratorBindingType(ctx, decl.initializer);
     const wasmTypeBase: ValType =
-      initIsTransferredArrayLikeResult
-        ? { kind: "externref" as const }
-        : nativeGenBindingType ??
+      nativeGenBindingType ??
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
       // keep its externref slot even when the block-scoped shadow machinery

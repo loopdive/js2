@@ -60,7 +60,7 @@ function prepareArrayLikeDeps(ctx: CodegenContext, fctx: FunctionContext): Array
   const set = ctx.funcMap.get("__extern_set");
   const deleteProperty = ctx.funcMap.get("__delete_property");
   const boxNumber = ctx.funcMap.get("__box_number");
-  const toString = ctx.funcMap.get("__extern_toString");
+  const toStringIdx = ctx.funcMap.get("__extern_toString");
   const isUndefined = ctx.funcMap.get("__extern_is_undefined");
   if (
     length === undefined ||
@@ -69,12 +69,12 @@ function prepareArrayLikeDeps(ctx: CodegenContext, fctx: FunctionContext): Array
     set === undefined ||
     deleteProperty === undefined ||
     boxNumber === undefined ||
-    toString === undefined ||
+    toStringIdx === undefined ||
     isUndefined === undefined
   ) {
     return undefined;
   }
-  return { length, getIdx, hasIdx, set, deleteProperty, boxNumber, toString, isUndefined };
+  return { length, getIdx, hasIdx, set, deleteProperty, boxNumber, toString: toStringIdx, isUndefined };
 }
 
 /** Append the Array.prototype ToObject guard shared by the three mutators. */

@@ -9,7 +9,12 @@ feasibility: medium
 goal: test262-conformance
 parent: 983d
 test262_fail: 8
+coercion-sites-allow:
+  # Generic Array.join's element ToString path intentionally reuses the
+  # established standalone __extern_toString provider.
+  - src/codegen/array-like-native.ts
 ---
+
 # #2573 — Missing-property read on a plain object yields `null` not `undefined`
 
 ## Problem
