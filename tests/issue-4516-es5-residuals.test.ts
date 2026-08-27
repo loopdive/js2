@@ -28,6 +28,8 @@ const EXACT_RUNTIME_EVAL_ROWS = [
   "annexB/language/eval-code/direct/func-switch-case-eval-func-existing-var-no-init.js",
 ] as const;
 
+const EXACT_HOST_REGRESSION_ROWS = ["built-ins/eval/name.js"] as const;
+
 let liveQuickjsAvailable = false;
 try {
   liveQuickjsAvailable = selectCachedRuntimeEvalProvider().engine === "quickjs";
@@ -63,6 +65,11 @@ async function runStandaloneScript(source: string): Promise<void> {
 }
 
 describe.skipIf(!TEST262_READY)("ES5 standalone residual cluster", () => {
+  it.each(EXACT_HOST_REGRESSION_ROWS)("keeps the host lane valid for %s", async (file) => {
+    const result = await runTest262File(join(TEST262, file), "issue-4516-es5-host-regression", 120_000);
+    expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
+  });
+
   it.each(EXACT_HOST_FREE_ROWS)("passes the exact residual row %s", async (file) => {
     const result = await runTest262File(join(TEST262, file), "issue-4516-es5-residuals", 120_000, "standalone");
     expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
