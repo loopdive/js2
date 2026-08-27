@@ -1,10 +1,11 @@
 {
   "id": "4774",
   "assignee": "ttraenkler/opus-4774",
-  "requested_by": "ttraenkler/opus-4774",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4774-invalid-module-emit",
   "claimed_at": "2026-08-27T15:31:47Z",
-  "updated_at": "2026-08-27T15:31:47Z",
-  "write_id": "13747-za7fexa4"
+  "updated_at": "2026-08-27T19:33:16Z",
+  "write_id": "1756-3mv0r2ls",
+  "released_at": "2026-08-27T19:33:17Z"
 }
