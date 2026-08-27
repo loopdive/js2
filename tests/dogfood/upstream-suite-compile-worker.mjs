@@ -195,7 +195,15 @@ async function main() {
       // available after the instance is handed to the runtime. Run the same
       // initializer after that handoff instead of inside WebAssembly.start.
       deferTopLevelInit: true,
-      ...(process.env.DOGFOOD_PACKAGE_CACHE_DIR ? { packageCacheDir: process.env.DOGFOOD_PACKAGE_CACHE_DIR } : {}),
+      ...(process.env.DOGFOOD_PACKAGE_CACHE_DIR
+        ? {
+            packageCacheDir: process.env.DOGFOOD_PACKAGE_CACHE_DIR,
+            // A package-cache benchmark measures separate provider modules.
+            // Do not silently recompile their sources monolithically when the
+            // consumer itself has an unsupported compiler shape.
+            packageLinking: "separate",
+          }
+        : {}),
     };
     result =
       mode === "source"
@@ -230,7 +238,14 @@ async function main() {
   signalWorkerCompileComplete(durationMs);
   if (!result.success || !result.binary?.length) {
     emit({
-      compile: { success: false, validates: false, durationMs, binaryBytes: 0, errors: result.errors ?? [] },
+      compile: {
+        success: false,
+        validates: false,
+        durationMs,
+        binaryBytes: 0,
+        errors: result.errors ?? [],
+        linkPlan: result.linkPlan ?? null,
+      },
       wasm: null,
     });
     return;

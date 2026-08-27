@@ -117,9 +117,12 @@ Options:
                     inline-lowered into a self-contained module.
   --package-linking <mode>
                     npm package output for project compilation: separate
-                    (default) caches and instantiates provider Wasm modules;
+                    caches and instantiates provider Wasm modules and preserves
+                    linked-consumer compiler errors without a bundled retry;
                     merge statically combines them with Binaryen wasm-merge;
-                    off retains monolithic source compilation.
+                    off retains monolithic source compilation. Project API
+                    calls default to automatic linking with compatibility
+                    fallback.
   --emulate <env>   Emulate a host runtime's globals so they type-check without
                     @types/node. 'node' = ambient process/etc.; 'none' = off.
                     Auto-enabled (type-level only) when the source imports a

@@ -111,6 +111,66 @@ describe("#2527 npm package module linking", () => {
     expect(linked.instance.exports.run?.()).toBe(42);
   });
 
+  it("returns a failed linked root directly without recompiling provider sources as a bundle", async () => {
+    const root = project("package-link-root-failure");
+    writePackage(root, "root-failure-provider", "export function limit(): number { return 3; }\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      `import { limit } from "root-failure-provider";
+export async function run(): Promise<number> {
+  let i = 0;
+  try {
+    while (i < limit()) {
+      await Promise.reject(1);
+      i++;
+    }
+  } catch (error) {
+    return error as number;
+  }
+  return i;
+}
+`,
+    );
+
+    const entry = join(root, "main.ts");
+    const cacheDir = join(root, ".cache");
+    const compileSeparate = () =>
+      compileProject(entry, {
+        allowJs: true,
+        emitWat: false,
+        packageCacheDir: cacheDir,
+        packageLinking: "separate",
+      });
+
+    const first = await compileSeparate();
+    const second = await compileSeparate();
+
+    for (const result of [first, second]) {
+      expect(result.success).toBe(false);
+      expect(result.errors.some((error) => error.message.includes("#3587"))).toBe(true);
+      expect(result.linkPlan?.mode).toBe("separate");
+      expect(result.linkPlan?.fallbackReason).toBeUndefined();
+      expect(result.linkedModules).toBeUndefined();
+    }
+    expect(first.linkPlan).toMatchObject({
+      mode: "separate",
+      compiledProviders: 1,
+      cachedProviders: 0,
+    });
+    expect(second.linkPlan).toMatchObject({
+      mode: "separate",
+      compiledProviders: 0,
+      cachedProviders: 1,
+    });
+
+    const automatic = await compile(root, "main.ts", cacheDir);
+    expect(automatic.success).toBe(false);
+    expect(automatic.linkPlan).toMatchObject({
+      mode: "bundled",
+      fallbackReason: expect.stringMatching(/linked root compilation failed/i),
+    });
+  });
+
   it("links a package dependency DAG provider-before-consumer", async () => {
     const root = project("package-link-dag");
     writePackage(root, "base-fn", "export function double(x: number): number { return x * 2; }\n");
