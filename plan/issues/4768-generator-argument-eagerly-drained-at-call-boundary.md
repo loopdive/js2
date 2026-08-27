@@ -96,10 +96,28 @@ Recorded so the next attempt does not repeat them:
   stack dump, it is **never reached** for `plain(g())`.
 - **`_stepClosureIterator`** is not reached either (same method). Its cap is
   `1 << 16`, not 1e6, so it could not have produced 1,000,001 regardless.
+- **`_arrayFromIter`** — not reached for the bare alias (`var a = fin(); var a2 = a;`).
+- **`__extern_length`** — contains no drain; it reads an own `length` (or 0).
 
-So the drain is not in either runtime drainer. It happens on the compiled side,
-at whatever lowering handles binding a generator value to a new name. The 1e6
-constant should be located there rather than assumed to be the runtime's.
+**Every JS-side drainer is excluded by instrumentation.** The drain is therefore
+emitted Wasm: codegen produces a loop that runs the iterator to completion when
+a generator is bound to a new name, and 1e6 is a cap in that emitted loop, not
+in `runtime.ts`.
+
+Two further measurements pin its shape:
+
+- It drains to **natural completion**, not blindly to the cap:
+  `function* fin() { for (var i=0;i<3;i++) { n++; yield i; } }` then
+  `var a = fin(); var a2 = a;` gives `n === 3`. The 1e6 only appears for an
+  infinite generator, as the runaway guard.
+- `buildVecFromExternref` IS reached, but at module-generation time via
+  `reserveVecFieldMaterializers` (`member-set-dispatch.ts:543`) — that registers
+  materializer functions, so it identifies the family of lowering to look at,
+  not the executing call.
+
+Start from `emitStandaloneIterableMaterialize` / the native `__iterator` /
+`__iterator_next` drive loop and the vec-materializer emitters, and find the cap
+constant there.
 
 ## Implementation Plan
 
