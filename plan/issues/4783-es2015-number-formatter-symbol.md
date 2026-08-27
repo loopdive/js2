@@ -149,8 +149,9 @@ also passed: Prettier, Biome, TypeScript 7, and TypeScript 5.  `git diff
 - Plan checkpoint: `2fad13936`
 - Implementation checkpoint: `1dcffcdb0`
 - Current-upstream sync checkpoint: `a43dc325b` (merged `upstream/main` at `4d1001a8`)
-- Upstream PR: to be opened from `ttraenkler:codex/es2015-next-bounded-fix-7` against `loopdive/js2:main`
-- Merge/queue state: hold until the upstream PR is current and CI plus ARM are green; no queue request has been made
+- Upstream PR: [#5079](https://github.com/loopdive/js2/pull/5079), from `ttraenkler:codex/es2015-next-bounded-fix-7` against `loopdive/js2:main`
+- PR state at handoff: open, ready/non-draft, `MERGEABLE`/`CLEAN`, head `a5be883a22742d89b69a04e299ccb9a02eec8a68`; all visible required checks and ARM passed, with no comments, reviews, or hold labels observed
+- Merge/queue state: ready for the one-time auto-merge arm and merge-queue enqueue; no queue mutation was made from this context because that consequential remote action requires explicit parent/user authorization
 
 ## Intended files
 
