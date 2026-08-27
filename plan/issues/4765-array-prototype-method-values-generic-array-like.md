@@ -420,6 +420,26 @@ same staleness) does not fix even the isolated probe, so `proxy` is not sitting 
 an externref slot and the materialisation is elsewhere. Written and reverted, not
 shipped.
 
+**The allocation site itself is `buildVecFromExternref`** (`src/codegen/type-coercion.ts:757`).
+It materialises a host array-like into a vec by calling `__extern_length` (which
+returns **f64**), narrowing that to an i32 `lenLocal`, and allocating a backing
+of that size. A proxy reporting `2 ** 53 + 2` narrows to a saturated i32 (~4.29
+billion) and `array.new_default` refuses it — the uncatchable
+"requested new array is too large".
+
+Two things follow, and they are separable:
+
+1. **Defensive, and correct regardless of the rest**: an f64 length that does not
+   fit a sane vec size should raise a catchable **RangeError**, not a Wasm trap.
+   A trap cannot be caught by the JS `try` in the test (or in user code), so
+   today the failure mode is a hard abort rather than a JS exception. This alone
+   will not flip these rows — they expect neither — but it converts an
+   uncatchable crash into a diagnosable error.
+2. **The actual row fix**: nothing should be materialising here at all.
+   `Array.isArray` is a pure predicate, and `Array.prototype.slice.call(proxy, …)`
+   should reach the host bridge with the proxy intact. Finding why the proxy is
+   coerced into a vec on the way to those calls is the work.
+
 Note the three failing rows do NOT call `Array.isArray` themselves — they call
 `Array.prototype.slice.call(proxy, …)`. Same class (a host proxy materialised
 through a fake `length`), different site. Fixing the marshalling generally is
