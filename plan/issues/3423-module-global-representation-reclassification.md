@@ -189,3 +189,9 @@ the exact denominator was re-measured again: standalone run `20260827-025828`
 = 11/11 and host run `20260827-025951` = 11/11. These are the final checkpoint
 results for this branch; the five empty filtered shard files in each run are
 not Test262 rows.
+
+After integration onto refreshed upstream head `9e0c7a1b9` plus completed Set
+slice #4763, combined commit `f1aaaca7d` independently passed the focused
+regression at 2/2, host run `20260827-030825` at 11/11, and standalone run
+`20260827-030955` at 11/11. Both maintained-runner Test262 runs had zero
+failures, compile errors, compile timeouts, or skips.
