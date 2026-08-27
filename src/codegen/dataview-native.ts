@@ -60,6 +60,9 @@ import { undefinedExternInstrs } from "./any-helpers.js"; // (#3177) OOB read = 
 import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { ensureReflectIsConstructor } from "./reflect-construct-native.js"; // (#4449) TypedArraySpeciesCreate
+import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449) custom species constructors
+import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
 interface DvAccessor {
@@ -4678,6 +4681,369 @@ export function emitTaDynCtorConstructFromLocals(
     else: int8Arm,
   });
   fctx.body.push({ op: "local.get", index: resultLocal });
+}
+
+/**
+ * (#4449) Emit the shared TypedArraySpeciesCreate protocol for a boxed
+ * `$__ta_dyn_view` exemplar.
+ *
+ * The producer methods all have the same observable constructor protocol:
+ * `Get(exemplar, "constructor")`, `Get(C, @@species)`, nullish defaulting,
+ * `IsConstructor`, `Construct`, and `ValidateTypedArray`.  Keeping this in
+ * one emitter is important here because the dynamic-view receiver reaches the
+ * methods through an `externref` and cannot use the static typed-array
+ * constructor folds.  `argLocals` are already-evaluated externref arguments
+ * (the requested element count for map/filter/slice, or buffer/offset/length
+ * for subarray).
+ *
+ * The returned local always contains the constructed externref.  On an
+ * incompatible result or an invalid constructor the emitted code throws a
+ * catchable TypeError before returning.  `requestedLengthLocal`, when present,
+ * additionally implements TypedArrayCreate's single-number minimum-length
+ * check; subarray deliberately omits it because its constructor receives the
+ * buffer tuple rather than a requested result length.
+ */
+export interface TaDynSpeciesCreateOptions {
+  dvLocal: number;
+  argLocals: readonly number[];
+  requestedLengthLocal?: number;
+}
+
+export function emitTaDynSpeciesCreate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  options: TaDynSpeciesCreateOptions,
+): number | null {
+  if (!noJsHost(ctx)) return null;
+
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  ensureObjectRuntime(ctx);
+  ensureSymbolCarrier(ctx);
+
+  // These helpers are native in the standalone/WASI lane.  Resolve them
+  // before emitting any body that captures their indices; this also keeps a
+  // partially-equipped context from producing an invalid call instruction.
+  const externGetIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const symbolBoxIdx = ctx.funcMap.get("__box_symbol");
+  const isConstructorIdx = ensureReflectIsConstructor(ctx);
+  const driverIdx = reserveNativeConstructDriver(
+    ctx,
+    options.argLocals.length,
+    stringConstantExternrefInstrs(ctx, "prototype"),
+  );
+
+  const resultLocal = allocLocal(fctx, `__tasc_res_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: resultLocal });
+
+  if (
+    externGetIdx === undefined ||
+    isUndefinedIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    typeofFunctionIdx === undefined ||
+    symbolBoxIdx === undefined
+  ) {
+    emitThrowTypeError(ctx, fctx, "TypedArray species constructor is unavailable");
+    return resultLocal;
+  }
+
+  const kindLocal = allocLocal(fctx, `__tasc_kind_${fctx.locals.length}`, { kind: "i32" });
+  const selectedLocal = allocLocal(fctx, `__tasc_selected_${fctx.locals.length}`, { kind: "externref" });
+  const constructorLocal = allocLocal(fctx, `__tasc_ctor_${fctx.locals.length}`, { kind: "externref" });
+  const speciesLocal = allocLocal(fctx, `__tasc_species_${fctx.locals.length}`, { kind: "externref" });
+  const selectedAnyLocal = allocLocal(fctx, `__tasc_selected_any_${fctx.locals.length}`, { kind: "anyref" });
+  const resultAnyLocal = allocLocal(fctx, `__tasc_result_any_${fctx.locals.length}`, { kind: "anyref" });
+  const resultDvLocal = allocLocal(fctx, `__tasc_result_dv_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: dynIdx,
+  });
+  const resultKindLocal = allocLocal(fctx, `__tasc_result_kind_${fctx.locals.length}`, { kind: "i32" });
+  const resultEsLocal = allocLocal(fctx, `__tasc_result_es_${fctx.locals.length}`, { kind: "i32" });
+  const typeErrorArm = (message: string): Instr[] => {
+    const saved = fctx.body;
+    const body: Instr[] = [];
+    fctx.body = body;
+    emitThrowTypeError(ctx, fctx, message);
+    fctx.body = saved;
+    return body;
+  };
+
+  // Push the default concrete constructor selected by the exemplar's runtime
+  // kind.  The `$__ta_ctor` singleton is also the identity emitted for a bare
+  // TypedArray constructor in the dynamic harness, including kind 0; using it
+  // here keeps `result.constructor === TA` true without creating a second
+  // constructor carrier.
+  const pushDefaultConstructor = (): void => {
+    fctx.body.push(
+      { op: "local.get", index: options.dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+      { op: "local.set", index: kindLocal },
+    );
+    let chain: Instr[] = [{ op: "ref.null.extern" }];
+    for (let k = TA_CTOR_KINDS.length - 1; k >= 0; k--) {
+      const globalIdx = getOrRegisterTaCtorSingleton(ctx, k);
+      chain = [
+        { op: "local.get", index: kindLocal },
+        { op: "i32.const", value: k },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [{ op: "global.get", index: globalIdx }, { op: "extern.convert_any" }],
+          else: chain,
+        },
+      ];
+    }
+    fctx.body.push(...chain, { op: "local.set", index: selectedLocal });
+  };
+
+  pushDefaultConstructor();
+
+  // C = ? Get(exemplar, "constructor"). The dynamic MOP has already handled
+  // own expandos and inherited prototype accessors, so this call preserves
+  // their exact abrupt completion and lookup order.
+  fctx.body.push(
+    { op: "local.get", index: options.dvLocal },
+    { op: "extern.convert_any" },
+    ...stringConstantExternrefInstrs(ctx, "constructor"),
+    { op: "call", funcIdx: externGetIdx },
+    { op: "local.set", index: constructorLocal },
+    { op: "local.get", index: constructorLocal },
+    { op: "call", funcIdx: isUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [], // undefined C keeps the intrinsic default in selectedLocal
+      else: [
+        // null is not a constructor object. Keep it separate from the
+        // Type(Object(null)) classifier, whose null policy is intentionally
+        // different for ordinary dynamic reads.
+        { op: "local.get", index: constructorLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: typeErrorArm("TypedArray constructor is not an object"),
+          else: [],
+        },
+        { op: "local.get", index: constructorLocal },
+        { op: "call", funcIdx: typeofObjectIdx },
+        { op: "local.get", index: constructorLocal },
+        { op: "call", funcIdx: typeofFunctionIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: typeErrorArm("TypedArray constructor is not an object"),
+          else: [],
+        },
+        { op: "local.get", index: constructorLocal },
+        { op: "i32.const", value: 5 },
+        { op: "call", funcIdx: symbolBoxIdx },
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: speciesLocal },
+        { op: "local.get", index: speciesLocal },
+        { op: "ref.is_null" },
+        { op: "local.get", index: speciesLocal },
+        { op: "call", funcIdx: isUndefinedIdx },
+        { op: "i32.or" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [], // null/undefined species keeps the intrinsic default
+          else: [
+            { op: "local.get", index: speciesLocal },
+            { op: "local.set", index: selectedLocal },
+          ],
+        },
+      ],
+    },
+  );
+
+  // SpeciesConstructor requires an actual constructor before Construct.  The
+  // classifier is finalized after closure registration and understands both
+  // native TA carriers and compiled closure constructors.
+  fctx.body.push(
+    { op: "local.get", index: selectedLocal },
+    { op: "call", funcIdx: isConstructorIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: typeErrorArm("TypedArray species is not a constructor"),
+      else: [],
+    },
+    { op: "local.get", index: selectedLocal },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: selectedAnyLocal },
+  );
+
+  // Native TA constructors are handled inline. A null result means that the
+  // selected species is an ordinary closure, so dispatch it through the
+  // reserve/fill native construct driver with the method-specific arguments.
+  emitTaDynCtorConstructFromLocals(ctx, fctx, selectedAnyLocal, options.argLocals);
+  fctx.body.push({ op: "local.set", index: resultLocal });
+  fctx.body.push(
+    { op: "local.get", index: resultLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: selectedLocal },
+        { op: "ref.null.extern" },
+        ...options.argLocals.flatMap((index): Instr[] => [{ op: "local.get", index }]),
+        { op: "call", funcIdx: driverIdx },
+        { op: "local.set", index: resultLocal },
+      ],
+      else: [],
+    },
+  );
+
+  // TypedArrayCreate validates the constructed result before the producer
+  // writes to it. This catches ordinary objects, null, and too-short custom
+  // views with the required TypeError.
+  fctx.body.push(
+    { op: "local.get", index: resultLocal },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: resultAnyLocal },
+    { op: "ref.test", typeIdx: dynIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: typeErrorArm("TypedArray species constructor returned a non-TypedArray"),
+      else: [],
+    },
+    { op: "local.get", index: resultAnyLocal },
+    { op: "ref.cast", typeIdx: dynIdx },
+    { op: "local.set", index: resultDvLocal },
+  );
+  emitTaDynViewValidate(ctx, fctx, resultDvLocal);
+
+  if (options.requestedLengthLocal !== undefined) {
+    fctx.body.push(
+      { op: "local.get", index: resultDvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+      { op: "local.set", index: resultKindLocal },
+    );
+    pushElemSizeForKind(fctx, resultKindLocal);
+    fctx.body.push({ op: "local.set", index: resultEsLocal });
+    pushTaDynViewInBoundsLen(ctx, fctx, resultDvLocal, resultEsLocal);
+    fctx.body.push(
+      { op: "local.get", index: options.requestedLengthLocal },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("TypedArray species constructor returned too short"),
+        else: [],
+      },
+    );
+  }
+  return resultLocal;
+}
+
+/**
+ * (#4449) Copy a native numeric result vector into a dynamically-kinded
+ * TypedArray result.  `countLocal` is bounded by the species-create minimum
+ * length check; trailing capacity on an oversized custom result is left at
+ * its constructor-initialized zero value.
+ */
+export function emitTaDynViewWriteF64Vec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  resultDvLocal: number,
+  sourceVecLocal: number,
+  sourceVecTypeIdx: number,
+  sourceElemType: ValType,
+  countLocal: number,
+): void {
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
+  const sourceArrIdx = getArrTypeIdxFromVec(ctx, sourceVecTypeIdx);
+  if (sourceArrIdx < 0) return;
+
+  const kindLocal = allocLocal(fctx, `__tadw_kind_${fctx.locals.length}`, { kind: "i32" });
+  const esLocal = allocLocal(fctx, `__tadw_es_${fctx.locals.length}`, { kind: "i32" });
+  const arrLocal = allocLocal(fctx, `__tadw_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: byteArrIdx });
+  const baseLocal = allocLocal(fctx, `__tadw_base_${fctx.locals.length}`, { kind: "i32" });
+  const iLocal = allocLocal(fctx, `__tadw_i_${fctx.locals.length}`, { kind: "i32" });
+  const offLocal = allocLocal(fctx, `__tadw_off_${fctx.locals.length}`, { kind: "i32" });
+  const valueLocal = allocLocal(fctx, `__tadw_value_${fctx.locals.length}`, { kind: "f64" });
+  const leLocal = allocLocal(fctx, `__tadw_le_${fctx.locals.length}`, { kind: "i32" });
+
+  fctx.body.push(
+    { op: "local.get", index: resultDvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+    { op: "local.set", index: kindLocal },
+  );
+  pushElemSizeForKind(fctx, kindLocal);
+  fctx.body.push({ op: "local.set", index: esLocal });
+  fctx.body.push(
+    { op: "local.get", index: resultDvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: byteVecIdx, fieldIdx: 1 },
+    { op: "local.set", index: arrLocal },
+    { op: "local.get", index: resultDvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+    { op: "local.set", index: baseLocal },
+    { op: "i32.const", value: 1 },
+    { op: "local.set", index: leLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: iLocal },
+  );
+
+  const loopBody: Instr[] = [];
+  const saved = fctx.body;
+  fctx.body = loopBody;
+  fctx.body.push(
+    { op: "local.get", index: iLocal },
+    { op: "local.get", index: countLocal },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: sourceVecLocal },
+    { op: "struct.get", typeIdx: sourceVecTypeIdx, fieldIdx: 1 },
+    { op: "local.get", index: iLocal },
+    {
+      op: sourceElemType.kind === "i8" ? "array.get_u" : sourceElemType.kind === "i16" ? "array.get_s" : "array.get",
+      typeIdx: sourceArrIdx,
+    },
+  );
+  if (sourceElemType.kind === "i32" || sourceElemType.kind === "i8" || sourceElemType.kind === "i16") {
+    fctx.body.push({ op: "f64.convert_i32_s" });
+  } else if (sourceElemType.kind !== "f64") {
+    coerceType(ctx, fctx, sourceElemType, { kind: "f64" });
+  }
+  fctx.body.push({ op: "local.set", index: valueLocal });
+  fctx.body.push(
+    { op: "local.get", index: baseLocal },
+    { op: "local.get", index: iLocal },
+    { op: "local.get", index: esLocal },
+    { op: "i32.mul" },
+    { op: "i32.add" },
+    { op: "local.set", index: offLocal },
+    ...emitDynEncodeDispatch(ctx, fctx, kindLocal, arrLocal, offLocal, valueLocal, leLocal, byteArrIdx),
+    { op: "local.get", index: iLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: iLocal },
+    { op: "br", depth: 0 },
+  );
+  fctx.body = saved;
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
 }
 
 /**

@@ -44,6 +44,7 @@ import {
   emitDynDecodeDispatch,
   emitDynEncodeDispatch,
   i32ByteVec,
+  getOrRegisterTaCtorSingleton,
   pushElemSizeForKind,
   pushTaDynViewInBoundsLen,
 } from "./dataview-native.js";
@@ -365,6 +366,12 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     return; // object runtime not in this module — nothing routes here anyway
   }
 
+  // Dynamic view constructor reads are runtime-kind dispatches. Ensure every
+  // non-migrated TypedArray kind has an identity-stable singleton available
+  // before the MOP body captures its fallback chain; the source-level ctor
+  // value may be emitted after this finalize-time fill.
+  for (let k = 1; k < TA_CTOR_KINDS.length; k++) getOrRegisterTaCtorSingleton(ctx, k);
+
   const findFn = (name: string) => {
     const idx = ctx.funcMap.get(name);
     return idx === undefined ? undefined : definedFuncAt(ctx, idx);
@@ -525,8 +532,10 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     // index after the helper-owned locals avoids aliasing an i32 temporary with
     // this externref slot.
     let aProto = -1;
+    let aProtoValue = -1;
     const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
     const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
+    const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
     const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
     fn.locals.push(
       { name: "__tam_any", type: { kind: "anyref" } },
@@ -566,6 +575,10 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     if ((mode === "get" || mode === "has") && getProtoIdx !== undefined) {
       aProto = numParams + fn.locals.length;
       fn.locals.push({ name: "__tam_proto", type: { kind: "externref" } });
+    }
+    if (mode === "get") {
+      aProtoValue = numParams + fn.locals.length;
+      fn.locals.push({ name: "__tam_proto_value", type: { kind: "externref" } });
     }
     // key = __to_property_key(key)
     inner.push({ op: "local.get", index: 1 });
@@ -693,14 +706,35 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: getProtoIdx },
           { op: "local.set", index: aProto },
-          { op: "local.get", index: aProto },
-          { op: "ref.is_null" },
-          { op: "if", blockType: { kind: "empty" }, then: fallback },
-          { op: "local.get", index: aProto },
-          { op: "local.get", index: aKey },
-          { op: "call", funcIdx: selfIdx },
-          { op: "return" },
         );
+        out.push({ op: "local.get", index: aProto }, { op: "ref.is_null" });
+        out.push({ op: "if", blockType: { kind: "empty" }, then: fallback });
+        if (mode === "get" && isUndefinedIdx !== undefined) {
+          // A freshly materialized native prototype has no companion entry
+          // unless the module also flows that prototype through reflection.
+          // Treat that missing constructor as the intrinsic kind default so a
+          // dynamic view still exposes `view.constructor === TA`.  Keep an
+          // explicitly own expando value on the earlier path, and preserve
+          // non-undefined prototype values (including abrupt getter results).
+          out.push(
+            { op: "local.get", index: aProto },
+            { op: "local.get", index: aKey },
+            { op: "call", funcIdx: selfIdx },
+            { op: "local.set", index: aProtoValue },
+            { op: "local.get", index: aProtoValue },
+            { op: "call", funcIdx: isUndefinedIdx },
+            { op: "if", blockType: { kind: "empty" }, then: fallback },
+            { op: "local.get", index: aProtoValue },
+            { op: "return" },
+          );
+        } else {
+          out.push(
+            { op: "local.get", index: aProto },
+            { op: "local.get", index: aKey },
+            { op: "call", funcIdx: selfIdx },
+            { op: "return" },
+          );
+        }
       } else {
         out.push(...fallback);
       }

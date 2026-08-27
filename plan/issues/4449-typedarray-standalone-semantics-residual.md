@@ -225,3 +225,47 @@ getter, own `Symbol.species`, and abrupt `Symbol.species` getter. The existing
 This checkpoint intentionally does not claim producer-method progress; the
 55-row species cohort remains at the 0/55 standalone baseline until the shared
 species-create seam is wired.
+
+## 2026-08-27 clean-delivery producer checkpoint (partial)
+
+The resumed branch wires one shared standalone `TypedArraySpeciesCreate` seam
+for dynamic-view `map`, `filter`, `slice`, and `subarray`. It now performs the
+constructor/`@@species` lookup and nullish defaulting, preserves abrupt getter
+completion, invokes custom constructors with the method-specific argument
+tuple, validates a returned dynamic view and minimum length, and copies the
+ordinary producer vector into the species result. The dynamic MOP own
+`constructor` shadow path remains in front of prototype lookup. Detached
+buffers, reflection metadata, and BigInt value carriers remain out of scope.
+
+Focused evidence from this worktree:
+
+- `tests/issue-4449-species-controls.test.ts` plus
+  `tests/issue-4449-species-producers.test.ts`: **12/12 passed**, zero
+  standalone `env` imports.
+- An all-nine non-BigInt-constructor pin covering custom `map`, `filter`,
+  `slice`, and shared-buffer `subarray` passed **36/36**.
+- Tracked source delta at checkpoint: `array-methods.ts` +318 lines,
+  `dataview-native.ts` +366 lines, `call-receiver-method.ts` +13/-2, and
+  `ta-dyn-mop.ts` +41/-7; the added focused producer test is 197 lines. The
+  dataview addition is the single shared protocol and dynamic-kind copy seam;
+  the array-method addition is the four producer-specific argument/order arms
+  plus one runtime two-arm wrapper. No debug instrumentation is retained.
+
+The exact frozen cohort remains `/private/tmp/js2-4449-species-55.txt` (55
+rows). Fresh bounded runs used `COMPILER_POOL_SIZE=2`,
+`--official-scope-only`, and the exact path-file filter:
+
+| Lane | Run | Pass | Fail | Compile errors | Timeouts | Skips | Denominator |
+|---|---|---:|---:|---:|---:|---:|---:|
+| standalone (pinned QuickJS artifact `2e2d7736713beeda`) | `20260827-074318` | 20 | 35 | 0 | 0 | 0 | 55 |
+| host | `20260827-075040` | 52 | 3 | 0 | 0 | 0 | 55 |
+
+The standalone run is a **partial improvement only**, not an acceptance
+claim. Its 35 residuals are concentrated in constructor/default identity (8),
+invalid constructor/species and returned-view handling (11), custom invocation
+`this`/result copying (12), and the same-buffer offset/subarray cases (4), with
+method totals `map 9`, `filter 8`, `slice 10`, `subarray 8`. Host remains at
+the 52/55 control floor; its three failures are the pre-existing Float64
+`slice`/`subarray` custom-constructor receiver and invocation-argument rows.
+Draft PR #5022 must remain draft and this issue remains in progress until a
+future checkpoint reaches standalone 55/55 and host 55/55 with zero nonpasses.

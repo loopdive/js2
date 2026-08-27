@@ -46,8 +46,11 @@ import {
   isTaViewTypeIdx,
 } from "./registry/types.js";
 import {
+  emitTaDynSpeciesCreate,
+  pushElemSizeForKind,
   emitTaDynViewToVec,
   emitTaDynViewValidate,
+  emitTaDynViewWriteF64Vec,
   emitTaViewToVec,
   emitTaViewValidate,
   emitTaViewWriteBack,
@@ -1406,6 +1409,308 @@ function shouldWrapDynViewTwoArm(
   );
 }
 
+const DYN_VIEW_SPECIES_METHODS = new Set<string>(["map", "filter", "slice", "subarray"]);
+
+function shouldWrapDynViewSpeciesTwoArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  methodName: string,
+  skipDynViewWrap: boolean,
+): boolean {
+  return (
+    !skipDynViewWrap &&
+    noJsHost(ctx) &&
+    ctx.moduleUsesDynTaView &&
+    !dynViewTwoArmActive.has(callExpr) &&
+    ts.isPropertyAccessExpression(propAccess) &&
+    DYN_VIEW_SPECIES_METHODS.has(methodName) &&
+    ts.isIdentifier(propAccess.expression) &&
+    dynViewReceiverIsExternref(fctx, propAccess.expression.text)
+  );
+}
+
+/**
+ * (#4449) Runtime-kind producer arm for dynamic TypedArray views.  The
+ * existing ordinary vector methods remain the callback/index algorithms; this
+ * wrapper only supplies their f64 materialized input, performs one shared
+ * TypedArraySpeciesCreate, and copies the result into the returned dynamic
+ * view.  The ELSE arm is the exact pre-existing call lowering for a plain
+ * externref receiver.
+ */
+function emitDynViewSpeciesMethodTwoArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  receiverType: ts.Type | undefined,
+  methodName: string,
+  expectedType: ValType | undefined,
+): ValType | null | undefined | typeof VOID_RESULT {
+  const receiverExpr = propAccess.expression;
+  if (!ts.isIdentifier(receiverExpr)) return undefined;
+  const name = receiverExpr.text;
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+
+  const rt = compileExpression(ctx, fctx, receiverExpr);
+  if (rt && rt.kind !== "externref") coerceType(ctx, fctx, rt, { kind: "externref" });
+  const recvExt = allocLocal(fctx, `__dvs_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvExt });
+  const recvAny = allocLocal(fctx, `__dvs_any_${fctx.locals.length}`, { kind: "anyref" });
+  fctx.body.push(
+    { op: "local.get", index: recvExt },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: recvAny },
+  );
+
+  const dvLocal = allocLocal(fctx, `__dvs_dv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
+  const outer = fctx.body;
+  const thenArm: Instr[] = [];
+  const elseArm: Instr[] = [];
+  fctx.savedBodies.push(outer, thenArm, elseArm);
+
+  const abandon = (): undefined => {
+    fctx.body = outer;
+    fctx.savedBodies.pop();
+    fctx.savedBodies.pop();
+    fctx.savedBodies.pop();
+    return undefined;
+  };
+
+  fctx.body = thenArm;
+  fctx.body.push(
+    { op: "local.get", index: recvAny },
+    { op: "ref.cast", typeIdx: dynIdx },
+    { op: "local.set", index: dvLocal },
+  );
+  emitTaDynViewValidate(ctx, fctx, dvLocal);
+  const f64VecIdx = emitTaDynViewToVec(ctx, fctx, dvLocal);
+  const matLocal = allocLocal(fctx, `__dvs_mat_${fctx.locals.length}`, { kind: "ref", typeIdx: f64VecIdx });
+  fctx.body.push({ op: "local.set", index: matLocal });
+
+  const boxNumIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  if (boxNumIdx === undefined) return abandon();
+
+  const boxI32 = (valueLocal: number, tag: string): number => {
+    const out = allocLocal(fctx, `__dvs_${tag}_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      { op: "local.get", index: valueLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: boxNumIdx },
+      { op: "local.set", index: out },
+    );
+    return out;
+  };
+
+  const bindSpeciesResult = (speciesLocal: number): number => {
+    const anyLocal = allocLocal(fctx, `__dvs_species_any_${fctx.locals.length}`, { kind: "anyref" });
+    const resultDv = allocLocal(fctx, `__dvs_species_dv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
+    fctx.body.push(
+      { op: "local.get", index: speciesLocal },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: anyLocal },
+      { op: "local.get", index: anyLocal },
+      { op: "ref.cast", typeIdx: dynIdx },
+      { op: "local.set", index: resultDv },
+    );
+    return resultDv;
+  };
+
+  const captureVec = (
+    r: ValType | null | undefined | typeof VOID_RESULT,
+    tag: string,
+  ): { local: number; typeIdx: number; elemType: ValType; lenLocal: number } | undefined => {
+    if (!r || r === VOID_RESULT || (r.kind !== "ref" && r.kind !== "ref_null") || !("typeIdx" in r)) return undefined;
+    const typeIdx = r.typeIdx;
+    const arrIdx = getArrTypeIdxFromVec(ctx, typeIdx);
+    const arrDef = arrIdx < 0 ? undefined : ctx.mod.types[arrIdx];
+    if (!arrDef || arrDef.kind !== "array") return undefined;
+    const local = allocLocal(fctx, `__dvs_${tag}_${fctx.locals.length}`, r);
+    fctx.body.push({ op: "local.set", index: local });
+    const lenLocal = allocLocal(fctx, `__dvs_${tag}_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      { op: "local.get", index: local },
+      { op: "struct.get", typeIdx, fieldIdx: 0 },
+      { op: "local.set", index: lenLocal },
+    );
+    return { local, typeIdx, elemType: arrDef.element, lenLocal };
+  };
+
+  const copySpeciesResult = (
+    speciesLocal: number,
+    source: { local: number; typeIdx: number; elemType: ValType; lenLocal: number },
+    countLocal: number,
+  ): void => {
+    const resultDv = bindSpeciesResult(speciesLocal);
+    emitTaDynViewWriteF64Vec(ctx, fctx, resultDv, source.local, source.typeIdx, source.elemType, countLocal);
+  };
+
+  let outputSpecies: number | undefined;
+  if (methodName === "map") {
+    const sourceLen = allocLocal(fctx, `__dvs_map_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      { op: "local.get", index: matLocal },
+      { op: "struct.get", typeIdx: f64VecIdx, fieldIdx: 0 },
+      { op: "local.set", index: sourceLen },
+    );
+    const countArg = boxI32(sourceLen, "map_count");
+    outputSpecies =
+      emitTaDynSpeciesCreate(ctx, fctx, { dvLocal, argLocals: [countArg], requestedLengthLocal: sourceLen }) ??
+      undefined;
+    if (outputSpecies === undefined) return abandon();
+    const savedBind = fctx.localMap.get(name);
+    fctx.localMap.set(name, matLocal);
+    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
+    else fctx.localMap.delete(name);
+    const mapped = captureVec(r, "map_result");
+    if (!mapped) return abandon();
+    copySpeciesResult(outputSpecies, mapped, sourceLen);
+  } else if (methodName === "filter") {
+    const savedBind = fctx.localMap.get(name);
+    fctx.localMap.set(name, matLocal);
+    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
+    else fctx.localMap.delete(name);
+    const filtered = captureVec(r, "filter_result");
+    if (!filtered) return abandon();
+    outputSpecies =
+      emitTaDynSpeciesCreate(ctx, fctx, {
+        dvLocal,
+        argLocals: [boxI32(filtered.lenLocal, "filter_count")],
+        requestedLengthLocal: filtered.lenLocal,
+      }) ?? undefined;
+    if (outputSpecies === undefined) return abandon();
+    copySpeciesResult(outputSpecies, filtered, filtered.lenLocal);
+  } else if (methodName === "slice") {
+    const savedBind = fctx.localMap.get(name);
+    fctx.localMap.set(name, matLocal);
+    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
+    else fctx.localMap.delete(name);
+    const sliced = captureVec(r, "slice_result");
+    if (!sliced) return abandon();
+    outputSpecies =
+      emitTaDynSpeciesCreate(ctx, fctx, {
+        dvLocal,
+        argLocals: [boxI32(sliced.lenLocal, "slice_count")],
+        requestedLengthLocal: sliced.lenLocal,
+      }) ?? undefined;
+    if (outputSpecies === undefined) return abandon();
+    copySpeciesResult(outputSpecies, sliced, sliced.lenLocal);
+  } else {
+    // subarray: the method does not materialize/copy. Compute the normalized
+    // element window, then pass the backing buffer and byte tuple to species.
+    const sourceLen = allocLocal(fctx, `__dvs_sub_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      { op: "local.get", index: matLocal },
+      { op: "struct.get", typeIdx: f64VecIdx, fieldIdx: 0 },
+      { op: "local.set", index: sourceLen },
+    );
+    const begin = allocLocal(fctx, `__dvs_sub_begin_${fctx.locals.length}`, { kind: "i32" });
+    const end = allocLocal(fctx, `__dvs_sub_end_${fctx.locals.length}`, { kind: "i32" });
+    if (callExpr.arguments.length >= 1) {
+      compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    } else fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: begin });
+    emitClampIndex(fctx, begin, sourceLen);
+    const endArg = callExpr.arguments.length >= 2 ? callExpr.arguments[1]! : undefined;
+    const endUndefined = endArg !== undefined && ts.isIdentifier(endArg) && endArg.text === "undefined";
+    if (endArg !== undefined && !endUndefined) {
+      compileExpression(ctx, fctx, endArg, { kind: "f64" });
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" }, { op: "local.set", index: end });
+      emitClampIndex(fctx, end, sourceLen);
+    } else {
+      fctx.body.push({ op: "local.get", index: sourceLen }, { op: "local.set", index: end });
+    }
+    const subLen = allocLocal(fctx, `__dvs_sub_count_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      { op: "local.get", index: end },
+      { op: "local.get", index: begin },
+      { op: "i32.sub" },
+      { op: "local.set", index: subLen },
+    );
+    emitClampNonNeg(fctx, subLen);
+    const kind = allocLocal(fctx, `__dvs_sub_kind_${fctx.locals.length}`, { kind: "i32" });
+    const elemSize = allocLocal(fctx, `__dvs_sub_es_${fctx.locals.length}`, { kind: "i32" });
+    const byteOffset = allocLocal(fctx, `__dvs_sub_off_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      { op: "local.get", index: dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+      { op: "local.set", index: kind },
+    );
+    pushElemSizeForKind(fctx, kind);
+    fctx.body.push(
+      { op: "local.set", index: elemSize },
+      { op: "local.get", index: dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+      { op: "local.get", index: begin },
+      { op: "local.get", index: elemSize },
+      { op: "i32.mul" },
+      { op: "i32.add" },
+      { op: "local.set", index: byteOffset },
+    );
+    const bufferArg = allocLocal(fctx, `__dvs_sub_buffer_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      { op: "local.get", index: dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+      { op: "extern.convert_any" },
+      { op: "local.set", index: bufferArg },
+    );
+    outputSpecies =
+      emitTaDynSpeciesCreate(ctx, fctx, {
+        dvLocal,
+        argLocals: [bufferArg, boxI32(byteOffset, "sub_offset"), boxI32(subLen, "sub_length")],
+      }) ?? undefined;
+    if (outputSpecies === undefined) return abandon();
+  }
+
+  // The branch result is the species-created view after any producer copy.
+  // Keep the full dynamic arm in the `if` so creation and validation execute
+  // only for a dynamic view, then leave the constructed view on its value
+  // stack for the enclosing call expression.
+  if (outputSpecies === undefined) return undefined;
+  thenArm.push({ op: "local.get", index: outputSpecies });
+
+  fctx.body = elseArm;
+  dynViewTwoArmActive.add(callExpr);
+  const rElse = compileExpression(ctx, fctx, callExpr, expectedType);
+  dynViewTwoArmActive.delete(callExpr);
+  const elseOk = coerceArmToExternref(ctx, fctx, rElse, true);
+  fctx.body = outer;
+  fctx.savedBodies.pop();
+  fctx.savedBodies.pop();
+  fctx.savedBodies.pop();
+  if (!elseOk) return undefined;
+  outer.push(
+    { op: "local.get", index: recvAny },
+    { op: "ref.test", typeIdx: dynIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: thenArm,
+      else: elseArm,
+    },
+  );
+  return { kind: "externref" };
+}
+
+/** Entry point for the earlier any/externref receiver dispatcher. */
+export function tryCompileDynViewSpeciesMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  receiverType: ts.Type,
+  expectedType?: ValType,
+): ValType | null | undefined | typeof VOID_RESULT {
+  const methodName = propAccess.name.text;
+  if (!shouldWrapDynViewSpeciesTwoArm(ctx, fctx, propAccess, callExpr, methodName, false)) return undefined;
+  return emitDynViewSpeciesMethodTwoArm(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType);
+}
+
 function emitDynViewMethodTwoArm(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1549,6 +1854,19 @@ export function compileArrayMethodCall(
   const methodName =
     overrideMethodName ?? (ts.isPropertyAccessExpression(propAccess) ? propAccess.name.text : undefined);
   if (!methodName || !ARRAY_METHODS.has(methodName)) return undefined;
+
+  if (shouldWrapDynViewSpeciesTwoArm(ctx, fctx, propAccess, callExpr, methodName, skipDynViewWrap)) {
+    const species = emitDynViewSpeciesMethodTwoArm(
+      ctx,
+      fctx,
+      propAccess as ts.PropertyAccessExpression,
+      callExpr,
+      receiverType,
+      methodName,
+      expectedType,
+    );
+    if (species !== undefined) return species;
+  }
 
   // (#3058) Runtime-kind proto-method dispatch on a boxed `$__ta_dyn_view` receiver
   // (dynamic `new <ctorVar>(rab)` where the element kind is only known at runtime).
