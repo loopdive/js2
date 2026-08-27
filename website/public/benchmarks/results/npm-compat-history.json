@@ -9817,6 +9817,100 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-27T11:43:36.519Z",
+      "sourceRevision": "7e0b03ebb7f239bff884a7c93262994bbeefe343",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 310192.2909932325,
+            "dynamic": 0.12081581958461053
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 499.97376753656675,
+            "dynamic": 0.21702608193871564
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.873065490231852,
+            "dynamic": 0.15489269585692308
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T13:00:23.074Z",
+      "sourceRevision": "12805b623fe623178245ffaef8bfae0a860edb41",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 304569.46368000464,
+            "dynamic": 0.12299767314304715
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 650.6186473390384,
+            "dynamic": 0.20912273007642124
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 17.106792994652196,
+            "dynamic": 0.14607270858231583
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T13:32:52.862Z",
+      "sourceRevision": "47280b7182d07489453f477bf9c5fbcdbcc09d44",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.011992386673522407
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T14:20:34.749Z",
+      "sourceRevision": "641bb706d676c97332f7cc276382ea0df3189304",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009924345004697889
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

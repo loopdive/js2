@@ -3,6 +3,7 @@
   "codegen/array-concat-spec.ts": 2,
   "codegen/array-filter-spec-access.ts": 1,
   "codegen/array-join-proto-hole.ts": 2,
+  "codegen/array-like-native.ts": 2,
   "codegen/array-methods.ts": 20,
   "codegen/array-nonindex-key.ts": 2,
   "codegen/array-prototype-borrow.ts": 4,

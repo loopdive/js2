@@ -96,6 +96,9 @@ import {
   resolveEnclosingClassName,
 } from "../shared.js";
 import {
+  emitArgumentsVecBody,
+  emitSetExtrasArgv,
+  ensureArgcGlobal,
   compileNestedClassDeclaration,
   hoistFunctionDeclarations,
   maybeSetArgcForKnownCall,
@@ -2072,11 +2075,7 @@ function compileNewFunctionExpression(
   // 1. Flatten call-site arguments (resolve spread on array literals)
   const rawArgs = expr.arguments ?? [];
   const flatArgs = flattenCallArgs(rawArgs);
-  if (!flatArgs) {
-    // Can't flatten spread at compile time — unsupported
-    reportError(ctx, expr, "new FunctionExpression with non-literal spread not supported");
-    return null;
-  }
+  const hasDynamicSpread = flatArgs === null;
 
   const needsArguments = needsImplicitArgumentsObject(funcExpr);
 
@@ -2111,9 +2110,9 @@ function compileNewFunctionExpression(
       const paramType = ctx.checker.getTypeAtLocation(p);
       formalParams.push(resolveWasmType(ctx, paramType));
     }
-  } else {
+  } else if (!hasDynamicSpread) {
     // No formal params — create f64 params for each call-site arg
-    for (let i = 0; i < flatArgs.length; i++) {
+    for (let i = 0; i < flatArgs!.length; i++) {
       formalParams.push({ kind: "f64" });
     }
   }
@@ -2217,8 +2216,8 @@ function compileNewFunctionExpression(
         type: formalParams[i] ?? { kind: "f64" },
       });
     }
-  } else {
-    for (let i = 0; i < flatArgs.length; i++) {
+  } else if (!hasDynamicSpread) {
+    for (let i = 0; i < flatArgs!.length; i++) {
       paramDefs.push({ name: `__arg${i}`, type: { kind: "f64" } });
     }
   }
@@ -2319,7 +2318,27 @@ function compileNewFunctionExpression(
   }
 
   // Set up `arguments` if the body references it
-  if (needsArguments) {
+  if (needsArguments && hasDynamicSpread && formalParams.length === 0) {
+    // A runtime spread has no statically-known parameter slots. Keep the
+    // lifted function zero-arity and let the shared arguments builder append
+    // the call-site vector from `__extras_argv`; the constructor call site
+    // publishes that vector immediately before the call below.
+    const elemType: ValType = { kind: "externref" };
+    const vti = getOrRegisterVecType(ctx, "externref", elemType);
+    const ati = getArrTypeIdxFromVec(ctx, vti);
+    const vecRef: ValType = { kind: "ref", typeIdx: vti };
+    const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
+    const arrTmp = allocLocal(liftedFctx, "__args_arr_tmp", {
+      kind: "ref",
+      typeIdx: ati,
+    });
+    emitArgumentsVecBody(ctx, liftedFctx, formalParams, 1, {
+      vecTypeIdx: vti,
+      arrTypeIdx: ati,
+      argsLocalIdx: argsLocal,
+      arrTmpIdx: arrTmp,
+    });
+  } else if (needsArguments) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericFormal = formalParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericFormal) {
@@ -2464,23 +2483,42 @@ function compileNewFunctionExpression(
     fctx.body.push({ op: "local.set", index: receiverLocal });
   }
 
-  // Push __self argument
-  fctx.body.push({ op: "local.get", index: closureLocal });
-
   // Push call-site arguments (flattened, spread already resolved).
   // (#4464) Arity is now enforced here: a surplus argument is evaluated (source
   // order, side effects intact) and dropped, a missing one gets its parameter's
   // default. Previously both cases pushed the wrong number of operands, which
   // with the trailing receiver operand would be a module-validation error
   // rather than a silently shifted parameter.
-  for (let i = 0; i < flatArgs.length; i++) {
-    const actual = compileExpression(ctx, fctx, flatArgs[i]!, formalParams[i]);
-    if (i >= formalParams.length && actual !== null && actual !== undefined) {
-      fctx.body.push({ op: "drop" });
+  if (hasDynamicSpread) {
+    if (formalParams.length !== 0) {
+      // Dynamic argument extraction for a function expression with declared
+      // formals is not part of the ES2015 cohort admitted by this slice. Keep
+      // the old diagnostic rather than manufacturing a mismatched call ABI;
+      // zero-formal constructors use the shared runtime-argv path below.
+      reportError(ctx, expr, "new FunctionExpression with non-literal spread and formal parameters not supported");
+      for (const formalParam of formalParams) pushDefaultValue(fctx, formalParam, ctx);
+      fctx.body.push({ op: "local.get", index: closureLocal });
+    } else {
+      // `emitSetExtrasArgv` evaluates each fixed argument and drives every
+      // spread iterator exactly once, preserving ArgumentListEvaluation order.
+      // The zero-formal lifted body consumes the resulting vector through the
+      // same argc/extras protocol as ordinary function calls.
+      emitSetExtrasArgv(ctx, fctx, rawArgs as ts.Expression[], 0);
+      fctx.body.push({ op: "i32.const", value: 0 });
+      fctx.body.push({ op: "global.set", index: ensureArgcGlobal(ctx) });
+      fctx.body.push({ op: "local.get", index: closureLocal });
     }
-  }
-  for (let i = flatArgs.length; i < formalParams.length; i++) {
-    pushDefaultValue(fctx, formalParams[i]!, ctx);
+  } else {
+    fctx.body.push({ op: "local.get", index: closureLocal });
+    for (let i = 0; i < flatArgs!.length; i++) {
+      const actual = compileExpression(ctx, fctx, flatArgs![i]!, formalParams[i]);
+      if (i >= formalParams.length && actual !== null && actual !== undefined) {
+        fctx.body.push({ op: "drop" });
+      }
+    }
+    for (let i = flatArgs!.length; i < formalParams.length; i++) {
+      pushDefaultValue(fctx, formalParams[i]!, ctx);
+    }
   }
   if (receiverLocal !== undefined) {
     fctx.body.push({ op: "local.get", index: receiverLocal });

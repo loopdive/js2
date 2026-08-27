@@ -1,7 +1,7 @@
 ---
 id: 4406
 title: "return-type unboxing ABI: i32/f64-returning callee twins so booleans and numbers cross calls unboxed"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-14
 priority: high
@@ -10,6 +10,24 @@ feasibility: hard
 task_type: perf
 area: codegen
 related: [4157, 4405]
+# (2026-08-27, Phase 0+1) The plan keeps `refinedTwinReturnType` as the SINGLE
+# decision point (§3.2/§5.1), so the boolean arm has to land in `typed-this.ts`;
+# the shim's brand-driven re-box has to land at the twin's minting site in
+# `closures.ts` (§3.3a); the ToBoolean return arm has to land at the one return
+# coercion choke point in `statements/control-flow.ts` (§3.3c); the published
+# verdict needs a context field and two wiring sites in `index.ts` (§3.1). The
+# ~40-line census was moved OUT to the new leaf `src/codegen/ret-unbox-abi.ts`
+# rather than granted, which cut the `typed-this.ts` growth from +123 to +44.
+loc-budget-allow:
+  - src/codegen/typed-this.ts
+  - src/codegen/index.ts
+  - src/codegen/statements/control-flow.ts
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsClosure
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4406 — return-type unboxing ABI
@@ -530,3 +548,161 @@ one and the lane regresses.
 - **Phase 2 can grow the binary** (lane B is already +37 % over lane A). Measure
   and state it; the standalone floor guards run in the `merge_group`, not on the
   PR.
+
+---
+
+## Slice record — Phases 0 + 1 (2026-08-27)
+
+Implemented against `origin/main` @ `7e0b03ebb7`. Every number below was measured
+in a fresh process on that base or on the branch; the plan's own §0 commands were
+re-run first and **three of its §1 measurements had drifted** — recorded in full
+below, because two of them change what the slice can claim.
+
+### What landed
+
+| plan ref | change | file |
+| --- | --- | --- |
+| §3.1 | `analyzeBooleanNames` publishes `{ properties, functions }` from the ONE traversal #2847 already runs; `analyzeBooleanPropertyNames` is now a thin view for its `excludeNames` caller | `struct-field-boolean-brand.ts` |
+| §3.1 | `ctx.booleanFunctionNames` + both wiring sites (single-source **and** linked) | `context/types.ts`, `index.ts` |
+| §3.2 | the boolean arm **before** the numeric one inside `refinedTwinReturnType` — the single decision point is unchanged | `typed-this.ts` |
+| §3.3(a) | the generic body's shim picks its re-box helper off the BRAND (`__box_boolean` vs `__box_number`) | `closures.ts` |
+| §3.3(b) | the `__unbox_boolean` trap arm is routed past, into the generic `i32` arm's `__unbox_number` + `i32.trunc_sat_f64_s` | `typed-this.ts` |
+| §3.3(c) | a boolean-branded return target coerces through `emitToBoolean`, not `coerceType`'s ToNumber + truncate | `statements/control-flow.ts` |
+| §6 Phase 0 | `JS2WASM_RET_UNBOX_STATS=1` funnel census, and the flag family, in a new LEAF module | `ret-unbox-abi.ts` (new) |
+| §8.2 | `JS2WASM_RET_UNBOX_ABI_POISON=1` | `ret-unbox-abi.ts`, `typed-this.ts` |
+
+`JS2WASM_RET_UNBOX_ABI` is **opt-in** via `optInFlagEnabled` (#4405's helper):
+unset ⇒ OFF, and every off-token of the shared rule disables it. §3.3(b) and
+§3.3(c) are flag-gated **only** to keep the OFF build byte-identical — a
+DECLARED `boolean` return reaches both sites today.
+
+### §0/§1 revalidation — three drifts
+
+**Drift 1 — the plan's two lanes have collapsed into one.** #4157's tuned
+eleven are default-ON (`src/perf-flags.ts`), so today's default *is*
+approximately the plan's "lane B". Setting the plan's §0 lane-B environment adds
+nothing but the four still-default-OFF levers.
+
+| lane | binary B | `__box_boolean` | `__unbox_number` | `__box_number` | `__is_truthy` | checksum |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| plan A — flags off @ `12b5b0bb7` | 2,558,246 | 333,363 | 883,318 | 489,166 | 997,454 | 422 |
+| plan B — tuned-11 + 4 levers | 3,497,429 | 224,339 | 214,677 | 1 | 237,193 | 422 |
+| **today, default (flag OFF)** | 3,818,402¹ | **291,279** | **224,707** | **1,954** | **239,854** | **422** |
+| **today, `JS2WASM_RET_UNBOX_ABI=1`** | 3,816,084¹ | **291,314** | 224,707 | 1,954 | 239,802 | **422** |
+
+¹ with the `JS2WASM_EXEC_CENSUS` instrument installed. Uninstrumented:
+**3,818,182 B** default, **3,815,864 B** flag-on (−2,318 B, −0.06 %).
+
+**Drift 2 — §1.3's miscompile witness no longer reproduces. A neighbouring one
+does.** The plan's exact probe (`pp.eat = function (x) { return this.n === x; }`,
+then `("" + p.eat(5)).length`) now answers **4**, matching node. A predicate
+whose body is a bare comparison already carries a boolean-branded i32 through
+its DECLARED signature, so `refinedTwinReturnType` declines on it
+(`declared.kind !== "externref"`). Cause of the drift: #4414 (done 2026-08-14)
+fixed the three stringification consumers that decided boolean-ness from the
+static TS type alone and ignored the i32 brand (`compileNativeConcatOperand`
+and the template-literal span path in `src/codegen/string-ops.ts`, plus the
+`String(x)` i32 arm in `src/codegen/expressions/call-identifier.ts`) — #4414's
+own measurement of this repro shows `refined=undefined`, so the twin refinement
+was never the producer there, and `JS2WASM_NUMERIC_TWINS=0` fixes this slice's
+surviving witness while #4414 measured it as not fixing theirs. The `&&`-of-calls shape — which is acorn's
+own idiom (`eatContextual`, `shouldParseArrow`, every `regexp_eat*`) — still
+reaches the refinement and still miscompiles:
+
+```js
+pp.eq   = function (x) { return this.n === x; };
+pp.pred = function (x) { return this.eq(x) && this.eq(x); };
+("" + p.pred(5)).length   // node 4 ("true") · standalone default 1 ("1")
+```
+
+`JS2WASM_NUMERIC_TWINS=0` fixes it and `JS2WASM_DIRECT_CALLS=0` fixes it, so
+§1.2's root cause (no `isBooleanish` filter on the `numericFunctions` loop) is
+intact — only its witness moved. `tests/issue-4406-ret-unbox-abi.test.ts` pins
+the new one.
+
+**Drift 3 — "all 83 are minted f64" is now "54 of 83 are ALREADY i32b".**
+`JS2WASM_RET_UNBOX_STATS=1` on the acorn lane, flag off, reproduces §7's Phase-0
+checkpoint **exactly** — `numericFunctions=102 booleanFunctions=83 overlap=83
+booleanOnly=0` — but the per-name table it prints says the twins have moved:
+
+| twin result | count | which |
+| --- | ---: | --- |
+| `i32b` already | **54** | `eat`, `eatContextual`, `isContextual`, most `regexp_eat*` |
+| `f64` still | **7** | `isAwaitUsing`, `isSimpleAssignTarget`, `isUsing`, `regexp_eatCharacterEscape`, `regexp_eatLoneUnicodePropertyNameOrValue`, `shouldParseAsyncArrow`, `shouldParseExportStatement` |
+| no twin | 22 | no write-once verdict — `refinedTwinReturnType` declines upstream of the boolean arm |
+
+So "the return half of this ABI is already built, just with the wrong type" is
+today true of **7** acorn method names, not 83, and the flag's whole effect on
+this lane is those seven. That is why the §7 Phase-1 checkpoints are met while
+`__box_boolean` does not move.
+
+### Measured against §7's amended criteria
+
+| criterion | result |
+| --- | --- |
+| **Phase 0** — verdict published; census reproduces `102 / 83 / 83 / 0` | ✅ exact |
+| **Phase 1** — with the flag on, the names' twins declare `{i32, boolean}` | ✅ twins `i32Boolean` 54 → **61**, trampolines 53 → **60** |
+| **Phase 1** — `legacyFills` stays 0 | ✅ `sites=3976 trampolines=545 twinFills=516 genericFills=29 legacyFills=0`, identical on and off |
+| **Phase 1** — `__unbox_boolean` stays at 2 (the §3.3(b) tripwire) | ✅ **2** on and off |
+| **Phase 1** — checksum 422 | ✅ on, off, and every off-token |
+| **Phase 1** — flag-off byte-identical | ✅ `sha256 87b19d033d804ad8e87b57b82d41f5fa1cbd1b0c10553ac92b9d14cc52dc22b4`, 3,818,182 B — identical from base code and from the branch, and identical under `JS2WASM_RET_UNBOX_ABI_POISON=1` alone |
+| **Phase 1 correctness** — the §1.3 probe matches node with the flag on | ✅ via drift 2's witness: 1 → **4**; `typeof`/`JSON.stringify`/`=== true`/false-case all match node |
+| **`__box_boolean`** | 291,279 → 291,314 (**+35**, +0.012 %) — the null §4 predicts; the buckets it names are Phases 2/3 |
+| **`__unbox_number`** | 224,707, unchanged — out of scope per §1.5 |
+| binary size | −2,318 B (−0.06 %); no floor risk |
+
+**Poison probe (§8.2).** Flag on + poison on: the acorn self-parse **fails**
+(`RangeError: Maximum call stack size exceeded` inside the parser — an inverted
+predicate makes it recurse). Flag on, poison off: checksum 422. Poison alone:
+byte-identical to the default. The refined path is live and executed, so none of
+the numbers above is a reading of a dead path.
+
+### §3.3(c) — what is closed and what is trusted
+
+The ToBoolean return arm closes the divergence the plan flags: `coerceType`
+(`type-coercion.ts`, the `externref → i32` arm) is ToNumber + `i32.trunc_sat_f64_s`
+regardless of the boolean brand, so a return expression that lowered to a boxed
+`"abc"` would truncate to `0` where ToBoolean says `1`. With the flag on, that
+site routes through `emitToBoolean` instead.
+
+What is still **trusted, not proven**: that #2847's name-keyed fixpoint is
+sound about "this name returns a boolean". It is the same trust
+`numericFunctionNames` already carries default-ON for `provenNumericOperand`,
+and `expressionIsBoolean` routes every type question through
+`ctx.oracle.isBooleanProducing`. Stating it rather than leaving it implicit, as
+§3.3(c) asks.
+
+### Two PRE-EXISTING defects found (not introduced here, not fixed here)
+
+1. **`tests/issue-3754-numeric-return-twin.test.ts` fails 9 of 10 on
+   `origin/main` @ `7e0b03ebb7`** — `expected '' to be 'externref'`, i.e. the
+   `__dc_P_inc_0_g` trampoline that file reads is no longer emitted for its
+   shape. Verified by reverting all six touched files to `HEAD` and re-running:
+   same 9 failures. That file is not in a required check, which is why it has
+   stayed red.
+2. **A mixed boolean/number prototype method consumed by string concatenation
+   emits an INVALID MODULE**, identically with the flag on and off and on base:
+
+   ```js
+   pp.pred = function (x) { if (x > 100) { return 7; } return this.eq(x) && this.eq(x); };
+   ("" + p.pred(5)).length
+   // CompileError: struct.get[0] expected type (ref null 6), found call of type (ref null 71)
+   ```
+
+   Worth its own issue; `compile()` reports `success: true` and the failure only
+   surfaces at `WebAssembly.compile`.
+
+### What remains
+
+- **§6 Phase 2** — the merge/consumer half (`expressions/logical-ops.ts` types
+  its merge `(result externref)`; lever 4's `arm-tail-call` / `prev-call`
+  declines). Untouched here; re-measure lever 4 with the flag on before building
+  anything.
+- **§6 Phase 3** — the parameter half (the 29 % + 15 % + 5 % argument buckets).
+  Recommend a separate issue, as the plan does; this is where the AC's remaining
+  headroom is.
+- **§6 Phase 4** — the default-ON `isBooleanish` filter on the
+  `numericFunctions` loop. Now cheaper to justify: drift 3 shows only 7 acorn
+  names still ride the unfiltered verdict into an f64 twin.
+- **§1.4's producer census** was NOT re-measured; its 1.40× reconciliation gap
+  is still open, so the plan's consumer-shape ranking remains a ranking.
