@@ -165,3 +165,25 @@ Refreshed artifacts are `.tmp/issue-4779-refresh-host.jsonl`
 The PR remains draft+hold because queued PR #5074 will advance upstream main;
 after #5074 lands, perform one final minimal sync and repeat these checks
 before readiness. Keep `mergeQueueEntry: null` until then.
+
+## Final current-main verification (2026-08-27)
+
+After #5074 landed, upstream advanced further through #4781 to
+`fb4efeaa5cb2a374d9b6ff87b4eca217a2ab78f1`. The branch was synchronized to
+that exact current tip by non-rewriting merge commit
+`a94a1e5feecd4734d527f72651a7cbce918bba61`. The exact Test262 row again
+reports **host 1/1 pass** and **standalone 1/1 pass**, with zero failures,
+compile errors, compile timeouts, or skips. The focused regression remains
+**4/4 passed** with `TEST262_WORKERS=2`; no losses were observed.
+
+Final artifacts:
+
+- `.tmp/issue-4779-final-host.jsonl`
+  (`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`)
+- `.tmp/issue-4779-final-standalone.jsonl`
+  (`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`)
+
+The implementation and issue handoff are complete. PR #5073 must remain
+draft+hold until its body uses the exact durable CLA prompt/link, all checks
+are green on this final head, GitHub reports CLEAN/MERGEABLE, and
+`mergeQueueEntry` is confirmed null before readiness and enqueue.
