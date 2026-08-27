@@ -2427,7 +2427,10 @@ function recordObservedIrOutcomes(
     existingOutcomes: ctx.irOutcomes,
     target,
   });
-  ctx.irOutcomes.push(...reconciled.outcomes);
+  const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  ctx.irOutcomes.push(
+    ...reconciled.outcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)),
+  );
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
 

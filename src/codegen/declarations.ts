@@ -20,6 +20,8 @@ import {
   unwrapPromiseType,
 } from "../checker/type-mapper.js";
 import type { FieldDef, FuncHandle, GlobalDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import type { IrUnitId } from "../ir/identity.js";
+import { IrInvariantError } from "../ir/outcomes.js";
 import {
   exactPreparedAccessorExpressionKey,
   exactPreparedAccessorSyntaxKey,
@@ -3490,12 +3492,50 @@ export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: t
  * The funcIdx/typeIdx slot itself is untouched in both modes. Skipped
  * functions are deliberately NOT registered as direct-front-end inlinables:
  * the IR module pass has already made the complete optimization decision.
- * Returns the names actually skipped (undefined when `skipBodies` is not
- * passed).
+ * Returns the names actually skipped (undefined when neither a compatibility
+ * name projection nor exact function-body routing is passed).
  *
  * `moduleInitMode` controls the accumulated `__module_init` work, which is
  * per-GRAPH state, not per-source state — see {@link ModuleInitMode}.
  */
+export interface FunctionBodyCompileRouting {
+  readonly skipBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly preserveSkippedBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly skippedUnitIds: IrUnitId[];
+}
+
+export function resolvePreparedFunctionBodyRoute(input: {
+  readonly sourceFileName: string;
+  readonly functionName: string;
+  readonly unitId?: IrUnitId;
+  readonly skipBodies?: ReadonlySet<string>;
+  readonly preserveSkippedBodies?: ReadonlySet<string>;
+  readonly routing?: FunctionBodyCompileRouting;
+}): { readonly skip: boolean; readonly preserve: boolean } {
+  const skipByName = input.skipBodies?.has(input.functionName) === true;
+  const skipByUnit = input.unitId !== undefined && input.routing?.skipBodyUnitIds.has(input.unitId) === true;
+  if (input.routing && skipByName !== skipByUnit) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "patch",
+      `prepared function body routing disagrees for ${input.unitId ?? `${input.sourceFileName}::${input.functionName}`}`,
+    );
+  }
+  const skip = input.routing ? skipByUnit : skipByName;
+  if (!skip) return { skip: false, preserve: false };
+  const preserveByName = input.preserveSkippedBodies?.has(input.functionName) === true;
+  const preserveByUnit =
+    input.unitId !== undefined && input.routing?.preserveSkippedBodyUnitIds.has(input.unitId) === true;
+  if (input.routing && preserveByName !== preserveByUnit) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "patch",
+      `prepared function body preservation disagrees for ${input.unitId ?? `${input.sourceFileName}::${input.functionName}`}`,
+    );
+  }
+  return { skip: true, preserve: input.routing ? preserveByUnit : preserveByName };
+}
+
 export function compileDeclarations(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -3504,8 +3544,9 @@ export function compileDeclarations(
   classBodyRouting?: ClassBodyCompileRouting,
   moduleInitMode: ModuleInitMode = "full",
   moduleInitBodyRouting?: ModuleInitBodyCompileRouting,
+  functionBodyRouting?: FunctionBodyCompileRouting,
 ): string[] | undefined {
-  const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
+  const skippedNames: string[] | undefined = skipBodies || functionBodyRouting ? [] : undefined;
   // Build a map from function name → index within ctx.mod.functions
   const funcByName = new Map<string, number>();
   for (let i = 0; i < ctx.mod.functions.length; i++) {
@@ -4255,11 +4296,21 @@ export function compileDeclarations(
           // has already installed the final IR body and explicitly asks us to
           // preserve it. Do NOT register either form as a direct-front-end
           // inlinable (see the function doc comment).
-          if (skipBodies?.has(fnName)) {
-            if (!preserveSkippedBodies?.has(fnName)) {
+          const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(stmt);
+          const bodyRoute = resolvePreparedFunctionBodyRoute({
+            sourceFileName: sourceFile.fileName,
+            functionName: fnName,
+            ...(unitId ? { unitId } : {}),
+            ...(skipBodies ? { skipBodies } : {}),
+            ...(preserveSkippedBodies ? { preserveSkippedBodies } : {}),
+            ...(functionBodyRouting ? { routing: functionBodyRouting } : {}),
+          });
+          if (bodyRoute.skip) {
+            if (!bodyRoute.preserve) {
               func.body = [{ op: "unreachable" }];
             }
             skippedNames!.push(fnName);
+            if (functionBodyRouting && unitId !== undefined) functionBodyRouting.skippedUnitIds.push(unitId);
             continue;
           }
           try {

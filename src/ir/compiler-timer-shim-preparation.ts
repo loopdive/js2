@@ -295,6 +295,7 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
   readonly ctx: CodegenContext;
   readonly entries: readonly Entry[];
   readonly inventory: IrUnitInventory;
+  readonly atomicTerminalPopulation?: boolean;
   readonly closureSupport: PreparedComponentClosureSupportEvidence;
   readonly classAccessorWritebacks: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
   readonly callableImports: ReadonlyMap<string, Import>;
