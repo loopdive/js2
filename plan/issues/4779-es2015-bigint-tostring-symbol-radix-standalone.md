@@ -147,3 +147,21 @@ current upstream tip, the exact A/B and focused checks are rerun there, CI is
 green, and GitHub reports CLEAN/MERGEABLE with `mergeQueueEntry: null`. The
 branch currently has the issue-plan checkpoint `e985e13`; the implementation
 checkpoint follows after this evidence update.
+
+## Current-main refresh (2026-08-27)
+
+The branch was refreshed without rewriting onto upstream/main
+`4d1001a8cf9dc8f0fd0cbd83385d82e3e3110141` (PR #5070) by merge commit
+`2355aa791c3355c53fd2a1bfd77b0d24219bc9d4`. The exact one-row cohort was
+rerun with structural harness controls and a 120-second timeout: host **1/1
+pass** and standalone **1/1 pass**, with zero failures, compile errors,
+compile timeouts, or skips. The focused regression again reports **4/4
+passed** with `TEST262_WORKERS=2`; no losses were observed.
+
+Refreshed artifacts are `.tmp/issue-4779-refresh-host.jsonl`
+(`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`) and
+`.tmp/issue-4779-refresh-standalone.jsonl`
+(`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`).
+The PR remains draft+hold because queued PR #5074 will advance upstream main;
+after #5074 lands, perform one final minimal sync and repeat these checks
+before readiness. Keep `mergeQueueEntry: null` until then.
