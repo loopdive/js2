@@ -108,6 +108,7 @@ import {
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
 import {
+  isTupleType,
   addUnionImports,
   resolveWasmType,
   TYPED_ARRAY_NAMES,
@@ -2549,6 +2550,43 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
 }
 
 /**
+ * (#3566) Emit `.length` for a fixed tuple in the host-free targets.
+ *
+ * Array.entries() yields an `$ObjVec`, but a tuple-typed function parameter
+ * crosses the call boundary as a tuple struct. Its fixed arity is therefore
+ * available statically; sending that struct through `__extern_get("length")`
+ * loses the tuple shape and unboxes `undefined` as NaN. Keep the receiver
+ * evaluation (and any carrier conversion) exactly once. A dynamic externref
+ * reaching this arm still uses the native `$ObjVec`/vec length reader.
+ */
+function emitStandaloneTupleLength(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ts.Type,
+): PADispatchResult {
+  if (!(ctx.standalone || ctx.wasi) || !isTupleType(objType)) return PA_FALLTHROUGH;
+
+  const tupleTarget = ((objType as ts.TypeReference).target ?? objType) as ts.TupleType;
+  const tupleArity = tupleTarget.fixedLength;
+  // Optional/rest tuples have a runtime-dependent length. Restrict this seam
+  // to the fixed [T0, T1, ...] shape used by entries() pairs.
+  if (!Number.isFinite(tupleArity) || tupleTarget.minLength !== tupleArity) {
+    return PA_FALLTHROUGH;
+  }
+
+  const exprResult = compileExpression(ctx, fctx, expr.expression);
+  if (!exprResult) return null;
+  if (exprResult.kind === "externref") return emitStandaloneAnyLength(ctx, fctx);
+
+  // The statically typed tuple value was only needed to prove the tuple shape;
+  // discard it before producing the scalar length result.
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: tupleArity });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+/**
  * True when a class method returns an anonymous function-valued field. The
  * checker gives the call result a function signature, but that signature does
  * not carry the particular field initializer's NamedEvaluation name. Keep the
@@ -2926,6 +2964,9 @@ export function tryLengthAndNameReads(
 
   // Handle array.length (vec struct: field 0 is the logical length)
   if (propName === "length") {
+    const tupleLength = emitStandaloneTupleLength(ctx, fctx, expr, objType);
+    if (tupleLength !== PA_FALLTHROUGH) return tupleLength;
+
     // (#1742) `this.length` where `this` is the host-supplied `__current_this`
     // externref but may carry a compiled vec at runtime (a closure body dispatched
     // via `__call_fn_method_N`). The override `this` is typically `any` → externref,
