@@ -402,7 +402,30 @@ So the trigger needs a Proxy whose `get` REPORTS a length past 2^53 over a
 sparse vec — something on our side then materialises a backing of that reported
 length. `slice`/`splice` are downstream victims, not the cause.
 
-**Deliberately not asserting the exact statement.** The runner's error line names
+**Bisected to a single operation.** Deleting statements one at a time: Proxy
+construction alone is fine, `proxy.length` alone is fine (returns 9007199254740994,
+correct), `proxy["9007199254740989"]` alone is fine (returns "a"). The trigger is
+**`Array.isArray(proxy)`** — which per §23.1.2.2 is a pure IsArray check that
+allocates nothing.
+
+`__extern_is_array` in the runtime is clean, so the allocation is on the way IN.
+`new Proxy(t, h)` is typed as its TARGET (ProxyConstructor returns `T`), so a
+proxy over an array resolves to a **vec** in `call-builtin-static.ts`, takes the
+`isArrayCarrierValType` constant-fold branch, and compiles the argument AS a vec
+"for side effects" — materialising the host proxy through its reported `length`.
+
+**The obvious fix does not work.** Applying the #2617 precedent (trust the local's
+actual SLOT type when it is externref/anyref, as `compileInOperator` does for the
+same staleness) does not fix even the isolated probe, so `proxy` is not sitting in
+an externref slot and the materialisation is elsewhere. Written and reverted, not
+shipped.
+
+Note the three failing rows do NOT call `Array.isArray` themselves — they call
+`Array.prototype.slice.call(proxy, …)`. Same class (a host proxy materialised
+through a fake `length`), different site. Fixing the marshalling generally is
+what these rows need, not a per-builtin patch.
+
+**Deliberately not asserting the exact statement for the .call rows.** The runner's error line names
 the frame, not the failing statement, and believing it has now produced two wrong
 diagnoses in this issue. Whoever picks this up should bisect by deleting
 statements, not read the location out of the message.
