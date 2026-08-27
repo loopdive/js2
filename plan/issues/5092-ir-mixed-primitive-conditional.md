@@ -124,8 +124,9 @@ and therefore is not an IR-owned unit.
 - It does not change conditional callees, optional chaining, logical/nullish
   operators, object/extern unions, or arbitrary union ABI design.
 - #4787 lands first because both checkpoints touch `src/ir/from-ast.ts` and
-  `src/ir/select.ts`. #5092 is developed on that exact head and is opened
-  against current main only after #4787 lands, avoiding an overlapping PR diff.
+  `src/ir/select.ts`. To parallelize review without duplicating that diff,
+  #5092 is stacked on the narrow prepared-call safety follow-up; its PR base is
+  retargeted to current `main` after the dependency lands.
 
 ## Implementation outcome
 
@@ -150,6 +151,8 @@ and therefore is not an IR-owned unit.
 - `tests/issue-5092-ir-mixed-primitive-conditional.test.ts`: 17/17 passed.
 - `tests/issue-4178.test.ts`: 14/14 passed.
 - `tests/issue-3143.test.ts` + `tests/issue-3203.test.ts`: 45/45 passed.
+- After stacking the #4787 prepared-call guard, focused #4787 + #5092 + #4178
+  coverage passed 48/48 and TypeScript 7 typecheck remained clean.
 - TypeScript 7 project typecheck passed with zero diagnostics.
 - Targeted Biome lint, Prettier formatting, `git diff --check`, IR fallback,
   IR dialect/layering, oracle, coercion-site, LOC, function, issue, and done-
