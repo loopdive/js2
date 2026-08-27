@@ -3367,6 +3367,21 @@ function emitPromiseSubclassOnHostCtor(
   fctx.localMap.set("this", selfLocal);
   ctx.currentFunc = fctx;
 
+  // The host-side Promise species constructor is invoked by V8 through the
+  // dynamic closure bridge. Materialize its ordinary `arguments` object when
+  // the source constructor reads it (the bridge seeds `__argc` so the object
+  // preserves the native call's argument count). The direct-new constructor
+  // path remains unchanged; this is only the run-on-host capability path.
+  if (needsImplicitArgumentsObject(ctor)) {
+    emitArgumentsObject(
+      ctx,
+      fctx,
+      params.map((param) => param.type),
+      0,
+      /* unmapped */ true,
+    );
+  }
+
   // Default-value initialization for ctor params with initializers — identical
   // to the direct-new ctor path (defaultInitBase = 0 for a user ctor).
   {

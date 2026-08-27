@@ -1,30 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #2864 wave-2 S2 — a generator whose body reads the implicit `arguments`
- * object must not route through the Wasm-native generator frame.
+ * #2864 C02 — a generator whose body reads the implicit `arguments` object
+ * carries that object through the Wasm-native generator frame.
  *
- * The native state struct has slots for `this`, own params and spilled locals.
- * The RESUME function compiles the body with a FRESH `FunctionContext`, and the
- * §10.2.11 `arguments`-vec setup in `function-body.ts` runs against the FACTORY's
- * context only — so `arguments` resolves to nothing inside the resume body.
- *
- * The bail already existed for generator EXPRESSIONS
- * (`isNativeGeneratorExpressionShape`) and generator METHODS, and was simply
- * never applied to free function DECLARATIONS — which #3032 W6 later routed
- * natively on the JS-HOST lane too. Measured before the fix:
- *
- *   - JS-HOST (gc): the compiler reported SUCCESS and emitted a module the
- *     ENGINE REJECTS — `global.set[0] expected type externref, found i32.const
- *     of type i32`. A non-generator reading `arguments` is valid, and a
- *     generator not reading it is valid; it is specifically generator ×
- *     `arguments`. This is the worst failure mode available: green compile,
- *     unloadable binary.
- *   - standalone/wasi: a raw wasm trap at the FIRST `arguments` read, before
- *     any suspend — so it was never a suspend-crossing problem.
- *
- * Making `arguments` genuinely work in the frame is a separate slice (factory
- * builds the vec at call time, spills it; resume reloads it; mapped aliasing
- * needs `fctx.mappedArgsInfo` rebuilt against the frame) — see #2864.
+ * The factory builds the §10.2.11 arguments vec at call time, stores it in a
+ * dedicated state field, and the detached RESUME context reloads that same vec
+ * (including mapped-parameter metadata) before compiling the body. The focused
+ * pins below cover free declarations, function expressions, object/class
+ * methods, extras, resume-after-yield, and host controls.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -64,16 +47,30 @@ export function test(): number { return g(7, 8).next().value as number; }`);
     expect(names.filter((n) => n.startsWith("__gen_") || n === "__create_generator")).toEqual([]);
   });
 
-  it("standalone: refuses cleanly (#680) instead of trapping", async () => {
+  it("standalone: frame carries arguments and stays host-free", async () => {
     const r = await compile(
       `function* g(a: number, b: number) { const n = arguments.length; yield n; }
 export function test(): number { return g(7, 8).next().value as number; }`,
       { fileName: "test.ts", target: "standalone" },
     );
-    // A refusal is the correct standalone answer until the frame carries
-    // `arguments`; the pre-fix behaviour was a raw trap at runtime.
-    expect(r.success).toBe(false);
-    expect(r.errors?.[0]?.message ?? "").toContain("#680");
+    expect(r.success, r.errors?.[0]?.message).toBe(true);
+    const mod = await WebAssembly.compile(r.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(2);
+  });
+
+  it("standalone: frame carries call-site extras for a zero-formal generator", async () => {
+    const r = await compile(
+      `function* g() { yield arguments.length; }
+export function test(): number { return g(7, 8, 9).next().value as number; }`,
+      { fileName: "test.ts", target: "standalone" },
+    );
+    expect(r.success, r.errors?.[0]?.message).toBe(true);
+    const mod = await WebAssembly.compile(r.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(3);
   });
 
   it("standalone: a generator NOT reading arguments is still host-free", async () => {
@@ -88,5 +85,55 @@ export function test(): number { return g(7, 8).next().value as number; }`,
     expect(r.success, r.errors?.[0]?.message).toBe(true);
     const mod = await WebAssembly.compile(r.binary);
     expect(WebAssembly.Module.imports(mod)).toEqual([]);
+  });
+
+  it("standalone: function-expression frame carries arguments", async () => {
+    const r = await compile(
+      `export function test(): number {
+  let ref: any;
+  ref = function*() { yield arguments.length; };
+  return ref(7, 8).next().value as number;
+}`,
+      { fileName: "test.ts", target: "standalone" },
+    );
+    expect(r.success, r.errors?.[0]?.message).toBe(true);
+    const mod = await WebAssembly.compile(r.binary);
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(2);
+  });
+
+  it("standalone: object and class methods share the arguments carrier", async () => {
+    const r = await compile(
+      `const obj = { *om(a: number, b: number) { yield arguments.length; } };
+class C { *cm(a: number, b: number) { yield arguments.length; } }
+export function test(): number {
+  return (obj.om(7, 8).next().value as number) + (new C().cm(7, 8).next().value as number);
+}`,
+      { fileName: "test.ts", target: "standalone" },
+    );
+    expect(r.success, r.errors?.[0]?.message).toBe(true);
+    expect(WebAssembly.Module.imports(await WebAssembly.compile(r.binary))).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(4);
+  });
+
+  it("standalone: mapped arguments writes survive a yield", async () => {
+    const r = await compile(
+      `function* g(a: number) { arguments[0] = 9; yield a; }
+export function test(): number { return g(1).next().value as number; }`,
+      { fileName: "test.ts", target: "standalone", inferModuleStrictArguments: false },
+    );
+    expect(r.success, r.errors?.[0]?.message).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(9);
+  });
+
+  it("JS-HOST: method arguments remain a correct control", async () => {
+    const exports = await compileToWasm(`
+      const obj = { *m(a: number, b: number) { yield arguments.length; } };
+      export function test(): number { return obj.m(7, 8).next().value as number; }
+    `);
+    expect(exports.test()).toBe(2);
   });
 });
