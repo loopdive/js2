@@ -133,6 +133,35 @@ come from tier 1 partially consuming before failing, or from the whole chain
 running twice. That is the next thing to measure — instrument which tier sets
 local 6.
 
+### The measurement that does NOT compose — read this first
+
+Instrumenting the actual failing row end to end gives three facts that cannot
+all be true together. Resolving that contradiction is the task:
+
+1. **The materialiser runs exactly ONCE**, with the right budget:
+   `TIER name=__array_from_iter_n_strict limit=1` — a single occurrence.
+   Tier 3 (the unbounded `call 18`) never executes.
+2. **`_drainIterable` is the branch taken** (`DI limit=1 strict=true`), and it
+   does *not* hit the `Array.from` fallback. Its loop is provably one step:
+   `while (out.length < limit) { r = it.next(); if (r?.done) break; out.push(r.value) }`
+   with `limit === 1`.
+3. **`_stepClosureIterator` is never called** — no `_walkWasmIterator` path.
+
+One call, budget 1, a one-step loop — yet the row observes **two** IteratorSteps
+(`second === 1` where the spec requires `0`).
+
+So the second step happens **outside every path instrumented above**. Do not
+re-instrument those three; they are covered.
+
+Remaining candidates are on the compiled side. Note the receiver here is itself
+a **generator method** (`*method([,])`), so its parameter prologue runs at
+[[Call]] while the body runs at the first `.next()` — destructuring executing
+twice, or at the wrong time, would produce exactly this.
+
+Cheapest next probe: bind the same generator to a plain function parameter
+versus a generator-method parameter and compare step counts. That separates
+"destructuring runs twice" from "destructuring runs at the wrong time".
+
 ### Also ruled out: IteratorClose
 
 §8.5.3 does call IteratorClose when a pattern stops early, and
