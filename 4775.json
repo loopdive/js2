@@ -1,10 +1,11 @@
 {
   "id": "4775",
   "assignee": "ttraenkler/opus-4775",
-  "requested_by": "ttraenkler/opus-4775",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4775-3754-suite-triage",
   "claimed_at": "2026-08-27T15:31:53Z",
-  "updated_at": "2026-08-27T15:31:53Z",
-  "write_id": "13808-5p3v3mpa"
+  "updated_at": "2026-08-27T19:12:29Z",
+  "write_id": "1746-5htdgkpw",
+  "released_at": "2026-08-27T19:12:29Z"
 }
