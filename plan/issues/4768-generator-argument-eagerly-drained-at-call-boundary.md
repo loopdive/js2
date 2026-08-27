@@ -18,9 +18,12 @@ horizon: l
 # #4768 — compiled generators run to completion on first host-side next()
 
 
-> **Root cause CONFIRMED** (see the section below). Everything after it is the
-> reduction trail — eight superseded hypotheses, kept only so they are not
-> retried.
+> **Root cause CONFIRMED** (see the section below), and the fix is **bounded**:
+> the native suspend/resume generator lowering already exists and already
+> handles this generator shape — one use-site gate (`f(g())`, a plain call
+> argument) routes it to the eager buffer instead. Everything below the
+> root-cause sections is the reduction trail — eight superseded hypotheses, kept
+> only so they are not retried.
 
 ## What is confirmed
 
@@ -184,23 +187,56 @@ lowering"*). #3032 deferred the body from creation-time to first-resume, which
 fixed `var it = g()` observing side effects — but a resume still runs
 **everything**.
 
-Note `__gen_set_eager` is a flag, so the compiled generator has an eager and a
-non-eager mode. Whether the non-eager mode is a usable incremental path, or only
-the inner bookkeeping for the eager run, is the first thing to establish — it
-decides whether this is a lowering rewrite or a matter of driving an existing
-state machine.
+`__gen_set_eager` is **not** an incremental-vs-eager switch — settled by reading
+`ensureGenEagerFlag` (`closures.ts:1868`). It is lazy-CREATION vs
+run-the-whole-body: flag `0` makes `function*(){…}` return a lazy thunk instead
+of running at creation (#3032); flag `1` makes the re-invoked closure "take the
+historical eager-buffer path, **byte-for-byte**". There is no incremental mode
+behind it, so nothing can be driven incrementally through that flag.
 
-### Why this is a design change
+### NOT a design change — the state machine already exists, and this row is one gate away
 
-`state.buf` + `state.materialize` is the generator representation. Making a
-compiled generator resume incrementally means real suspend/resume — a
-coroutine — rather than run-to-completion-then-replay. That is a substantial
-piece of work with its own performance profile, not a patch.
+This was written up as "a coroutine rewrite, not a patch". That was wrong, and
+the correction is the actionable part of this issue.
+
+A real suspend/resume native generator lowering **already ships**:
+`src/codegen/generators-native.ts` — a WasmGC state struct plus a resume
+function, no buffer. Since **#3032 W6** it is the host-lane lowering for free
+`function*` declarations. `isNativeGeneratorCandidate` decides who gets it, and
+`generators-native.ts:2051` says outright that generator EXPRESSIONS and METHODS
+keeping the eager path are "separate W6 slices" — planned work, not a missing
+mechanism.
+
+The elision rows use a **free declaration**, so they clear that gate. What
+rejects them is the use-site safety walk, `hostLaneGeneratorUsesAreSafe`
+(`generators-native.ts:1772`). The fixture's last line is the whole problem:
+
+```js
+function* g() { first += 1; yield; second += 1; }
+f = ([,]) => { assert.sameValue(first, 1); assert.sameValue(second, 0); };
+f(g());          // ← generator flows into an ORDINARY CALL ARGUMENT
+```
+
+`useIsSafe` allowlists exactly: `.next()/.throw()/.return()` member calls,
+`for…of`, spread, `Array.from`, and parenthesised forms of those. A plain call
+argument is none of them, so the walk returns false and `g` falls back to the
+eager buffer — where one host-side `next()` runs the body to completion and
+`second` is 1 where §8.5.3 requires 0. That single rejection is the whole bug on
+this family.
+
+The rejection is *correct as written*: the native factory returns a raw WasmGC
+state struct and an ordinary parameter is externref, so passing it across a call
+boundary loses the type — the same reason `viaBinding` iteration consumers are
+rejected (see the #3468 note in that walk).
+
+So the fix is a bounded W6-style slice, not a rewrite: **carry the state-struct
+type across a call boundary when the callee is statically known** — here `f(g())`
+where `f`'s parameter is destructured. Escape into an *unknown* callee must keep
+the eager path.
 
 Scope note: the failing rows are host-lane. A generator driven from **compiled**
-code was measured correct (`var it = g(); it.next()` → `first=1 second=0`), so
-whatever path that takes is already incremental; the buffering polyfill is what
-JS-side consumers get.
+code was measured correct (`var it = g(); it.next()` → `first=1 second=0`) —
+that is this same native machine, which is why it is already incremental there.
 
 ### Superseded: LOCALISED — one host-side `next()` resumes the generator TWICE
 
@@ -436,28 +472,39 @@ constant there.
 
 ## Implementation Plan
 
+Steps 2–3 of the original plan chased the alias/1e6 hypothesis and are
+**retracted** — see the retraction trail below. The plan now follows the
+confirmed gate.
+
 1. **Reproduce first.** `scripts/run-test262-paths.mts --isolate` on
-   `.tmp/all-elision.txt` (the 375 rows; regenerate with
-   `grep elision` over the ES2015 path list). Isolation is mandatory — the
-   `*-array-prototype.js` variants poison the realm, and an in-process run
-   reports garbage for everything after the first one.
-2. **Find the 1e6 on the COMPILED side.** Both runtime drainers are ruled out by
-   instrumentation (see above), so start from the lowering for `var u = it`
-   where `it` holds a generator — the minimal three-line reproduction — rather
-   than from the argument path. `plain(x)` never reads `x`, so nothing about the
-   callee can justify materialising.
-3. **Make laziness the default for an alias.** Binding a generator to a new name
-   must copy the reference, not materialise. Only a consumer that genuinely
-   needs an array (destructuring with a known step count, spread, rest) should
-   materialise, and then with its bound. Note `it.next()` already stays lazy, so
-   a lazy path exists — the question is why the alias does not take it.
-4. **Guard the zero case explicitly.** `function f([]) {}` must consume **no**
-   iterator steps (§8.5.3 `ArrayBindingPattern : [ ]` returns
-   NormalCompletion without an IteratorStep). It currently drains. This is the
-   cheapest single assertion that proves the fix.
-5. Add permanent equivalence coverage counting `next()` calls for `[]`, `[,]`,
-   `[, ,]`, `[a]`, `[a, b]`, `[[]]`, and a plain parameter — the exact table
-   above, which is currently 1000001 across the board.
+   `.tmp/all-elision.txt` (the 375 rows; regenerate with `grep elision` over the
+   ES2015 path list). Isolation is mandatory — the `*-array-prototype.js`
+   variants poison the realm, and an in-process run reports garbage for
+   everything after the first one.
+2. **Confirm the routing on the real row.** Compile
+   `language/expressions/arrow-function/dstr/ary-ptrn-elision.js` through the
+   runner's `wrapTest` and check whether `g` took the native or the eager path
+   (the eager path imports the `__gen_*` family; the native path emits a state
+   struct). Expect eager, rejected by `hostLaneGeneratorUsesAreSafe` at the
+   `f(g())` argument position. If it is rejected somewhere else instead, stop
+   and re-derive — do not build on this plan.
+3. **Extend `useIsSafe` to the statically-known-callee argument position.** A
+   generator call as an argument is safe only when the callee resolves to a
+   local function whose corresponding parameter is consumed natively (an array
+   binding pattern here). Everything else — unknown callee, reassignable
+   binding, callee that stores the parameter — must keep the eager path. This is
+   the same shape as the existing `bindingHasGeneratorInitializer` carve-out,
+   and it is where the risk in this issue lives: the walk is a **safety** walk,
+   and widening it wrongly silently drops values rather than erroring.
+4. **Thread the state-struct type through that parameter.** The callee's param
+   is externref today, which is exactly why the walk rejects the position; the
+   native destructuring drain (`tryCompileNativeGeneratorForOf` /
+   `emitNativeGeneratorToVec`) needs the struct ValType at the use site.
+5. **Guard the zero case explicitly.** `function f([]) {}` must consume **no**
+   iterator steps (§8.5.3 `ArrayBindingPattern : [ ]` returns NormalCompletion
+   without an IteratorStep). Cheapest single assertion that proves the fix.
+6. Add permanent equivalence coverage counting `next()` calls for `[]`, `[,]`,
+   `[, ,]`, `[a]`, `[a, b]`, `[[]]`, and a plain parameter.
 
 ## Acceptance criteria
 
@@ -465,6 +512,9 @@ constant there.
 - [ ] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
 - [ ] The 20 `*ary-ptrn-elision.js` rows pass
 - [ ] No regression across the ES2015 `dstr` families, measured with `--isolate`
+- [ ] No regression in the `GeneratorPrototype/*` families — widening
+      `useIsSafe` is precisely what #3468 and the `result-prototype.js`
+      regression note in that walk were caused by
 
 ## Notes
 
