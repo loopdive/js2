@@ -81,13 +81,13 @@ FILTER="$(git show f43caf308:plan/issues/2864-standalone-generator-carrier.md | 
 TEST262_TARGET=standalone TEST262_REPORTER=dot TEST262_WORKERS=2 \
   COMPILER_POOL_SIZE=2 TEST262_PATH_FILTER="$FILTER" \
   JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda \
-  PATH=/opt/homebrew/opt/llvm@18/bin:$PATH \
+  PATH=/opt/homebrew/opt/llvm@18/bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:$PATH \
   bash scripts/run-test262-vitest.sh --official-scope-only
 
 TEST262_TARGET=gc TEST262_REPORTER=dot TEST262_WORKERS=2 \
   COMPILER_POOL_SIZE=2 TEST262_PATH_FILTER="$FILTER" \
   JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda \
-  PATH=/opt/homebrew/opt/llvm@18/bin:$PATH \
+  PATH=/opt/homebrew/opt/llvm@18/bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:$PATH \
   bash scripts/run-test262-vitest.sh --official-scope-only
 ```
 
@@ -155,6 +155,27 @@ workers:
 | `20260827-083020` | standalone | full 27 | **6/27 pass**, 21 host-import CE, 0 skip | `benchmarks/results/test262-standalone-report-20260827-083020.json` |
 | `20260827-083211` | gc host control | full 27 | **24/27 pass**, the same 3 pre-existing failures, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-083211.json` |
 
+After the final `el.initializer !== undefined` guard (commit `5118e8c61`),
+the acceptance reruns were:
+
+| run | target | paths | result | artifact |
+| --- | --- | ---: | --- | --- |
+| `20260827-084008` | standalone | 6 selected | **6/6 pass**, 0 CE, 0 skip, host-free | `benchmarks/results/test262-standalone-report-20260827-084008.json` |
+| `20260827-084129` | gc host control | 6 selected | **6/6 pass**, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-084129.json` |
+| `20260827-084243` | standalone | full 27 | **6/27 pass**, 21 host-import CE, 0 skip | `benchmarks/results/test262-standalone-report-20260827-084243.json` |
+| `20260827-084527` | gc host control | full 27 | **24/27 pass**, 3 fail, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-084527.json` |
+
+The six-row acceptance denominator is exactly:
+
+```text
+test/language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js
+test/language/expressions/object/dstr/gen-meth-obj-ptrn-id-init-fn-name-class.js
+test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js
+test/language/statements/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-class.js
+test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-class.js
+test/language/statements/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-class.js
+```
+
 The full standalone run flips exactly the selected six rows. Its 21-row
 residual is unchanged host-import leakage, grouped as follows:
 
@@ -162,14 +183,50 @@ residual is unchanged host-import leakage, grouped as follows:
   class-expression null-deref lane);
 - six `args-unmapped` rows (arguments/frame plumbing);
 - six generator function-expression dstr name rows (closure/function-expression
-  lane; includes the host-failing arrow control);
+  lane; all six are host-pass controls after the final guard, but remain
+  standalone host-import bails);
 - three named-generator self-binding scope rows; and
 - two object-method rest-parameter scope rows.
 
-The full host control continues to fail only the three paths already recorded:
-the dstr arrow default, the strict named-generator scope row, and the object
-rest-parameter open row. The non-strict named-generator scope row remains a
-host pass and is part of the residual handoff.
+The final full host control fails exactly these three paths:
+
+- `test/language/expressions/generators/scope-name-var-open-strict.js` — the
+  named inner binding does not reject modification with `TypeError`;
+- `test/language/expressions/generators/scope-name-var-open-non-strict.js` —
+  the parameter closure observes the native function instead of `null`; and
+- `test/language/expressions/object/scope-gen-meth-param-rest-elem-var-open.js`
+  — the parameter closure observes `outside` instead of `inside`.
+
+The dstr-arrow host control that failed in the initial baseline is a host pass
+after the final guard, but remains in the standalone residual because its
+generator still emits host imports.
+
+The related native-generator regression command was:
+
+```sh
+PATH=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH \
+  node_modules/.bin/vitest run \
+  tests/issue-4769-c02-class-defaults.test.ts \
+  tests/issue-3952.test.ts tests/issue-3386.test.ts \
+  tests/issue-2756.test.ts tests/issue-2864-s2-generator-arguments.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism \
+  --reporter=dot
+```
+
+It produced **4 files passed, 45 tests passed, 1 skipped, 1 failed**. The only
+failure was the pre-existing `tests/issue-2756.test.ts` class-expression
+default-materialization case (`TypeError: [object Object] is not a
+constructor`), reproduced with the source gate reverted; the four task-related
+files passed and no new skip was introduced.
+
+The implementation is carried by commits `eaa7b48e5` (bounded zero-suspend
+class-default admission and focused semantic pin) and `5118e8c61` (guard the
+class-default syntax probe for absent initializers). The issue-plan checkpoint
+is `8e116f40b`. These commits are the pending checkpoint for the separate
+upstream draft PR
+[#5037](https://github.com/loopdive/js2/pull/5037), sourced from
+`ttraenkler/js2` and targeting `loopdive/js2:main`; the PR remains draft until
+the parent agent confirms the implementation push and refreshed CI.
 
 ## Implementation plan
 
