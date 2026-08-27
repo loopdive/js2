@@ -151,8 +151,8 @@ TypeScript 5.  `git diff --check` is clean.
 - Implementation checkpoint: `1dcffcdb0`
 - Current-upstream sync checkpoint: `00fd1834c` (contains upstream `main` at `db872cf39ffcda8775fa11b0385c896337ab611e`)
 - Upstream PR: [#5079](https://github.com/loopdive/js2/pull/5079), from `ttraenkler:codex/es2015-next-bounded-fix-7` against `loopdive/js2:main`
-- PR state at handoff: open, ready/non-draft, `MERGEABLE`/`CLEAN`, head `a5be883a22742d89b69a04e299ccb9a02eec8a68`; all visible required checks and ARM passed, with no comments, reviews, or hold labels observed
-- Merge/queue state: ready for the one-time auto-merge arm and merge-queue enqueue; no queue mutation was made from this context because that consequential remote action requires explicit parent/user authorization
+- PR state at final-sync handoff: open, ready/non-draft, head `3d8f7544db286f12fe9d609605e2b373541cf1b0`; the final host/standalone evidence is green, but GitHub dispatched only CLA/retarget/release-pending for this head, so required CI/Test262/parity checks remain absent and GitHub reports `UNKNOWN` mergeability until a maintainer retriggers them
+- Merge/queue state: hold until the required workflows are present and green; no queue mutation was made from this context because that consequential remote action requires explicit parent/user authorization
 
 ## Intended files
 
