@@ -8599,14 +8599,14 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       // null-result class.call in statement position emits balanced.
       const setter = findClassMember(recvType.shape, fieldName, "setter");
       if (setter && setter.params.length === 1) {
-        const newValue = lowerExpr(expr.right, cx, setter.params[0]!);
+        let newValue = lowerExpr(expr.right, cx, setter.params[0]!);
         const newValueType = cx.builder.typeOf(newValue);
-        if (!irTypeEquals(newValueType, setter.params[0]!)) {
-          demoteToLegacy(
-            "property-write-unsupported",
-            `ir/from-ast: assignment to setter ${recvType.shape.className}.${fieldName} (${describeIrType(setter.params[0]!)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
-          );
-        }
+        if (setter.params[0]!.kind === "dynamic" && newValueType.kind !== "dynamic")
+          newValue =
+            boxConcreteToDynamic(newValue, newValueType, expr.right, cx) ??
+            demoteToLegacy("property-write-unsupported", "unboxable dynamic setter value");
+        if (!irTypeAssignable(cx.builder.typeOf(newValue), setter.params[0]!))
+          demoteToLegacy("property-write-unsupported", "setter value is not assignable");
         cx.builder.emitClassCall(recv, fieldName, "setter", [newValue], null, setter.target);
         return;
       }
