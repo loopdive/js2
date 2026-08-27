@@ -59,6 +59,7 @@ import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import { ensureFunctionNativeProtoGlue } from "../array-object-proto.js";
 import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "../function-proto-has-instance.js";
+import { tryEmitHostFunctionHasInstanceCall } from "../host-function-has-instance.js";
 import { ensureStandaloneNativeMethodClosure } from "../native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
@@ -1643,6 +1644,14 @@ export function compileCallableElementAccessCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
+  // (#4771) JS-host twin of the standalone arm below: the same inherited
+  // `@@hasInstance` method, lowered onto the host `__instanceof_check`
+  // predicate instead of a native method closure. Declines on every other lane.
+  {
+    const hostHasInstance = tryEmitHostFunctionHasInstanceCall(ctx, fctx, expr, elemAccess);
+    if (hostHasInstance !== undefined) return hostHasInstance;
+  }
+
   // `%Function.prototype%[@@hasInstance]` is a native method closure whose
   // first user parameter is the dynamic `this` receiver. The generic element
   // call path treats the value as an ordinary one-argument closure and thus
