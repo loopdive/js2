@@ -129,8 +129,12 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
     }
-    if (!ctx.vecOwnKeysDirty && isOwnKeysOrDescriptorDefineUse(node)) {
+    if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
+      // ArraySetLength can expose absent f64 indices even when every literal
+      // starts dense. Arm the read-side marker before body compilation for
+      // any descriptor builtin that may reach a vec through an alias.
+      if (isDescriptorDefineReference(node)) ctx.usesArrayHoles = true;
     }
     // (#4159/#4160) Dynamic code defeats the whole pre-scan: static eval
     // inlining (#1163) splices parsed statements in during BODY compilation,
@@ -644,6 +648,14 @@ function isOwnKeysOrDescriptorDefineUse(node: ts.Node): boolean {
   const ns = node.expression.text;
   if (ns !== "Object" && ns !== "Reflect") return false;
   return OWN_KEYS_OR_DEFINE_METHODS.has(node.name.text);
+}
+
+function isDescriptorDefineReference(node: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  return (
+    (node.expression.text === "Object" || node.expression.text === "Reflect") &&
+    (node.name.text === "defineProperty" || node.name.text === "defineProperties")
+  );
 }
 
 /**

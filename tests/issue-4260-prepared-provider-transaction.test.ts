@@ -23,7 +23,12 @@ import {
   irRuntimeFuncRef,
   irUnitFuncRef,
 } from "../src/ir/callable-bindings.js";
-import { buildIrUnitInventory, type IrBindingId, type IrUnitId } from "../src/ir/identity.js";
+import {
+  buildIrUnitInventory,
+  type IrBindingId,
+  type IrTerminalUnitRecord,
+  type IrUnitId,
+} from "../src/ir/identity.js";
 import type { IrFunction } from "../src/ir/nodes.js";
 import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../src/ir/program-abi.js";
@@ -34,7 +39,7 @@ import {
   type StructTypeDef,
   type WasmFunction,
 } from "../src/ir/types.js";
-import { compile, type CompileResult } from "../src/index.js";
+import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
@@ -51,6 +56,117 @@ const SHARED_PROVIDER_SOURCE = `
   export function failed(): number { return new Failed().value("abc"); }
   export function healthy(): number { return new Healthy().value("abcd"); }
 `;
+
+const EXACT_CLASS_SETTER_SOURCE = `
+  function trigger(): void {
+    const C = class {
+      set value(next) {
+        target = next;
+      }
+    };
+    new C().value = 42;
+  }
+
+  var verdict: number = 0;
+  try {
+    trigger();
+  } catch (error) {
+    verdict = error instanceof ReferenceError ? 1 : 2;
+  }
+  let target: any;
+
+  export function run(): number {
+    return verdict;
+  }
+`;
+
+interface WatFunction {
+  readonly name: string;
+  readonly body: string;
+}
+
+function exactAccessorUnits(source: string, fileName: string): readonly IrTerminalUnitRecord[] {
+  const ast = analyzeSource(source, fileName);
+  const inventory = buildIrUnitInventory([ast.sourceFile], {
+    entrySource: ast.sourceFile,
+    checker: ast.checker,
+  });
+  return inventory.terminalUnits.filter(
+    (unit) => unit.observedKind === "class-member" && unit.kind === "class-instance-setter",
+  );
+}
+
+function exactOutcome(result: CompileResult, unitId: IrUnitId): IrObservedOutcome {
+  const outcomes = (result.irOutcomes ?? []).filter((candidate) => candidate.unitId === unitId);
+  expect(outcomes, `outcome count for ${unitId}`).toHaveLength(1);
+  return outcomes[0]!;
+}
+
+function parseWatFunctions(wat: string): readonly WatFunction[] {
+  const starts = [...wat.matchAll(/^ {2}\(func \$([^\s(]+)/gm)].map((match) => ({
+    name: match[1]!,
+    index: match.index,
+  }));
+  return starts.map(({ name, index }, position) => ({
+    name,
+    body: wat.slice(index, starts[position + 1]?.index ?? wat.length),
+  }));
+}
+
+function watCallTargets(wat: string, body: string): readonly string[] {
+  const imports = [...wat.matchAll(/^\s*\(import .+ \(func(?: \$([^\s(]+))?/gm)].map(
+    (match) => match[1] ?? "<anonymous-import>",
+  );
+  const definitions = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const names = [...imports, ...definitions];
+  return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => {
+    const target = names[Number(match[1])] ?? "<missing>";
+    return target.endsWith("_import") ? target.slice(0, -"_import".length) : target;
+  });
+}
+
+function referenceErrorCallChains(result: CompileResult): readonly string[] {
+  return parseWatFunctions(result.wat)
+    .flatMap(({ name, body }) =>
+      watCallTargets(result.wat, body)
+        .filter((target) => target === "__new_ReferenceError" || target === "__throw_reference_error")
+        .map((target) => `${name}->${target}`),
+    )
+    .sort();
+}
+
+function referenceErrorImportInventory(result: CompileResult): readonly string[] {
+  return WebAssembly.Module.imports(new WebAssembly.Module(result.binary))
+    .map(({ module, name, kind }) => `${module}.${name}:${kind}`)
+    .filter(
+      (name) => name.endsWith(".__new_ReferenceError:function") || name.endsWith(".__throw_reference_error:function"),
+    )
+    .sort();
+}
+
+function importInventory(result: CompileResult): readonly string[] {
+  return WebAssembly.Module.imports(new WebAssembly.Module(result.binary))
+    .map(({ module, name, kind }) => `${module}.${name}:${kind}`)
+    .sort();
+}
+
+function referenceErrorProviderInventory(generated: ReturnType<typeof generateModule>) {
+  const providerKey = irCallableBindingKey(irRuntimeFuncRef("__new_ReferenceError").binding);
+  return (generated.programAbi?.abi.entries() ?? [])
+    .filter(({ structuralReferenceKey }) => structuralReferenceKey === providerKey)
+    .map((entry) => ({
+      id: entry.id,
+      structuralReferenceKey: entry.structuralReferenceKey,
+      slotPolicy: entry.slotPolicy,
+      slotSpace: entry.slotPolicy === "required" ? entry.slotSpace : undefined,
+      intent: entry.intent,
+      finalIndex: generated.programAbi!.abi.resolveFinalIndex(entry.id),
+    }));
+}
+
+function referenceErrorDefinitionCount(result: CompileResult): number {
+  return parseWatFunctions(result.wat).filter(({ name }) => name === "__new_ReferenceError").length;
+}
 
 async function withPreparedSealFailure<T>(selector: string, run: () => T | Promise<T>): Promise<T> {
   const key = "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE";
@@ -1113,6 +1229,165 @@ describe("#4260 atomic prepared provider publication", () => {
     missingScope.abort();
     expect(sessionState(target.session)).toEqual(before);
   });
+
+  it.each(RUNTIME_TARGETS)(
+    "keeps the sole ReferenceError requester transactional across an injected setter seal failure in %s",
+    async (target) => {
+      const fileName = `issue-4260-reference-error-${target}.ts`;
+      const setters = exactAccessorUnits(EXACT_CLASS_SETTER_SOURCE, fileName);
+      expect(setters, "exact class-setter terminal inventory").toHaveLength(1);
+      const setter = setters[0]!;
+
+      const directOptions = {
+        fileName,
+        target,
+        experimentalIR: false,
+        deferTopLevelInit: true,
+        emitWat: true,
+        hostBridge: target === "gc" ? ("always" as const) : ("off" as const),
+        skipSemanticDiagnostics: true,
+      };
+      const preparedOptions = {
+        ...directOptions,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      };
+
+      const direct = await compile(EXACT_CLASS_SETTER_SOURCE, directOptions);
+      const prepared = await compile(EXACT_CLASS_SETTER_SOURCE, preparedOptions);
+      const injected = await withPreparedSealFailure(`terminal:${setter.id}`, () =>
+        compile(EXACT_CLASS_SETTER_SOURCE, preparedOptions),
+      );
+
+      for (const [label, result] of [
+        ["direct", direct],
+        ["prepared", prepared],
+        ["injected", injected],
+      ] as const) {
+        expect(result.success, `${label}: ${result.errors.map(({ message }) => message).join("\n")}`).toBe(true);
+        expect(result.errors).toEqual([]);
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        expect(WebAssembly.validate(result.binary)).toBe(true);
+        // The legacy inline body and the retained setter can each carry the
+        // same canonical constructor call. B.7 cardinality is semantic:
+        // exactOutcome() and the provider inventory below each require one
+        // requester/component/provider, while this checks the physical chain.
+        expect(referenceErrorCallChains(result), `${label}: canonical ReferenceError helper chain`).toEqual(
+          target === "gc"
+            ? [`__anonClass_0_set_value->${label === "prepared" ? "__new_ReferenceError" : "__throw_reference_error"}`]
+            : ["__anonClass_0_set_value->__new_ReferenceError", "trigger->__new_ReferenceError"],
+        );
+      }
+
+      expect(exactOutcome(prepared, setter.id)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irCompiledFuncs ?? []).toContain(setter.displayName);
+      expect(exactOutcome(injected, setter.id)).toMatchObject({
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+      expect(exactOutcome(injected, setter.id)).not.toHaveProperty("preparedComponentId");
+      expect(injected.irCompiledFuncs ?? []).not.toContain(setter.displayName);
+
+      for (const result of [direct, prepared, injected]) {
+        expect((await instantiateAndInitialize(result)).run!()).toBe(1);
+      }
+
+      const codegenOptions = {
+        deferTopLevelInit: true,
+        emitWat: true,
+        hostBridge: target === "gc" ? ("always" as const) : ("off" as const),
+        standalone: target === "standalone",
+        nativeStrings: target === "standalone",
+        skipSemanticDiagnostics: true,
+      };
+      const directGenerated = generateModule(analyzeSource(EXACT_CLASS_SETTER_SOURCE, fileName), {
+        ...codegenOptions,
+        experimentalIR: false,
+      });
+      const preparedGenerated = generateModule(analyzeSource(EXACT_CLASS_SETTER_SOURCE, fileName), {
+        ...codegenOptions,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
+      const injectedGenerated = await withPreparedSealFailure(`terminal:${setter.id}`, () =>
+        generateModule(analyzeSource(EXACT_CLASS_SETTER_SOURCE, fileName), {
+          ...codegenOptions,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+        }),
+      );
+
+      for (const [label, generated] of [
+        ["direct", directGenerated],
+        ["prepared", preparedGenerated],
+        ["injected", injectedGenerated],
+      ] as const) {
+        const hardErrors = generated.errors.filter(({ severity }) => severity !== "warning");
+        expect(hardErrors, `${label}: ${hardErrors.map(({ message }) => message).join("\n")}`).toEqual([]);
+        expect(generated.irPostClaimErrors ?? []).toEqual([]);
+      }
+
+      expect(referenceErrorImportInventory(injected)).toEqual(referenceErrorImportInventory(direct));
+
+      if (target === "gc") {
+        expect(referenceErrorImportInventory(direct)).toEqual(["env.__throw_reference_error:function"]);
+        expect(referenceErrorImportInventory(prepared)).toEqual(["env.__new_ReferenceError:function"]);
+      } else {
+        expect(referenceErrorImportInventory(prepared)).toEqual(referenceErrorImportInventory(direct));
+        for (const result of [direct, prepared, injected]) {
+          expect(result.imports, "standalone compiler import descriptors").toEqual([]);
+          expect(result.hostImportSummary?.total ?? 0, "standalone host-import inventory").toBe(0);
+          expect(importInventory(result), "standalone Wasm import section").toEqual([]);
+          expect(referenceErrorDefinitionCount(result)).toBe(1);
+        }
+      }
+
+      const directProviders = referenceErrorProviderInventory(directGenerated);
+      const preparedProviders = referenceErrorProviderInventory(preparedGenerated);
+      const injectedProviders = referenceErrorProviderInventory(injectedGenerated);
+      expect(directProviders).toEqual([]);
+      expect(preparedProviders).toHaveLength(1);
+      expect(preparedProviders[0]).toMatchObject(
+        target === "gc"
+          ? {
+              structuralReferenceKey: irCallableBindingKey(irRuntimeFuncRef("__new_ReferenceError").binding),
+              slotPolicy: "alias",
+              slotSpace: undefined,
+              intent: { kind: "callable", origin: "runtime" },
+              finalIndex: { space: "function" },
+            }
+          : {
+              structuralReferenceKey: irCallableBindingKey(irRuntimeFuncRef("__new_ReferenceError").binding),
+              slotPolicy: "required",
+              slotSpace: "function",
+              intent: { kind: "callable", origin: "runtime" },
+              finalIndex: { space: "function" },
+            },
+      );
+      if (target === "gc") {
+        expect(injectedProviders).toEqual(directProviders);
+      } else {
+        // Standalone fallback materializes the same canonical in-module
+        // constructor as Prepared; the retained row is one live provider,
+        // not an extra aborted-component publication.
+        expect(injectedProviders).toEqual(preparedProviders);
+      }
+
+      for (const generated of [directGenerated, preparedGenerated, injectedGenerated]) {
+        expect(generated.module.functions.filter(({ name }) => name === "__new_ReferenceError")).toHaveLength(
+          target === "standalone" ? 1 : 0,
+        );
+      }
+    },
+  );
 
   it.each(RUNTIME_TARGETS)(
     "aborts one exact %s component while its sibling commits the one shared string-slice provider",

@@ -18,6 +18,8 @@ const EXACT_HOST_FREE_ROWS = [
   "language/statements/function/S13.2.2_A11.js",
   "built-ins/Object/S9.9_A6.js",
   "built-ins/Function/15.3.5.4_2-95gs.js",
+  "built-ins/Object/defineProperty/15.2.3.6-4-116.js",
+  "built-ins/Object/defineProperty/15.2.3.6-4-159.js",
 ] as const;
 
 const EXACT_RUNTIME_EVAL_ROWS = [
@@ -25,6 +27,8 @@ const EXACT_RUNTIME_EVAL_ROWS = [
   "annexB/language/eval-code/direct/func-switch-case-eval-func-init.js",
   "annexB/language/eval-code/direct/func-switch-case-eval-func-existing-var-no-init.js",
 ] as const;
+
+const EXACT_HOST_REGRESSION_ROWS = ["built-ins/eval/name.js"] as const;
 
 let liveQuickjsAvailable = false;
 try {
@@ -61,6 +65,11 @@ async function runStandaloneScript(source: string): Promise<void> {
 }
 
 describe.skipIf(!TEST262_READY)("ES5 standalone residual cluster", () => {
+  it.each(EXACT_HOST_REGRESSION_ROWS)("keeps the host lane valid for %s", async (file) => {
+    const result = await runTest262File(join(TEST262, file), "issue-4516-es5-host-regression", 120_000);
+    expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
+  });
+
   it.each(EXACT_HOST_FREE_ROWS)("passes the exact residual row %s", async (file) => {
     const result = await runTest262File(join(TEST262, file), "issue-4516-es5-residuals", 120_000, "standalone");
     expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
@@ -109,5 +118,37 @@ describe.skipIf(!TEST262_READY)("ES5 standalone residual cluster", () => {
       }
     `);
     expect(exports.test()).toBe(1);
+  });
+
+  it("keeps ArraySetLength growth absent for an initially dense number array", async () => {
+    const exports = await runStandaloneModule(`
+      export function test() {
+        var value = [0, 1, 2];
+        Object.defineProperty(value, "length", { value: 5 });
+        return value.length === 5 && !value.hasOwnProperty("3") && !value.hasOwnProperty("4") &&
+          value[4] === undefined ? 1 : 0;
+      }
+    `);
+    expect(exports.test()).toBe(1);
+  });
+
+  it("does not populate the dynamic getter from an unallocated structural type", async () => {
+    const result = await compile(
+      `var harness = { global: globalThis, gc: function () {} };
+       export function test(k: string): number { return (harness as any)[k] ? 1 : 0; }`,
+      {
+        fileName: "issue-4516-phantom-global.ts",
+        target: "standalone",
+        emitWat: true,
+        skipSemanticDiagnostics: true,
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const wat = result.wat ?? "";
+    const start = wat.indexOf("(func $__extern_get ");
+    const end = wat.indexOf("\n  (func $", start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(end - start).toBeLessThan(100_000);
   });
 });
