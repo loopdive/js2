@@ -520,6 +520,14 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     const aKey = base + 5; // normalized key externref
     const aN = base + 6; // parsed numeric key f64
     const aExp = base + 7; // (#3177 slice 4) expando $Object externref
+    // `pushTaDynViewInBoundsLen` below allocates scratch locals, so append the
+    // prototype scratch slot only after that helper has finished. Keeping its
+    // index after the helper-owned locals avoids aliasing an i32 temporary with
+    // this externref slot.
+    let aProto = -1;
+    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
+    const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
     fn.locals.push(
       { name: "__tam_any", type: { kind: "anyref" } },
       { name: "__tam_dv", type: { kind: "ref_null", typeIdx: dynIdx } },
@@ -555,6 +563,10 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     inner.push({ op: "local.set", index: aEs });
     pushTaDynViewInBoundsLen(ctx, fctxLike, aDv, aEs);
     inner.push({ op: "local.set", index: aLen });
+    if ((mode === "get" || mode === "has") && getProtoIdx !== undefined) {
+      aProto = numParams + fn.locals.length;
+      fn.locals.push({ name: "__tam_proto", type: { kind: "externref" } });
+    }
     // key = __to_property_key(key)
     inner.push({ op: "local.get", index: 1 });
     inner.push({ op: "call", funcIdx: tpkIdx });
@@ -578,7 +590,6 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
               ? "__reflect_set"
               : "__delete_property",
     );
-    const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
     const loadExpando = (): Instr[] => [
       { op: "local.get", index: aDv },
       { op: "ref.as_non_null" },
@@ -634,6 +645,65 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       out.push({ op: "local.get", index: aKey });
       out.push({ op: "call", funcIdx: selfIdx });
       out.push({ op: "return" });
+      return out;
+    };
+
+    // `constructor` is the one named TypedArray property whose ordinary
+    // lookup is observable by the species protocol.  It must consult an own
+    // expando property first, then the selected prototype (which may carry an
+    // inherited getter installed by the test), before falling back to the
+    // intrinsic per-kind carrier.  The old namedValue arm ran first and made
+    // an own `view.constructor = C` invisible to `SpeciesConstructor`.
+    //
+    // Keep the recursive call on the ordinary MOP rather than reaching into
+    // the property table here: that preserves accessor invocation and abrupt
+    // completion propagation for both the expando and prototype paths.
+    const constructorLookup = (): Instr[] => {
+      const fallback: Instr[] =
+        mode === "get"
+          ? [...namedValue("constructor", aDv, aKind, aEs, aLen), { op: "return" }]
+          : [{ op: "i32.const", value: 1 }, { op: "return" }];
+      const out: Instr[] = [];
+      out.push(...loadExpando());
+      if (hasOwnIdx !== undefined && selfIdx !== undefined) {
+        const own: Instr[] = [
+          { op: "local.get", index: aExp },
+          { op: "local.get", index: aKey },
+          { op: "call", funcIdx: hasOwnIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: aExp },
+              { op: "local.get", index: aKey },
+              { op: "call", funcIdx: selfIdx },
+              { op: "return" },
+            ],
+          },
+        ];
+        out.push(
+          { op: "local.get", index: aExp },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: own },
+        );
+      }
+      if ((mode === "get" || mode === "has") && getProtoIdx !== undefined && selfIdx !== undefined) {
+        out.push(
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: getProtoIdx },
+          { op: "local.set", index: aProto },
+          { op: "local.get", index: aProto },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: fallback },
+          { op: "local.get", index: aProto },
+          { op: "local.get", index: aKey },
+          { op: "call", funcIdx: selfIdx },
+          { op: "return" },
+        );
+      } else {
+        out.push(...fallback);
+      }
       return out;
     };
     // (§23.2.3.34) `view[Symbol.toStringTag]` — the %TypedArray%.prototype
@@ -700,9 +770,11 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then:
-            mode === "get"
-              ? [...namedValue(prop, aDv, aKind, aEs, aLen), { op: "return" }]
-              : [{ op: "i32.const", value: 1 }, { op: "return" }],
+            prop === "constructor"
+              ? constructorLookup()
+              : mode === "get"
+                ? [...namedValue(prop, aDv, aKind, aEs, aLen), { op: "return" }]
+                : [{ op: "i32.const", value: 1 }, { op: "return" }],
         });
       }
     }

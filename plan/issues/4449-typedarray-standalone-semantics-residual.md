@@ -16,10 +16,13 @@ related: [4444, 2159, 2175]
 loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
+  - src/codegen/ta-dyn-mop.ts
   - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
 ---
 
 # #4449 — TypedArray.prototype standalone semantics residual
@@ -192,3 +195,33 @@ method-specific argument tuple, reject incompatible/non-TypedArray results,
 and write producer values into the returned view. Rerun the exact 55-row host
 and pinned standalone controls before claiming a gain; host's 52/55 result is
 the regression floor. Detached-buffer and reflection work remain out of scope.
+
+## 2026-08-27 clean-delivery resumed species plan
+
+This branch is the clean upstream delivery branch behind draft PR #5022.
+
+1. Add focused dynamic-view controls for own `constructor` shadowing and
+   `constructor[Symbol.species]` lookup/defaulting, including original abrupt
+   value propagation, before modifying producer algorithms.
+2. Implement one reusable TypedArraySpeciesCreate seam, then wire a single
+   producer method first. Preserve method-specific constructor arguments and
+   validate returned dynamic views before widening to the other methods.
+3. Land only independently proven producer slices; keep detached-buffer,
+   reflection metadata, and BigInt carriers out of scope.
+4. Rerun the frozen 55-row cohort in standalone and host after every completed
+   slice. Draft PR #5022 may be marked ready only when the owned implementation
+   is complete, standalone is 55/55 with zero non-passes, and host is 55/55.
+
+### 2026-08-27 dynamic constructor control checkpoint
+
+The dynamic-view MOP now checks an own `constructor` expando before walking the
+selected prototype, preserving original getter abrupt completions and explicit
+own values. The focused standalone controls in
+`tests/issue-4449-species-controls.test.ts` pass 5/5 with zero `env` imports:
+own constructor shadowing, abrupt constructor getter, inherited constructor
+getter, own `Symbol.species`, and abrupt `Symbol.species` getter. The existing
+`issue-3058-dyn-view-proto-methods` regression suite remains green (11/11).
+
+This checkpoint intentionally does not claim producer-method progress; the
+55-row species cohort remains at the 0/55 standalone baseline until the shared
+species-create seam is wired.
