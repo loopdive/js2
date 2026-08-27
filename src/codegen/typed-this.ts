@@ -98,6 +98,9 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 // expressions.ts / index.ts.
 import { VOID_RESULT, coerceType, compileExpression, flushLateImportShifts, valTypesMatch } from "./shared.js";
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+// (#4406) The return-type unboxing ABI's flag family — opt-in, default OFF, so
+// every decision below reads exactly as it did before the flag existed.
+import { isBrandedBoolean, retUnboxAbiEnabled, retUnboxAbiPoisoned } from "./ret-unbox-abi.js";
 
 /**
  * Property names whose reads/writes have dedicated lowerings (array length,
@@ -1105,6 +1108,21 @@ export function refinedTwinReturnType(
   const key = writeOnceMethodKeyOf(ctx, fn);
   if (key === undefined) return undefined;
   const methodName = key.slice(key.indexOf("/") + 1);
+  // (#4406) BOOLEAN BEFORE NUMERIC, and the order is not cosmetic. `isNumeric`
+  // deliberately answers true for booleans (`fact.kind === "boolean"`, the
+  // `true`/`false` keywords, `!x`, every BOOLEAN_BINARY operator) and the
+  // `numericFunctions` loop — unlike the property and grounded-slot loops —
+  // carries no `isBooleanish` filter. So `booleanFunctionNames` is a SUBSET of
+  // `numericFunctionNames`, and a numeric-first test would claim every
+  // predicate as `f64` and leave this arm dead.
+  //
+  // The generic body's shim has to box the refined result back up, so decline
+  // before the twin is minted when `__box_boolean` is unresolvable — the same
+  // discipline the `__box_number` guard above applies to the numeric arm.
+  if (retUnboxAbiEnabled() && ctx.booleanFunctionNames?.has(methodName) === true) {
+    if (ctx.funcMap.get("__box_boolean") === undefined) return undefined;
+    return { kind: "i32", boolean: true };
+  }
   if (ctx.numericFunctionNames?.has(methodName) !== true) return undefined;
   return { kind: "f64" };
 }
@@ -1816,7 +1834,25 @@ function unboxFromExternref(ctx: CodegenContext, type: ValType, out: Instr[]): b
     out.push({ op: "ref.cast", typeIdx: type.typeIdx });
     return true;
   }
-  if (type.kind === "i32" && type.boolean) {
+  // (#4406) The `__unbox_boolean` arm is a TRAP once the refined boolean ABI is
+  // on, so the flag routes past it into the generic `i32` arm below.
+  //
+  // `__unbox_boolean` recognises ONLY a boxed-boolean carrier; a boolean that
+  // arrives as the engine's i31 numeric carrier makes it answer false, and that
+  // exact bug once "turned true conditions into false across the closure
+  // bridge" (`closure-exports.ts`, the `paramType.kind === "i32"` arm, which
+  // took the same defence for the same reason). The arm is effectively dead
+  // today — `__unbox_boolean` executes 2× per acorn self-parse — and goes live
+  // the moment a refined boolean trampoline degrades to its legacy arm, which
+  // the acorn lane cannot see because that arm is reached only on a `ref.test`
+  // miss.
+  //
+  // The generic arm's `__unbox_number` + `i32.trunc_sat_f64_s` recognises i31,
+  // boxed-number AND boxed-boolean, and ToNumber is exactly {0,1} on a boolean,
+  // so it is total over every carrier the dispatcher can hand back. Gated on
+  // the flag purely to keep the OFF build byte-identical: a DECLARED `boolean`
+  // return already reaches this arm today.
+  if (type.kind === "i32" && type.boolean && !retUnboxAbiEnabled()) {
     const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
     if (unboxBoolIdx === undefined) return false;
     out.push({ op: "call", funcIdx: unboxBoolIdx });
@@ -2078,6 +2114,14 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
         directCallStats.legacyReasons.set(key, (directCallStats.legacyReasons.get(key) ?? 0) + 1);
       }
     }
+
+    // (#4406) POISON. Statement-only and gated on BOTH env vars, so an ordinary
+    // build never reaches it. Every arm above (twin / generic / legacy, guarded
+    // or not) has already merged to `resultType`, so one `i32.eqz` here inverts
+    // exactly the refined boolean results and nothing else. #4157 entry 22's
+    // lesson: a green workload under poison proves the path is DEAD, not that
+    // the change is safe.
+    if (isBrandedBoolean(resultType) && retUnboxAbiPoisoned()) arm.push({ op: "i32.eqz" });
 
     // A twin now represents every use of `this` (including bare/non-field
     // expressions) with its typed receiver parameter. An unguarded,

@@ -326,8 +326,29 @@ function inferBooleanValueNames(
   return candidates;
 }
 
-/** Compute property names whose complete visible source write set is boolean. */
-export function analyzeBooleanPropertyNames(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): Set<string> {
+/** The two name-keyed verdicts this module's single traversal produces. */
+export interface BooleanNameVerdicts {
+  /** Property names whose complete visible source write set is boolean. */
+  properties: Set<string>;
+  /**
+   * (#4406) Function NAMES that return a boolean on EVERY path — the greatest
+   * fixpoint `inferBooleanFunctionNames` already computed for the property
+   * verdict, published rather than discarded. `refinedTwinReturnType` uses it
+   * to mint a typed-`this` twin whose wasm result is a boolean-branded `i32`
+   * instead of an `externref` the caller has to unbox.
+   */
+  functions: Set<string>;
+}
+
+/**
+ * Compute both boolean name verdicts in ONE traversal.
+ *
+ * The function verdict is a by-product of the property one — the property rule
+ * needs "does `this.eat(x)` produce a boolean" to classify
+ * `node.generator = this.eat(...)`, which is exactly the same question — so
+ * publishing it costs nothing beyond the return shape.
+ */
+export function analyzeBooleanNames(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): BooleanNameVerdicts {
   const facts = collectBooleanFlowFacts(ctx, sourceFiles);
   const booleanFunctions = inferBooleanFunctionNames(ctx, facts.functionsByName);
   const booleanValues = inferBooleanValueNames(ctx, facts, booleanFunctions);
@@ -348,7 +369,15 @@ export function analyzeBooleanPropertyNames(ctx: CodegenContext, sourceFiles: re
 
   for (const write of facts.propertyWrites) record(write.name, write.value, write.typedBoolean);
 
-  return new Set([...state].filter(([, info]) => info.saw && info.allBoolean).map(([name]) => name));
+  return {
+    properties: new Set([...state].filter(([, info]) => info.saw && info.allBoolean).map(([name]) => name)),
+    functions: booleanFunctions,
+  };
+}
+
+/** Property-only view of {@link analyzeBooleanNames}, for its `excludeNames` caller. */
+export function analyzeBooleanPropertyNames(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): Set<string> {
+  return analyzeBooleanNames(ctx, sourceFiles).properties;
 }
 
 /** Brand numeric struct fields whose complete source write set is boolean. */
