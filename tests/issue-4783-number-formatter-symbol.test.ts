@@ -3,7 +3,7 @@
 // #4783 covers the direct-call Number formatter ToNumber(Symbol) boundary.
 // Keep the exact failing rows and nearby positive formatter controls in the
 // authoritative assembled-harness path for both the JS-host and standalone
-// targets.
+// targets, so a backend regression cannot silently reintroduce divergence.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
