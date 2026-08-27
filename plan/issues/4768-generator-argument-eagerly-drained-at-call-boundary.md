@@ -1,10 +1,10 @@
 ---
 id: 4768
-title: "Aliasing a generator to a second binding eagerly drains it to the 1e6 cap (breaks infinite generators; 375+ ES2015 rows)"
+title: "Array binding-pattern elision consumes too many iterator steps (20 rows confirmed; mechanism UNCONFIRMED)"
 status: ready
 created: 2026-08-27
 updated: 2026-08-27
-priority: critical
+priority: high
 feasibility: hard
 reasoning_effort: high
 task_type: bugfix
@@ -15,9 +15,51 @@ sprint: current
 horizon: l
 ---
 
-# #4768 — aliasing a generator drains it
+# #4768 — elision consumes too many iterator steps
 
-## Problem
+
+> **Status of the mechanism: UNCONFIRMED.** The FAILING ROWS are real and
+> reproducible through the runner. The explanation below — that aliasing a
+> generator drains it — is **not** supported by the emitted code, and a later
+> check contradicts it. Read "What is confirmed" before acting on any of it.
+
+## What is confirmed
+
+- **20 rows fail, identically.** Every `*ary-ptrn-elision.js` across every
+  function form (generators, methods, object methods, async generators,
+  defaults) reports `Expected SameValue(«1», «0»)` — an initializer observed
+  once when the spec says zero. Reproduced with
+  `scripts/run-test262-paths.mts --isolate` at the pinned submodule SHA. This is
+  the runner's own verdict, not a hand-rolled probe.
+- **375 ES2015 rows mention elision**; the blast radius is at least the 20.
+- The destructuring step-count machinery is correct: `patternIteratorStepCount`
+  returns 1 for `[,]` (checked against the TS parser) and that count reaches the
+  runtime intact (traced: `limit=1`).
+
+## What is NOT confirmed — and the evidence against it
+
+The step-count tables below were produced by test262-shaped probes that count a
+module variable incremented inside a generator body. They consistently showed
+1,000,001 steps on alias. But compiling the same shapes and reading the EMITTED
+WAT shows **no drain at all**:
+
+```
+module scope   var a = fin(); var a2 = a;   → global.get 4; local.tee 2; global.set 5
+inside fn      same                          → no drain markers
+passed to fn   plain(fin())                  → no drain markers
+```
+
+Scanned for `__array_from_iter`, `__iterator_next`, `__extern_length` and the
+literal `1000000`: none present in any of the three. Combined with the four
+JS-side drainers already excluded by instrumentation, there is no identified
+mechanism that could produce 1,000,001 — which means the probe's counter is
+likely measuring something other than iterator steps.
+
+**Do not build on the mechanism sections below without first re-deriving the
+count from the emitted code.** They are retained only to save the next reader
+from repeating the same four exclusions.
+
+## Original problem statement (mechanism unconfirmed)
 
 Passing a compiled generator to **any** function eagerly runs it to exhaustion —
 or, for an infinite generator, to the 1,000,000-step defensive cap. No
