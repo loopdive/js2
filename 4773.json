@@ -1,10 +1,11 @@
 {
   "id": "4773",
   "assignee": "ttraenkler/opus-4612",
-  "requested_by": "ttraenkler/opus-4612",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4773-per-arg-reachability",
   "claimed_at": "2026-08-27T13:05:23Z",
-  "updated_at": "2026-08-27T13:05:23Z",
-  "write_id": "19212-ts0stb12"
+  "updated_at": "2026-08-27T15:48:35Z",
+  "write_id": "27541-bgmk05jn",
+  "released_at": "2026-08-27T15:48:35Z"
 }
