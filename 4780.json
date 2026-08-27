@@ -1,10 +1,11 @@
 {
   "id": "4780",
   "assignee": "ttraenkler/opus-4780",
-  "requested_by": "ttraenkler/opus-4780",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4780-route-c-perf-floor",
   "claimed_at": "2026-08-27T19:34:58Z",
-  "updated_at": "2026-08-27T19:34:58Z",
-  "write_id": "7354-sjwhtxg6"
+  "updated_at": "2026-08-27T23:43:08Z",
+  "write_id": "1745-a2qvx8ac",
+  "released_at": "2026-08-27T23:43:08Z"
 }
