@@ -163,6 +163,33 @@ at all. `a[2]` lowers to a direct struct-field read (`__sget_2`), and `2 in a`
 resolves statically from the struct shape. All three edits were tried and
 reverted.
 
+The string-key form behaves identically, which rules out the indexed MOP as the
+site. Reproducing `pop/length-near-integer-limit.js` exactly (the row asserts
+`"9007199254740990" in arrayLike === false`):
+
+```
+var a = { "9007199254740989": "x", "9007199254740990": "y", length: 2**53-1 };
+Array.prototype.pop.call(a);
+  pop returned "y"                         ✓
+  a.length === 2**53-2                     ✓
+  a["9007199254740989"] === "x"            ✓   (untouched element)
+  hasOwnProperty(a, "9007199254740990")    ✓  false
+  "9007199254740990" in a                  ✗  true   (must be false)
+  a["9007199254740990"]                    ✗  "y"    (must be undefined)
+```
+
+The host `pop` did everything right — only the compiled `in` and the property
+read disagree. Both resolve **statically from the struct shape** for a
+literal key on a known-typed receiver, so neither reaches `__extern_has`
+(which is tombstone-aware and would answer correctly).
+
+The escape is the crux: the deletion happens **inside host code**
+(`Array.prototype.pop.call(a)`), not via a `delete` statement, so no
+"module uses delete" signal could catch it — and there is no
+`escapesToHost` / `usesDelete` concept in `CodegenContext` today to hang a
+narrow fix on (checked). An object handed to an unknown host callee can have
+its shape mutated, so its later reads cannot be answered from the static shape.
+
 The real fix is **per-instance property presence for statically-shaped structs**
 — the struct field physically exists, so deletion needs a presence bit consulted
 by the compiled read and `in`, not just a host-side tombstone. The precedent is
