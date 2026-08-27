@@ -2246,16 +2246,15 @@ compiled as ONE standalone unit, `optimize: 4`, `deferTopLevelInit`,
 | `constructor-resolution-unsupported` | 1 | 0 |
 | `abi-signature-parity` | 1 | 0 |
 
-Five claims regressed under main drift — `isInAstralSet`,
-`isIdentifierStart`, `isIdentifierChar` (now `expr-ident-not-in-scope`), and the
-two `isRegExpIdentifier*` predicates that closed over them. `binop` / `kw` /
-`tokenizer` also moved into `return-type-not-resolvable`, a bucket that was
-empty on 2026-08-21. **The good news in the same measurement:** the `tokenizer`
+Five claims regressed under main drift. **That regression is #4773's, not this
+record's — see #4773 for the affected units, the chain between them, and the
+bisect result.** It is mid-bisect at the time of writing and its numbers
+supersede anything inferable from the table above; the table is here only so the
+next slice on this issue measures its own base instead of inheriting 31/42.
+
+**The good news in the same measurement:** the `tokenizer`
 `abi-signature-parity` withdrawal is gone — the driver now has ZERO post-claim
-withdrawals, so the "zero withdrawals" bar is met by main again. The −5
-regression is being bisected separately and is not this record's subject; it is
-noted here only so the next slice measures its own base instead of inheriting
-31/42.
+withdrawals, so the "zero withdrawals" bar is met by main again.
 
 ### Correction 2 — every residual is a CHAIN, and they bottom out in two substrates
 
@@ -2273,8 +2272,18 @@ cannot fire) gives the real chain:
 | `finishNodeAt` | `nontail-if-cond:PropertyAccess` (`this.options.locations`) | `body-elemstore-recv` (`node.range[1] = pos`) | `param-type-not-resolvable` (`node`) | open-object |
 | `pushComment` | `closure-return-type:FunctionExpression` | object literal + `new SourceLocation(…)` | — | open-object + ES5 ctor |
 | `wordsRegexp` | `logical-value-unsupported` | `new RegExp(…)` + open-object cache | — | open-object |
-| `getOptions`, `kw` | `objectlit-empty` | — | — | open-object |
+| `getOptions` | `objectlit-empty` | — | — | open-object |
 | `stringToBigInt` | `expr-ident-not-in-scope` (`BigInt`) | — | — | BigInt global |
+
+Every row is a `JS2WASM_IR_SHAPE_DIAG` reading taken on `7e0b03ebb7`, not carried
+over from the 2026-08-21 record. That distinction caught one error while this
+table was being written: `kw` is listed above as `objectlit-empty` in the
+2026-08-21 census, but measures `return-type-not-resolvable` here. It is
+therefore NOT in this table — `kw`, `binop` and `tokenizer` all sit in
+`return-type-not-resolvable` on current main, a bucket that was empty on
+2026-08-21, which puts them in the drift #4773 is bisecting. They were not
+chain-probed, because probing a unit whose current bucket is about to move
+measures the drift, not the residual.
 
 **So there are not eight independent cheap flips available. There are two
 substrates and a BigInt global.** `new Position` / `new SourceLocation` are
