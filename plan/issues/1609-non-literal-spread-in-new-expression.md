@@ -260,3 +260,24 @@ follow-ups, not hidden residual failures. After the final pushed head
 ready for review. Ownership handoff: `ttraenkler/codex-es6-new-spread`,
 implementation owner `ttraenkler/codex-es6-new-spread`, with the exact
 artifacts and residual follow-ups recorded in this checkpoint.
+
+### Repaired-main landing handoff — 2026-08-27
+
+PR #5048 was deliberately dequeued after its merge-group run inherited the
+145-row standalone regression signature `c12d78255ab4839c` from merged PR
+#5044. That regression was repaired by PR #5057 and its merge-group Test262
+regression guard passed before this branch was synchronized again.
+
+The branch now includes repaired `upstream/main` merge commit
+`12805b623fe623178245ffaef8bfae0a860edb41` through synchronization checkpoint
+`40940671f`. A fresh exact rerun after that merge remains **14/14 pass** in the
+host lane and **14/14 pass** in standalone, with zero failures, compile errors,
+timeouts, or skips. The artifacts are
+`/private/tmp/js2-1609-host-repairmerge.jsonl` (sha256
+`59890cece6993e2392c658f1475ecdc0ddf42fe6395989636b62fa1b4874f088`) and
+`/private/tmp/js2-1609-standalone-repairmerge.jsonl` (sha256
+`2ae861807d121c26e71a1336110b69930fd68c8903b2fab3d842ee68e73e52c3`).
+
+Landing procedure: push this evidence checkpoint, remove the temporary
+`hold` label, and re-enter the merge queue. Do not bypass a failed queued
+regression guard.
