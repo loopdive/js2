@@ -1,11 +1,10 @@
 {
   "id": "4780",
-  "assignee": "",
-  "requested_by": "ttraenkler/opus-4775",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-27T16:13:17Z",
-  "updated_at": "2026-08-27T16:13:17Z",
-  "write_id": "15765-a0zwl36e",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/opus-4780",
+  "requested_by": "ttraenkler/opus-4780",
+  "status": "in-progress",
+  "branch": "claude/issue-4780-route-c-perf-floor",
+  "claimed_at": "2026-08-27T19:34:58Z",
+  "updated_at": "2026-08-27T19:34:58Z",
+  "write_id": "7354-sjwhtxg6"
 }
