@@ -12,6 +12,21 @@ feasibility: hard
 reasoning_effort: high
 task_type: bug
 area: codegen
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/object-runtime-descriptors.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/closure-props.ts::fillClosurePropHelpers
+  - src/runtime.ts::resolveImport
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/index.ts::generateModule
+  - src/codegen/function-instance-props.ts::fillFunctionInstanceProps
 es_edition: es6
 language_feature: function-properties, descriptors
 goal: core-semantics
@@ -421,3 +436,30 @@ Reproduce any row in this issue with a test262-shaped probe under `.tmp/` run
 through `runTest262File` — the runner's `wrapTest` is what makes `verifyProperty`
 and the `Test262Error` channel available, and judging by anything else is how
 #4764 shipped a regression.
+
+## Implementation checkpoint (2026-08-27)
+
+The metadata bridge now has an unfinished source prototype (14 production files,
+518 added lines). It widens the existing `$fnmeta` carrier to the host/gc lane,
+exports host-readable name/length projections, routes host reflection through
+those projections, synthesizes class literal descriptors, and keeps standalone
+closure bags/tombstones coherent. The checkpoint is intentionally not ready:
+the PR remains draft+hold.
+
+Exact maintained-runner probe results from this worktree, with positive controls
+verified on every invocation:
+
+| probe | host | standalone |
+| --- | --- | --- |
+| `.tmp/probe/4770-fn.js` (five closure shapes, literal descriptors) | pass | pass |
+| `.tmp/probe/4770-class.js` (class literal name/length/prototype) | pass | pass |
+| `.tmp/probe/4770-class-surfaces.js` (dynamic class keys) | pass | fail at dynamic class `name` descriptor |
+| `.tmp/probe/4770-surfaces.js` (dynamic function keys, delete/redefine, class) | pass | fails before the initial dynamic function `name` assertion with the dedicated define-lookup path; reverting that call reaches the later known redefine-attribute mismatch (`writable: true`, expected `false`) |
+| `.tmp/probe/4770-debug-redef.js` (non-delete redefine) | pass | pass |
+
+The smallest remaining implementation slice is standalone dynamic-key dispatch
+for class constructor `name`/`length`/`prototype`, plus resolution of the
+standalone harness interaction in the combined dynamic function/delete probe.
+Do not broaden the cohort or run a suite sweep until those two exact probes are
+green; retain the existing host/standalone literal closure and class checks as
+regressions.

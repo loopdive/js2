@@ -464,6 +464,15 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
   shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
+  // (#4770) Metadata singleton globals are cached by declaration shape rather
+  // than in one of the older named-global maps above. Host-lane metadata
+  // interns string imports lazily, so a later import must move these cached
+  // absolute indices together with the emitted global.get/global.set refs.
+  if (ctx.fnInstanceMetaGlobalByKey) {
+    for (const [key, idx] of ctx.fnInstanceMetaGlobalByKey) {
+      if (idx >= threshold) ctx.fnInstanceMetaGlobalByKey.set(key, idx + delta);
+    }
+  }
   shiftMap(ctx.tdzGlobals);
 
   // (#1749) The CPR proto-override records (Array.prototype[@@iterator] /

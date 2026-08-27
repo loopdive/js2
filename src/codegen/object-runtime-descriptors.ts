@@ -241,6 +241,77 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     ];
   };
 
+  // (#4770) A deleted closure intrinsic is represented by a self-referential
+  // entry in its private bag. The descriptor applier must treat that marker as
+  // an absent property when a later define creates the key again, while still
+  // preserving ordinary self-referential properties on user objects. Resolve
+  // the entry with the bag supplied by the closure substitution arm, rather
+  // than mutating the nullable entry local after the lookup (WasmGC engines can
+  // trap when a typed nullable local is reset inside the generated preflight).
+  const objFindDefineIdx = (() => {
+    const objRef: ValType = { kind: "ref", typeIdx: objectTypeIdx };
+    const marker: Instr[] = [
+      { op: "local.get", index: 2 },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+          { op: "local.tee", index: 4 },
+          { op: "ref.test", typeIdx: -19 },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              { op: "local.get", index: 4 },
+              { op: "ref.cast", typeIdx: -19 },
+              { op: "local.get", index: 2 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: -19 },
+              { op: "ref.eq" },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    ];
+    return s.registerNative(
+      "__obj_find_define",
+      [objRef, { kind: "externref" }, { kind: "externref" }],
+      [entryRefNull],
+      [
+        { name: "entry", type: entryRefNull },
+        { name: "value", type: { kind: "anyref" } },
+      ],
+      [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: objFindIdx },
+        { op: "local.tee", index: 3 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: entryRefNull },
+          then: [{ op: "ref.null", typeIdx: propEntryTypeIdx }],
+          else: [
+            ...marker,
+            {
+              op: "if",
+              blockType: { kind: "val", type: entryRefNull },
+              then: [{ op: "ref.null", typeIdx: propEntryTypeIdx }],
+              else: [{ op: "local.get", index: 3 }],
+            },
+          ],
+        },
+      ],
+    );
+  })();
+
   // ── __defineProperty_value (#1629 S6 — native data-descriptor define) ─────
   //
   // `Object.defineProperty(obj, key, { value, writable?, enumerable?,
@@ -325,7 +396,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "local.get", index: 4 },
       { op: "ref.as_non_null" },
       { op: "local.get", index: 1 },
-      { op: "call", funcIdx: objFindIdx },
+      { op: "local.get", index: 13 },
+      { op: "call", funcIdx: objFindDefineIdx },
       { op: "local.tee", index: 11 },
       { op: "ref.is_null" },
       {

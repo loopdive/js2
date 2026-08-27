@@ -341,7 +341,15 @@ export function emitFuncRefAsClosure(
   // ONCE here (both paths below need it) but materialized lazily — `fnMetaSlot`
   // mints an interned string global, and a path that ends up not carrying the
   // slot should not leave one behind.
-  const metaDecl = ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName);
+  const metaDecl =
+    ctx.funcMapOwnerDecl.get(funcName) ??
+    ctx.topLevelFunctionDeclarations.get(funcName) ??
+    // Class constructors are registered under `<ClassName>_new`, while their
+    // source declaration lives in `classDeclarationMap` rather than the
+    // function-owner maps used by ordinary declarations. Carry that
+    // declaration through the same metadata path so the class mirror can
+    // recover its spec `name`/`length` on the host lane.
+    [...ctx.classDeclarationMap.entries()].find(([className]) => funcName === `${className}_new`)?.[1];
   // Constructibility belongs to the source function, not to whichever value
   // read happened to materialize its cached capture struct first. A self-read
   // can mint an ordinary function's artifact with `__constructible`, followed

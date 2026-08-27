@@ -37,6 +37,7 @@ const BRIDGE_PREFIXES: readonly string[] = [
   "__sget_",
   "__sset_",
   "__call_fn",
+  "__fninst_",
   "__closure_",
   "__is_vec",
   "__is_closure",

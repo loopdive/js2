@@ -24,6 +24,7 @@ import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { emitFuncRefAsClosure } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
+import { functionInstanceMetadataEnabled } from "../function-instance-meta.js";
 import type { InnerResult } from "../shared.js";
 import {
   coerceType,
@@ -467,7 +468,17 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   // `length` accessor does not own the `name` key, so it must not suppress the
   // independent class-name stamp for dynamic class-object reads.
   const hasStaticNameAccessor = ctx.staticAccessorSet.has(`${className}_name`);
-  if (!ctx.standalone && !ctx.wasi && !className.startsWith("__") && !hasStaticNameAccessor) {
+  // (#4770) The WasmGC lane now exposes the constructor's generated
+  // function-instance metadata directly. Keep the legacy sidecar stamp only
+  // for profiles that do not have those projections; otherwise it shadows
+  // the metadata descriptor with ordinary enumerable/configurable flags.
+  if (
+    !functionInstanceMetadataEnabled(ctx) &&
+    !ctx.standalone &&
+    !ctx.wasi &&
+    !className.startsWith("__") &&
+    !hasStaticNameAccessor
+  ) {
     const setIdx = ctx.funcMap.get("__extern_set");
     if (setIdx !== undefined) {
       addStringConstantGlobal(ctx, "name");

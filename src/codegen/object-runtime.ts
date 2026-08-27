@@ -1108,6 +1108,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     reserveProtoIndexStore(ctx);
   }
 
+  // (#4770) The JS-host lane keeps reflective property ownership in
+  // runtime.ts, but it still needs a generated read-only view of a closure's
+  // per-declaration `$fnmeta` carrier. Reserve that resolver after the
+  // standalone-only side-table substrate above; the host path must not pull in
+  // bag/tombstone helpers or their splice arms.
+  if (ctx.targetProfile.target === "gc") reserveFunctionInstanceProps(ctx);
+
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
   //
   // Placeholder reserved with the object runtime and filled at FINALIZE by
