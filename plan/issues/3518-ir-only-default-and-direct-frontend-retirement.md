@@ -1739,7 +1739,7 @@ linear executable route, or second planner is in scope.
     in `plan/log/ir-optimization-retirement-ledger.md` and set
     lowering/complete/retirement-ready. At that point, and only then, update
     `tests/issue-3792-ir-optimization-retirement-gate.test.ts` to the measured
-    totals of 46 rows, 33 complete, and 4 ready. Neither evidence file belongs
+    totals of 50 rows, 37 complete, and 4 ready. Neither evidence file belongs
     to the compile-once C2 commit.
 
 11. **C2 landing discipline.** Run the new route/anti-widening suites, the
@@ -1808,7 +1808,7 @@ Fail closed if the direct/direct median drifts beyond 5%, if the Prepared/direct
 median exceeds 1.05, or if its interval's upper bound exceeds 1.10; no speedup
 claim follows from merely clearing those regression limits. Every launch uses
 the strict finite, nonnegative one-minute load gate
-`load < logicalCores - 2`; on the current ten-core host the limit is `< 8`.
+`load < logicalCores - 2`; on an eight-logical-core host the limit is `< 6`.
 An environmental gate abort is diagnostic evidence, never a retryable PASS.
 
 Run the focused #1004 and #3518 suites, prior string-builder/owned-append/
@@ -1955,3 +1955,70 @@ The no-growth and structural output gates are therefore met. Promotion of
 30-valid-sample ABBA runtime driver satisfies the existing 5% direct/direct,
 1.05 median, and 1.10 bootstrap-upper-bound gates. The broader syntax/provider
 mutation matrix and final R9 switch deletion remain later transactions.
+
+#### C2d checkpoint: durable counted-append runtime gate (2026-08-27)
+
+This checkpoint began only after C2c was live on `main`. Add the discoverable
+`benchmark:bench-string-ir-runtime` command around
+`scripts/measure/bench-string-ir-runtime.mts` and lock its pure protocol helpers
+in `tests/issue-3518-bench-string-runtime-driver.test.ts`. Compile the C2c
+builder-off direct and Prepared artifacts once, authenticate their exact route
+ownership and matching Wasm surface, then execute every timed launch in a fresh
+Node process with a 512 MiB old-space cap, explicit GC, warmup, artifact digest
+verification, and the exact `bench_string() === 5000` oracle.
+
+Each of 30 rounds brackets one adjacent direct/Prepared candidate pair with
+fresh direct controls. Candidate order alternates AB then BA, producing exact
+D/P/P/D blocks across each two-round pair. A fresh finite, nonnegative
+one-minute load observation must be strictly below `logicalCores - 2` inside
+every child before setup. The first load or worker failure aborts without retry
+and retains all completed launches as diagnostic evidence. The completed run
+must publish all 120 launch records, 30 paired Prepared/direct ratios, 30
+direct/direct bracket ratios, artifact hashes and sizes, process memory, the
+paired medians, and the deterministic 10,000-resample 95% bootstrap interval in
+`benchmarks/results/ir/3518-bench-string-runtime.json`.
+
+The first v1 execution is retained separately as
+`benchmarks/results/ir/3518-bench-string-runtime-aborted-v1.json`. It completed
+14 rounds / 56 launches before the next child observed load 6.325 against the
+strict `< 6` threshold and aborted exactly as designed. That run also exposed
+a harness defect before any retirement claim: each fresh child re-imported
+`tsx`, the compiler, and the full runtime, reporting roughly 376–559 MiB RSS
+and driving the host over its own gate. Protocol v2 replaces that setup with
+`scripts/measure/bench-string-ir-runtime-worker.mjs`, a plain-Node worker that
+loads only the signed Wasm artifact and Node built-ins. It rejects every
+non-function import and installs throwing stubs for function imports, so the
+timed `bench_string` path cannot silently depend on host setup. The v1 abort is
+diagnostic evidence and is not retried or reclassified; v2 is a materially new
+protocol whose complete run must still satisfy every unchanged gate above.
+
+Only a report whose direct/direct median deviation is at most 5%, whose
+Prepared/direct median is at most 1.05, and whose bootstrap upper bound is at
+most 1.10 may promote `IR-OPT-COUNTED-LITERAL-STRING-APPEND`. On that same
+signed checkpoint, move its owner to
+`src/ir/from-ast.ts::lowerPreparedCountedStringAppend`, mark lowering/complete
+and all three evidence classes verified, set `retirementReady: true`, and
+synchronize the live #3792 totals to 50 rows, 37 complete, and 4 ready. Clearing
+the bounds proves runtime parity/no regression, not a speedup. It does not
+delete the direct handler, retire the builder switch, close #3518, or make a
+repository-wide IR-only claim; those remain gated by R9 and the refreshed R10
+reachability audit.
+
+Protocol v2 completed all 30 rounds / 120 launches against merged revision
+`8c0033daa50f8d08a49976500e4f62e1440882ce`. Every launch observed load in
+`[3.2383, 3.2988]` against the strict `< 6` threshold, returned the exact
+5,000,000 accumulated checksum, and reported RSS in `[58,556,416, 59,031,552]`
+bytes. The direct artifact is 130,308 bytes with SHA-256
+`3cbc410df50905b51a6a269fb152a037fea767e6ce06a41e07e047720e4f60aa`;
+Prepared is 130,062 bytes with SHA-256
+`dd45e84b55933ffa5587d27e1640a2d389db03c48b65b648977f2bfaa5fde3a5`.
+
+The direct/direct median is 1.002100 (0.210% deviation). The paired
+Prepared/direct median is 0.986557 and its deterministic 10,000-resample 95%
+bootstrap interval is `[0.971562, 0.988501]`. All three fail-closed limits pass,
+so the ledger row now names the executable lowerer, marks semantic/output/
+performance evidence verified, and becomes the fourth retirement-ready row.
+This is parity/no-regression evidence only. The direct handler and builder
+switch remain live controls until R9 and the refreshed R10 reachability audit.
+The driver/ledger suites pass 22/22, both TypeScript 7 and TypeScript 5 pass,
+and repository lint and formatting checks are green.

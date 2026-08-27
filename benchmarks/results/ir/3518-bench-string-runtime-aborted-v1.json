@@ -1,0 +1,1402 @@
+{
+  "schemaVersion": 1,
+  "status": "aborted",
+  "generatedAt": "2026-08-27T09:59:02.426Z",
+  "sourceRevision": "8c0033daa50f8d08a49976500e4f62e1440882ce",
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "v8OldSpaceLimitMb": 512
+  },
+  "protocol": {
+    "rounds": 30,
+    "samplesPerArm": 14,
+    "directControlSamples": 28,
+    "callsPerSample": 1000,
+    "warmupCalls": 12,
+    "schedule": "direct-control / alternating-AB-BA candidate / direct-control",
+    "freshProcessPerLaunch": true,
+    "bootstrapIterations": 10000,
+    "bootstrapSeed": 55675949
+  },
+  "artifacts": [
+    {
+      "lane": "direct",
+      "binaryBytes": 130308,
+      "sha256": "3cbc410df50905b51a6a269fb152a037fea767e6ce06a41e07e047720e4f60aa",
+      "imports": [
+        {
+          "module": "env",
+          "name": "Document_createElement",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Element_set_textContent",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "HTMLElement_addEventListener",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Performance_now",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Element_get_children",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Document_get_body",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Element_set_innerHTML",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "CSSStyleDeclaration_set_cssText",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "HTMLElement_get_style",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Node_appendChild",
+          "kind": "function"
+        }
+      ],
+      "exports": [
+        {
+          "name": "bench_string",
+          "kind": "function"
+        },
+        {
+          "name": "main",
+          "kind": "function"
+        },
+        {
+          "name": "__cb_0",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_0",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_1",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_2",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_3",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_4",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_5",
+          "kind": "function"
+        },
+        {
+          "name": "__is_ctor_closure",
+          "kind": "function"
+        },
+        {
+          "name": "$ch",
+          "kind": "function"
+        },
+        {
+          "name": "__exn_tag",
+          "kind": "tag"
+        }
+      ]
+    },
+    {
+      "lane": "prepared",
+      "binaryBytes": 130062,
+      "sha256": "dd45e84b55933ffa5587d27e1640a2d389db03c48b65b648977f2bfaa5fde3a5",
+      "imports": [
+        {
+          "module": "env",
+          "name": "Document_createElement",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Element_set_textContent",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "HTMLElement_addEventListener",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Performance_now",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Element_get_children",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Document_get_body",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Element_set_innerHTML",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "CSSStyleDeclaration_set_cssText",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "HTMLElement_get_style",
+          "kind": "function"
+        },
+        {
+          "module": "env",
+          "name": "Node_appendChild",
+          "kind": "function"
+        }
+      ],
+      "exports": [
+        {
+          "name": "bench_string",
+          "kind": "function"
+        },
+        {
+          "name": "main",
+          "kind": "function"
+        },
+        {
+          "name": "__cb_0",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_0",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_1",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_2",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_3",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_4",
+          "kind": "function"
+        },
+        {
+          "name": "__\u0000js2_call_fn_method_argc_5",
+          "kind": "function"
+        },
+        {
+          "name": "__is_ctor_closure",
+          "kind": "function"
+        },
+        {
+          "name": "$ch",
+          "kind": "function"
+        },
+        {
+          "name": "__exn_tag",
+          "kind": "tag"
+        }
+      ]
+    }
+  ],
+  "launches": [
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 0,
+      "round": 0,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5570.917,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.1416015625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 546373632,
+        "heapUsedBytes": 205311904
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 1,
+      "round": 0,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5406.875,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.1416015625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 558022656,
+        "heapUsedBytes": 205373768
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 2,
+      "round": 0,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5331.541,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.1416015625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 542736384,
+        "heapUsedBytes": 205309192
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 3,
+      "round": 0,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5412.917,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 3.9697265625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 545374208,
+        "heapUsedBytes": 205312760
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 4,
+      "round": 1,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5594.583,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 3.9697265625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 556072960,
+        "heapUsedBytes": 205372480
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 5,
+      "round": 1,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5584.125,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 3.8115234375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 558383104,
+        "heapUsedBytes": 205369752
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 6,
+      "round": 1,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6214.5,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 3.8115234375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 554434560,
+        "heapUsedBytes": 205370536
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 7,
+      "round": 1,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6679.75,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 3.8115234375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 555728896,
+        "heapUsedBytes": 205371984
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 8,
+      "round": 2,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 7269.333,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.2265625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 452296704,
+        "heapUsedBytes": 205373648
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 9,
+      "round": 2,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6210.084,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.2265625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 539115520,
+        "heapUsedBytes": 205373280
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 10,
+      "round": 2,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5248,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.6083984375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 520814592,
+        "heapUsedBytes": 205370680
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 11,
+      "round": 2,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5893.041,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.6083984375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 558186496,
+        "heapUsedBytes": 205371648
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 12,
+      "round": 3,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6447.958,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.5595703125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 546947072,
+        "heapUsedBytes": 205313408
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 13,
+      "round": 3,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5435.834,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.5595703125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557498368,
+        "heapUsedBytes": 205371696
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 14,
+      "round": 3,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6412.166,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.5947265625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 545538048,
+        "heapUsedBytes": 205312280
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 15,
+      "round": 3,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6022.875,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.5947265625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 548388864,
+        "heapUsedBytes": 205312776
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 16,
+      "round": 4,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5680.208,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.787109375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 555778048,
+        "heapUsedBytes": 205369704
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 17,
+      "round": 4,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6751.084,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.787109375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557121536,
+        "heapUsedBytes": 205372040
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 18,
+      "round": 4,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 6016.458,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.8837890625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 501334016,
+        "heapUsedBytes": 205312928
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 19,
+      "round": 4,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6302.125,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.8837890625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 533561344,
+        "heapUsedBytes": 205373368
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 20,
+      "round": 5,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5497.625,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.81298828125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 538263552,
+        "heapUsedBytes": 205313800
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 21,
+      "round": 5,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 6451.625,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.81298828125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 546783232,
+        "heapUsedBytes": 205311664
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 22,
+      "round": 5,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6122.834,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.90771484375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 478887936,
+        "heapUsedBytes": 205370568
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 23,
+      "round": 5,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6727.625,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.90771484375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 538345472,
+        "heapUsedBytes": 205437800
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 24,
+      "round": 6,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 9484.208,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9150390625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 497238016,
+        "heapUsedBytes": 205372728
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 25,
+      "round": 6,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6134.875,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9150390625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 559136768,
+        "heapUsedBytes": 205369688
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 26,
+      "round": 6,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 6348.625,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9150390625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 556384256,
+        "heapUsedBytes": 205372088
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 27,
+      "round": 6,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5744.75,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.00146484375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557334528,
+        "heapUsedBytes": 205369784
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 28,
+      "round": 7,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5402.875,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.00146484375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 472072192,
+        "heapUsedBytes": 205371768
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 29,
+      "round": 7,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5372.375,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.1611328125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557858816,
+        "heapUsedBytes": 205371824
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 30,
+      "round": 7,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6176.75,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.1611328125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 554287104,
+        "heapUsedBytes": 205373816
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 31,
+      "round": 7,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6771,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.14794921875,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 440942592,
+        "heapUsedBytes": 205370752
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 32,
+      "round": 8,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5608.542,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.14794921875,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 555139072,
+        "heapUsedBytes": 205372376
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 33,
+      "round": 8,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5316.042,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.14794921875,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557793280,
+        "heapUsedBytes": 205372616
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 34,
+      "round": 8,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5185.667,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9755859375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557137920,
+        "heapUsedBytes": 205371512
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 35,
+      "round": 8,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6398.958,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9755859375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 544587776,
+        "heapUsedBytes": 205313560
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 36,
+      "round": 9,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5291.167,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.8974609375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 555532288,
+        "heapUsedBytes": 205369688
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 37,
+      "round": 9,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 9670.708,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.8974609375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 444088320,
+        "heapUsedBytes": 205377952
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 38,
+      "round": 9,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 11451.25,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9853515625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 447348736,
+        "heapUsedBytes": 205375448
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 39,
+      "round": 9,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5564.667,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.9853515625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 492404736,
+        "heapUsedBytes": 205366744
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 40,
+      "round": 10,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5418.75,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.986328125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 501547008,
+        "heapUsedBytes": 205373536
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 41,
+      "round": 10,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 14661.583,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 4.986328125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 420593664,
+        "heapUsedBytes": 205312232
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 42,
+      "round": 10,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5462.041,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.5478515625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 544735232,
+        "heapUsedBytes": 205370752
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 43,
+      "round": 10,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 8009,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.5478515625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 544489472,
+        "heapUsedBytes": 205317096
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 44,
+      "round": 11,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 7697.583,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.50390625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 556728320,
+        "heapUsedBytes": 205372128
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 45,
+      "round": 11,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 6607.791,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.50390625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 376356864,
+        "heapUsedBytes": 205370544
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 46,
+      "round": 11,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6367.083,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.70361328125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 452689920,
+        "heapUsedBytes": 205376304
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 47,
+      "round": 11,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5520.75,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.70361328125,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 499630080,
+        "heapUsedBytes": 205309536
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 48,
+      "round": 12,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5545.375,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.80712890625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 556089344,
+        "heapUsedBytes": 205367080
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 49,
+      "round": 12,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5767.459,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.80712890625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 556187648,
+        "heapUsedBytes": 205367920
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 50,
+      "round": 12,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 5404.25,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.982421875,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 544129024,
+        "heapUsedBytes": 205314904
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 51,
+      "round": 12,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5845.667,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.982421875,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 554172416,
+        "heapUsedBytes": 205374272
+      }
+    },
+    {
+      "role": "control-before",
+      "lane": "direct",
+      "sequence": 52,
+      "round": 13,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 5466.458,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.9833984375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 557088768,
+        "heapUsedBytes": 205371160
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "prepared",
+      "sequence": 53,
+      "round": 13,
+      "result": {
+        "lane": "prepared",
+        "nsPerCall": 6088.25,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.9833984375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 559398912,
+        "heapUsedBytes": 205372624
+      }
+    },
+    {
+      "role": "candidate",
+      "lane": "direct",
+      "sequence": 54,
+      "round": 13,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6216.792,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.9833984375,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 555368448,
+        "heapUsedBytes": 205374272
+      }
+    },
+    {
+      "role": "control-after",
+      "lane": "direct",
+      "sequence": 55,
+      "round": 13,
+      "result": {
+        "lane": "direct",
+        "nsPerCall": 6188.25,
+        "calls": 1000,
+        "warmupCalls": 12,
+        "checksum": 5000000,
+        "load": {
+          "oneMinute": 5.744140625,
+          "logicalCores": 8,
+          "threshold": 6
+        },
+        "rssBytes": 554778624,
+        "heapUsedBytes": 205372536
+      }
+    }
+  ],
+  "directDirectRatios": [
+    0.9716384214663403,
+    1.1939674502996918,
+    0.8106714880168512,
+    0.9340747877079845,
+    1.1094884201423612,
+    1.2237329756031012,
+    0.6057174199469265,
+    1.2532216643916434,
+    1.1409307445678394,
+    1.0516899202009689,
+    1.4780161476355247,
+    0.7172056475389743,
+    1.0541517931609676,
+    1.1320401620208187
+  ],
+  "preparedDirectRatios": [
+    0.9860669980349093,
+    0.8985638426261163,
+    0.8450771358326232,
+    0.8477375663699286,
+    0.8911839935631077,
+    1.0536991530392625,
+    1.034841785692455,
+    0.8697737483304326,
+    0.97547517495159,
+    0.844511123239821,
+    0.3725410141592487,
+    1.0378050670927332,
+    0.9370244331169064,
+    0.9793234195385658
+  ],
+  "abort": {
+    "kind": "load-gate",
+    "message": "one-minute load 6.32 must be strictly below 6 (logical cores 8 minus two)",
+    "load": {
+      "oneMinute": 6.32470703125,
+      "logicalCores": 8,
+      "threshold": 6
+    }
+  }
+}
