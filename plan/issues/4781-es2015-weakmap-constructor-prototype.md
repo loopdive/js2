@@ -121,5 +121,14 @@ Both lanes changed from `{"fail":1,"pass":6}` to `{"pass":7}`. The
 lanes. The focused Vitest suite passes 14/14 (target plus six controls in host
 and standalone). TypeScript, lint, formatting, and issue-integrity gates pass.
 
+Handoff: commit `45c857703` is pushed on
+`ttraenkler/js2:codex/es2015-next-bounded-fix-5`, merged with the current
+`upstream/main` tip `7edc857f1`. Upstream PR
+[#5074](https://github.com/loopdive/js2/pull/5074) targets `loopdive/js2:main`
+with the required description and checked CLA. It is currently draft while
+the initial CI run establishes green mergeability; mark it ready once those
+checks are green. Keep the final authoritative 11,704-row standalone run as
+the umbrella handoff.
+
 Do not claim the ES2015 edition complete from this one-row result; the
 umbrella's final 11,704/11,704 authoritative run remains required.
