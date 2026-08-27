@@ -34,6 +34,28 @@ function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
     : null;
 }
 
+function createRedeclaredObjectIdentityState() {
+  return {
+    redeclaredObjectIdentityDeclarations: new Set<ts.VariableDeclaration>(),
+    redeclaredObjectIdentityLiterals: new Set<ts.ObjectLiteralExpression>(),
+  };
+}
+
+function createAccessorObjectState() {
+  return {
+    externrefAccessorVars: new Set<string>(),
+    evalAccessorObjectVars: new Set<string>(),
+  };
+}
+
+function createObjectShapeAssignmentState() {
+  return {
+    objectLiteralAssignedPropertyNames: new Set<string>(),
+    objectLiteralAssignedPropertyTypes: new Map<string, ts.Type[]>(),
+    objectLiteralIndexedAssignedPropertyTypes: new Map<ts.Declaration, ts.Type[]>(),
+  };
+}
+
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
@@ -95,7 +117,6 @@ export function createCodegenContext(
     booleanPropertyNames: new Set(),
     noBrandShapeTypes: new Set(),
     fnctorReservedTypeIdx: new Map(), // #2773 S1 — up-front fnctor struct-type slots
-
     numImportFuncs: 0,
     jsStringImports: new Map(),
     currentFunc: null,
@@ -167,6 +188,7 @@ export function createCodegenContext(
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
+    usesNativeConcatHoleSubstrate: false, // (#4922) finalizer demand, narrower than general array holes
     importMetaTypeIdx: undefined, // (#2970) shared $ImportMeta struct type
     importMetaGlobals: new Map(), // (#2970) per-source-file import.meta object globals
     inModuleInitFlagReads: undefined, // (#2800) recorded __in_module_init flag reads
@@ -270,8 +292,7 @@ export function createCodegenContext(
     weakRefTypeIdx: -1,
     mapHelpers: new Map(),
     mapHelpersEmitted: false,
-    objectLiteralAssignedPropertyNames: new Set(),
-    objectLiteralAssignedPropertyTypes: new Map(),
+    ...createObjectShapeAssignmentState(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
     anyHelpers: new Map(),
@@ -305,8 +326,9 @@ export function createCodegenContext(
     irWithOpenObjectTargetKeys: new Set(),
     ordinaryToPrimitiveObjectDeclarations: new Set(),
     ordinaryToPrimitiveObjectLiterals: new Set(),
+    ...createRedeclaredObjectIdentityState(),
     hostSpreadObjectGlobals: new Set(),
-    externrefAccessorVars: new Set(),
+    ...createAccessorObjectState(),
     pendingMathMethods: new Set(),
     pendingMethodTrampolines: [],
     needsToUint32: false,

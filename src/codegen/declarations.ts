@@ -40,6 +40,7 @@ import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"
 import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
+import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -53,6 +54,7 @@ import {
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
 import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
+import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -121,6 +123,7 @@ import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.j
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
 import { compileExpression, compileStatement } from "./shared.js";
+import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-planning.js";
@@ -1042,6 +1045,15 @@ function lowerParamType(
   const isScalar =
     wasmType.kind === "i32" || wasmType.kind === "i64" || wasmType.kind === "f32" || wasmType.kind === "f64";
   if (hasReferenceReassignment && (isAnonymousReference || isScalar)) {
+    wasmType = { kind: "externref" };
+  }
+  // A formal named `arguments` shadows the function's implicit arguments
+  // binding. It is still an ordinary JavaScript parameter, so an omitted
+  // actual must arrive as `undefined` rather than the scalar/ref zero used by
+  // the native ABI defaults. Keep this boundary dynamic (unless an explicit
+  // native annotation deliberately opts into a Wasm-only representation) so
+  // `function f(arguments) { return arguments; } f()` observes undefined.
+  if (param.name.getText(sourceFile) === "arguments" && nativeParam === null) {
     wasmType = { kind: "externref" };
   }
   // Runtime eval publishes top-level script functions through an externref
@@ -2021,12 +2033,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
         const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+        const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
         const inferredNumericRet = withScopedReturn
           ? null
           : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
         if (inferredNumericRet) {
           results = [inferredNumericRet];
-        } else if (withScopedReturn) {
+        } else if (withScopedReturn || preInitVarReturn) {
           // See `functionReturnsThroughWithScope`: the checker resolved the
           // returned name against the SHADOWED outer binding, so the inferred
           // type describes the wrong value. Carry it as `any`.
@@ -2426,6 +2439,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
+    if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return true;
     // (#4707/#4754) `new Proxy` returns an externref carrier even though
     // TypeScript gives it the target's structural type. Keep a member-only
     // module binding dynamic, but preserve the structural slot when that exact
@@ -2536,8 +2550,23 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    // A source-file `var` is initialized to `undefined` before its initializer
+    // runs. When that value is actually observed, a checker-inferred primitive
+    // slot would expose the Wasm zero value instead (`false`, `0`, or an empty
+    // reference). Widen only the binding-identity-proven pre-init cases; the
+    // broader local-slot predicate also covers shapes that are unsafe to widen
+    // at module scope (see the Array.prototype.filter guard below).
+    if (moduleVarDirectPreInitValueIsObserved(ctx, decl)) return { kind: "externref" };
     const nativeGeneratorType = nativeGeneratorBindingType(ctx, decl.initializer);
     if (nativeGeneratorType) return nativeGeneratorType;
+    // (#ES5 filter residual) A typed numeric filter can observe an inherited
+    // accessor whose Get result is not numeric.  The filter lowering keeps the
+    // callback's f64 ABI but widens its result vec to externref so that value
+    // survives the module-global store.  Keep the receiving binding on the
+    // same dynamic carrier; otherwise the checker-inferred number[] slot
+    // immediately coerces the heterogeneous result back to f64 ("prototype"
+    // becomes NaN) before the next read.
+    if (filterResultNeedsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
     // (#4222 ES5 residual) The bounded sized-Array carrier is a nominal
     // subtype of the ordinary externref vec.  Module globals need the same
     // concrete slot as function-local bindings; otherwise the initializer can
@@ -2558,6 +2587,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // fnctor-instance-object-slot.ts for why agreement is a correctness
     // requirement rather than an optimization.
     if (variableSlotHoldsReconstructedFnctorInstance(ctx, decl)) {
+      return { kind: "externref" };
+    }
+    // (#4249) A constant direct-eval accessor assignment is parsed into a
+    // foreign SourceFile, so its object literal cannot tag the receiving
+    // declaration through the normal initializer walk. The pre-pass records
+    // that binding in externrefAccessorVars before module globals are typed;
+    // converge the global slot with the eval literal's host-object
+    // representation here, otherwise a later `o.foo` read is compiled as a
+    // closed-struct field load and bypasses the installed accessor descriptor.
+    if (ts.isIdentifier(decl.name) && ctx.evalAccessorObjectVars.has(decl.name.text)) {
       return { kind: "externref" };
     }
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {

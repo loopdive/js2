@@ -3,6 +3,7 @@
 import { irGlobalBindingKey } from "../ir/abi-bindings.js";
 import { irCallableBindingKey, irSupportFuncRef, irUnitCallableBindingId } from "../ir/callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrClassId, type IrSourceId, type IrUnitId } from "../ir/identity.js";
+import type { IrProgramCallableBindingRecord } from "../ir/program-callable-bindings.js";
 import type { IrFuncRef, IrGlobalRef } from "../ir/nodes.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, GlobalDef, WasmFunction } from "../ir/types.js";
@@ -12,6 +13,7 @@ import {
   canonicalProgramAbiCallableTypeContract,
   canonicalProgramAbiValType,
   cloneProgramAbiCallableTypeContract,
+  programAbiCallableSignaturesEqual,
 } from "./program-abi-signatures.js";
 
 export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
@@ -51,6 +53,10 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   stdlibMathHelper: 18,
   /** (#3521) Source/unit-qualified fnctor constructor support callable. */
   fnctorConstructor: 19,
+  /** M1A internal import aliases; these never allocate a function slot. */
+  moduleImportAlias: 20,
+  /** M1A internal export/re-export aliases; these never allocate a function slot. */
+  moduleExportAlias: 21,
 } as const);
 
 /**
@@ -114,6 +120,15 @@ export interface ProgramAbiSupportCallablePlan extends ProgramAbiSupportCallable
 export interface ProgramAbiSupportCallableAliasPlan extends ProgramAbiSupportCallablePlanBase {
   readonly derivedOrdinal: number;
   readonly aliasOf: IrBindingId;
+}
+
+export interface ProgramAbiModuleCallableAliasPlan {
+  /** Exact immutable graph record being materialized in the Program ABI. */
+  readonly record: IrProgramCallableBindingRecord;
+  /** Binding ID of the next exact alias/source target in the graph chain. */
+  readonly aliasOf: IrBindingId;
+  /** Allocator-owned callable signature of the canonical source unit. */
+  readonly signature: FuncTypeDef;
 }
 
 export interface ProgramAbiFunctionValuePlan {
@@ -435,6 +450,151 @@ export function planProgramAbiSupportCallableAlias(
       signature: canonicalProgramAbiCallableTypeContract(typeContract),
     },
   });
+  session.registerCallableTypeContract(bindingId, typeContract);
+  session.registerStructuralReference(bindingId, structuralReferenceKey);
+  return bindingId;
+}
+
+function moduleCallableAliasStructuralReferenceKey(
+  record: IrProgramCallableBindingRecord,
+  aliasOf: IrBindingId,
+): string {
+  return JSON.stringify([
+    "module-callable-alias",
+    record.kind,
+    record.sourceId,
+    record.declarationOrdinal,
+    record.bindingOrdinal,
+    record.bindingId,
+    aliasOf,
+    record.canonicalBindingId,
+    record.targetUnitId,
+  ]);
+}
+
+/**
+ * Materialize one internal module import/export alias as a non-allocating
+ * callable ABI entry. Public exports, host imports, and compiler support use
+ * different provenance families and must never be substituted here.
+ */
+export function planProgramAbiModuleCallableAlias(
+  ctx: CodegenContext,
+  plan: ProgramAbiModuleCallableAliasPlan,
+): IrBindingId | undefined {
+  const session = ctx.programAbiSession;
+  if (!session) return undefined;
+  const { record, aliasOf } = plan;
+  if (record.kind === "source") {
+    throw new ProgramAbiInvariantError(
+      "invalid-callable-provenance",
+      "module callable alias planning requires an import- or export-alias graph record",
+    );
+  }
+  if (
+    !Number.isSafeInteger(record.declarationOrdinal) ||
+    record.declarationOrdinal < 0 ||
+    !Number.isSafeInteger(record.bindingOrdinal) ||
+    record.bindingOrdinal < 0 ||
+    record.sourceId.length === 0 ||
+    record.localName.length === 0 ||
+    record.targetUnitId.length === 0 ||
+    record.canonicalBindingId !== irUnitCallableBindingId(record.targetUnitId) ||
+    aliasOf !== record.targetBindingId
+  ) {
+    throw new ProgramAbiInvariantError(
+      "invalid-binding-reference",
+      `module callable alias ${record.bindingId} has an incomplete structural graph contract`,
+    );
+  }
+  const role = record.kind === "import-alias" ? "module-import-callable" : "module-export-callable";
+  const roleOrdinal =
+    record.kind === "import-alias"
+      ? PROGRAM_ABI_CALLABLE_ROLE.moduleImportAlias
+      : PROGRAM_ABI_CALLABLE_ROLE.moduleExportAlias;
+  const expectedBindingId = createIrBindingId({
+    ownerId: record.sourceId,
+    domain: "callable",
+    role,
+    ordinal: record.bindingOrdinal,
+  });
+  if (record.bindingId !== expectedBindingId) {
+    throw new ProgramAbiInvariantError(
+      "invalid-binding-reference",
+      `module callable alias ${record.bindingId} is not the canonical ${role} identity for ${record.sourceId}`,
+    );
+  }
+  if (!session.hasKnownUnit(record.targetUnitId)) {
+    throw new ProgramAbiInvariantError(
+      "unknown-inventory-unit",
+      `module callable alias ${record.bindingId} targets unknown source unit ${record.targetUnitId}`,
+    );
+  }
+  if (aliasOf === record.bindingId) {
+    throw new ProgramAbiInvariantError("alias-cycle", `module callable alias ${record.bindingId} targets itself`);
+  }
+  const target = session.getDraft(aliasOf);
+  if (!target) {
+    throw new ProgramAbiInvariantError(
+      "missing-alias-target",
+      `module callable alias ${record.bindingId} targets unplanned binding ${aliasOf}`,
+    );
+  }
+  if (target.intent.kind !== "callable") {
+    throw new ProgramAbiInvariantError(
+      "alias-intent-kind-mismatch",
+      `module callable alias ${record.bindingId} targets non-callable binding ${aliasOf}`,
+    );
+  }
+  if (
+    target.intent.origin === "support" ||
+    target.intent.origin === "import" ||
+    target.intent.origin === "runtime" ||
+    target.intent.origin === "intrinsic" ||
+    (target.intent.origin === "source" && target.intent.unitId !== record.targetUnitId) ||
+    (target.intent.origin === "module-alias" && target.intent.targetUnitId !== record.targetUnitId)
+  ) {
+    throw new ProgramAbiInvariantError(
+      "invalid-callable-provenance",
+      `module callable alias ${record.bindingId} does not target canonical source unit ${record.targetUnitId}`,
+    );
+  }
+  const typeContract = cloneProgramAbiCallableTypeContract(plan.signature);
+  if (
+    !programAbiCallableSignaturesEqual(target.intent.signature, canonicalProgramAbiCallableTypeContract(typeContract))
+  ) {
+    throw new ProgramAbiInvariantError(
+      "alias-signature-mismatch",
+      `module callable alias ${record.bindingId} disagrees with target ${aliasOf}`,
+    );
+  }
+  const bindingId = record.bindingId;
+  const structuralReferenceKey = moduleCallableAliasStructuralReferenceKey(record, aliasOf);
+  session.ensurePlan({
+    id: bindingId,
+    structuralOrder: session.structuralOrder.forSource(record.sourceId, {
+      domain: "callable",
+      roleOrdinal,
+      derivedOrdinal: record.bindingOrdinal,
+    }),
+    structuralReferenceKey,
+    displayName: record.localName,
+    slotPolicy: "alias",
+    aliasOf,
+    intent: {
+      kind: "callable",
+      origin: "module-alias",
+      sourceId: record.sourceId,
+      aliasKind: record.kind,
+      targetUnitId: record.targetUnitId,
+      signature: canonicalProgramAbiCallableTypeContract(typeContract),
+    },
+  });
+  if (session.hasLocator(bindingId)) {
+    throw new ProgramAbiInvariantError(
+      "locator-not-required",
+      `module callable alias ${bindingId} unexpectedly owns an allocator locator`,
+    );
+  }
   session.registerCallableTypeContract(bindingId, typeContract);
   session.registerStructuralReference(bindingId, structuralReferenceKey);
   return bindingId;

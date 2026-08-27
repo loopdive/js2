@@ -5,7 +5,7 @@ status: done
 completed: 2026-08-23
 sprint: current
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-25
 priority: high
 horizon: m
 feasibility: medium
@@ -19,19 +19,28 @@ related: [4491, 4504, 4515, 4641, 4643]
 origin: "wave-5 lead sweep (2026-08-23) on campaign HEAD c9990a7d2+, fresh compiler bundle + eval adapter. All 12 rows re-verified failing; no existing issue covers this directory."
 assignee: dev-4653
 loc-budget-allow:
+  - src/codegen/binary-ops.ts
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
   - src/codegen/declarations.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/object-runtime-enumeration.ts
 func-budget-allow:
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/closures.ts::computeClosureWrapperSig
+  - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/declarations.ts::lowerParamType
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
 ---
 
 # #4653 — `language/statements/function` residual (12 rows)
 
-> **Outcome: 3 of the 12 rows fixed, 9 documented as residuals with measured
+> **Outcome: 5 of the 12 rows fixed, 7 documented as residuals with measured
 > roots and owners.** `status: done` records that the issue's acceptance bar —
 > triage, before/after sweep, per-file flips, zero regressions, pins, residual
-> attribution — is met; it does NOT mean all twelve rows pass. The nine open
+> attribution — is met; it does NOT mean all twelve rows pass. The seven open
 > rows and their roots are in `## Residuals`, and the twelve rows turned out to
 > be **eleven distinct roots**, so they do not belong under one issue. Anyone
 > picking one up should start from that section, not from the row table.
@@ -117,8 +126,8 @@ isolation.
 | **W1** `with (arguments)` | `S13.2.2_A18_T1`, `_T2` | `arguments.callee` is a compile-time property-access arm, not an own property of the backing vec, so the dynamic `with` HasBinding gate misses it | residual — vec representation |
 | **W2** re-declared `with` target | `S13.2.2_A19_T8` | two `with` blocks over one re-declared `var` share a target proof keyed off the FIRST initializer's key set | residual |
 | **W3** `with` + var-hoisted fn | `S13.2.2_A17_T3` | null-pointer trap in `__module_init` | residual |
-| **V** omitted reference-typed arg | `S13_A15_T3` | an omitted argument for a `(ref null T)` parameter is `ref.null T`, i.e. JS `null`, not `undefined` | residual — value-rep |
-| **P** binary `+` | `S13_A2_T2` | `number + <dynamic>` folded to an f64 add | residual |
+| **V** omitted reference-typed arg | `S13_A15_T3` | an omitted argument for a `(ref null T)` parameter is `ref.null T`, i.e. JS `null`, not `undefined` | **FIXED** |
+| **P** binary `+` | `S13_A2_T2` | `number + <dynamic>` folded to an f64 add | **FIXED** |
 | **C** non-callable call | `S13.2.2_A2` | calling a non-callable object does not throw at all | residual |
 | **R** `Function(p, body)` | `S13.2.2_A8_T3` | `++`/`--` inside eval'd/minted code throws for any name bound in a FUNCTION variable environment (the parameter IS bound; reads and `x = x + 1` work) | residual — **#4662** |
 | **M** `fun.prototype` own-ness | `13.2-18-1` | a function EXPRESSION has no own `prototype` under the live descriptor MOP | residual — **#4491** |
@@ -191,6 +200,26 @@ Only the receiving slot was wrong: `moduleGlobalWasmType` typed
 `var __1 = __func()` from the checker's `number`, giving `(mut f64)`, and the
 string result coerced to `NaN` on BOTH reads.
 
+### V — omitted actuals must carry JavaScript `undefined`
+
+`S13_A15_T3` uses a formal named `arguments`, which shadows the implicit
+`arguments` object and is still an ordinary JavaScript parameter. The native
+ABI previously allowed the checker to select a nullable reference type and
+filled a missing actual with `ref.null`, exposing `null` to JavaScript. The
+formal boundary now stays `externref` for this unannotated spelling, so the
+call adapter supplies the canonical `undefined` singleton while supplied
+values remain unchanged.
+
+### P — binary `+` must observe the raw surplus argument
+
+The `S13_A2_T2` IIFE observes `arguments[1]`, whose runtime value is the string
+`"1"`, while TypeScript infers the named parameter `arg` as numeric. The
+numeric fast path therefore applied ToNumber before the operator could apply
+ToPrimitive. Function expressions that need their implicit arguments object now
+use the ordinary closure activation (preserving argc and extras), widen
+unannotated scalar parameters at that boundary, and route `+` through the
+dynamic ToPrimitive path when it reads one of those bindings.
+
 ## Fix
 
 | file | change |
@@ -200,6 +229,11 @@ string result coerced to `NaN` on BOTH reads.
 | `src/codegen/fnctor-escape-gate.ts` | both recognisers consult it; net −16 LOC (the relocation is larger than the addition) |
 | `src/codegen/duplicate-function-declaration.ts` (new) | `callTargetIsRedeclaredFunction`, via `ctx.oracle.declarationsOf` |
 | `src/codegen/declarations.ts` | `moduleGlobalWasmType` widens a call-initialized global to `externref` when the callee has ≥2 body-bearing declarations — the sibling of the existing purely-void-call arm |
+| `src/codegen/closures.ts` | preserves raw call-site values for unannotated scalar parameters of functions that observe their implicit `arguments` object, and records those bindings for dynamic operators |
+| `src/codegen/context/types.ts` | carries the raw-arguments binding set through the function context |
+| `src/codegen/declarations.ts` | keeps an unannotated formal named `arguments` on an `externref` boundary so omitted actuals remain `undefined` |
+| `src/codegen/expressions/call-tail-dispatch.ts` | routes arguments-observing function-expression IIFEs through a real closure activation instead of the inline path |
+| `src/codegen/binary-ops.ts` | uses the dynamic `+` lowering when an operand is a raw arguments-observing binding |
 
 **Why F's admission is narrow.** A wrong claim there is a miscompile; a decline
 only forfeits today's behaviour. Admitted: a non-exported `var` with no
@@ -327,9 +361,28 @@ reporter. This suite is unaffected in practice — it declares zero `.skip` /
 infrastructure failure, not from an intended skip — but the reporter choice is a
 precondition for the tier-1 rule's diagnostic half, not just for its verdict.
 
+**2026-08-25 scope/error-cluster follow-up.** The authoritative 131-row
+standalone census used the pinned QuickJS artifact and `COMPILER_POOL_SIZE=1`.
+Compared path-for-path with
+`benchmarks/results/test262-standalone-results-20260825-144627.jsonl` (81/131
+passing), the candidate report
+`benchmarks/results/test262-standalone-results-20260825-164800.jsonl` is
+**83/131 passing**, with 47 semantic failures and 1 compile error. The only
+changes are these two fail→pass flips, with zero pass→fail losses:
+
+| row | base | candidate |
+| --- | --- | --- |
+| `language/statements/function/S13_A2_T2.js` | fail | **pass** |
+| `language/statements/function/S13_A15_T3.js` | fail | **pass** |
+
+The QuickJS adapter compiled and validated successfully. The focused pins in
+`tests/issue-4653.test.ts` now execute the exact named-`arguments` formal and
+arguments-observing IIFE shapes as positive tests; the seven original rows
+listed as residuals below remain `it.fails` with their measured owners.
+
 ## Residuals
 
-Nine rows remain, each with a measured root and an owner. None is a guess.
+Seven rows remain, each with a measured root and an owner. None is a guess.
 
 - **W1 `with (arguments)`** (`S13.2.2_A18_T1`, `_T2`) — `arguments.callee` is
   synthesized by a compile-time property-access arm; it is not an own property of
@@ -353,19 +406,14 @@ Nine rows remain, each with a measured root and an owner. None is a guess.
   name traps with `dereferencing a null pointer in __module_init`. Reproduced in a
   reduced probe. Trap-first: this is an invalid access, not a wrong answer, and I
   did not attempt a fix I could not verify end-to-end within this lane.
-- **V omitted reference-typed argument** (`S13_A15_T3`) — the row's
-  `arguments`-named parameter is INCIDENTAL. Measured: `function pass(q){return q}`
-  called with zero arguments answers `undefined` when that is the only call site,
-  and answers **`null`** (`typeof "object"`, `v === null` true) as soon as one
-  other call site passes a string, because the parameter's wasm type becomes a
-  nullable reference and the padding is `ref.null <typeidx>`. Value-representation
-  territory (#4641's lane); the fix is to widen the parameter, not to patch the
-  pad.
-- **P binary `+`** (`S13_A2_T2`) — also not what the issue file predicted. The
-  named-function-expression scope check (CHECK#2) PASSES; `arguments[1]` on its
-  own IS the string `"1"` and `typeof arguments[1]` IS `"string"`. Only
-  `arg + arguments[1]` folded to an f64 add because the left operand is provably
-  numeric and the right one is dynamic.
+- **V omitted reference-typed argument** (`S13_A15_T3`) — **FIXED by this
+  follow-up**. The row's `arguments`-named formal now uses an `externref`
+  boundary, so an omitted actual is the canonical JavaScript `undefined` while
+  a supplied string remains a string. The focused pin exercises both calls.
+- **P binary `+`** (`S13_A2_T2`) — **FIXED by this follow-up**. The named
+  function-expression scope check remains correct, `arguments[1]` remains the
+  string `"1"`, and the arguments-observing IIFE now takes the closure path and
+  reaches dynamic `+` rather than applying an eager numeric add.
 - **C non-callable call** (`S13.2.2_A2`) — `rose()` does not throw at all; it
   evaluates to `undefined`. That is why the row reports `[object Object]`: the
   test's own `throw new Test262Error(…)` then runs inside the `try` and is caught

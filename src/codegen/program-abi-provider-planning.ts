@@ -10,6 +10,12 @@ import { programAbiIntentsEqual } from "./program-abi-intent-equality.js";
 import type { ProgramAbiCallableImportRegistry } from "./program-abi-import-planning.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import type { CodegenContext } from "./context/types.js";
+import type {
+  PreparedProgramAbiDescriptorLifecycle,
+  PreparedProgramAbiDescriptorPart,
+  PreparedProgramAbiMapWrite,
+  PreparedProgramAbiProvisionalBinding,
+} from "./program-abi-prepared-transaction.js";
 import type { ProgramAbiDraft, ProgramAbiSession, ProgramAbiSlotLocator } from "./program-abi-session.js";
 import {
   canonicalProgramAbiCallableTypeContract,
@@ -65,16 +71,18 @@ interface PreparedCallableProviderEntry extends PreparedCallableProviderDenomina
 
 interface PreparedCallableProviderDescriptorPayload {
   readonly registry: ProgramAbiCallableProviderRegistry;
+  readonly lifecycle: PreparedProgramAbiDescriptorLifecycle;
   readonly observationOrder: readonly string[] | undefined;
   readonly appendedOrder: readonly string[];
   readonly denominator: readonly PreparedCallableProviderDenominatorEntry[];
   readonly selected: readonly PreparedCallableProviderEntry[];
+  readonly requestedKeys: readonly string[];
   readonly returnKeys: readonly string[];
   readonly importDescriptor: PreparedCallableImportDescriptor | undefined;
 }
 
 /** Opaque registry-authenticated token; its payload never crosses this module. */
-interface PreparedCallableProviderDescriptor {
+export interface PreparedCallableProviderDescriptor {
   readonly kind: "prepared-callable-provider-descriptor";
 }
 
@@ -229,7 +237,7 @@ function draftStructuralOrderOwner(session: ProgramAbiSession, draft: ProgramAbi
  */
 export class ProgramAbiCallableProviderRegistry {
   private readonly observed = new Map<string, ObservedProvider>();
-  private observationOrder: readonly string[] | undefined;
+  private readonly preparedPublication = new Map<"observationOrder", readonly string[]>();
   /**
    * (#4514) Provider keys first observed AFTER `sealObservationOrder`, in
    * discovery order. They extend the sealed order at the tail, so no already
@@ -238,6 +246,15 @@ export class ProgramAbiCallableProviderRegistry {
   private readonly appendedOrder: string[] = [];
   private readonly plannedByKey = new Map<string, IrBindingId>();
   private plannedValue: ReadonlyMap<string, IrBindingId> | undefined;
+
+  private get observationOrder(): readonly string[] | undefined {
+    return this.preparedPublication.get("observationOrder");
+  }
+
+  private set observationOrder(order: readonly string[] | undefined) {
+    if (order === undefined) this.preparedPublication.delete("observationOrder");
+    else this.preparedPublication.set("observationOrder", order);
+  }
 
   constructor(
     readonly session: ProgramAbiSession,
@@ -402,10 +419,14 @@ export class ProgramAbiCallableProviderRegistry {
       descriptor,
       Object.freeze({
         registry: this,
+        lifecycle: Object.freeze({
+          state: new Map<"state" | "scopeId", string>([["state", "fresh"]]),
+        }),
         observationOrder,
         appendedOrder,
         denominator,
         selected,
+        requestedKeys,
         returnKeys: Object.freeze(returnKeys),
         importDescriptor: exactImportDescriptor,
       }),
@@ -463,9 +484,21 @@ export class ProgramAbiCallableProviderRegistry {
     payload.selected.forEach((expected, index) => this.assertSameSelectedEntry(expected, actual[index]!));
   }
 
-  publishPreparedDescriptor(descriptor: PreparedCallableProviderDescriptor): ReadonlyMap<string, IrBindingId> {
-    this.assertPreparedDescriptorCurrent(descriptor);
+  /**
+   * Return the exact allocator identities authenticated by one still-current
+   * prepared descriptor. Export-alias preparation uses these objects before
+   * the provider locator rows have crossed the atomic publication boundary.
+   */
+  preparedDescriptorAllocatorObjects(descriptor: PreparedCallableProviderDescriptor): ReadonlySet<object> {
     const payload = this.requirePreparedDescriptor(descriptor);
+    this.assertPreparedDescriptorCurrent(descriptor);
+    return new Set(payload.selected.map(({ provider }) => provider.locator.value));
+  }
+
+  publishPreparedDescriptor(descriptor: PreparedCallableProviderDescriptor): ReadonlyMap<string, IrBindingId> {
+    const payload = this.requirePreparedDescriptor(descriptor);
+    assertProviderDescriptorFresh(payload.lifecycle);
+    this.assertPreparedDescriptorCurrent(descriptor);
     for (const entry of payload.selected) {
       if (
         entry.ownerKind === "provisional-import" &&
@@ -824,6 +857,86 @@ export class ProgramAbiCallableProviderRegistry {
     return entry.bindingId;
   }
 
+  /** Build one scope-authenticated provider write set without publishing it. */
+  prepareDescriptorForScope(
+    descriptor: PreparedCallableProviderDescriptor,
+    session: ProgramAbiSession,
+    scopeId: string,
+  ): PreparedProgramAbiDescriptorPart {
+    const payload = this.requirePreparedDescriptor(descriptor);
+    if (session !== this.session || scopeId.length === 0) {
+      throw providerError("prepared callable-provider descriptor targets a foreign session or empty scope");
+    }
+    assertProviderDescriptorFresh(payload.lifecycle);
+    payload.lifecycle.state.set("scopeId", scopeId);
+    payload.lifecycle.state.set("state", "claimed");
+    try {
+      this.assertPreparedDescriptorCurrent(descriptor);
+      const bindings = Object.freeze(
+        payload.selected.map(
+          (entry): PreparedProgramAbiProvisionalBinding =>
+            Object.freeze({
+              draft: entry.draft,
+              structuralReferenceKey: entry.provider.structuralReferenceKey,
+              ...(entry.ownsLocator ? { locator: entry.provider.locator as ProgramAbiSlotLocator } : {}),
+              callableTypeContract: entry.typeContract,
+            }),
+        ),
+      );
+      const registryWrites: PreparedProgramAbiMapWrite[] = [];
+      if (this.observationOrder === undefined) {
+        registryWrites.push(
+          Object.freeze({
+            target: this.preparedPublication as Map<unknown, unknown>,
+            key: "observationOrder",
+            value: Object.freeze(payload.denominator.map(({ provider }) => provider.structuralReferenceKey)),
+          }),
+        );
+      }
+      for (const entry of payload.selected) {
+        if (entry.planned !== undefined) continue;
+        registryWrites.push(
+          Object.freeze({
+            target: this.plannedByKey as Map<unknown, unknown>,
+            key: entry.provider.structuralReferenceKey,
+            value: entry.bindingId,
+          }),
+        );
+      }
+      const requested = Object.freeze([...payload.requestedKeys]);
+      const requestedSet = new Set(requested);
+      const requiredImportBindingIds = Object.freeze([
+        ...new Set(
+          payload.selected
+            .filter(({ ownerKind }) => ownerKind === "provisional-import")
+            .map(({ canonicalOwner }) => canonicalOwner),
+        ),
+      ]);
+      const closure = Object.freeze(
+        payload.selected.map((entry) => entry.provider.structuralReferenceKey).filter((key) => !requestedSet.has(key)),
+      );
+      return Object.freeze({
+        kind: "callable-providers" as const,
+        session,
+        descriptor,
+        lifecycle: payload.lifecycle,
+        bindings,
+        requestedStructuralReferenceKeys: requested,
+        closureStructuralReferenceKeys: closure,
+        ...(payload.importDescriptor === undefined ? {} : { requiredImportDescriptor: payload.importDescriptor }),
+        ...(requiredImportBindingIds.length === 0 ? {} : { requiredImportBindingIds }),
+        registryWrites: Object.freeze(registryWrites),
+        assertCurrent: () => {
+          assertProviderDescriptorClaimed(payload.lifecycle, scopeId);
+          this.assertPreparedDescriptorCurrent(descriptor);
+        },
+      });
+    } catch (error) {
+      payload.lifecycle.state.set("state", "consumed");
+      throw error;
+    }
+  }
+
   /**
    * The sealed prefix, plus (#4514) every key discovered after sealing in
    * discovery order. The prefix is sorted once and never re-sorted, so a
@@ -881,4 +994,43 @@ export class ProgramAbiCallableProviderRegistry {
     }
     return ref.binding;
   }
+}
+
+function providerDescriptorState(lifecycle: PreparedProgramAbiDescriptorLifecycle): string | undefined {
+  return lifecycle.state.get("state");
+}
+
+function assertProviderDescriptorFresh(lifecycle: PreparedProgramAbiDescriptorLifecycle): void {
+  if (providerDescriptorState(lifecycle) !== "fresh" || lifecycle.state.has("scopeId")) {
+    throw providerError("prepared callable-provider descriptor is not fresh");
+  }
+}
+
+function assertProviderDescriptorClaimed(lifecycle: PreparedProgramAbiDescriptorLifecycle, scopeId: string): void {
+  if (providerDescriptorState(lifecycle) !== "claimed" || lifecycle.state.get("scopeId") !== scopeId) {
+    throw providerError(`prepared callable-provider descriptor is not claimed by exact scope ${scopeId}`);
+  }
+}
+
+export function prepareCallableProviderDescriptorForScope(
+  descriptor: PreparedCallableProviderDescriptor,
+  session: ProgramAbiSession,
+  scopeId: string,
+): PreparedProgramAbiDescriptorPart {
+  const payload = preparedCallableProviderDescriptors.get(descriptor);
+  if (!payload) throw providerError("prepared callable-provider descriptor is forged");
+  return payload.registry.prepareDescriptorForScope(descriptor, session, scopeId);
+}
+
+export function consumePreparedCallableProviderDescriptor(
+  descriptor: PreparedCallableProviderDescriptor,
+  session: ProgramAbiSession,
+  scopeId: string,
+): void {
+  const payload = preparedCallableProviderDescriptors.get(descriptor);
+  if (!payload || payload.registry.session !== session) {
+    throw providerError("prepared callable-provider descriptor is forged or belongs to another session");
+  }
+  assertProviderDescriptorClaimed(payload.lifecycle, scopeId);
+  payload.lifecycle.state.set("state", "consumed");
 }

@@ -27,6 +27,7 @@
 // `JS2WASM_EVAL_ENGINE=interpreter` with the REFUSAL provider).
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 
 /**
  * Compile `pre` at MODULE scope plus `return <expr>` as the `test()` export and
@@ -45,6 +46,31 @@ async function runModule(pre: string, expr: string): Promise<number> {
   // Host-free: a standalone module must instantiate against an empty import
   // object. If this ever needs a bridge, an arm leaked a host import.
   const { instance } = await WebAssembly.instantiate(result.binary, {});
+  const exports = instance.exports as Record<string, () => number>;
+  if (typeof exports.__module_init === "function") exports.__module_init();
+  return exports.test!();
+}
+
+/**
+ * Run a module through the test262 runtime-eval provider when the exact
+ * assertion reads the bare `Function` intrinsic. The provider is required for
+ * identity with that realm-owned value; no dynamic source evaluation is used.
+ */
+async function runLinkedModule(pre: string, expr: string): Promise<number> {
+  const source = `${pre}\nexport function test() { return ${expr}; }`;
+  const result = await compile(source, {
+    allowJs: true,
+    fileName: "issue-4637-linked.js",
+    skipSemanticDiagnostics: true,
+    target: "standalone",
+    deferTopLevelInit: true,
+  });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+  const instance = await instantiateTest262Module(
+    result.binary,
+    {},
+    { target: "standalone", providerLabel: "issue-4637" },
+  );
   const exports = instance.exports as Record<string, () => number>;
   if (typeof exports.__module_init === "function") exports.__module_init();
   return exports.test!();
@@ -357,10 +383,10 @@ describe("#4637 A4 — a function's `prototype` is an OWN property (§20.2.4.2)"
 });
 
 describe("#4637 — measured residuals (see the issue's Residuals table for owners)", () => {
-  it.fails("new Object(<Date>) keeps the receiver's method dispatch (S15.2.2.1_A2_T5)", async () => {
-    // Identity holds; the checker types the expression `Object`, so
-    // `n_obj.getFullYear` does not dispatch. Needs `Object(x)`'s STATIC type to
-    // follow the argument — outside this issue's proto-representation scope.
+  it("new Object(<Date>) keeps the receiver's method dispatch (S15.2.2.1_A2_T5)", async () => {
+    // ToObject returns an object argument unchanged. The native Date method
+    // arm must therefore see the preserved Date receiver despite TypeScript's
+    // broad `Object` type for the constructor expression.
     expect(
       await runModule(
         `var obj = new Date(1978, 3);
@@ -370,13 +396,24 @@ describe("#4637 — measured residuals (see the issue's Residuals table for owne
     ).toBe(1);
   });
 
-  it.fails("a function value's `.constructor` is %Function% (S15.2.1.1_A2_T11 / _A2_T7)", async () => {
-    // Needs `%Function.prototype%` materialized as a real chain object with its
-    // §20.2.3 own properties; the standalone `%Function.prototype%` `$Object`
-    // singleton is currently EMPTY (`array-object-proto.ts`).
+  it("a function value's `.constructor` is %Function% (S15.2.1.1_A2_T11 / _A2_T7)", async () => {
     expect(
-      await runModule(`var n_obj = Object(function func(){ return 1; });`, `n_obj.constructor === Function ? 1 : 0`),
-    ).toBe(1);
+      await runLinkedModule(
+        `var call_obj = Object(function call_func(){ return 1; });
+         var new_obj = new Object(function new_func(){ return 2; });`,
+        `(call_obj.constructor === Function ? 1 : 0) + (new_obj.constructor === Function ? 2 : 0)`,
+      ),
+    ).toBe(3);
+  });
+
+  it("keeps ordinary and primitive Object results on their existing constructor paths", async () => {
+    expect(
+      await runModule(
+        `var plain_obj = new Object({});
+         var number_obj = Object(42);`,
+        `(plain_obj.constructor === Object ? 1 : 0) + (number_obj.constructor === Number ? 2 : 0)`,
+      ),
+    ).toBe(3);
   });
 
   it.fails("obj.call resolves through a %Function.prototype% prototype (S15.3.4.4_A1_T2)", async () => {
@@ -391,7 +428,7 @@ describe("#4637 — measured residuals (see the issue's Residuals table for owne
     ).toBe(1);
   });
 
-  it.fails("an `undefined`-initialized var can hold an object (preventExtensions/15.2.3.10-2)", async () => {
+  it("an `undefined`-initialized var can hold an object (preventExtensions/15.2.3.10-2)", async () => {
     // NOT a `preventExtensions` bug: `Object.preventExtensions(o) === o` holds
     // and `var b; b = Object.preventExtensions(o)` works. `var a = undefined`
     // types the SLOT from the initializer, so the later object write is lost.

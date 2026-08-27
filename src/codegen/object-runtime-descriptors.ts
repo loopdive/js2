@@ -50,6 +50,67 @@ import {
 // #3537 bag ∪ the #3251 overlay companion.
 import { reserveVecPropsKeySource, vecPropertiesKeySourceArm } from "./vec-props-key-source.js";
 import { protoIndexOwnViewSubstituteInstrs } from "./proto-index-store.js"; // (#2175 P2) own-view companion substitution
+import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js";
+
+function closurePrototypeDescriptorArm(
+  ctx: CodegenContext,
+  closureProtoOfIdx: number,
+  anyStrTypeIdx: number,
+  strFlattenIdx: number,
+  strEqualsIdx: number,
+  newPlainObjectIdx: number,
+  fnProtoLocal: number,
+  descriptorLocal: number,
+  setKey: (name: string, value: Instr[]) => Instr[],
+  boxBoolConst: (value: number) => Instr[],
+): Instr[] {
+  // Ordinary function objects own `prototype` as a data property
+  // `{writable:true, enumerable:false, configurable:false}`. The
+  // value→prototype edge is identity-based and returns null for arrows,
+  // builtins, and functions without a registered prototype.
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+        { op: "call", funcIdx: strFlattenIdx },
+        ...nativeStringLiteralInstrs(ctx, "prototype"),
+        { op: "call", funcIdx: strEqualsIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: closureProtoOfIdx },
+            { op: "local.tee", index: fnProtoLocal },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "call", funcIdx: newPlainObjectIdx },
+                { op: "local.set", index: descriptorLocal },
+                ...setKey("value", [{ op: "local.get", index: fnProtoLocal }]),
+                ...setKey("writable", boxBoolConst(1)),
+                ...setKey("enumerable", boxBoolConst(0)),
+                ...setKey("configurable", boxBoolConst(0)),
+                { op: "local.get", index: descriptorLocal },
+                { op: "return" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -2455,6 +2516,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const L_WLEN = 10;
     const L_KSTR = 11;
     const L_KIDX = 12;
+    const closureProtoOfIdx = ctx.standalone ? ctx.funcMap.get(CLOSURE_PROTO_OF) : undefined;
+    const L_FNPROTO = strExotic ? 13 : 7;
     // (#3319) A gOPD MISS (no own property / non-`$Object` receiver) answers
     // `undefined`. Under the `undefinedSingleton` regime (#2106 flip) that
     // must be the `$undefined` singleton — a bare null externref is `null`,
@@ -2703,6 +2766,20 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         : [{ op: "ref.null.extern" } as Instr, { op: "return" } as Instr];
 
     const body: Instr[] = [
+      ...(closureProtoOfIdx !== undefined
+        ? closurePrototypeDescriptorArm(
+            ctx,
+            closureProtoOfIdx,
+            anyStrTypeIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            newPlainObjectIdx,
+            L_FNPROTO,
+            6,
+            setKey,
+            boxBoolConst,
+          )
+        : []),
       // (#2896) Builtin-fn metadata arm: gOPD over a builtin function value
       // synthesizes the spec data descriptor for its "name"/"length" own
       // properties ({writable:false, enumerable:false, configurable:true}).
@@ -2851,6 +2928,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               { name: "kStr", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } },
               { name: "kIdx", type: { kind: "i32" } },
             ] as { name: string; type: ValType }[])
+          : []),
+        ...(closureProtoOfIdx !== undefined
+          ? ([{ name: "fnProto", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],
       body,

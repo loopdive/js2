@@ -291,6 +291,22 @@ const PROVIDER_EXPORT_WRAPPER = `
         }
       }
 
+      export function __runtime_script_eval(
+        source: any,
+        globalObject: any
+      ): any {
+        try {
+          const value = executeGlobalScript(parse, source, globalObject);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(true, value);
+        } catch (error) {
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(false, error);
+        }
+      }
+
       export function __runtime_direct_eval(
         source: any,
         globalObject: any,

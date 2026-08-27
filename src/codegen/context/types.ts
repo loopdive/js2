@@ -358,6 +358,7 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  nativeProtoVariadic?: boolean;
   /**
    * True only while every concrete allocation of this wrapper/subtype is a
    * checker-certified one-shot host callback. Such values are consumed by
@@ -632,6 +633,10 @@ export interface FunctionContext {
    * narrowed to a WasmGC ref that the host cannot reconstruct reliably.
    */
   captureExternrefNames?: Set<string>;
+  /** Formal bindings whose values must remain raw for an observable
+   * `arguments` object. Their checker type may be a scalar, but identifier
+   * reads must not eagerly unbox the call-site value. */
+  rawArgumentsParamNames?: Set<string>;
   /** Return type */
   returnType: ValType | null; // null = void
   /** Accumulated body instructions */
@@ -1804,6 +1809,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   holeTypeIdx: number;
   holeGlobalIdx: number | undefined;
+  /** True only when native Array.prototype.concat requested the hole carrier. */
+  usesNativeConcatHoleSubstrate: boolean;
   /**
    * (#2970) `import.meta` per-module object identity. One shared zero-field
    * `$ImportMeta` struct type, plus a DISTINCT immutable global instance per
@@ -2148,6 +2155,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   objectLiteralAssignedPropertyNames: Set<string>;
   /** Concrete RHS types observed for those property writes. */
   objectLiteralAssignedPropertyTypes: Map<string, ts.Type[]>;
+  /** Concrete RHS types observed for statically-resolved indexed properties. */
+  objectLiteralIndexedAssignedPropertyTypes: Map<ts.Declaration, ts.Type[]>;
   /**
    * (#2674) Property names that need a deferred-fill member-READ dispatcher
    * `__get_member_<name>(recv: externref) -> externref` — the SYMMETRIC read-side
@@ -3328,6 +3337,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
   /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
   ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
+  /**
+   * Exact module `var` declarations whose object-literal field reads a
+   * redeclaration-widened binding.  The field must remain a raw externref so
+   * an object wrapper/function written by a later `var` redeclaration keeps
+   * its identity through the literal carrier.
+   */
+  redeclaredObjectIdentityDeclarations: Set<ts.VariableDeclaration>;
+  /** Initializer-node twin of `redeclaredObjectIdentityDeclarations`. */
+  redeclaredObjectIdentityLiterals: Set<ts.ObjectLiteralExpression>;
   /** Module-global names whose direct non-specific spread initializer is an open object. */
   hostSpreadObjectGlobals: Set<string>;
   /**
@@ -3342,6 +3360,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * to short-circuit the struct-resolution chain back to `undefined`.
    */
   externrefAccessorVars: Set<string>;
+  /** Names assigned accessor-bearing object literals by constant direct eval. */
+  evalAccessorObjectVars: Set<string>;
   /** Math methods that need inline Wasm implementations */
   pendingMathMethods: Set<string>;
   /**
@@ -3643,6 +3663,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  can have its const-fold disagree with runtime state, so it routes to the
    *  runtime helper. Empty for nearly every module. */
   memberDeleteReceiverNames?: ReadonlySet<string>;
+  deletedBuiltinPrototypeMembers?: ReadonlySet<string>;
   /** (#1472 Phase A) Set of dynamic-shape object/property host-import names
    *  already refused under `--target standalone`, used to deduplicate the
    *  compile-error so a single source construct emits at most one error per

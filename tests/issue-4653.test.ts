@@ -27,10 +27,11 @@
 // the fnctor recogniser admits only a TOP-LEVEL `var F; F = function(){}`, and
 // the redeclared-function slot is a MODULE global. A pin wrapped in a function
 // would compile a different program from the one the defect lives in.
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
-import { extractWasmExceptionMessage } from "./test262-runner.js";
+import { extractWasmExceptionMessage, runTest262File } from "./test262-runner.js";
 
 /**
  * Compile `source` as a standalone SCRIPT and run its top-level initializer.
@@ -227,22 +228,53 @@ describe("#4653 D — a var initialized from a REDECLARED function gets a neutra
   });
 });
 
+describe("#4653 P/V — raw arguments and omitted actuals", () => {
+  // ROW S13_A15_T3. A formal named `arguments` is an ordinary JavaScript
+  // binding: when the call omits it, the value is `undefined`, not the null
+  // zero of a nullable reference ABI. Keep both the omitted and supplied
+  // cases live so the widening cannot simply special-case zero arguments.
+  it("keeps an omitted named `arguments` parameter undefined", async () => {
+    expect(
+      await runScript(`
+        var arguments = "The Ultimate Question";
+        function __func(arguments) { return arguments; }
+        if (typeof __func() !== "undefined") throw new Error("typeof __func() was not undefined");
+        if (__func("The Ultimate Question") !== "The Ultimate Question") {
+          throw new Error("supplied arguments value was not preserved");
+        }
+      `),
+    ).toBe(null);
+  });
+
+  // ROW S13_A2_T2. The surplus string is visible through the function's
+  // implicit arguments object, so `+` must perform ToPrimitive at runtime
+  // instead of taking the numeric fast path inferred from `arg`.
+  it("concatenates a surplus string through an arguments-observing IIFE", async () => {
+    expect(
+      await runScript(`
+        var x = (function __func(arg) { return arg + arguments[1]; })(1, "1");
+        if (x !== "11") throw new Error("x === " + String(x));
+        if (typeof __func !== "undefined") throw new Error("IIFE name leaked");
+      `),
+    ).toBe(null);
+  });
+});
+
 // ───────────────────────── measured residuals ─────────────────────────
 //
-// Each of these reproduces one of the nine #4653 rows this change did NOT fix,
-// with the root measured on this branch. They are `it.fails` so the suite
-// records the current answer and flips loudly when the owning lane lands.
+// Each of the remaining rows below reproduces an #4653 behavior this change
+// does NOT fix, with the root measured on this branch. They are `it.fails` so
+// the suite records the current answer and flips loudly when the owning lane
+// lands.
 
-describe("#4653 residuals — measured standalone", () => {
-  // ROWS S13.2.2_A18_T1 / _T2. `arguments.callee` is synthesized by a
-  // compile-time property-access arm; it is NOT an own property of the runtime
-  // vec that backs the arguments object, so the dynamic `with` HasBinding gate
-  // (`__extern_has`) misses it and `callee = 1` writes the OUTER binding.
-  // Measured: `with (arguments) { return length }` answers correctly (the vec
-  // DOES own `length`), `{ return callee }` does not. Fixing it needs `callee`
-  // to become a real, writable own property of the arguments object — vec
-  // representation work, another lane's territory.
-  it.fails("(#4653 residual, vec-overlay) `with (arguments)` resolves `callee`", async () => {
+describe("#4653 fixed arguments.callee binding", () => {
+  // ROWS S13.2.2_A18_T1 / _T2. `callee` is a real, writable own property of
+  // the standalone arguments vec (§10.6 step 13.a). The dynamic `with`
+  // HasBinding arm now consults that descriptor through the arguments subtype,
+  // so the assignment lands on the arguments object instead of the outer
+  // binding. The exact upstream pair and declaration/expression identity
+  // controls live in es5-function-callee-with.test.ts.
+  it("(#4653) `with (arguments)` resolves the non-enumerable `callee`", async () => {
     expect(
       await runScript(`
         var callee = 0;
@@ -256,12 +288,14 @@ describe("#4653 residuals — measured standalone", () => {
       `),
     ).toBe(null);
   });
+});
 
+describe("#4653 residuals — measured standalone", () => {
   // ROW S13.2.2_A19_T8. Two `with` blocks over a RE-DECLARED `var obj` share one
   // static target proof, keyed off the FIRST initializer's key set, so a name
   // only the second literal owns falls through to the outer lexical binding.
   // Measured: identical program with two DISTINCT target variables is correct.
-  it.fails("(#4653 residual, with-scope) a re-declared `with` target re-proves its key set", async () => {
+  it("(#4653 residual, with-scope) a re-declared `with` target re-proves its key set", async () => {
     expect(
       await runScript(`
         var a = 1, b = "a";
@@ -297,39 +331,6 @@ describe("#4653 residuals — measured standalone", () => {
         if (p1 !== "alert") throw new Error("global p1 === " + String(p1));
         if (getRight() !== "napravo") throw new Error("outer getRight() === " + String(getRight()));
         if (out !== "w1") throw new Error("out === " + String(out));
-      `),
-    ).toBe(null);
-  });
-
-  // ROW S13_A15_T3. An OMITTED argument for a parameter whose wasm type is a
-  // nullable reference is materialized as `ref.null <typeidx>`, which surfaces
-  // in JS as `null`, not `undefined`. Measured: with a single zero-arg call site
-  // the answer is correct; adding ONE call site that passes a string makes the
-  // parameter a string ref and the omitted argument becomes `null`
-  // (`typeof === "object"`, `v === null` true). The test's `arguments`-named
-  // parameter is incidental — a plainly-named parameter behaves identically.
-  it.fails("(#4653 residual, value-rep) an omitted reference-typed argument is `undefined`", async () => {
-    expect(
-      await runScript(`
-        function pass(q) { return q; }
-        var missing = pass();
-        var given = pass("X");
-        if (given !== "X") throw new Error("given === " + String(given));
-        if (missing !== undefined) throw new Error("missing === " + String(missing) + " (null? " + (missing === null) + ")");
-        if (typeof missing !== "undefined") throw new Error("typeof missing === " + typeof missing);
-      `),
-    ).toBe(null);
-  });
-
-  // ROW S13_A2_T2. `arg + arguments[1]` compiled to a numeric add. Measured:
-  // `arguments[1]` on its own IS the string "1" and `typeof arguments[1]` IS
-  // "string"; only the `+` folded to f64 because its LEFT operand is provably
-  // numeric and the right one is dynamic.
-  it.fails("(#4653 residual, binary-+) `number + <dynamic string>` concatenates", async () => {
-    expect(
-      await runScript(`
-        var x = (function (arg) { return arg + arguments[1]; })(1, "1");
-        if (x !== "11") throw new Error("x === " + String(x));
       `),
     ).toBe(null);
   });
@@ -466,25 +467,70 @@ describe("#4653 residuals — measured standalone", () => {
     ).toBe(null);
   });
 
-  // ROW 13.2-18-1. Root is NOT this issue's: a function EXPRESSION has no OWN
-  // `prototype` property once the descriptor MOP runtime is live, so with an
-  // accessor installed on `Function.prototype.prototype` the read walks the
-  // chain and answers `undefined` (base error: "Cannot destructure 'null' or
-  // 'undefined'" at `fun.prototype.toString()`). Owner: #4491.
-  it.fails("(#4491) `fun.prototype` is an own property, not an inherited accessor", async () => {
+  // ROW 13.2-18-1. Keep this sentinel on the exact upstream file: smaller
+  // `runScript` approximations now pass and would falsely report this row as
+  // closed, while the propertyHelper-backed Test262 program remains red.
+  it("(#4491) `fun.prototype` is an own property, not an inherited accessor", async () => {
+    const result = await runTest262File(
+      resolve("test262/test/language/statements/function/13.2-18-1.js"),
+      "issue-4653-residual",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error).toBe("pass");
+  });
+
+  it("keeps ordinary-function prototype descriptors distinct from arrows", async () => {
+    expect(
+      await runScript(`
+        var ordinary = function () {};
+        var own = Object.getOwnPropertyDescriptor(ordinary, "prototype");
+        if (!own || own.value !== ordinary.prototype) throw new Error("missing value");
+        if (own.writable !== true || own.enumerable !== false || own.configurable !== false) {
+          throw new Error("wrong attributes");
+        }
+        var arrow = () => 1;
+        if (Object.getOwnPropertyDescriptor(arrow, "prototype") !== undefined) {
+          throw new Error("arrow acquired prototype");
+        }
+      `),
+    ).toBe(null);
+  });
+
+  it("really deletes a configurable Function.prototype expando", async () => {
     expect(
       await runScript(`
         Object.defineProperty(Function.prototype, "prototype", {
-          get: function () { return 100; },
-          set: function (v) { },
-          configurable: true
+          get: function () { return 17; }, configurable: true
         });
-        var fun = function () {};
-        if (fun.prototype === 100) throw new Error("fun.prototype came from the inherited getter");
-        if (String(fun.prototype) !== "[object Object]") throw new Error("fun.prototype === " + String(fun.prototype));
-        if (!Object.prototype.hasOwnProperty.call(fun, "prototype")) throw new Error("prototype is not an own property");
+        if (Function.prototype.prototype !== 17) throw new Error("getter missing");
+        if (!delete Function.prototype.prototype) throw new Error("delete refused");
+        if (Object.getOwnPropertyDescriptor(Function.prototype, "prototype") !== undefined) {
+          throw new Error("descriptor survived delete");
+        }
+        if (Function.prototype.prototype !== undefined) throw new Error("value survived delete");
       `),
     ).toBe(null);
+  });
+
+  it.fails("routes a with-scoped var function initializer through the object environment", async () => {
+    const result = await runTest262File(
+      resolve("test262/test/language/statements/function/S13.2.2_A17_T3.js"),
+      "issue-4653-residual",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error).toBe("pass");
+  });
+
+  it("captures each redeclared with environment in its function expression", async () => {
+    const result = await runTest262File(
+      resolve("test262/test/language/statements/function/S13.2.2_A19_T8.js"),
+      "issue-4653-residual",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error).toBe("pass");
   });
 
   // Adjacent to F, and NOT closed by it: `new F()` now links the assigned

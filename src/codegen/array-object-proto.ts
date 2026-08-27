@@ -56,6 +56,7 @@ import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
+import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -87,6 +88,11 @@ import {
   emitStringProtoToStringFlat,
 } from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
+import {
+  appendStandaloneGlobalNamespaceSeeds,
+  appendStandaloneGlobalObjectCarrierSeeds,
+  standaloneGlobalEvalSeedInstrs,
+} from "./standalone-global-object-carriers.js";
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 
@@ -582,6 +588,7 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     setUTCMinutes: 3,
     setSeconds: 2,
     setUTCSeconds: 2,
+    setYear: 1,
     // Date getters / no-arg conversions are 0-arity (ES2024 §21.4.4); fold their
     // `.length` to 0 so the meta-read path reports the spec arity.
     getDate: 0,
@@ -647,11 +654,6 @@ const STRING_PROTO_METHOD_PARAM_SLOTS: Readonly<Record<string, number>> = {
   includes: 2, // (searchString, position) §22.1.3.7
   startsWith: 2, // (searchString, position) §22.1.3.23
   endsWith: 2, // (searchString, endPosition) §22.1.3.6
-  // (#4426 session) `concat(...args)` is variadic (spec `.length` 1). Four real
-  // slots cover every ES5-shaped borrow (test262 uses ≤3); the call path pads
-  // absent slots with null (skipped per §22.1.3.5 step 3) and truncates a
-  // longer tail — the 128-arg S15.5.4.6_A2 is a documented residual.
-  concat: 4,
 };
 
 // ── ArrayBuffer.prototype (ES2024 §25.1.5) ────────────────────────────────────
@@ -783,6 +785,10 @@ const ASYNCDISPOSABLESTACK_PROTO_METHOD_LENGTH: Readonly<Record<string, number>>
  * compile refusal). Returns externref (the uniform closure-call result type).
  */
 function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  if (member === "concat") {
+    return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
+  }
+
   // (#4394) The higher-order members already have a native standalone loop —
   // `__hof_<name>`, emitted by `ensureNativeArrayHof` for the DYNAMIC receiver
   // arm. It reads its receiver through `__extern_length` / `__extern_get_idx`,
@@ -1764,6 +1770,7 @@ function makeGlue(
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
+    memberIsVariadic: (member) => (name === "Array" || name === "String") && member === "concat",
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2788,30 +2795,19 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   const savedBody = fctx.body;
   fctx.body = [];
   ctx.liveBodies.add(savedBody);
-  for (const name of ["Array", "Object", "JSON", "Math", "Proxy", "Reflect"] as const) {
-    fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, name);
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
-    if (emitBuiltinNamespaceObject(ctx, fctx, name) === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    const defineIdx = ctx.funcMap.get("__defineProperty_value");
-    if (defineIdx === undefined) {
-      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" });
-      continue;
-    }
-    // Global builtin bindings: writable, non-enumerable, configurable.
-    fctx.body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
-  }
+  const evalSeeds = standaloneGlobalEvalSeedInstrs(ctx, fctx, objLocal);
+  appendStandaloneGlobalNamespaceSeeds(ctx, fctx, objLocal);
+  appendStandaloneGlobalObjectCarrierSeeds(ctx, fctx, objLocal);
   const namespaceSeeds = fctx.body;
   fctx.body = savedBody;
   ctx.liveBodies.delete(savedBody);
   ctx.liveBodies.add(namespaceSeeds);
-  const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
+  const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, fctx, objLocal);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   if (!functionSeeds || newObjectIdx === undefined || defineValueIdx === undefined || boxNumberIdx === undefined) {
+    ctx.liveBodies.delete(evalSeeds);
     ctx.liveBodies.delete(namespaceSeeds);
     return null;
   }
@@ -2842,12 +2838,14 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
+    ...evalSeeds,
     ...functionSeeds,
     ...valueSeeds,
     ...namespaceSeeds,
     { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
   ];
+  ctx.liveBodies.delete(evalSeeds);
   ctx.liveBodies.delete(namespaceSeeds);
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });

@@ -11,7 +11,7 @@
  */
 
 import * as path from "path";
-import { createHash } from "node:crypto";
+import * as nodeCrypto from "node:crypto";
 import { ts } from "./ts-api.js";
 import type {
   CompileOptions,
@@ -140,7 +140,7 @@ function wasmBytes(binary: Uint8Array): BufferSource {
 }
 
 function hashText(parts: readonly string[]): string {
-  const hash = createHash("sha256");
+  const hash = nodeCrypto.createHash("sha256");
   for (const part of parts) {
     hash.update(String(part.length));
     hash.update(":");

@@ -4,7 +4,7 @@ title: "`with` statement, ES5 standalone: 73-row residue reduced to 51; first IR
 status: suspended
 sprint: current
 created: 2026-08-07
-updated: 2026-08-22
+updated: 2026-08-25
 priority: high
 horizon: xl
 feasibility: hard
@@ -58,6 +58,13 @@ loc-budget-allow:
   # of dispatch into a new module would hide the arm from the two identical
   # arms it must stay in step with.
   - src/codegen/statements/nested-declarations.ts
+  # 2026-08-25 deferred A5_T4/A5_T5 follow-up: the two rows now reach the
+  # open-representation member-access boundary, where standalone's distinct
+  # undefined singleton must be rejected as a nullish receiver. The shared
+  # guard wiring stays in these capped dispatchers; the native-string fallback
+  # check itself lives in the new src/codegen/string-element-read.ts leaf.
+  - src/codegen/property-access.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   # Four-line statement-dispatch hook; all selection logic is in the dedicated
   # isPhase1WithStatement helper and ir/with-environment subsystem.
@@ -82,6 +89,13 @@ func-budget-allow:
   # hoisting it elsewhere would bypass that guard.
   - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
   - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
+  # 2026-08-25 deferred A5_T4/A5_T5 follow-up: the two small guard call-sites
+  # must stay beside their existing receiver compilation and late-import flush
+  # so the captured function indices remain valid. The reusable undefined
+  # predicate is in late-imports.ts; moving these lines into a helper would
+  # obscure the ordering invariant they enforce.
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/property-access.ts::compileElementAccess
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -947,6 +961,24 @@ typeof o.p1;       // "object"; must be "undefined"
 A member read off a deleted/absent property of an open `$Object` neither throws
 nor types as `undefined`. That is its own head — property-access on the open
 representation — and should not be filed against `with`.
+
+### 2026-08-25 follow-up — the deferred pair now passes
+
+The two rows are now fixed by the property-access head; this issue remains
+`suspended` because the broader `with` residue is not complete. Standalone's
+`__extern_get` can return a non-null `$undefined` singleton, so checking only
+`ref.is_null` lets `myObj.p1.a` and `myObj.p1[2]` continue into a second lookup.
+Dynamic member and element receivers now also call the native
+`__extern_is_undefined` predicate and throw the catchable TypeError required by
+RequireObjectCoercible. Identifier receivers retain the prior path so a
+shadowed `undefined` binding is not misclassified.
+
+Focused controls: #4206 dynamic-with plus the ES5 standalone-with and #4484
+shadowing suites are 59/59. The local authentic 44-row census moved from
+28/16 (14 provider-unavailable rows plus the two semantic failures) to 30/14;
+the canonical published baseline had A5_T4 already passing and A5_T5 as the
+single semantic flip. The remaining 14 local failures are provider-unavailable
+QuickJS rows, not regressions from this change.
 
 ### `language/statements/function` — 25 rows re-verified, clustered, none taken
 

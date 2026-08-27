@@ -95,14 +95,116 @@ import {
   buildArgcExtrasSetupFromLocals,
   buildArgcResetNoLazyExtras,
 } from "./argc-extras.js";
-import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge } from "./apply-arguments-vector.js";
+import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge, tryBindApply } from "./apply-arguments-vector.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
+import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
+import { buildStandardTryTable } from "../../ir/try-table.js";
+import { installableReceiverInstrs } from "../helpers/undefined-receiver.js"; // (#4555) runtime-eval receiver seam
 
 // (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
 // because call sites import it from `calls.ts`.
 export { emitVirtualMethodDispatchByTag };
+
+/**
+ * Install the unbound-call receiver marker around a dynamically dispatched
+ * callable invocation.
+ *
+ * A closure body that reads `this` uses `__current_this` when it has no lexical
+ * receiver.  Member-call dispatchers deliberately install their receiver in
+ * that global, but a bare call has no Reference base (§13.3.6.2), so its
+ * thisArgument is `undefined` and the global must be empty while the callee
+ * runs.  Leaving an enclosing member receiver in place made
+ * `assert.throws(TypeError, function () { this.missing(); })` observe the
+ * outer `assert` function as `this` and skip the expected TypeError.
+ *
+ * The body is parked in a local before restoring the previous receiver.  The
+ * target-tagged scaffold restores it on both normal and tagged-exception exits
+ * so a caught throw cannot leak the unbound marker into the surrounding call.
+ */
+export function emitBareCallReceiverReset(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  body: Instr[],
+  resultType: ValType | null,
+): Instr[] {
+  const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
+  const previousThisLocal = allocLocal(fctx, `__bare_prev_this_${fctx.locals.length}`, { kind: "externref" });
+  const resultLocal =
+    resultType === null ? undefined : allocLocal(fctx, `__bare_result_${fctx.locals.length}`, resultType);
+  const restoreOnException = (fctx.tryCatchDepth ?? 0) > 0;
+  const exceptionLocal =
+    restoreOnException && (ctx.standalone || ctx.wasi)
+      ? allocLocal(fctx, `__bare_exception_${fctx.locals.length}`, { kind: "externref" })
+      : undefined;
+
+  const restore: Instr[] = [
+    { op: "local.get", index: previousThisLocal },
+    { op: "global.set", index: currentThisGlobalIdx },
+  ];
+  const parkedBody = [...body];
+  if (resultLocal !== undefined) parkedBody.push({ op: "local.set", index: resultLocal });
+
+  const protectedCall: Instr | undefined = !restoreOnException
+    ? undefined
+    : exceptionLocal !== undefined
+      ? buildStandardTryTable({ kind: "empty" }, parkedBody, [
+          {
+            kind: "catch",
+            tagIdx: ensureExnTag(ctx),
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: exceptionLocal },
+              ...restore,
+              { op: "local.get", index: exceptionLocal },
+              { op: "throw", tagIdx: ensureExnTag(ctx) },
+            ],
+          },
+        ])
+      : {
+          op: "try",
+          blockType: { kind: "empty" },
+          body: parkedBody,
+          catches: [],
+          catchAll: [...restore, { op: "rethrow", depth: 0 }],
+        };
+
+  return [
+    { op: "global.get", index: currentThisGlobalIdx },
+    { op: "local.set", index: previousThisLocal },
+    { op: "ref.null.extern" },
+    { op: "global.set", index: currentThisGlobalIdx },
+    ...(protectedCall === undefined ? parkedBody : [protectedCall]),
+    ...restore,
+    ...(resultLocal === undefined ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
+  ];
+}
+
+function emitDynamicCallDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  dispatch: Instr[],
+): Instr[] {
+  // A property/element reference carries an explicit receiver and must retain
+  // any receiver installed by its caller. Every other dynamic callee is a
+  // value call: its Reference base is absent, so clear `__current_this` while
+  // the selected closure runs (§13.3.6.2). Parenthesized/type-asserted forms
+  // are still bare calls after their transparent wrappers are removed.
+  let bareCallee: ts.Expression = expr.expression;
+  while (
+    ts.isParenthesizedExpression(bareCallee) ||
+    ts.isAsExpression(bareCallee) ||
+    ts.isSatisfiesExpression(bareCallee) ||
+    ts.isNonNullExpression(bareCallee) ||
+    ts.isTypeAssertionExpression(bareCallee)
+  ) {
+    bareCallee = bareCallee.expression;
+  }
+  const isBareCall = !ts.isPropertyAccessExpression(bareCallee) && !ts.isElementAccessExpression(bareCallee);
+  return isBareCall ? emitBareCallReceiverReset(ctx, fctx, dispatch, { kind: "externref" }) : dispatch;
+}
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -159,6 +261,7 @@ import {
 } from "../object-ops.js";
 import {
   BUILTIN_CTOR_NAMES,
+  chainRootIsGrowable,
   emitArrayIsArrayExternrefPredicate,
   emitNullCheckThrow,
   isIrWithOpenObjectTargetReceiver,
@@ -210,6 +313,8 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
+import { ensureRuntimeEvalAotCallableCarrierTypes } from "../runtime-eval-callable.js";
+import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "../runtime-eval-boundary.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
@@ -278,13 +383,17 @@ import { compileOptionalCallExpression } from "./calls-optional.js";
 import {
   emitStandaloneDirectEvalRuntime,
   emitStandaloneIndirectEvalRuntime,
+  emitStandaloneGlobalScriptEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
+  isGlobalFunctionIdentifier,
   isFunctionCtorImmediateCall,
+  tryStaticNewFunction,
   tryStandaloneDynamicFunctionCtorValue,
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
 import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
+import { tryEvalAsCommentPeephole } from "./eval-comment-peephole.js"; // (#1240) exhaustive comment eval loop
 import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
@@ -2096,7 +2205,6 @@ function isStaticallyNonCallableBindTarget(ctx: CodegenContext, fctx: FunctionCo
   // generic object/`any` value as non-callable.
   return ts.isIdentifier(target) && ctx.oracle.builtinReceiverOf(target) === "RegExp";
 }
-
 /**
  * Compile `Function.prototype.bind.call(target, thisArg, ...args)`.
  * Callable targets reshape to the ordinary `.bind` path. Under standalone,
@@ -2109,6 +2217,7 @@ function tryCompileIndirectFunctionBindCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
+  if (propAccess.name.text === "apply") return tryBindApply(ctx, fctx, expr, propAccess);
   if (
     propAccess.name.text !== "call" ||
     !ts.isPropertyAccessExpression(propAccess.expression) ||
@@ -4705,7 +4814,7 @@ export function tryEmitInlineDynamicCall(
     }
   }
 
-  fctx.body.push(...dispatch);
+  fctx.body.push(...emitDynamicCallDispatch(ctx, fctx, expr, dispatch));
   return { kind: "externref" };
 }
 
@@ -4754,6 +4863,62 @@ function materializedArgumentsVector(fctx: FunctionContext, expression: ts.Expre
   return ts.isIdentifier(current) && current.text === "arguments" && fctx.localMap.has("arguments")
     ? current
     : undefined;
+}
+
+/**
+ * True for a syntactic value produced by the standalone runtime-eval
+ * Function constructor.  Such a value is a caller-owned callable carrier, so
+ * its `.call`/`.apply` members cannot be recovered by the ordinary property
+ * ladder (the provider's target intentionally does not mirror Function's
+ * prototype).  The reflective call site can nevertheless route it through
+ * the canonical `__apply_closure` bridge, preserving the explicit receiver.
+ */
+function standaloneDynamicFunctionCtorArgs(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+): readonly ts.Expression[] | undefined {
+  if (!ctx.standalone) return undefined;
+  let value = expression;
+  while (
+    ts.isParenthesizedExpression(value) ||
+    ts.isAsExpression(value) ||
+    ts.isSatisfiesExpression(value) ||
+    ts.isNonNullExpression(value) ||
+    ts.isTypeAssertionExpression(value)
+  ) {
+    value = value.expression;
+  }
+  if (ts.isNewExpression(value)) {
+    let target: ts.Expression = value.expression;
+    while (
+      ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isSatisfiesExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isTypeAssertionExpression(target)
+    ) {
+      target = target.expression;
+    }
+    if (ts.isIdentifier(target) && target.text === "Function" && isGlobalFunctionIdentifier(target, ctx.checker)) {
+      return value.arguments ?? [];
+    }
+  }
+  if (ts.isCallExpression(value) && !value.questionDotToken) {
+    let target: ts.Expression = value.expression;
+    while (
+      ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isSatisfiesExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isTypeAssertionExpression(target)
+    ) {
+      target = target.expression;
+    }
+    if (ts.isIdentifier(target) && target.text === "Function" && isGlobalFunctionIdentifier(target, ctx.checker)) {
+      return value.arguments;
+    }
+  }
+  return undefined;
 }
 
 function isNullishPromiseThenCallbackArg(expr: ts.Expression | undefined): boolean {
@@ -6041,9 +6206,21 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   }
 
   const externref: ValType = { kind: "externref" };
-  for (const arg of expr.arguments) {
+  for (let i = 0; i < expr.arguments.length; i += 1) {
+    const arg = expr.arguments[i]!;
     const type = compileExpression(ctx, fctx, arg, externref);
     if (type && type.kind !== "externref") coerceType(ctx, fctx, type, externref);
+    if (i === 1) {
+      // The provider's undefined singleton is private to that module. If it
+      // crosses the seam as an opaque externref, the caller's carrier cannot
+      // recognize it as an absent receiver and a sloppy callee observes that
+      // foreign object instead of applying §10.4.3. Normalize at the seam
+      // while the value is still in the provider's own representation; null
+      // is the caller's established unbound spelling, and the callee's own
+      // strictness still selects undefined versus the realm global.
+      const receiverLocal = allocLocal(fctx, `__runtime_eval_receiver_${fctx.locals.length}`, externref);
+      fctx.body.push({ op: "local.set", index: receiverLocal }, ...installableReceiverInstrs(ctx, receiverLocal));
+    }
   }
   ensureObjectRuntime(ctx);
   const applyIdx = reserveApplyClosure(ctx);
@@ -6391,10 +6568,11 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const testsIntrinsic = calleeName === "__runtime_eval_is_intrinsic_callback";
   const wrapsResult = calleeName === "__runtime_eval_wrap_result";
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
+  const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
-    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult) ||
+    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult && !testsAotCallable) ||
     (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
   ) {
     return undefined;
@@ -6405,6 +6583,38 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
   if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);
   if (unwrapsResult) return emitRuntimeEvalResultBoundaryUnwrap(ctx, fctx, externref);
+  if (testsAotCallable) {
+    const carrier = ctx.runtimeEvalAotCallableCarrier ?? ensureRuntimeEvalAotCallableCarrierTypes(ctx);
+    const valueLocal = allocLocal(fctx, `__runtime_eval_aot_predicate_${fctx.locals.length}`, externref);
+    fctx.body.push({ op: "local.set", index: valueLocal });
+    const brandMatch: Instr[] = [
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+      { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 3 },
+      { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_A },
+      { op: "i32.eq" },
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+      { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_B },
+      { op: "i32.eq" },
+      { op: "i32.and" },
+    ];
+    fctx.body.push(
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: carrier.structTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: brandMatch,
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    );
+    return { kind: "i32" };
+  }
   const typeIdx = ensureRuntimeEvalInterpretedCallbackType(ctx);
   const valueLocal = allocLocal(fctx, `__runtime_eval_boundary_value_${fctx.locals.length}`, externref);
   const candidateLocal = allocLocal(fctx, `__runtime_eval_boundary_candidate_${fctx.locals.length}`, externref);
@@ -6812,6 +7022,29 @@ function compileCallExpression(
     return compileOptionalDirectCall(ctx, fctx, expr);
   }
 
+  const globalScriptEvalCallee = unwrapTransparent(expr.expression);
+  if (
+    ctx.standalone &&
+    ts.isIdentifier(globalScriptEvalCallee) &&
+    globalScriptEvalCallee.text === "__js2wasm_global_script_eval"
+  ) {
+    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    if (runtimeScriptEval !== undefined) return runtimeScriptEval;
+  }
+  // Test262's `$262.evalScript` is a host-facing global-Script entry, not an
+  // ordinary open-object method. Lower the direct canonical spelling before
+  // native `$Object` method dispatch would try to recover a closure from the
+  // harness object. Aliased reads still execute the shim's intrinsic helper.
+  if (
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    expr.expression.name.text === "evalScript" &&
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "$262"
+  ) {
+    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    if (runtimeScriptEval !== undefined) return runtimeScriptEval;
+  }
   // eval(...) — first try static inlining (#1163): if the source argument is
   // a compile-time-constant string, parse it and splice the AST inline at the
   // call site.  This is the zero-runtime-cost path.  If the argument is not
@@ -6829,17 +7062,9 @@ function compileCallExpression(
   {
     const evalKind = classifyEvalCallExpression(expr, ctx.checker);
     if (evalKind !== "none") {
-      // #1229 — peephole: `eval("/" + X + "/")` → `new RegExp(X)`.
-      // Test262's BMP-codepoint regex tests build a regex literal per
-      // iteration via eval; the eval pipeline (TS+codegen+wasm-instantiate)
-      // is ~50ms per call, hitting the 30s pool ceiling on the first few
-      // hundred of 65k iterations. Rewriting to the RegExp constructor
-      // avoids the eval pipeline entirely — one host call (regex parse +
-      // compile) instead of two (eval pipeline + regex parse + compile).
-      // The semantic difference (eval throws SyntaxError-by-eval; new RegExp
-      // throws SyntaxError-by-RegExp) is invisible to callers that only
-      // inspect `.source` / `.flags` / matching behavior, which is the
-      // entire test set this targets.
+      // Hot-loop eval shapes compile away before the general runtime boundary.
+      const commentOnly = tryEvalAsCommentPeephole(ctx, fctx, expr);
+      if (commentOnly !== undefined) return commentOnly;
       const rewritten = tryEvalAsRegExpPeephole(ctx, fctx, expr);
       if (rewritten !== undefined) return rewritten;
       const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
@@ -7228,7 +7453,14 @@ function compileCallExpression(
     // method provider instead of resolving the literal's stale static method;
     // this retains both post-with replacement, repeated-read identity, and
     // the full argument list in both lanes.
-    if (!ts.isPrivateIdentifier(propAccess.name) && isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression)) {
+    if (
+      !ts.isPrivateIdentifier(propAccess.name) &&
+      (isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression) ||
+        (ctx.standalone &&
+          ts.isIdentifier(propAccess.expression) &&
+          ctx.sloppyImplicitGlobals?.has(propAccess.expression.text) === true &&
+          chainRootIsGrowable(ctx, propAccess.expression)))
+    ) {
       const openTargetCall = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
       if (openTargetCall !== undefined) return openTargetCall;
     }
@@ -7359,6 +7591,98 @@ function compileCallExpression(
       {
         const badArgArray = tryEmitApplyArgArrayTypeError(ctx, fctx, expr, propAccess);
         if (badArgArray !== undefined) return badArgArray;
+      }
+
+      // (#4656) A dynamic standalone Function value is represented by a
+      // caller-owned runtime-eval carrier.  Its provider target deliberately
+      // does not mirror Function.prototype, so the ordinary `innerExpr.apply`
+      // property lookup misses even though the carrier is callable.  Route the
+      // reflective operation through the same arity bridge used by dynamic
+      // calls, retaining the explicit thisArg and the real argument vector.
+      // Keep this syntactic and standalone-only: constant Function forms are
+      // harmless here (the bridge still invokes their compiled closure), while
+      // arbitrary callable values continue through the established lowerings.
+      const dynamicFunctionCtorArgs = standaloneDynamicFunctionCtorArgs(ctx, innerExpr);
+      if (dynamicFunctionCtorArgs !== undefined) {
+        const applyArgsExpr = !isCall && expr.arguments.length >= 2 ? expr.arguments[1]! : undefined;
+        const applyVector = applyArgsExpr === undefined ? undefined : materializedArgumentsVector(fctx, applyArgsExpr);
+        const applyElements =
+          applyArgsExpr !== undefined && ts.isArrayLiteralExpression(applyArgsExpr)
+            ? flattenStaticArrayElements(applyArgsExpr)
+            : undefined;
+        // A non-materialized, non-literal array-like still needs the generic
+        // runtime property path; do not claim it and silently turn it into an
+        // empty argument list.
+        if (!isCall && applyArgsExpr !== undefined && applyVector === undefined && applyElements === undefined) {
+          // fall through to the established reflective-call machinery
+        } else {
+          const vecBuilders = ensureObjVecBuilders(ctx);
+          reserveApplyClosure(ctx);
+
+          // Constant constructor arguments can use the existing AOT synthesis,
+          // but this reflective site explicitly supplies the receiver.  Allow
+          // `this` in that synthesis so `new Function("this.x = 1").call(o)`
+          // stays in the caller module where the object-property runtime can see
+          // `o`; non-constant bodies retain the provider carrier path below.
+          const staticCalleeType = tryStaticNewFunction(ctx, fctx, dynamicFunctionCtorArgs, true);
+          const calleeType = staticCalleeType ?? compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
+          if (calleeType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else if (calleeType.kind !== "externref") {
+            coerceType(ctx, fctx, calleeType, { kind: "externref" });
+          }
+
+          if (expr.arguments.length > 0) {
+            const thisType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+            if (thisType === null) fctx.body.push({ op: "ref.null.extern" });
+            else if (thisType.kind !== "externref") coerceType(ctx, fctx, thisType, { kind: "externref" });
+          } else {
+            emitUndefined(ctx, fctx);
+          }
+
+          const argsLocal = allocLocal(fctx, `__runtime_eval_reflective_args_${fctx.locals.length}`, {
+            kind: "externref",
+          });
+          const newIdx = ctx.funcMap.get("__new_objvec") ?? vecBuilders.newIdx;
+          fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: argsLocal });
+
+          if (isCall) {
+            for (const arg of expr.arguments.slice(1)) {
+              fctx.body.push({ op: "local.get", index: argsLocal });
+              const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+              if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+              else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+              fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecBuilders.pushIdx });
+            }
+          } else if (expr.arguments.length >= 2) {
+            const vector = applyVector;
+            if (vector !== undefined) {
+              // Replace the local's freshly allocated empty vector with the
+              // already-materialized arguments object.  The callee and receiver
+              // remain on the value stack for the final apply call.
+              emitMaterializedArgumentsVector(ctx, fctx, vector);
+              fctx.body.push({ op: "local.set", index: argsLocal });
+            } else if (applyElements !== undefined) {
+              for (const arg of applyElements) {
+                fctx.body.push({ op: "local.get", index: argsLocal });
+                const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+                if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+                else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+                fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecBuilders.pushIdx });
+              }
+            }
+          }
+
+          const applyIdx = ctx.funcMap.get("__apply_closure");
+          if (applyIdx !== undefined) {
+            fctx.body.push({ op: "local.get", index: argsLocal }, { op: "call", funcIdx: applyIdx });
+            return { kind: "externref" };
+          }
+          // Reservation should make this unreachable; keep a balanced fallback
+          // if a future target declines the bridge after operands are emitted.
+          fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
       }
 
       // (#4246) §10.2.1.2 step 5.b — a SLOPPY callee binds `ToObject(thisArg)`

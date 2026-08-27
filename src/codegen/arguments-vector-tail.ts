@@ -115,7 +115,13 @@ export function emitArgumentsVecTail(
     },
     { op: "local.get", index: totalLenLocal },
     { op: "local.get", index: arrTmp },
-    ...(argumentsVecTypeIdx === vti ? [] : ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+    // The nominal standalone arguments subtype appends its ordinary-property
+    // state after the shared vec fields: `lengthAbsent`, an arbitrary
+    // `lengthValue`, and the `lengthOverride` presence bit. Keep the parent
+    // vec construction byte-for-byte unchanged for every other carrier.
+    ...(argumentsVecTypeIdx === vti
+      ? []
+      : ([{ op: "i32.const", value: 0 }, { op: "ref.null.extern" }, { op: "i32.const", value: 0 }] satisfies Instr[])),
     { op: "struct.new", typeIdx: argumentsVecTypeIdx },
     { op: "local.set", index: argsLocal },
   );

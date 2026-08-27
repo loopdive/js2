@@ -1880,6 +1880,7 @@ function _wrapWasmClosure(
   };
   installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity });
+  wsh.recordCallableOwner(wrapped, callbackState);
   if (_canBeWeakKey(closure)) {
     if (!byArity) {
       byArity = new Map();
@@ -2086,6 +2087,7 @@ function _wrapWasmClosureUnknownArity(
   }
   installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity: -1 });
+  wsh.recordCallableOwner(wrapped, callbackState);
   if (closure != null && typeof closure === "object") {
     _wasmClosureDynamicWrapperCache.set(closure, wrapped);
     _wasmClosureWrapperTargets.set(wrapped, closure);
@@ -8314,6 +8316,7 @@ function _wrapCallableForHost(
   const proxy = new Proxy(fnTarget, handler);
   _hostCallableCache.set(closure, proxy);
   _hostProxyReverse.set(proxy, closure); // so _unwrapForHost round-trips
+  wsh.recordCallableOwner(proxy, callbackState);
   // The same closure can cross the boundary as this constructible proxy and as
   // a dynamic wasmClosureDynamicBridge. Canonicalize both representations to
   // the raw closure so strict constructor identity remains stable.
@@ -9479,24 +9482,6 @@ function _temporalPlainTimeAddField(...args: any[]): number {
   return [hourOut, minuteOut, secondOut, millisecondOut, microsecondOut, nanosecondOut][_temporalTrunc(fieldRaw)] ?? 0;
 }
 
-/**
- * Keep intrinsic constructor identity inside a supplied per-test sandbox.
- * Host objects naturally expose host-realm constructors; compiled code in the
- * isolated realm resolves the corresponding bare identifier from the sandbox.
- * Only canonical host intrinsics are substituted, so user constructors pass
- * through unchanged.
- */
-function _sandboxConstructorValue(value: any, key: any, globalSandbox?: Record<string, any>): any {
-  if (globalSandbox && key === "constructor" && typeof value === "function") {
-    const name = (value as { name?: string }).name;
-    if (name && value === (globalThis as any)[name]) {
-      const sandboxValue = globalSandbox[name];
-      if (sandboxValue !== undefined) return sandboxValue;
-    }
-  }
-  return value;
-}
-
 function _wrapRawCallableHostValue(
   value: any,
   exports: Record<string, Function> | undefined,
@@ -9765,11 +9750,8 @@ function resolveImport(
       // we must NOT coerce the first arg to a primitive: wrap WasmGC structs
       // with `_wrapForHost` so the Proxy translates `arg[Symbol.replace]` →
       // `arg["@@replace"]` and invokes any user-defined method (#1443).
-      // (#3903) Everything that depends only on `method` is decided ONCE here,
-      // at import-resolution time, instead of on every crossing. A string
-      // benchmark makes 10k-50k crossings per `run()`, so anything left in the
-      // per-call body is multiplied by that. See the per-crossing breakdown in
-      // plan/issues/3903-host-call-lane-string-boundary.md.
+      // (#3903) Everything depending only on `method` is decided once here,
+      // rather than on every crossing; see plan/issues/3903-host-call-lane-string-boundary.md.
       const isSymbolDispatch = isHostStringSymbolDispatch(method);
       const usesNaNOmitSentinel = method === "includes" || method === "startsWith" || method === "endsWith";
       const isSplit = method === "split";
@@ -9792,15 +9774,20 @@ function resolveImport(
       };
       const fixedPredicate = makeHostStringPredicateAdapter(method, coerce);
       if (fixedPredicate) return fixedPredicate;
-      // Also hoisted (#3903): was re-allocated per call as the `.map` callback
-      // of the Symbol-dispatch branch below.
+      // Also hoisted (#3903): was re-allocated per call as the `.map` callback below.
       const deferDataArg = (value: any): any => _deferStringDataArg(value, callbackState, coerce);
+      const deferReplacementArg = wsh.makeStringReplacementArg(
+        method,
+        callbackState,
+        deferDataArg,
+        _isWasmStruct,
+        _maybeWrapCallableUnknownArity,
+      );
       return (s: any, ...a: any[]) => {
         const recv = coerce(s);
         let args: any[];
         if (isSymbolDispatch && a.length > 0) {
-          // Wrap (don't coerce) the first arg so JS's String.prototype.<method>
-          // can dispatch on Symbol.<method> via the wasm-struct proxy (#1443).
+          // Wrap (don't coerce) the first arg so String.prototype.<method> can dispatch via the wasm-struct proxy (#1443).
           const first = a[0];
           let wrapped: any;
           const primReroute = _rerouteStringSymbolMethodPrimitive(method, first);
@@ -9825,20 +9812,16 @@ function resolveImport(
           } else {
             wrapped = first;
           }
-          // (#3903) Same result as `[wrapped, ...a.slice(1).map(…)]`, without
-          // the three intermediate arrays (slice + map + spread target).
+          // (#3903) Same result as `[wrapped, ...a.slice(1).map(…)]`, without three intermediate arrays.
           const n = a.length;
           args = new Array(n);
           args[0] = wrapped;
-          for (let i = 1; i < n; i++) args[i] = deferDataArg(a[i]);
+          for (let i = 1; i < n; i++) args[i] = i === 1 ? deferReplacementArg(a[i]) : deferDataArg(a[i]);
         } else {
-          // (#3903) `a.map(coerce)` allocates an extra array and goes through
-          // Array.prototype.map's generic element visit; a plain loop over the
-          // rest array is the same observable behaviour (coerce never throws
-          // for holes — a rest array has none).
+          // (#3903) A plain loop avoids `a.map(coerce)`'s extra array and generic visit; rest arrays have no holes.
           const n = a.length;
           args = new Array(n);
-          for (let i = 0; i < n; i++) args[i] = coerce(a[i]);
+          for (let i = 0; i < n; i++) args[i] = i === 1 ? deferReplacementArg(a[i]) : coerce(a[i]);
         }
         // #3761 — split uses -1 for omission/2^32 - 1; explicit NaN remains ToUint32(NaN) = 0.
         // #2002 — includes/startsWith/endsWith use NaN as the "position not
@@ -11047,7 +11030,7 @@ assert._isSameValue = isSameValue;
                 // code must restore the raw Wasm value, otherwise private-field
                 // dispatch cannot ref.cast the proxy to its declaring class and
                 // reads such as `child.#methods` collapse to null.
-                return _unwrapForHost(v);
+                return wsh.normalizeSandboxValue(obj, v, key, globalSandbox, callbackState, _unwrapForHost);
               }
             } catch (e) {
               // #2180/#2617 — a revoked-proxy TypeError, OR any exception from a
@@ -11058,7 +11041,8 @@ assert._isSameValue = isSameValue;
             }
           }
           const val = _safeGet(obj, key, callbackState);
-          if (val !== undefined) return _unwrapForHost(val);
+          if (val !== undefined)
+            return wsh.normalizeSandboxValue(obj, val, key, globalSandbox, callbackState, _unwrapForHost);
           // (#4618) A property read off a BARE closure bridge (the plain host
           // function `_wrapWasmClosureUnknownArity` mints): the bridge drops
           // the closure's sidecar surface, so `console.log.mock` /
@@ -17041,7 +17025,7 @@ assert._isSameValue = isSameValue;
                 const rawVec = _abHostBufferReverse.get(v);
                 if (rawVec !== undefined) return rawVec;
               }
-              return _sandboxConstructorValue(_unwrapForHost(v), key, globalSandbox);
+              return wsh.normalizeSandboxValue(obj, v, key, globalSandbox, callbackState, _unwrapForHost);
             }
           } catch {
             /* fall through to the generic path */
@@ -17055,7 +17039,7 @@ assert._isSameValue = isSameValue;
           // `sandbox.Array`, but `obj.constructor` for host JS arrays
           // returns `globalThis.Array`. Substitute the sandbox version so
           // `arr.constructor === Array` holds. No-op without a sandbox.
-          return _sandboxConstructorValue(_unwrapForHost(val), key, globalSandbox);
+          return wsh.normalizeSandboxValue(obj, val, key, globalSandbox, callbackState, _unwrapForHost);
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {

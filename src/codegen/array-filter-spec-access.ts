@@ -36,11 +36,13 @@
  *   agree on accessor indices.
  */
 
+import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureLateImport, flushLateImportShifts, isAnyValue } from "./shared.js";
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
+import { ensureAnyFromExternHelper } from "./any-helpers.js";
 
 /** The subset of the HOF loop locals these builders need. */
 export interface FilterLoopView {
@@ -49,6 +51,21 @@ export interface FilterLoopView {
   logicalLenTmp: number;
   iTmp: number;
   getOp: "array.get_u" | "array.get_s" | "array.get";
+}
+
+/**
+ * Whether a filter result can carry a non-number through a typed numeric
+ * receiver and therefore must stay on the dynamic externref carrier at its
+ * binding site. The output widening in `compileArrayFilter` and the slot type
+ * chosen by declarations/variables must agree; otherwise a `number[]` slot
+ * coerces an inherited accessor's string to NaN before the next read.
+ */
+export function filterResultNeedsDynamicCarrier(ctx: CodegenContext, initializer: ts.Expression | undefined): boolean {
+  if (!ctx.standalone || !ctx.protoIndexDirty || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!ts.isPropertyAccessExpression(initializer.expression) || initializer.expression.name.text !== "filter")
+    return false;
+  const resultFact = ctx.oracle.typeFactOf(initializer);
+  return resultFact.kind === "array" && resultFact.element.kind === "number";
 }
 
 /**
@@ -80,6 +97,14 @@ export interface OverlayFilterAccess {
   hasIdx: Instr[];
   /** `[] → []`: stores the fresh `Get(O, ToString(i))` into the element local. */
   loadElem: Instr[];
+  /**
+   * When a numeric typed lane is widened for an inherited accessor, preserve
+   * the raw JS value as an externref alongside the numeric callback value.
+   * `filter` must store the former in its result: `Get` can produce a string
+   * (or any other non-number) even though the callback's statically typed
+   * parameter is a number.
+   */
+  rawElemLocal?: number;
 }
 
 /**
@@ -98,16 +123,11 @@ export function overlayFilterAccess(
   loop: FilterLoopView,
   elemType: ValType,
   elemLocal: number,
+  rawElemLocal?: number,
 ): OverlayFilterAccess | null {
   if (!overlayRouteActive(ctx)) return null;
-  if (elemType.kind !== "f64" && elemType.kind !== "externref") return null;
-  // (#2001) A module with array-literal elisions keeps the `$Hole` dense route:
-  // `__extern_has_idx`'s vec arm answers on `i < length` alone, so it would
-  // report a `$Hole` slot as PRESENT and leak the sentinel through
-  // `__extern_get_idx`. Holes and accessor descriptors together are rare; the
-  // dense route is the conservative answer for that intersection.
-  if (ctx.usesArrayHoles && elemType.kind === "externref") return null;
-
+  const anyValueElem = isAnyValue(elemType, ctx);
+  if (elemType.kind !== "f64" && elemType.kind !== "externref" && !anyValueElem) return null;
   const hasIdxFn = ensureLateImport(
     ctx,
     "__extern_has_idx",
@@ -122,8 +142,17 @@ export function overlayFilterAccess(
   );
   const unboxFn =
     elemType.kind === "f64" ? ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]) : 0;
+  let anyFromExternFn: number | undefined;
+  if (anyValueElem) {
+    // The vec carrier itself stores boxed AnyValue structs. The externref
+    // chokepoint unwraps those back to the canonical box (and classifies
+    // accessor results such as primitive numbers) rather than wrapping the
+    // carrier externref as a new tag-5 value.
+    anyFromExternFn = ensureAnyFromExternHelper(ctx);
+  }
   flushLateImportShifts(ctx, fctx);
   if (hasIdxFn === undefined || getIdxFn === undefined || unboxFn === undefined) return null;
+  if (anyValueElem && anyFromExternFn === undefined) return null;
 
   const recvLocal = allocLocal(fctx, `__arr_flt_ovr_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.get", index: loop.vecTmp });
@@ -140,9 +169,12 @@ export function overlayFilterAccess(
     loadElem: [
       ...idxArg,
       { op: "call", funcIdx: getIdxFn },
+      ...(rawElemLocal === undefined ? [] : ([{ op: "local.tee", index: rawElemLocal }] satisfies Instr[])),
       ...(elemType.kind === "f64" ? ([{ op: "call", funcIdx: unboxFn }] satisfies Instr[]) : []),
+      ...(anyValueElem ? ([{ op: "call", funcIdx: anyFromExternFn! }] satisfies Instr[]) : []),
       { op: "local.set", index: elemLocal },
     ],
+    ...(rawElemLocal === undefined ? {} : { rawElemLocal }),
   };
 }
 

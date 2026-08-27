@@ -130,10 +130,13 @@ import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
+import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
+import { isForeignEvalNode } from "./eval-source.js";
 import {
   elementAccessTypedArrayName,
   emitVecNamedOrDynamicElementSet,
   compileElementIndexI32,
+  isDynamicPropertyKeyExpression,
 } from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
 import {
   compileStringBuilderAppend,
@@ -151,8 +154,7 @@ import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
-  emitRefreshRuntimeEvalBindingValueCellForWrite,
-  emitRuntimeEvalBindingCellWrite,
+  emitRealmGlobalPrimitiveMethodWriteback,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
@@ -167,6 +169,7 @@ import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -348,53 +351,29 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     if (!isUnresolvableIdent(ctx, fctx, expr.left) || identifierHasOnlyAmbientDeclarations(ctx, expr.left)) {
       const runtimeBinding = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
       if (runtimeBinding) {
-        const wrapRuntimeEvalCallable = isStaticallyCallableExpression(ctx, expr.right);
-        const rhsType = compileExpression(
-          ctx,
-          fctx,
-          expr.right,
-          wrapRuntimeEvalCallable ? undefined : { kind: "externref" },
-        );
-        if (!rhsType) {
-          reportError(ctx, expr, "Failed to compile runtime-eval-shadowed assignment value");
-          return null;
-        }
-        if (rhsType.kind !== "externref") coerceType(ctx, fctx, rhsType, { kind: "externref" });
-        const rhsLocal = allocLocal(fctx, `__runtime_eval_shadow_rhs_${fctx.locals.length}`, {
-          kind: "externref",
+        return compileRuntimeEvalShadowedAssignment(ctx, fctx, expr, expr.left, name, runtimeBinding, {
+          isStaticallyCallableExpression,
+          tryEmitAmbientIdentifierGlobalWriteFromLocal,
+          emitIdentifierWriteFromLocal,
         });
-        fctx.body.push({ op: "local.set", index: rhsLocal });
-
-        const savedPresent = pushBody(fctx);
-        let cellValueLocal = rhsLocal;
-        if (wrapRuntimeEvalCallable) {
-          fctx.body.push({ op: "local.get", index: rhsLocal });
-          emitRuntimeEvalAotCallableAdapter(ctx, fctx);
-          cellValueLocal = allocLocal(fctx, `__runtime_eval_shadow_cell_value_${fctx.locals.length}`, {
-            kind: "externref",
-          });
-          fctx.body.push({ op: "local.set", index: cellValueLocal });
+      }
+    }
+    // The ambient global value properties are non-writable. They are not
+    // represented in localMap/moduleGlobals, so without this arm assignment
+    // fell through to the auto-local fallback. A source declaration shadows
+    // the intrinsic and must retain ordinary mutable-binding semantics.
+    if (name === "NaN" || name === "Infinity" || name === "undefined") {
+      const declaration = ctx.oracle.valueDeclarationOf(expr.left);
+      const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+      if (isGlobalIntrinsic) {
+        const rhsType = compileExpression(ctx, fctx, expr.right);
+        if (isStrictContext(expr.left, ctx.inferModuleStrictArguments)) {
+          if (rhsType) fctx.body.push({ op: "drop" });
+          emitThrowTypeError(ctx, fctx, `Assignment to read-only global '${name}'`);
+          fctx.body.push({ op: "unreachable" });
+          return { kind: "f64" };
         }
-        const refreshedBinding = emitRefreshRuntimeEvalBindingValueCellForWrite(ctx, fctx, name, runtimeBinding);
-        emitRuntimeEvalBindingCellWrite(fctx, refreshedBinding ?? runtimeBinding, cellValueLocal);
-        const presentBody = fctx.body;
-        popBody(fctx, savedPresent);
-
-        const savedMiss = pushBody(fctx);
-        if (!tryEmitAmbientIdentifierGlobalWriteFromLocal(ctx, fctx, expr.left, rhsLocal)) {
-          emitIdentifierWriteFromLocal(ctx, fctx, expr.left, rhsLocal);
-        }
-        const missBody = fctx.body;
-        popBody(fctx, savedMiss);
-
-        fctx.body.push(
-          { op: "local.get", index: runtimeBinding.valueCellLocal },
-          { op: "ref.is_null" },
-          { op: "i32.eqz" },
-          { op: "if", blockType: { kind: "empty" }, then: presentBody, else: missBody },
-          { op: "local.get", index: rhsLocal },
-        );
-        return { kind: "externref" };
+        return rhsType;
       }
     }
     // const bindings — assignment throws TypeError at runtime
@@ -3675,7 +3654,31 @@ function compilePropertyAssignment(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): InnerResult {
-  const objType = ctx.checker.getTypeAtLocation(target.expression);
+  // A folded direct-eval body lives in the foreign `<eval>.ts` source file.
+  // Its `this.#private` assignment is still lexically inside the surrounding
+  // static class method, so let the private-accessor path classify it with the
+  // FunctionContext's class hint. Every other foreign assignment remains on
+  // the dynamic member setter because the checker cannot type its bindings.
+  const foreignStaticPrivateClassName =
+    isForeignEvalNode(target) &&
+    fctx.isStaticContext &&
+    fctx.enclosingClassName !== undefined &&
+    ctx.classDeclarationMap.has(fctx.enclosingClassName) &&
+    ts.isPrivateIdentifier(target.name) &&
+    skipTransparentExpressions(target.expression).kind === ts.SyntaxKind.ThisKeyword
+      ? fctx.enclosingClassName
+      : undefined;
+  if (isForeignEvalNode(target) && foreignStaticPrivateClassName === undefined) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
+  }
+  // The foreign static-private lane never consumes `objType` when its
+  // classifier finds the accessor (the private branch below returns first),
+  // but use the real class declaration as the defensive fallback instead of
+  // querying the unbound foreign `this` node.
+  const objTypeNode = foreignStaticPrivateClassName
+    ? ctx.classDeclarationMap.get(foreignStaticPrivateClassName)!
+    : target.expression;
+  const objType = ctx.checker.getTypeAtLocation(objTypeNode);
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
@@ -3753,11 +3756,16 @@ function compilePropertyAssignment(
       if (!rhsType) return null;
       if (globalType && rhsType.kind !== globalType.kind) coerceType(ctx, fctx, rhsType, globalType);
       const resultLocal = allocLocal(fctx, `__realm_global_write_${fctx.locals.length}`, globalType ?? rhsType);
-      fctx.body.push({ op: "local.tee", index: resultLocal });
-      fctx.body.push({ op: "global.set", index: globalIdx });
+      const storedType = globalType ?? rhsType;
+      fctx.body.push({ op: "local.set", index: resultLocal });
+      emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, resultLocal, storedType);
+      // The writeback may add a string global, so resolve the module-global
+      // index again before storing the binding value.
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? globalIdx });
       // An assignment expression evaluates to the assigned value.
       fctx.body.push({ op: "local.get", index: resultLocal });
-      return globalType ?? rhsType;
+      return storedType;
     }
   }
 
@@ -3785,6 +3793,30 @@ function compilePropertyAssignment(
   // value is tee'd and re-pushed after the (obj-returning) helper call.
   if (!ts.isPrivateIdentifier(target.name) && target.name.text === "__proto__") {
     const externRef: ValType = { kind: "externref" };
+
+    // (#4648) A closed-shape object returned from
+    // `Object.preventExtensions({})` does not carry the native `$Object`
+    // integrity/prototype fields.  Letting this assignment reach the generic
+    // boundary setter consequently records a sidecar prototype link even
+    // though the ECMAScript [[SetPrototypeOf]] operation must be refused.
+    // The integrity pass has already marked identifier receivers in
+    // `nonExtensibleVars`; preserve evaluation order, consume the receiver,
+    // evaluate the RHS, and leave the assignment value on the stack without
+    // invoking the setter.  This is the same silent-refusal posture used by
+    // `__object_setPrototypeOf` for standalone non-extensible objects.
+    if (
+      ctx.standalone &&
+      ts.isIdentifier(target.expression) &&
+      ctx.nonExtensibleVars.has(integrityVarKey(ctx, target.expression))
+    ) {
+      const objResult = compileExpression(ctx, fctx, target.expression, externRef);
+      if (!objResult) return null;
+      if (objResult.kind !== "externref") coerceType(ctx, fctx, objResult, externRef);
+      fctx.body.push({ op: "drop" });
+      compileProtoArg(ctx, fctx, value);
+      return externRef;
+    }
+
     // obj (externref)
     const objResult = compileExpression(ctx, fctx, target.expression, externRef);
     if (!objResult) return null;
@@ -3826,7 +3858,7 @@ function compilePropertyAssignment(
   // `(this as any).#m`) can otherwise send us through __extern_set and
   // silently drop the write.
   if (ts.isPrivateIdentifier(target.name)) {
-    const privateMember = classifyPrivateMember(ctx, target.name);
+    const privateMember = classifyPrivateMember(ctx, target.name, foreignStaticPrivateClassName);
     if (privateMember?.kind === "method" || privateMember?.kind === "accessor-readonly") {
       // Evaluate RHS for side effects before throwing (spec evaluation order).
       const rhsResult = compileExpression(ctx, fctx, value);
@@ -4108,6 +4140,19 @@ function compilePropertyAssignment(
     return externSetTy;
   }
 
+  // A Script's top-level `this` is the same realm global object as
+  // `globalThis`. Keep callable values written through that spelling in the
+  // shared runtime-eval AOT carrier too; otherwise a caller-private closure
+  // stored on the native standalone global reaches QuickJS as an opaque
+  // non-callable object. The `globalThis` arm above already does this for its
+  // spelling, and this is the corresponding §10.4.1.1 receiver path.
+  if (receiverIsRealmGlobalObject(ctx, fctx, target.expression)) {
+    const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
+    const wrapRuntimeEvalCallable =
+      ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
+  }
+
   // Handle externref property set
   if (isExternalDeclaredClass(objType, ctx.checker)) {
     const externSetResult = compileExternPropertySet(ctx, fctx, target, value, objType);
@@ -4197,15 +4242,14 @@ function compilePropertyAssignment(
         { op: "local.get", index: newLenTmp },
         { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
       ];
+      const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
       if (receiverProvenVec) {
-        // Byte-identical to pre-#4638 for a statically proven vec receiver.
-        for (const instr of lengthStore) fctx.body.push(instr);
+        for (const instr of selectedStore) fctx.body.push(instr);
       } else {
         // The guarded cast above parks `null` when the receiver was not a vec;
-        // `struct.set` on null is the same uncatchable trap, so skip the store.
         fctx.body.push({ op: "local.get", index: vecTmp });
         fctx.body.push({ op: "ref.is_null" });
-        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: lengthStore });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: selectedStore });
       }
       // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
@@ -5241,8 +5285,13 @@ function compileElementAssignment(
       elementAccessTypedArrayName(ctx, target.expression) === undefined &&
       !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
     ) {
-      const routed = emitOverlayRoutedElementSet(ctx, fctx, target.argumentExpression, value, (e, h) =>
-        compileExpression(ctx, fctx, e, h),
+      const routed = emitOverlayRoutedElementSet(
+        ctx,
+        fctx,
+        target.argumentExpression,
+        value,
+        isStrictContext(target, ctx.inferModuleStrictArguments),
+        (e, h) => compileExpression(ctx, fctx, e, h),
       );
       if (routed) return routed;
     }
@@ -5261,6 +5310,19 @@ function compileElementAssignment(
         then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
         else: [],
       });
+    }
+    // Dynamic object-like keys use ToPropertyKey, not the numeric element
+    // lane. Reuse the ordinary extern setter after the vec null guard so
+    // `x[object] = value` preserves coercion order and reaches either the
+    // numeric element or the vec expando/prototype path selected by the
+    // runtime (`S15.4_A1.1_T9`).
+    if (
+      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
+      isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression)
+    ) {
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      return compileExternSetFallback(ctx, fctx, target, value, arrType);
     }
     // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
     // the existing conversion path when constants, bounds, or overflow safety

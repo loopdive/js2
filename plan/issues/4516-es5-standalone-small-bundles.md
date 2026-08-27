@@ -19,6 +19,12 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/regexp-standalone.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/builtins.ts
+  # The standalone Boolean constructor delegates object truthiness to the
+  # shared primitive-tail leaf; this driver grows by its import only.
+  - src/codegen/expressions/new-builtin-globals.ts
 func-budget-allow:
   - src/codegen/statements/loops.ts::compileForInStatement
   - src/codegen/statements/loops.ts::compileForOfArray
@@ -26,6 +32,8 @@ func-budget-allow:
   - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
   - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/expressions/builtins.ts::compileDateMethodCall
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
@@ -84,3 +92,14 @@ keep ordinary dynamic quantifiers as refusals.
   it is blocked here by missing `clang-18`/`cmake`.
 - `tests/issue-4516-regexp.test.ts` plus `tests/issue-4065.test.ts`: 36/36.
 - TypeScript 7 typecheck and targeted Prettier check: pass.
+
+## Test Results
+
+The assigned Annex B Date and strict-global-constant slices are complete; the
+other buckets in this umbrella issue remain independently scoped.
+
+- Exact standalone Test262 Annex B Date bucket: 6/6 passing (+6).
+- Exact standalone Test262 strict ambient-global assignment bucket: 2/2
+  passing (+2).
+- Focused Vitest: `tests/issue-4516-date-annex-b.test.ts` and
+  `tests/issue-4516-strict-global-constants.test.ts` — 8/8 tests passing.

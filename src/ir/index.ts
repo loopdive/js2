@@ -7,6 +7,7 @@ export * from "./program-abi.js";
 export * from "./async-plan.js";
 export * from "./nodes.js";
 export * from "./callable-bindings.js";
+export * from "./program-callable-bindings.js";
 export * from "./abi-bindings.js";
 export * from "./alloc-registry.js";
 export * from "./builder.js";

@@ -83,6 +83,7 @@ import {
   emitImplicitGlobalRead,
   emitRuntimeEvalBindingRead,
   emitRuntimeEvalGlobalRead,
+  emitRuntimeEvalGlobalLexicalReadOrFallback,
   emitRuntimeEvalSharedValueUnwrap,
   runtimeEvalSharedValueUnwrapInstrs,
 } from "../global-environment.js";
@@ -370,8 +371,19 @@ function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node
  * legitimately resolve cross-file and stay untouched, as do synthetic
  * compiler-minted identifiers (no parent / no source position).
  */
-export function moduleGoalIdentifierIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
+export function moduleGoalIdentifierIsUndeclared(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
   if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
+  // (#4249) A direct eval body is parsed as a foreign SourceFile, so its
+  // identifiers have no checker symbol and would otherwise look like a
+  // cross-module leak. The eval executes in the caller's module environment;
+  // let the ordinary local/module-global resolution below serve that binding.
+  // `directEvalSloppyThisFallback` is set only while the direct-eval splice is
+  // being compiled (and is propagated to its callback frames).
+  if (fctx.directEvalSloppyThisFallback === true) return false;
   const valSym = identifierValueSymbol(ctx, id);
   if (valSym === undefined) return true;
   const decl = valSym.valueDeclaration ?? valSym.declarations?.[0];
@@ -763,6 +775,57 @@ function ambientGlobalReadIsUserFunctionShadowed(ctx: CodegenContext, id: ts.Ide
   return ts.isFunctionDeclaration(decl) && decl.name?.text === name;
 }
 
+function compileRuntimeEvalGlobalLexicalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | null {
+  const name = id.text;
+  const savedFallback = pushBody(fctx);
+  const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
+  if (fallbackType === null) {
+    popBody(fctx, savedFallback);
+    return null;
+  }
+  if (fallbackType.kind !== "externref") coerceType(ctx, fctx, fallbackType, { kind: "externref" });
+  const fallbackBody = fctx.body;
+  popBody(fctx, savedFallback);
+  return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, { kind: "externref" });
+}
+
+function shouldUseRuntimeEvalGlobalLexicalRead(
+  ctx: CodegenContext,
+  skipRuntimeEvalState: boolean,
+  unresolvedInModuleGoal: boolean,
+): boolean {
+  return (
+    !skipRuntimeEvalState &&
+    !unresolvedInModuleGoal &&
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalGlobalFunctionBindings === true
+  );
+}
+
+function compileCapturedGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  name: string,
+): ValType {
+  const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+  if (tdzResult === "check") {
+    emitTdzCheck(ctx, fctx, name);
+  } else if (tdzResult === "throw") {
+    emitStaticTdzThrow(ctx, fctx, id.text);
+  }
+  const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
+  if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
+    fctx.body.push({ op: "ref.as_non_null" });
+    return { kind: "ref", typeIdx: gType.typeIdx };
+  }
+  return gType;
+}
+
 /** Resolve an imported top-level function by declaration/allocator identity. */
 function exactImportedTopLevelFunction(
   ctx: CodegenContext,
@@ -870,7 +933,7 @@ function compileIdentifierCore(
     const savedBody = fctx.body;
     fctx.body = staticArm;
     const staticTy = withShadowReadSuppressed(
-      () => compileIdentifierCore(ctx, fctx, id, skipRuntimeEvalState),
+      () => compileIdentifierCore(ctx, fctx, id, true),
       name, // (#4648) marks this as the static fallback arm FOR `name`
     );
     if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
@@ -1290,28 +1353,17 @@ function compileIdentifierCore(
   // (#3505) Graph-wide name-keyed registries (capturedGlobals, moduleGlobals,
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
   // for THIS module's environment record — see moduleGoalIdentifierIsUndeclared.
-  const unresolvedInModuleGoal = moduleGoalIdentifierIsUndeclared(ctx, id);
+  const unresolvedInModuleGoal = moduleGoalIdentifierIsUndeclared(ctx, fctx, id);
   const graphNameRegistryUnavailable = unresolvedInModuleGoal || readsAmbientDeclaration;
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
   const capturedIdx = graphNameRegistryUnavailable ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
-    // TDZ check: throw ReferenceError if let/const variable accessed before initialization
-    // Apply static analysis — captured globals are often accessed from closures,
-    // but analyzeTdzAccess handles the cross-function case correctly (returns "check")
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
-    const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
-    // Globals widened from ref to ref_null for null init — narrow back
-    if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
-      fctx.body.push({ op: "ref.as_non_null" });
-      return { kind: "ref", typeIdx: gType.typeIdx };
-    }
-    return gType;
+    return compileCapturedGlobalRead(ctx, fctx, id, name);
+  }
+
+  if (shouldUseRuntimeEvalGlobalLexicalRead(ctx, skipRuntimeEvalState, unresolvedInModuleGoal)) {
+    return compileRuntimeEvalGlobalLexicalRead(ctx, fctx, id);
   }
 
   // Check module-level globals (top-level let/const declarations)
