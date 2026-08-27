@@ -78,6 +78,7 @@ toggles are the R9 debt" is corrected accordingly, per-var below.
 | `JS2WASM_IR_OBJECT_SHAPES` | on | `=0` reverts to the legacy boxed-externref object representation | **retire-at-R9** — legacy-representation escape hatch | R9 |
 | `JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER` | on | `=0` restores direct-first ownership for the bounded scalar leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER` | on | `=0` restores direct-first ownership for the bounded array leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
+| `JS2WASM_MULTI_PREPARED_STRING_CUTOVER` | on | `=0` restores direct-first ownership for the exact counted-string benchmark leaf while retaining its late IR overlay | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER` | on | `=0` restores direct-first ownership for the bounded benchmark loop leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER` | on | `=0` restores direct-first ownership for the bounded Fibonacci pair | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_IR_INLINE` | on | `=0`/tuned sets control the IR-level inliner (#4157) | keep-as-tuning — IR pass config, no legacy involvement (a `-O`-style knob) | — |
@@ -96,7 +97,7 @@ Nothing is retire-now-already-dead: every var has a live reader under `src/`
 
 The original four `JS2WASM_IR_*` retire-at-R9 vars remain exactly
 `JS2WASM_IR_FIRST`, `JS2WASM_IR_STRING_BUILDER`, `JS2WASM_IR_ASYNC`, and
-`JS2WASM_IR_OBJECT_SHAPES`. The four current
+`JS2WASM_IR_OBJECT_SHAPES`. The five current
 `JS2WASM_MULTI_PREPARED_*_CUTOVER` vars are additional bounded direct-route
 escape hatches introduced after the 2026-08-21 census. R9 consumes the complete
 live retire-at-R9 table, not the historical cardinality. Every new bounded

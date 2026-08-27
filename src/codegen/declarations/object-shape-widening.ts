@@ -484,6 +484,18 @@ export function collectEmptyObjectWidening(
             markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
           }
 
+          // #2573 — `length` explicitly written as `undefined` or `null`
+          // must not be represented by the primitive default of a widened
+          // field. Pin this receiver to the open object store so the missing
+          // read, explicit null, and later writes share one presence-aware
+          // carrier. Ordinary primitive-only widened objects keep their
+          // existing closed-struct fast path.
+          if (!ctx.objectHashConsumerVars.has(varName)) {
+            for (const s of stmts) {
+              markNullishPropertyWrites(s, varName, ctx.objectHashConsumerVars);
+            }
+          }
+
           // (#2071) Returned from a foreign-return-capable constructor → the
           // literal escapes as the construct result; keep it an open `$Object`
           // (see varEscapesViaForeignReturnCtor above).
@@ -2285,6 +2297,33 @@ function markObjectHashConsumers(node: ts.Node, varName: string, poisonSet: Set<
       visitTarget(n.left);
     }
     ts.forEachChild(n, visit);
+  };
+
+  visit(node);
+}
+
+/**
+ * #2573 — An empty object whose later `length` writes include an explicit
+ * `null`/`undefined` value cannot use a primitive widened field as its carrier.
+ * The field initializer is the absent-property default, while the later write
+ * is an observable value; a closed numeric slot collapses both states to zero.
+ */
+function markNullishPropertyWrites(node: ts.Node, varName: string, poisonSet: Set<string>): void {
+  const visit = (current: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(current) &&
+      current.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(current.left) &&
+      ts.isIdentifier(current.left.expression) &&
+      current.left.expression.text === varName &&
+      current.left.name.text === "length"
+    ) {
+      const rhs = current.right;
+      if (rhs.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(rhs) && rhs.text === "undefined")) {
+        poisonSet.add(varName);
+      }
+    }
+    ts.forEachChild(current, visit);
   };
 
   visit(node);

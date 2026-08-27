@@ -54,6 +54,7 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
 import { addUnionImports } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
@@ -1636,8 +1637,9 @@ export type GeneratorDecl = ts.FunctionDeclaration | ts.MethodDeclaration | ts.F
  *     §27.5/EvaluateGeneratorBody). Pattern params destructure eagerly in the
  *     lifted factory (emitClosureParamDestructuring) and pack into spill
  *     fields (#3386);
- *   - no `arguments` (the eager path builds the arguments vec; the state struct
- *     has no slot for it);
+ *   - `arguments` is supported by the C02 frame-carrier slice: the lifted
+ *     factory builds the vec and `registerNativeGenerator` stores it in the
+ *     state; the resume context reloads it before compiling the body;
  *   - no `this` (a bare function expression's `this` is call-site dependent; the
  *     state-struct model has no receiver slot for the non-method case);
  *   - a NAMED fn-expr must not reference its own name (the self-binding scope
@@ -1664,7 +1666,6 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     }
     if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
-  if (bodyNeedsArgumentsObject(decl.body)) return false;
   if (fnExprBodyReferencesThis(decl.body)) return false;
   if (decl.name && bodyReferencesOwnName(decl.body, decl.name.text)) return false;
   // (#3302) Outer-scope captures are ADMITTED in the standalone/wasi lane:
@@ -2104,44 +2105,15 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
     if (!hostLaneGeneratorUsesAreSafe(ctx, decl)) return false;
   }
   if (!decl.body || !decl.asteriskToken) return false;
-  // (#2864 wave-2 S2) A body that READS the implicit `arguments` object has no
-  // native-frame support: the state struct has slots for `this`, own params and
-  // spilled locals, and the RESUME function compiles the body with a fresh
-  // `FunctionContext` in which nothing ever builds the arguments vec (the
-  // §10.2.11 setup in function-body.ts runs on the FACTORY's context only). So
-  // `arguments` resolves to nothing in the resume body.
-  //
-  // This bail already existed for the two OTHER generator forms — generator
-  // EXPRESSIONS (`isNativeGeneratorExpressionShape`) and METHODS (the
-  // `bodyNeedsArgumentsObject(decl.body)` arm below) — and was simply never
-  // applied to free function DECLARATIONS, which #3032 W6 subsequently routed
-  // natively on the JS-HOST lane as well. Measured consequences of the gap:
-  //   * JS-HOST (gc): `function* g(a,b){ const n = arguments.length; yield n }`
-  //     compiled "successfully" and produced a module the ENGINE REJECTS —
-  //     `global.set[0] expected type externref, found i32.const of type i32`.
-  //     A non-generator reading `arguments`, and a generator not reading it,
-  //     are both valid; it is specifically generator × `arguments`.
-  //   * standalone/wasi: a raw wasm trap at the first `arguments` read, before
-  //     any suspend — not a suspend-crossing problem.
-  // Both become the ordinary eager-buffer path (host: correct; standalone: a
-  // clean #680 refusal), which is what every other unsupported shape does here.
-  //
-  // NOTE for the #3032 "js-host bytes identical" contract: host bytes DO change
-  // for these programs, and that contract cannot apply — the bytes being
-  // replaced are an invalid module, so there is no valid baseline to preserve.
-  //
-  // Making `arguments` genuinely work in the native frame is a real slice, not
-  // a wider gate: the factory must build the vec at CALL time (§10.2.11) and
-  // spill it, the resume function must reload it into an `arguments` local, and
-  // MAPPED aliasing (`arguments[0] = v` writing back to param `a`) needs
-  // `fctx.mappedArgsInfo` rebuilt against the frame. Design banked in #2864.
-  if (bodyNeedsArgumentsObject(decl.body)) return false;
+  // (#2864 C02) `arguments` is carried by the native frame. The factory setup
+  // builds the vec at call time and `ensureNativeGeneratorResumeFunction`
+  // rehydrates it into the detached resume context, including mapped metadata.
   // (#3164) A FunctionExpression may be anonymous — its native registration
   // rides a synthetic lifted-closure name supplied by the emit site
   // (closures.ts). Everything else still requires a name (funcMap key).
   if (!decl.name && !ts.isFunctionExpression(decl)) return false;
-  // (#3164) Fn-expr-specific shape gate (identifier-only params, no
-  // `this`/`arguments`, no self-name reference, no outer capture). Applied
+  // (#3164) Fn-expr-specific shape gate (identifier-only params, frame-carried
+  // `arguments`, no `this`/self-name reference, no outer capture). Applied
   // here — the SINGLE candidate gate — so `sourceNeedsGeneratorHostImports`,
   // `registerNativeGenerator`, and the closures.ts emit site all agree
   // (disagreement bakes an undefined `__gen_*` funcIdx → invalid module).
@@ -2255,19 +2227,15 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
       if (sameName > 1) return false;
     }
   }
-  // (#2571) A method generator that reads `arguments`, uses `super.*`, or
-  // CAPTURES an enclosing-function binding (#2203) has no native state-machine
-  // support: the eager-buffer path builds the arguments vec / closure, while the
-  // native state struct has slots only for `this` + own params, not captures.
-  // Bail to the host path so it stays correct (host) / refuses cleanly
-  // (standalone) rather than reading a garbage slot. This keeps the candidate
-  // gate the SINGLE source of truth — `registerNativeGenerator` (class-bodies)
-  // and `sourceNeedsGeneratorHostImports` both consult it and agree.
+  // (#2571) A method generator that uses `super.*` or CAPTURES an
+  // enclosing-function binding (#2203) has no native state-machine support.
+  // `arguments` is the bounded C02 exception: its vec is now carried by the
+  // native frame, while the remaining unsupported method cases stay on the
+  // host path / clean standalone refusal.
   if (
     ts.isMethodDeclaration(decl) &&
     decl.body &&
-    (bodyNeedsArgumentsObject(decl.body) ||
-      methodBodyUsesSuper(decl.body) ||
+    (methodBodyUsesSuper(decl.body) ||
       // (#3032 W4) Outer-scope captures are ADMITTED for method generators in
       // the standalone/wasi lane: a class / object-literal method body never
       // receives captures as params — it resolves them through the
@@ -2390,7 +2358,7 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
       found = true;
       // (#3164) A generator FUNCTION EXPRESSION no longer forces the host
       // imports when the extended candidate gate admits it (zero/identifier
-      // params, no `this`/`arguments`/self-name/capture — the fn-expr arm of
+      // params, frame-carried `arguments`, no `this`/self-name/capture — the fn-expr arm of
       // `isNativeGeneratorCandidate`); the closures.ts emit site routes it
       // through the native state-struct factory. Any bail (including async —
       // the modifiers check inside the candidate) keeps the imports
@@ -2401,8 +2369,8 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
     if (ts.isMethodDeclaration(node) && node.asteriskToken && node.body) {
       found = true;
       // (#2571) A class / object-literal generator METHOD that the native path
-      // can lower (instance/static, identifier params, no capture / arguments /
-      // super) no longer forces the host imports — same logic as the
+      // can lower (instance/static, identifier params, frame-carried arguments,
+      // no capture / super) no longer forces the host imports — same logic as the
       // FunctionDeclaration branch above, generalized to methods. A
       // non-candidate or capturing method generator still needs the host buffer.
       if (!isNativeGeneratorCandidate(ctx, node) || generatorCapturesOuterScope(ctx, node)) needsHost = true;
@@ -2547,6 +2515,19 @@ export function registerNativeGenerator(
   // precede the user params, aligned with the caller's paramTypes prefix.
   const captureNames = (leadingCaptures ?? []).map((c) => c.name);
   const paramNames = synthesizedThis ? ["this", ...userParamNames] : [...captureNames, ...userParamNames];
+  // (#2864 C02) The ordinary emit sites build `arguments` before this factory
+  // is emitted. Carry that vec in the native frame so the detached resume
+  // function can rehydrate the same object (including call-site extras).
+  // Synthetic receiver/capture params are not part of the source-level
+  // arguments object.
+  const needsArguments = decl.body ? bodyNeedsArgumentsObject(decl.body) : false;
+  const argumentsParamOffset = synthesizedThis ? 1 : captureNames.length;
+  const argumentsVecTypeIdx = needsArguments ? getOrRegisterVecType(ctx, "arguments") : undefined;
+  const argumentsMapped =
+    needsArguments &&
+    decl.parameters.length > 0 &&
+    isSimpleParameterList(decl.parameters) &&
+    !isStrictFunction(decl, ctx.inferModuleStrictArguments);
   // (#2864 F1) `sent` / `abrupt` carry the `.next(v)` / `.return(v)` value. For
   // the boxed-any carrier they are externref so an arbitrary value survives; for
   // numeric / string carriers they stay f64 (byte-identical to before).
@@ -2559,6 +2540,14 @@ export function registerNativeGenerator(
     // (#2864 F2) `gen.throw(e)` payload — externref regardless of carrier.
     { name: "error", type: { kind: "externref" }, mutable: true },
   ];
+  const argumentsFieldIdx = needsArguments ? stateFields.length : undefined;
+  if (argumentsFieldIdx !== undefined) {
+    stateFields.push({
+      name: "arguments",
+      type: { kind: "ref", typeIdx: argumentsVecTypeIdx! },
+      mutable: true,
+    });
+  }
   // (#3620) A BINDING-PATTERN parameter's state field must be typed at the
   // value's actual wasm-boundary representation (`externref`), NOT at the TS
   // type the checker infers for the pattern.
@@ -2594,7 +2583,8 @@ export function registerNativeGenerator(
       mutable: false,
     });
   }
-  const spillFieldOffset = PARAM_FIELD_OFFSET + paramTypes.length;
+  const paramFieldOffset = PARAM_FIELD_OFFSET + (argumentsFieldIdx === undefined ? 0 : 1);
+  const spillFieldOffset = paramFieldOffset + paramTypes.length;
   // Params that are also reassigned in the body need a mutable spill slot too;
   // but params already live in the struct. Spills cover body-declared locals.
   const paramNameSet = new Set(paramNames);
@@ -2743,7 +2733,11 @@ export function registerNativeGenerator(
     // must agree with the field it `struct.get`s. Identical to `paramTypes`
     // except for binding-pattern params (widened to `externref` above).
     paramTypes: stateParamTypes,
-    paramFieldOffset: PARAM_FIELD_OFFSET,
+    paramFieldOffset,
+    argumentsFieldIdx,
+    argumentsVecTypeIdx,
+    argumentsParamOffset: needsArguments ? argumentsParamOffset : undefined,
+    argumentsMapped: needsArguments ? argumentsMapped : undefined,
     sentFieldIdx: SENT_FIELD,
     modeFieldIdx: MODE_FIELD,
     abruptFieldIdx: ABRUPT_FIELD,
@@ -4152,6 +4146,38 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     }
   }
 
+  // (#2864 C02) `arguments` is initialized by the factory at call time, but
+  // this resume function owns the detached execution context. Rehydrate the
+  // same vec before compiling the body so identifier/property lowering sees a
+  // real local. The resume function has its own `__gen_self` parameter, hence
+  // the +1 when rebuilding mapped-arguments metadata; source-level synthetic
+  // receiver/capture params are skipped by `argumentsParamOffset`.
+  if (info.argumentsFieldIdx !== undefined && info.argumentsVecTypeIdx !== undefined) {
+    const argumentsLocal = allocLocal(resumeFctx, "arguments", {
+      kind: "ref",
+      typeIdx: info.argumentsVecTypeIdx,
+    });
+    resumeFctx.body.push({ op: "local.get", index: 0 });
+    resumeFctx.body.push({
+      op: "struct.get",
+      typeIdx: info.stateTypeIdx,
+      fieldIdx: info.argumentsFieldIdx,
+    });
+    resumeFctx.body.push({ op: "local.set", index: argumentsLocal });
+    if (info.argumentsMapped) {
+      const sourceParamOffset = info.argumentsParamOffset ?? 0;
+      const paramTypes = info.paramTypes.slice(sourceParamOffset, sourceParamOffset + info.decl.parameters.length);
+      resumeFctx.mappedArgsInfo = {
+        argsLocalIdx: argumentsLocal,
+        arrTypeIdx: getArrTypeIdxFromVec(ctx, info.argumentsVecTypeIdx),
+        vecTypeIdx: info.argumentsVecTypeIdx,
+        paramCount: paramTypes.length,
+        paramOffset: sourceParamOffset + 1,
+        paramTypes,
+      };
+    }
+  }
+
   // Load spills into locals. (#2864 F1b) The load local is minted at the spill's
   // actual ValType so the `struct.get` (of the same-typed field) round-trips. The
   // body's var-declaration reuses this exact slot (it is already in `localMap`),
@@ -4252,8 +4278,20 @@ export function compileNativeGeneratorFunction(
   decl: GeneratorDecl,
   info: NativeGeneratorInfo,
 ): void {
-  ensureNativeGeneratorResumeFunction(ctx, info);
-  // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, params…, spills(NaN)…
+  // The factory prologue is not yet registered in `mod.functions`. Building
+  // the detached resume function can add host-lane imports, so keep the
+  // already-emitted arguments setup visible to the late-index shifter for the
+  // duration of that build. Standalone has no such imports, which is why this
+  // corruption previously appeared only in the JS-host controls.
+  const factoryBodyWasLive = ctx.liveBodies.has(fctx.body);
+  if (!factoryBodyWasLive) ctx.liveBodies.add(fctx.body);
+  try {
+    ensureNativeGeneratorResumeFunction(ctx, info);
+  } finally {
+    if (!factoryBodyWasLive) ctx.liveBodies.delete(fctx.body);
+  }
+  // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, error=⊥,
+  // optional frame-carried arguments, params…, spills(NaN)…
   // (#2864 F1) `sent`/`abrupt` init to the carrier default — `f64 NaN` for the
   // numeric/string carriers (unchanged) or a null externref for the boxed-any
   // carrier so the struct.new typechecks before the first `.next(v)`.
@@ -4265,6 +4303,19 @@ export function compileNativeGeneratorFunction(
   fctx.body.push({ op: "i32.const", value: 0 }); // mode = MODE_NEXT
   fctx.body.push(carrierInit); // abrupt
   fctx.body.push({ op: "ref.null.extern" }); // (#2864 F2) error
+  // (#2864 C02) The ordinary function/method/closure prologue has already
+  // built the arguments vec in this factory at call time. Store that exact
+  // object in the frame before the captured params so every later resume sees
+  // the original call-site arity and values.
+  if (info.argumentsFieldIdx !== undefined) {
+    const argumentsLocal = fctx.localMap.get("arguments");
+    if (argumentsLocal === undefined) {
+      reportError(ctx, decl, "Internal error: native generator arguments local disappeared before frame construction");
+      fctx.body.push({ op: "unreachable" });
+      return;
+    }
+    fctx.body.push({ op: "local.get", index: argumentsLocal });
+  }
   // (#2571) Read every wasm param into its `param_*` state slot. For an instance
   // method generator the synthetic `this` is wasm param 0 and user params are
   // 1..n, so iterate `info.paramTypes.length` (which includes the synthetic

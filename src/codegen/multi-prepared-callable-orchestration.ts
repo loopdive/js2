@@ -31,6 +31,10 @@ import type {
   MultiPreparedFunctionValueSupportReceipt,
   MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
+import {
+  collectMultiPreparedStringLeafShapes,
+  type MultiPreparedStringLeafShape,
+} from "./multi-prepared-string-leaf.js";
 
 type ProgramCallableRecord = IrProgramCallableBindingGraph["records"][number];
 
@@ -185,7 +189,7 @@ export interface MultiPreparedCallableOrchestrationInput {
   readonly multiAst: MultiTypedAST;
   readonly ctx: CodegenContext;
   readonly identityContext: IrPlanningIdentityContext;
-  readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
+  readonly planSource: (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape) => IrOverlayPlan;
   readonly safeSelection: (plan: IrOverlayPlan, sourceFile: ts.SourceFile) => IrSelection;
   readonly directCallerActivationTargets: (plan: IrOverlayPlan, sourceFile: ts.SourceFile) => ReadonlySet<IrUnitId>;
   readonly preparedFunctionValueTargets: (plan: IrOverlayPlan, sourceFile: ts.SourceFile) => ReadonlySet<IrUnitId>;
@@ -410,7 +414,7 @@ export interface MultiPreparedProgramRoutePlanningInput {
   readonly identityContext: IrPlanningIdentityContext;
   readonly ctx: CodegenContext;
   readonly explicitlyDisabled: (value: string | undefined) => boolean;
-  readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
+  readonly planSource: (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape) => IrOverlayPlan;
   readonly buildSafety: () => MultiPreparedScalarLeafGraphSafety;
   readonly safeSelection: (
     plan: IrOverlayPlan,
@@ -439,10 +443,16 @@ export interface MultiPreparedProgramRoutePlanningInput {
 
 export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramRoutePlanningInput): void {
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
-  const planSource = (sourceFile: ts.SourceFile): IrOverlayPlan => {
+  const stringProofContext = { checker: input.multiAst.checker, oracle: input.ctx.oracle };
+  const stringShapes = collectMultiPreparedStringLeafShapes({
+    proofContext: stringProofContext,
+    sourceFiles: input.multiAst.sourceFiles,
+  });
+  const stringShapeBySource = new Map(stringShapes.map((shape) => [shape.sourceFile, shape] as const));
+  const planSource = (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape): IrOverlayPlan => {
     const cached = plans.get(sourceFile);
     if (cached) return cached;
-    const plan = input.planSource(sourceFile);
+    const plan = input.planSource(sourceFile, stringShape ?? stringShapeBySource.get(sourceFile));
     plans.set(sourceFile, plan);
     return plan;
   };
@@ -460,6 +470,8 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     active,
     scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
     arrayCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
+    stringCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_STRING_CUTOVER),
+    stringProofContext,
     functionValueLeafCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
     fibonacciPairCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
     ctx: input.ctx,
@@ -472,6 +484,7 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     hasForeignLateProvider: input.hasForeignLateProvider,
     prepareFunctionValueSupport: input.prepareFunctionValueSupport,
     projectLoweringPlans: input.projectLoweringPlans,
+    stringShapes,
   });
   if (input.ctx.irProgramCallableCutoverEnabled) {
     planMultiPreparedCallableComponents({

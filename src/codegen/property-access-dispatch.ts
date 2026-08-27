@@ -60,7 +60,7 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
-import { nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
@@ -100,6 +100,7 @@ import {
   emitTaCtorBytesPerElement,
   emitTaCtorValue,
   emitTaViewAccessor,
+  emitTaViewDynamicByteOffset,
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
@@ -257,6 +258,18 @@ export function tryDynamicReceiverRuntimeDispatchReads(
     const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
     if (isDynamicReceiver) {
       const r = emitTaViewDynamicByteLength(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
+      if (r) return r;
+    }
+  }
+
+  // (#4761) `.byteOffset` on a dynamic constructor/view receiver. The direct
+  // property spelling does not go through the standalone string-key MOP, so
+  // use the same runtime `$__ta_dyn_view` test as `.byteLength` and apply the
+  // detached-buffer zero rule at the owning view seam.
+  if (propName === "byteOffset" && noJsHost(ctx) && ctx.taDynViewTypeIdx >= 0) {
+    const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
+    if (isDynamicReceiver) {
+      const r = emitTaViewDynamicByteOffset(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
       if (r) return r;
     }
   }
@@ -2233,6 +2246,14 @@ function emitClassStaticMemberRead(
       const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
       return retType ?? { kind: "externref" };
     }
+    // A setter-only accessor still owns the property, but reading it returns
+    // the canonical `undefined` value (§10.4.2 [[Get]]). Without this arm the
+    // class-object carrier falls through to its constructor-name/length
+    // metadata, so `static set name(_) {}` incorrectly reads "Class".
+    if (ctx.staticAccessorSet.has(accessorKey)) {
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+      return { kind: "externref" };
+    }
   }
   return PA_FALLTHROUGH;
 }
@@ -4123,9 +4144,15 @@ export function finalizeStructAndDynamicMemberGet(
   // The receiver already resolves externref (resolveWasmType degrade); this
   // keeps the RESULT representation equally honest.
   const foreignReturnReceiver = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(objType);
-  const accessWasm: ValType = foreignReturnReceiver
-    ? { kind: "externref" }
-    : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+  // #2573 — an empty object pinned to the open `$Object` carrier has a
+  // checker-evolved shape, but its runtime property values remain dynamic.
+  // Keep the read as externref so an absent property is not unboxed through
+  // the widened numeric field type before `=== undefined` / `typeof` sees it.
+  const openObjectReceiver = ts.isIdentifier(expr.expression) && ctx.objectHashConsumerVars.has(expr.expression.text);
+  const accessWasm: ValType =
+    foreignReturnReceiver || openObjectReceiver
+      ? { kind: "externref" }
+      : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
@@ -4246,6 +4273,7 @@ export function finalizeStructAndDynamicMemberGet(
       // representation stays honest.
       const preserveDynamicResultCarrier =
         isEvalAccessorReceiver ||
+        openObjectReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
         foreignReturnReceiver;

@@ -23,7 +23,7 @@ import {
   isSymbolType,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
+import { compileArrayMethodCall, resolveArrayInfo, tryCompileDynViewSpeciesMethodCall } from "../array-methods.js";
 import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
@@ -742,6 +742,13 @@ export function compileReceiverMethodCall(
   const receiverIsExternrefTagged =
     ts.isIdentifier(receiverTagExpr) && ctx.externrefAccessorVars.has(receiverTagExpr.text);
 
+  // (#4449) Dynamic TypedArray producer methods must be recognized before the
+  // generic native-string ladder below: `any` receivers are intentionally
+  // eligible for that ladder, but a boxed dynamic view has its own species
+  // semantics for map/filter/slice/subarray.
+  const dynSpecies = tryCompileDynViewSpeciesMethodCall(ctx, fctx, propAccess, expr, receiverType, expectedType);
+  if (dynSpecies !== undefined) return dynSpecies;
+
   // TextEncoder/TextDecoder under no-JS-host targets. These are standard
   // Web/Node APIs, but WASI/standalone cannot rely on env.TextEncoder_* host
   // imports. Lower the narrow UTF-8 surface natively.
@@ -928,7 +935,9 @@ export function compileReceiverMethodCall(
   if (isExternalDeclaredClass(receiverType, ctx.checker)) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
-    if (externResult !== undefined) return externResult;
+    if (externResult !== undefined) {
+      return externResult;
+    }
   }
 
   // (#2865) `.next()` on a DRIVEN async-generator object (typed receiver).
@@ -3499,6 +3508,8 @@ export function compileReceiverMethodCall(
 
     if (isAnyOrExternref) {
       const methodName = propAccess.name.text;
+      const dynSpecies = tryCompileDynViewSpeciesMethodCall(ctx, fctx, propAccess, expr, receiverType, expectedType);
+      if (dynSpecies !== undefined) return dynSpecies;
       const nativeResult = tryCompileNativeGeneratorMethodCall(
         ctx,
         fctx,

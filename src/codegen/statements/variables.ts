@@ -66,6 +66,98 @@ import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extract
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 
+/**
+ * A transferred generic Array reverse returns its ORIGINAL receiver, which is
+ * an open object for the ES5/ES2015 genericity rows. TypeScript still exposes
+ * the borrowed method's `T[]` return type, so an unannotated binding such as
+ * `var reverse = obj.reverse()` would otherwise allocate a vec slot and
+ * materialise a fresh array at the declaration store, losing object identity.
+ *
+ * Prove only the exact assignment spelling used by those rows. Numeric literal
+ * element writes are disjoint from the named method slot; dynamic computed
+ * writes and rebinding remain conservative proof hazards.
+ */
+export function transferredArrayLikeResultNeedsExternref(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): boolean {
+  if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
+  const callee = initializer.expression;
+  if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
+  const memberName = callee.name.text;
+  if (memberName !== "reverse") return false;
+
+  let receiver: ts.Expression = callee.expression;
+  while (ts.isParenthesizedExpression(receiver) || ts.isAsExpression(receiver) || ts.isNonNullExpression(receiver)) {
+    receiver = receiver.expression;
+  }
+  if (!ts.isIdentifier(receiver)) return false;
+  const receiverName = receiver.text;
+  const callPos = initializer.getStart();
+  let matchingWrite: ts.BinaryExpression | undefined;
+  let bailed = false;
+
+  const isArrayPrototypeMember = (expression: ts.Expression): boolean => {
+    let value = expression;
+    while (ts.isParenthesizedExpression(value) || ts.isAsExpression(value) || ts.isNonNullExpression(value)) {
+      value = value.expression;
+    }
+    if (!ts.isPropertyAccessExpression(value) || ts.isPrivateIdentifier(value.name) || value.name.text !== memberName) {
+      return false;
+    }
+    const prototype = value.expression;
+    return (
+      ts.isPropertyAccessExpression(prototype) &&
+      prototype.name.text === "prototype" &&
+      ts.isIdentifier(prototype.expression) &&
+      prototype.expression.text === "Array"
+    );
+  };
+
+  const computedWriteMayNameMember = (left: ts.ElementAccessExpression): boolean => {
+    const argument = left.argumentExpression;
+    if (argument === undefined) return true;
+    if (ts.isStringLiteralLike(argument) || ts.isNumericLiteral(argument)) return argument.text === memberName;
+    return true;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (bailed) return;
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const left = node.left;
+      if (ts.isIdentifier(left) && left.text === receiverName) {
+        bailed = true;
+        return;
+      }
+      if (
+        ts.isElementAccessExpression(left) &&
+        ts.isIdentifier(left.expression) &&
+        left.expression.text === receiverName &&
+        computedWriteMayNameMember(left)
+      ) {
+        bailed = true;
+        return;
+      }
+      if (
+        ts.isPropertyAccessExpression(left) &&
+        !ts.isPrivateIdentifier(left.name) &&
+        left.name.text === memberName &&
+        ts.isIdentifier(left.expression) &&
+        left.expression.text === receiverName
+      ) {
+        if (matchingWrite !== undefined || node.end > callPos || !isArrayPrototypeMember(node.right)) {
+          bailed = true;
+          return;
+        }
+        matchingWrite = node;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(receiver.getSourceFile());
+  return !bailed && matchingWrite !== undefined;
+}
+
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
   symbol: ts.Symbol,
@@ -1774,6 +1866,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const isProxyTargetBinding = bindingIsProxyTarget(ctx, decl);
     if (isProxyTargetBinding) ctx.externrefAccessorVars.add(name);
     const initIsPropertyDescriptorResult = isPropertyDescriptorResultExpression(decl.initializer);
+    const initIsTransferredArrayLikeResult = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
     // (#3037 CS1a) A spread-free, data-only object literal produced into an
     // `any`/`unknown`/`object` context (standalone) is built as an open `$Object`
     // and normally lands in an externref local — where at `===` it boxes tag-5
@@ -1830,7 +1923,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
         : undefined;
     const filterResultDynamicCarrier = filterResultNeedsDynamicCarrier(ctx, decl.initializer);
-    const nativeGenBindingType = nativeGeneratorBindingType(ctx, decl.initializer);
+    const nativeGenBindingType: ValType | null = initIsTransferredArrayLikeResult
+      ? { kind: "externref" }
+      : nativeGeneratorBindingType(ctx, decl.initializer);
     const wasmTypeBase: ValType =
       nativeGenBindingType ??
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in

@@ -31,6 +31,8 @@ import {
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
   type MultiPreparedScalarLeafReceipt,
+  multiPreparedRouteClaimsOverlap,
+  type MultiPreparedRouteClaimSnapshot,
 } from "./multi-prepared-scalar-leaf.js";
 
 interface ExactFibonacciPairSyntax {
@@ -755,6 +757,8 @@ export function planEarlyMultiPreparedFunctionValueRoutes<Plan extends MultiPrep
     legacyName: string,
   ) => MultiPreparedFunctionValueSupportReceipt | undefined;
   readonly projectLoweringPlans: (plan: Plan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  /** Earlier successful route families, frozen by MultiPreparedProgramOwner. */
+  readonly claimedRouteClaims?: MultiPreparedRouteClaimSnapshot;
 }): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>> {
   const leafStates = planEarlyMultiPreparedFunctionValueLeafRoute({
     active: input.active,
@@ -768,6 +772,7 @@ export function planEarlyMultiPreparedFunctionValueRoutes<Plan extends MultiPrep
     hasForeignLateProvider: (plan, sourceFile, unitId) => input.hasForeignLateProvider(plan, sourceFile, unitId, true),
     prepareFunctionValueSupport: input.prepareFunctionValueSupport,
     projectLoweringPlans: input.projectLoweringPlans,
+    claimedRouteClaims: input.claimedRouteClaims,
   });
   if (leafStates.size !== 0) return leafStates;
   const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
@@ -803,6 +808,17 @@ export function planEarlyMultiPreparedFunctionValueRoutes<Plan extends MultiPrep
       input.hasForeignLateProvider(plan, exactSyntax.sourceFile, wrapperUnitId, true),
   });
   if (!candidate) return states;
+  if (
+    input.claimedRouteClaims &&
+    multiPreparedRouteClaimsOverlap(
+      input.claimedRouteClaims,
+      exactSyntax.sourceFile,
+      [candidate.recursiveUnitId, candidate.unitId],
+      [candidate.recursiveUnitId, candidate.unitId],
+    )
+  ) {
+    return states;
+  }
   const state: EarlyMultiPreparedScalarLeafState<Plan> = { plan, skippedFunctionUnitIds: new Set() };
   states.set(exactSyntax.sourceFile, state);
   if (!input.fibonacciPairCutoverEnabled) return states;

@@ -25,6 +25,7 @@ oracle-ratchet-allow:
 loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
+  - src/codegen/multi-prepared-scalar-leaf.ts
   - src/ir/backend/linear-integration.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
@@ -1822,3 +1823,41 @@ receipts, and signed issue/evidence locks before this section may claim
 `JS2WASM_IR_STRING_BUILDER=0` control throughout hybrid operation. It can be
 deleted only after R9 removes that switch and #3792 plus the refreshed #3090
 R10 audit prove the handler unreachable across the full supported denominator.
+
+#### C2a implementation checkpoint: exact `bench_string` compile-once route (2026-08-27)
+
+The first executable C2 checkpoint now consumes the merged C1 proof for the
+exact two-source `string.ts` / `helpers.ts` graph. It injects only C1's
+identity-bearing counted-loop plan into multi-source overlay planning, prepares
+`bench_string` through `prepareIrBodies`, authenticates its callback support and
+counted-string receipt, and routes its exact singleton body skip through
+`MultiPreparedProgramOwner`. The owner now carries a frozen cross-family claim
+ledger in scalar → array → string → function-value/Fibonacci order, so an
+overlap declines before the later family's first allocation.
+
+The route is default-on behind
+`JS2WASM_MULTI_PREPARED_STRING_CUTOVER`; `=0` restores exactly the target's
+`compileFunctionBody` and `compileStatement` rows while retaining the late IR
+overlay. The stored counted-string receipt must occur exactly once in the
+merged report before terminal consumption. Target body identity is sealed at
+the preparation, post-direct, post-overlay-consumption, post-trampoline, and
+pre-publication boundaries so legitimate whole-module rewrites are captured
+only at their named boundary and any subsequent drift fails closed.
+
+Focused evidence in
+`tests/issue-3518-bench-string-prepared-cutover.test.ts` proves the default-on
+route survives a direct-body poison with zero target legacy rows, proves the
+rollback lane restores both physical rows with
+`legacyBodyEmitted: true` / `irBodyEmitted: true`, and separately proves the
+poison still fires on that direct lane. The unchanged whole-program owner
+census passes alongside it. Prepared and route-off artifacts retain the same
+Wasm import/export surface, DTS, compiler import manifest, and string-pool
+membership, instantiate through the shared runtime harness, and both return
+`5000` from `bench_string`. C1 remains a separately merged 71-test proof
+checkpoint; this change does not duplicate its planner predicates.
+
+This checkpoint does not claim the later runtime/optimization-retirement
+transaction. The expanded mutation matrix, builder-off artifact comparison,
+durable 30-sample ABBA runtime driver, optimization-ledger promotion, and final
+R9 switch deletion remain follow-up evidence and must not be inferred from the
+compile-once route landing.

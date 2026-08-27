@@ -106,7 +106,12 @@ export function resolveAssignedTransferredProtoMember(
         bailed = true;
         return;
       }
-      if (ts.isElementAccessExpression(left) && ts.isIdentifier(left.expression) && left.expression.text === recvName) {
+      if (
+        ts.isElementAccessExpression(left) &&
+        ts.isIdentifier(left.expression) &&
+        left.expression.text === recvName &&
+        computedWriteMayNameMember(left, memberName)
+      ) {
         bailed = true;
         return;
       }
@@ -128,6 +133,21 @@ export function resolveAssignedTransferredProtoMember(
   const write = writes[0]!;
   if (write.end > callPos) return undefined;
   return asProtoMemberAccess(write.right);
+}
+
+/**
+ * A computed write is a slot-proof hazard only when its key can be the named
+ * member.  Numeric/string literals are statically disjoint from a builtin
+ * method name, which matters for the historical genericity rows: they write
+ * `obj[0]`, `obj[2]`, … after installing `obj.reverse` and must not make that
+ * otherwise unambiguous transfer decline.  Dynamic expressions remain
+ * conservative and invalidate the proof.
+ */
+function computedWriteMayNameMember(left: ts.ElementAccessExpression, memberName: string): boolean {
+  const argument = left.argumentExpression;
+  if (argument === undefined) return true;
+  if (ts.isStringLiteralLike(argument) || ts.isNumericLiteral(argument)) return argument.text === memberName;
+  return true;
 }
 
 /**

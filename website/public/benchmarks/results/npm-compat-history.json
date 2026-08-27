@@ -9676,6 +9676,53 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-27T06:04:36.384Z",
+      "sourceRevision": "a593534755408033d37d403f06047cccc8dcb3d5",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010550941285300581
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T06:55:32.267Z",
+      "sourceRevision": "00f9b03d9eee083644c214b24792c68ad41f7815",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 189337.15895568134,
+            "dynamic": 0.09665882892552612
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 885.9383072721753,
+            "dynamic": 0.2115160331192335
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 14.411635870697515,
+            "dynamic": 0.11385514484117194
+          }
+        }
+      }
     }
   ]
 }

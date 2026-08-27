@@ -349,16 +349,11 @@ export type FilterResult = { skip: true; reason: string } | { skip: false; reaso
 //     was dead, so it has been counted all along: the baseline records it as
 //     `compile_timeout (10s)`, bounded by the CompilerPool timeout. Left
 //     counted rather than resurrected as a skip (#1589 hot spot C).
-const HANGING_TESTS = new Set([
-  // #3122 (surfaced by #3119): never-done iterator whose ONLY exit is an
-  // abrupt LHS assignment (`for (x.attr of iterable)` with a throwing setter,
-  // §13.7.5.13 step 6.f → IteratorClose). Our accessor-setter store does not
-  // raise on this path, so the loop spins to the runner timeout (previously:
-  // host lane compile_timeout / standalone fail "illegal cast" — no pass is
-  // lost by skipping). Still hangs (>150s) as of 2026-08-23. Remove when
-  // #3122 lands.
-  "test/language/statements/for-of/body-put-error.js",
-]);
+// No active entries. Keep the set and its early-return checks in place so a
+// newly reproduced compiler hang can be bounded without changing runner
+// control flow; #3122's former entry was removed after a standalone proof of
+// abrupt setter propagation and IteratorClose (see issue #4761).
+const HANGING_TESTS = new Set<string>();
 
 export function shouldSkip(source: string, meta: Test262Meta, filePath?: string): FilterResult {
   const scope = classifyTestScope(source, meta, filePath);

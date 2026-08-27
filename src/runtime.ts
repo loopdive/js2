@@ -1650,13 +1650,7 @@ function _canBeWeakKey(obj: any): boolean {
   return obj != null && (typeof obj === "object" || typeof obj === "function");
 }
 
-/**
- * IsConcatSpreadable (§23.1.3.1.1) for an opaque WasmGC struct receiver: true
- * iff `Symbol.isConcatSpreadable` resolves to a truthy value. The flag is stored
- * in the sidecar under both the real symbol and the `@@isConcatSpreadable`
- * string mirror (see `_symbolIdToKeys`). Returns false when the property is
- * absent or falsy, so a plain array-like is NOT spread unless explicitly tagged.
- */
+/** IsConcatSpreadable (§23.1.3.1.1) for an opaque WasmGC receiver; plain array-likes are not spread. */
 function _isConcatSpreadable(
   obj: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
@@ -1669,75 +1663,49 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+// Prevent callable-mirror property writes from recursing through their raw closure proxy.
+const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
-// #3214 B2 — `__make_callback(-1, closure)` bridges a reusable canonical void
-// IR closure without minting a legacy `__cb_N` export. Cache the
-// non-constructible JS arrow per raw closure so repeated boundary conversion
-// preserves identity. The compiler-owned -2 sentinel proves an inline closure
-// is consumed once and intentionally bypasses this cache.
+// #3214 B2: cache reusable -1 void bridges; one-shot -2 closures intentionally bypass it.
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
 _test262ErrorConstructors.add(test262Host.HostTest262Error);
-
-// (#3369) Callback bridges must remain usable while the evaluated program has
-// installed non-writable numeric properties on Array.prototype. `[].push(x)`
-// and direct indexed assignment perform [[Set]] and can be rejected by such an
-// inherited property. Define dense own argument slots explicitly instead.
-// Capture the intrinsics before user code runs so the helper is also immune to
-// later rebinding of Array/Reflect properties.
+// (#3369/#4758) Captured intrinsics keep callback ABI arrays independent of mutated prototypes.
 const _IntrinsicArray = Array;
 const _intrinsicReflectApply = Reflect.apply;
 const _intrinsicReflectConstruct = Reflect.construct;
 const _intrinsicReflectDefineProperty = Reflect.defineProperty;
+function _defineDenseSlot(array: any[], index: number, value: any): void {
+  _intrinsicReflectDefineProperty(array, index, { value, writable: true, enumerable: true, configurable: true });
+}
 function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
   const dense = new _IntrinsicArray<any>(length);
-  for (let i = 0; i < length; i++) {
-    _intrinsicReflectDefineProperty(dense, i, {
-      value: i < args.length ? args[i] : undefined,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
+  for (let i = 0; i < length; i++) _defineDenseSlot(dense, i, i < args.length ? args[i] : undefined);
+  return dense;
+}
+// Compiled closure exports accept canonical Wasm values, not JS-facing proxy views.
+function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
+  const dense = _denseOwnArgs(args, length);
+  for (let i = 0; i < length; i++) _defineDenseSlot(dense, i, _unwrapForHost(dense[i]));
   return dense;
 }
 
-// Arguments crossing from a host callback back into a compiled closure may be
-// live `_wrapForHost` proxies for WasmGC structs. The closure dispatch exports
-// accept the underlying typed structs, not their JS-facing proxy views. Build
-// the same prototype-safe dense argument list as `_denseOwnArgs`, while
-// restoring each proxy to its canonical Wasm value at this boundary.
-function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
-  const dense = _denseOwnArgs(args, length);
-  for (let i = 0; i < length; i++) {
-    _intrinsicReflectDefineProperty(dense, i, {
-      value: _unwrapForHost(dense[i]),
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
-  return dense;
+// Build callback ABI arguments without Array iteration, then use captured Reflect.apply (#4758).
+function _applyWithPrefix(fn: Function, thisArg: any, prefix: ArrayLike<any>, suffix: ArrayLike<any>): any {
+  const args = new _IntrinsicArray<any>(prefix.length + suffix.length);
+  for (let i = 0; i < prefix.length; i++) _defineDenseSlot(args, i, prefix[i]);
+  for (let i = 0; i < suffix.length; i++) _defineDenseSlot(args, prefix.length + i, suffix[i]);
+  return _intrinsicReflectApply(fn, thisArg, args);
 }
 
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
     return _wasmClosureWrapperTargets.get(v as Function) ?? v;
   }
-  // (#1712) Canonicalize a `_wrapForHost` proxy back to its underlying raw
-  // WasmGC struct before the reference compare. The two dynamic read paths
-  // that feed `===`/`!==` disagree on representation: an instance-field read
-  // (`this.type`) returns the raw struct, while a module-global + property
-  // read (`types$1.eof`) returns the cached host proxy for the SAME struct
-  // (the proxy is identity-stable per struct via `_hostProxyCache`). Without
-  // this unwrap `proxy === rawStruct` is `false` even though both denote one
-  // object — which is exactly why acorn's `parseTopLevel` guard
-  // `this.type !== types$1.eof` never tripped and the tokenizer looped forever.
-  // `_unwrapForHost` maps any host proxy to its unique struct (1:1 via
-  // `_hostProxyReverse`) and passes a non-proxy through unchanged, so two
-  // genuinely distinct structs still compare unequal.
+  // #1712: canonicalize identity-stable host proxies before reference comparison;
+  // otherwise dynamic proxy and typed raw-struct reads of one object compare unequal.
   if (v != null && typeof v === "object") {
     return _unwrapForHost(v);
   }
@@ -1891,14 +1859,14 @@ function _wrapWasmClosure(
         const argcCallFn = exports![`__\0js2_call_fn_method_argc_${methodArity}`];
         const ret =
           typeof argcCallFn === "function"
-            ? argcCallFn(methodArity, receiver, closure, ...methodPadded)
-            : methodCallFn(receiver, closure, ...methodPadded);
+            ? _applyWithPrefix(argcCallFn, undefined, [methodArity, receiver, closure], methodPadded)
+            : _applyWithPrefix(methodCallFn, undefined, [receiver, closure], methodPadded);
         return _wasmAccessorGetterReturnWrappers.has(wrapped)
           ? _maybeWrapAccessorGetterCallable(ret, callbackState)
           : ret;
       }
     }
-    const ret = callFn(closure, ...padded);
+    const ret = _applyWithPrefix(callFn, undefined, [closure], padded);
     return _wasmAccessorGetterReturnWrappers.has(wrapped) ? _maybeWrapAccessorGetterCallable(ret, callbackState) : ret;
   };
   const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
@@ -2048,8 +2016,8 @@ function _wrapWasmClosureUnknownArity(
         const argcCallFn = exports[`__\0js2_call_fn_method_argc_${dispatchArity}`];
         return marshalNew(
           typeof argcCallFn === "function"
-            ? argcCallFn(args.length, receiver, closure, ...padded)
-            : methodCallFn(receiver, closure, ...padded),
+            ? _applyWithPrefix(argcCallFn, undefined, [args.length, receiver, closure], padded)
+            : _applyWithPrefix(methodCallFn, undefined, [receiver, closure], padded),
         );
       }
     }
@@ -2061,7 +2029,7 @@ function _wrapWasmClosureUnknownArity(
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
     const padded = _denseOwnWasmArgs(args, arity);
-    return marshalNew(callFn(closure, ...padded));
+    return marshalNew(_applyWithPrefix(callFn, undefined, [closure], padded));
   };
   const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
     try {
@@ -3224,6 +3192,39 @@ function _sidecarSet(obj: any, key: any, val: any): void {
   }
 }
 
+// Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
+function _mirrorClosurePropertyToHostBridges(
+  closure: any,
+  key: PropertyKey,
+  val: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): void {
+  if (closure == null || typeof closure !== "object") return;
+  let active = _closurePropertyMirrorActive.get(closure);
+  if (!active) _closurePropertyMirrorActive.set(closure, (active = new Set<PropertyKey>()));
+  if (active.has(key)) return;
+  active.add(key);
+  try {
+    const bridges = new Set<Function>();
+    const dynamic = _wasmClosureDynamicWrapperCache.get(closure);
+    if (typeof dynamic === "function") bridges.add(dynamic);
+    const known = _wasmClosureWrapperCache.get(closure);
+    if (known) for (const bridge of known.values()) bridges.add(bridge);
+    const callable = _hostCallableCache.get(closure);
+    if (typeof callable === "function") bridges.add(callable);
+    if (bridges.size === 0) return;
+    const hostValue = _maybeWrapCallableUnknownArity(val, callbackState);
+    for (const bridge of bridges) {
+      try {
+        Reflect.set(bridge, key, hostValue, bridge);
+      } catch {}
+    }
+  } finally {
+    active.delete(key);
+    if (active.size === 0) _closurePropertyMirrorActive.delete(closure);
+  }
+}
+
 function _sidecarDelete(obj: any, key: any): boolean {
   if (!_canBeWeakKey(obj)) return false;
   const sc = _wasmStructProps.get(obj);
@@ -3234,21 +3235,8 @@ function _sidecarDelete(obj: any, key: any): boolean {
   return false;
 }
 
-/**
- * Sentinel for OrdinaryToPrimitive's `tryMethod`: distinguishes "method is
- * absent / returned an Object / dispatch trapped" (try the next method) from a
- * method that legitimately returned the primitive `undefined`. Without it, a
- * real `undefined` return is wrongly treated as "absent" and the next method is
- * consulted (#1826). Per §7.1.1.1 steps 5-6, any non-Object return is the result.
- */
-// #1935 — single in-band "absent" sentinel for the host runtime. Returning
-// `undefined` to signal "no such getter / method / property" is a bug: user
-// code can legitimately return `undefined`, and the in-band signal then
-// misreads that as absence (a getter returning `undefined` shadowed by the
-// underlying field; a `valueOf` returning `undefined` treated as "no valueOf").
-// `_MISS` is a unique symbol that user code can never produce, so it
-// unambiguously means absence. (Was `_PRIM_ABSENT`, scoped to ToPrimitive;
-// unified here and now also used by the property-getter lookup path.)
+// #1826/#1935: an unforgeable absence sentinel keeps legitimate `undefined`
+// results distinct from missing getters, methods, and properties.
 const _MISS: unique symbol = Symbol("runtime-absent-sentinel");
 // Back-compat alias so the existing ToPrimitive call sites keep reading
 // naturally; both names refer to the same unique symbol.
@@ -4500,19 +4488,19 @@ function _invokeJsonCallable(
     const methodCallFn = exports[`__call_fn_method_${arity}`];
     if (typeof methodCallFn === "function") {
       const rawThis = typeof thisVal === "object" ? _unwrapForHost(thisVal) : thisVal;
-      return methodCallFn(_isWasmStruct(rawThis) ? rawThis : thisVal, fn, ...args);
+      return _applyWithPrefix(methodCallFn, undefined, [_isWasmStruct(rawThis) ? rawThis : thisVal, fn], args);
     }
   }
   const callFn = exports[`__call_fn_${arity}`];
   if (typeof callFn === "function") {
-    return callFn(fn, ...args);
+    return _applyWithPrefix(callFn, undefined, [fn], args);
   }
   // Fall back to the highest-arity dispatcher available, padding extras.
   for (let a = 4; a >= 0; a--) {
     const cf = exports[`__call_fn_${a}`];
     if (typeof cf === "function") {
       const padded = _denseOwnArgs(args, a);
-      return cf(fn, ...padded);
+      return _applyWithPrefix(cf, undefined, [fn], padded);
     }
   }
   return undefined;
@@ -5430,6 +5418,7 @@ function _safeSet(
         }
       }
     }
+    _mirrorClosurePropertyToHostBridges(obj, key, _unwrapForHost(val), callbackState);
     return;
   }
   // Strict [[Set]] pre-check (§13.15.2 → §10.1.9), by resolved descriptor kind:
@@ -5690,16 +5679,8 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
   return fn;
 }
 
-/**
- * (#1395) `_staticMethodNames` is the static-method analog of
- * `_prototypeMethodNames` above. Populated by the `__register_class_object`
- * host import on first lazy access of a class identifier. Consulted by
- * `__getOwnPropertyDescriptor` when the receiver is a class-object singleton
- * — returns a method descriptor with the spec-correct flags
- * (`{enumerable: false, configurable: true, writable: true}` per ECMA-262
- * §15.7.1) so `verifyProperty(C, "m", ...)` tests pass.
- */
 const _staticMethodNames = new WeakMap<object, string[]>();
+const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
 // Static methods are invoked by host frameworks through the generic closure
 // bridge. Their object results must be readable host objects (React consumes
 // getDerivedStateFromProps' returned partial state immediately), unlike the
@@ -6143,7 +6124,7 @@ function _ownStructKeys(obj: any, exports: Record<string, Function> | undefined)
   if (protoMethods !== undefined) {
     for (const n of protoMethods) if (!_isDeletedClassProp(obj, n)) push(n);
   } else if (staticMethods !== undefined) {
-    for (const n of staticMethods) if (!_isDeletedClassProp(obj, n)) push(n);
+    for (const n of _classObjectOwnPropertyNames.get(obj) ?? staticMethods) if (!_isDeletedClassProp(obj, n)) push(n);
   } else {
     for (const n of _getStructFieldNames(obj, exports) ?? []) push(n);
   }
@@ -12064,6 +12045,12 @@ assert._isSameValue = isSameValue;
           if (classObj == null || typeof classObj !== "object") return;
           const names = typeof csv === "string" && csv.length > 0 ? csv.split(",") : [];
           _staticMethodNames.set(classObj, names);
+          _classObjectOwnPropertyNames.set(classObj, [
+            "length",
+            "name",
+            "prototype",
+            ...names.filter((name) => name !== "length" && name !== "name" && name !== "prototype"),
+          ]);
         };
       if (name === "__register_class_static_method")
         return function registerClassStaticMethod(classObj: any, methodName: any, closure: any): void {
@@ -13156,7 +13143,9 @@ assert._isSameValue = isSameValue;
           // (filtered through the #1364b deletion set).
           const staticMethods = _staticMethodNames.get(obj);
           if (staticMethods !== undefined) {
-            const names = staticMethods.filter((n) => !_isDeletedClassProp(obj, n));
+            const names = (_classObjectOwnPropertyNames.get(obj) ?? staticMethods).filter(
+              (n) => !_isDeletedClassProp(obj, n),
+            );
             const sc = _wasmStructProps.get(obj);
             if (sc) {
               for (const k of Object.getOwnPropertyNames(sc)) {
@@ -14185,9 +14174,9 @@ assert._isSameValue = isSameValue;
               const padded = _denseOwnArgs(args, n);
               if (viaMethod) {
                 const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
-                return callFn(_isWasmStruct(rawThis) ? rawThis : this, captured, ...padded);
+                return _applyWithPrefix(callFn, undefined, [_isWasmStruct(rawThis) ? rawThis : this, captured], padded);
               }
-              return callFn(captured, ...padded);
+              return _applyWithPrefix(callFn, undefined, [captured], padded);
             };
             callable = boundBridge;
             // Stamp hints onto the wrapper so the bound function inherits
@@ -15208,30 +15197,27 @@ assert._isSameValue = isSameValue;
         }
         return [arr]; // Fallback: wrap single value
       };
-      // Promise combinators delegate spec iteration/capabilities to the host;
-      // only opaque Wasm vecs and callable thenables need boundary views.
-      // (#2671/#4736) Wasm object-literal thenables need a host-callable `then` at
-      // native Promise boundaries; raw structs expose none. Wrap only structs whose
-      // own `then` is callable in the live mirror: its get bridges the closure and
-      // #2015 receiver unwrapping restores raw `this`. Non-thenables stay raw to
-      // preserve fulfilled-value identity.
+      // Native Promise boundaries mirror opaque WasmGC thenables; ordinary structs stay raw (#2671/#4736).
       const _wrapThenable = (v: any): any => {
         if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
         const exports = callbackState?.getExports();
         if (!exports) return v;
         try {
-          // A struct-SHAPE `then` field is read via the compiled `__sget_then`
-          // getter — `_safeGet` reads only the sidecar/accessor/proto layers by
-          // design, so it alone misses the literal `{ then: function … }` shape.
-          // A sidecar-assigned `obj.then = fn` falls back to `_safeGet`.
+          const hasThen = _structHasOwnFieldName(v, "then", exports) || !!_wasmStructProps.get(v)?.__get_then;
           let t: any;
           try {
             const sget = (exports as Record<string, Function>).__sget_then;
             if (typeof sget === "function") t = sget(v);
           } catch {
-            t = undefined;
+            if (hasThen) return _wrapForHost(v, exports);
           }
-          if (t == null) t = _safeGet(v, "then", callbackState);
+          if (t == null) {
+            try {
+              t = _safeGet(v, "then", callbackState);
+            } catch {
+              if (hasThen) return _wrapForHost(v, exports);
+            }
+          }
           if (t != null && (typeof t === "function" || _isWasmClosureValue(t, callbackState))) {
             return _wrapForHost(v, exports);
           }
@@ -15239,6 +15225,10 @@ assert._isSameValue = isSameValue;
           /* not a thenable — pass through raw */
         }
         return v;
+      };
+      const _wrapPromiseReaction = (cb: any): any => {
+        const wrapped = _maybeWrapCallable(cb, 1, callbackState);
+        return typeof wrapped === "function" ? (...args: any[]) => _wrapThenable(wrapped(...args)) : wrapped;
       };
       const _toIterable = (iter: any): any => {
         // null/undefined: per spec, GetIterator throws TypeError. Native does
@@ -15519,12 +15509,15 @@ assert._isSameValue = isSameValue;
           if (p && typeof p.__j === "function") p.__j(reason);
         };
       // (#1382) `executor` is called as `executor(resolve, reject)` — arity 2.
-      if (name === "Promise_new") return (executor: any) => new Promise(_maybeWrapCallable(executor, 2, callbackState));
+      if (name === "Promise_new") {
+        // Honor source-realm Promise[@@species]; product callers retain the intrinsic fallback.
+        const PromiseCtor = (globalSandbox?.Promise ?? Promise) as PromiseConstructor;
+        return (executor: any) => new PromiseCtor(_maybeWrapCallable(executor, 2, callbackState));
+      }
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
-      if (name === "Promise_then") return (p: any, cb: any) => p.then(_maybeWrapCallable(cb, 1, callbackState));
+      if (name === "Promise_then") return (p: any, cb: any) => p.then(_wrapPromiseReaction(cb));
       if (name === "Promise_then2")
-        return (p: any, cb1: any, cb2: any) =>
-          p.then(_maybeWrapCallable(cb1, 1, callbackState), _maybeWrapCallable(cb2, 1, callbackState));
+        return (p: any, cb1: any, cb2: any) => p.then(_wrapPromiseReaction(cb1), _wrapPromiseReaction(cb2));
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));
