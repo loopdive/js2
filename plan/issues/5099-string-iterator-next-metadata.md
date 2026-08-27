@@ -96,10 +96,14 @@ baseline-summary sync at `5321bfbbfa9193c6b55a7558126b88b003a03719`:
 - scheduled-summary-tree focused suite: `6/6` tests passed, and exact
   host/standalone repeats remained `2/2` with both controls and
   `nondeterministic: 0`.
+- post-#5085-tree (`upstream/main` `698ecb8f16`) focused suite: `6/6` tests
+  passed, and exact host/standalone repeats remained `2/2` with both controls
+  and `nondeterministic: 0`.
 
-Post-sync CI for PR #5103 head `e0159876d6` (Actions run `33123862203`) is
+Post-sync CI for PR #5103 head `e0159876d6` (Actions run `33123862203`) was
 fully green (all required jobs successful or intentionally skipped), and the
-branch is mergeable against `upstream/main` `5321bfbbfa`. The subsequent
-tracker-only handoff head is `a7fdb491e0`; it must receive its own fresh CI
-result before readiness changes. The PR remains draft and held outside the
-merge queue pending the parent’s readiness/queue operation.
+branch was mergeable against `upstream/main` `5321bfbbfa`. The subsequent
+tracker-only handoff head `a7fdb491e0` and post-#5085 sync merge `41e71fba9a`
+were each validated locally; fresh CI on the final pushed head is required
+before readiness changes. The PR remains draft and held outside the merge
+queue pending the parent’s readiness/queue operation.
