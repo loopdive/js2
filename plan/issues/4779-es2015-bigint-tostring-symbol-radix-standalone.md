@@ -235,10 +235,40 @@ baseline. The optimized corpus also measured **114/120 matches**, and the
 optimizer outcome gate reported **0 regressions** against the unoptimized
 lane. The six non-match rows are the same in both differential outputs and
 remain existing corpus coverage outside this bounded fix; the local
-optimizer emitted its known Binaryen assertion text on two rows but did not
+optimizer emitted Binaryen assertion text on two rows but did not
 change any outcome or the zero-regression gate.
 
 The committed repair therefore has one source-line deletion, one merge-group
 conflict record, and no new behavioral or differential regression. The normal
 pre-push hook must still pass on this committed tree before publishing the
 checkpoint; keep `hold` until the fresh PR checks complete.
+
+## Latest upstream refresh (2026-08-27)
+
+After the initial repaired-head PR checks passed, upstream/main advanced to
+`1bf5aa171727d2acfcf7710b8e945182eb99169d` (PR #5081). The branch was
+synchronized to that exact tip by non-rewriting merge commit `d9c6bbeb`.
+The merge introduced no additional change in the repaired call-receiver file:
+`emitSymbolArgToNumberThrow` remains a single import from the #4779 helper,
+with all four existing call sites sharing that binding. The PR remains
+non-draft, held, and outside the merge queue while this refreshed tree is
+validated and published.
+
+## Latest upstream validation (2026-08-27)
+
+On the refreshed head, the exact one-row harness again passed in both lanes:
+host **1/1** and standalone **1/1**, with no failures, compile errors,
+timeouts, or skips. The focused #4779 regression suite reports **4/4 passed**
+with `TEST262_WORKERS=2`. The latest row artifacts are
+`.tmp/issue-4779-latest-host.jsonl`
+(`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`) and
+`.tmp/issue-4779-latest-standalone.jsonl`
+(`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`).
+
+TypeScript 7 and 5.9, full Biome lint, full Prettier check, `git diff --check`,
+oracle ratchet, and issue integrity all pass. The unoptimized differential
+corpus remains **114/120 matches**; its delta gate reports **0 new
+regressions** and two improvements against the 99/104 frozen baseline. The
+optimized corpus also remains **114/120 matches**, and its outcome gate reports
+**0 regressions**. The optimizer emitted assertion text on two existing rows,
+but both lanes have identical outcomes and the gate is green.
