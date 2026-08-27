@@ -14,7 +14,7 @@ declare module "../ir/integration.js" {
   interface IrIntegrationOptions {
     /** Source files participating in one aggregate IR integration. */
     readonly integrationSourceFiles?: readonly ts.SourceFile[];
-    /** Withdraw every terminal when any member of the aggregate fails. */
+    /** Seal and withdraw the exact aggregate as one component. */
     readonly atomicComponent?: boolean;
     /** Exact non-source bindings included in the component seal. */
     readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;

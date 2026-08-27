@@ -4,9 +4,9 @@ title: "IR-only R5: whole-program single- and multi-source Prepared ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-27
 assignee: ttraenkler/codex
-branch: codex/3525-m1-binding-plan
+branch: codex/3525-unit-keyed-body-skips
 priority: critical
 horizon: xl
 complexity: XL
@@ -39,6 +39,15 @@ files:
   - src/codegen/index.ts
   - src/compiler.ts
   - tests/issue-3525-ir-whole-program-multi-source.test.ts
+loc-budget-allow:
+  - src/codegen/declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/multi-prepared-program.ts
+  - src/ir/integration.ts
+  - src/ir/prepared-component-dependencies.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 # #3525 — IR-only R5: whole-program single- and multi-source Prepared ownership
@@ -698,10 +707,13 @@ terminal.
 ### 5. Bounded rollout and deletions
 
 Gate the new route with
-`JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER`; enabled is the default for
-ordinary standalone multi-source compilation with `experimentalIR: true`,
-native strings, no WASI, and non-fast ABI. The exact disabled lane is a
-required control with the same graph/census and zero M1A reservations.
+`JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER`. M1A initially enabled it
+by default for ordinary standalone multi-source compilation with
+`experimentalIR: true`, native strings, no WASI, and non-fast ABI. M1A.1 rolls
+aggregate commitment back to explicit `1` until generic/dedicated-owner
+composition is certified. The frozen callable graph and selection preplanning
+remain active for the established #3214 imported-HOF lane, while the disabled
+lane creates zero M1A reservations.
 
 For units admitted through M1A, delete/bypass these authorities:
 
@@ -815,6 +827,64 @@ bodies, bypass flat-name authority, and prove zero direct emissions without
 weakening fallback. The parent #3525/M1 milestone remains open until M1B makes
 fast/ordinary ownership converge and retires the residual callable/name
 compatibility path.
+
+## M1A.1 implementation lock — unit-keyed direct-body consumption (2026-08-27)
+
+The merged M1A owner reserves cross-source components by exact `IrUnitId`, but
+its final handoff to `compileDeclarations` projects those reservations back to
+bare `skipBodies` / `preserveBodies` names. The owner then reconstructs skipped
+unit IDs from the returned name list. Per-source `funcMap` rebinding currently
+keeps that compatible, but the skip decision itself still trusts the flat-name
+authority that R5 is required to retire.
+
+M1A.1 threads the already-frozen source-local unit projections through
+`multi-prepared-program.ts` and `multi-prepared-body-skips.ts` into a dedicated
+top-level function-body routing record in `declarations.ts`. For each bodyful
+function declaration, `compileDeclarations` resolves the exact unit from the
+shared `IrPlanningIdentityContext`; its unit membership is authoritative for
+skip and preserve. The legacy name sets remain a temporary slot-locator and
+compatibility assertion only: disagreement between name and unit projections
+is an invariant before direct body emission, never permission to guess or
+fallback. Observed skipped units flow back directly to the program owner; no
+name-to-unit reconstruction is permitted.
+
+Making the M1A runtime test non-vacuous exposed two earlier implementation
+defects that this checkpoint also closes. The orchestration union-find did not
+join a caller whose stable unit ID sorted after its callee, so the asserted
+route could silently remain the ordinary late overlay. Once joined, final IR
+optimization could erase the connecting call before dependency sealing and
+split the already-certified aggregate into per-terminal prepared scopes.
+`atomicComponent` now preserves the caller-certified terminal denominator as
+one deterministic dependency/seal component even when the final IR edge has
+disappeared. The body-reservation census and direct-body poison make the
+cross-source prepared route, rather than merely any IR emission, mandatory in
+the focused runtime proof. If no aggregate commits, attempted units remain
+withdrawn while untouched graph units may continue through the established
+late overlay; this preserves the #3214 imported-HOF invariant without allowing
+IR-after-direct emission.
+
+Aggregate commitment is explicit opt-in at this checkpoint. Candidate
+preplanning remains default-on because it supplies the frozen callable graph
+used by the #3214 imported-HOF lane, but only an exact `1` may reserve and
+publish a cross-source callable component. Generic commitment also refuses a
+graph once an established scalar, array, string, function-value, or Fibonacci
+Prepared owner has reserved any unit. A graph with runtime module-init
+population disables callable preplanning before dedicated-route selection and
+stays on its established ownership path.
+
+Focused acceptance requires every admitted component unit to have zero
+`compileFunctionBody` / `compileStatement` audit rows, one `terminal-ir`
+disposition, a unique source-qualified unit ID, and correct runtime dispatch.
+A direct decision test supplies the same legacy spelling with a foreign unit ID
+and must fail invariantly rather than authorize the skip. The cutover-disabled
+control retains the same terminal denominator and direct behavior. Existing
+scalar, array, string, function-value, and Fibonacci routes must also correlate
+their exact unit projections through the shared consumer. Same-spelled
+cross-source component admission is still blocked by M1A's conservative flat
+collision filter and remains a later R5 deletion step. This checkpoint removes
+flat-name authority only at the body-skip boundary; it does not enable
+fast/WASI/host components, compose the generic lane with an already-reserved
+dedicated Prepared route, delete the late overlay, or complete M1B/M2/R5.
 
 ## Ownership and resolution invariants
 

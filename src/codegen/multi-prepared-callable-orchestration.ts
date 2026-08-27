@@ -5,6 +5,7 @@ import type { TypeFact } from "../checker/oracle.js";
 import type { IrImportedCallLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
+import { collectModuleInitPopulation } from "../ir/module-init.js";
 import type { IrIntegrationError, IrIntegrationReport } from "../ir/integration.js";
 import type { IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -52,6 +53,8 @@ export function initializeMultiPreparedProgram(
     !ctx.fast &&
     ctx.nativeStrings &&
     !explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
+  ctx.irProgramCallableComponentCutoverEnabled =
+    ctx.irProgramCallableCutoverEnabled && process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER === "1";
   return createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
 }
 
@@ -284,6 +287,10 @@ function recordAggregateFailure(
 export function planMultiPreparedCallableComponents(input: MultiPreparedCallableOrchestrationInput): void {
   const graph = input.ctx.irProgramCallableBindingGraph;
   if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
+  // Dedicated Prepared owners freeze graph-wide allocator/support identity.
+  // Generic component composition remains fail-closed until that shared
+  // transaction is certified rather than shifting an established route.
+  if (input.owner.existingRouteUnitIds.size > 0) return;
   const records = new Map(graph.records.map((record) => [record.bindingId, record] as const));
   const candidates = new Map<IrUnitId, MultiPreparedCallableCandidate>();
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
@@ -331,7 +338,9 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
   const union = (left: IrUnitId, right: IrUnitId): void => {
     const leftRoot = find(left);
     const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot < rightRoot ? leftRoot : rightRoot);
+    if (leftRoot === rightRoot) return;
+    if (leftRoot < rightRoot) parent.set(rightRoot, leftRoot);
+    else parent.set(leftRoot, rightRoot);
   };
   for (const candidate of candidates.values()) {
     for (const target of candidate.plan.identityPlan.identitySelection.localCallees?.get(candidate.unitId) ?? []) {
@@ -366,6 +375,15 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
       );
     })
     .sort((left, right) => compare(left[0]!, right[0]!));
+  const componentCutoverEnabled =
+    input.ctx.irProgramCallableComponentCutoverEnabled === true &&
+    input.multiAst.sourceFiles.every((sourceFile) => collectModuleInitPopulation(sourceFile).length === 0);
+  if (!componentCutoverEnabled) {
+    const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
+    for (const group of groups) for (const candidate of group) attempted.add(candidate.unitId);
+    if (attempted.size > 0) input.ctx.irProgramCallableAttemptedUnitIds = attempted;
+    return;
+  }
   const components: MultiPreparedProgramCallableComponent[] = [];
   const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
   for (const [groupIndex, group] of groups.entries()) {
@@ -468,6 +486,10 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     !input.ctx.wasi &&
     !input.ctx.fast &&
     input.multiAst.sourceFiles.length > 1;
+  if (input.multiAst.sourceFiles.some((sourceFile) => collectModuleInitPopulation(sourceFile).length > 0)) {
+    input.ctx.irProgramCallableCutoverEnabled = false;
+    input.ctx.irProgramCallableComponentCutoverEnabled = false;
+  }
   input.owner.planExistingRoutes({
     active,
     scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
