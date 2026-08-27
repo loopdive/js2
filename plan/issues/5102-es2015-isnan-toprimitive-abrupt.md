@@ -1,7 +1,7 @@
 ---
 id: 5102
 title: "ES2015 standalone isNaN must propagate ToPrimitive abrupt completions"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -131,5 +131,17 @@ Final validation ran after merging and retaining upstream/main at
   integrity, with `TEST262_WORKERS=2`. No full 11,704-row census was run.
 
 The plan checkpoint is `df96e0d86b`; implementation checkpoint is
-`8f1d2a06f7`. The upstream PR handoff URL will be appended after opening the
-single compliant PR; no GitHub issue is created or linked.
+`8f1d2a06f7`. After that validation, upstream/main advanced to
+`eafd6700ac54fdf2b89a6b77eb0560b3b475fdb9` and was merged in
+`ed387a0a18` before the final handoff.
+
+The focused suite now guards only its eight corpus-backed exact host/standalone
+cases with `existsSync(test262/harness/assert.js)`. With the corpus present,
+it ran **10/10 passed** after the `eafd6700ac` merge. In a no-corpus
+temporary root `/private/tmp/js2-5102-no-corpus.7uw5uw`, it ran **2 passed /
+8 skipped**: both self-contained controls remained mandatory and green, while
+only the eight Test262-dependent cases skipped. The direct final exact run on
+the synchronized tree was **4/4 host and 4/4 standalone pass**.
+
+The final evidence commit and upstream synchronization commit will be pushed
+before opening the single compliant PR; no GitHub issue is created or linked.
