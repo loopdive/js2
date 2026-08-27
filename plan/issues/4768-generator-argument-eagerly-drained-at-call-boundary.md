@@ -55,6 +55,25 @@ JS-side drainers already excluded by instrumentation, there is no identified
 mechanism that could produce 1,000,001 — which means the probe's counter is
 likely measuring something other than iterator steps.
 
+**But note exactly what that evidence does and does not cover.** All three
+shapes above are plain ALIASES; none contains a destructuring pattern. An
+attempt to read the emitted code for the actual elision shapes
+(`function f([,]) {}` called with `g()`) produced **nothing**, because the
+compile fails before emit:
+
+```
+error L3  Argument of type 'Generator<1 | 2, void, unknown>' is not assignable
+          to parameter of type '[any?]'.
+success: false   bytes: 0   watLen: 0
+```
+
+TypeScript rejects a Generator against a tuple-typed binding pattern, so a
+`.ts` probe cannot exercise this at all — while the test262 rows, being plain
+JS with no annotations, compile and run fine under the runner. **So the WAT
+evidence refutes the alias/drain story but says nothing either way about the
+elision path.** Probe it as JS (the runner's own `wrapTest`), never as
+annotated TypeScript.
+
 **Do not build on the mechanism sections below without first re-deriving the
 count from the emitted code.** They are retained only to save the next reader
 from repeating the same four exclusions.
