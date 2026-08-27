@@ -9660,6 +9660,22 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-27T05:20:57.708Z",
+      "sourceRevision": "14e8e17b6789ee65ca345849df42e33e635ea2b9",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010942463690549829
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
