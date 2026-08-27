@@ -36,6 +36,42 @@ horizon: l
   returns 1 for `[,]` (checked against the TS parser) and that count reaches the
   runtime intact (traced: `limit=1`).
 
+## CONFIRMED from emitted code — two materialisers, one unbounded
+
+Compiling the real row through the runner's own `wrapTest` (the only way to
+compile it — see the TypeScript note below) and reading the WAT shows the module
+imports **both** helpers and calls **both**:
+
+```
+__array_from_iter_n_strict  (import 16)  — 1 call site
+    local.get 1 / f64.const 1 / call 16          ← BOUNDED, correct: 1 step for `[,]`
+
+__array_from_iter           (import 18)  — 1 call site
+    local.get 6 / ref.is_null / (if (then
+    local.get 1 /              call 18            ← UNBOUNDED, full drain
+```
+
+So the bounded path exists and computes the right budget (`f64.const 1` for
+`[,]`), and a **second, unbounded fallback** is emitted alongside it behind a
+`ref.is_null` guard on a different local. A full drain of a 2-yield generator is
+2 steps, which is exactly the observed `Expected SameValue(«1», «0»)`.
+
+**Finding and bounding that second emitter is the fix.** Candidates ruled out:
+
+- `buildTupleFromIterableFallback` (`type-coercion.ts:1201`) — bounding it (host
+  lane to `__array_from_iter_n`, native lane to `tupleFields.length` instead of
+  `-1`) left the emitted WAT byte-identical for this row and all 20 rows still
+  failing, so this row does not take that path. Reverted, unshipped. It is
+  probably still worth bounding on its own merits — a tuple has fixed arity, so
+  the unbounded drain there is observably wrong too — but it needs its own
+  measurement.
+- `nested-declarations.ts:2912` — the spread-arguments path; `f(g())` has no
+  spread.
+
+Remaining candidates for the unbounded call: `expressions/calls.ts:2932/3052`,
+`new-super.ts:3055`, and any `__array_from_iter` fallback inside
+`destructuring-params.ts`'s chain after `fbIterName`.
+
 ## What is NOT confirmed — and the evidence against it
 
 The step-count tables below were produced by test262-shaped probes that count a
