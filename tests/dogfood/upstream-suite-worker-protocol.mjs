@@ -4,6 +4,26 @@ export function signalWorkerCompileComplete(durationMs, stream = process.stderr)
   stream.write(`${WORKER_COMPILE_COMPLETE_PREFIX}${Math.max(0, Math.round(durationMs))}\n`);
 }
 
+/**
+ * Write a worker's single terminal JSON result and exit.
+ *
+ * The exit is explicit — a disposable compile worker must not be held open by
+ * abandoned upstream timers, streams, or scheduler handles, which would turn a
+ * finished result into an outer worker timeout.
+ *
+ * It happens from the write callback, though, and that ordering is the whole
+ * point of this helper. The parent captures stdout through a pipe (`spawn`
+ * with stdio "pipe"), and a pipe accepts only its buffer — 64 KB on Linux —
+ * before the remainder has to be drained asynchronously by the reader.
+ * Writing and then exiting immediately truncates any larger report at exactly
+ * that boundary, leaving the parent a half-written JSON document (#4767).
+ */
+export function emitWorkerResult(value, exitCode = 0, stream = process.stdout) {
+  stream.write(`${JSON.stringify(value)}\n`, () => {
+    process.exit(exitCode);
+  });
+}
+
 export function readWorkerCompileDuration(stderr) {
   const match = String(stderr).match(new RegExp(`${WORKER_COMPILE_COMPLETE_PREFIX}(\\d+)`));
   return match ? Number(match[1]) : null;

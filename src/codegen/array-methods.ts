@@ -64,6 +64,7 @@ import {
   registerEmitBoundsCheckedArrayGet,
   VOID_RESULT,
 } from "./shared.js";
+import { emitIncludesSearchValue } from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import {
@@ -3135,11 +3136,6 @@ function compileArrayIncludes(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  if (callExpr.arguments.length < 1) {
-    reportError(ctx, callExpr, "includes requires 1 argument");
-    return null;
-  }
-
   const vecTmp = allocLocal(fctx, `__arr_inc_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_inc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_inc_i_${fctx.locals.length}`, { kind: "i32" });
@@ -3186,8 +3182,7 @@ function compileArrayIncludes(
   });
   fctx.body.push({ op: "local.set", index: effLenTmp });
 
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, valType);
-  fctx.body.push({ op: "local.set", index: valTmp });
+  const incNeverMatches = emitIncludesSearchValue(ctx, fctx, callExpr, valType, valTmp);
 
   // fromIndex (optional 2nd arg, default 0)
   if (callExpr.arguments.length >= 2) {
@@ -3335,6 +3330,8 @@ function compileArrayIncludes(
       { op: eqOp },
     ];
   }
+
+  if (incNeverMatches) comparisonInstrs = [{ op: "i32.const", value: 0 }];
 
   const loopBody: Instr[] = [
     { op: "local.get", index: iTmp },

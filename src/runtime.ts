@@ -7708,6 +7708,18 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         const sc = _wasmStructProps.get(obj);
         return !!sc && key in sc;
       }
+      // (#4765) A DELETED key is absent for HasProperty too. `fieldNamesForHost()`
+      // below is the STATIC struct shape and does not shrink on delete, so
+      // `"k" in wrapped` stayed true after the host's own
+      // `Array.prototype.{pop,splice,unshift}` removed `k` via
+      // DeletePropertyOrThrow — the "…is removed" test262 family.
+      // `_wasmStructHasOwn` (hasOwnProperty) and the compiled read already
+      // consult this set; the proxy's `has` trap was the one that did not, and
+      // it is what an `in` on an externref-typed receiver reaches.
+      {
+        const tomb = _wasmStructDeletedKeys.get(obj);
+        if (tomb?.has(typeof key === "symbol" ? key : String(key))) return false;
+      }
       if (safeGetField(key) !== undefined) return true;
       const sc = _wasmStructProps.get(obj);
       if (sc && key in sc) return true;
@@ -11229,6 +11241,10 @@ assert._isSameValue = isSameValue;
       // what the conformance tests compare. Used by the vec computed-get when
       // the key is a `Symbol.iterator` (host-mode only).
       if (name === "__array_proto_values") return () => Array.prototype.values;
+      // (#4765 slice 1) `%Array.prototype.<m>%` — the value of a NON-CALL method
+      // read on a vec (`[].includes`), which used to read as null. Rationale and
+      // scope: `src/codegen/array-method-value.ts`.
+      if (name === "__array_proto_method") return (k: any) => (Array.prototype as any)[String(k)];
       if (name === "__extern_set")
         return (obj: any, key: any, val: any) => {
           // (#860) When a Wasm closure struct is stored as a property value
