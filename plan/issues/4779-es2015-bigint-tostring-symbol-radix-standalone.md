@@ -272,3 +272,21 @@ regressions** and two improvements against the 99/104 frozen baseline. The
 optimized corpus also remains **114/120 matches**, and its outcome gate reports
 **0 regressions**. The optimizer emitted assertion text on two existing rows,
 but both lanes have identical outcomes and the gate is green.
+
+## Final upstream handoff (2026-08-27)
+
+Upstream/main advanced once more to `220ce6c4913ddb10e6af0417dcf4d3aef6470220`
+(PR #5082). The branch now contains the non-rewriting sync checkpoint
+`27782f9e` with Thomas authorship and the Codex trailer. The exact row was
+rerun after that merge: host **1/1 pass** and standalone **1/1 pass**, with
+structural controls passing and no failures, compile errors, timeouts, or
+skips. The final artifacts are
+`.tmp/issue-4779-final-host-after-5082.jsonl`
+(`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`) and
+`.tmp/issue-4779-final-standalone-after-5082.jsonl`
+(`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`).
+
+The normal pre-commit hook also reran the focused regression (**4/4 passed**)
+with `TEST262_WORKERS=2` and the oracle ratchet. The branch is ready to push
+only after the normal pre-push checks pass; retain `hold` and keep it outside
+the queue until the fresh PR checks are green.
