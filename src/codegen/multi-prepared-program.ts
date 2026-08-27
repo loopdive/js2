@@ -743,6 +743,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       (selected.classMembers?.size ?? 0) !== 0 ||
       (selected.classMemberUnitIds?.size ?? 0) !== 0 ||
       selected.moduleInit?.stmtCount === 0 ||
+      preparation.preparedFunction.body !== preparation.preparedFunctionBody ||
+      !Object.isFrozen(preparation.preparedInstructions) ||
+      !sameIdentityArray(preparation.preparedFunction.body, preparation.preparedInstructions) ||
       preparedBody.unitId !== preparation.unitId ||
       projection.length !== 1 ||
       projection[0]?.unitId !== preparation.unitId ||
@@ -1057,6 +1060,28 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     } catch (error) {
       this.#state = "failed";
       throw error;
+    }
+  }
+
+  /** Assert the Prepared body and exact ABI slot before intentional startup wrapping. */
+  assertPreparedModuleInitCurrent(): void {
+    this.#requireState("routes-complete");
+    const preparation = this.#moduleInitPreparation;
+    if (!preparation) return;
+    if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY === "1") {
+      preparation.preparedFunction.body = [{ op: "unreachable" }];
+    }
+    const registry = this.#ctx.programAbiModuleInitCallables;
+    if (
+      registry?.functionForUnit(preparation.unitId) !== preparation.preparedFunction ||
+      registry.handleForUnit(preparation.unitId) !== preparation.preparedHandle ||
+      preparation.preparedFunction.body !== preparation.preparedFunctionBody ||
+      !sameIdentityArray(preparation.preparedFunction.body, preparation.preparedInstructions)
+    ) {
+      this.#fail(
+        "module-init-startup-mismatch",
+        "Prepared module-init body or exact ABI slot changed before startup finalization",
+      );
     }
   }
 

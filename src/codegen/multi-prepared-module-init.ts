@@ -13,7 +13,7 @@ import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrIntegrationReport } from "../ir/integration.js";
 import type { IrSelection } from "../ir/select.js";
-import type { FuncHandle, WasmFunction } from "../ir/types.js";
+import type { FuncHandle, Instr, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, CodegenOptions } from "./context/types.js";
 import { preallocateModuleInitCallable } from "./declarations.js";
@@ -42,6 +42,7 @@ export interface MultiPreparedModuleInitPlanningInput {
   readonly options?: CodegenOptions;
   readonly identityContext: IrPlanningIdentityContext;
   readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
+  readonly planResolvedSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
   readonly safeSelection: (plan: IrOverlayPlan, sourceFile: ts.SourceFile) => IrSelection;
   readonly projectLoweringPlans: (plan: IrOverlayPlan, selection: IrSelection) => IrIntegrationLoweringPlans;
   readonly selectExactLexicalModuleInit: (
@@ -60,6 +61,8 @@ export interface MultiPreparedModuleInitPreparation {
   readonly preparedComponentId: string;
   readonly preparedFunction: WasmFunction;
   readonly preparedHandle: FuncHandle;
+  readonly preparedFunctionBody: WasmFunction["body"];
+  readonly preparedInstructions: readonly Instr[];
   readonly preparedBody: PreparedIrModuleInitBody;
   readonly report: IrIntegrationReport;
   readonly selection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
@@ -99,7 +102,16 @@ function hasForbiddenModuleInitSyntax(sourceFile: ts.SourceFile, checker: ts.Typ
       return;
     }
     if (ts.isIdentifier(node)) {
-      const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
+      const symbol = checker.getSymbolAtLocation(node);
+      let resolved = symbol;
+      if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+        resolved = checker.getAliasedSymbol(symbol);
+        if (!resolved || resolved === symbol || (resolved.declarations?.length ?? 0) === 0) {
+          forbidden = true;
+          return;
+        }
+      }
+      const declarations = resolved?.declarations ?? [];
       if (declarations.some((declaration) => declaration.getSourceFile() !== sourceFile)) {
         forbidden = true;
         return;
@@ -217,7 +229,26 @@ export function planMultiPreparedModuleInit(
 
   const contributorPlan = safeSelections.find(([sourceFile]) => sourceFile === contributor.sourceFile);
   if (!contributorPlan) return undefined;
-  const [, overlayPlan] = contributorPlan;
+  // The generic multi-source overlay intentionally plans without module
+  // bindings. M2 must repeat the contributor plan with the exact resolver so
+  // unsupported storage/value representations are rejected before the ABI
+  // slot is reserved, rather than becoming a fatal lowering-time mismatch.
+  const overlayPlan = input.planResolvedSource(contributor.sourceFile);
+  const resolvedSelection = input.safeSelection(overlayPlan, contributor.sourceFile);
+  if (
+    resolvedSelection.funcs.size !== 0 ||
+    (resolvedSelection.classMembers?.size ?? 0) !== 0 ||
+    (resolvedSelection.classMemberUnitIds?.size ?? 0) !== 0 ||
+    overlayPlan.importedCalls.size !== 0 ||
+    overlayPlan.topLevelFunctionValues.size !== 0 ||
+    overlayPlan.hostVoidCallbacks.size !== 0 ||
+    overlayPlan.hostDateSnapshots.size !== 0 ||
+    overlayPlan.hostDateGetters.size !== 0 ||
+    overlayPlan.promiseDelays.constructions.size !== 0 ||
+    overlayPlan.suspendingAsyncUnitIds.size !== 0
+  ) {
+    return undefined;
+  }
   // The existing multi-source safe-selection projection deliberately clears
   // module-init because its generic overlay is not an owner. M2 consumes the
   // planner's claim assessment directly, then installs its own exact owner.
@@ -227,8 +258,7 @@ export function planMultiPreparedModuleInit(
   if (
     !lexical ||
     lexical.unitId !== contributor.unitId ||
-    lexical.invocationKind !== contributor.planning.plan.invocation.kind ||
-    contributor.planning.plan.invocation.kind === "none"
+    lexical.invocationKind !== contributor.planning.plan.invocation.kind
   ) {
     return undefined;
   }
@@ -264,9 +294,11 @@ export function planMultiPreparedModuleInit(
   const terminalEvidence = evidence.find(
     (entry) => entry.kind === "patched" && entry.unitId === contributor.unitId && entry.legacyName === "<module-init>",
   );
-  const preparedComponentId = terminalEvidence?.preparedComponentId;
+  const preparedComponentId = terminalEvidence?.kind === "patched" ? terminalEvidence.preparedComponentId : undefined;
   const preparedFunction = registry.functionForUnit(contributor.unitId);
   const preparedHandle = registry.handleForUnit(contributor.unitId);
+  const preparedFunctionBody = preparedFunction?.body;
+  const preparedInstructions = preparedFunctionBody ? Object.freeze([...preparedFunctionBody]) : undefined;
   if (
     !preparedBody ||
     report.errors.length !== 0 ||
@@ -275,6 +307,9 @@ export function planMultiPreparedModuleInit(
     !preparedComponentId ||
     preparedFunction === undefined ||
     preparedHandle === undefined ||
+    preparedFunctionBody === undefined ||
+    preparedFunctionBody.length === 0 ||
+    preparedInstructions === undefined ||
     artifacts.length !== 1
   ) {
     throw new IrInvariantError(
@@ -292,6 +327,8 @@ export function planMultiPreparedModuleInit(
     preparedComponentId,
     preparedFunction,
     preparedHandle,
+    preparedFunctionBody,
+    preparedInstructions,
     preparedBody,
     report,
     selection: preparedSelection,

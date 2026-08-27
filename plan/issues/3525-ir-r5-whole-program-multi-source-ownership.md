@@ -33,11 +33,20 @@ files:
   - src/ir/module-bindings.ts
   - src/ir/imported-functions.ts
   - src/ir/module-init.ts
+  - src/ir/module-init-plan.ts
   - src/ir/integration.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-program-callable-context.ts
+  - src/codegen/legacy-body-audit.ts
+  - src/codegen/multi-prepared-body-skips.ts
+  - src/codegen/multi-prepared-callable-orchestration.ts
+  - src/codegen/multi-prepared-module-init.ts
+  - src/codegen/multi-prepared-program.ts
+  - src/codegen/program-abi-module-init-planning.ts
   - src/compiler.ts
+  - tests/issue-3525-multi-prepared-module-init.test.ts
   - tests/issue-3525-ir-whole-program-multi-source.test.ts
 loc-budget-allow:
   - src/codegen/declarations.ts
@@ -65,6 +74,42 @@ default/namespace imports, global-script declarations, same-name declarations,
 classes, closures, and module initialization must resolve by R1 structural
 identity. Fast and ordinary multi-source modes may differ in representation,
 but not in front-end ownership or source-unit accounting.
+
+## M2 landing checkpoint — one source-qualified module initializer (2026-08-27)
+
+The next bounded landing moves one executable multi-source module initializer
+behind exact Prepared ownership. It is intentionally narrower than the full R5
+module graph contract so it can land independently and preserve a fail-closed
+boundary while the remaining syntax and graph cases stay on the direct route.
+
+- The production gate is exactly
+  `JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER=1`; every other value preserves
+  the existing path.
+- Eligibility requires exactly one source with source-local executable module
+  initialization and no unresolved or cross-source value aliases in that
+  body. A resolver-backed second plan must also prove every module storage and
+  value-flow representation before reservation. All other sources must
+  contribute an empty init plan.
+- The owner preallocates and reserves the exact source-qualified module-init
+  unit in `ProgramAbiModuleInitCallableRegistry` before body emission. The
+  contributor source records the Prepared unit outcome; empty sources record
+  no synthetic ownership.
+- Every direct module-init pass is suppressed while this route owns the unit.
+  One frozen Prepared body is registered, checked again before startup
+  finalization, and wrapped once as either the start function or deferred host
+  export adapter.
+- The acceptance test proves dependency-first and entry-contributor ordering,
+  one and two contributor rejection, the all-empty case, cross-source imported
+  read rejection, deferred-host TDZ behavior, exact ABI reservation, zero
+  direct roots, body-identity and duplicate-adapter fail-closed seams, and a
+  disabled-gate direct-path poison control. A boolean-to-number module-value
+  mismatch proves unsupported representations reject before reservation and
+  retain the direct fallback.
+
+This checkpoint does not yet admit multiple executable source initializers,
+cross-source value reads, re-export evaluation, cycles/SCCs, or arbitrary
+module-init syntax. Those remain adjacent gates for the later whole-program
+module graph owner; they must not be inferred from this exact-unit cutover.
 
 ## Current evidence
 

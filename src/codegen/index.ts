@@ -3663,6 +3663,7 @@ function planMultiIrOverlaySource(
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
   countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan },
+  resolveModuleBindings = false,
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3672,7 +3673,7 @@ function planMultiIrOverlaySource(
     syntacticDiagnostics: multiAst.syntacticDiagnostics,
   };
   return planIrOverlay(ctx, sourceAst, identityContext, {
-    resolveModuleBindings: false,
+    resolveModuleBindings,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
     ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
     ...(countedStringAppendProof ? { countedStringAppendProof } : {}),
@@ -6515,6 +6516,7 @@ function finalizeMultiPreparedModuleInitStartup(
   ctx: CodegenContext,
   owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
 ): void {
+  owner?.assertPreparedModuleInitCurrent();
   finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
   owner?.finalizePreparedModuleInitStartup();
 }
@@ -8967,6 +8969,8 @@ function planMultiPreparedProgramRoutes(
         undefined,
         stringShape ? { loop: stringShape.loop, plan: stringShape.plan } : undefined,
       ),
+    planResolvedModuleInitSource: (sourceFile) =>
+      planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined, undefined, undefined, true),
     buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),

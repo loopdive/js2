@@ -437,6 +437,7 @@ export interface MultiPreparedProgramRoutePlanningInput {
   readonly ctx: CodegenContext;
   readonly explicitlyDisabled: (value: string | undefined) => boolean;
   readonly planSource: (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape) => IrOverlayPlan;
+  readonly planResolvedModuleInitSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
   readonly buildSafety: () => MultiPreparedScalarLeafGraphSafety;
   readonly safeSelection: (
     plan: IrOverlayPlan,
@@ -459,7 +460,14 @@ export interface MultiPreparedProgramRoutePlanningInput {
   readonly projectLoweringPlans: (plan: IrOverlayPlan, selection: IrSelection) => IrIntegrationLoweringPlans;
   readonly moduleInit?: Omit<
     MultiPreparedModuleInitPlanningInput,
-    "ctx" | "multiAst" | "identityContext" | "options" | "planSource" | "safeSelection" | "projectLoweringPlans"
+    | "ctx"
+    | "multiAst"
+    | "identityContext"
+    | "options"
+    | "planSource"
+    | "planResolvedSource"
+    | "safeSelection"
+    | "projectLoweringPlans"
   >;
   readonly callable: Omit<
     MultiPreparedCallableOrchestrationInput,
@@ -526,6 +534,7 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
         identityContext: input.identityContext,
         ...(input.options ? { options: input.options } : {}),
         planSource,
+        planResolvedSource: input.planResolvedModuleInitSource,
         safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
         projectLoweringPlans: input.projectLoweringPlans,
       })
