@@ -4,7 +4,7 @@ title: "instanceof hard residuals: Function.prototype getter / WasmGC array prot
 status: in-progress
 sprint: Backlog
 created: 2026-06-28
-updated: 2026-08-26
+updated: 2026-08-27
 priority: low
 horizon: l
 feasibility: hard
@@ -164,3 +164,79 @@ checkpoint without first splitting and re-proving them. Cluster 4 and cluster
    thrown-object identity.
 5. Rerun exact 3/3 host and standalone evidence. If either mechanism remains
    unsafe after the time box, commit an issue-only handoff and no source code.
+
+## 2026-08-27 Luna/max final proof and issue-only handoff
+
+The final isolated controls were run from combined head `114f8a95a` with the
+three maintained cluster-4 rows only, `TEST262_WORKERS=2`,
+`COMPILER_POOL_SIZE=2`, and the pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` for standalone execution.
+The host control `20260827-035907` measured **2/3** (object-throws and
+primitive passed; object failed), while the standalone control
+`20260827-035555` measured **1/3** (primitive passed; object and object-throws
+failed). The final standalone proof after the experimental source changes,
+`20260827-043635`, remained **1/3**, with zero compile errors, compile
+timeouts, or skips. No source fix is claimed by this checkpoint.
+
+The host object failure is narrower than a false prototype walk: the getter
+returns `Array.prototype`, but the compiled return coercion materializes that
+host array as a fresh WasmGC vector and the host facade is not identity-equal
+to the canonical `Array.prototype`. The diagnostic shape was
+`valueType=object valueStruct=false array=true`, followed by a returned
+prototype with `protoHostProxy=true`, `rawProtoStruct=true`,
+`rawProtoVec=true`, `protoSameValue=false`, and only the `length` own key.
+The existing native fallback then reads `target.prototype` a second time,
+which explains the getter-count failure. The standalone throwing-object row
+still loses the getter's abrupt completion and reports that no exception was
+thrown.
+
+The attempted narrow checkpoint added tri-state native `$NativeProto` probes,
+an Array-prototype carrier marker, and a host carrier identity arm. It did not
+change the authoritative standalone denominator or result, so all experimental
+source edits were restored. TypedArray and class metadata paths were untouched;
+cluster 5's undeclared-global behavior remains out of scope. The next agent
+should model the returned-prototype identity/carrier and abrupt completion as
+separate OrdinaryHasInstance mechanisms, then rerun the exact 3/3 controls
+before adding permanent tests. This branch carries issue documentation only;
+the parent agent should transplant the documentation commit onto a clean
+upstream delivery branch and use a draft PR for the handoff.
+
+## 2026-08-27 clean-delivery resumed implementation plan
+
+This branch is the clean `upstream/main` delivery branch behind draft PR #5023;
+do not copy the earlier combined-head experiment.
+
+1. Add focused carrier-identity and abrupt-completion reductions before source
+   edits. The getter must run exactly once in every case.
+2. Resolve the object-result mechanism first: preserve the returned
+   `Array.prototype` identity across the host/native carrier boundary and use
+   that exact value for the prototype-chain comparison.
+3. Resolve the standalone throwing-object mechanism separately, propagating
+   the original thrown object without a boolean/default fallback.
+4. Keep the primitive-return sibling passing and leave cluster 5 undeclared
+   identifier semantics untouched.
+5. Mark PR #5023 ready only after permanent focused tests pass and the exact
+   maintained three-row slice is 3/3 in standalone with zero non-passes; retain
+   host 3/3 as a regression control.
+
+## 2026-08-27 clean-delivery no-gain disposition
+
+The resumed candidate widened accessor returns to externref, classified
+`Function.prototype` as a callable native prototype, added an Array-prototype
+brand arm to dynamic `instanceof`, and preserved the already-read prototype in
+the host fallback. Direct reductions exercised those paths, but the maintained
+Test262 lowering did not improve, so none of those source edits is retained.
+
+Authoritative standalone run `20260827-064940` recorded exactly three rows:
+**1 pass / 2 fail / 0 compile error / 0 compile timeout / 0 skip**. The primitive
+control passed; the object result remained false and the throwing getter still
+lost its expected abrupt completion. Host solo runs `20260827-064356` and
+`20260827-064758` each hit the runner's exact 10-second compile ceiling on the
+throwing-object row while concurrent compiler-heavy tasks were active; they are
+load-contaminated diagnostics, not acceptance evidence.
+
+The source experiment, WAT instrumentation, probe-only test, and generated
+report mirror were restored. PR #5023 remains a draft issue-backed handoff. The
+next implementation must first prove why the Test262 fixture bypasses the
+direct reduction's carrier/classifier path before changing shared closure,
+prototype, or `instanceof` machinery again.

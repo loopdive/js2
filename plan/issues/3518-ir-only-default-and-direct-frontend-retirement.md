@@ -1861,3 +1861,97 @@ transaction. The expanded mutation matrix, builder-off artifact comparison,
 durable 30-sample ABBA runtime driver, optimization-ledger promotion, and final
 R9 switch deletion remain follow-up evidence and must not be inferred from the
 compile-once route landing.
+
+#### C2b checkpoint: true-direct control and phase-addressed fail-closed evidence (2026-08-27)
+
+The first follow-up closes a control-path defect exposed by the C2a landing.
+`JS2WASM_IR_STRING_BUILDER=0` correctly rejected the counted builder in the
+structural selector, but early multi-source orchestration still injected C1's
+counted-string proof into the legacy-name projection. The late overlay then saw
+`bench_string` in the compatibility selection without a matching structural
+owner and failed `selection-preparation-mismatch` instead of producing the
+required direct artifact. Early orchestration now withholds every string shape
+and proof when the builder switch is disabled. The resulting artifact has the
+two physical target legacy rows, a typed `string-builder-candidate` outcome,
+`legacyBodyEmitted: true`, `irBodyEmitted: false`, and returns `5000`.
+
+The string route also gains the parsed test-only
+`JS2WASM_TEST_TAMPER_MULTI_PREPARED_STRING_LEAF` selector. Its JSON object must
+contain only the exact target `unitId` and one explicit phase: `support`,
+`preparation-receipt`, `skip-report`, `post-direct-currentness`, or
+`post-merge-receipt`. Each phase corrupts a distinct authenticated record after
+the route's first mutation. Every corruption fails invariantly with zero target
+legacy rows; malformed or foreign selectors are themselves invariants, and the
+route requires an armed selector to match exactly once. This turns the C2a
+currentness checks into executable no-fallback evidence rather than relying on
+their success path alone.
+
+Focused raw and optimized A/B coverage now uses builder-off—not route-off—as
+the direct control. Both artifacts preserve the target UnitId, all non-target
+legacy audit rows, imports/exports, DTS, and string-pool membership, and both
+instantiate and return `5000`. The route-off lane remains separately covered as
+the rollback control with `legacyBodyEmitted: true` and `irBodyEmitted: true`.
+
+This checkpoint deliberately does **not** promote
+`IR-OPT-COUNTED-LITERAL-STRING-APPEND`. The first corrected optimized A/B on the
+current arm64 host measured 130,595 bytes Prepared versus 130,308 bytes direct:
+Prepared is 287 bytes larger, so the no-growth output gate is not yet met. The
+next implementation transaction must:
+
+1. attribute and remove that target/provider overhead while preserving the
+   generic `string.repeat` validation matrix and the counted-plan receipt;
+2. lock structural target helper/provider calls and allocations at direct or
+   better, without numeric function-index assertions;
+3. add and run the durable 30-valid-sample ABBA driver with the 5% direct/direct,
+   1.05 median, and 1.10 bootstrap-upper-bound gates; and
+4. only after all three evidence classes pass, promote the optimization ledger
+   row and synchronize the measured #3792 totals.
+
+The broader syntax/provider mutation matrix and final R9 switch deletion remain
+separate follow-ups. No performance, retirement-ready, linear cutover, or
+repository-wide IR-only claim follows from this checkpoint.
+
+#### C2c checkpoint: authenticated counted-native repeat provider (2026-08-27)
+
+The accepted-output regression is removed without weakening generic
+`String.prototype.repeat`. IR format v5.4 adds the optional
+`countedStringAppendTripCount` proof to `string.repeat`. Production from-AST
+lowering emits it only for the exact checker-retained counted-loop trip count in
+the signed-i32 range. The verifier requires a matching source-qualified
+`countedStringAppendSite`, an integer in `[2, 2147483647]`, and an exact f64
+constant definition for the instruction's `count` SSA value. The fragment is
+canonicalized from the checker-proven literal/const-alias chain to an exact
+`string.const`; its UTF-16 length times the trip count must stay at or below the
+native kernel's `0x40000000` result bound. Final provenance association joins
+the same trip count and fragment back to the retained syntax plan. Missing,
+borrowed, out-of-range, non-constant, non-literal, oversized-result, and
+provider-without-proof variants fail closed.
+
+Native WasmGC preparation maps only that authenticated form to
+`__ir_string_repeat_counted_native`, whose physical provider is the existing
+`__str_repeat (string, i32) -> string` kernel. Lowering performs the proven-safe
+`i32.trunc_f64_s` conversion at the call site. It does not materialize the
+generic `__ir_string_repeat_native (string, f64) -> string` validation adapter.
+Site-less repeats, out-of-i32-range counted repeats, host strings, and the linear
+backend retain the generic f64 provider and its complete ToIntegerOrInfinity /
+RangeError behavior. Adapter-manifest string-pool metadata remains byte-for-byte
+compatible with direct output even though the counted artifact has no dead
+RangeError path.
+
+On the current arm64 host, the accepted raw and requested-`optimize: 4`
+artifacts both measure **130,062 bytes Prepared versus 130,308 bytes direct**:
+Prepared is now **246 bytes smaller** and 533 bytes smaller than C2b's 130,595
+byte artifact. Both accepted binaries pass `WebAssembly.validate`, preserve DTS,
+imports/exports, string-pool membership, target UnitId, non-target route rows,
+and return `5000`. Named WAT evidence contains `__str_repeat`, contains no
+`__ir_string_repeat_native`, uses non-saturating `i32.trunc_f64_s`, and reduces
+the target's static call count from four to two with no increase in target
+`array.new` or `struct.new` operations. The focused verifier/provider/contract,
+cutover, and phase-tamper suites pass 36/36, and the TypeScript 7 typecheck
+passes.
+
+The no-growth and structural output gates are therefore met. Promotion of
+`IR-OPT-COUNTED-LITERAL-STRING-APPEND` remains withheld until the durable
+30-valid-sample ABBA runtime driver satisfies the existing 5% direct/direct,
+1.05 median, and 1.10 bootstrap-upper-bound gates. The broader syntax/provider
+mutation matrix and final R9 switch deletion remain later transactions.

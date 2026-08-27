@@ -34,6 +34,7 @@ import {
   requireValidPreparedCountedStringAppendReceipt,
 } from "../ir/counted-string-append-provenance.js";
 import type { IrSourceId, IrUnitId } from "../ir/identity.js";
+import type { IrIntegrationReport } from "../ir/integration-report.js";
 import { asVal } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrSelection } from "../ir/select.js";
@@ -69,6 +70,11 @@ import {
   canonicalProgramAbiCallableTypeContract,
   programAbiCallableSignaturesEqual,
 } from "./program-abi-signatures.js";
+import {
+  createMultiPreparedStringLeafTestTamper,
+  multiPreparedStringMergedReportForTest,
+  tamperMultiPreparedStringSkipReport,
+} from "./multi-prepared-string-leaf-test-tamper.js";
 
 export interface MultiPreparedStringLeafProofContext {
   readonly checker: ts.TypeChecker;
@@ -113,6 +119,8 @@ export interface MultiPreparedStringLeafRoute extends MultiPreparedLeafRouteBase
   readonly sealAfterOverlayCurrentness: () => void;
   readonly sealAfterFinalizationCurrentness: () => void;
   readonly sealBeforePublicationCurrentness: () => void;
+  readonly tamperSkipReport: (skippedFunctionUnitIds: ReadonlySet<IrUnitId>) => void;
+  readonly mergedReportForTest: (report: IrIntegrationReport) => IrIntegrationReport;
   readonly assertCurrent: () => void;
 }
 
@@ -1256,12 +1264,16 @@ export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPrepared
   };
   states.set(sourceFile, state);
   if (!input.cutoverEnabled) return states;
+  const testTamper = createMultiPreparedStringLeafTestTamper(candidate.unitId);
 
   // This is the first mutation in the route.  Recheck all pure C1 evidence
   // immediately before requesting the shared support graph.
   requireCurrentMultiPreparedStringLeafCandidate(resolverInput, candidate);
   const support = input.prepareFunctionValueSupport(plan, sourceFile, candidate.unitId, candidate.legacyName);
   if (!support) stringLeafInvariant("patch", candidate);
+  testTamper.apply("support", () => {
+    support.trampolineFunction.name = `${support.trampolineFunction.name}$tampered`;
+  });
   requireCurrentMultiPreparedStringLeafSupport(resolverInput, candidate, support, "before-prepare");
 
   const prepared = prepareIrBodies({
@@ -1278,7 +1290,17 @@ export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPrepared
   if (prepared.classMembers || prepared.moduleInit || prepared.implicitConstructorUnitIds.size !== 0) {
     stringLeafInvariant("patch", candidate);
   }
-  const countedReceipt = exactStringPreparedReceipt(candidate, prepared);
+  let preparedForReceipt: ReturnType<typeof prepareIrBodies> = prepared;
+  testTamper.apply("preparation-receipt", () => {
+    preparedForReceipt = {
+      ...prepared,
+      report: {
+        ...prepared.report,
+        preparedCountedStringAppendReceipts: Object.freeze([]),
+      },
+    };
+  });
+  const countedReceipt = exactStringPreparedReceipt(candidate, preparedForReceipt);
   const preparedReceipt = exactStringPreparedBody(candidate, prepared);
   const allocated = exactAllocatedNumericCallable(input.ctx, candidate.unitId, candidate.legacyName, 0, false);
   if (!allocated || allocated.func.body.length === 0) stringLeafInvariant("patch", candidate);
@@ -1309,6 +1331,11 @@ export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPrepared
     if (afterDirectSealed) {
       requiredStringLeafInvariant("patch", `post-direct currentness for ${candidate.unitId} was sealed twice`);
     }
+    testTamper.apply("post-direct-currentness", () => {
+      const first = allocated.func.body[0];
+      if (!first) requiredStringLeafInvariant("patch", `prepared body for ${candidate.unitId} became empty`);
+      allocated.func.body[0] = { ...first };
+    });
     captureCurrentInstructions();
     afterDirectSealed = true;
   };
@@ -1338,6 +1365,7 @@ export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPrepared
     }
     captureCurrentInstructions();
     beforePublicationSealed = true;
+    testTamper.assertConsumed();
   };
   const assertCurrent = (): void => {
     const currentSafety = input.safety();
@@ -1410,6 +1438,10 @@ export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPrepared
     sealAfterOverlayCurrentness,
     sealAfterFinalizationCurrentness,
     sealBeforePublicationCurrentness,
+    tamperSkipReport: (skippedFunctionUnitIds: ReadonlySet<IrUnitId>) =>
+      tamperMultiPreparedStringSkipReport(testTamper, skippedFunctionUnitIds, candidate.importedTargetUnitId),
+    mergedReportForTest: (report: IrIntegrationReport) =>
+      multiPreparedStringMergedReportForTest(testTamper, report, countedReceipt),
     assertCurrent,
   });
   states.set(sourceFile, { plan, route, skippedFunctionUnitIds: new Set() });

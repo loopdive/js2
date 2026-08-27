@@ -626,6 +626,8 @@ export interface IrInstrStringRepeat extends IrInstrBase {
   readonly provider?: IrFuncRef;
   /** Exact counted-loop provenance; absent for unrelated generic repeat producers. */
   readonly countedStringAppendSite?: IrCountedStringAppendSiteId;
+  /** Exact checker-proven count for a bounded string.const native repeat. */
+  readonly countedStringAppendTripCount?: number;
 }
 
 /** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
