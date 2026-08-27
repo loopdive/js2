@@ -43,7 +43,7 @@ import { emitThisReceiverGuardConvert } from "./property-access.js";
 import { compileArraySliceFromVecLocal } from "./array-methods.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import {
@@ -96,6 +96,7 @@ import {
 } from "./standalone-global-object-carriers.js";
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
+import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -1804,6 +1805,7 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
+      (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
       // (#4491 wave-5 T2) `this<X>Value(this)` for the three primitive-wrapper
       // families (§21.1.3.7 / §22.1.3.28 / §20.3.3.3). Routed FIRST so it
       // serves String too — `emitStringProtoMemberBody` would otherwise claim
