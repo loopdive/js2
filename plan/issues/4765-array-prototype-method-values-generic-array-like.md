@@ -448,6 +448,26 @@ The heuristic trades one trap for another, and #4707 / #4754 / #4931 already
 tuned this seam (`proxyModuleEscapeGateEnabled` is described there as "the sole
 attribution seam").
 
+**Measured what flipping it would buy.** The gate has a documented off-switch
+(`JS2WASM_PROXY_MODULE_ESCAPE_GATE=0`, `declarations.ts:1649`), so the benefit
+side of the trade is a number, not a guess:
+
+| escape gate | ES2016 in-scope |
+| --- | --- |
+| on (today's default) | 113 / 124 |
+| off | **114 / 124** |
+
+Exactly one row flips — `slice/length-exceeding-integer-limit-proxied-array.js`.
+`splice/create-species-length-exceeding-integer-limit.js` and
+`reverse/…-with-proxy.js` do NOT flip, so they fail for reasons beyond the
+materialisation.
+
+**The cost side is unmeasured and is the whole question.** The gate exists
+because of #4707/#4754/#4931; turning it off restores #4931's behaviour by the
+code's own account. Nobody should flip the default on the strength of +1 ES2016
+row without running the full suite both ways — that measurement is the actual
+next step, and it is cheap in CI and expensive locally.
+
 **So this is a policy decision on a tuned heuristic, not a defect to patch.**
 The options are to make the escape gate distinguish "handed to a typed consumer
 that will cast" from "handed to a generic host algorithm that will not", or to
