@@ -332,14 +332,28 @@ one push later — everything after the failing step, plus the earlier ones:
 `generate:feature-badges:check` · `test:ir:alloc` · the `#1524` allowlist tests ·
 `tests/issue-{3004,3303,1580}.test.ts` — all green.
 
-**One `quality` step is red and it is NOT this branch's:
-`scripts/run-guard-suite.mjs` — 26 failures in 4 files** (`issue-3164`,
-`issue-3386`, `issue-3565`, `issue-680`), all `RuntimeError: unreachable` in
-`__gen_resume___closure_*`, i.e. the standalone native-generator lane.
-A/B-confirmed against `origin/main`'s own `src/runtime.ts` on the merged head:
-**byte-identical failure sets**, 26/26, same test names. It is a live red on
-`main`, not collateral from #3481, and it will block any PR that runs `quality`
-until someone owns it. Escalated to the coordinator.
+**`scripts/run-guard-suite.mjs` fails LOCALLY but is green in CI — a Node-version
+divergence, not a main regression.** Locally it gives 26 failures in 4 files
+(`issue-3164`, `issue-3386`, `issue-3565`, `issue-680`), all
+`RuntimeError: unreachable` in `__gen_resume___closure_*`, i.e. the standalone
+native-generator lane. Two facts place it:
+
+- A/B against `origin/main`'s own `src/runtime.ts` on this merged head gives
+  **byte-identical failure sets**, 26/26, same test names — so it is not
+  collateral from #3481.
+- CI's `quality` is **green on this exact head** (`7ab44e0857`), and that job
+  runs the guard suite. CI uses **Node 25** (`.github/actions/setup-node-pnpm`
+  default); this container has only Node 20/21/22, and the suite fails on both
+  20 and 22.
+
+So it is an engine-version-dependent failure in the WasmGC generator-resume path
+that newer V8 handles — worth knowing when validating locally on Node ≤22 (it
+will look like a red main and it is not), but it blocks nothing.
+
+> Correction: the commit message on `7ab44e0857` calls this "a live red on main"
+> that "will block any PR that runs `quality`". That was written before the CI
+> run came back and is **wrong** — the A/B (not mine) held up, the impact claim
+> did not. This paragraph is the accurate record.
 
 ### What is still open (steps 2–3, deliberately not attempted here)
 
