@@ -26,19 +26,46 @@ that group and **cancels its run**. A re-enqueue loop on the queue head cost
 Your job on a green PR is to make it *enqueueable* and confirm it was taken —
 not to push it into the queue.
 
-## 2. Read `mergeStateStatus`, not a count of green checks
+## 2. Judge readiness from the real signals, not from `mergeStateStatus`
 
 - **A SKIPPED required check SATISFIES branch protection.** Jobs skipped by
   their own `if:`/path filter still publish a check run with conclusion
   `skipped`. On a docs-only PR `equivalence-gate` skips and the PR is still
   `CLEAN`. Do **not** decide readiness by counting six `SUCCESS` conclusions —
-  you will not find them and will wrongly conclude the PR is not ready.
-- **`UNSTABLE` is never auto-enqueued.** `auto-enqueue` takes only
-  `{CLEAN, HAS_HOOKS}`; `UNSTABLE` is deliberately excluded (#3878/#3904). So a
-  PR with **every required check green** can sit forever because one
-  *non-required* check is red. Re-run the failed job to get back to `CLEAN`.
-  Do not stand down on "required checks are green".
-- `BEHIND`/`DIRTY` → merge `origin/main` in and push (see §5).
+  you will not find them and will wrongly conclude the PR is not ready. Judge
+  each REQUIRED check as green when its conclusion is `success` OR `skipped`.
+- **Do not read `mergeStateStatus` as the enqueue gate at all.** Since **#4094**
+  `enqueueEligibility()` in `scripts/enqueue-green-prs.mjs` decides from four
+  real signals only — not draft, no hold label, `mergeable === "MERGEABLE"`
+  (the field, not the status string), and every *required* check green. The
+  function's own comment is explicit: *"`mergeStateStatus` is deliberately NOT
+  a parameter. It cannot be consulted even by accident."* The old
+  `ENQUEUEABLE = {CLEAN, HAS_HOOKS}` set is **vestigial** — read lines 631 and
+  1276, both of which say "Was `!ENQUEUEABLE.has(...)`".
+
+  Consequences, both the opposite of the pre-#4094 folklore (which still
+  survives in `CLAUDE.md`): a red **non-required** check does not block enqueue,
+  and neither does being behind main. `mergeStateStatus` is also *stale* —
+  measured on the same PR minutes apart with no push, and a PR 4 commits behind
+  reading `CLEAN` while one 0 commits behind read `UNSTABLE`. Diagnose from the
+  check runs and `mergeable`, never from the summary string.
+- **`BEHIND` → do NOTHING. Let the PR's CI finish.** This is the one that looks
+  most like a call to action and is not. Behind-ness does **not** block enqueue:
+  `scripts/enqueue-green-prs.mjs` derives eligibility from checks + draft +
+  hold-labels and says so outright — *"`mergeStateStatus` is deliberately NOT a
+  parameter. It cannot be consulted."* (#4094) — and the merge queue builds the
+  group against main anyway.
+
+  Merging main into a `BEHIND` PR **restarts its ~10-minute PR CI from zero**.
+  On a busy day main merges faster than that, so the checks never complete and
+  the PR becomes permanently un-enqueueable. #4520 cycled 70+ minutes this way,
+  and `auto-refresh-prs.yml` skips in-flight heads specifically to avoid it.
+  A steward that "helpfully" merges main on every `BEHIND` check-in **is** the
+  livelock. If a refresh is genuinely wanted, that cron owns it — it runs every
+  20 min and already knows when to hold off.
+- `DIRTY` → a real conflict; resolve it (see §5). On a PR whose own files
+  conflict, first suspect a **duplicate merge** — another lane landing the same
+  mechanism — rather than ordinary drift.
 - `linear-tests` is **not** a required check (#3934), despite older docs.
 
 Verify the required list rather than trusting any doc:

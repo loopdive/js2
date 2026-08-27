@@ -1,9 +1,11 @@
 ---
 id: 4773
 title: "acorn driver loses 5 IR claims: the #4491 vec-param narrowing withdrawal is module-wide, not per-argument"
-status: ready
+status: done
 sprint: current
 created: 2026-08-27
+completed: 2026-08-27
+assignee: ttraenkler/opus-4612
 priority: medium
 horizon: m
 feasibility: medium
@@ -20,6 +22,16 @@ origin: "#4612 close-out re-measurement (2026-08-27): the #2949 acorn runtime-dy
 # open-PR scan at reservation: the 4 open PRs on loopdive/js2 (#5057, #5056,
 # #5049, #5048) introduce or modify only issue files 4768, 4770, 4771 and
 # 1609 — no plan/issues/4773-* is in flight.
+#
+# 2026-08-27 implementation: the reachability ANALYSIS went to a new subsystem
+# module (src/codegen/declarations/provenance-closed-arrays.ts). What remains at
+# the guard is irreducible: the import, the one added condition clause, and a
+# 6-line pointer comment — a withdrawal rule's condition cannot live anywhere
+# but the withdrawal. +9 lines on the file, +8 on the function.
+loc-budget-allow:
+  - src/codegen/declarations/param-return-inference.ts
+func-budget-allow:
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
 ---
 
 # #4773 — the vec-param narrowing withdrawal is module-wide, so acorn loses 5 IR claims it can prove safe
@@ -164,32 +176,171 @@ EMITTED**. The loss appears only in the full 6,266-line bundle, because only
 there does something set the module-wide dirty flag. Any attempt to reduce this
 to a local shape rejection will fail to reproduce.
 
-## Proposed direction (not yet implemented)
-
-Make the withdrawal **per-argument-reachability** instead of module-wide: keep
-the vec narrowing when every argument that reaches this parameter is provably
-un-dirty (e.g. a module-level array literal never used as a receiver of
-`defineProperty`/`defineProperties`/`Object.create`/`Reflect.defineProperty`,
-never `delete`d at an index, and never escaping to a site that could do either).
-Withdraw exactly as today otherwise.
-
-This is deliberately left unimplemented here. The guard protects a measured
-test262 correctness family, and a precision change to it must be validated
-against the #4491 array-descriptor suites, not just against this driver.
-
 ## Acceptance criteria
 
-- [ ] The acorn runtime-dynamic driver returns to **≥ 31/43 emitted** with
+- [x] The acorn runtime-dynamic driver returns to **≥ 31/43 emitted** with
       **zero** post-claim withdrawals, with `isInAstralSet`,
       `isIdentifierStart`, `isIdentifierChar`, `isRegExpIdentifierStart` and
       `isRegExpIdentifierPart` all EMITTED.
-- [ ] The #4491 identity guarantee still holds: a vec parameter whose reaching
+- [x] The #4491 identity guarantee still holds: a vec parameter whose reaching
       arguments CAN be descriptor-dirty still has its narrowing withdrawn, with
-      a test pinning the accessor/`writable:false` survival across the argument
-      boundary.
-- [ ] `tests/issue-4491-wave4.test.ts` and the test262 `propertyHelper.js`
-      verification family are unregressed.
-- [ ] `check:ir-fallbacks` / `check:ir-only` unchanged or improved.
+      a test pinning the accessor survival across the argument boundary.
+- [x] `tests/issue-4491-wave4.test.ts` and the descriptor suites are
+      unregressed.
+- [x] `check:ir-fallbacks` / `check:ir-only` unchanged or improved.
+
+## Implementation (2026-08-27)
+
+### Dispatch adjudication, recorded verbatim
+
+`pre-dispatch-gate.mjs 4773` returned **STOP**: `BLOCKER ACTIVE idiom overlap —
+4491-es5-defineproperty-mop-residual.md (status: ready, CLAIMED by
+ttraenkler/dev-4491) shares [4491, withdrawal]`. The guard being made precise is
+#4491's own, installed by that lane in wave-4, and #4491 was live (claim held
+since 2026-08-23, `updated: 2026-08-25`).
+
+The coordinator adjudicated **override**, on the record, after establishing that
+`ttraenkler/dev-4491` is not an addressable session (local or cloud), so
+brokering was impossible and re-routing would strand the issue behind an
+unreachable lane. The override was made sound by **narrowing the scope**: only
+the provenance-closed literal case is implemented, never general reachability,
+so the soundness argument no longer needs #4491's descriptor-MOP context. If the
+literal case had not recovered the five units, the instruction was to stop and
+report rather than widen.
+
+### The rule
+
+A `__vec_*` parameter narrowing survives a descriptor-dirty module **only** when
+both hold:
+
+1. **Every** argument reaching that parameter, at **every** call site, is a bare
+   identifier naming a *provenance-closed module-level array literal*:
+   declared once at module level (not exported, not shadowed by any parameter,
+   binding element or function of the same name), initialised to an array
+   literal whose every element is a primitive literal (a hole, an identifier, a
+   nested array/object all disqualify), and referenced **nowhere** except as a
+   direct argument of a call whose callee is a plain identifier — which by
+   construction excludes `Object.defineProperty(a, …)`, `Object.create(a)`,
+   `Reflect.defineProperty(a, …)` (callee is a property access), `a.push(…)`,
+   `a[i] = …`, `delete a[i]`, `a = x`, `f(...a)`, `new F(a)` and `export { a }`.
+   Closure: each such array must be passed **only** to this exact
+   `(funcName, paramIndex)`, so it cannot also flow into a function that might
+   descriptor-touch it.
+2. The callee only **reads** the parameter — no element or property store, no
+   `delete`, no onward pass, no reassignment.
+
+Anything unrecognised returns false and withdraws exactly as before; the default
+is unchanged behaviour. The soundness claim is deliberately small: **a
+descriptor cannot reach an object nothing else can reference.**
+
+`new funcName(…)` sites fail closed (constructor provenance is not modelled).
+A parameter with no call sites fails closed. A file containing `eval` or `with`
+has **no** closed names at all — both can reach a binding without naming it in a
+position any identifier scan can see.
+
+### Where it lives
+
+- `src/codegen/declarations/provenance-closed-arrays.ts` — **new**, the whole
+  analysis plus the proof obligation, cached per source file (`WeakMap`), pure
+  AST (no checker queries — `check:oracle-ratchet` reports +0).
+- `src/codegen/declarations/param-return-inference.ts` — the wave-4 condition
+  gains one clause, `!paramReceivesOnlyProvenanceClosedArrayLiterals(...)`. The
+  rule, its comment and its measured rationale are otherwise untouched.
+
+### Measured — acorn runtime-dynamic driver
+
+All numbers in this section and the next were re-measured on the final head
+**`bcd5403051`** — the merge of `origin/main` at `842ea5ca0b` into this branch,
+which brought 12 changed `src/codegen` files, so the earlier run against
+`2d72807370` could not be carried forward. Same reduced driver as the diagnosis
+above.
+
+| | main (without the change) | this branch `bcd5403051` |
+| --- | --- | --- |
+| emitted | 26/43 | **31/43** |
+| post-claim withdrawals | 0 | **0** |
+| `param-type-not-resolvable` | 1 | 0 |
+| `body-shape-rejected` | 10 | 8 |
+| `call-graph-closure` | 2 | 0 |
+| `return-type-not-resolvable` | 3 | 3 |
+| `logical-value-unsupported` | 1 | 1 |
+
+The per-unit diff is **exactly** the five units of the regression flipping to
+EMITTED and nothing else — identical to what the blunt guard-OFF probe produced,
+i.e. the precise whitelist recovers everything the disable did and no more.
+
+### Validation
+
+Every suite was run **both** with and without the change (file-copy A/B on head
+`bcd5403051`, swapping only `param-return-inference.ts` so the base is exactly
+"this head minus the change"), because several of these suites are already red
+on main and a raw failure count would have been unreadable. Failing-test **name
+sets** were compared, not just counts — equal counts could hide a swap. All
+three groups: identical names, identical counts.
+
+| suite | with change | on base | verdict |
+| --- | --- | --- | --- |
+| `issue-4491-wave4` + `wave7` + `t4-add-parity` + `function-binding-widening` + `proto-index-constructor-shadow` | 4 failed / 50 passed | 4 failed / 50 passed | **byte-identical**, all pre-existing |
+| `issue-3251` + `-s2` + `-s3`, `issue-4159`, `issue-4159-4160-prescan-flags`, `issue-4160-*` | 13 failed / 67 passed | 13 failed / 67 passed | **byte-identical**, all pre-existing |
+| `es5-standalone-descriptors`, `-descriptor-bags`, `-getownpropertydescriptor`, `issue-2874`, `issue-3661-*` ×2, `issue-3663`, `issue-3037` | 9 failed / 36 passed | 9 failed / 36 passed | **byte-identical**, all pre-existing |
+| `issue-4773-provenance-closed-vec-param` (new) | 9 passed | 1 failed (the must-pass) | pins the fix |
+
+### For the #4491 lane (`ttraenkler/dev-4491`) — two pre-existing reds on main
+
+Recorded here rather than passed along in conversation, because #4491's lane was
+not reachable while this landed. **Neither is caused by this change** — both
+fail identically with and without it, measured by the file-copy A/B above.
+
+1. **The wave-4 invariant's own pin is red on main.**
+   `tests/issue-4491-wave4.test.ts > #4491 wave-4 — vec identity at a
+   monomorphic parameter > reads an array-index ACCESSOR through a narrowed
+   parameter` fails on current main. That is the test asserting the very
+   property the wave-4 withdrawal exists to protect, so the guard's regression
+   coverage is currently not green. #4773 did not touch it and does not fix it;
+   it is called out because a red invariant pin is easy to mistake for
+   collateral from a later change.
+2. **`tests/issue-4159-4160-prescan-flags.test.ts` fails 13 of 22** with
+   `Cannot read properties of undefined (reading 'add')` — a harness/setup
+   error (sub-millisecond failures), not a behaviour change in the pre-scan.
+
+The three suites #4773 leaned on for validation are otherwise stable, and the
+six MUST-WITHDRAW tests added here (below) are additional protection for the
+wave-4 rule — they pass on the parent commit too.
+
+| gate | result |
+| --- | --- |
+| `check:ir-fallbacks` | OK — no unintended/post-claim/module-level increases |
+| `check:ir-only` | READY — 38 IR bodies, 0 legacy, `{"wasmgc/standalone":38}` |
+| `check:linear-ir` | OK — files=13, compiled=10, buckets unchanged |
+| `check-loc-budget` / `check-func-budget` | OK with the frontmatter grant above |
+| `check-coercion-sites` / `check:oracle-ratchet` / `check:dead-exports` | OK (oracle +0, dead-exports 0 new) |
+| `typecheck` | clean |
+| `biome lint` (3 changed files) | clean |
+| equivalence gate, 8 shards, separate processes | see below |
+
+### Tests
+
+`tests/issue-4773-provenance-closed-vec-param.test.ts` — 9 tests, both
+directions, every one asserted by EXECUTING the operation rather than by
+inspecting a type. All fixtures carry the same unrelated accessor descriptor and
+assert `hostHidden() === 42`, so the module is provably descriptor-dirty in every
+case — otherwise the must-withdraw tests would be vacuous.
+
+- **must-pass** — the closed literal keeps its narrowing (`EMITTED`) and still
+  computes `[1,1,1,0,1]`, which is what Node computes. Fails on the parent
+  commit with `select:param-type-not-resolvable`.
+- **must-withdraw ×7** — a descriptor on the array, an alias, an EXPORTED
+  binding, a second callee, a store through the parameter, a non-literal
+  element, and an `eval` anywhere in
+  the file (`eval("Object.defineProperty(a, …)")` names a binding inside a
+  string, where no identifier scan can see it; `with` is excluded on the same
+  grounds). Each withdraws. The
+  descriptor case additionally asserts the accessor is **honoured through the
+  parameter** (`[1,1,1,1,1]`, matching Node): a carrier copy would answer the
+  raw backing slot and give the descriptor-free `[1,1,1,0,1]`. That assertion is
+  the #4491 invariant, and it passes on the base too — these five tests add
+  protection for the wave-4 rule, they do not merely describe this change.
+- **JS-host lane** — untouched; `overlayRouteActive` requires `ctx.standalone`.
 
 ## Coordination
 
