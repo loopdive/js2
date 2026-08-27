@@ -46,7 +46,9 @@ import {
   isStringType,
   isStringWrapperType,
   isVoidType,
+  isUndefWidenedBindingElement,
   mapTsTypeToWasm,
+  resolveBindingElementType,
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
@@ -11668,8 +11670,12 @@ function hoistBindingPattern(ctx: CodegenContext, fctx: FunctionContext, pattern
       // identifier resolver falling through to `global.get/set $__mod_<name>`,
       // so the inner destructured var aliased the module global.
       const elemType = ctx.checker.getTypeAtLocation(element);
-      const wasmType = resolveWasmType(ctx, elemType);
+      const resolvedWasmType = resolveWasmType(ctx, elemType);
+      const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
       const localIdx = allocLocal(fctx, name, wasmType);
+      if (isUndefWidenedBindingElement(element, resolvedWasmType)) {
+        (fctx.undefWidenedLocals ??= new Set()).add(name);
+      }
       // Hoisted vars should be `undefined`, not `null` (#737)
       if (wasmType.kind === "externref") {
         emitUndefined(ctx, fctx);
@@ -11688,11 +11694,12 @@ function hoistBindingPattern(ctx: CodegenContext, fctx: FunctionContext, pattern
  *
  * Called from `compileObjectDestructuring` / `compileArrayDestructuring` at
  * entry — BEFORE the binding-element loop allocates the actual binding locals.
- * Only the TDZ flag is allocated here; the destructuring's own `allocLocal`
- * for the binding runs later (line ~648 of destructuring.ts) and registers
- * the binding name in `localMap`. By the time the default initializer is
- * compiled (after that `allocLocal`), `compileIdentifier` will see both
- * `localMap.has(name)` and `tdzFlagLocals.get(name)` and apply the TDZ check.
+ * The binding local is allocated here when needed so a default initializer can
+ * resolve a sibling forward reference through `localMap`; its type must use
+ * the same undefined-preserving rule as the later destructuring allocator.
+ * By the time the default initializer is compiled, `compileIdentifier` sees
+ * both `localMap.has(name)` and `tdzFlagLocals.get(name)` and applies the TDZ
+ * check.
  *
  * The TDZ flag is allocated unconditionally for destructured bindings —
  * +1 i32 local per binding is cheap, and unconditionality avoids subtle
@@ -11720,8 +11727,12 @@ export function ensureLetConstBindingPatternTdzFlags(
       // path and silently returns a default value instead of throwing.
       if (!fctx.localMap.has(name)) {
         const elemType = ctx.checker.getTypeAtLocation(element);
-        const wasmType = resolveWasmType(ctx, elemType);
+        const resolvedWasmType = resolveWasmType(ctx, elemType);
+        const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
         allocLocal(fctx, name, wasmType);
+        if (isUndefWidenedBindingElement(element, resolvedWasmType)) {
+          (fctx.undefWidenedLocals ??= new Set()).add(name);
+        }
       }
       // Allocate TDZ flag if missing — zero-init (uninitialized).
       if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();

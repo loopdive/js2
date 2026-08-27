@@ -17,7 +17,11 @@ import {
   ensureStructForType,
   resolveWasmType,
 } from "./index.js";
-import { isUndefWidenedBindingElement, resolveBindingElementType } from "../checker/type-mapper.js";
+import {
+  isUndefWidenedBindingElement,
+  resolveBindingElementType,
+  undefinedPreservingBindingSourceType,
+} from "../checker/type-mapper.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
@@ -472,7 +476,7 @@ export function emitObjectPatternRestFromVec(
       fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
       fctx.body.push({ op: "i32.const", value: numKey });
       emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemWasmType);
-      coerceType(ctx, fctx, elemWasmType, localType);
+      coerceType(ctx, fctx, undefinedPreservingBindingSourceType(nested, elemWasmType), localType);
       fctx.body.push({ op: "local.set", index: localIdx });
       if (isDecl) emitLocalTdzInit(fctx, localName);
     }
@@ -1474,7 +1478,14 @@ export function destructureParamObject(
       // Coerce struct field type to local's declared type if they differ (#658)
       const objLocalType = getLocalType(fctx, localIdx);
       if (objLocalType && !valTypesMatch(fieldType, objLocalType)) {
-        coerceType(ctx, fctx, fieldType, objLocalType);
+        // A closed object struct stores an absent or explicitly-undefined
+        // numeric field as the UNDEF_F64 sentinel.  Destructuring widened the
+        // destination slot to externref (#3315/#3423), so this is the
+        // identity-carrying f64→externref boundary: recover undefined only
+        // for this binding element while ordinary NaN still boxes as a
+        // number.  The generic f64 coercion deliberately cannot do that,
+        // because an arbitrary computed NaN is a real number.
+        coerceType(ctx, fctx, undefinedPreservingBindingSourceType(element, fieldType), objLocalType);
       }
       fctx.body.push({ op: "local.set", index: localIdx });
       if (isDecl) emitLocalTdzInit(fctx, localName);

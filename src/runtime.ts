@@ -153,6 +153,11 @@ function _getNodeRequire(): ((id: string) => any) | undefined {
  */
 const _wasmStructProps = new WeakMap<object, Record<string | symbol, any>>();
 
+// Restore the dedicated f64 undefined sentinel at the host property boundary.
+const _f64 = new DataView(new ArrayBuffer(8));
+const _restoreF64Undefined = (v: unknown): unknown =>
+  typeof v === "number" && (_f64.setFloat64(0, v) ?? _f64.getBigUint64(0)) === 0x7ff00000deadc0den ? undefined : v;
+
 // (#2739) Host-recorded [[Prototype]] link for an opaque WasmGC struct. A struct
 // exported to JS has no host-observable [[Prototype]] (`Object.getPrototypeOf`
 // returns null/the engine default), so `Object.setPrototypeOf(struct, proto)` /
@@ -1695,6 +1700,8 @@ function _recordBoundTarget(bound: any, target: unknown): any {
   return bound;
 }
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
+// Keep internal Set bookkeeping safe from user-mutation of Set.prototype.add.
+const _nativeSetAdd = Set.prototype.add;
 const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
@@ -3270,15 +3277,15 @@ function _mirrorClosurePropertyToHostBridges(
   let active = _closurePropertyMirrorActive.get(closure);
   if (!active) _closurePropertyMirrorActive.set(closure, (active = new Set<PropertyKey>()));
   if (active.has(key)) return;
-  active.add(key);
+  _nativeSetAdd.call(active, key);
   try {
     const bridges = new Set<Function>();
     const dynamic = _wasmClosureDynamicWrapperCache.get(closure);
-    if (typeof dynamic === "function") bridges.add(dynamic);
+    if (typeof dynamic === "function") _nativeSetAdd.call(bridges, dynamic);
     const known = _wasmClosureWrapperCache.get(closure);
-    if (known) for (const bridge of known.values()) bridges.add(bridge);
+    if (known) for (const bridge of known.values()) _nativeSetAdd.call(bridges, bridge);
     const callable = _hostCallableCache.get(closure);
-    if (typeof callable === "function") bridges.add(callable);
+    if (typeof callable === "function") _nativeSetAdd.call(bridges, callable);
     if (bridges.size === 0) return;
     const hostValue = _maybeWrapCallableUnknownArity(val, callbackState);
     for (const bridge of bridges) {
@@ -5058,7 +5065,7 @@ function _safeGet(
       const fieldExports = callbackState?.getExports();
       if (_structHasOwnFieldName(obj, key, fieldExports)) {
         const getter = fieldExports?.[`__sget_${key}`];
-        if (typeof getter === "function") return getter(obj);
+        if (typeof getter === "function") return _restoreF64Undefined(getter(obj));
       }
     }
     // For JS Symbols, check the accessor map (for Symbol-keyed defineProperty accessors)
@@ -11174,7 +11181,7 @@ assert._isSameValue = isSameValue;
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
             const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
-            if (fieldValue !== wsh.NO_GENERATED_FIELD) return fieldValue;
+            if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
             // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
             if (key === "byteLength") {
               const bl = _byteVecByteLength(obj, exports);
@@ -17161,7 +17168,7 @@ assert._isSameValue = isSameValue;
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
           const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
-          if (fieldValue !== wsh.NO_GENERATED_FIELD) return fieldValue;
+          if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
           // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
           if (key === "byteLength") {
             const bl = _byteVecByteLength(obj, exports);
