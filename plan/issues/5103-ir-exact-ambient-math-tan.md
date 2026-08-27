@@ -1,7 +1,7 @@
 ---
 id: 5103
 title: "IR: own exact ambient Math.tan(number) calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -102,6 +102,26 @@ the direct path.
 - Every excluded form declines before claim with no invariant or post-claim
   failure.
 - Affected #3526 suites, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.tan` is now the fourteenth closed source-level Math intrinsic. The
+  shared Math table admits only exact ambient one-number calls and the generic
+  from-AST path emits the semantic intrinsic without any tangent-specific
+  builder branch.
+- The frozen manifest attaches `selfhost.math.tan` / `Math_tan`, declares
+  `math.tan -> [math.cos, math.sin]`, and deduplicates the transitive
+  `math.reduce-trig` dependency. The existing provider materializer emits the
+  established helper family; no algorithm or direct-codegen file changed.
+- `JS2WASM_IR_MATH_TAN=0` withdraws only the new claim. Shadowed, aliased,
+  wrong-arity, spread, and non-number forms all decline before claim.
+- Four focused/affected suites pass 23/23, including host and zero-import
+  standalone execution, exact semantic/provider evidence, dependency closure,
+  direct-path parity, rollback, exhaustive Math integration, all-target/backend
+  manifest closure, and linear-backend legality.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max review returned GO with no P0/P1 finding.
 
 ## Non-goals
 
