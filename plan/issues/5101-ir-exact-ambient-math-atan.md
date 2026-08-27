@@ -20,6 +20,8 @@ files:
   - src/ir/intrinsics.ts
   - src/ir/runtime-manifest.ts
   - src/ir/select.ts
+  - scripts/check-ir-kind-neutrality.mjs
+  - scripts/ir-kind-neutrality-baseline.json
   - tests/issue-3526-ir-math-intrinsic-integration.test.ts
   - tests/issue-3526-ir-runtime-manifest.test.ts
   - tests/issue-5101-ir-math-atan.test.ts
