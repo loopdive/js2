@@ -105,6 +105,18 @@ Handoff: keep PR #5056 draft with `hold` and `mergeQueueEntry: null`. Do not
 mark ready or enqueue until the reduced checkpoint is pushed, rebased onto
 current `main`, and its CI is green/mergeable.
 
+Post-#5065 current-main verification merged upstream tip
+`2a7548ca819248df332986cde2cff81e65042bff` without rewriting history at
+`36b3e1b99c1d2f8446eb0f1cc15acb73d46d9917`. The exact rerun remains host
+**0/1 pass** (`fail: 1`, unchanged) and standalone **1/1 pass**; focused
+#4770 coverage remains green. Final artifacts are
+`.tmp/4770-final-post5065-host.jsonl` (SHA-256
+`5f6d8001e8ace1428424c0416a48c7180d3f7b104e660abdbbc0e675ede79757`)
+and `.tmp/4770-final-post5065-standalone.jsonl` (SHA-256
+`2ea832f2b69f6d78c260bed65fde618b406c49728217e470c65254cc5d791f68`).
+The remaining landing gates are the evidence commit's normal hooks and
+refreshed upstream CI/CLEAN verification.
+
 ## Post-merge revalidation (Codex, 2026-08-27)
 
 The branch was updated without rebasing by fetching `upstream/main` at
