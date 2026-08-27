@@ -1,7 +1,7 @@
 ---
 id: 5101
 title: "IR: own exact ambient Math.atan(number) calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -130,6 +130,29 @@ selection/build contract. No parallel `atan` recognizer is added.
   invariant.
 - Existing #3526 runtime-manifest, integration, and linear-backend tests pass.
 - Typecheck and all required pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.atan` is now the thirteenth closed source-level Math intrinsic, with
+  the existing unary f64 definition and self-hosted `Math_atan` provider. The
+  only selection change is one shared table row plus the narrow rollback in
+  `selectorSupportsMathPlan`; from-AST lowering remains completely generic.
+- The #3526 closed-vocabulary, manifest, all-method integration, and neutrality
+  evidence now describe thirteen intrinsic entry points. `math.reduce-trig`
+  remains the sole provider-only feature, and linear legality continues to
+  reject every callable-backed Math intrinsic including `math.atan`.
+- Focused #5101 plus affected #3526 coverage passes 23/23. It proves host and
+  zero-import standalone execution, provider-free semantic IR before manifest
+  attachment, exact existing-provider resolution, IR/direct parity across
+  finite values, infinities, NaN and signed zero, pre-claim exclusions, and a
+  compile-level `JS2WASM_IR_MATH_ATAN=0` rollback without withdrawing
+  `Math.atan2`.
+- TypeScript 7 typecheck, targeted Prettier/Biome, the IR kind-neutrality gate,
+  and scoped LOC/function budgets pass. Independent Luna Max review returned
+  GO with no P0/P1 finding; it confirmed the compile-level rollback test closes
+  the selector-only flag caveat.
+- Numerical behavior intentionally remains the existing self-hosted
+  `Math_atan` behavior. This issue changes ownership, not the approximation.
 
 ## Non-goals
 
