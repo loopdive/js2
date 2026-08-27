@@ -75,18 +75,19 @@ standalone pass controls.
 `src/codegen/map-runtime.ts` already emits the required native TypeError for
 literal `null`, `undefined`, numeric, boolean, and string callback arguments
 from #3573. Its static branch intentionally has no Symbol case, while
-`src/codegen/array-methods.ts` already treats `ts.TypeFlags.ESSymbolLike` as
+`src/codegen/array-methods.ts` already treats a statically typed Symbol as
 non-callable. The failing Test262 source uses `features: [Symbol]` and calls
-`s.forEach(Symbol())`, so adding the same type-flag check to the collection
-guard is narrow and preserves runtime values that cannot be classified at
-compile time.
+`s.forEach(Symbol())`, so adding the same type classification through
+`ctx.oracle.staticJsTypeOf` is narrow and preserves runtime values that cannot
+be classified at compile time.
 
 ## Implementation
 
 The static non-callable branch in `tryCompileNativeCollectionForEach` now also
-checks `ctx.checker.getTypeAtLocation(cbArg).flags` for
-`ts.TypeFlags.ESSymbolLike`. This is the same compile-time classification used
-by the array-HOF guard. It reuses the existing receiver evaluation and
+checks `ctx.oracle.staticJsTypeOf(cbArg) === "symbol"`. This uses the shared
+oracle type-query boundary rather than reaching directly into the TypeScript
+checker, while preserving the same compile-time classification used by the
+array-HOF guard. It reuses the existing receiver evaluation and
 `emitThrowTypeError` path, so no collection iteration or dynamic callback
 behavior changes.
 
