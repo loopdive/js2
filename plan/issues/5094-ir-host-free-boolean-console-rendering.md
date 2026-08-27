@@ -1,9 +1,9 @@
 ---
 id: 5094
 title: "IR: render branded booleans through the host-free standalone console sink"
-status: in-progress
+status: done
 created: 2026-08-27
-updated: 2026-08-27
+updated: 2026-08-28
 assignee: ttraenkler/codex
 branch: codex/5094-ir-host-free-boolean-console
 priority: high
@@ -88,9 +88,9 @@ builder; today only its branded-boolean carrier demotes.
    `legacyBodyEmitted: false`.
 5. Add negative boundary cases for an unbranded integer (still numeric) and a
    shape the existing selector excludes, proving no accidental claim widening.
-6. Pin both controls: `experimentalIR: false` must restore the direct body, and
-   the global `JS2WASM_IR_FIRST=0` control must not leave an IR-only dependency
-   in the legacy path.
+6. Pin the actual per-compile control: `experimentalIR: false` must restore the
+   direct body without leaving an IR-only dependency in the legacy path. The
+   repository-wide `JS2WASM_IR_FIRST=0` contract remains owned by #3143.
 
 ## Acceptance criteria
 
@@ -103,6 +103,25 @@ builder; today only its branded-boolean carrier demotes.
 - `experimentalIR: false` compiles and executes through the direct path.
 - Existing #4462 console tests and #4503 boolean-brand tests remain green.
 - Typecheck, formatting, lint, and repository IR ratchets pass.
+
+## Implementation outcome and validation
+
+- `lowerHostFreeConsoleArgument` now dispatches an exact branded `i32` through
+  #4503's `lowerBooleanToString` before the unbranded numeric-i32 arm. No
+  selector, capability, runtime, or direct-codegen path changed.
+- Focused #5094 coverage passes 4/4: all five console methods, representative
+  branded producers, zero imports, IR-only body telemetry, an unbranded
+  `s.length` numeric control, the excluded multi-argument shape, and the
+  `experimentalIR: false` control.
+- #4503 boolean-brand regression coverage passes 29/29. TypeScript 7 typecheck
+  passes after merging current `upstream/main`.
+- #4462 passes 14/15 both on this branch and on a clean `upstream/main`
+  control. Its one failing historical assertion expects `calendar.ts::el` to
+  remain DOM-unsupported; current main emits that unit through the exact
+  standalone DOM provider added after #4462. The identical control failure is
+  recorded as an upstream stale expectation, not a #5094 regression.
+- Commit hooks passed targeted formatting, lint, and LOC/function budgets. The
+  required full pre-push checks run before publication.
 
 ## Non-goals
 
