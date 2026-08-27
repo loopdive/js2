@@ -1263,6 +1263,13 @@ export function tryCompileNativeGeneratorForOf(
  * instead of being OOB, silently skipping binding defaults (`const [a,b=9]=g()`
  * with one yield). Trimming restores the literal-array invariant the destructure
  * machinery relies on (backing-array length == logical length).
+ *
+ * `stepLimit` (#4768 call-boundary consumer): when supplied, stop after at most
+ * that many iterator steps. This is the binding-pattern elision contract — a
+ * pattern such as `[,]` performs one `IteratorStep`, while `[]` performs none.
+ * The check is emitted before `resume`, so a zero-step pattern never starts the
+ * generator body and a bounded drain never advances it past the required
+ * prefix. `undefined` preserves the existing unbounded drain.
  */
 export function emitNativeGeneratorToVec(
   ctx: CodegenContext,
@@ -1272,6 +1279,7 @@ export function emitNativeGeneratorToVec(
   vecTypeIdx: number,
   arrTypeIdx: number,
   trimToLength = false,
+  stepLimit?: number,
 ): void {
   const resumeIdx = ensureNativeGeneratorResumeFunction(ctx, info);
   const resultRef: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
@@ -1330,6 +1338,17 @@ export function emitNativeGeneratorToVec(
   //   if (len == cap) grow; data[len] = res.value; len++; br loop;
   // } }
   const loopBody: Instr[] = [
+    // (#4768) A bounded binding pattern must test its step budget before
+    // resuming the generator. In particular, `[,]` reaches this branch with
+    // limit 1; the caller handles empty-only patterns without a drain.
+    ...(stepLimit !== undefined
+      ? [
+          { op: "local.get", index: lenLocal } as Instr,
+          { op: "i32.const", value: stepLimit } as Instr,
+          { op: "i32.ge_s" } as Instr,
+          { op: "br_if", depth: 1 } as Instr,
+        ]
+      : []),
     { op: "local.get", index: iterLocal },
     { op: "call", funcIdx: resumeIdx },
     { op: "local.set", index: resultLocal },
