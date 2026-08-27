@@ -13,6 +13,21 @@ import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js"
 
 const identities = createTestIrFunctionIdentityFactory("issue-5105-ir-math-inverse-trig");
 const METHODS = ["asin", "acos"] as const;
+const U64_MASK = (1n << 64n) - 1n;
+const U64_SIGN = 1n << 63n;
+
+function orderedFloatBits(value: number): bigint {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value, false);
+  const bits = view.getBigUint64(0, false);
+  return (bits & U64_SIGN) !== 0n ? ~bits & U64_MASK : bits | U64_SIGN;
+}
+
+function ulpDistance(left: number, right: number): bigint {
+  const leftBits = orderedFloatBits(left);
+  const rightBits = orderedFloatBits(right);
+  return leftBits > rightBits ? leftBits - rightBits : rightBits - leftBits;
+}
 
 function intrinsicInstructions(fn: IrFunction): IrInstrIntrinsic[] {
   const instructions: IrInstrIntrinsic[] = [];
@@ -199,6 +214,36 @@ describe("#5105 exact ambient Math.asin/Math.acos IR ownership", () => {
       for (const value of [Number.NaN, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY]) {
         expect(Number.isNaN(irFn(value)), `IR ${method} for ${String(value)}`).toBe(true);
         expect(Number.isNaN(directFn(value)), `direct ${method} for ${String(value)}`).toBe(true);
+      }
+    }
+  });
+
+  it("pins the established native-Math accuracy envelope near boundaries and in the interior", async () => {
+    const result = await compile(
+      `
+        export function asin(value: number): number { return Math.asin(value); }
+        export function acos(value: number): number { return Math.acos(value); }
+      `,
+      { fileName: "issue-5105-native-oracle.ts", experimentalIR: true, trackIrOutcomes: true },
+    );
+    expectSuccess(result);
+    const exports = await instantiate(result);
+    const samples = [
+      -1, -0.9999999999999999, -0.999999, -0.99, -0.9, -0.5, -0.1, 0, 0.1, 0.5, 0.9, 0.99, 0.999999, 0.9999999999999999,
+      1,
+    ];
+    const maxUlps = { asin: 4_000_000n, acos: 16_000_000n } as const;
+
+    for (const method of METHODS) {
+      const compiled = exports[method] as (value: number) => number;
+      const native = Math[method];
+      for (const value of samples) {
+        const actual = compiled(value);
+        const expected = native(value);
+        expect(Math.abs(actual - expected), `${method} absolute error for ${value}`).toBeLessThanOrEqual(1e-9);
+        expect(ulpDistance(actual, expected), `${method} ULP distance for ${value}`).toBeLessThanOrEqual(
+          maxUlps[method],
+        );
       }
     }
   });
