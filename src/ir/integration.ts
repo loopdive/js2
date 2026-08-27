@@ -189,6 +189,7 @@ import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
   type IrDirectCallTarget,
+  type IrFnctorParameterPreselectionPlan,
   type IrIntegrationLoweringPlans,
   type IrCountedStringAppendLoweringPlan,
   type PreparedCountedStringAppendReceipt,
@@ -1037,6 +1038,7 @@ export function compileIrPathFunctions(
     ownerProjection: activeOwnerProjection,
     declarationsByName,
     definedFunctionAt: (funcIdx) => definedFuncAt(ctx, funcIdx),
+    fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
   });
   const selected =
     selection ??
@@ -1064,6 +1066,20 @@ export function compileIrPathFunctions(
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsLiteralStringReplace: true,
+      ...(loweringPlans?.fnctorNativeStringBoundaries
+        ? {
+            fnctorNativeStringBoundary: (call: ts.CallExpression) =>
+              loweringPlans.fnctorParameterPreselectionIsCurrent?.() === true &&
+              loweringPlans.fnctorNativeStringBoundaries!.has(call),
+          }
+        : {}),
+      ...(loweringPlans?.fnctorParameterPreselection?.nativeStringReplaceCall
+        ? {
+            fnctorNativeStringReplace: (call: ts.CallExpression) =>
+              loweringPlans.fnctorParameterPreselection?.nativeStringReplaceCall === call &&
+              loweringPlans.fnctorParameterPreselectionIsCurrent?.() === true,
+          }
+        : {}),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
@@ -1228,19 +1244,54 @@ export function compileIrPathFunctions(
       });
     }
   }
+  if (loweringPlans?.fnctorParameterPreselection && loweringPlans.fnctorParameterPreselectionIsCurrent) {
+    if (!loweringPlans.fnctorParameterPreselectionIsCurrent()) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "ir/integration: exact fnctor parameter preselection became stale before lowering",
+      );
+    }
+  }
   const externrefType = irVal({ kind: "externref" });
   const numberType = irVal({ kind: "f64" });
-  if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseFloat") && ctx.funcMap.has("parseFloat")) {
-    directCallTargets.set("parseFloat", {
-      target: irRuntimeFuncRef("parseFloat"),
-      signature: { params: [externrefType], returnType: numberType },
-    });
-  }
-  if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseInt") && ctx.funcMap.has("parseInt")) {
-    directCallTargets.set("parseInt", {
-      target: irRuntimeFuncRef("parseInt"),
-      signature: { params: [externrefType, numberType], returnType: numberType },
-    });
+  const exactFnctorBoundaries = loweringPlans?.fnctorNativeStringBoundaries;
+  if (loweringPlans && exactFnctorBoundaries) {
+    for (const boundary of exactFnctorBoundaries.values()) {
+      const previous = directCallTargets.get(boundary.builtin);
+      if (
+        previous &&
+        (previous.target.binding.kind !== "runtime" ||
+          previous.target.binding.symbol !== boundary.builtin ||
+          previous.target.name !== boundary.target.name)
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `ir/integration: exact fnctor boundary ${boundary.builtin} conflicts with another callable target`,
+        );
+      }
+      directCallTargets.set(boundary.builtin, {
+        target: boundary.target,
+        signature: boundary.signature,
+      });
+    }
+  } else if (!loweringPlans?.fnctorParameterPreselection) {
+    // Functions outside the exact linked fnctor route still use the
+    // established name-keyed parser adapter compatibility path. The exact
+    // linked route above has checker-certified AST-site boundary plans.
+    if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseFloat") && ctx.funcMap.has("parseFloat")) {
+      directCallTargets.set("parseFloat", {
+        target: irRuntimeFuncRef("parseFloat"),
+        signature: { params: [externrefType], returnType: numberType },
+      });
+    }
+    if (selected.funcs.has("stringToNumber") && !directCallTargets.has("parseInt") && ctx.funcMap.has("parseInt")) {
+      directCallTargets.set("parseInt", {
+        target: irRuntimeFuncRef("parseInt"),
+        signature: { params: [externrefType, numberType], returnType: numberType },
+      });
+    }
   }
   const preparedDirectCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>(loweringPlans?.directCalls);
   const directCallsFor = (
@@ -1320,6 +1371,8 @@ export function compileIrPathFunctions(
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
     standaloneDomCapability,
+    loweringPlans?.fnctorParameterPreselection,
+    loweringPlans?.fnctorParameterPreselectionIsCurrent,
   );
 
   // -------------------------------------------------------------------------
@@ -1388,6 +1441,8 @@ export function compileIrPathFunctions(
           funcName: name,
           ownerUnitId,
           directCalls: directCallsFor(stmt, ownerUnitId),
+          fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+          fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
           paramTypeOverrides: o?.params,
           returnTypeOverride: o?.returnType,
           calleeTypes,
@@ -1603,6 +1658,8 @@ export function compileIrPathFunctions(
           funcName: semanticName,
           ownerUnitId,
           directCalls: preparedDirectCalls,
+          fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+          fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
           ...(isCtorMember
             ? {
                 constructorInitClassShape: classShape,
@@ -1811,6 +1868,8 @@ export function compileIrPathFunctions(
             funcName: memberName,
             ownerUnitId,
             directCalls: directCallsFor(member, ownerUnitId),
+            fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+            fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
             ...(isCtorMember
               ? { constructorInitClassShape: classShape, paramTypeOverrides }
               : isStaticMethod
@@ -1972,6 +2031,8 @@ export function compileIrPathFunctions(
         funcName: MODULE_INIT_UNIT_NAME,
         ownerUnitId: moduleInitUnitId,
         directCalls: directCallsFor(synthetic, moduleInitUnitId),
+        fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
+        fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
         moduleBindings,
@@ -3006,6 +3067,8 @@ export function compileIrPathFunctions(
       importedCallableCatalog,
       preparedRuntimeManifest?.providers,
       fuseNativeNumberFormatCarriers,
+      loweringPlans?.fnctorParameterPreselection,
+      loweringPlans?.fnctorParameterPreselectionIsCurrent,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -4299,6 +4362,8 @@ function makeFromAstResolver(
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
+  fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
+  fnctorParameterPreselectionIsCurrent?: () => boolean,
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -4395,6 +4460,12 @@ function makeFromAstResolver(
     },
     dynamicCarrierIsExternref() {
       return !ctx.fast;
+    },
+    fnctorNativeStringReplace(call: ts.CallExpression) {
+      return (
+        fnctorParameterPreselection?.nativeStringReplaceCall === call &&
+        fnctorParameterPreselectionIsCurrent?.() === true
+      );
     },
     // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
     // interface no longer carries the mode discriminator; every mode
@@ -5031,6 +5102,15 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === "__str_replaceAll") {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, symbol);
+    }
+  } else if (ref.binding.kind === "runtime" && (symbol === "parseInt" || symbol === "parseFloat")) {
+    // Exact parser boundaries use the source-qualified ambient builtin map;
+    // a same-named source function in funcMap must never steal the call.
+    index = ctx.ambientBuiltinFuncMap.get(symbol);
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -5093,6 +5173,8 @@ function makeResolver(
   importedCallableCatalog: ReadonlyMap<string, Import>,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
   fuseNativeNumberFormatCarriers = false,
+  fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
+  fnctorParameterPreselectionIsCurrent?: () => boolean,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
@@ -5244,6 +5326,27 @@ function makeResolver(
     // the legacy name-keyed maps.
     resolveFnctor(shape: IrFnctorShape): IrFnctorLowering | null {
       return ctx.programAbiFnctors?.resolve(shape) ?? null;
+    },
+    resolveParamPhysicalType(unitId: IrUnitId, parameterIndex: number, logicalType: IrType) {
+      const consumer = fnctorParameterPreselection?.valueConsumer;
+      if (!consumer || consumer.unitId !== unitId || parameterIndex !== consumer.parameterIndex) return undefined;
+      if (logicalType.kind !== "string") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] lost its semantic string type`,
+        );
+      }
+      if (fnctorParameterPreselectionIsCurrent && !fnctorParameterPreselectionIsCurrent()) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] became stale during lowering`,
+        );
+      }
+      return consumer.parameterPhysicalType.kind === "ref_null"
+        ? { type: consumer.parameterPhysicalType, refineNonNull: true as const }
+        : { type: consumer.parameterPhysicalType };
     },
     // -------------------------------------------------------------------
     // Vec dispatch (slice 6 part 2 — #1181).
@@ -5969,6 +6072,8 @@ function preregisterNativeStringHelpers(ctx: CodegenContext, fns: readonly Built
     switch (instr.kind) {
       case "forof.string":
         return true;
+      case "call":
+        return instr.target.binding.kind === "runtime" && instr.target.binding.symbol === "__str_replaceAll";
       case "forof.vec":
       case "forof.iter":
         for (const sub of instr.body) {

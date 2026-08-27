@@ -76,6 +76,7 @@ import {
   referencesPromotedI32Slot,
 } from "./analysis/i32-slots.js";
 import { IrFunctionBuilder } from "./builder.js";
+import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import {
@@ -101,6 +102,8 @@ import {
   requireMatchingLoweringPlanOwner,
   requireValidImportedCallTarget,
   type IrDirectCallLoweringPlan,
+  type IrFnctorNativeStringBoundaryPlan,
+  type IrFnctorParameterPreselectionPlan,
   type IrHostDateGetterLoweringPlan,
   type IrHostDateSnapshotLoweringPlan,
   type IrHostVoidCallbackLoweringPlan,
@@ -112,6 +115,8 @@ import {
 } from "./ast-lowering-plans.js";
 export type {
   IrDirectCallLoweringPlan,
+  IrFnctorNativeStringBoundaryPlan,
+  IrFnctorParameterPreselectionPlan,
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
@@ -680,6 +685,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     /** Native indexOf returns i32 while JavaScript's numeric carrier is f64. */
     resultRep?: "i32-number";
   } | null;
+  /** Exact #3521 global underscore replacement inside the linked parser. */
+  fnctorNativeStringReplace?(call: ts.CallExpression): boolean;
   /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
   preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
   /**
@@ -872,6 +879,10 @@ export interface AstToIrOptions {
   readonly calleeTypes?: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>;
   /** Exact source direct-call plans keyed by the certified AST call node. */
   readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
+  /** Exact late #3521 fnctor projection consumed by property/call lowering. */
+  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
+  /** Exact native-string runtime boundaries keyed by AST call site. */
+  readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** (#3214) Exact imported-call, function-value, and host-callback AST-site plans. */
   readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
@@ -1309,6 +1320,8 @@ export function lowerFunctionAstToIr(
     returnType,
     calleeTypes: options.calleeTypes,
     directCalls: options.directCalls,
+    fnctorParameterPreselection: options.fnctorParameterPreselection,
+    fnctorNativeStringBoundaries: options.fnctorNativeStringBoundaries,
     importedCalls: options.importedCalls,
     topLevelFunctionValues: options.topLevelFunctionValues,
     hostVoidCallbacks: options.hostVoidCallbacks,
@@ -2279,6 +2292,8 @@ interface LowerCtx {
   readonly returnType: IrType | null;
   readonly calleeTypes?: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>;
   readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
+  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
+  readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
@@ -5118,6 +5133,26 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     }
   }
 
+  if (recvType.kind === "fnctor") {
+    const plan = cx.fnctorParameterPreselection;
+    const fieldRead = plan?.fieldReads.find((candidate) => candidate.access === expr);
+    if (
+      !plan ||
+      !fieldRead ||
+      fieldRead.fieldName !== "input" ||
+      plan.ownerUnitId !== cx.ownerUnitId ||
+      plan.projection.sourceFile !== expr.getSourceFile() ||
+      !irFnctorShapeEquals(recvType.shape, plan.shape) ||
+      propName !== "input"
+    ) {
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: fnctor field access is not covered by the exact #3521 plan (${cx.funcName})`,
+      );
+    }
+    return cx.builder.emitFnctorGet(recv, plan.shape, propName);
+  }
+
   if (recvType.kind === "string") {
     // Slice 1 — only `.length` is supported on string receivers.
     if (propName !== "length") {
@@ -6217,6 +6252,21 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   requireMatchingLoweringPlanOwner("direct call", direct.ownerUnitId, cx.ownerUnitId, cx.funcName);
   const calleeSig = direct.signature;
+  const fnctorBoundary = cx.fnctorNativeStringBoundaries?.get(expr);
+  if (
+    fnctorBoundary &&
+    (fnctorBoundary.ownerUnitId !== cx.ownerUnitId ||
+      fnctorBoundary.call !== expr ||
+      !sameIrCallableBinding(fnctorBoundary.target.binding, direct.target.binding) ||
+      fnctorBoundary.target.name !== direct.target.name ||
+      !closureSignatureEquals(fnctorBoundary.signature, calleeSig))
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: exact fnctor native-string boundary disagrees with its direct-call plan (${cx.funcName})`,
+    );
+  }
   // Slice 8a (#1169g): spread args with statically-known sources
   // (ArrayLiteralExpression with no nested spread). Expand at compile
   // time to one IR arg per literal element. The pre-expansion arity
@@ -6235,7 +6285,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     const staticNumericArray = cx.resolver?.staticNumericArrayRead?.(argExpr, expected) ?? null;
     let argVal =
       staticNumericArray === null
-        ? lowerExpr(argExpr, cx, expected)
+        ? lowerExpr(argExpr, cx, fnctorBoundary && i === fnctorBoundary.argumentIndex ? { kind: "string" } : expected)
         : cx.builder.emitGlobalGet(staticNumericArray.globalRef, staticNumericArray.type);
     let argType = cx.builder.typeOf(argVal);
     // #3214 B0 — source-function callable params use externref, while closure
@@ -6269,7 +6319,25 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       argVal = cx.builder.emitDynToNumber(argVal);
       argType = cx.builder.typeOf(argVal);
     }
+    const exactNativeStringBoundary =
+      fnctorBoundary !== undefined &&
+      i === fnctorBoundary.argumentIndex &&
+      argExpr === fnctorBoundary.argument &&
+      argType.kind === "string" &&
+      asVal(expected)?.kind === "externref";
+    if (fnctorBoundary && i === fnctorBoundary.argumentIndex && !exactNativeStringBoundary) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: exact fnctor native-string argument lost its string carrier (${cx.funcName})`,
+      );
+    }
+    if (exactNativeStringBoundary) {
+      argVal = cx.builder.emitCoerceToExternref(argVal);
+      argType = cx.builder.typeOf(argVal);
+    }
     const dynamicExternBoundary =
+      !exactNativeStringBoundary &&
       argType.kind === "dynamic" &&
       asVal(expected)?.kind === "externref" &&
       cx.resolver?.dynamicCarrierIsExternref?.() === true &&
@@ -7863,6 +7931,34 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // the active string backend. Returns null when the method isn't supported
   // by Phase 1 (caller falls through to the existing `string` arm below).
   if (recvType.kind === "string") {
+    const exactFnctorStringReplace =
+      methodName === "replace" &&
+      cx.resolver?.fnctorNativeStringReplace?.(expr) === true &&
+      expr.arguments.length === 2 &&
+      expr.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
+      expr.arguments[0]!.getText() === "/_/g" &&
+      ts.isStringLiteralLike(expr.arguments[1]!) &&
+      expr.arguments[1]!.text === "";
+    if (exactFnctorStringReplace) {
+      const replacement = lowerExpr(expr.arguments[1]!, cx, { kind: "string" });
+      const replacementType = cx.builder.typeOf(replacement);
+      if (replacementType.kind !== "string") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: exact fnctor replacement lost its string carrier (${cx.funcName})`,
+        );
+      }
+      const result = cx.builder.emitCall(
+        irRuntimeFuncRef("__str_replaceAll"),
+        [recv, cx.builder.emitStringConst("_"), replacement],
+        { kind: "string" },
+      );
+      if (result === null) {
+        throw new Error(`ir/from-ast: exact fnctor string replace produced void result (${cx.funcName})`);
+      }
+      return result;
+    }
     if (
       methodName === "replace" &&
       (expr.arguments.length !== 2 ||

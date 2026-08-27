@@ -18,6 +18,10 @@ import {
   makeIrFnctorPropagationAdmissionResolver,
   type IrFnctorArgumentProjectionRoute,
 } from "./ir-fnctor-admission.js";
+import {
+  irFnctorParameterPreselectionIsCurrent,
+  planIrFnctorParameterPreselection,
+} from "./ir-fnctor-parameter-planning.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -79,6 +83,8 @@ import {
   type IrSelection,
 } from "../ir/select.js";
 import type {
+  IrFnctorNativeStringBoundaryPlan,
+  IrFnctorParameterPreselectionPlan,
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
@@ -2286,6 +2292,12 @@ export interface IrOverlayPlan {
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
   readonly importedFunctionResolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+  /** Exact late #3521 fnctor parameter projection, when fully prepared. */
+  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
+  /** Exact native-string runtime boundary plans keyed by AST call site. */
+  readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
+  /** Revalidates the mutable ABI joins immediately before integration. */
+  readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
 }
 
 /**
@@ -2484,9 +2496,19 @@ function makeIrImplicitParamTypeResolver(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   moduleBindingResolver?: IrModuleBindingResolver,
+  fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
 ): (parameter: ts.ParameterDeclaration) => IrImplicitParamProjection | undefined {
   const candidatesByDeclaration = new WeakMap<ts.FunctionDeclaration, ReadonlySet<ts.ParameterDeclaration>>();
   return (parameter) => {
+    if (fnctorParameterPreselection?.parameterDeclaration === parameter) {
+      return { kind: "object", type: fnctorParameterPreselection.overrideType };
+    }
+    if (fnctorParameterPreselection?.valueConsumer?.parameterDeclaration === parameter) {
+      return { kind: "string", type: { kind: "string" } };
+    }
+    if (fnctorParameterPreselection?.valueConsumer?.declaration.parameters[1] === parameter) {
+      return { kind: "bool", type: irVal({ kind: "i32", boolean: true }) };
+    }
     if (parameter.type) return undefined;
     const declaration = parameter.parent;
     if (!ts.isFunctionDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
@@ -2720,7 +2742,28 @@ function planIrOverlay(
   // claim-then-demote). The carrier keying in `ensureDynMemberGet` matches
   // (`ctx.fast`), so every claimed config emits a valid, carrier-aligned body.
   const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
-  const resolveImplicitParamType = makeIrImplicitParamTypeResolver(ctx, ast.sourceFile, resolveModuleBinding);
+  const fnctorArgumentProjectionAuthority =
+    fnctorArgumentProjections.length > 0 ? makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker) : undefined;
+  const fnctorParameterPreselection =
+    options.fnctorArgumentProjectionRoute && fnctorArgumentProjectionAuthority
+      ? planIrFnctorParameterPreselection({
+          ctx,
+          sourceFile: ast.sourceFile,
+          identityContext,
+          route: options.fnctorArgumentProjectionRoute,
+          authority: fnctorArgumentProjectionAuthority,
+          projections: fnctorArgumentProjections,
+        })
+      : undefined;
+  const fnctorParameterPreselectionIsCurrent = fnctorParameterPreselection
+    ? () => irFnctorParameterPreselectionIsCurrent(ctx, fnctorParameterPreselection)
+    : undefined;
+  const resolveImplicitParamType = makeIrImplicitParamTypeResolver(
+    ctx,
+    ast.sourceFile,
+    resolveModuleBinding,
+    fnctorParameterPreselection,
+  );
   const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
     const projection = resolveImplicitParamType(parameter);
     if (projection?.kind !== "object") return false;
@@ -2730,6 +2773,13 @@ function planIrOverlay(
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
   };
   const legacyCallerAbiIsProjected = (declaration: ts.FunctionDeclaration): boolean => {
+    if (
+      fnctorParameterPreselection &&
+      (declaration === fnctorParameterPreselection.parameterDeclaration.parent ||
+        declaration === fnctorParameterPreselection.valueConsumer?.declaration)
+    ) {
+      return true;
+    }
     // (#3518) The certified surface now includes `string` positions, whose
     // carrier both front-ends derive from the SAME `ctx.nativeStrings` /
     // `ctx.anyStrTypeIdx` pair. `functionReturnsDynamicObjectCarrier` is the one
@@ -2848,7 +2898,21 @@ function planIrOverlay(
       ...(fnctorArgumentProjections.length > 0
         ? {
             fnctorArgumentProjections,
-            fnctorArgumentProjectionAuthority: makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker),
+            fnctorArgumentProjectionAuthority: fnctorArgumentProjectionAuthority!,
+          }
+        : {}),
+      ...(fnctorParameterPreselection?.nativeStringBoundaries
+        ? {
+            fnctorNativeStringBoundary: (call: ts.CallExpression) =>
+              fnctorParameterPreselectionIsCurrent?.() === true &&
+              fnctorParameterPreselection.nativeStringBoundaries!.some((boundary) => boundary.call === call),
+          }
+        : {}),
+      ...(fnctorParameterPreselection?.nativeStringReplaceCall
+        ? {
+            fnctorNativeStringReplace: (call: ts.CallExpression) =>
+              fnctorParameterPreselectionIsCurrent?.() === true &&
+              fnctorParameterPreselection.nativeStringReplaceCall === call,
           }
         : {}),
       legacyCallerAbiIsProjected,
@@ -3150,6 +3214,15 @@ function planIrOverlay(
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
+    ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
+    ...(fnctorParameterPreselection?.nativeStringBoundaries
+      ? {
+          fnctorNativeStringBoundaries: new Map(
+            fnctorParameterPreselection.nativeStringBoundaries.map((boundary) => [boundary.call, boundary] as const),
+          ),
+        }
+      : {}),
+    ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
   };
 }
 
