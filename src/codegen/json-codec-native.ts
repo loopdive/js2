@@ -49,7 +49,7 @@ import {
   nativeStringType,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
-import { ensureObjectRuntime, OBJ_FLAG_RAWJSON } from "./object-runtime.js";
+import { ensureObjectRuntime, FLAG_DEFAULT, OBJ_FLAG_RAWJSON } from "./object-runtime.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { emitJsonQuoteString } from "./json-runtime.js";
@@ -3387,7 +3387,13 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
   const newObjIdx = ctx.funcMap.get("__new_plain_object")!;
   const externSetIdx = ctx.funcMap.get("__extern_set")!;
   const externGetIdx = ctx.funcMap.get("__extern_get")!;
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx")!;
+  const externLengthIdx = ctx.funcMap.get("__extern_length")!;
   const deleteIdx = ctx.funcMap.get("__delete_property")!;
+  const objectKeysIdx = ctx.funcMap.get("__object_keys")!;
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor")!;
+  const defineFromDescIdx = ctx.funcMap.get("__obj_define_from_desc")!;
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined")!;
   const orderedIdx = ctx.funcMap.get("__obj_ordered")!;
   const numToStrIdx = ctx.funcMap.get("number_toString")!;
 
@@ -3401,6 +3407,12 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
   const propEntryTypeIdx = objTypes.propEntryTypeIdx;
   const objVecTypeIdx = objTypes.objVecTypeIdx;
   const objVecArrTypeIdx = objTypes.objVecArrTypeIdx;
+  const proxyTypeIdx = objTypes.proxyTypeIdx;
+  // A literal array uses one of the concrete `__vec_*` carriers, while the
+  // parser's own arrays use `$ObjVec`.  Both are arrays for the purposes of
+  // InternalizeJSONProperty, but neither is a `$Object`; keep this common
+  // supertype test local to the JSON walk rather than widening Proxy itself.
+  const vecBaseTypeIdx = getOrRegisterVecBaseType(ctx);
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
 
   // Pre-register the recursive internalize funcIdx so the body can call itself.
@@ -3432,12 +3444,215 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
   const L_VEC = 12; // ref null $ObjVec
   const L_DATA = 13; // ref $ObjVecArr
   const L_OBJREF = 14; // externref — the $Object/$ObjVec value re-as-externref
+  const L_PROXY_TARGET = 15; // anyref — Proxy [[ProxyTarget]]
+  const L_PROXY_KEYS = 16; // externref — Proxy ownKeys result snapshot
+
+  // The S1 standalone value model carries `undefined` as a non-null singleton;
+  // only the legacy lane conflates it with a null externref.  Keep the branch
+  // predicate lane-aware so JSON `null` is never mistaken for an undefined
+  // reviver result when the singleton is active.
+  const elemIsUndefined = (): Instr[] =>
+    undefinedSingletonActive(ctx)
+      ? [
+          { op: "local.get", index: L_ELEM },
+          { op: "call", funcIdx: isUndefinedIdx },
+        ]
+      : [{ op: "local.get", index: L_ELEM }, { op: "ref.is_null" }];
+
+  // Proxy values are deliberately an opaque standalone struct rather than a
+  // `$Object` subtype.  InternalizeJSONProperty must nevertheless perform the
+  // same observable walk on one: the existing dynamic helpers already carry
+  // the Proxy [[Get]], [[Delete]]/[[OwnPropertyKeys]], and [[DefineOwnProperty]]
+  // front guards, so routing through them preserves both trap abruptness and
+  // the original thrown object.  The array arm obtains `length` through
+  // `__extern_get` before coercing it through the existing array-like
+  // `__extern_length` path; this is the narrow seam needed by the two length
+  // abrupt-completion rows.
+  const proxyObjectArm: Instr[] = [
+    // keys = EnumerableOwnProperties(proxy, "key") — snapshot before walking.
+    { op: "local.get", index: P_VAL },
+    { op: "call", funcIdx: objectKeysIdx },
+    { op: "local.set", index: L_PROXY_KEYS },
+    { op: "local.get", index: L_PROXY_KEYS },
+    { op: "call", funcIdx: externLengthIdx },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: L_CAP },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: L_I },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: L_I },
+            { op: "local.get", index: L_CAP },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            // k = keys[i].  __extern_get_idx handles both `$ObjVec` keys and
+            // a user array returned by an ownKeys trap.
+            { op: "local.get", index: L_PROXY_KEYS },
+            { op: "local.get", index: L_I },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: externGetIdxIdx },
+            { op: "local.set", index: L_K },
+            // child = proxy[k] (Proxy [[Get]] front guard).
+            { op: "local.get", index: P_VAL },
+            { op: "local.get", index: L_K },
+            { op: "call", funcIdx: externGetIdx },
+            { op: "local.set", index: L_CHILD },
+            // elem = InternalizeJSONProperty(proxy, k, reviver).
+            { op: "local.get", index: L_CHILD },
+            { op: "local.get", index: P_VAL },
+            { op: "local.get", index: L_K },
+            { op: "local.get", index: P_REVIVER },
+            { op: "call", funcIdx: internFuncIdx },
+            { op: "local.set", index: L_ELEM },
+            // CreateDataProperty(proxy, k, elem), or [[Delete]] for undefined.
+            ...elemIsUndefined(),
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: P_VAL },
+                { op: "local.get", index: L_K },
+                { op: "call", funcIdx: deleteIdx },
+                { op: "drop" },
+              ],
+              else: [
+                { op: "local.get", index: P_VAL },
+                { op: "local.get", index: L_K },
+                { op: "local.get", index: L_ELEM },
+                { op: "i32.const", value: FLAG_DEFAULT },
+                { op: "call", funcIdx: createDescriptorIdx },
+                { op: "call", funcIdx: defineFromDescIdx },
+                { op: "drop" },
+              ],
+            },
+            { op: "local.get", index: L_I },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: L_I },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const proxyArrayArm: Instr[] = [
+    // len = ToLength(Get(proxy, "length")).  Keep the first read on the
+    // Proxy; the temporary ordinary object only reuses the already-native
+    // ToLength(ToNumber(ToPrimitive(...))) implementation.
+    { op: "local.get", index: P_VAL },
+    ...nativeStringLiteralInstrs(ctx, "length"),
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: externGetIdx },
+    { op: "local.set", index: L_CHILD },
+    { op: "call", funcIdx: newObjIdx },
+    { op: "local.set", index: L_OBJREF },
+    { op: "local.get", index: L_OBJREF },
+    ...nativeStringLiteralInstrs(ctx, "length"),
+    { op: "extern.convert_any" },
+    { op: "local.get", index: L_CHILD },
+    { op: "call", funcIdx: externSetIdx },
+    { op: "local.get", index: L_OBJREF },
+    { op: "call", funcIdx: externLengthIdx },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: L_CAP },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: L_I },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: L_I },
+            { op: "local.get", index: L_CAP },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: L_I },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: numToStrIdx },
+            { op: "local.set", index: L_K },
+            // child = proxy[index] (Proxy [[Get]] front guard).
+            { op: "local.get", index: P_VAL },
+            { op: "local.get", index: L_K },
+            { op: "call", funcIdx: externGetIdx },
+            { op: "local.set", index: L_CHILD },
+            { op: "local.get", index: L_CHILD },
+            { op: "local.get", index: P_VAL },
+            { op: "local.get", index: L_K },
+            { op: "local.get", index: P_REVIVER },
+            { op: "call", funcIdx: internFuncIdx },
+            { op: "local.set", index: L_ELEM },
+            ...elemIsUndefined(),
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: P_VAL },
+                { op: "local.get", index: L_K },
+                { op: "call", funcIdx: deleteIdx },
+                { op: "drop" },
+              ],
+              else: [
+                { op: "local.get", index: P_VAL },
+                { op: "local.get", index: L_K },
+                { op: "local.get", index: L_ELEM },
+                { op: "i32.const", value: FLAG_DEFAULT },
+                { op: "call", funcIdx: createDescriptorIdx },
+                { op: "call", funcIdx: defineFromDescIdx },
+                { op: "drop" },
+              ],
+            },
+            { op: "local.get", index: L_I },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: L_I },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const proxyArm: Instr[] = [
+    { op: "local.get", index: L_ANY },
+    { op: "ref.cast", typeIdx: proxyTypeIdx },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: L_PROXY_TARGET },
+    { op: "local.get", index: L_PROXY_TARGET },
+    { op: "ref.test", typeIdx: objVecTypeIdx },
+    { op: "local.get", index: L_PROXY_TARGET },
+    { op: "ref.test", typeIdx: vecBaseTypeIdx },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: proxyArrayArm,
+      else: proxyObjectArm,
+    },
+  ];
 
   const internBody: Instr[] = [
     // any = any.convert_extern(val)
     { op: "local.get", index: P_VAL },
     { op: "any.convert_extern" },
     { op: "local.set", index: L_ANY },
+    // ── $Proxy arm ───────────────────────────────────────────────────────
+    { op: "local.get", index: L_ANY },
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: proxyArm,
+    },
     // ── $Object arm ───────────────────────────────────────────────────────
     { op: "local.get", index: L_ANY },
     { op: "ref.test", typeIdx: objectTypeIdx },
@@ -3496,8 +3711,7 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
                 { op: "call", funcIdx: internFuncIdx },
                 { op: "local.set", index: L_ELEM },
                 // if elem is undefined (null externref) → delete; else set
-                { op: "local.get", index: L_ELEM },
-                { op: "ref.is_null" },
+                ...elemIsUndefined(),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -3612,6 +3826,8 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
       { count: 1, type: { kind: "ref_null", typeIdx: objVecTypeIdx } }, // L_VEC
       { count: 1, type: { kind: "ref", typeIdx: objVecArrTypeIdx } }, // L_DATA
       { count: 1, type: externref }, // L_OBJREF
+      { count: 1, type: anyref }, // L_PROXY_TARGET
+      { count: 1, type: externref }, // L_PROXY_KEYS
     ],
     body: internBody,
     exported: false,
