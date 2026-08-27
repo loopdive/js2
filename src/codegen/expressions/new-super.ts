@@ -3721,6 +3721,15 @@ function prepareNativeSetAdderDispatch(
   fctx: FunctionContext,
   collTmp: number,
 ): NativeSetAdderDispatch | undefined {
+  // Reading a builtin prototype as a value (for example the Test262
+  // `Object.getPrototypeOf(s)` assertion) arms the companion store and seeds
+  // its intrinsic members, but it does not install a user override.  Treating
+  // that seeded `Set.prototype.add` as custom makes the constructor invoke the
+  // deliberately-refusing first-class member closure instead of the native
+  // `__set_add` fast path.  The pre-scan's named-write bit is the narrow gate
+  // for an observable override; descriptor and assignment writes both set it.
+  if (!ctx.protoNamedDirty) return undefined;
+
   const hasIdx = ctx.funcMap.get("__protoidx_has_r");
   const getIdx = ctx.funcMap.get("__protoidx_get_r");
   if (hasIdx === undefined || getIdx === undefined) return undefined;
