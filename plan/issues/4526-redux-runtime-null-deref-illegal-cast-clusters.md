@@ -168,7 +168,7 @@ infrastructure, caching answers, or introducing Redux-specific rewrites:
 ## 2026-08-27 bounded heterogeneous-callable ABI checkpoint
 
 The preserved `98c7955` checkpoint was rebased onto current `origin/main`
-(`1bf5aa171727d2`); Git identified that commit's patch as already represented
+(`220ce6c4913ddb`); Git identified that commit's patch as already represented
 upstream, so the branch retains the checkpoint's behavior without a broad
 merge commit. This follow-up is limited to the generic dynamic callable
 carrier/capture paths and a linked middleware regression; it does not alter
