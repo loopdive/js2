@@ -95,6 +95,7 @@ import {
   storeSpills,
 } from "./frame-core.js";
 import { ensureI32Condition, resolveWasmType } from "./index.js";
+import { isUndefWidenedBindingElement } from "../checker/type-mapper.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -313,6 +314,13 @@ export interface AsyncFrameInfo {
    */
   derivedSpillInit?: Map<number, number>;
   /**
+   * (#3315/#3423) Pattern-derived bindings whose f64 source was widened to
+   * externref so an absent/explicitly-undefined property remains the JS
+   * `undefined` identity. The resume fctx marks these names so identifier
+   * reads do not narrow the externref back to f64 and turn it into NaN.
+   */
+  undefWidenedPatternBindings?: Set<string>;
+  /**
    * (#2967 phase 3a) Spill index → ref-cell metadata for FORCE-BOXED class-1
    * hazardous spills (nested-mutable-captured locals / derived params). The
    * field (and `spillTypes[i]`) is the CELL ref type; `valType` is the boxed
@@ -489,6 +497,7 @@ export function buildAsyncFrameInfo(
   // stored back at every suspend, so a mutation before an await survives it —
   // the same observable semantics the CPS continuation snapshot gave them.
   const derived = derivedParams ?? [];
+  const undefWidenedPatternBindings = collectUndefWidenedPatternBindings(ctx, decl, derived);
   const { spillNames, spillTypes } = computeAsyncSpills(
     ctx,
     decl,
@@ -678,6 +687,7 @@ export function buildAsyncFrameInfo(
     spillTypes,
     spillFieldOffset,
     derivedSpillInit: derivedSpillInit.size > 0 ? derivedSpillInit : undefined,
+    undefWidenedPatternBindings: undefWidenedPatternBindings.size > 0 ? undefWidenedPatternBindings : undefined,
     spillCellInfo: spillCellInfo.size > 0 ? spillCellInfo : undefined,
     tdzCellNames: tdzCellNames.length > 0 ? tdzCellNames : undefined,
     tdzCellFieldStart: tdzCellNames.length > 0 ? tdzCellFieldStart : undefined,
@@ -1403,6 +1413,59 @@ function collectDerivedPatternParams(decl: ts.FunctionLikeDeclaration, fctx: Fun
 }
 
 /**
+ * (#3315/#3423) Carry the undefined-preserving representation contract from
+ * the eager parameter-destructure entry function into the async resume
+ * function. The resume body is compiled independently, so its checker view
+ * would otherwise emit `__unbox_number` for a binding whose entry local is an
+ * externref widened specifically to preserve `undefined`.
+ *
+ * Restrict the marker to names that the entry prologue actually materialized;
+ * an absent binding must keep the legacy unresolved-name behavior rather than
+ * gaining a new local merely because it appears in the syntax pattern.
+ */
+function collectUndefWidenedPatternBindings(
+  ctx: CodegenContext,
+  decl: ts.FunctionLikeDeclaration,
+  derived: DerivedParamCapture[],
+): Set<string> {
+  const materialized = new Set(derived.map((binding) => binding.name));
+  const out = new Set<string>();
+  const walk = (pattern: ts.BindingPattern): void => {
+    for (const element of pattern.elements) {
+      if (!ts.isBindingElement(element)) continue;
+      if (ts.isIdentifier(element.name)) {
+        const name = element.name.text;
+        const fact = ctx.oracle.typeFactOf(element);
+        const nonNullish =
+          fact.kind === "union"
+            ? fact.parts.filter((part) => part.kind !== "null" && part.kind !== "undefined" && part.kind !== "void")
+            : [];
+        const resolvesToF64 =
+          fact.kind === "number" ||
+          (fact.kind === "union" &&
+            fact.parts.length === 2 &&
+            nonNullish.length === 1 &&
+            nonNullish[0]?.kind === "number");
+        if (
+          materialized.has(name) &&
+          isUndefWidenedBindingElement(element, resolvesToF64 ? { kind: "f64" } : { kind: "externref" })
+        ) {
+          out.add(name);
+        }
+      } else {
+        walk(element.name);
+      }
+    }
+  };
+  for (const parameter of decl.parameters) {
+    if (ts.isObjectBindingPattern(parameter.name) || ts.isArrayBindingPattern(parameter.name)) {
+      walk(parameter.name);
+    }
+  }
+  return out;
+}
+
+/**
  * Defensive check of the {@link AsyncCfgPlan} emitter contract (see the
  * contract block in async-cps.ts). Returns a human-readable violation, or
  * `null` when the plan is emittable. Cheap (O(states)); run once per machine so
@@ -1712,6 +1775,16 @@ export function ensureAsyncResumeFunction(
   // eager hydration; frame-core also preserves force-boxed capture aliases.
   const selectiveSpillRestores = cfg.states.some((state) => state.restoreSpillNames !== undefined);
   initializeSpillLocals(info, resumeFctx, frameLocal, !selectiveSpillRestores, info.spillCellInfo);
+  // (#3315/#3423) Pattern-derived bindings are eagerly destructured in the
+  // entry function, where an f64 source is widened to externref to preserve
+  // an absent/explicitly-undefined property. The resume body is compiled with
+  // a fresh FunctionContext; carry the same marker across so identifier reads
+  // do not narrow that value back to f64 (and thereby turn it into NaN).
+  if (info.undefWidenedPatternBindings) {
+    for (const name of info.undefWidenedPatternBindings) {
+      (resumeFctx.undefWidenedLocals ??= new Set()).add(name);
+    }
+  }
   // (#4618) Re-bind the suspend-surviving TDZ flag cells: load each cell from
   // its frame field and register it in boxedTdzFlags + tdzFlagLocals so
   // emitLocalTdzInit / emitLocalTdzCheck / the call-site flag prepend all
