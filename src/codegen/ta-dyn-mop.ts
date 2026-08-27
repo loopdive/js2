@@ -415,10 +415,26 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           { op: "call", funcIdx: boxNumIdx },
         ];
       case "byteOffset":
+        // §10.4.5.2: a detached TypedArray reports byteOffset 0. Detachment is
+        // represented by the shared backing byte-vec's length field being
+        // negative; preserve a non-zero offset for an attached empty/windowed
+        // view, so checking the view's effective length would conflate the two.
         return [
           { op: "local.get", index: dv },
-          { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
-          { op: "f64.convert_i32_s" },
+          { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 }, // buf
+          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }, // buf.length
+          { op: "i32.const", value: 0 },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [{ op: "f64.const", value: 0 }],
+            else: [
+              { op: "local.get", index: dv },
+              { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+              { op: "f64.convert_i32_s" },
+            ],
+          },
           { op: "call", funcIdx: boxNumIdx },
         ];
       case "BYTES_PER_ELEMENT":
