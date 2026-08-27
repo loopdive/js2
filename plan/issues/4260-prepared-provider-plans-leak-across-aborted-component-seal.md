@@ -1,7 +1,7 @@
 ---
 id: 4260
 title: "Prepared callable-provider plans leak across an aborted component seal"
-status: in-progress
+status: done
 sprint: Backlog
 created: 2026-08-09
 updated: 2026-08-27
@@ -61,16 +61,16 @@ registry invariant would hide the split rather than restore transactionality.
 
 ## Acceptance criteria
 
-- [ ] An injected pre-seal failure over a TDZ-writing prepared component records
+- [x] An injected pre-seal failure over a TDZ-writing prepared component records
       typed Unsupported and executes only direct codegen (`direct=1, IR=0`) in
       GC and standalone, without stale-provider, unplanned-provider, or
       post-claim errors.
-- [ ] The aborted host component leaves no unused `__new_ReferenceError` import;
+- [x] The aborted host component leaves no unused `__new_ReferenceError` import;
       the aborted standalone component leaves no orphan in-module constructor.
-- [ ] A two-component control where both request the same provider and only one
+- [x] A two-component control where both request the same provider and only one
       aborts proves that the healthy component remains sealed/emitted and owns
       the single committed provider plan.
-- [ ] Provider/import planning, prepared-component dependency, Program-ABI
+- [x] Provider/import planning, prepared-component dependency, Program-ABI
       transaction, direct-fallback, typecheck, and IR fallback suites pass.
 
 ## Relationship to #4259
@@ -630,3 +630,29 @@ chain evidence separate from the one canonical Program-ABI provider row. The
 focused #4259 accessor suite remains 17/21 on both the checkpoint and an
 unmodified live-main control; those four inherited failures are not acceptance
 regressions for this checkpoint.
+
+## 2026-08-27 closure reconciliation — atomic publication accepted
+
+PR #4996 (`91e77f7303974ec62a7fd122bbe3187b0f0652df`) landed the
+authenticated one-shot prepared-component batch: callable imports, providers,
+class layouts, export aliases, and Program-ABI session rows now publish only
+after complete validation. Abort consumes the provisional descriptors without
+leaving registry, locator, reverse-index, import, provider, or prepared-scope
+state behind.
+
+PR #5031 (`14e8e17b6789ee65ca345849df42e33e635ea2b9`) then landed the
+literal B.7 acceptance matrix on the post-#4755 baseline. Its 21/21 focused
+cases prove injected pre-seal Unsupported/direct-only fallback and the
+uninjected Prepared/direct controls in both GC and standalone, with exact
+terminal outcomes, zero post-claim errors, no stale host import or orphan
+standalone constructor, and one canonical provider retained by the healthy
+shared-provider component. Provider/import planning, scoped dependency,
+transaction, direct-fallback, TypeScript 7/5, layering, fallback, oracle,
+coercion, optimization, dead-export, LOC, function-growth, and ordinary hook
+gates passed without a baseline increase or skipped hook.
+
+The four #4259 accessor failures recorded above remain byte-for-byte inherited
+on the unmodified live-main control and are outside this issue's atomic
+publication acceptance. They do not keep #4260 open. This closure satisfies
+only the #4260 dependency; it does not complete parent #3521 or authorize a
+later R-stage retirement.

@@ -9973,6 +9973,37 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-27T19:00:19.927Z",
+      "sourceRevision": "db872cf39ffcda8775fa11b0385c896337ab611e",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 329816.10135705984,
+            "dynamic": 0.12923411736125198
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 897.8769996266099,
+            "dynamic": 0.20627457021593346
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 15.326316380695124,
+            "dynamic": 0.16191238365430066
+          }
+        }
+      }
     }
   ]
 }
