@@ -60,7 +60,7 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
-import { nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
@@ -2231,6 +2231,14 @@ function emitClassStaticMemberRead(
     if (funcIdx !== undefined) {
       const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
       return retType ?? { kind: "externref" };
+    }
+    // A setter-only accessor still owns the property, but reading it returns
+    // the canonical `undefined` value (§10.4.2 [[Get]]). Without this arm the
+    // class-object carrier falls through to its constructor-name/length
+    // metadata, so `static set name(_) {}` incorrectly reads "Class".
+    if (ctx.staticAccessorSet.has(accessorKey)) {
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+      return { kind: "externref" };
     }
   }
   return PA_FALLTHROUGH;

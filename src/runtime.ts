@@ -5700,6 +5700,21 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
  * §15.7.1) so `verifyProperty(C, "m", ...)` tests pass.
  */
 const _staticMethodNames = new WeakMap<object, string[]>();
+// #4450 — the constructor's standard own keys exist even when no static
+// method owns their spelling. Keep this separate from `_staticMethodNames`,
+// whose entries drive static-method descriptor/value bridges: adding
+// `length`/`name`/`prototype` to that map would make ordinary class metadata
+// look like writable method descriptors. The class-object reflection path uses
+// this map only for own-key enumeration.
+const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
+
+function _classObjectOwnKeys(staticMethods: readonly string[]): string[] {
+  const names = ["length", "name", "prototype"];
+  for (const name of staticMethods) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
 // Static methods are invoked by host frameworks through the generic closure
 // bridge. Their object results must be readable host objects (React consumes
 // getDerivedStateFromProps' returned partial state immediately), unlike the
@@ -6143,7 +6158,9 @@ function _ownStructKeys(obj: any, exports: Record<string, Function> | undefined)
   if (protoMethods !== undefined) {
     for (const n of protoMethods) if (!_isDeletedClassProp(obj, n)) push(n);
   } else if (staticMethods !== undefined) {
-    for (const n of staticMethods) if (!_isDeletedClassProp(obj, n)) push(n);
+    for (const n of _classObjectOwnPropertyNames.get(obj) ?? staticMethods) {
+      if (!_isDeletedClassProp(obj, n)) push(n);
+    }
   } else {
     for (const n of _getStructFieldNames(obj, exports) ?? []) push(n);
   }
@@ -12048,6 +12065,7 @@ assert._isSameValue = isSameValue;
           if (classObj == null || typeof classObj !== "object") return;
           const names = typeof csv === "string" && csv.length > 0 ? csv.split(",") : [];
           _staticMethodNames.set(classObj, names);
+          _classObjectOwnPropertyNames.set(classObj, _classObjectOwnKeys(names));
         };
       if (name === "__register_class_static_method")
         return function registerClassStaticMethod(classObj: any, methodName: any, closure: any): void {
@@ -13140,7 +13158,9 @@ assert._isSameValue = isSameValue;
           // (filtered through the #1364b deletion set).
           const staticMethods = _staticMethodNames.get(obj);
           if (staticMethods !== undefined) {
-            const names = staticMethods.filter((n) => !_isDeletedClassProp(obj, n));
+            const names = (_classObjectOwnPropertyNames.get(obj) ?? staticMethods).filter(
+              (n) => !_isDeletedClassProp(obj, n),
+            );
             const sc = _wasmStructProps.get(obj);
             if (sc) {
               for (const k of Object.getOwnPropertyNames(sc)) {
