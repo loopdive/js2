@@ -79,7 +79,8 @@ the exact pristine bootstrap query:
 Validation on `220ce6c4913ddb10e6af0417dcf4d3aef6470220` plus this patch, and
 repeated after synchronizing with `upstream/main` at `857b343f344d566f3f382168a8538dd8dca26f2c`.
 The focused suite and exact rows were rerun after the latest sync at
-`fd36446c46358734900b7ab207e05b0ef8f7bf39`:
+`fd36446c46358734900b7ab207e05b0ef8f7bf39`, then again after the scheduled
+baseline-summary sync at `5321bfbbfa9193c6b55a7558126b88b003a03719`:
 
 - authoritative standalone first run: `2/2` pass; host first run: `2/2` pass;
   each run's positive controls reported both pass and fail outcomes;
@@ -91,6 +92,9 @@ The focused suite and exact rows were rerun after the latest sync at
   each with both structural controls and `nondeterministic: 0`;
 - latest-tree focused suite: `6/6` tests passed, and exact host/standalone
   repeats remained `2/2` with both controls and `nondeterministic: 0`.
+- scheduled-summary-tree focused suite: `6/6` tests passed, and exact
+  host/standalone repeats remained `2/2` with both controls and
+  `nondeterministic: 0`.
 
 Draft PR #5103 remains held and outside the merge queue until repository
 quality gates and CI are green; then it can be marked ready and enqueued.
