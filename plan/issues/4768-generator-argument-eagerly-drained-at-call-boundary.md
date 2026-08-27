@@ -68,9 +68,48 @@ So the bounded path exists and computes the right budget (`f64.const 1` for
 - `nested-declarations.ts:2912` — the spread-arguments path; `f(g())` has no
   spread.
 
-Remaining candidates for the unbounded call: `expressions/calls.ts:2932/3052`,
-`new-super.ts:3055`, and any `__array_from_iter` fallback inside
-`destructuring-params.ts`'s chain after `fbIterName`.
+### The unbounded emitter — FOUND
+
+`buildVecFromExternref` (`src/codegen/type-coercion.ts:823` and `:837`):
+
+```ts
+ensureLateImport(ctx, strictIterator ? "__array_from_iter_strict" : "__array_from_iter", …)
+…
+const iterIdx = useNativeMaterializer
+  ? ctx.funcMap.get("__array_from_iter_n")        // native lane: BOUNDED
+  : useNativeObjVec
+    ? undefined
+    : ctx.funcMap.get(strictIterator ? "__array_from_iter_strict" : "__array_from_iter");
+                                                   // host lane: UNBOUNDED
+```
+
+The host lane calls the unbounded helper; only the native lane got the bounded
+one. That is the `call 18` in the emitted WAT.
+
+**Why it has no bound to pass, and why this is a design change not a one-liner.**
+`buildVecFromExternref` builds a vec of *unknown* length from an iterable, so it
+takes no step-count parameter — and it reaches the module through
+`reserveVecFieldMaterializers` (`member-set-dispatch.ts:543`), which registers a
+**shared, pre-registered materializer function** at module-generation time. A
+single shared function body cannot carry a per-call-site §8.5.3 budget as
+things stand.
+
+So the row emits both paths — the bounded destructuring call (`call 16`,
+`f64.const 1`) and this shared unbounded materializer (`call 18`) — behind
+different `ref.is_null` guards, and the unbounded one wins.
+
+The fix is one of:
+
+1. Give the registered materializer a step-budget parameter and thread the
+   pattern's `patternIteratorStepCount` through every caller, passing `-1`
+   (unbounded) only for rest/spread.
+2. Make the destructuring path never fall through to the shared materializer —
+   i.e. ensure the bounded arm's guard covers the iterable case that currently
+   reaches `call 18`.
+
+Option 2 is smaller if the guard condition turns out to be the only reason the
+unbounded arm is reached; option 1 is the one that fixes every other caller too.
+Either needs a before/after run of the 20 rows plus the wider `dstr` families.
 
 ## What is NOT confirmed — and the evidence against it
 
