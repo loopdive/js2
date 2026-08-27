@@ -144,6 +144,20 @@ The branch was refreshed with a non-rewriting upstream merge commit
 `7b2dcc224` before this rerun.  The final evidence checkpoint and pushed head
 are recorded with the PR handoff.
 
+## Latest-main readiness verification (2026-08-27)
+
+After upstream advanced again through #5067, the branch non-rewriting merged
+current `upstream/main` at `db872cf39ffcda8775fa11b0385c896337ab611e`.
+The exact four-row official cohort was then exercised through
+`runTest262File` in both lanes with the pinned QuickJS artifact and at most two
+compiler workers: host **4/4 passed** and standalone **4/4 passed**. The direct
+standalone no-host-import assertion also passed. Together with the adjacent
+#2594 controls, the focused verification is **16/16 passed** with zero losses.
+
+Handoff: PR #5072 remains draft plus `hold` until this checkpoint is pushed
+with normal hooks and the refreshed required checks are green. It may be
+marked ready and enqueued only while current, mergeable, and thread-clean.
+
 ## Intended files
 
 - `src/codegen/expressions/call-namespace-static.ts`
