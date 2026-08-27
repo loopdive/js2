@@ -1,7 +1,7 @@
 ---
 id: 5092
 title: "IR mixed-primitive conditional-expression ownership"
-status: in-progress
+status: done
 assignee: ttraenkler/codex
 branch: codex/5092-ir-conditional-expression
 created: 2026-08-27
@@ -17,15 +17,24 @@ goal: ir-first
 depends_on: [4787]
 related: [1820, 3144, 4178, 4502, 4512]
 files:
+  - src/codegen/ir-first-gate.ts
+  - src/codegen/ir-overlay-safety.ts
   - src/ir/from-ast.ts
   - src/ir/select.ts
   - tests/issue-4178.test.ts
   - tests/issue-5092-ir-mixed-primitive-conditional.test.ts
 loc-budget-allow:
+  - total
+  - src/codegen/ir-first-gate.ts
+  - src/codegen/ir-overlay-safety.ts
   - src/ir/from-ast.ts
   - src/ir/select.ts
 func-budget-allow:
+  - src/codegen/ir-first-gate.ts::irFirstBodyIsProvenLowerable
+  - src/codegen/ir-overlay-safety.ts::computeIrFirstSkipUnitIds
+  - src/ir/from-ast.ts::lowerCall
   - src/ir/from-ast.ts::lowerConditional
+  - src/ir/select.ts::buildLocalCallGraph
   - src/ir/select.ts::isPhase1Expr
 ---
 
@@ -117,3 +126,31 @@ and therefore is not an IR-owned unit.
 - #4787 lands first because both checkpoints touch `src/ir/from-ast.ts` and
   `src/ir/select.ts`. #5092 is developed on that exact head and is opened
   against current main only after #4787 lands, avoiding an overlapping PR diff.
+
+## Implementation outcome
+
+- Selection and lowering share one checker-backed primitive-family grammar.
+  Exact mixed `number`/`string`/`boolean` arms lower into separately buffered
+  branches, receive honest boxed-dynamic tags, and join through one lazy IR
+  `if`; every mismatch after claim is an invariant.
+- Exact dynamic `typeof` dispatches on the two proven runtime tag families.
+  Direct ambient `String(c ? a : b)` and `Number(c ? a : b)` convert each
+  concrete arm inside that same lazy branch. General wrapper calls, aliases,
+  and shadowed bindings remain direct-owned.
+- The compile-once gate now models string and this bounded dynamic primitive
+  domain, so accepted functions publish only the IR body. The focused #4178
+  expectation is updated from retained-direct fallback to IR ownership.
+- Rollback remains available through
+  `JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL=0` and the global
+  `JS2WASM_IR_FIRST=0` switch. Test-only tag/result drift proves fail-closed
+  behavior after claim.
+
+## Validation
+
+- `tests/issue-5092-ir-mixed-primitive-conditional.test.ts`: 17/17 passed.
+- `tests/issue-4178.test.ts`: 14/14 passed.
+- `tests/issue-3143.test.ts` + `tests/issue-3203.test.ts`: 45/45 passed.
+- TypeScript 7 project typecheck passed with zero diagnostics.
+- Targeted Biome lint, Prettier formatting, `git diff --check`, IR fallback,
+  IR dialect/layering, oracle, coercion-site, LOC, function, issue, and done-
+  status gates passed.

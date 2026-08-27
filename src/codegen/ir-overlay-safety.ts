@@ -368,6 +368,7 @@ export function computeIrFirstSkipUnitIds(input: IrFirstSkipIdentityInput): Read
   const positionDomain = (annotation: ts.TypeNode | undefined, resolved: IrType): ValueDomain | null => {
     if (isF64(resolved)) return "number";
     if (isI32(resolved) && annotation?.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
+    if (resolved.kind === "string" && annotation?.kind === ts.SyntaxKind.StringKeyword) return "string";
     return null;
   };
   const signatureDomains = (
