@@ -133,6 +133,7 @@ import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
 import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
+import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4783)
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
 import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
 import {
@@ -2107,6 +2108,32 @@ export function compileReceiverMethodCall(
       }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
+        // (#4775) A fnctor receiver gets its devirtualization chance HERE.
+        // `tryEmitDirectTwinCall` — #3754's numeric-return twins and #3685's
+        // receiver-flow devirtualization — is otherwise reached only from
+        // `tryCompileLateFnctorPrototypeMethodCall`, ~1400 lines below, and this
+        // block RETURNS before it: `resolveStructNameForExpr`'s wasm-carrier
+        // fallback (`ad543a660e`) resolves every standalone fnctor local, since
+        // `var p = new P(0)` has no checker struct but carries `(ref null
+        // $__fnctor_P)`; `__fnctor_P_inc` is then absent from `funcMap`
+        // (prototype methods are never struct fields, #1712), so
+        // `compileCallablePropertyCall`'s dynamic arm claimed the call. Route
+        // (c) — `recv.m()` on a non-`this` receiver — stopped devirtualizing
+        // entirely, at 27.8x on the `method` axis.
+        //
+        // The ORDER is the fix; nothing is removed. A decline falls through to
+        // exactly the lowering below, so every non-devirtualizable receiver is
+        // byte-identical. Do not move this after the callable-property probe.
+        if (structTypeName.startsWith("__fnctor_")) {
+          const devirtualized = tryEmitDirectTwinCall(ctx, fctx, expr, propAccess, {
+            computeSig: (fn) => computeClosureWrapperSig(ctx, fn),
+            reserveLegacyDispatch: (name, arity) => reserveClosedMethodDispatch(ctx, name, arity),
+            ensureCurrentThisGlobal: () => ensureCurrentThisGlobal(ctx),
+            ensureArgcGlobal: () => ensureArgcGlobal(ctx),
+            undefinedExtern: () => undefinedExternInstrs(ctx),
+          });
+          if (devirtualized !== undefined) return devirtualized;
+        }
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
@@ -2659,6 +2686,8 @@ export function compileReceiverMethodCall(
       // A non-f64 argument (externref/ref, e.g. a Symbol) must funnel through
       // ToNumber, which throws TypeError on Symbol; coerce to f64 here so the
       // subsequent f64 local.tee is type-correct and Symbols throw (#1564).
+      const symbolThrow = emitSymbolArgToNumberThrow(ctx, fctx, [expr.arguments[0]!], { kind: "externref" });
+      if (symbolThrow !== undefined) return symbolThrow;
       coerceNumberMethodArgToF64(ctx, fctx, compileExpression(ctx, fctx, expr.arguments[0]!));
       // RangeError: fractionDigits must be 0-100
       const digitsLocal = allocLocal(fctx, `__toFixed_digits_${fctx.locals.length}`, { kind: "f64" });
@@ -2727,6 +2756,8 @@ export function compileReceiverMethodCall(
       const recvLocalP = allocLocal(fctx, `__toPrecision_recv_${fctx.locals.length}`, { kind: "f64" });
       fctx.body.push({ op: "local.set", index: recvLocalP });
       // ToNumber(precision) funnel — Symbol args must throw TypeError (#1564).
+      const symbolThrow = emitSymbolArgToNumberThrow(ctx, fctx, [expr.arguments[0]!], { kind: "externref" });
+      if (symbolThrow !== undefined) return symbolThrow;
       coerceNumberMethodArgToF64(ctx, fctx, compileExpression(ctx, fctx, expr.arguments[0]!));
       const precLocal = allocLocal(fctx, `__toPrecision_prec_${fctx.locals.length}`, { kind: "f64" });
       fctx.body.push({ op: "local.set", index: precLocal });
@@ -2823,6 +2854,8 @@ export function compileReceiverMethodCall(
       const recvLocalE = allocLocal(fctx, `__toExponential_recv_${fctx.locals.length}`, { kind: "f64" });
       fctx.body.push({ op: "local.set", index: recvLocalE });
       // ToNumber(fractionDigits) funnel — Symbol args must throw TypeError (#1564).
+      const symbolThrow = emitSymbolArgToNumberThrow(ctx, fctx, [expr.arguments[0]!], { kind: "externref" });
+      if (symbolThrow !== undefined) return symbolThrow;
       coerceNumberMethodArgToF64(ctx, fctx, compileExpression(ctx, fctx, expr.arguments[0]!));
       const digitsLocal = allocLocal(fctx, `__toExponential_digits_${fctx.locals.length}`, { kind: "f64" });
       fctx.body.push({ op: "local.set", index: digitsLocal });

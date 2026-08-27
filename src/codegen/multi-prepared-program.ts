@@ -15,7 +15,7 @@ import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import type { IrSourceId, IrSourceKind, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
-import { IrInvariantError } from "../ir/outcomes.js";
+import { IrInvariantError, type IrObservedOutcome } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjectionEntry, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
@@ -392,7 +392,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   readonly #callableComponentByUnitId = new Map<IrUnitId, MultiPreparedProgramCallableComponent>();
   readonly #callableComponentsBySourceFile = new Map<SourceFile, MultiPreparedProgramCallableComponent[]>();
   readonly #callableSkippedUnitIds = new Set<IrUnitId>();
-  readonly #callableSkippedNamesBySourceFile = new Map<SourceFile, Set<string>>();
+  readonly #callableSkippedUnitIdsBySourceFile = new Map<SourceFile, Set<IrUnitId>>();
   readonly #routeSnapshots: RouteSnapshot<Plan>[] = [];
   #claimedRouteClaims: MultiPreparedRouteClaimSnapshot = EMPTY_MULTI_PREPARED_ROUTE_CLAIMS;
   readonly #bodySourceIds: IrSourceId[] = [];
@@ -625,10 +625,12 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           this.#callableComponentsBySourceFile.set(unit.sourceFile, sourceComponents);
         }
       }
+      this.#ctx.irProgramCallablePreparedUnitIds = new Set(componentUnitIds);
     } catch (error) {
       this.#callableComponents.length = 0;
       this.#callableComponentByUnitId.clear();
       this.#callableComponentsBySourceFile.clear();
+      delete this.#ctx.irProgramCallablePreparedUnitIds;
       throw error;
     }
   }
@@ -748,7 +750,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       compileMultiPreparedScalarLeafDeclarations(this.#ctx, sourceFile, state, moduleInitMode, {
         skipBodies: this.#callableSkipNames(sourceFile),
         preserveBodies: this.#callableSkipNames(sourceFile),
-        onSkippedNames: (names) => this.#recordCallableSkippedNames(sourceFile, names),
+        skipBodyUnitIds: this.#callableSkipUnitIds(sourceFile),
+        preserveBodyUnitIds: this.#callableSkipUnitIds(sourceFile),
+        onSkippedUnitIds: (unitIds) => this.#recordCallableSkippedUnitIds(sourceFile, unitIds),
       });
       const route = state?.route;
       if (state && route?.routeKind === "string") route.tamperSkipReport(state.skippedFunctionUnitIds);
@@ -862,6 +866,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       this.#assertAllCallableBodySkips();
       for (const component of this.#callableComponents) component.assertCurrent?.();
       for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
+      this.#recordCallableIrTelemetry();
       this.#state = "routes-complete";
     } catch (error) {
       this.#state = "failed";
@@ -1229,32 +1234,35 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     return names;
   }
 
-  #recordCallableSkippedNames(sourceFile: SourceFile, names: readonly string[]): void {
-    const expected = this.#callableSkipNames(sourceFile);
+  #callableSkipUnitIds(sourceFile: SourceFile): ReadonlySet<IrUnitId> {
+    return new Set(
+      (this.#callableComponentsBySourceFile.get(sourceFile) ?? []).flatMap((component) =>
+        component.units.filter((unit) => unit.sourceFile === sourceFile).map((unit) => unit.unitId),
+      ),
+    );
+  }
+
+  #recordCallableSkippedUnitIds(sourceFile: SourceFile, unitIds: readonly IrUnitId[]): void {
+    const expected = this.#callableSkipUnitIds(sourceFile);
     if (expected.size === 0) {
-      this.#callableSkippedNamesBySourceFile.set(sourceFile, new Set());
+      if (unitIds.length !== 0) {
+        this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} reported foreign callable body skips`);
+      }
+      this.#callableSkippedUnitIdsBySourceFile.set(sourceFile, new Set());
       return;
     }
-    const observed = new Set(names);
-    for (const name of expected) {
-      if (!observed.has(name)) {
-        this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} did not skip callable component ${name}`);
-      }
+    const observed = new Set(unitIds);
+    if (!sameSet(observed, [...expected])) {
+      this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} did not skip its exact callable units`);
     }
-    for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
-      for (const unit of component.units) {
-        if (unit.sourceFile === sourceFile && observed.has(unit.legacyName)) {
-          this.#callableSkippedUnitIds.add(unit.unitId);
-        }
-      }
-    }
-    this.#callableSkippedNamesBySourceFile.set(sourceFile, new Set([...expected].filter((name) => observed.has(name))));
+    for (const unitId of observed) this.#callableSkippedUnitIds.add(unitId);
+    this.#callableSkippedUnitIdsBySourceFile.set(sourceFile, observed);
   }
 
   #assertCallableBodySkip(sourceFile: SourceFile): void {
-    const expected = this.#callableSkipNames(sourceFile);
-    const observed = this.#callableSkippedNamesBySourceFile.get(sourceFile) ?? new Set<string>();
-    if (expected.size !== observed.size || [...expected].some((name) => !observed.has(name))) {
+    const expected = this.#callableSkipUnitIds(sourceFile);
+    const observed = this.#callableSkippedUnitIdsBySourceFile.get(sourceFile) ?? new Set<IrUnitId>();
+    if (!sameSet(observed, [...expected])) {
       this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} has an incomplete callable component skip set`);
     }
   }
@@ -1264,6 +1272,45 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     const expected = new Set(this.#callableComponentByUnitId.keys());
     if (!sameSet(this.#callableSkippedUnitIds, [...expected])) {
       this.#fail("body-skip-mismatch", "callable component body skips do not cover the reserved unit population");
+    }
+  }
+
+  #recordCallableIrTelemetry(): void {
+    if (this.#callableComponents.length === 0) return;
+    const names = this.#callableComponents.flatMap((component) => component.units.map((unit) => unit.legacyName));
+    this.#ctx.irCompiledFuncs = [...(this.#ctx.irCompiledFuncs ?? []), ...names];
+    const outcomes = this.#ctx.irOutcomes;
+    if (!outcomes) return;
+    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+    const existingUnitIds = new Set(outcomes.flatMap((outcome) => (outcome.unitId ? [outcome.unitId] : [])));
+    const existingKeys = new Set(outcomes.map((outcome) => outcome.key));
+    for (const component of this.#callableComponents) {
+      for (const unit of component.units) {
+        const terminal = this.#terminalMap.get(unit.unitId)!;
+        if (existingUnitIds.has(unit.unitId) || existingKeys.has(terminal.legacyKey)) {
+          this.#fail("route-report-mismatch", `callable component ${unit.unitId} already has a terminal outcome`);
+        }
+        outcomes.push({
+          key: terminal.legacyKey,
+          sourceId: terminal.sourceId,
+          unitId: terminal.id,
+          file: unit.sourceFile.fileName,
+          unitKind: terminal.observedKind,
+          displayName: terminal.displayName,
+          ordinal: terminal.legacyOrdinal,
+          line: terminal.line,
+          column: terminal.column,
+          backend: "wasmgc",
+          target,
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: component.preparedComponentId,
+          kind: "emitted",
+          stage: "patch",
+        });
+        existingUnitIds.add(unit.unitId);
+        existingKeys.add(terminal.legacyKey);
+      }
     }
   }
 
@@ -1457,6 +1504,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #assertStable(): void {
     this.#validateConstruction();
+    if (
+      !sameSet(this.#ctx.irProgramCallablePreparedUnitIds ?? new Set<IrUnitId>(), [
+        ...this.#callableComponentByUnitId.keys(),
+      ])
+    ) {
+      this.#fail("route-plan-mismatch", "callable component context projection changed after registration");
+    }
     if (this.#bodyPlan) this.#assertBodyPlan();
   }
 

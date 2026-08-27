@@ -1218,8 +1218,25 @@ export function compileBinaryExpression(
         op === ts.SyntaxKind.ExclamationEqualsToken ||
         op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
         op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      // (#4774) …but NOT a `+` with a STATICALLY-string operand. §13.15.3 step 7
+      // concatenates whenever either ToPrimitive result is a String, so such a
+      // `+` is unconditionally a concat and its static type is `string` whatever
+      // the other operand holds. `__any_add` returns the `$AnyValue` carrier
+      // instead, while every consumer lowers from that static `string`:
+      // `.length` emits a bare `struct.get $AnyString 0` whose only defence is an
+      // `externref` special case (#1797/#4607), so the module failed validation
+      // — with `success: true` and no diagnostic. Fixed on the PRODUCER because
+      // `charCodeAt`, `__str_concat` and `===` read the same static type (that
+      // one trapped `illegal cast` instead). Declining hands the expression to
+      // the string-concat route below, which returns a native string ref. Only
+      // the `unionRepEqInvolved` limb reaches here — an `any` is not a string
+      // type, so a both-`any` `+` is byte-identical. #4414's residual (`true`
+      // stringified as "1" via the union carrier) is a separate VALUE defect on
+      // an already-valid module and is deliberately untouched.
+      const plusIsStaticallyStringConcat =
+        isPlusOp && (isStringType(leftTsType) || (isStringType(rightTsType) && !isBigIntType(leftTsType)));
       // Only dispatch through AnyValue for + (string concat possible) and equality
-      if (isPlusOp || isEqualityOp) {
+      if ((isPlusOp && !plusIsStaticallyStringConcat) || isEqualityOp) {
         // (#3169) Record the ACTIVE any-equality dispatch expr so the #3037
         // read-carrier (`maybeWrapAnyReadEqualityCarrier`) fires ONLY for
         // operands whose enclosing equality really routes through
