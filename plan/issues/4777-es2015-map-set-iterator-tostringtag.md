@@ -132,5 +132,10 @@ lowering, the in-process host intrinsic snapshot, and this issue's focused
 regression test. No iterator construction, `next()`, method alias, or
 unrelated builtin behavior changed. The branch is
 `codex/es6-next-bounded-fix-2` in worktree
-`/private/tmp/js2-es6-next-bounded-fix-2`; commit and PR metadata are added
-after the final hook-compatible checkpoint.
+`/private/tmp/js2-es6-next-bounded-fix-2`; the source/test checkpoint is
+`5e7b2f12d28971c1a5ac8061e0b68ecabff25c65` and was authored by Thomas
+Tränkler with the required Codex trailer. The requested push to
+`ttraenkler/js2` was blocked before network execution by the sandbox's
+sensitive-egress policy; no remote SHA or PR URL exists yet. Retry the push
+and create the draft upstream PR only after that external-write approval is
+granted.
