@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrBindingId, IrUnitId } from "../ir/identity.js";
+import type { IrFnctorParameterPreselectionPlan } from "../ir/ast-lowering-plans.js";
 import type { IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, irVal, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -54,6 +55,8 @@ export function makeMultiSourceOverrideResolvers(input: {
   readonly ownerProjection: IrLegacyUnitProjection;
   readonly declarationsByName: ReadonlyMap<string, ts.FunctionDeclaration>;
   readonly definedFunctionAt: (funcIdx: number) => { readonly typeIdx: number } | undefined;
+  /** Exact #3521 owners already carry their prepared ABI and must not be repaired by the legacy heuristic. */
+  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
 }): {
   readonly implicitParamUsesNumericVecAbi: (parameter: ts.ParameterDeclaration) => boolean;
   readonly effectiveOverride: (
@@ -80,6 +83,14 @@ export function makeMultiSourceOverrideResolvers(input: {
       ? input.identityContext.declarationByUnitId.get(projected.unitId)
       : input.declarationsByName.get(name);
     const functionDeclaration = declaration && ts.isFunctionDeclaration(declaration) ? declaration : undefined;
+    if (
+      input.fnctorParameterPreselection &&
+      functionDeclaration &&
+      (functionDeclaration === input.fnctorParameterPreselection.parameterDeclaration.parent ||
+        functionDeclaration === input.fnctorParameterPreselection.valueConsumer?.declaration)
+    ) {
+      return override;
+    }
     const legacyFuncIdx = input.ctx.funcMap.get(name);
     const legacyFunction = legacyFuncIdx === undefined ? undefined : input.definedFunctionAt(legacyFuncIdx);
     const legacySignature = legacyFunction === undefined ? undefined : input.ctx.mod.types[legacyFunction.typeIdx];

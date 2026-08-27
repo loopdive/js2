@@ -408,6 +408,10 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly resolveImplicitParamType?: (
     parameter: ts.ParameterDeclaration,
   ) => "f64" | "bool" | "string" | "object" | "dynamic" | undefined;
+  /** Exact #3521 parseInt/parseFloat native-string boundary call sites. */
+  readonly fnctorNativeStringBoundary?: (call: ts.CallExpression) => boolean;
+  /** Exact #3521 global underscore replacement inside the linked parser. */
+  readonly fnctorNativeStringReplace?: (call: ts.CallExpression) => boolean;
   /**
    * Exact legacy callable-ABI proof for an unannotated parameter projected as
    * the ordinary non-fast numeric vec. General object/any evidence is not
@@ -8788,6 +8792,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
         }
         if (expr.expression.name.text === "replace") {
+          if (currentSelectionOptions?.fnctorNativeStringReplace?.(expr) === true) {
+            if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
+            return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
+          }
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-backend", expr);
           }
@@ -9770,9 +9778,19 @@ export function buildLocalCallGraph(
           } else if (decls.has(callee)) {
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
+          } else if (currentSelectionOptions?.fnctorNativeStringBoundary?.(node) === true) {
+            if (node.arguments) {
+              for (const argument of node.arguments) visit(argument);
+            }
+            return;
           } else if (
             currentDynamicRuntimeBuildable &&
             callerName === "stringToNumber" &&
+            // Keep the pre-#3521 dynamic compatibility escape restricted to
+            // checker-proven ambient bindings. A source/import binding named
+            // `parseInt` or `parseFloat` must not become an authenticated
+            // runtime boundary when the exact L3 plan is absent.
+            selectorSeesAmbientBinding(node.expression) &&
             parseNumberCallUsesDynamicCarrier(callerName, node) &&
             ((callee === "parseFloat" && node.arguments.length === 1) ||
               (callee === "parseInt" && node.arguments.length === 2))
