@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 9009,
-    "fail": 17,
-    "ce": 3,
+    "pass": 9027,
+    "fail": 1,
+    "ce": 1,
     "skip": 0,
     "total": 9029,
     "pct": 100,
@@ -49,8 +49,8 @@
   {
     "edition": "ES2015",
     "pass": 8414,
-    "fail": 2715,
-    "ce": 574,
+    "fail": 2714,
+    "ce": 575,
     "skip": 1,
     "total": 11704,
     "pct": 72,
@@ -337,8 +337,8 @@
       {
         "name": "tail-call-optimization",
         "pass": 20,
-        "fail": 12,
-        "ce": 1,
+        "fail": 11,
+        "ce": 2,
         "skip": 0,
         "total": 33,
         "pct": 61
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4275,
-    "fail": 1076,
+    "pass": 4292,
+    "fail": 1059,
     "ce": 94,
     "skip": 0,
     "total": 5445,

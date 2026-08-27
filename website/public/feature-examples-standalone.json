@@ -82,7 +82,7 @@
     {
       "name": "arguments object (full)",
       "testCategories": ["language/arguments-object"],
-      "passCount": 136,
+      "passCount": 138,
       "totalCount": 263
     },
     {
@@ -94,7 +94,7 @@
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 165,
+      "passCount": 166,
       "totalCount": 181
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1070,
+      "passCount": 1076,
       "totalCount": 1177
     },
     {
@@ -156,7 +156,7 @@
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 627,
+      "passCount": 628,
       "totalCount": 667
     },
     {
@@ -179,7 +179,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2075,
+      "passCount": 2087,
       "totalCount": 3161
     },
     {
@@ -191,13 +191,13 @@
     {
       "name": "Property accessors (get / set)",
       "testCategories": ["language/expressions/property-accessors"],
-      "passCount": 20,
+      "passCount": 21,
       "totalCount": 21
     },
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1128,
+      "passCount": 1127,
       "totalCount": 1131
     },
     {
