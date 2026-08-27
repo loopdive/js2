@@ -475,6 +475,28 @@ Diffing the two fail sets: **18 rows fixed, 1 regressed.** The single regression
 is `built-ins/Object/getOwnPropertySymbols/proxy-invariant-not-extensible-absent-string-key.js`
 — almost certainly the invariant #4931 was introduced to protect.
 
+**The −1 is itself diagnosed, and it is shallow.** With the gate off, `proxy`
+stays a real host Proxy, and the row needs the host's §10.5.11 invariant check to
+fire. Probed:
+
+```
+var t = { prop: 2 };
+Object.isExtensible(t)                     true    ✓
+Object.preventExtensions(t);
+Object.isExtensible(t)                     false   ✓   extensibility tracking is correct
+Object.getOwnPropertySymbols(new Proxy(t, { ownKeys: () => [] }))
+                                           does NOT throw   ✗
+```
+
+Extensibility is tracked correctly, so the failure is upstream of it: the host's
+check calls `target.[[OwnPropertyKeys]]()` on our wrapped struct, and if the
+wrapper's **`ownKeys` trap** does not report `"prop"`, `targetConfigurableKeys`
+is empty and step 21 never throws. That is a `_wrapForHost` gap, independent of
+the escape gate — the gate flip merely stops hiding it.
+
+Fix that trap and the gate flip becomes **+19 / −0** on this population, which
+would make it a clean decision rather than a trade.
+
 So the real trade is **+18 / −1 inside the Proxy population, plus +1 in ES2016**,
 against one proxy-invariant row. That looks strongly favourable, and it is still
 not mine to flip: the −1 is a genuine conformance regression, the number was
