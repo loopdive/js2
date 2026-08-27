@@ -333,6 +333,7 @@ import {
   fillClosedStructExternGetArms,
   fillClosedStructHasOwnArms,
   fillClosedStructOwnPropertyNamesArms,
+  fillClassObjectNameArms,
   fillDynamicForinVecArms,
   fillExternArrayLikeStructArms,
   fillExternGetIdxVecArms,
@@ -6124,6 +6125,13 @@ export function generateModule(
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch (#866)
     emitToPrimitiveMethodExports(ctx);
 
+    // (#4770) A dynamic `verifyProperty` helper passes a compiled class
+    // constructor through the native MOP boundary. Its singleton `name`
+    // property is not part of the shared class/instance struct fields, so
+    // install the identity-guarded standalone view after all competing MOP
+    // prefixes have been finalized.
+    fillClassObjectNameArms(ctx);
+
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
     // just above). `__to_primitive`'s standalone class arm baked a `call` to the
@@ -9826,6 +9834,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch.
     emitToPrimitiveMethodExports(ctx);
+
+    // (#4770) Multi-source parity for the dynamic class-constructor `name`
+    // property view; see the single-source placement above.
+    fillClassObjectNameArms(ctx);
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /
