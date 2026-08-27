@@ -99,8 +99,42 @@ the existing host helper path.
 
 ## Test results
 
-To be filled with post-change command output, focused test counts, exact
-host/standalone rows, and the local-vs-local A/B partition.
+The implementation adds only the standalone zero-argument arm in
+`src/codegen/expressions/call-namespace-static.ts`; the existing host route and
+argument-bearing arm are unchanged.
+
+The exact post-change harness run used the same pinned artifact, two-worker
+limit, and mandatory positive controls as the baseline:
+
+| lane | target cohort + controls | result | evidence |
+| --- | ---: | --- | --- |
+| JS-host | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/after/host.jsonl` |
+| standalone | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/after/standalone.jsonl` |
+
+The target's local A/B partition is exactly one standalone `compile_error →
+pass` gain, zero losses, and zero other changes:
+
+```text
+before: 1 file, compile_error 1
+after:  4 files, pass 4 (target plus three controls)
+target: fail -> pass 1; pass -> fail 0; other 0
+```
+
+The host target remains `pass → pass` (zero flips).  The three pinned controls
+were independently measured 3/3 pass in each baseline lane and are 3/3 pass
+in each post-change lane:
+
+```text
+test/built-ins/ArrayBuffer/isView/arg-is-not-object.js
+test/built-ins/ArrayBuffer/isView/arg-is-arraybuffer.js
+test/built-ins/ArrayBuffer/isView/arg-has-no-viewedarraybuffer.js
+```
+
+Focused Vitest regression: `tests/issue-4778-arraybuffer-isview-no-arg.test.ts`
+passed **9/9**, including host and standalone runs for all four pins, plus a
+direct standalone compile assertion that `result.imports` is empty.  The
+standalone target therefore no longer emits `env::__get_builtin` for the
+omitted-argument call.
 
 ## Intended files
 
