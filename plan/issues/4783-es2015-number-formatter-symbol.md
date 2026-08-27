@@ -148,6 +148,7 @@ also passed: Prettier, Biome, TypeScript 7, and TypeScript 5.  `git diff
 - Branch: `codex/es2015-next-bounded-fix-7`
 - Plan checkpoint: `2fad13936`
 - Implementation checkpoint: `1dcffcdb0`
+- Current-upstream sync checkpoint: `a43dc325b` (merged `upstream/main` at `4d1001a8`)
 - Upstream PR: to be opened from `ttraenkler:codex/es2015-next-bounded-fix-7` against `loopdive/js2:main`
 - Merge/queue state: hold until the upstream PR is current and CI plus ARM are green; no queue request has been made
 
