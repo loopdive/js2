@@ -1,11 +1,10 @@
 {
   "id": "3522",
-  "assignee": "ttraenkler/codex-ir-lead",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
-  "branch": "codex/3522-field-call-ownership-current",
-  "claimed_at": "2026-08-22T04:29:49Z",
-  "updated_at": "2026-08-27T19:12:55Z",
-  "write_id": "76833-u8qon32d",
-  "released_at": "2026-08-27T19:12:55Z"
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/3522-f2-owner-aware-direct-calls",
+  "claimed_at": "2026-08-27T19:13:02Z",
+  "updated_at": "2026-08-27T19:13:02Z",
+  "write_id": "76823-7fk5fkl4"
 }
