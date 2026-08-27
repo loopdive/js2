@@ -56,6 +56,9 @@ import {
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo } from "./type-coercion.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
+// (#4768) Recover a native generator state after it crosses a known closure
+// parameter's externref ABI, then drain only the binding pattern's steps.
+import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 // (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
 // `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
@@ -1617,6 +1620,61 @@ export function destructureParamArray(
       const dstrDoneLocal = allocLocal(fctx, `__dparam_done_${fctx.locals.length}`, { kind: "i32" });
       fctx.body.push({ op: "i32.const", value: 0 });
       fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+
+      // (#4768) A native generator state can cross a statically known
+      // ordinary call boundary through the closure's externref parameter ABI.
+      // Recover each registered state type before the tuple/host fallback; the
+      // latter cannot iterate a raw WasmGC struct and would silently report
+      // `done` on the first host-protocol step. The bounded drain mirrors
+      // IteratorBindingInitialization: the pattern's elision count is the
+      // maximum number of resume calls, and the caller already returned for
+      // empty-only patterns above (zero steps, no generator execution).
+      const nativeStateInfos = [...ctx.nativeGenerators.values()].filter(
+        (info, index, values) =>
+          values.findIndex((candidate) => candidate.stateTypeIdx === info.stateTypeIdx) === index,
+      );
+      const nativeStateStepLimit = patternIteratorStepCount(pattern.elements);
+      for (const nativeInfo of nativeStateInfos) {
+        const genElemKind = nativeInfo.elemValType.kind === "externref" ? "externref" : "f64";
+        const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
+        const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
+        const genVecLocal = allocLocal(fctx, `__dparam_gen_vec_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: genVecTypeIdx,
+        });
+
+        const savedBody = pushBody(fctx);
+        const nativePathInstrs = fctx.body;
+        try {
+          fctx.body.push({ op: "local.get", index: anyTmp });
+          fctx.body.push({ op: "ref.cast", typeIdx: nativeInfo.stateTypeIdx });
+          emitNativeGeneratorToVec(
+            ctx,
+            fctx,
+            nativeInfo,
+            { kind: "ref", typeIdx: nativeInfo.stateTypeIdx },
+            genVecTypeIdx,
+            genArrTypeIdx,
+            true,
+            nativeStateStepLimit,
+          );
+          fctx.body.push({ op: "local.set", index: genVecLocal });
+          destructureParamArray(ctx, fctx, genVecLocal, pattern, { kind: "ref", typeIdx: genVecTypeIdx }, opts);
+          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+        } finally {
+          popBody(fctx, savedBody);
+        }
+
+        fctx.body.push({ op: "local.get", index: anyTmp });
+        fctx.body.push({ op: "ref.test", typeIdx: nativeInfo.stateTypeIdx });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: nativePathInstrs,
+          else: [],
+        });
+      }
 
       for (let ti = 0; ti < ctx.mod.types.length; ti++) {
         const def = ctx.mod.types[ti];

@@ -13,6 +13,12 @@ language_feature: generators
 goal: spec-completeness
 sprint: current
 horizon: l
+loc-budget-allow:
+  - src/codegen/destructuring-params.ts
+  - src/codegen/generators-native.ts
+func-budget-allow:
+  - src/codegen/destructuring-params.ts::destructureParamArray
+  - src/codegen/generators-native.ts::hostLaneGeneratorUsesAreSafe
 ---
 
 # #4768 — compiled generators run to completion on first host-side next()
@@ -508,14 +514,61 @@ confirmed gate.
 
 ## Acceptance criteria
 
-- [ ] `plain(g())` on an infinite generator consumes **0** steps
-- [ ] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
-- [ ] The 20 `*ary-ptrn-elision.js` rows pass
+- [x] `plain(g())` on an infinite generator consumes **0** steps
+- [x] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
+- [x] The 20 `*ary-ptrn-elision.js` rows pass
 - [ ] No regression across the ES2015 `dstr` families, measured with `--isolate`
-- [ ] No regression in the `GeneratorPrototype/*` families — widening
+- [x] No regression in the `GeneratorPrototype/*` families — widening
       `useIsSafe` is precisely what #3468 and the `result-prototype.js`
       regression note in that walk were caused by
 
+## Measured implementation evidence
+
+The bounded native state carrier is implemented on
+`codex/4768-generator-call-boundary` (PR #5044). Measurements below use the
+pinned `test262` fixture at `b363f29d3c43c626dc852744ad64a0b48a003693` and
+were run on 2026-08-27. The exact selected-row host A/B uses the plan
+checkpoint `2390d0175` as its baseline:
+
+- Host baseline: **0/20 pass** (`{ fail: 20 }`); after: **20/20 pass**
+  (`{ pass: 20 }`).
+- Standalone after: **20/20 pass** (`{ pass: 20 }`).
+- Permanent focused coverage in
+  `tests/issue-4768-generator-call-boundary.test.ts`: **10/10 tests**. It
+  covers an infinite unused plain argument (0 steps), `[]` (0), `[,]` (1),
+  `[, ,]` (2), `[a]` (1), `[a,b]` (2), nested `[[]]` (1), plus unknown and
+  reassignable callees remaining on the conservative eager path (2 steps).
+- Matching same-base controls: the 11 `ary-ptrn-empty.js` rows are **11/11
+  pass** before and after; the 11 `ary-ptrn-elem-id-iter-complete.js` rows are
+  **8 pass / 3 fail** before and after, with identical row verdicts. The three
+  existing statement-form failures are unchanged and are not introduced by
+  this call-boundary lane.
+- GeneratorPrototype host controls: **5 pass / 1 fail** before and after,
+  with byte-identical JSONL verdicts. The lone existing failure is
+  `built-ins/GeneratorPrototype/next/from-state-executing.js` (expected
+  `TypeError` not thrown); `next/result-prototype.js` passes in both runs.
+  The standalone result-prototype probe still has the pre-existing
+  `null`-versus-object failure and is outside this host-lane change.
+- Existing native-generator regression suites (11 focused files, including
+  #2169, #2172, #2571, #2581, #2864, #3032, and #4922): **92/92 tests pass**.
+  Changed-file Biome lint and Prettier checks pass; the changed-file filtered
+  TypeScript check reports no errors (the repository-wide check retains
+  unrelated baseline diagnostics).
+
+Commands and JSONL artifacts:
+
+```text
+node --import tsx scripts/harness-flip-probe.ts --files .tmp/4768-selected-all.txt --target host --timeout 120000 --out .tmp/4768-host-after-final.jsonl
+node --import tsx scripts/harness-flip-probe.ts --files .tmp/4768-selected-all.txt --target standalone --timeout 120000 --out .tmp/4768-standalone-after-final.jsonl
+node_modules/.bin/vitest run tests/issue-4768-generator-call-boundary.test.ts
+node_modules/.bin/vitest run tests/issue-2169-destructure-native-generator.test.ts tests/issue-2169-arrayfrom-native-generator.test.ts tests/issue-2169-spread-native-generator.test.ts tests/issue-2172-nested-native-generator.test.ts tests/issue-1665-standalone-generator-forof.test.ts tests/issue-3032-lazy-generator-expressions.test.ts tests/issue-3032-w4-method-generators.test.ts tests/issue-2571-native-method-generators.test.ts tests/issue-2581-objlit-method-generators.test.ts tests/issue-2864-s2-generator-arguments.test.ts tests/issue-4922-generator-arguments.test.ts
+```
+
+The full 375-row ES2015 `dstr` sweep described in the original reduction was
+not rerun; that criterion intentionally remains unchecked. The exact 20-row
+scope, focused ordinary-call semantics, and same-base GeneratorPrototype
+regression proof are complete. Keep PR #5044 draft until current-main
+integration, required CI, and mergeability are verified by the handoff owner.
 ## Notes
 
 Infinite generators are currently unusable as arguments in compiled code — the
