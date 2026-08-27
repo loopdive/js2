@@ -23,6 +23,99 @@ func-budget-allow:
 
 # #4768 — compiled generators run to completion on first host-side next()
 
+## Post-merge audit: the #5044 standalone regression
+
+**Status: reproduced as a real source regression; bounded repair implemented on
+the follow-up checkpoint branch.** This remains owned by #4768; no separate
+issue is needed.
+
+The merge-group run for PR #5044 was
+[`33066137515`](https://github.com/loopdive/js2/actions/runs/33066137515), with
+candidate merge `c5dc152fc5d7d16512983eab09cf75740070fbd0` and pre-PR parent
+`0d25094e953381672e1b161cc5c4337234b6cad6`. The standalone guard job was
+`merge shard reports` (`98501096552`). Its exact baseline/current comparison
+was 48,735 rows:
+
+```
+                 baseline   candidate   delta
+pass                33,107      32,962    -145
+fail                10,210      10,355    +145
+compile_error         5,291       5,291       0
+compile_timeout          13          13       0
+skip                    114         114       0
+```
+
+The baseline was the `js2wasm-baselines` `main` snapshot checked out by the
+run (commit `2e011fe83a0f244ca82af4c456f8f82a3e05485b2`); the standalone JSONL
+SHA-256 is
+`278931e96d230cdbb92afc8ac54a2e1d73bf7dba6b6d348239cbb23089f22e57`.
+`diff-test262.ts` reports **145 pass→fail**, **0 improvements**, **0
+wasm-identical noise**, **0 timeout transitions**, and all 145 rows have a
+changed wasm hash. The exact regression bucket signature is
+`c12d78255ab4839c` with categories `assertion_fail: 96`, `other: 42`, and
+`type_error: 7`; the four filename families are `rest-ary-elision: 86`,
+`rest-id-elision-next-err: 26`, `rest-ary-empty: 26`, and
+`elem-ary-rest-iter: 7`.
+
+All 145 rows are `scope=standard` and `scope_official=true`. The maintained
+edition classifier places 77 in ES2015, 40 in ES2018 (async iteration), and 28
+in ES2022 (private class methods). The host artifact shares 36 of the 145
+failures (35 `other`, one `runtime_error`); the other 109 are standalone-only.
+That is a source/target interaction, not baseline drift or report arithmetic:
+the failed job ran both lanes, the row set is unchanged, and every regression
+is a real pass→fail with a changed binary.
+
+### Smallest reproduction and cause
+
+Using the maintained `harness-flip-probe.ts`, the pinned QuickJS-ng artifact
+(`954dc53628e36891f93c359aa60895c2ae3dac6b`), wasi-libc
+(`8d8348ec24253d0638a693b8af82445c13d92d32`), clang 18.1.3, and at most two
+workers:
+
+```
+language/expressions/generators/dstr/ary-ptrn-rest-ary-elision.js
+merge parent 0d25094e: pass (deterministic)
+merged #5044 c5dc152f: fail (deterministic)
+```
+
+The failure is `Expected SameValue(«0», «1»)`: #5044's new standalone recovery
+branch calls `patternIteratorStepCount`, whose `-1` sentinel means “unbounded
+rest”, and passes that value to `emitNativeGeneratorToVec` as a step limit.
+The materializer checks `len >= stepLimit` before its first resume, so `0 >= -1`
+stops the generator without resuming it. Nested patterns such as `[[...x]]`
+reach the same condition through the recursive destructurer. The host-only
+known-call safety gate's rest rejection does not protect standalone, where the
+recovery loop was unconditional.
+
+### Bounded repair and evidence
+
+The follow-up checkpoint skips the native state-recovery arm when the current
+binding pattern has an unbounded/rest step count, preserving the pre-#5044
+tuple/host fallback until a rest-aware state carrier exists. Finite patterns
+(`[]`, `[,]`, `[a,b]`, and nested finite patterns) remain on the #5044 bounded
+path. A standalone unit control for `function consume([...[,]]) {}` was added
+to `tests/issue-4768-generator-call-boundary.test.ts`.
+
+Measured after the repair on branch `codex/audit-5044-regressions`:
+
+- the exact three-family sample (elision, iterator-throw, nested-rest) is 3/3
+  pass, matching the pre-#5044 parent;
+- the official ES2015 regression slice is **77/77 pass**;
+- all 145 inherited regression paths are **145/145 pass**, run as 50/50 +
+  50/50 + 45/45 with the assembled-harness controls green;
+- the adjacent native-generator/destructuring suites are **92/92 pass**;
+- TypeScript 7 typecheck, Prettier, and Biome changed-file checks pass.
+
+### Handoff / investigation plan
+
+1. Review and merge the bounded rest guard in the follow-up PR from
+   `codex/audit-5044-regressions`.
+2. Re-run the merge-group standalone guard after that PR lands and verify the
+   145-row cohort has no pass→fail transitions.
+3. Keep the original full 375-row ES2015 `dstr` sweep acceptance item below
+   open; the 77-row official-edition regression cohort is complete, but that
+   broader historical sweep was not claimed by this audit.
+
 
 > **Root cause CONFIRMED** (see the section below), and the fix is **bounded**:
 > the native suspend/resume generator lowering already exists and already
