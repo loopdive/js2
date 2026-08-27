@@ -3510,3 +3510,14 @@ baseline changes. F2 remains `in-progress` work under #3522. F3 dormant
 field-call evidence and F4 bounded admission remain separate post-merge
 checkpoints and inherit the same independent-review, strict-load,
 signed-commit, and unskipped-hook gates.
+
+The post-push kind-neutrality gate found one evidence location made stale by
+the added `integration.ts` lines. The `forof.string` row keeps its existing
+`js` verdict, `dialect` placement, rationale, declaration, and two-entry
+evidence set; only the integration evidence location moves from line 5109 to
+line 5146. The relocked
+baseline SHA-256 is
+`42686323c13fcb8539e82b179efd89a4d2feba10edefc7d4772ca65130a91a42`.
+`check:ir-kind-neutrality` again reports 85 kinds: 55 neutral, 27 JS-dialect,
+and 3 unresolved, with 58 core placements and 27 dialect placements. No row,
+verdict, placement, or phase-two move was added, removed, or widened.
