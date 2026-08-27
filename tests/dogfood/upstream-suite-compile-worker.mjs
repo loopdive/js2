@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { compile, compileProject, instantiateLinkedProject } from "../../src/index.ts";
 import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
@@ -14,12 +14,22 @@ const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
 
 function emit(value, exitCode = 0) {
-  // Every invocation of this worker produces exactly one terminal result.
-  // Write it synchronously before exiting so abandoned upstream timers,
-  // streams, or scheduler handles cannot keep the disposable child alive and
-  // turn a completed test result into an outer worker timeout.
-  writeFileSync(process.stdout.fd, `${JSON.stringify(value)}\n`);
-  process.exit(exitCode);
+  // Every invocation of this worker produces exactly one terminal result, and
+  // the child must not be kept alive by abandoned upstream timers, streams, or
+  // scheduler handles — hence the explicit exit rather than `process.exitCode`.
+  //
+  // Exit only from the write callback, though. The parent captures stdout
+  // through a pipe (`spawn` with stdio "pipe"), and a pipe accepts just its
+  // buffer — 64 KB on Linux — before the rest of the write has to be drained
+  // asynchronously. `writeFileSync(process.stdout.fd, …)` followed by an
+  // immediate `process.exit()` therefore truncated any report larger than that
+  // at exactly 64 KB: cookie's stringify-cookie suite emits ~508 KB, the parent
+  // read a half-written JSON document, `JSON.parse` threw, and all 63,528 tests
+  // in the file were recorded as failures (#4767). Small reports fit the buffer
+  // in one synchronous write, which is why only the largest file regressed.
+  process.stdout.write(`${JSON.stringify(value)}\n`, () => {
+    process.exit(exitCode);
+  });
 }
 
 function errorText(error, instance) {
