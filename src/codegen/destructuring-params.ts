@@ -1475,7 +1475,14 @@ export function destructureParamObject(
       // Coerce struct field type to local's declared type if they differ (#658)
       const objLocalType = getLocalType(fctx, localIdx);
       if (objLocalType && !valTypesMatch(fieldType, objLocalType)) {
-        coerceType(ctx, fctx, fieldType, objLocalType);
+        // A closed object struct stores an absent or explicitly-undefined
+        // numeric field as the UNDEF_F64 sentinel.  Destructuring widened the
+        // destination slot to externref (#3315/#3423), so this is the
+        // identity-carrying f64→externref boundary: recover undefined only
+        // for this binding element while ordinary NaN still boxes as a
+        // number.  The generic f64 coercion deliberately cannot do that,
+        // because an arbitrary computed NaN is a real number.
+        coerceType(ctx, fctx, undefinedPreservingBindingSourceType(element, fieldType), objLocalType);
       }
       fctx.body.push({ op: "local.set", index: localIdx });
       if (isDecl) emitLocalTdzInit(fctx, localName);

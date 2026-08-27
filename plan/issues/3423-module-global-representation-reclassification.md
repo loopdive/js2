@@ -17,8 +17,14 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/destructuring-params.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/object-runtime.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  - src/codegen/destructuring-params.ts::destructureParamObject
 ---
 
 # #3423 — top-level module-global bindings read as undefined under the literal harness
@@ -147,3 +153,39 @@ than this proven array-rest storage path. Do not expand the denominator until
 that path is isolated and separately verified. The interrupted dependency
 provisioning left no artifact in the worktree; the linked dependency and
 pinned QuickJS artifact were used for this checkpoint.
+
+## 2026-08-27 nested-object source-shape checkpoint — exact 11-row denominator
+
+The owned source-shape slice is the 11 exact `obj-ptrn-prop-obj.js` paths in
+the statement/expressions function, generator, async-generator, try, and
+`let`/`const`/`var` contexts. It is intentionally narrower than the historical
+82-row family; no 82-row rerun was performed in this checkpoint.
+
+Fresh controls before the source-boundary fix were the variable representative:
+host run `20260827-015237` = 0/1 and standalone run `20260827-015424` = 0/1,
+both failing with `SameValue(NaN, undefined)`. After the closed-struct f64
+field → externref boundary and shared binding allocation fixes, the exact
+11-row denominator measured as follows (empty filtered shard files are not
+rows):
+
+| run | lane | rows | result |
+| --- | --- | --- | --- |
+| `20260827-022532` | host | 11/11 | pass |
+| `20260827-022648` | standalone | 9/11 | two async-generator resume rows still failed |
+| `20260827-023944` | standalone | 11/11 | pass after async-frame binding-marker fix |
+| `20260827-024058` | host | 11/11 | pass after the same shared fix |
+
+The remaining 2/11 standalone failures were the async-generator expression and
+statement paths. Their entry destructuring had already widened `x`, `y`, and
+`z` to `externref`, but the independently compiled async resume function still
+applied checker-type `__unbox_number` reads. The shared async-frame metadata now
+threads the undefined-preserving pattern-binding marker into that resume context;
+ordinary NaN is still boxed as a number because only the dedicated undefined
+sentinel bit pattern is restored. Permanent host and standalone coverage is in
+`tests/issue-3423-nested-object-dstr.test.ts`.
+
+After narrowing the host runtime edit to the proven string-key property path,
+the exact denominator was re-measured again: standalone run `20260827-025828`
+= 11/11 and host run `20260827-025951` = 11/11. These are the final checkpoint
+results for this branch; the five empty filtered shard files in each run are
+not Test262 rows.
