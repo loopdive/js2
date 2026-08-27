@@ -115,6 +115,30 @@ The adjacent `Symbol.prototype.valueOf` `length.js`, `name.js`, and
 part of this behavior-only cohort. No standalone residual in the selected
 two-row cohort remains.
 
+## Refreshed-upstream verification (2026-08-27)
+
+The branch was synchronized with the current `upstream/main` tip
+`842ea5ca0b161df9fd0d26865075cc1184434361` by the non-rewriting merge commit
+`1e32242a9e9fa84ad6db61394104495803f78f42`. Its delta from that upstream tip
+remains limited to the four files listed in this issue. The behavior fix is
+`a8e36e8ce3119cd754e277adf0dac22856c8a3ea`.
+
+The exact two-row cohort was rerun on that refreshed branch with the
+structural harness controls: host **2/2 pass** and standalone **2/2 pass**,
+with 0 failures, compile errors, compile timeouts, or skips in either lane.
+The focused regression was rerun with at most two workers and reports **8/8
+passed**. The refreshed harness artifacts are:
+
+- host: `.tmp/issue-4776-after-refresh-host.jsonl`
+  (`049c3294a6df45e227dd613e42d4824bb9470c2e95070ca937ca3f373993754a`)
+- standalone: `.tmp/issue-4776-after-refresh-standalone.jsonl`
+  (`314597e80e43844d023467c8e8c0efeb17390b8cae1d07bd49b6e222d1c09b83`)
+
+PR #5065 remains a draft with the hold label while refreshed upstream CI is
+pending; no ready or merge-queue action has been taken. The final handoff
+requires refreshed CI to be fully green and the PR to be clean/mergeable,
+with `mergeQueueEntry: null` verified before any ready/enqueue change.
+
 ## Acceptance
 
 - Both exact rows pass in host and standalone after the change.
