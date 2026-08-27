@@ -297,6 +297,14 @@ function _getOrVivifyFnPrototype(
   if (!_isWasmStruct(obj)) return undefined;
   const existing = _sidecarGet(obj, "prototype");
   if (existing !== undefined) return existing;
+  // (#4771) `f.prototype = undefined` writes a REAL slot value that reads back
+  // as `undefined` — indistinguishable from "never written" by value alone.
+  // Vivifying over it silently restored an object prototype, so §7.3.20 step 5
+  // never saw the non-object the program installed. Presence, not value.
+  if (_canBeWeakKey(obj)) {
+    const sidecar = _wasmStructProps.get(obj);
+    if (sidecar && "prototype" in sidecar) return undefined;
+  }
   // Gate on `__is_closure` when exports are reachable. During the module
   // START function (where acorn's `Parser.prototype.m = fn` writes run)
   // `getExports()` is still undefined — WebAssembly.instantiate has not
@@ -2489,6 +2497,31 @@ function _markAccessorGetterReturn(getterFn: any): any {
  * exception (ReturnIfAbrupt) — it is NOT swallowed.
  */
 const _INSTANCEOF_THROW = 2;
+
+/** (#4771) "this receiver owns no readable `prototype` slot" — distinct from a slot holding `undefined`. */
+const _SLOT_ABSENT: unique symbol = Symbol("js2:prototype-slot-absent");
+
+/**
+ * (#4771) §7.3.20 step 4 `Get(C, "prototype")` when C is a compiled closure.
+ *
+ * The host wrapper `_maybeWrapCallableUnknownArity` mints is an ordinary JS
+ * function with its OWN fresh `.prototype`, so reading `target.prototype`
+ * answers about the BRIDGE, not about the compiled function — `f.prototype =
+ * undefined` stayed invisible and step 5's TypeError never fired. Read the
+ * compiled slot instead, and distinguish "written `undefined`" (a real slot
+ * value, which MUST throw) from "never written" (vivify, as every other reader
+ * of a closure's prototype does).
+ */
+function _compiledFnPrototypeSlot(
+  raw: unknown,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): unknown {
+  if (!_isWasmStruct(raw) || !_canBeWeakKey(raw)) return _SLOT_ABSENT;
+  const sidecar = _wasmStructProps.get(raw as object);
+  if (sidecar && "prototype" in sidecar) return sidecar.prototype;
+  const vivified = _getOrVivifyFnPrototype(raw, callbackState);
+  return vivified === undefined ? _SLOT_ABSENT : vivified;
+}
 function _fnctorInstanceofResult(
   v: any,
   target: Function,
@@ -2617,11 +2650,13 @@ function _instanceofResult(
 
   // §7.3.20 step 4/5: P = Get(target, "prototype"); if Type(P) is not Object →
   // TypeError. Reached only for an object V, per the step-3 short-circuit above.
-  let proto: unknown;
-  try {
-    proto = (target as { prototype?: unknown }).prototype;
-  } catch (e) {
-    throw e;
+  let proto = _compiledFnPrototypeSlot(rawTarget, callbackState);
+  if (proto === _SLOT_ABSENT) {
+    try {
+      proto = (target as { prototype?: unknown }).prototype;
+    } catch (e) {
+      throw e;
+    }
   }
   if (proto === null || proto === undefined || (typeof proto !== "object" && typeof proto !== "function")) {
     return _INSTANCEOF_THROW;
