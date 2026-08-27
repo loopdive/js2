@@ -4,7 +4,7 @@ title: "Standalone: no Wasm-native generator carrier — sync generators leak __
 status: in-progress
 assignee: ttraenkler/codex-es6-closeout
 created: 2026-06-30
-updated: 2026-08-26
+updated: 2026-08-27
 priority: high
 feasibility: hard
 model: gpt-5.6-luna
@@ -19,6 +19,9 @@ umbrella: 2860
 architect_spec: candidate
 loc-budget-allow:
   - src/codegen/generators-native.ts
+  # (#2864 C02) NativeGeneratorInfo carries the optional frame-arguments
+  # metadata consumed by the generator factory/resume pair.
+  - src/codegen/context/types.ts
   # (#2864 wave-2 S1) Three god-files grow, and the growth is overwhelmingly
   # the root-cause notes rather than logic — the executable change is ~30 lines
   # total across all three. Each note is load-bearing because each site had
@@ -62,6 +65,9 @@ func-budget-allow:
   - src/codegen/type-coercion.ts::coerceType
   - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
   - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  # (#2864 C02) registerNativeGenerator grows for the optional arguments field,
+  # mapped metadata, and the corresponding parameter/spill offset alignment.
+  - src/codegen/generators-native.ts::registerNativeGenerator
 ---
 
 # Standalone: Wasm-native generator carrier (sync)
@@ -1740,3 +1746,57 @@ Every selected path appears exactly once below; counts in parentheses are the gr
 - The largest native-refusal group is **C01: 102 rows**, but only 21/102 host-pass controls. It mixes delegation, dstr iterator-close, nested-yield position, computed-name, and arguments shapes. It must not be widened as one bucket.
 - Child routing is explicit: delegation/iterator-close → #2173; reflective/prototype receiver shapes → #2175; new control-flow/yield-position shapes → #2906; frame arguments and named-expression self-binding remain #2864 follow-ups.
 - No host import, skip, fixture, or oracle workaround was introduced in this checkpoint. A subsequent implementation must add standalone semantic pins and rerun all 297 rows plus all 297 host controls before claiming a delta.
+
+### C02 frame-carried `arguments` implementation checkpoint (2026-08-27)
+
+The first bounded C02 slice is now implemented and independently verified. It
+covers the exact **30/57** `arguments-object` rows in the C02 manifest:
+
+| shape | rows | standalone | host control |
+| --- | ---: | ---: | ---: |
+| class declaration generator methods (instance/static) | 10 | 10 pass | 10 pass |
+| class expression generator methods (instance/static) | 10 | 10 pass | 10 pass |
+| generator function expressions | 5 | 5 pass | 5 pass |
+| object-literal generator methods | 5 | 5 pass | 5 pass |
+| **bounded C02 slice** | **30** | **30 pass** | **30 pass** |
+
+The targeted loop used the exact paths in
+`/private/tmp/js2-2864-c02-arguments-paths.txt`, `wrapTest`, and the existing
+`CompilerPool` unified worker with one worker (within the requested two-worker
+ceiling). A standalone `runTest` pass includes the existing zero-host-import
+gate; therefore these 30 rows produced no `__create_generator`/`__gen_*`
+imports. The corresponding host controls all reached the test body and passed.
+The authoritative C02 denominator remains 57 rows (54/57 host-pass controls);
+the other 27 rows remain the dstr/default/self-name follow-ups and are not
+credited to this slice.
+
+Root cause and fix:
+
+- `NativeGeneratorInfo` now records an optional frame `arguments` field, its
+  canonical vec type, source-parameter offset, and mapped-arguments flag.
+- `compileNativeGeneratorFunction` stores the factory's eagerly-created
+  arguments vec in that field. `ensureNativeGeneratorResumeFunction` reloads
+  it into the detached resume context before body compilation and rebuilds
+  `mappedArgsInfo` against the resume parameter indices.
+- Generator-specific parameter and spill offsets advance past the optional
+  field; ordinary generators retain the historical layout. The candidate gate
+  admits this bounded arguments shape while retaining the existing super,
+  capture, rest/default, and plan bails.
+
+Focused semantic pins in
+`tests/issue-2864-s2-generator-arguments.test.ts` cover free declarations,
+call-site extras, function expressions, object/class methods,
+resume-after-yield, mapped writes, and a JS-host control. The focused suite is
+**10/10 green**; the related native-generator regression set is **62 passed,
+3 skipped** (the skips are the pre-existing #3591 stale module-init state
+cases).
+
+Static checks are green after the issue's intentional budget grants:
+
+- `node node_modules/typescript/bin/tsc --noEmit --pretty false`
+- `SKIP_SLOW_PRECOMMIT=1 pnpm run check:loc-budget`
+- `SKIP_SLOW_PRECOMMIT=1 pnpm run check:func-budget`
+
+This is a bounded acceptance checkpoint, not closure of the umbrella: C02's
+remaining 27 rows, C01's 102 native-plan refusals, and the other carrier groups
+remain routed to their documented follow-ups.
