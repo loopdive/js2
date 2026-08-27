@@ -508,6 +508,20 @@ consulted.
 That makes the −1 a `getOwnPropertySymbols`-routing gap, not a wrapper-trap gap.
 Correcting my own note one line above, which blamed the `ownKeys` trap.
 
+**And the runtime half is already correct.** `__getOwnPropertySymbols`
+(`runtime.ts:13192`) does `if (!_isWasmStruct(obj)) return Object.getOwnPropertySymbols(obj)`
+— for a real host Proxy that runs the trap and the §10.5.11 invariant, and would
+throw. So the fold is in **codegen**: `proxy` is typed as its target
+(`{prop: number}`), and the call is answered statically from that type instead of
+reaching the runtime import.
+
+That is the same "the static type is not a fact about this site" shape as the
+#2617 `in` guard and the escape-aware `in` fix in slice 2 — and my two attempts at
+that shape for `Array.isArray` (locals, then module globals) both failed to fire,
+so the slot-type approach is NOT the right instrument here. Find where
+`Object.getOwnPropertySymbols` is folded and gate on the argument being a
+`new Proxy`-derived binding directly.
+
 Fix that trap and the gate flip becomes **+19 / −0** on this population, which
 would make it a clean decision rather than a trade.
 
