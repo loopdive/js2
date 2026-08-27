@@ -1453,6 +1453,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // suspension, and any method with a yield is the #3952 cross-suspend
       // failure, so both retain the conservative host path.
       const classDefaultSafe =
+        el.initializer !== undefined &&
         ts.isClassExpression(el.initializer!) &&
         ts.isMethodDeclaration(decl) &&
         decl.body !== undefined &&
