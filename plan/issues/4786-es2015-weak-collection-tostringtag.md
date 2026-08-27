@@ -26,6 +26,8 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/native-proto.ts
   - src/codegen/native-proto-own-props.ts
+func-budget-allow:
+  - src/codegen/native-proto-own-props.ts::registerNativeProtoHasOwn
 ---
 
 # #4786 — ES2015 standalone WeakMap and WeakSet prototype `Symbol.toStringTag`
