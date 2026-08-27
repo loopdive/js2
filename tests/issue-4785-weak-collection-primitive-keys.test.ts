@@ -1,5 +1,5 @@
 /**
- * #4782 — standalone WeakMap/WeakSet insertion-key TypeErrors.
+ * #4785 — standalone WeakMap/WeakSet insertion-key TypeErrors.
  *
  * The exact two-row cohort exercises nullish, primitive, and registered-symbol
  * insertion keys. The controls retain valid object/symbol insertion and the
@@ -27,7 +27,7 @@ async function run(file: string, target?: "standalone") {
   return runTest262File(join("test262/test", file), file.split("/").slice(0, 2).join("/"), 120_000, target);
 }
 
-describe("#4782 — WeakMap/WeakSet primitive insertion keys", () => {
+describe("#4785 — WeakMap/WeakSet primitive insertion keys", () => {
   it.each(COHORT)("passes the exact host row %s", async (file) => {
     const result = await run(file);
     expect(result.status, `${file}: ${result.reason ?? result.error ?? ""}`).toBe("pass");

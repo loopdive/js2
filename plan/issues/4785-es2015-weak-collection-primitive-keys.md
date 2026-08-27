@@ -1,5 +1,5 @@
 ---
-id: 4782
+id: 4785
 title: "ES2015 standalone WeakMap/WeakSet reject primitive insertion keys"
 status: in-progress
 sprint: current
@@ -18,13 +18,13 @@ assignee: "ttraenkler/codex-es2015-next-bounded-fix-6"
 related: [3395, 864]
 files:
   - src/codegen/weak-collections-runtime.ts
-  - tests/issue-4782-weak-collection-primitive-keys.test.ts
-  - plan/issues/4782-es2015-weak-collection-primitive-keys.md
+  - tests/issue-4785-weak-collection-primitive-keys.test.ts
+  - plan/issues/4785-es2015-weak-collection-primitive-keys.md
 loc-budget-allow:
   - src/codegen/weak-collections-runtime.ts
 ---
 
-# #4782 — ES2015 standalone WeakMap/WeakSet reject primitive insertion keys
+# #4785 — ES2015 standalone WeakMap/WeakSet reject primitive insertion keys
 
 ## Problem
 
@@ -135,7 +135,7 @@ rows report no `env::*` host imports. Raw artifacts are:
 - standalone report/results: `benchmarks/results/test262-standalone-report-20260827-193835.json`,
   `benchmarks/results/test262-standalone-results-20260827-193835.jsonl`
 
-The focused Vitest regression `tests/issue-4782-weak-collection-primitive-keys.test.ts`
+The focused Vitest regression `tests/issue-4785-weak-collection-primitive-keys.test.ts`
 reports **16/16 passed** with at most two compiler workers. Prettier checks,
 TypeScript 7 typecheck, and `git diff --check` pass. The final implementation
 commit and upstream PR handoff remain to be recorded after the repository
