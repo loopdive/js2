@@ -297,6 +297,14 @@ function _getOrVivifyFnPrototype(
   if (!_isWasmStruct(obj)) return undefined;
   const existing = _sidecarGet(obj, "prototype");
   if (existing !== undefined) return existing;
+  // (#4771) `f.prototype = undefined` writes a REAL slot value that reads back
+  // as `undefined` — indistinguishable from "never written" by value alone.
+  // Vivifying over it silently restored an object prototype, so §7.3.20 step 5
+  // never saw the non-object the program installed. Presence, not value.
+  if (_canBeWeakKey(obj)) {
+    const sidecar = _wasmStructProps.get(obj);
+    if (sidecar && "prototype" in sidecar) return undefined;
+  }
   // Gate on `__is_closure` when exports are reachable. During the module
   // START function (where acorn's `Parser.prototype.m = fn` writes run)
   // `getExports()` is still undefined — WebAssembly.instantiate has not
@@ -1663,6 +1671,29 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+/**
+ * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
+ * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a
+ * host-native bound function exposes no `prototype` at all — so without this
+ * edge `x instanceof f.bind()` reads `prototype === undefined` and reports the
+ * §7.3.20 step-5 TypeError instead of forwarding.
+ */
+const _boundFunctionTargets = new WeakMap<Function, unknown>();
+
+/**
+ * (#4771) Remember `bound`'s [[BoundTargetFunction]]. `target` is the ORIGINAL
+ * receiver of `.bind()` — the wasm closure struct when there is one, not the
+ * host bridge that was actually bound, because the bridge carries no prototype
+ * edge back to the compiled function.
+ */
+function _recordBoundTarget(bound: any, target: unknown): any {
+  try {
+    _boundFunctionTargets.set(bound, target);
+  } catch {
+    /* non-extensible / exotic bound value — `instanceof` keeps its old answer */
+  }
+  return bound;
+}
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
 const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
@@ -2466,6 +2497,31 @@ function _markAccessorGetterReturn(getterFn: any): any {
  * exception (ReturnIfAbrupt) — it is NOT swallowed.
  */
 const _INSTANCEOF_THROW = 2;
+
+/** (#4771) "this receiver owns no readable `prototype` slot" — distinct from a slot holding `undefined`. */
+const _SLOT_ABSENT: unique symbol = Symbol("js2:prototype-slot-absent");
+
+/**
+ * (#4771) §7.3.20 step 4 `Get(C, "prototype")` when C is a compiled closure.
+ *
+ * The host wrapper `_maybeWrapCallableUnknownArity` mints is an ordinary JS
+ * function with its OWN fresh `.prototype`, so reading `target.prototype`
+ * answers about the BRIDGE, not about the compiled function — `f.prototype =
+ * undefined` stayed invisible and step 5's TypeError never fired. Read the
+ * compiled slot instead, and distinguish "written `undefined`" (a real slot
+ * value, which MUST throw) from "never written" (vivify, as every other reader
+ * of a closure's prototype does).
+ */
+function _compiledFnPrototypeSlot(
+  raw: unknown,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): unknown {
+  if (!_isWasmStruct(raw) || !_canBeWeakKey(raw)) return _SLOT_ABSENT;
+  const sidecar = _wasmStructProps.get(raw as object);
+  if (sidecar && "prototype" in sidecar) return sidecar.prototype;
+  const vivified = _getOrVivifyFnPrototype(raw, callbackState);
+  return vivified === undefined ? _SLOT_ABSENT : vivified;
+}
 function _fnctorInstanceofResult(
   v: any,
   target: Function,
@@ -2566,6 +2622,15 @@ function _instanceofResult(
     return 0;
   }
 
+  // §7.3.20 step 2: if C has a [[BoundTargetFunction]] slot, the answer is
+  // InstanceofOperator(V, BC) — a bound function never consults its OWN
+  // `prototype` (it has none). Placed before the step-3 primitive short-circuit
+  // so a custom `@@hasInstance` on the bound TARGET still gets its chance.
+  const boundTarget = _boundFunctionTargets.get(target as Function);
+  if (boundTarget !== undefined) {
+    return _instanceofResult(v, boundTarget, callbackState, strict);
+  }
+
   // §13.10.2 step 5: Return OrdinaryHasInstance(target, V). (§7.3.20)
   //
   // ORDER MATTERS (#2702): §7.3.20 step 3 ("If Type(O) is not Object, return
@@ -2585,11 +2650,13 @@ function _instanceofResult(
 
   // §7.3.20 step 4/5: P = Get(target, "prototype"); if Type(P) is not Object →
   // TypeError. Reached only for an object V, per the step-3 short-circuit above.
-  let proto: unknown;
-  try {
-    proto = (target as { prototype?: unknown }).prototype;
-  } catch (e) {
-    throw e;
+  let proto = _compiledFnPrototypeSlot(rawTarget, callbackState);
+  if (proto === _SLOT_ABSENT) {
+    try {
+      proto = (target as { prototype?: unknown }).prototype;
+    } catch (e) {
+      throw e;
+    }
   }
   if (proto === null || proto === undefined || (typeof proto !== "object" && typeof proto !== "function")) {
     return _INSTANCEOF_THROW;
@@ -5529,6 +5596,18 @@ const _fnctorInstanceofHooks: FnctorIoHooks = {
   expectedPrototype: (target, exports) => _getOrVivifyFnPrototype(target, { getExports: () => exports }),
   instancePrototype: _fnctorCtorProto,
   parentPrototype: _structUserProto,
+  recordedPrototype: (instance, exports) => {
+    if (_isWasmStruct(instance) && _canBeWeakKey(instance)) {
+      if (_wasmStructProto.has(instance)) return _wasmStructProto.get(instance);
+      return _fnctorCtorProto(instance, exports);
+    }
+    // A HOST object — `Object.create(new f())` hands back a real JS object whose
+    // [[Prototype]] is the WasmGC struct. §7.3.20 step 7a is literally
+    // `O.[[GetPrototypeOf]]()`, so performing it here is the spec's own step,
+    // and a Proxy trap that throws must propagate (ReturnIfAbrupt) rather than
+    // be swallowed.
+    return Reflect.getPrototypeOf(instance);
+  },
 };
 /** JS-owned objects explicitly admitted through a native dynamic export. */
 const _nativeBoundaryHostObjects = new WeakMap<object, WeakSet<object>>();
@@ -14214,7 +14293,7 @@ assert._isSameValue = isSameValue;
             throw new TypeError("Function.prototype.bind called on non-callable");
           }
           const partial: any[] = _nativeIsArray(argsArray) ? argsArray : [];
-          return Function.prototype.bind.apply(callable, [thisArg, ...partial]);
+          return _recordBoundTarget(Function.prototype.bind.apply(callable, [thisArg, ...partial]), target);
         };
       // (#1337) Invoke an arbitrary callable externref with an arguments array.
       // Used to call values that the codegen knows are JS-functional externrefs

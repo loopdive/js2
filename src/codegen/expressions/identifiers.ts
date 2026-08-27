@@ -2349,7 +2349,7 @@ function identifierHasSourceDeclaration(ctx: CodegenContext, id: ts.Identifier):
  * is not an object, is not callable with no `@@hasInstance`, has a non-callable
  * `@@hasInstance`, or (OrdinaryHasInstance §7.3.20) has a non-object prototype.
  */
-function emitInstanceofThrowGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitInstanceofThrowGuard(ctx: CodegenContext, fctx: FunctionContext): void {
   // stack in: [i32 code]
   const codeLocal = allocLocal(fctx, `__instanceof_code_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.tee", index: codeLocal });
