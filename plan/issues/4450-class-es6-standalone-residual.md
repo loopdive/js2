@@ -126,3 +126,20 @@ prototype metadata cases; these remain assigned to the plan's follow-up lanes.
 - Post-#4447 re-measurement recorded here; remaining sub-buckets fixed or
   re-attributed to #2158/#2864 with evidence, scoped-run measured
   (`TEST262_TARGET=standalone TEST262_PATH_FILTER="language/statements/class|language/expressions/class"`).
+
+## 2026-08-27 Luna/max wave plan — static name/length precedence
+
+The exact bounded slice is four ES2015 class-definition rows:
+`fn-name-static-precedence.js`, `fn-name-static-precedence-order.js`,
+`fn-length-static-precedence.js`, and `fn-length-static-precedence-order.js`.
+The cached host and standalone baselines fail all four; the implementation
+branch must establish fresh controls on the combined PR head.
+
+1. Reduce class static `name`/`length` definition order and descriptor state
+   without entering generator, parameter-destructuring, or subclass machinery.
+2. Fix the shared class-definition metadata path so standard own properties
+   exist before a static method of the same name replaces them, with observable
+   key order and method value preserved.
+3. Add permanent focused tests covering both names and both ordering cases.
+4. Rerun the exact 4/4 rows in host and standalone and record exact evidence,
+   losses, and any residual handoff before integration into draft PR #5010.

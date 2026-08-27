@@ -149,3 +149,18 @@ and add permanent focused coverage before widening shared prototype storage or
 runtime classification. Do not reuse the isolated worktree's broad edits as a
 checkpoint without first splitting and re-proving them. Cluster 4 and cluster
 5 both remain open; no regression is claimed fixed by this handoff.
+
+## 2026-08-27 Luna/max follow-up plan — split OrdinaryHasInstance mechanisms
+
+1. Start clean from the current combined PR head; do not copy the prior broad
+   uncommitted experiment.
+2. Freeze the same exact three cluster-4 rows and reproduce host and standalone
+   controls independently.
+3. First isolate the returned object prototype-chain comparison. Only after it
+   passes, isolate abrupt getter completion as a separate change. Preserve the
+   primitive control throughout.
+4. Limit edits to the smallest OrdinaryHasInstance/prototype-read seam and add
+   permanent tests for getter count, returned prototype identity, and original
+   thrown-object identity.
+5. Rerun exact 3/3 host and standalone evidence. If either mechanism remains
+   unsafe after the time box, commit an issue-only handoff and no source code.

@@ -126,3 +126,23 @@ clusters satisfy the acceptance criteria below.
 - Sub-bucket counts above driven to zero (or re-attributed to #2175 with
   evidence) with scoped-run measurements
   (`TEST262_TARGET=standalone TEST262_PATH_FILTER="built-ins/TypedArray"`).
+
+## 2026-08-27 Luna/max wave plan — exact species cohort
+
+The cached ES2015 baseline joins exactly 11,704 paths. Within it, the exact
+`speciesctor` cohort contains 55 rows: cached host is 45 pass / 10 fail and
+cached standalone is 0 pass / 55 fail. These counts select the cohort only;
+the implementation branch must rerun all 55 rows on the combined PR head before
+and after its change.
+
+1. Freeze the exact 55 paths and separate constructor lookup, `@@species`
+   lookup/defaulting, abrupt completion, invocation arguments, and returned-view
+   validation by row. Do not treat the shared error text as a bucket boundary.
+2. Implement the narrowest shared TypedArraySpeciesCreate path used by `map`,
+   `filter`, `slice`, and `subarray`, preserving lookup order and abrupt values.
+   Do not touch reflection-only method metadata or detached-buffer handling.
+3. Add permanent focused coverage for one success, one default-species case,
+   one abrupt constructor lookup, and one incompatible returned object.
+4. Rerun the exact 55 paths in host and standalone. Record every denominator,
+   any losses, and residual handoff here; integrate only a net-correct proven
+   slice into draft PR #5010.
