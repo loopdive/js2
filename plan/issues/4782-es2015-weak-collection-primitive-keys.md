@@ -140,3 +140,32 @@ reports **16/16 passed** with at most two compiler workers. Prettier checks,
 TypeScript 7 typecheck, and `git diff --check` pass. The final implementation
 commit and upstream PR handoff remain to be recorded after the repository
 push gates complete.
+
+## Current-main verification (2026-08-27)
+
+After the implementation checkpoint, the branch was synchronized with
+`upstream/main` at `4d1001a8cf9dc8f0fd0cbd83385d82e3e3110141` through merge
+commit `2226ffd28`. The exact eight-row A/B slice was then rerun from that
+current-main merge with the same `--official-scope-only`, QuickJS standalone,
+and `COMPILER_POOL_SIZE=2` settings:
+
+- host: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0 skips**;
+  all eight rows are expected host-import passes
+- standalone: **8/8 pass, 0 fail, 0 compile errors, 0 compile timeouts, 0
+  skips**; all eight rows are host-import-free
+- the two target rows and six controls therefore show zero losses after the
+  current-main synchronization
+
+Current-main artifacts:
+
+- host report/results: `benchmarks/results/test262-report-20260827-200143.json`,
+  `benchmarks/results/test262-results-20260827-200143.jsonl`
+- standalone report/results: `benchmarks/results/test262-standalone-report-20260827-200340.json`,
+  `benchmarks/results/test262-standalone-results-20260827-200340.jsonl`
+
+The focused Vitest regression remains **16/16 passed** after the merge. The
+scoped Biome lint, Prettier, TypeScript, diff, oracle-ratchet,
+coercion-site-ratchet, numeric-local IR parity, and issue-integrity checks are
+the repository gates for the pushed checkpoint. PR #5077 remains draft with
+`hold` until its final pushed head is current-main, mergeable, and CI-green;
+the queue entry is intentionally null until then.
