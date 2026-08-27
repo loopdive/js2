@@ -254,8 +254,9 @@ The scoped ES2015 cohort is complete. Dynamic spreads on a function expression
 with declared formal parameters still retain the existing diagnostic because
 they are outside this zero-formal cohort; WASI remains outside this host /
 standalone slice and keeps its prior best-effort route. Those are explicit
-follow-ups, not hidden residual failures. PR #5048 remains draft pending full
-remote CI and mergeability; it is not marked ready from local evidence alone.
-Ownership handoff: `ttraenkler/codex-es6-new-spread`, implementation owner
-`ttraenkler/codex-es6-new-spread`, with the exact artifacts and residual
-follow-ups recorded in this checkpoint.
+follow-ups, not hidden residual failures. After the final pushed head
+`ee9b3927797069da0e121cf8c7fc295198cd96eb`, GitHub reports 25 successful and
+11 expected skipped checks, zero pending/failures, and `MERGEABLE`; PR #5048 is
+ready for review. Ownership handoff: `ttraenkler/codex-es6-new-spread`,
+implementation owner `ttraenkler/codex-es6-new-spread`, with the exact
+artifacts and residual follow-ups recorded in this checkpoint.
