@@ -199,3 +199,43 @@ separate OrdinaryHasInstance mechanisms, then rerun the exact 3/3 controls
 before adding permanent tests. This branch carries issue documentation only;
 the parent agent should transplant the documentation commit onto a clean
 upstream delivery branch and use a draft PR for the handoff.
+
+## 2026-08-27 clean-delivery resumed implementation plan
+
+This branch is the clean `upstream/main` delivery branch behind draft PR #5023;
+do not copy the earlier combined-head experiment.
+
+1. Add focused carrier-identity and abrupt-completion reductions before source
+   edits. The getter must run exactly once in every case.
+2. Resolve the object-result mechanism first: preserve the returned
+   `Array.prototype` identity across the host/native carrier boundary and use
+   that exact value for the prototype-chain comparison.
+3. Resolve the standalone throwing-object mechanism separately, propagating
+   the original thrown object without a boolean/default fallback.
+4. Keep the primitive-return sibling passing and leave cluster 5 undeclared
+   identifier semantics untouched.
+5. Mark PR #5023 ready only after permanent focused tests pass and the exact
+   maintained three-row slice is 3/3 in standalone with zero non-passes; retain
+   host 3/3 as a regression control.
+
+## 2026-08-27 clean-delivery no-gain disposition
+
+The resumed candidate widened accessor returns to externref, classified
+`Function.prototype` as a callable native prototype, added an Array-prototype
+brand arm to dynamic `instanceof`, and preserved the already-read prototype in
+the host fallback. Direct reductions exercised those paths, but the maintained
+Test262 lowering did not improve, so none of those source edits is retained.
+
+Authoritative standalone run `20260827-064940` recorded exactly three rows:
+**1 pass / 2 fail / 0 compile error / 0 compile timeout / 0 skip**. The primitive
+control passed; the object result remained false and the throwing getter still
+lost its expected abrupt completion. Host solo runs `20260827-064356` and
+`20260827-064758` each hit the runner's exact 10-second compile ceiling on the
+throwing-object row while concurrent compiler-heavy tasks were active; they are
+load-contaminated diagnostics, not acceptance evidence.
+
+The source experiment, WAT instrumentation, probe-only test, and generated
+report mirror were restored. PR #5023 remains a draft issue-backed handoff. The
+next implementation must first prove why the Test262 fixture bypasses the
+direct reduction's carrier/classifier path before changing shared closure,
+prototype, or `instanceof` machinery again.
