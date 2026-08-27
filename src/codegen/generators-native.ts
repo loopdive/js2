@@ -1445,10 +1445,23 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         (ts.isFunctionExpression(el.initializer) ||
           ts.isArrowFunction(el.initializer) ||
           ts.isClassExpression(el.initializer));
+      // (#4769) A class-valued default is safe for a ZERO-SUSPEND method in
+      // the class-declaration and object-literal lanes. The factory still
+      // round-trips the class through the state field, but the resume function
+      // runs immediately and never carries it over a yield. Class-expression
+      // methods currently null-dereference the same value even without a
+      // suspension, and any method with a yield is the #3952 cross-suspend
+      // failure, so both retain the conservative host path.
+      const classDefaultSafe =
+        ts.isClassExpression(el.initializer!) &&
+        ts.isMethodDeclaration(decl) &&
+        decl.body !== undefined &&
+        !nodeContainsYield(decl.body) &&
+        (ts.isClassDeclaration(decl.parent) || ts.isObjectLiteralExpression(decl.parent));
       if (
         closureDefault &&
         ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined) ||
-          ts.isClassExpression(el.initializer!) ||
+          (ts.isClassExpression(el.initializer!) && !classDefaultSafe) ||
           ts.isFunctionExpression(decl))
       ) {
         return null;

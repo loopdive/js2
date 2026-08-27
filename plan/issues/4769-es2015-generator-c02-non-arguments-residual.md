@@ -15,6 +15,10 @@ es_edition: 2015
 goal: standalone-mode
 sprint: current
 related: [2864, 4444, 2175, 2906]
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+func-budget-allow:
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
 ---
 
 # #4769 — remaining ES2015 generator C02 residual
@@ -108,17 +112,64 @@ The 27 rows partition by the gates observed in the baseline:
 
 | partition | rows | host pass | current gate / handoff |
 | --- | ---: | ---: | --- |
-| class/object dstr `class {}` inferred-name defaults | 10 | 10 | `buildNativeGeneratorPlan` rejects class-valued element defaults; selected largest cohesive subset |
+| class/object dstr `class {}` inferred-name defaults | 10 | 10 | `buildNativeGeneratorPlan` rejects class-valued element defaults; six safe method rows selected, four class-expression rows remain conservative |
 | dstr arrow/function/class defaults in generator function expressions | 6 | 5 | function-expression host lane and class/generator closure safety; retain conservative bails |
 | `args-unmapped` parameter-default methods | 6 | 6 | arguments/frame plumbing; separate from the excluded 30 paths and hand off to the arguments work |
 | named generator self-binding scope | 3 | 2 | `bodyReferencesOwnName`; strict mutation remains a host failure |
 | object-method rest-parameter scope | 2 | 1 | rest parameter / eval-environment semantics; open scope remains a host failure |
 
-The selected ten rows are the four class-expression method forms, the two
-object-literal method forms, and the four class-declaration method forms whose
-only shared residual is a class-valued destructuring default. They all pass on
-the host baseline; the other 17 remain measured handoffs until their own
-runtime invariant is proved.
+The selected six rows are the two object-literal method forms and the four
+class-declaration method forms whose only shared residual is a class-valued
+destructuring default. The four class-expression method forms have the same
+host-pass baseline but still null-dereference the class value in a zero-suspend
+experiment, so they remain conservative. The other 17 rows remain measured
+handoffs until their own runtime invariant is proved.
+
+## Bounded implementation and outcome
+
+The owning seam is the class-valued element-default gate in
+`buildNativeGeneratorPlan` (`src/codegen/generators-native.ts`). It now admits
+the initializer only when the generator is a method in a class declaration or
+object literal and `nodeContainsYield(decl.body)` is false. This is a
+zero-suspend exception: the factory packs the default class through the frame
+field, the initial resume executes immediately, and no class value crosses a
+yield. Class-expression methods, free generator declarations, generator
+function expressions, and any yielding method retain the existing bail. The
+candidate and registration paths still share the plan result, so no
+host-import/undefined-funcidx disagreement is introduced.
+
+The focused semantic pin is
+`tests/issue-4769-c02-class-defaults.test.ts`. Before the source change it
+failed because the six-row source emitted
+`env::__gen_create_buffer`/`env::__create_generator`; after the change it
+validates, instantiates with `{}`, returns `42`, and keeps a class-expression
+method on the host path.
+
+Post-change exact-run evidence, all with the pinned QuickJS artifact and two
+workers:
+
+| run | target | paths | result | artifact |
+| --- | --- | ---: | --- | --- |
+| `20260827-082656` | standalone | 6 selected | **6/6 pass**, 0 CE, 0 skip, host-free | `benchmarks/results/test262-standalone-report-20260827-082656.json` |
+| `20260827-082808` | gc host control | 6 selected | **6/6 pass**, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-082808.json` |
+| `20260827-083020` | standalone | full 27 | **6/27 pass**, 21 host-import CE, 0 skip | `benchmarks/results/test262-standalone-report-20260827-083020.json` |
+| `20260827-083211` | gc host control | full 27 | **24/27 pass**, the same 3 pre-existing failures, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-083211.json` |
+
+The full standalone run flips exactly the selected six rows. Its 21-row
+residual is unchanged host-import leakage, grouped as follows:
+
+- four class-expression dstr class-name rows (the zero-suspend
+  class-expression null-deref lane);
+- six `args-unmapped` rows (arguments/frame plumbing);
+- six generator function-expression dstr name rows (closure/function-expression
+  lane; includes the host-failing arrow control);
+- three named-generator self-binding scope rows; and
+- two object-method rest-parameter scope rows.
+
+The full host control continues to fail only the three paths already recorded:
+the dstr arrow default, the strict named-generator scope row, and the object
+rest-parameter open row. The non-strict named-generator scope row remains a
+host pass and is part of the residual handoff.
 
 ## Implementation plan
 
