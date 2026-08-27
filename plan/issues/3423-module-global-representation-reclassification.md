@@ -1,14 +1,15 @@
 ---
 id: 3423
 title: "Module-global representation: top-level bindings read as undefined under literal harness — ~600 default reclassifications"
-status: ready
+status: in_progress
 created: 2026-07-18
 priority: medium
 feasibility: hard
 task_type: bugfix
 area: codegen
 goal: test262-conformance
-model: fable
+model: gpt-5.6-luna
+reasoning_effort: max
 sprint: current
 horizon: l
 related: [3370, 3188, 3417]
@@ -69,3 +70,42 @@ Two overlapping representation gaps the correct harness exposes:
 This is genuinely HARD (representation work) — spec first, land incrementally. Likely
 overlaps/merges with #3188; the architect/PO should decide whether to fold this into
 #3188 or keep it as the v8-reclassification-scoped child.
+
+## 2026-08-26 authoritative ES2015 remeasurement and first milestone
+
+The complete authoritative host run `20260826-180615` and standalone run
+`20260826-194014` each contain the same 82 `/dstr/` rows with the exact
+observable mismatch `Expected SameValue(«NaN», «undefined») to be true`. This
+is a stable cross-lane family, not a lane-specific adapter result. Its syntax
+distribution is identical in both reports: 16 statement-class, 16
+expression-class, 9 `for`, 9 `for-of`, 6 object-method, 4 statement-generator,
+4 statement-function, and 18 rows across function/generator/arrow and
+`let`/`const`/`var` contexts.
+
+The source artifacts are:
+
+```text
+/private/tmp/js2-es6-authoritative-measure3/benchmarks/results/test262-results-20260826-180615.jsonl
+/private/tmp/js2-es6-authoritative-measure4/benchmarks/results/test262-standalone-results-20260826-194014.jsonl
+```
+
+The first implementation milestone is deliberately the exact 82-row family,
+not the full historical ~600-row umbrella:
+
+1. Extract the identical 82-path intersection and rerun every path alone in
+   both lanes with pass/fail harness controls before attributing the mismatch.
+2. Reduce at least one `obj-ptrn-prop-obj` and one
+   `ary-ptrn-rest-obj-prop-id` row to prove whether the `NaN` binding is lost at
+   module-global storage, nested destructuring, or closure capture.
+3. Implement the shared representation fix at the owning binding/load path.
+   Preserve TDZ, hoisting, closure capture, and `var`/`let`/`const` distinctions;
+   do not patch Test262 values or route through a host oracle.
+4. Add focused module-global and destructuring controls, then rerun all 82
+   exact paths in host and standalone modes. Record any distinct residual as a
+   follow-up instead of counting it as fixed.
+5. Run TypeScript 5/7, formatting, lint, LOC/function budgets, ratchets, and
+   issue gates; commit and push the worktree branch for integration into the
+   sole upstream draft PR #5010.
+
+Acceptance for this milestone is 82/82 pass in both lanes with no timeout,
+compile error, skip, filter, fixture rewrite, or oracle-only workaround.
