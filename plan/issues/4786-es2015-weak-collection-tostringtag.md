@@ -1,10 +1,11 @@
 ---
 id: 4786
 title: "ES2015 standalone WeakMap and WeakSet prototype Symbol.toStringTag"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-27
 updated: 2026-08-27
+completed: 2026-08-27
 assignee: "ttraenkler/codex-es2015-next-bounded-fix-8"
 priority: high
 horizon: s
@@ -103,9 +104,48 @@ requires the corresponding `"WeakSet"` value and attributes.
   issue's regression test; no changes to WeakMap/WeakSet instance insertion or
   constructor behavior are included.
 
+## Test Results
+
+Post-sync evidence below was collected after merging the current
+`upstream/main` tip `5bdc209f0de611808a701d9b08a0b971d689f12f` into the branch
+(merge commit `3f01cf71910cfe1168a2cc9c957bb6fd00315adb`). The Test262
+submodule remained at `b363f29d3c43c626dc852744ad64a0b48a003693` and every run
+used the required QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` with two compiler workers.
+
+- Clean baseline (source `fb4efeaa5cb2a374d9b6ff87b4eca217a2ab78f1`): exact
+  standalone A/B was 0/2 (both rows failed); exact host control was 2/2.
+  Baseline JSONL SHA-256: standalone
+  `e4df36f897308af6a7b2e0818269045e5a86d0ba818b13918fbc240ea516c204`, host
+  `7ee917934c709e699c6e7b726e98bdb15cc8b69628ae872eba5fc6da17019eab`.
+- Post-sync exact harness A/B: standalone 2/2 and host 2/2, with no compile
+  errors, timeouts, skips, or control loss. JSONL SHA-256: standalone
+  `737ef305b80435fbaaaee2beb31759ee78099c5f41bddaedacfad395caaa4449`, host
+  `7ee917934c709e699c6e7b726e98bdb15cc8b69628ae872eba5fc6da17019eab`.
+- Post-sync repeat/determinism probes: standalone 2/2 and host 2/2, each with
+  `nondeterministic: 0`.
+- Focused Vitest regression file `tests/issue-4786-weak-collection-tostringtag.test.ts`:
+  6/6 tests passed (both exact rows in both lanes plus descriptor/identity
+  controls in both lanes).
+- Authoritative maintained runner, narrowed only to this official cohort with
+  `TEST262_PATH_FILTER_FILE` and two matching local shards:
+  `TEST262_TARGET=standalone TEST262_WORKERS=2 COMPILER_POOL_SIZE=2`
+  `pnpm run test:262 --official-scope-only` — 2/2 pass, 0 fail, 0 compile
+  errors, 0 timeouts, 0 skips, 2 host-free passes. Results JSONL SHA-256
+  `8943c8b3961fc049ff50d37543d7733416d44be40a7a16047f65d3510d3b0b60` and
+  report SHA-256 `508160a793451aa0387c354f68d7759dade2b089885150debccbc605feb3487b`.
+- An unfiltered `pnpm run test:262 --official-scope-only` invocation was also
+  started as a full-scope diagnostic. The two-worker local run spent over 17
+  minutes in pre-existing shard-10 generator/Unicode/TypedArray failures and
+  timeouts before interruption; it had not reached either #4786 row. The
+  complete scoped authoritative run above is the acceptance result for this
+  bounded cohort.
+
 ## Handoff
 
 Worktree: `/private/tmp/js2-es2015-next-bounded-fix-8`.
 Branch: `codex/es2015-next-bounded-fix-8`.
-The source checkpoint and exact A/B artifacts will be recorded here after the
-focused implementation and current-main verification.
+Source commits: `fae00a578a` (plan/claim) and `019109f311` (implementation);
+current-main merge: `3f01cf7191`.
+The branch is ready for the separate upstream PR for #4786. No WeakMap/WeakSet
+instance insertion or constructor code was changed.
