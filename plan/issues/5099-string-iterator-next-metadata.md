@@ -19,6 +19,7 @@ func-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 files:
   - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/call-builtin-static.ts
   - tests/issue-5099.test.ts
 ---
 
@@ -75,13 +76,17 @@ the exact pristine bootstrap query:
 - `tests/issue-5099.test.ts` covers both exact Test262 rows in host and
   standalone plus a descriptor/metadata regression control in each lane.
 
-Validation on `220ce6c4913ddb10e6af0417dcf4d3aef6470220` plus this patch:
+Validation on `220ce6c4913ddb10e6af0417dcf4d3aef6470220` plus this patch, and
+repeated after synchronizing with `upstream/main` at `857b343f344d566f3f382168a8538dd8dca26f2c`:
 
 - authoritative standalone first run: `2/2` pass; host first run: `2/2` pass;
   each run's positive controls reported both pass and fail outcomes;
 - authoritative standalone repeat: `2/2` pass, `nondeterministic: 0`; host
   repeat: `2/2` pass, `nondeterministic: 0`;
 - focused Vitest regression: `6/6` tests passed with one fork (max two workers).
+
+- synchronized-tree repeat: host `2/2` and standalone `2/2`, each with both
+  structural controls and `nondeterministic: 0`.
 
 Draft PR #5103 remains held and outside the merge queue until repository
 quality gates and CI are green; then it can be marked ready and enqueued.
