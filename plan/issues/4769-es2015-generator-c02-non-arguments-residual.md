@@ -112,23 +112,25 @@ The 27 rows partition by the gates observed in the baseline:
 
 | partition | rows | host pass | current gate / handoff |
 | --- | ---: | ---: | --- |
-| class/object dstr `class {}` inferred-name defaults | 10 | 10 | `buildNativeGeneratorPlan` rejects class-valued element defaults; six safe method rows selected, four class-expression rows remain conservative |
+| class/object dstr `class {}` inferred-name defaults | 10 | 10 | Initially rejected by `buildNativeGeneratorPlan`; six class/object method rows landed first, and the four class-expression rows are covered by the next bounded cluster below |
 | dstr arrow/function/class defaults in generator function expressions | 6 | 5 | function-expression host lane and class/generator closure safety; retain conservative bails |
 | `args-unmapped` parameter-default methods | 6 | 6 | arguments/frame plumbing; separate from the excluded 30 paths and hand off to the arguments work |
 | named generator self-binding scope | 3 | 2 | `bodyReferencesOwnName`; strict mutation remains a host failure |
 | object-method rest-parameter scope | 2 | 1 | rest parameter / eval-environment semantics; open scope remains a host failure |
 
-The selected six rows are the two object-literal method forms and the four
-class-declaration method forms whose only shared residual is a class-valued
-destructuring default. The four class-expression method forms have the same
-host-pass baseline but still null-dereference the class value in a zero-suspend
-experiment, so they remain conservative. The other 17 rows remain measured
-handoffs until their own runtime invariant is proved.
+The initial selected six rows were the two object-literal method forms and the
+four class-declaration method forms whose only shared residual is a class-valued
+destructuring default. The four class-expression method forms had the same
+host-pass baseline but initially null-dereferenced the class value in a
+zero-suspend experiment. They are addressed by the next bounded cluster below;
+the other 17 rows remain measured handoffs until their own runtime invariant is
+proved.
 
 ## Bounded implementation and outcome
 
-The owning seam is the class-valued element-default gate in
-`buildNativeGeneratorPlan` (`src/codegen/generators-native.ts`). It now admits
+The owning seam for the initial six-row checkpoint was the class-valued
+element-default gate in
+`buildNativeGeneratorPlan` (`src/codegen/generators-native.ts`). It admitted
 the initializer only when the generator is a method in a class declaration or
 object literal and `nodeContainsYield(decl.body)` is false. This is a
 zero-suspend exception: the factory packs the default class through the frame
@@ -213,7 +215,7 @@ PATH=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node
   --reporter=dot
 ```
 
-It produced **4 files passed, 45 tests passed, 1 skipped, 1 failed**. The only
+It produced **4 files passed, 46 tests passed, 1 skipped, 1 failed**. The only
 failure was the pre-existing `tests/issue-2756.test.ts` class-expression
 default-materialization case (`TypeError: [object Object] is not a
 constructor`), reproduced with the source gate reverted; the four task-related
@@ -227,6 +229,50 @@ upstream draft PR
 [#5037](https://github.com/loopdive/js2/pull/5037), sourced from
 `ttraenkler/js2` and targeting `loopdive/js2:main`; the PR remains draft until
 the parent agent confirms the implementation push and refreshed CI.
+
+## Next bounded cluster: class-expression method defaults
+
+The next largest cohesive host-pass partition is the four class-expression
+method rows in the manifest (two instance and two static forms). A direct
+admission probe initially reproduced the recorded null dereference: the
+class-expression method's native resume plan inferred an anonymous class-valued
+binding as the enclosing class's GC ref, while the factory emitted the default
+class as a closure-backed externref. The narrow correction keeps only
+zero-suspend class-expression methods in this partition and records those
+class-valued bindings at the boundary `externref` representation. Yielding
+class-expression methods, generator-valued defaults, and function-expression
+generator lanes retain their existing bails.
+
+The focused control `tests/issue-4769-c02-class-defaults.test.ts` now has
+**3/3 tests passing**: the prior six class/object methods, four zero-suspend
+class-expression methods, and a yielding class-expression host-path guard.
+
+The exact four-row acceptance denominator is:
+
+```text
+test/language/expressions/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js
+test/language/expressions/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-class.js
+test/language/expressions/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-class.js
+test/language/expressions/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-class.js
+```
+
+Exact post-change runs used the pinned QuickJS artifact, two workers, and
+`--official-scope-only`:
+
+| run | target | paths | result | artifact |
+| --- | --- | ---: | --- | --- |
+| `20260827-090824` | standalone | 4 selected | **4/4 pass**, 0 CE, 0 skip, host-free | `benchmarks/results/test262-standalone-report-20260827-090824.json` |
+| `20260827-090948` | gc host control | 4 selected | **4/4 pass**, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-090948.json` |
+| `20260827-091351` | standalone | full 27 | **10/27 pass**, 17 host-import CE, 0 skip | `benchmarks/results/test262-standalone-report-20260827-091351.json` |
+| `20260827-091542` | gc host control | full 27 | **24/27 pass**, 3 fail, 0 CE, 0 skip | `benchmarks/results/test262-report-20260827-091542.json` |
+
+The full standalone run flips exactly the four class-expression rows in this
+cluster in addition to the prior six. The remaining 17 host-import compile
+errors are unchanged: six `args-unmapped` rows (arguments/frame plumbing), six
+generator function-expression dstr-name rows (known function-expression
+generator trap), three named-generator self-binding scope rows, and two
+object-method rest-parameter scope rows. The host full run retains the same
+three pre-existing failures documented above.
 
 ## Implementation plan
 

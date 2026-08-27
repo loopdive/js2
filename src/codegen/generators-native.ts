@@ -1419,8 +1419,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       //     (NamedEvaluation, #1450/#1119/#1049). ADMITTED.
       //   GENERATOR function expression (`[g = function*(){}]`) → objlit lane
       //     traps at runtime. STILL BAILS.
-      //   CLASS expression (`{ K = class {…} }`) → "dereferencing a null pointer"
-      //     in BOTH the objlit and class lanes. STILL BAILS.
+      //   CLASS expression (`{ K = class {…} }`) → the zero-suspend class/object
+      //     method lane is admitted by #4769 with an externref spill; yielding
+      //     methods and generator-function-expression lanes retain the bail.
       //
       // Note #3386's cited evidence is stale: the shape it named — the #3164
       // host-mix fixture `*method([gen = function*(){}] = [])` in the CLASS lane —
@@ -1446,19 +1447,23 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           ts.isArrowFunction(el.initializer) ||
           ts.isClassExpression(el.initializer));
       // (#4769) A class-valued default is safe for a ZERO-SUSPEND method in
-      // the class-declaration and object-literal lanes. The factory still
-      // round-trips the class through the state field, but the resume function
-      // runs immediately and never carries it over a yield. Class-expression
-      // methods currently null-dereference the same value even without a
-      // suspension, and any method with a yield is the #3952 cross-suspend
-      // failure, so both retain the conservative host path.
+      // the class-declaration, class-expression, and object-literal lanes. The
+      // factory round-trips the class through the state field, but the resume
+      // function runs immediately and never carries it over a yield. In the
+      // class-expression lane TypeScript can alias an anonymous default class
+      // to the enclosing class's GC type; keeping these bindings at the
+      // boundary `externref` representation avoids that identity collision and
+      // lets the normal dynamic property path observe the constructor name.
+      // Methods with a yield retain the #3952 cross-suspend host path.
       const classDefaultSafe =
         el.initializer !== undefined &&
         ts.isClassExpression(el.initializer!) &&
         ts.isMethodDeclaration(decl) &&
         decl.body !== undefined &&
         !nodeContainsYield(decl.body) &&
-        (ts.isClassDeclaration(decl.parent) || ts.isObjectLiteralExpression(decl.parent));
+        (ts.isClassDeclaration(decl.parent) ||
+          ts.isObjectLiteralExpression(decl.parent) ||
+          ts.isClassExpression(decl.parent));
       if (
         closureDefault &&
         ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined) ||
@@ -1468,7 +1473,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         return null;
       }
       const elemTsType = ctx.checker.getTypeAtLocation(el);
-      const bindType = resolveBindingElementType(el, elemTsType, (t) => resolveWasmType(ctx, t));
+      const bindType =
+        classDefaultSafe && ts.isClassExpression(decl.parent)
+          ? { kind: "externref" as const }
+          : resolveBindingElementType(el, elemTsType, (t) => resolveWasmType(ctx, t));
       const safe = spillSafeValType(bindType);
       if (!safe) return null;
       patternParamSpillTypes.set(id.text, safe);
