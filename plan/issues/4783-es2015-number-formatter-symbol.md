@@ -1,7 +1,7 @@
 ---
 id: 4783
 title: "ES2015 Number formatter Symbol-argument coercion"
-status: in-progress
+status: review
 created: 2026-08-27
 updated: 2026-08-27
 priority: medium
@@ -110,8 +110,46 @@ missing or wrong exception values in standalone mode.
 
 ## Test results
 
-_To be filled with the pre-change baseline, post-change A/B evidence, controls,
-determinism, and final handoff before marking this issue done._
+The implementation routes the statically known Symbol argument through
+`emitSymbolArgToNumberThrow` before the existing numeric formatter coercion in
+all three direct-call branches.  Receiver and argument evaluation order is
+unchanged, and dynamic/element-access calls remain on their existing paths.
+
+The post-change authoritative runs used the same pinned Test262 checkout,
+QuickJS artifact, exact six-row filter, and two compiler workers as the
+baseline.  They reached every row with no skip, compile error, or timeout:
+
+| lane | run | target result | controls | report JSONL SHA-256 |
+| --- | --- | --- | --- | --- |
+| JS-host | `20260827-193607` | 3/3 pass | 3/3 pass | `3f5c605c72a0ff1b2284d054c3b5c0948d27d0c3e63e4b6c4f7eb109c11046a9` |
+| standalone | `20260827-193728` | 3/3 pass | 3/3 pass | `5cf62ce45edffb240eb57f01ab4cc4a806658c55bd0424b17b02cd358d1d0283` |
+
+Compared with the baseline artifacts above, this is exactly two host
+fail-to-pass flips and three standalone fail-to-pass flips, with zero
+pass-to-fail losses.  The host's pre-existing dynamic host-import diagnostics
+are unchanged for this cohort; the standalone direct-compile probes succeed
+with zero `env` imports.
+
+Repeat runs with the same filter and worker limit were also clean:
+
+| lane | repeat run | result | report JSONL SHA-256 |
+| --- | --- | --- | --- |
+| JS-host | `20260827-194701` | 6/6 pass | `16a448062e72256a434424b028fe3e65f0031ded3b71cbbd78ec74983756b0d9` |
+| standalone | `20260827-195645` | 6/6 pass | `4ee2c4319d0ec33b525a723a0c5bba6c7aee3c206a25aab6c671950ab7582bc3` |
+
+Focused regression coverage passed `13/13` (six authoritative rows in each
+lane plus three standalone no-host-import probes).  The focused source gates
+also passed: Prettier, Biome, TypeScript 7, and TypeScript 5.  `git diff
+--check` is clean.
+
+## Handoff
+
+- Worktree: `/private/tmp/js2-es2015-next-bounded-fix-7`
+- Branch: `codex/es2015-next-bounded-fix-7`
+- Plan checkpoint: `2fad13936`
+- Implementation checkpoint: `1dcffcdb0`
+- Upstream PR: to be opened from `ttraenkler:codex/es2015-next-bounded-fix-7` against `loopdive/js2:main`
+- Merge/queue state: hold until the upstream PR is current and CI plus ARM are green; no queue request has been made
 
 ## Intended files
 
