@@ -216,6 +216,27 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     ]);
   });
 
+  it("keeps a caller-certified atomic population together after its final IR edge disappears", () => {
+    const f = fixture();
+    const input = {
+      module: { functions: [irFunction(f.first), irFunction(f.second)] },
+      terminalUnitIds: new Set([f.first.id, f.second.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), sourceCallableEntry(f.second.id)]),
+    };
+
+    expect(derivePreparedComponentDependencies(input).components).toHaveLength(2);
+    const atomic = derivePreparedComponentDependencies({ ...input, atomicTerminalPopulation: true });
+    expect(atomic.components).toHaveLength(1);
+    expect(atomic.components[0]).toMatchObject({
+      id: `prepared-component:${[f.first.id, f.second.id].sort().join("+")}`,
+      status: "complete",
+      terminalUnitIds: [f.first.id, f.second.id].sort(),
+    });
+    expect(atomic.componentByTerminalUnitId.get(f.first.id)).toBe(atomic.components[0]);
+    expect(atomic.componentByTerminalUnitId.get(f.second.id)).toBe(atomic.components[0]);
+  });
+
   it("keeps the local component atomic when the callee ABI reservation is missing", () => {
     const f = fixture();
     const call: IrInstr = {

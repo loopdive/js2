@@ -419,6 +419,7 @@ export function sealDependencyCompletePreparedComponents(
     readonly ctx: CodegenContext;
     readonly entries: readonly PreparedComponentArtifactEntry[];
     readonly inventory: IrUnitInventory;
+    readonly atomicTerminalPopulation?: boolean;
     readonly callableImports: ReadonlyMap<string, Import>;
     readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
     readonly onSealFailure: PreparedComponentSealFailureHandler;
@@ -484,6 +485,7 @@ export function sealDependencyCompletePreparedComponents(
     derivePreparedComponentDependencies({
       module: { functions: entries.map((entry) => entry.fn) },
       terminalUnitIds: candidateTerminalUnitIds,
+      ...(input.atomicTerminalPopulation ? { atomicTerminalPopulation: true } : {}),
       inventory,
       derivedUnits,
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
