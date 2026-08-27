@@ -1970,6 +1970,21 @@ export function compileTypeofExpression(
     ) {
       forceRuntimeTypeof = true;
     }
+    // (#2573) An empty object pinned to the open runtime store can acquire a
+    // property after its declaration, including a later `null`/`undefined`
+    // write. Its evolved checker type still reports the widened field's
+    // primitive carrier, so folding `typeof obj.length` would answer
+    // "number" even when the runtime store returns the canonical undefined.
+    // Keep the exact receiver/key read on the runtime path in both lanes; the
+    // dynamic property reader already preserves explicit null and accessors.
+    if (
+      !forceRuntimeTypeof &&
+      ts.isPropertyAccessExpression(bareTdz) &&
+      ts.isIdentifier(bareTdz.expression) &&
+      ctx.objectHashConsumerVars.has(bareTdz.expression.text)
+    ) {
+      forceRuntimeTypeof = true;
+    }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
     // the binding is ASSIGNED elsewhere in the source must NOT const-fold: TS
     // does not apply assignments made inside nested closures to the outer flow,
