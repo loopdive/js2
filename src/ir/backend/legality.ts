@@ -127,7 +127,10 @@ export interface IrBackendLegalityError {
 
 /** Optional finalized ABI authority used only by the WasmGC fnctor seam. */
 export interface IrBackendFnctorResolver {
-  resolveFnctor?(shape: IrFnctorShape): unknown | null;
+  resolveFnctor?(shape: IrFnctorShape): {
+    readonly supportsConstruction: boolean;
+    readonly supportsFieldGet: boolean;
+  } | null;
 }
 
 export function verifyIrBackendLegality(
@@ -138,12 +141,9 @@ export function verifyIrBackendLegality(
   const errors: IrBackendLegalityError[] = [];
   const checkedClassShapes = new Set<IrClassShape>();
   const checkType = (type: IrType, block: number | undefined, where: string): void => {
-    const fnctorResolved =
-      type.kind === "fnctor" &&
-      backend === "wasmgc" &&
-      fnctorResolver !== undefined &&
-      fnctorResolver.resolveFnctor !== undefined &&
-      fnctorResolver.resolveFnctor(type.shape) !== null;
+    const fnctorHandle =
+      type.kind === "fnctor" && backend === "wasmgc" ? fnctorResolver?.resolveFnctor?.(type.shape) : null;
+    const fnctorResolved = fnctorHandle !== null && fnctorHandle !== undefined && fnctorHandle.supportsFieldGet;
     const msg = backendTypeError(backend, type, fnctorResolved);
     if (msg) errors.push({ message: `${where}: ${msg}`, func: func.name, block });
     checkNestedTypeShapes(type, block, where, checkType, checkedClassShapes);
@@ -188,8 +188,15 @@ function checkInstr(
   // backends and resolver-free callers remain fail-closed.
   if (instr.kind === "fnctor.new" || instr.kind === "fnctor.get") {
     if (backend !== "wasmgc") reject("nominal fnctor instruction is only legal for the WasmGC ABI");
-    else if (!fnctorResolver?.resolveFnctor || fnctorResolver.resolveFnctor(instr.shape) === null) {
-      reject("nominal fnctor instruction requires an explicit validated resolver");
+    else {
+      const lowering = fnctorResolver?.resolveFnctor?.(instr.shape);
+      const supported =
+        lowering !== null &&
+        lowering !== undefined &&
+        (instr.kind === "fnctor.new" ? lowering.supportsConstruction : lowering.supportsFieldGet);
+      if (!supported) {
+        reject("nominal fnctor instruction requires an explicit validated resolver");
+      }
     }
   }
 

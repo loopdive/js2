@@ -6,7 +6,8 @@ import { compile } from "../src/index.js";
 // `arr.values()`/`.keys()` reaching the generic for-of consumer (i.e. stored in
 // a variable, escaping the direct #681 recognizer) now lower to a pure-Wasm
 // canonical-vec iterator record + native __iterator/__iterator_next, with NO
-// __iterator*/__array_* host imports. `.entries()` (pair-shaped) is deferred.
+// __iterator*/__array_* host imports. Fixed pair `.length` and tuple-boundary
+// reads are covered below; other stored-pair indexed reads remain deferred.
 
 const ITER_HOST_IMPORT_RE = /__(?:async_)?iterator|__array_(?:entries|keys|values)/;
 
@@ -117,8 +118,10 @@ describe("#1320 Slice 1 standalone iterator bridge", () => {
   // consumers that route via __iterator_rest (spread) and the for-of drive.
   // (Indexed `pair[0]` read and `[k,v]` array-dstr over a *stored* entries()
   // depend on the open-any element-retrieval layer (#1888 S5/#2177) and are
-  // covered there; the direct `for ([k,v] of arr.entries())` form is native via
-  // the #681 recognizer and is exercised in issue-681-standalone-iterators.)
+  // covered there. The fixed tuple helper below additionally checks indexed
+  // values after the tuple-typed boundary; the direct `for ([k,v] of
+  // arr.entries())` form is native via the #681 recognizer and is exercised in
+  // issue-681-standalone-iterators.)
 
   it("drives a stored arr.entries() through native for-of (no host import)", async () => {
     // Each yielded pair is a 2-element $ObjVec → pair.length === 2.
@@ -132,6 +135,23 @@ describe("#1320 Slice 1 standalone iterator bridge", () => {
         }
       `),
     ).toBe(2 + 2 + 2);
+  });
+
+  it("preserves entries pair contents and length through a tuple helper", async () => {
+    // The tuple boundary must retain both values and the fixed pair arity.
+    expect(
+      await runStandalone(`
+        export function f(): number {
+          function add(pair: [number, number]): number {
+            return pair[0] + pair[1] + pair.length;
+          }
+          const it = [10, 20, 30].entries();
+          let n: number = 0;
+          for (const pair of it) { n = n + add(pair); }
+          return n;
+        }
+      `),
+    ).toBe(69);
   });
 
   it("spreads a stored arr.entries() into an array of pairs (no host import)", async () => {
@@ -174,5 +194,26 @@ describe("#1320 Slice 1 standalone iterator bridge", () => {
     noIterHostImports(r);
     const { instance } = await WebAssembly.instantiate(r.binary, {});
     expect((instance.exports as { f: () => number }).f()).toBe(2 + 2);
+  });
+
+  it("preserves entries pair contents and length through a tuple helper under --target wasi", async () => {
+    const r = await compile(
+      `
+        export function f(): number {
+          function add(pair: [number, number]): number {
+            return pair[0] + pair[1] + pair.length;
+          }
+          const it = [10, 20].entries();
+          let n: number = 0;
+          for (const pair of it) { n = n + add(pair); }
+          return n;
+        }
+      `,
+      { target: "wasi" },
+    );
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    noIterHostImports(r);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as { f: () => number }).f()).toBe(35);
   });
 });

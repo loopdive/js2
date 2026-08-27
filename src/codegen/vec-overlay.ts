@@ -111,6 +111,7 @@ import {
   allowedCarriers,
   carrierDefaultInstrs,
   carrierRefWriteBack,
+  type CarrierDefaultMode,
   type OverlayCarrier,
 } from "./vec-overlay-carriers.js";
 
@@ -853,15 +854,14 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
    * has to exist so length/iteration see the index. Intermediate holes read
    * as the carrier default (null/0) rather than undefined — the documented
    * S1/S3 boundary (real hole semantics ride with ArraySetLength, and the
-   * dominant cluster shape `var arr = []` is an externref carrier whose null
-   * default observes as undefined-ish).
+   * dominant `var arr = []` shape is an externref carrier whose null default observes as undefined-ish).
    */
-  const growDefaultArms = (anyLocal: number, idxLocal: number, externAsUndefined = false): Instr[] => {
+  const growDefaultArms = (anyLocal: number, idxLocal: number, mode: CarrierDefaultMode = "default"): Instr[] => {
     const arms: Instr[] = [];
     for (const c of carriers) {
       const elemSetIdx = ensureVecElemSet(ctx, c.vecTypeIdx);
       if (elemSetIdx === null) continue;
-      const defaultVal = carrierDefaultInstrs(ctx, c, externAsUndefined, missExtern);
+      const defaultVal = carrierDefaultInstrs(ctx, c, mode, missExtern);
       arms.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: c.vecTypeIdx },
@@ -1252,7 +1252,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                           { op: "i32.const", value: 1 },
                           { op: "i32.sub" },
                           { op: "local.set", index: 17 },
-                          ...growDefaultArms(4, 17),
+                          ...growDefaultArms(4, 17, "holes"),
                         ],
                       },
                     ],
@@ -1623,7 +1623,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: growDefaultArms(4, 7, /* externAsUndefined */ true),
+          then: growDefaultArms(4, 7, "undefined"),
         },
         { op: "local.get", index: 0 },
       ];

@@ -307,7 +307,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
           { op: "local.set", index: OLEN },
           { op: "local.get", index: IDX },
           { op: "local.get", index: OLEN },
-          { op: "i32.gt_s" },
+          { op: "i32.gt_u" },
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -334,7 +334,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     { op: "i32.add" },
     { op: "local.get", index: VEC },
     { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
-    { op: "i32.gt_s" },
+    { op: "i32.gt_u" },
     {
       op: "if",
       blockType: { kind: "empty" },

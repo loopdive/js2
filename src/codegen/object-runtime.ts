@@ -113,6 +113,7 @@ import {
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
+import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -170,6 +171,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
+import { buildTemplateRawGetArm } from "./object-runtime-template-raw.js";
 import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983) strict [[Set]] TypeError
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -179,6 +181,7 @@ import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // 
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
+import { allocatedStructTypeIndices } from "./walk-instructions.js";
 import {
   type ColdFieldLocation,
   coldFieldNameAt,
@@ -1123,44 +1126,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // Look up an already-emitted native string helper.
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals")!;
-  // A tagged-template callback written in JavaScript commonly leaves its
-  // `strings` parameter as `any`, so its `.raw` read reaches this dynamic
-  // property helper rather than the statically typed vec dispatcher. The
-  // template object is a WasmGC subtype of the ordinary vec; recognize only
-  // the exact `raw` key and return the extra field when the runtime value has
-  // that subtype. Other keys and other receivers continue through the normal
-  // object/vec/closure lookup ladder.
-  const templateVecTypeIdx = ctx.templateVecTypeIdx;
-  const templateRawGetArm: Instr[] =
-    templateVecTypeIdx >= 0 && strFlattenIdx !== undefined && strEqualsIdx !== undefined
-      ? [
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: anyStrTypeIdx },
-          { op: "call", funcIdx: strFlattenIdx },
-          ...nativeStringLiteralInstrs(ctx, "raw"),
-          { op: "call", funcIdx: strEqualsIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 4 },
-              { op: "ref.test", typeIdx: templateVecTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 4 },
-                  { op: "ref.cast", typeIdx: templateVecTypeIdx },
-                  { op: "struct.get", typeIdx: templateVecTypeIdx, fieldIdx: 2 },
-                  { op: "extern.convert_any" },
-                  { op: "return" },
-                ],
-              },
-            ],
-          },
-        ]
-      : [];
+  const templateRawGetArm = buildTemplateRawGetArm(ctx, ctx.templateVecTypeIdx, strFlattenIdx, strEqualsIdx);
 
   // ── (#2896) Reserved builtin-fn metadata natives (standalone only) ────────
   //
@@ -8582,7 +8548,6 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     }
   }
   if (byField.size === 0) return;
-
   // Factory, not a shared Instr tree: finalize remaps every function body in
   // place, so sharing these objects between the two predicates would remap all
   // embedded type indices twice (#1719 reserve/fill discipline).
@@ -9122,6 +9087,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
   type Entry = {
     typeIdx: number;
     fieldIdx: number;
@@ -9134,18 +9100,14 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     cold?: ColdFieldLocation;
     /** (#3927 per-type layouts) Read through the family's `$resid` carrier. */
     resid?: ResidFieldLocation;
-    /**
-     * (#3927 per-type layouts) Family stamp-RANGE guard on a resid (base-
-     * keyed) arm — `ref.test $base` also matches a canonical-twin family.
-     * Layout arms use the exact-stamp `shapeFieldIdx`/`shapeId` pair instead.
-     */
+    /** Family stamp-range guard for a resid/base arm; layout arms use exact stamps. */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName) || isOpenDescriptorShape(structName, fields)) continue;
     const typeIdx = ctx.structMap.get(structName);
-    if (typeIdx === undefined) continue;
+    if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
@@ -9619,15 +9581,15 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const applyClosureIdx = ctx.funcMap.get("__apply_closure");
   if (!fn || externGetIdx === undefined || applyClosureIdx === undefined) return;
 
-  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor
-  // arm. The slow path below calls `__extern_get`, which walks its prepended
-  // ladder + `__fnctor_proto_start` before reaching the round-9b cache — but
+  const fnctorMissingMethod = buildFnctorMissingMethodDispatch(ctx, fn, externGetIdx, applyClosureIdx);
+
+  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor arm.
+  // The slow path calls `__extern_get` before reaching the round-9b cache, but
   // HERE the fnctor's prototype is a KNOWN GLOBAL, so the cache check is a
-  // handful of loads with zero calls: interned key + generation match +
-  // owner `ref.eq` against `global.get <proto>` + live-DATA entry flags →
-  // apply the cached method closure directly. Any miss falls to the exact
-  // old `__extern_get` path (which also populates the cache). Locals for the
-  // key/entry scratch are appended once below.
+  // handful of loads with zero calls: interned key + generation match + owner
+  // `ref.eq` against `global.get <proto>` + live-DATA entry flags. Any miss
+  // falls to the exact old `__extern_get` path, which also populates the cache;
+  // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
@@ -9652,7 +9614,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         ? (objStructDef.type.fields[1].type as { typeIdx: number }).typeIdx
         : undefined;
 
-  const arms: Instr[] = [];
+  const arms: Instr[] = [...fnctorMissingMethod.noPrototypeArms];
   for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
     const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
     if (typeIdx === undefined) continue;
@@ -9746,9 +9708,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: externGetIdx },
-          ...(ctx.funcMap.has("__nullish_to_null")
-            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-            : []),
+          ...fnctorMissingMethod.missingMethodGuard,
+          { op: "local.get", index: fnctorMissingMethod.missingMethodLocal },
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
           { op: "call", funcIdx: applyClosureIdx },

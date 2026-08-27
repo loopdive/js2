@@ -3778,6 +3778,117 @@ export function emitTaViewDynamicByteLength(
 }
 
 /**
+ * (#4761) Read `.byteOffset` from a boxed `$__ta_dyn_view` receiver at
+ * runtime. A dynamic constructor value is normally carried through an
+ * `any`/union local, so the ordinary static `$__ta_view` accessor arm cannot
+ * see its layout and a direct member read would otherwise bypass the
+ * integer-indexed MOP. The shared backing byte-vector is the detach marker:
+ * its length is forced below zero by `$DETACHBUFFER`, and the TypedArray
+ * accessor returns zero for that state (§23.2.3.3). An attached empty view is
+ * deliberately distinguished from detached (its byte-vector length is zero,
+ * while its stored window offset remains observable).
+ *
+ * This is a no-host dynamic-receiver arm. Non-view values use the ordinary
+ * dynamic property lookup, preserving a plain object's own `byteOffset`; if
+ * the late lookup helpers are unavailable, the fallback remains numeric zero.
+ */
+export function emitTaViewDynamicByteOffset(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  compileRecv: () => ValType | null,
+): ValType | null {
+  if (ctx.taDynViewTypeIdx < 0) return null;
+  const dynIdx = ctx.taDynViewTypeIdx;
+  const { vecTypeIdx } = i32ByteVec(ctx);
+  // Preserve ordinary object semantics when the dynamic receiver is not a
+  // `$__ta_dyn_view`: the runtime arm is shared with `any` values, so a plain
+  // object carrying its own `byteOffset` must not be folded to zero. Capture
+  // the helper indices before compiling the receiver; that compile can itself
+  // register late imports and shift baked function indices.
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  addStringConstantGlobal(ctx, "byteOffset");
+  flushLateImportShifts(ctx, fctx);
+  const anyLocal = allocLocal(fctx, `__tvbo_recv_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+
+  // Build the ordinary-object branch through the shared coercion engine. Keep
+  // this scratch body live while it registers ToNumber providers so any late
+  // function-index shift updates both the detached caller body and this branch.
+  const fallback: Instr[] = [];
+  const savedFallbackBody = fctx.body;
+  ctx.liveBodies.add(savedFallbackBody);
+  ctx.liveBodies.add(fallback);
+  fctx.body = fallback;
+  try {
+    if (getIdx !== undefined) {
+      // `$__extern_get` takes externref while the dynamic receiver is stored as
+      // anyref for the `$__ta_dyn_view` type test. Convert at that boundary,
+      // then let coerceType own ToPrimitive/ToNumber and its provider calls.
+      fctx.body.push({ op: "local.get", index: anyLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, "byteOffset"));
+      fctx.body.push({ op: "call", funcIdx: getIdx });
+      coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+    } else {
+      fctx.body.push({ op: "f64.const", value: 0 });
+    }
+  } finally {
+    fctx.body = savedFallbackBody;
+    ctx.liveBodies.delete(savedFallbackBody);
+  }
+  const rt = compileRecv();
+  if (rt === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (rt.kind !== "externref") {
+    coerceType(ctx, fctx, rt, { kind: "externref" });
+  }
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: anyLocal });
+  const resultLocal = allocLocal(fctx, `__tvbo_res_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: resultLocal });
+
+  const dvLocal = allocLocal(fctx, `__tvbo_dv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
+  const arm: Instr[] = [];
+  const saved = fctx.body;
+  fctx.body = arm;
+  fctx.body.push({ op: "local.get", index: anyLocal });
+  fctx.body.push({ op: "ref.cast", typeIdx: dynIdx });
+  fctx.body.push({ op: "local.tee", index: dvLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 }); // buf
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // buf.length
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "i32.const", value: 0 }],
+    else: [
+      { op: "local.get", index: dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 }, // byteOffset
+    ],
+  });
+  fctx.body.push({ op: "local.set", index: resultLocal });
+  fctx.body = saved;
+  fctx.body.push({ op: "local.get", index: anyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: dynIdx });
+  // The dynamic arm computes an i32 into resultLocal; the ordinary-object
+  // fallback above already leaves an f64, so normalize both branches to f64.
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "f64" } },
+    then: [...arm, { op: "local.get", index: resultLocal }, { op: "f64.convert_i32_s" }],
+    else: fallback,
+  });
+  ctx.liveBodies.delete(fallback);
+  return { kind: "f64" };
+}
+
+/**
  * (#3054 D) Push the CURRENT element length of a `$__ta_dyn_view` (`dvLocal`), given
  * its `kind` and `elemSize`. Field0 holds either a fixed element count (`>= 0`) or
  * the auto-length sentinel `-1` (a view built over a resizable buffer with no
@@ -4471,6 +4582,53 @@ export function emitTaDynCtorConstructFromLocals(
           { op: "local.get", index: a0AnyLocal },
           { op: "ref.test", typeIdx: objTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: objArm, else: chain },
+        ];
+      }
+    }
+
+    // ── Native `$ObjVec` copy arm: standalone `Array.from(source, mapFn)`
+    // produces the growable boxed-any carrier used by the object runtime.
+    // `makeArrayBuffer` in test262 deliberately feeds that result back into
+    // `new TA(arr)`. It is not a `$Object` or one of the typed `__vec_*`
+    // carriers, so without this arm the dispatch falls through to the count
+    // form and ToIndex rejects the carrier instead of copying its elements.
+    // Read the carrier directly here; the element values are externrefs and
+    // use the same ToNumber coercion as the `$Object` array-like arm above.
+    {
+      const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx ?? -1;
+      const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx ?? -1;
+      if (objVecTypeIdx >= 0 && objVecArrTypeIdx >= 0) {
+        const objVecArm: Instr[] = [];
+        const saved = fctx.body;
+        fctx.body = objVecArm;
+        const srcVecLocal = allocLocal(fctx, `__dtac_ov_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: objVecTypeIdx,
+        });
+        const srcDataLocal = allocLocal(fctx, `__dtac_ovd_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: objVecArrTypeIdx,
+        });
+        fctx.body.push({ op: "local.get", index: a0AnyLocal });
+        fctx.body.push({ op: "ref.cast", typeIdx: objVecTypeIdx });
+        fctx.body.push({ op: "local.tee", index: srcVecLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "local.set", index: dstNLocal });
+        fctx.body.push({ op: "local.get", index: srcVecLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 });
+        fctx.body.push({ op: "local.set", index: srcDataLocal });
+        emitAllocViewFromN();
+        emitCopyLoop((iLocal) => {
+          fctx.body.push({ op: "local.get", index: srcDataLocal });
+          fctx.body.push({ op: "local.get", index: iLocal });
+          fctx.body.push({ op: "array.get", typeIdx: objVecArrTypeIdx });
+          coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+        });
+        fctx.body = saved;
+        chain = [
+          { op: "local.get", index: a0AnyLocal },
+          { op: "ref.test", typeIdx: objVecTypeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: objVecArm, else: chain },
         ];
       }
     }
@@ -5651,7 +5809,31 @@ export function emitTaViewAccessor(
     return ctx.fast ? { kind: "i32" } : { kind: "f64" };
   }
   if (propName === "byteOffset") {
-    fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 });
+    // §23.2.3.3: a detached TypedArray reports byteOffset 0. The shared
+    // backing byte-vector stores the standalone detach marker in field 0;
+    // test it here rather than using the view's element length, because an
+    // attached zero-length view still exposes its stored offset.
+    const tvLocal = allocLocal(fctx, `__tav_bo_recv_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: taViewTypeIdx,
+    });
+    fctx.body.push({ op: "local.set", index: tvLocal });
+    fctx.body.push({ op: "local.get", index: tvLocal });
+    fctx.body.push({ op: "ref.as_non_null" });
+    fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 }); // buf
+    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // buf.length
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: tvLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 },
+      ],
+    });
     if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
     return ctx.fast ? { kind: "i32" } : { kind: "f64" };
   }

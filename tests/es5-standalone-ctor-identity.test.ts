@@ -123,6 +123,18 @@ export function readsBack(): boolean { return w.constructor === 42; }
     expect(out).toEqual({ shadowed: 1, readsBack: 1 });
   });
 
+  it("new Number instances expose the original Number prototype through constructor", async () => {
+    const out = await runStandalone(`${PRELUDE}
+const x1: any = new Number(1);
+const x2: any = new Number(2);
+const x3: any = new Number(3);
+export function prototypeType(): boolean { return typeof x1.constructor.prototype === "object"; }
+export function isPrototype(): boolean { return Number.prototype.isPrototypeOf(x2); }
+export function samePrototype(): boolean { return Number.prototype === x3.constructor.prototype; }
+`);
+    expect(out).toEqual({ prototypeType: 1, isPrototype: 1, samePrototype: 1 });
+  });
+
   it("the carrier read works when it is the module's FIRST demand for the builtin", async () => {
     // Argument order of `assert.sameValue(o.constructor, Number)`: the wrapper
     // read is compiled and evaluated BEFORE the bare identifier, so a bare
@@ -171,12 +183,13 @@ describe.skipIf(!TEST262)("#4223 — test262 files that flip", () => {
     "built-ins/Object/S15.2.1.1_A2_T1.js", // Object(boolean).constructor === Boolean
     "built-ins/Object/S15.2.1.1_A2_T13.js", // Object(boolean literal)
     "built-ins/String/S15.5.2.1_A1_T1.js", // new String(x).constructor === String
+    "built-ins/Number/S15.7.2.1_A2.js", // new Number(x) retains %Number.prototype%
   ];
   for (const rel of files) {
     it(`${rel} passes on the standalone lane`, { timeout: 60_000 }, async () => {
       const abs = join(__dirname, "..", "test262", "test", rel);
       const r = await runTest262File(abs, "es5-ctor-identity", 30_000, "standalone");
-      expect(`${r.status}: ${r.reason ?? ""}`).toBe("pass: ");
+      expect(`${r.status}: ${r.error ?? r.reason ?? ""}`).toBe("pass: ");
     });
   }
 });

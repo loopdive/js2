@@ -53,7 +53,7 @@ import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
-import { moduleTouchesConstructorProp } from "./property-access.js";
+import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
 import { compileExpression } from "./shared.js";
 
 const protoExtensionCache = new WeakMap<ts.SourceFile, boolean>();

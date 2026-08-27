@@ -157,6 +157,7 @@ import {
   localGlobalIdx,
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
+import { tryCompileArrayMethodValue } from "./array-method-value.js";
 import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
@@ -3680,6 +3681,12 @@ export function compilePropertyAccess(
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
 
+  // (#4765 slice 1) `[].includes` as a VALUE — the host intrinsic, so
+  // `[].includes.call(obj, …)` runs the generic algorithm instead of dying on a
+  // null. Non-call position and an array receiver only; see the module comment.
+  const arrayMethodValue = tryCompileArrayMethodValue(ctx, fctx, expr);
+  if (arrayMethodValue !== undefined) return arrayMethodValue;
+
   // Static field initializers can contain a folded direct eval. Its AST is
   // foreign, but `this.<name>` still denotes the surrounding class constructor
   // and must see compiler-owned static-field storage. Handle that one receiver
@@ -3702,13 +3709,13 @@ export function compilePropertyAccess(
     }
   }
 
-  // Static standalone Function bodies are parsed in a synthetic foreign
-  // source file. Their identifiers are deliberately compiled as externrefs,
-  // but TypeScript's checker cannot answer a property-access type query for
-  // those unbound declarations (it throws while resolving `this`). Keep this
-  // narrow lane entirely dynamic so expressions such as `a1.length` and
-  // `this.shifted` can still be lowered and evaluated by the object runtime.
+  // Static standalone Function bodies are parsed in a synthetic foreign source
+  // file; their identifiers are compiled as externrefs, but the checker cannot
+  // answer property-access queries for those unbound declarations. Keep this
+  // lane dynamic so expressions such as `a1.length` and `this.shifted` remain evaluable.
   if (isForeignEvalNode(expr)) {
+    const foreignPoison = tryCompileFunctionPoisonRead(ctx, fctx, expr);
+    if (foreignPoison !== undefined) return foreignPoison;
     const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
     const getIdx = ensureLateImport(
       ctx,
@@ -6408,43 +6415,4 @@ export function classifyPlainCtorReceiverNamespace(
     return "Object";
   }
   return undefined;
-}
-
-/**
- * (#3133) Module-wide shadowing guard for the static `.constructor` identity
- * fold: if the module ever ASSIGNS to or DELETES a `.constructor` property
- * (any receiver — syntactic scan, cached per source file), decline the fold so
- * runtime-shadowed reads keep their current dynamic behavior.
- */
-const constructorPropTouchCache = new WeakMap<ts.SourceFile, boolean>();
-export function moduleTouchesConstructorProp(sourceFile: ts.SourceFile): boolean {
-  let touched = constructorPropTouchCache.get(sourceFile);
-  if (touched === undefined) {
-    touched = false;
-    const isCtorMember = (e: ts.Expression): boolean =>
-      (ts.isPropertyAccessExpression(e) && e.name.text === "constructor") ||
-      (ts.isElementAccessExpression(e) &&
-        ts.isStringLiteralLike(e.argumentExpression) &&
-        e.argumentExpression.text === "constructor");
-    const walk = (node: ts.Node): void => {
-      if (touched) return;
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-        isCtorMember(node.left)
-      ) {
-        touched = true;
-        return;
-      }
-      if (ts.isDeleteExpression(node) && isCtorMember(node.expression)) {
-        touched = true;
-        return;
-      }
-      ts.forEachChild(node, walk);
-    };
-    walk(sourceFile);
-    constructorPropTouchCache.set(sourceFile, touched);
-  }
-  return touched;
 }

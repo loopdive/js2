@@ -96,7 +96,7 @@
   "codegen/typed-lane-overlay-route.ts": 1,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,
-  "codegen/vec-f64-hole-presence.ts": 1,
+  "codegen/vec-hole-companion.ts": 1,
   "codegen/vec-index-domain.ts": 2,
   "codegen/vec-length-set.ts": 2,
   "codegen/vec-overlay-high-index.ts": 1,

@@ -17,6 +17,7 @@ import {
 } from "./function-poison-pill.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { isStaticFunctionSelfName } from "./static-function-self-names.js";
 import { compileExpression, skipTransparentExpressions } from "./shared.js";
 
 type MemberExpression = ts.PropertyAccessExpression | ts.ElementAccessExpression;
@@ -61,7 +62,9 @@ export function tryCompileFunctionPoisonRead(
     // source declaration for `sourceFunctionForValue` to find.
     isStrictFunctionConstructorValue(ctx, member.receiver);
   const currentSloppyCallerRead =
-    member.name === "caller" && !strictFunction && isCurrentSourceFunctionValue(ctx, fctx, member.receiver);
+    member.name === "caller" &&
+    !strictFunction &&
+    (isCurrentSourceFunctionValue(ctx, fctx, member.receiver) || isStaticFunctionSelfName(ctx, fctx, member.receiver));
   if (!strictFunction && !currentSloppyCallerRead) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, member.receiver);

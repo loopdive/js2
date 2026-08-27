@@ -60,7 +60,7 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
-import { nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
@@ -81,6 +81,8 @@ import {
 import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constructor.js"; // (#2875 w4-F)
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
   tryCompileStandaloneRegExpMatchResultRead,
@@ -98,6 +100,7 @@ import {
   emitTaCtorBytesPerElement,
   emitTaCtorValue,
   emitTaViewAccessor,
+  emitTaViewDynamicByteOffset,
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
@@ -106,6 +109,7 @@ import {
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
 import {
+  isTupleType,
   addUnionImports,
   resolveWasmType,
   TYPED_ARRAY_NAMES,
@@ -152,6 +156,7 @@ import {
 import { tryEmitInstanceBuiltinProtoMethodValue } from "./instance-proto-method-identity.js"; // (#4481)
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
+import { tryObjectCoercionFnctorPrototypeIdentity } from "./object-coercion-fnctor-prototype.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   classExpressionDefinesOwnName,
@@ -171,7 +176,6 @@ import {
   isGeneratorIteratorResultLike,
   isGetProtoOfWiredViewProtoCall,
   isProvablyNonNull,
-  moduleTouchesConstructorProp,
   receiverIsCatchClauseBinding,
   receiverIsNativeStringValType,
   resolveInheritedStaticProp,
@@ -258,6 +262,18 @@ export function tryDynamicReceiverRuntimeDispatchReads(
     }
   }
 
+  // (#4761) `.byteOffset` on a dynamic constructor/view receiver. The direct
+  // property spelling does not go through the standalone string-key MOP, so
+  // use the same runtime `$__ta_dyn_view` test as `.byteLength` and apply the
+  // detached-buffer zero rule at the owning view seam.
+  if (propName === "byteOffset" && noJsHost(ctx) && ctx.taDynViewTypeIdx >= 0) {
+    const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
+    if (isDynamicReceiver) {
+      const r = emitTaViewDynamicByteOffset(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
+      if (r) return r;
+    }
+  }
+
   // (#3237 Slice 1) `.disposed` on a DYNAMIC (`any`/`unknown`/union) receiver
   // carrying a native `$DisposableStack` (the runner hoists a captured
   // `var stack = new DisposableStack()` to `let stack: any`). The className arm
@@ -284,6 +300,9 @@ export function tryConstructorPrototypeIdentity(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  const ctorProto = tryEmitBuiltinInstanceConstructorPrototype(ctx, fctx, expr);
+  if (ctorProto !== undefined) return ctorProto;
+
   // #3371: the original Test262 realm shim deliberately aliases
   // `$262.createRealm().global` to the current native global. Therefore
   // `other[TA.name]` is the same first-class `$__ta_ctor` value as `TA`, and
@@ -456,12 +475,8 @@ export function tryConstructorPrototypeIdentity(
     if (t) return t.kind === "externref" ? t : { kind: "externref" };
   }
 
-  // (#2026 PR-2) `.constructor` on an externref / `any`-typed instance: recover
-  // class identity by reading the instance `__tag` and dispatching to the
-  // matching `__class_<Name>` singleton, so `a.constructor === A` holds even when
-  // `a` flowed through an `any` binding. Only fires for an `any`/`unknown`
-  // receiver — a concretely-typed class instance keeps the zero-overhead static
-  // arm in `compileInstanceMember`.
+  // (#2026 PR-2) Recover `.constructor` class identity from `__tag` on any/unknown
+  // receivers; concretely-typed class instances keep the static arm.
   if (propName === "constructor") {
     const isAnyOrUnknown = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     if (isAnyOrUnknown) {
@@ -470,25 +485,23 @@ export function tryConstructorPrototypeIdentity(
     }
   }
 
-  // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1); the arm and the
-  // emitter the bare `Function` read shares live in function-intrinsic-carrier.ts.
+  const objectFnctorPrototype = tryObjectCoercionFnctorPrototypeIdentity(
+    ctx,
+    fctx,
+    expr,
+    propName,
+    moduleTouchesConstructorProp(expr.getSourceFile()),
+  );
+  if (objectFnctorPrototype !== undefined) return objectFnctorPrototype;
+
+  // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1).
   const fnValueCtor = tryEmitObjectCoercionFunctionConstructorRead(ctx, fctx, expr, propName, objType);
   if (fnValueCtor !== undefined) return fnValueCtor;
 
-  // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`
-  // → the GENUINE, identity-stable reified builtin-constructor object (supersedes
-  // the #2537 null-fold). Reading `.constructor` on a builtin extern-class receiver
-  // otherwise walks the inheritance chain (`compileExternPropertyGet`) to the
-  // `Object` base extern class — the only declarer of `constructor`,
-  // `importPrefix: "Object"` — and emits an `env::Object_get_constructor` host
-  // import (the leak the #2999 round-5 analysis flagged: 9 standalone passes for
-  // Set/WeakMap/WeakRef/WeakSet/RegExp/FinalizationRegistry/DisposableStack/
-  // SuppressedError plus instance forms). Route it to the SAME per-name
-  // `__builtin_ctor_<Name>` singleton the bare identifier now resolves to
-  // (identifiers.ts), so `<Builtin>.prototype.constructor === <Builtin>` is
-  // GENUINELY true (same object) and the swap-wrong-builtin cross-check
-  // `Set.prototype.constructor === Map` is GENUINELY false — NOT the null≡null
-  // tautology #2537 relied on.
+  // (#3006) Route standalone builtin `.constructor` reads to the genuine,
+  // identity-stable `__builtin_ctor_<Name>` singleton rather than the old null
+  // fold or the `Object_get_constructor` host import. Same-builtin identity
+  // stays true while cross-builtin identity stays false.
   //
   // Placed HERE (before the builtin-specific `.prototype`/regexp/native-proto
   // member paths further down) so it fires UNIFORMLY for every target builtin:
@@ -2233,6 +2246,14 @@ function emitClassStaticMemberRead(
       const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
       return retType ?? { kind: "externref" };
     }
+    // A setter-only accessor still owns the property, but reading it returns
+    // the canonical `undefined` value (§10.4.2 [[Get]]). Without this arm the
+    // class-object carrier falls through to its constructor-name/length
+    // metadata, so `static set name(_) {}` incorrectly reads "Class".
+    if (ctx.staticAccessorSet.has(accessorKey)) {
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+      return { kind: "externref" };
+    }
   }
   return PA_FALLTHROUGH;
 }
@@ -2546,6 +2567,43 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
     fctx.body.push({ op: "drop" }, { op: "i32.const", value: 0 });
   }
   if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+/**
+ * (#3566) Emit `.length` for a fixed tuple in the host-free targets.
+ *
+ * Array.entries() yields an `$ObjVec`, but a tuple-typed function parameter
+ * crosses the call boundary as a tuple struct. Its fixed arity is therefore
+ * available statically; sending that struct through `__extern_get("length")`
+ * loses the tuple shape and unboxes `undefined` as NaN. Keep the receiver
+ * evaluation (and any carrier conversion) exactly once. A dynamic externref
+ * reaching this arm still uses the native `$ObjVec`/vec length reader.
+ */
+function emitStandaloneTupleLength(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ts.Type,
+): PADispatchResult {
+  if (!(ctx.standalone || ctx.wasi) || !isTupleType(objType)) return PA_FALLTHROUGH;
+
+  const tupleTarget = ((objType as ts.TypeReference).target ?? objType) as ts.TupleType;
+  const tupleArity = tupleTarget.fixedLength;
+  // Optional/rest tuples have a runtime-dependent length. Restrict this seam
+  // to the fixed [T0, T1, ...] shape used by entries() pairs.
+  if (!Number.isFinite(tupleArity) || tupleTarget.minLength !== tupleArity) {
+    return PA_FALLTHROUGH;
+  }
+
+  const exprResult = compileExpression(ctx, fctx, expr.expression);
+  if (!exprResult) return null;
+  if (exprResult.kind === "externref") return emitStandaloneAnyLength(ctx, fctx);
+
+  // The statically typed tuple value was only needed to prove the tuple shape;
+  // discard it before producing the scalar length result.
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: tupleArity });
   return ctx.fast ? { kind: "i32" } : { kind: "f64" };
 }
 
@@ -2927,6 +2985,9 @@ export function tryLengthAndNameReads(
 
   // Handle array.length (vec struct: field 0 is the logical length)
   if (propName === "length") {
+    const tupleLength = emitStandaloneTupleLength(ctx, fctx, expr, objType);
+    if (tupleLength !== PA_FALLTHROUGH) return tupleLength;
+
     // (#1742) `this.length` where `this` is the host-supplied `__current_this`
     // externref but may carry a compiled vec at runtime (a closure body dispatched
     // via `__call_fn_method_N`). The override `this` is typically `any` → externref,

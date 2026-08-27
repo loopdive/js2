@@ -50,6 +50,7 @@ import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-calla
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
 import { emitRuntimeEvalFunctionPrototypeSeed } from "../runtime-eval-construct.js"; // (#4438) §20.2.1.1
 import { currentDirectEvalLexicalBindingNames, reifyCurrentDirectEvalBindings } from "../direct-eval-environment.js";
+import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -1658,15 +1659,12 @@ function synthesizeStaticNewFunction(
   }
   if (sf.statements.length !== 1 || !ts.isFunctionDeclaration(sf.statements[0]!)) return undefined;
   const fnDecl = sf.statements[0] as ts.FunctionDeclaration;
+  recordStaticFunctionSelfName(ctx, fnName, args);
 
   // (#2923 park-fix parity) A `"use strict"` directive prologue in the
-  // synthesized body switches on strict early-errors (`function f(eval){}`,
-  // duplicate params, …) the splice does NOT enforce — keep such bodies on the
-  // existing fallback path.
+  // synthesized body switches on strict early-errors (`function f(eval){}`, duplicate params, …) the splice does
+  // NOT enforce — keep such bodies on the existing fallback path.
   if (fnDecl.body && evalBodyHasUseStrictDirective(fnDecl.body.statements)) return undefined;
-
-  // (#3301) The widened-constant regex bail is gone — the foreign-node
-  // regex-literal arm now produces a correct value (see tryStaticEvalInline).
 
   // (#2924 park fix) A SLOPPY dynamic function's bare call must see
   // `this === globalThis` (§10.4.3 OrdinaryCallBindThis with a non-strict
@@ -1846,6 +1844,7 @@ export function tryStaticFunctionCtorCall(
 
   // Shape 1: `Function("...")` — plain-call value form.
   if (ts.isIdentifier(callee) && isGlobalFunctionIdentifier(callee, ctx.checker)) {
+    noteStaticFunctionOwner(ctx, expr);
     return tryStaticNewFunction(ctx, fctx, expr.arguments);
   }
 

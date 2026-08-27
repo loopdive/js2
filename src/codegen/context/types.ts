@@ -413,6 +413,19 @@ export interface NativeGeneratorInfo {
   paramTypes: ValType[];
   /** Field index where captured params start in the state struct. */
   paramFieldOffset: number;
+  /**
+   * (#2864 C02) Field carrying the eagerly-created `arguments` vec across
+   * generator suspension. Present only for generators whose body observes the
+   * implicit arguments object; the factory creates it at call time and the
+   * resume function hydrates its local from this field.
+   */
+  argumentsFieldIdx?: number;
+  /** Type index of the frame-carried arguments vec. */
+  argumentsVecTypeIdx?: number;
+  /** Number of leading synthetic params excluded from `arguments`. */
+  argumentsParamOffset?: number;
+  /** Whether this generator has the non-strict simple-list mapping. */
+  argumentsMapped?: boolean;
   /** Field index for the value passed to `.next(value)`. */
   sentFieldIdx: number;
   /** Field index for resume mode: 0 = next, 1 = return. */

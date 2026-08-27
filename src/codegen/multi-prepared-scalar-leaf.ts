@@ -278,6 +278,51 @@ export interface MultiPreparedScalarLeafRoute extends MultiPreparedLeafRouteBase
   readonly routeKind: "scalar";
 }
 
+/**
+ * Frozen ownership evidence passed between early route families.  The arrays
+ * are intentionally identity-bearing snapshots rather than mutable Sets: a
+ * later family must decline before it allocates support for any source,
+ * terminal, or target already claimed by an earlier family.
+ */
+export interface MultiPreparedRouteClaimSnapshot {
+  readonly sourceFiles: readonly ts.SourceFile[];
+  readonly terminalUnitIds: readonly IrUnitId[];
+  readonly targetUnitIds: readonly IrUnitId[];
+}
+
+export const EMPTY_MULTI_PREPARED_ROUTE_CLAIMS: MultiPreparedRouteClaimSnapshot = Object.freeze({
+  sourceFiles: Object.freeze([]),
+  terminalUnitIds: Object.freeze([]),
+  targetUnitIds: Object.freeze([]),
+});
+
+export function multiPreparedRouteClaimsOverlap(
+  claims: MultiPreparedRouteClaimSnapshot,
+  sourceFile: ts.SourceFile,
+  terminalUnitIds: readonly IrUnitId[],
+  targetUnitIds: readonly IrUnitId[],
+): boolean {
+  return (
+    claims.sourceFiles.includes(sourceFile) ||
+    terminalUnitIds.some((unitId) => claims.terminalUnitIds.includes(unitId)) ||
+    targetUnitIds.some((unitId) => claims.targetUnitIds.includes(unitId))
+  );
+}
+
+export function extendMultiPreparedRouteClaims(
+  claims: MultiPreparedRouteClaimSnapshot,
+  sourceFile: ts.SourceFile,
+  terminalUnitIds: readonly IrUnitId[],
+  targetUnitIds: readonly IrUnitId[],
+): MultiPreparedRouteClaimSnapshot {
+  const unique = <T>(values: readonly T[]): readonly T[] => [...new Set(values)];
+  return Object.freeze({
+    sourceFiles: Object.freeze(unique([...claims.sourceFiles, sourceFile])),
+    terminalUnitIds: Object.freeze(unique([...claims.terminalUnitIds, ...terminalUnitIds])),
+    targetUnitIds: Object.freeze(unique([...claims.targetUnitIds, ...targetUnitIds])),
+  });
+}
+
 /** Exact allocator objects frozen before a legacy owner reads a prepared function value. */
 export interface MultiPreparedFunctionValueSupportReceipt {
   readonly targetFunction: WasmFunction;
@@ -304,6 +349,7 @@ export interface MultiPreparedFunctionValueLeafRoute extends MultiPreparedLeafRo
 
 export type MultiPreparedEarlyLeafRoute =
   | MultiPreparedScalarLeafRoute
+  | import("./multi-prepared-string-leaf.js").MultiPreparedStringLeafRoute
   | MultiPreparedFunctionValueLeafRoute
   | import("./multi-prepared-array-leaf.js").MultiPreparedArrayLeafRoute
   | import("./multi-prepared-fibonacci-pair.js").MultiPreparedFibonacciPairRoute;
@@ -1339,6 +1385,7 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
     legacyName: string,
   ) => MultiPreparedFunctionValueSupportReceipt | undefined;
   readonly projectLoweringPlans: (plan: Plan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly claimedRouteClaims?: MultiPreparedRouteClaimSnapshot;
 }): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>> {
   const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
   if (!input.active || collectMultiPreparedScalarLeafCandidates(input.sourceFiles).length !== 0) {
@@ -1373,6 +1420,12 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
     if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
       invariant("resolve", "required multi-source function-value route failed exact candidate certification");
     }
+    return states;
+  }
+  if (
+    input.claimedRouteClaims &&
+    multiPreparedRouteClaimsOverlap(input.claimedRouteClaims, sourceFile, [candidate.unitId], [candidate.unitId])
+  ) {
     return states;
   }
   const state: EarlyMultiPreparedScalarLeafState<Plan> = { plan, skippedFunctionUnitIds: new Set() };

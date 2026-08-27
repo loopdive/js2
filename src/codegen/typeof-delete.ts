@@ -56,6 +56,7 @@ import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
+import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -1682,6 +1683,30 @@ function stringWrapperIndexNeedsRuntimeTypeof(
   );
 }
 
+/**
+ * #4450 — a static method named `name` or `length` replaces the constructor's
+ * standard data property during class definition. TypeScript keeps the
+ * intrinsic constructor metadata type (`string`/`number`) for those members,
+ * so a plain typeof fold would miss the method override. Restrict the override
+ * to a known class receiver and an actually collected static method.
+ */
+function classStaticMethodTypeofOverride(ctx: CodegenContext, expression: ts.Expression): boolean {
+  let bare = expression;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (!ts.isPropertyAccessExpression(bare) || ts.isPrivateIdentifier(bare.name)) return false;
+  const propertyName = bare.name.text;
+  if (propertyName !== "name" && propertyName !== "length") return false;
+  const className = classIdentityFromExpression(ctx, bare.expression);
+  return className !== undefined && hasClassStaticMethod(ctx, className, propertyName);
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1693,8 +1718,8 @@ export function compileTypeofExpression(
   if (realmGlobalTypeof !== undefined) return realmGlobalTypeof;
 
   // typeof Math.<constant> -> "number", typeof Math.<method> -> "function"
-  const mathTypeof = tf.tryCompileMathMemberTypeof(ctx, fctx, operand);
-  if (mathTypeof !== undefined) return mathTypeof;
+  const builtinTypeof = tf.tryCompileBuiltinMemberTypeof(ctx, fctx, operand);
+  if (builtinTypeof !== undefined) return builtinTypeof;
 
   // typeof import.meta -> "object"
   if (
@@ -1973,6 +1998,9 @@ export function compileTypeofExpression(
 
   // Try static resolution first via the shared helper
   if (!forceRuntimeTypeof) {
+    if (classStaticMethodTypeofOverride(ctx, operand)) {
+      return compileStringLiteral(ctx, fctx, "function");
+    }
     const staticResult = staticTypeofForType(ctx, tsType);
     // (#4250) Unsound-fold guard: the checker types a fnctor field from the
     // constructor's write, so the fold ignores every OTHER write reaching the
@@ -2194,8 +2222,12 @@ export function compileTypeofComparison(
   ) {
     const mathConstants = new Set(["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"]);
     staticTypeof = mathConstants.has(operand.name.text) ? "number" : "function";
+  } else if (classStaticMethodTypeofOverride(ctx, operand)) {
+    // Static `name`/`length` methods replace the constructor metadata value;
+    // do not let the checker keep folding those members to string/number.
+    staticTypeof = "function";
   } else {
-    staticTypeof = staticTypeofForType(ctx, tsType);
+    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? staticTypeofForType(ctx, tsType);
   }
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
@@ -2204,7 +2236,6 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
   }
-  // (#4491) `typeof x <cmp> "…"` read before `var x = <init>` runs — the hoisted
   // binding still holds `undefined`, so the checker's initializer-derived fold is
   // wrong for that window. Emit the same one-sided live-ness guard the plain
   // `typeof` arm uses: a NULL backing global answers "undefined", anything else
@@ -2228,7 +2259,8 @@ export function compileTypeofComparison(
     staticTypeof !== null &&
     ctx.standalone === true &&
     overlayRouteActive(ctx) &&
-    ts.isElementAccessExpression(operand)
+    ts.isElementAccessExpression(operand) &&
+    tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) === null
   ) {
     staticTypeof = null;
   }

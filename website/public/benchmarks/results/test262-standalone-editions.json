@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 9009,
-    "fail": 17,
-    "ce": 3,
+    "pass": 9029,
+    "fail": 0,
+    "ce": 0,
     "skip": 0,
     "total": 9029,
     "pct": 100,
@@ -48,10 +48,10 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8414,
-    "fail": 2715,
-    "ce": 574,
-    "skip": 1,
+    "pass": 8431,
+    "fail": 2702,
+    "ce": 571,
+    "skip": 0,
     "total": 11704,
     "pct": 72,
     "features": [
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 1848,
-        "fail": 328,
+        "pass": 1852,
+        "fail": 324,
         "ce": 310,
         "skip": 0,
         "total": 2486,
@@ -84,19 +84,19 @@
       },
       {
         "name": "TypedArray",
-        "pass": 484,
-        "fail": 524,
-        "ce": 42,
+        "pass": 486,
+        "fail": 525,
+        "ce": 39,
         "skip": 0,
         "total": 1050,
         "pct": 46
       },
       {
         "name": "Symbol.iterator",
-        "pass": 410,
+        "pass": 411,
         "fail": 262,
         "ce": 122,
-        "skip": 1,
+        "skip": 0,
         "total": 795,
         "pct": 52
       },
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 158,
-        "fail": 250,
+        "pass": 167,
+        "fail": 241,
         "ce": 23,
         "skip": 0,
         "total": 431,
-        "pct": 37
+        "pct": 39
       },
       {
         "name": "Reflect.construct",
@@ -157,8 +157,8 @@
       {
         "name": "Symbol.species",
         "pass": 38,
-        "fail": 138,
-        "ce": 9,
+        "fail": 139,
+        "ce": 8,
         "skip": 0,
         "total": 185,
         "pct": 21
@@ -552,12 +552,12 @@
       },
       {
         "name": "for-of",
-        "pass": 2,
+        "pass": 3,
         "fail": 1,
         "ce": 0,
-        "skip": 1,
+        "skip": 0,
         "total": 4,
-        "pct": 50
+        "pct": 75
       },
       {
         "name": "Array.prototype.values",
@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 92,
-    "fail": 27,
+    "pass": 95,
+    "fail": 24,
     "ce": 5,
     "skip": 0,
     "total": 124,
-    "pct": 74,
+    "pct": 77,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 16,
-        "fail": 12,
+        "pass": 19,
+        "fail": 9,
         "ce": 1,
         "skip": 0,
         "total": 29,
-        "pct": 55
+        "pct": 66
       },
       {
         "name": "u180e",
@@ -734,12 +734,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 2,
-        "fail": 4,
+        "pass": 3,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 6,
-        "pct": 33
+        "pct": 50
       },
       {
         "name": "arrow-function",
@@ -1507,27 +1507,27 @@
   },
   {
     "edition": "ES2020",
-    "pass": 668,
+    "pass": 671,
     "fail": 816,
-    "ce": 533,
+    "ce": 530,
     "skip": 18,
     "total": 2035,
     "pct": 33,
     "features": [
       {
         "name": "BigInt",
-        "pass": 301,
+        "pass": 304,
         "fail": 641,
-        "ce": 106,
+        "ce": 103,
         "skip": 0,
         "total": 1048,
         "pct": 29
       },
       {
         "name": "TypedArray",
-        "pass": 134,
+        "pass": 137,
         "fail": 472,
-        "ce": 102,
+        "ce": 99,
         "skip": 0,
         "total": 708,
         "pct": 19
@@ -2857,8 +2857,8 @@
   {
     "edition": "ES2024",
     "pass": 319,
-    "fail": 128,
-    "ce": 109,
+    "fail": 127,
+    "ce": 110,
     "skip": 0,
     "total": 556,
     "pct": 57,
@@ -2866,8 +2866,8 @@
       {
         "name": "TypedArray",
         "pass": 75,
-        "fail": 81,
-        "ce": 91,
+        "fail": 80,
+        "ce": 92,
         "skip": 0,
         "total": 247,
         "pct": 30
@@ -2884,8 +2884,8 @@
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
         "pass": 74,
-        "fail": 79,
-        "ce": 5,
+        "fail": 78,
+        "ce": 6,
         "skip": 0,
         "total": 158,
         "pct": 47
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4275,
-    "fail": 1076,
+    "pass": 4295,
+    "fail": 1056,
     "ce": 94,
     "skip": 0,
     "total": 5445,

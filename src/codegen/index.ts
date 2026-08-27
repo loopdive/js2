@@ -18,6 +18,10 @@ import {
   makeIrFnctorPropagationAdmissionResolver,
   type IrFnctorArgumentProjectionRoute,
 } from "./ir-fnctor-admission.js";
+import {
+  irFnctorParameterPreselectionIsCurrent,
+  planIrFnctorParameterPreselection,
+} from "./ir-fnctor-parameter-planning.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -48,7 +52,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
-import { planCountedStringAppend } from "../ir/analysis/counted-string-append.js";
+import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
@@ -81,6 +85,8 @@ import {
   type IrSelection,
 } from "../ir/select.js";
 import type {
+  IrFnctorNativeStringBoundaryPlan,
+  IrFnctorParameterPreselectionPlan,
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
@@ -234,6 +240,7 @@ import {
   MultiPreparedProgramOwner,
   publishMultiPreparedProgram,
   type MultiPreparedProgramAudit,
+  type MultiPreparedProgramOverlayResult,
 } from "./multi-prepared-program.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
@@ -2288,6 +2295,12 @@ export interface IrOverlayPlan {
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
   readonly importedFunctionResolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+  /** Exact late #3521 fnctor parameter projection, when fully prepared. */
+  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
+  /** Exact native-string runtime boundary plans keyed by AST call site. */
+  readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
+  /** Revalidates the mutable ABI joins immediately before integration. */
+  readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
 }
 
 /**
@@ -2486,9 +2499,19 @@ function makeIrImplicitParamTypeResolver(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   moduleBindingResolver?: IrModuleBindingResolver,
+  fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
 ): (parameter: ts.ParameterDeclaration) => IrImplicitParamProjection | undefined {
   const candidatesByDeclaration = new WeakMap<ts.FunctionDeclaration, ReadonlySet<ts.ParameterDeclaration>>();
   return (parameter) => {
+    if (fnctorParameterPreselection?.parameterDeclaration === parameter) {
+      return { kind: "object", type: fnctorParameterPreselection.overrideType };
+    }
+    if (fnctorParameterPreselection?.valueConsumer?.parameterDeclaration === parameter) {
+      return { kind: "string", type: { kind: "string" } };
+    }
+    if (fnctorParameterPreselection?.valueConsumer?.declaration.parameters[1] === parameter) {
+      return { kind: "bool", type: irVal({ kind: "i32", boolean: true }) };
+    }
     if (parameter.type) return undefined;
     const declaration = parameter.parent;
     if (!ts.isFunctionDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
@@ -2586,6 +2609,11 @@ function planIrOverlay(
     readonly enableCountedStringAppendProof?: boolean;
     /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
     readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
+    /** C2 supplies the already-certified multi-source string loop only. */
+    readonly countedStringAppendProof?: {
+      readonly loop: ts.ForStatement;
+      readonly plan: IrCountedStringAppendPlan;
+    };
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
@@ -2722,7 +2750,28 @@ function planIrOverlay(
   // claim-then-demote). The carrier keying in `ensureDynMemberGet` matches
   // (`ctx.fast`), so every claimed config emits a valid, carrier-aligned body.
   const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
-  const resolveImplicitParamType = makeIrImplicitParamTypeResolver(ctx, ast.sourceFile, resolveModuleBinding);
+  const fnctorArgumentProjectionAuthority =
+    fnctorArgumentProjections.length > 0 ? makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker) : undefined;
+  const fnctorParameterPreselection =
+    options.fnctorArgumentProjectionRoute && fnctorArgumentProjectionAuthority
+      ? planIrFnctorParameterPreselection({
+          ctx,
+          sourceFile: ast.sourceFile,
+          identityContext,
+          route: options.fnctorArgumentProjectionRoute,
+          authority: fnctorArgumentProjectionAuthority,
+          projections: fnctorArgumentProjections,
+        })
+      : undefined;
+  const fnctorParameterPreselectionIsCurrent = fnctorParameterPreselection
+    ? () => irFnctorParameterPreselectionIsCurrent(ctx, fnctorParameterPreselection)
+    : undefined;
+  const resolveImplicitParamType = makeIrImplicitParamTypeResolver(
+    ctx,
+    ast.sourceFile,
+    resolveModuleBinding,
+    fnctorParameterPreselection,
+  );
   const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
     const projection = resolveImplicitParamType(parameter);
     if (projection?.kind !== "object") return false;
@@ -2732,6 +2781,13 @@ function planIrOverlay(
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
   };
   const legacyCallerAbiIsProjected = (declaration: ts.FunctionDeclaration): boolean => {
+    if (
+      fnctorParameterPreselection &&
+      (declaration === fnctorParameterPreselection.parameterDeclaration.parent ||
+        declaration === fnctorParameterPreselection.valueConsumer?.declaration)
+    ) {
+      return true;
+    }
     // (#3518) The certified surface now includes `string` positions, whose
     // carrier both front-ends derive from the SAME `ctx.nativeStrings` /
     // `ctx.anyStrTypeIdx` pair. `functionReturnsDynamicObjectCarrier` is the one
@@ -2807,10 +2863,14 @@ function planIrOverlay(
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
-      ...(options.enableCountedStringAppendProof
+      ...(options.enableCountedStringAppendProof || options.countedStringAppendProof
         ? {
-            planCountedStringAppend: (loop: ts.ForStatement) =>
-              planCountedStringAppend({ checker: ast.checker, oracle: ctx.oracle }, loop),
+            planCountedStringAppend: (loop: ts.ForStatement) => {
+              if (options.countedStringAppendProof) {
+                return loop === options.countedStringAppendProof.loop ? options.countedStringAppendProof.plan : null;
+              }
+              return planCountedStringAppend({ checker: ast.checker, oracle: ctx.oracle }, loop);
+            },
           }
         : {}),
       jsHostExterns,
@@ -2850,7 +2910,21 @@ function planIrOverlay(
       ...(fnctorArgumentProjections.length > 0
         ? {
             fnctorArgumentProjections,
-            fnctorArgumentProjectionAuthority: makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker),
+            fnctorArgumentProjectionAuthority: fnctorArgumentProjectionAuthority!,
+          }
+        : {}),
+      ...(fnctorParameterPreselection?.nativeStringBoundaries
+        ? {
+            fnctorNativeStringBoundary: (call: ts.CallExpression) =>
+              fnctorParameterPreselectionIsCurrent?.() === true &&
+              fnctorParameterPreselection.nativeStringBoundaries!.some((boundary) => boundary.call === call),
+          }
+        : {}),
+      ...(fnctorParameterPreselection?.nativeStringReplaceCall
+        ? {
+            fnctorNativeStringReplace: (call: ts.CallExpression) =>
+              fnctorParameterPreselectionIsCurrent?.() === true &&
+              fnctorParameterPreselection.nativeStringReplaceCall === call,
           }
         : {}),
       legacyCallerAbiIsProjected,
@@ -3152,6 +3226,15 @@ function planIrOverlay(
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
+    ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
+    ...(fnctorParameterPreselection?.nativeStringBoundaries
+      ? {
+          fnctorNativeStringBoundaries: new Map(
+            fnctorParameterPreselection.nativeStringBoundaries.map((boundary) => [boundary.call, boundary] as const),
+          ),
+        }
+      : {}),
+    ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
   };
 }
 
@@ -3564,6 +3647,7 @@ function planMultiIrOverlaySource(
   identityContext: IrPlanningIdentityContext,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
+  countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan },
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3576,6 +3660,7 @@ function planMultiIrOverlaySource(
     resolveModuleBindings: false,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
     ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
+    ...(countedStringAppendProof ? { countedStringAppendProof } : {}),
   });
 }
 
@@ -3605,7 +3690,7 @@ function compileMultiIrOverlaySource(
   safety: MultiIrGraphSafety,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
-): void {
+): MultiPreparedProgramOverlayResult {
   const plan =
     early?.plan ??
     planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions, {
@@ -3654,6 +3739,9 @@ function compileMultiIrOverlaySource(
       finalSelection: safeSelection,
       safety,
     });
+  } else if (early?.route?.routeKind === "string") {
+    // MultiPreparedProgramOwner authenticates the string route before and
+    // after this consumer, including its C1 currentness contract.
   } else if (early?.route) {
     assertMultiPreparedScalarLeafRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
   }
@@ -3667,7 +3755,10 @@ function compileMultiIrOverlaySource(
     ...(early?.route ? { preparedLegacyNames: early.route.preparedFreeFunctions.completedBodies } : {}),
     projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
   });
-  consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, early?.skippedFunctionUnitIds);
+  return {
+    report,
+    consume: () => consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, early?.skippedFunctionUnitIds),
+  };
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
@@ -8809,7 +8900,16 @@ function planMultiPreparedProgramRoutes(
     identityContext,
     ctx,
     explicitlyDisabled: explicitlyDisabledEnv,
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    planSource: (sourceFile, stringShape) =>
+      planMultiIrOverlaySource(
+        ctx,
+        multiAst,
+        sourceFile,
+        identityContext,
+        undefined,
+        undefined,
+        stringShape ? { loop: stringShape.loop, plan: stringShape.plan } : undefined,
+      ),
     buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
@@ -8865,12 +8965,13 @@ function compileMultiPreparedProgramOverlays(
             early,
           );
         if (owner) owner.withOverlayState(sourceFile, compile);
-        else compile();
+        else compile()?.consume();
       });
     }
   });
   // Overlay preparation can create callback trampolines after legacy finalization.
   finalizeMethodTrampolines(ctx);
+  owner?.sealPostOverlayFinalization();
   frameStage(ctx, "ir-overlay");
 }
 

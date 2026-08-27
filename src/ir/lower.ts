@@ -93,6 +93,7 @@ import {
 import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag crossings at the frozen IrDynamicLowering contract
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import type { IrUnitId } from "./identity.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { stackifyMovableNestedValues } from "./nested-stackification.js";
 import { createIrDynamicScratchLocals } from "./lowering-dynamic-scratch.js";
@@ -192,6 +193,12 @@ export interface IrLowerResolver {
   resolveClass?(shape: IrClassShape): IrClassLowering | null;
   /** Resolve one source/unit-qualified fnctor against finalized ABI state. */
   resolveFnctor?(shape: import("./fnctor-abi.js").IrFnctorShape): IrFnctorLowering | null;
+  /** Exact semantic-to-physical parameter refinement for a prepared owner. */
+  resolveParamPhysicalType?(
+    unitId: IrUnitId,
+    parameterIndex: number,
+    logicalType: IrType,
+  ): { readonly type: ValType; readonly refineNonNull?: true } | undefined;
   /**
    * Slice 6 (#1169e): resolve a vec struct given its top-level Wasm
    * ValType. The IR carries the vec's value as a `ref`/`ref_null` to a
@@ -408,6 +415,46 @@ export function wasmValueTypeConverter(
     backend,
     convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName)],
   };
+}
+
+/**
+ * Validate the one semantic-to-physical parameter exception currently owned by
+ * the linked Parser route. The resolver is the source of the physical slot,
+ * but the lowerer still has to reject a stale or foreign heap type before it
+ * emits `ref.as_non_null` or publishes the function signature. Otherwise a
+ * resolver bug can manufacture a Wasm body whose local and result carriers do
+ * not agree even though both are reference-shaped.
+ */
+function requireExactPhysicalStringParameter(
+  resolver: IrLowerResolver,
+  backend: IrBackendKind,
+  funcName: string,
+  parameterIndex: number,
+  logicalType: IrType,
+  physical: { readonly type: ValType; readonly refineNonNull?: true },
+): void {
+  if (backend !== "wasmgc") {
+    throw new IrInvariantError(
+      "backend-legality-failure",
+      "lower",
+      `ir/lower: exact physical parameter refinement is only supported by WasmGC in ${funcName}`,
+    );
+  }
+  const canonical = resolver.resolveString?.();
+  const physicalType = physical.type;
+  const physicalCarrierMatches =
+    canonical?.kind === "ref" &&
+    (physicalType.kind === "ref" || physicalType.kind === "ref_null") &&
+    physicalType.typeIdx === canonical.typeIdx;
+  const refinementMatches =
+    physicalType.kind === "ref_null" ? physical.refineNonNull === true : physical.refineNonNull !== true;
+  if (logicalType.kind !== "string" || !physicalCarrierMatches || !refinementMatches) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: exact physical parameter ${parameterIndex} in ${funcName} is not the canonical native-string carrier/refinement`,
+    );
+  }
 }
 
 function flattenWasmValues(values: readonly IrLoweredValue<ValType>[]): LocalDef[] {
@@ -1351,6 +1398,14 @@ export function lowerIrFunctionBody<S, Slot>(
     const pi = paramIdx.get(v);
     if (pi !== undefined) {
       emitter.emitLocalGet(pi, out);
+      const physical = resolver.resolveParamPhysicalType?.(func.unitId, pi, paramTypeOf.get(v)!);
+      if (physical) {
+        requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, pi, paramTypeOf.get(v)!, physical);
+      }
+      if (physical?.refineNonNull) {
+        // pushraw-ok(#3521): exact prepared nullable native-string parameter refinement
+        emitter.pushRaw(out, { op: "ref.as_non_null" });
+      }
       return;
     }
     if (materialized.has(v)) {
@@ -1379,7 +1434,12 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       case "fnctor.new": {
         const lowering = resolver.resolveFnctor?.(instr.shape);
-        if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+        if (
+          !lowering ||
+          !lowering.supportsConstruction ||
+          lowering.resultIsExternref ||
+          lowering.constructorResultType.kind !== "ref"
+        ) {
           throw new Error(
             `ir/lower: fnctor.new ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
           );
@@ -1402,7 +1462,12 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "fnctor.get": {
         const lowering = resolver.resolveFnctor?.(instr.shape);
-        if (!lowering || lowering.structTypeIdx === undefined || lowering.carrierType.kind === "externref") {
+        if (
+          !lowering ||
+          !lowering.supportsFieldGet ||
+          lowering.structTypeIdx === undefined ||
+          lowering.instanceCarrierType.kind === "externref"
+        ) {
           throw new Error(
             `ir/lower: fnctor.get ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
           );
@@ -1416,11 +1481,18 @@ export function lowerIrFunctionBody<S, Slot>(
         // struct.get follows the validated nominal layout/field handle and
         // WasmGC backend checks above.
         // pushraw-ok(#3521): validated fnctor struct field read
+        const field = lowering.field(instr.fieldName);
         emitter.pushRaw(out, {
           op: "struct.get",
           typeIdx: lowering.structTypeIdx,
-          fieldIdx: lowering.fieldIdx(instr.fieldName),
+          fieldIdx: field.fieldIdx,
         });
+        if (field.refinement === "nullable-native-string") {
+          if (field.logicalType.kind !== "string" || field.physicalType.kind !== "ref_null") {
+            throw new Error(`ir/lower: fnctor.get ${instr.fieldName} has an invalid field refinement (${func.name})`);
+          }
+          emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#3521): exact nullable native-string field refinement
+        }
         return;
       }
       case "call": {
@@ -3693,7 +3765,13 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
-  const convertSlots = (type: IrType, where: string): readonly Slot[] => {
+  const convertSlots = (type: IrType, where: string, parameterIndex?: number): readonly Slot[] => {
+    const physical =
+      parameterIndex === undefined ? undefined : resolver.resolveParamPhysicalType?.(func.unitId, parameterIndex, type);
+    if (physical) {
+      requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, parameterIndex!, type, physical);
+      return [physical.type as unknown as Slot];
+    }
     const slots = typeConverter.convertType(type);
     if (slots.length === 0) {
       throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
@@ -3704,9 +3782,9 @@ export function lowerIrFunctionBody<S, Slot>(
   return {
     name: func.name,
     body,
-    params: func.params.map((param) => ({
+    params: func.params.map((param, index) => ({
       name: param.name,
-      slots: convertSlots(param.type, `param ${param.name}`),
+      slots: convertSlots(param.type, `param ${param.name}`, index),
     })),
     locals: locals.map((local) => ({
       name: local.name,
@@ -4124,10 +4202,10 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
   }
   if (t.kind === "fnctor") {
     const lowering = resolver.resolveFnctor?.(t.shape);
-    if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+    if (!lowering || lowering.resultIsExternref || lowering.instanceCarrierType.kind === "externref") {
       throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no exact struct ABI resolver (${funcName})`);
     }
-    return lowering.carrierType;
+    return lowering.instanceCarrierType;
   }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell

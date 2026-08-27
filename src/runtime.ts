@@ -5698,16 +5698,8 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
   return fn;
 }
 
-/**
- * (#1395) `_staticMethodNames` is the static-method analog of
- * `_prototypeMethodNames` above. Populated by the `__register_class_object`
- * host import on first lazy access of a class identifier. Consulted by
- * `__getOwnPropertyDescriptor` when the receiver is a class-object singleton
- * — returns a method descriptor with the spec-correct flags
- * (`{enumerable: false, configurable: true, writable: true}` per ECMA-262
- * §15.7.1) so `verifyProperty(C, "m", ...)` tests pass.
- */
 const _staticMethodNames = new WeakMap<object, string[]>();
+const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
 // Static methods are invoked by host frameworks through the generic closure
 // bridge. Their object results must be readable host objects (React consumes
 // getDerivedStateFromProps' returned partial state immediately), unlike the
@@ -6151,7 +6143,7 @@ function _ownStructKeys(obj: any, exports: Record<string, Function> | undefined)
   if (protoMethods !== undefined) {
     for (const n of protoMethods) if (!_isDeletedClassProp(obj, n)) push(n);
   } else if (staticMethods !== undefined) {
-    for (const n of staticMethods) if (!_isDeletedClassProp(obj, n)) push(n);
+    for (const n of _classObjectOwnPropertyNames.get(obj) ?? staticMethods) if (!_isDeletedClassProp(obj, n)) push(n);
   } else {
     for (const n of _getStructFieldNames(obj, exports) ?? []) push(n);
   }
@@ -7698,6 +7690,18 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         if (typeof key === "string" && staticMethods.includes(key)) return true;
         const sc = _wasmStructProps.get(obj);
         return !!sc && key in sc;
+      }
+      // (#4765) A DELETED key is absent for HasProperty too. `fieldNamesForHost()`
+      // below is the STATIC struct shape and does not shrink on delete, so
+      // `"k" in wrapped` stayed true after the host's own
+      // `Array.prototype.{pop,splice,unshift}` removed `k` via
+      // DeletePropertyOrThrow — the "…is removed" test262 family.
+      // `_wasmStructHasOwn` (hasOwnProperty) and the compiled read already
+      // consult this set; the proxy's `has` trap was the one that did not, and
+      // it is what an `in` on an externref-typed receiver reaches.
+      {
+        const tomb = _wasmStructDeletedKeys.get(obj);
+        if (tomb?.has(typeof key === "symbol" ? key : String(key))) return false;
       }
       if (safeGetField(key) !== undefined) return true;
       const sc = _wasmStructProps.get(obj);
@@ -11220,6 +11224,10 @@ assert._isSameValue = isSameValue;
       // what the conformance tests compare. Used by the vec computed-get when
       // the key is a `Symbol.iterator` (host-mode only).
       if (name === "__array_proto_values") return () => Array.prototype.values;
+      // (#4765 slice 1) `%Array.prototype.<m>%` — the value of a NON-CALL method
+      // read on a vec (`[].includes`), which used to read as null. Rationale and
+      // scope: `src/codegen/array-method-value.ts`.
+      if (name === "__array_proto_method") return (k: any) => (Array.prototype as any)[String(k)];
       if (name === "__extern_set")
         return (obj: any, key: any, val: any) => {
           // (#860) When a Wasm closure struct is stored as a property value
@@ -12056,6 +12064,12 @@ assert._isSameValue = isSameValue;
           if (classObj == null || typeof classObj !== "object") return;
           const names = typeof csv === "string" && csv.length > 0 ? csv.split(",") : [];
           _staticMethodNames.set(classObj, names);
+          _classObjectOwnPropertyNames.set(classObj, [
+            "length",
+            "name",
+            "prototype",
+            ...names.filter((name) => name !== "length" && name !== "name" && name !== "prototype"),
+          ]);
         };
       if (name === "__register_class_static_method")
         return function registerClassStaticMethod(classObj: any, methodName: any, closure: any): void {
@@ -13148,7 +13162,9 @@ assert._isSameValue = isSameValue;
           // (filtered through the #1364b deletion set).
           const staticMethods = _staticMethodNames.get(obj);
           if (staticMethods !== undefined) {
-            const names = staticMethods.filter((n) => !_isDeletedClassProp(obj, n));
+            const names = (_classObjectOwnPropertyNames.get(obj) ?? staticMethods).filter(
+              (n) => !_isDeletedClassProp(obj, n),
+            );
             const sc = _wasmStructProps.get(obj);
             if (sc) {
               for (const k of Object.getOwnPropertyNames(sc)) {

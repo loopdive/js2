@@ -4,7 +4,7 @@ title: "standalone: class ES6 semantics residual (~321 non-generator tests) — 
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-25
+updated: 2026-08-27
 priority: high
 horizon: l
 feasibility: hard
@@ -20,12 +20,38 @@ loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/literals.ts
   - src/codegen/statements/control-flow.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/typeof-delete.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/statements/control-flow.ts::compileReturnStatement
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/runtime.ts::resolveImport
 ---
 
 # #4450 — class ES6 standalone residual
+
+## Delivery regression repair (2026-08-27)
+
+PR #5024's first upstream quality run exposed a host-import migration ratchet
+failure: `runtimeTsLines` was 18,295 against the 18,275 maximum. The semantic
+change was already green (2/2 focused host/standalone pins, 8/8 equivalence
+shards, and issue tests), but the PR was not merge-ready with that quality
+failure.
+
+The class-own-key registry is now expressed without the redundant helper and
+duplicated explanatory block. This preserves the separate static-method and
+constructor-own-key registries—so `length`, `name`, and `prototype` cannot be
+mistaken for writable static methods—while keeping `runtime.ts` at the 18,275
+policy-counted-line ceiling after the branch's latest `main` merge.
+`check:host-import-policy`, lint, formatting, typecheck,
+and the 2/2 focused host/standalone tests pass locally. The repair must be
+pushed to the existing standalone fix PR #5024; no separate PR is warranted
+because it is a CI repair for that completed fix.
 
 ## Problem
 
@@ -126,7 +152,6 @@ prototype metadata cases; these remain assigned to the plan's follow-up lanes.
 - Post-#4447 re-measurement recorded here; remaining sub-buckets fixed or
   re-attributed to #2158/#2864 with evidence, scoped-run measured
   (`TEST262_TARGET=standalone TEST262_PATH_FILTER="language/statements/class|language/expressions/class"`).
-
 ## 2026-08-27 Luna/max wave plan — static name/length precedence
 
 The exact bounded slice is four ES2015 class-definition rows:
@@ -143,3 +168,65 @@ branch must establish fresh controls on the combined PR head.
 3. Add permanent focused tests covering both names and both ordering cases.
 4. Rerun the exact 4/4 rows in host and standalone and record exact evidence,
    losses, and any residual handoff before integration into draft PR #5010.
+
+## 2026-08-27 implementation/results handoff — static name/length precedence
+
+The bounded four-row slice is implemented on `codex/4450-es2015-class-meta-v2`
+(base `114f8a95a`). The failures had two related causes: class objects use a
+closed WasmGC carrier in standalone mode, so the native
+`Object.getOwnPropertyNames` path returned no keys, while the host registry
+tracked only static method names and omitted the constructor's standard
+`length`, `name`, and `prototype` keys. In addition, static `name`/`length`
+methods were hidden by compile-time `typeof` folding, and setter-only accessors
+could be invoked by the host constructor-name stamp during class creation.
+
+Implementation:
+
+- Added class-specific metadata helpers for the constructor's standard own-key
+  order and static method precedence.
+- Lowered known-class `Object.getOwnPropertyNames` calls to the native
+  standalone object-vector builder, preserving evaluation/TDZ side effects
+  and returning `length`, `name`, `prototype`, then non-duplicate static keys.
+- Applied the static-method function `typeof` override both to direct typeof
+  expressions and to the `typeof` comparison-folding path.
+- Made setter-only static `name`/`length` reads return canonical `undefined`;
+  host class metadata stamping now leaves those accessor-owned keys alone.
+- Extended the host class-object sidecar with the same ordered own-key list
+  without changing the static-method descriptor/deletion registry.
+- Added `tests/issue-4450-class-meta.test.ts` covering name and length methods,
+  computed keys, exact own-key ordering, getter/setter behavior, and a static
+  generator that must not execute while reading metadata.
+
+Evidence:
+
+- Fresh direct controls on the combined base: standalone `0/4`, host `0/4`.
+- Focused permanent tests: `tests/issue-4450.test.ts` and
+  `tests/issue-4450-class-meta.test.ts`: 4/4 passed.
+- Fresh exact host command (`pnpm run test:262 --official-scope-only`, pinned
+  QuickJS artifact, `COMPILER_POOL_SIZE=2`, four-file filter): run
+  `20260827-043015`, report `benchmarks/results/test262-report-20260827-043015.json`,
+  `4 pass / 4 total (100.0%)`.
+- Fresh exact standalone command with the same controls: run
+  `20260827-043237`, report
+  `benchmarks/results/test262-standalone-report-20260827-043237.json`,
+  `4 pass / 4 total (100.0%)`.
+
+The official runner creates 16 local shard suites for this filter; twelve
+empty shard files report Vitest's existing “No test suite found” diagnostic,
+but the runner's authoritative scoped result is the four discovered rows and
+reports 4/4 in each lane. A monolithic local-shard retry exceeded its 512 MB
+heap before producing a report, so it is not used as evidence. No residual
+diagnostic instrumentation is part of this checkpoint.
+
+Handoff: commit and push the verified checkpoint from this worktree. The
+parent agent should transplant the commit onto a clean `upstream/main`
+delivery branch and open the upstream PR on `loopdive/js2`; this branch is
+based on the combined PR head and is not itself a PR base. The broader #4450
+class residual (destructuring, subclass/prototype, generators, and reflection
+machinery) remains outside this slice.
+
+After transplant onto clean upstream `fcded6410`, the focused regression files
+passed 4/4 and the authoritative standalone runner was repeated on the final
+delivery code. Run `20260827-045029` passed the exact four rows 4/4 with zero
+failures, compile errors, compile timeouts, or skips. This clean-base result is
+the final acceptance evidence for the ready checkpoint PR.

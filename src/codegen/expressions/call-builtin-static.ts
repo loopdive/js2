@@ -119,6 +119,7 @@ import { compileMathCall } from "./builtins.js";
 import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { classIdentityFromExpression, classStaticOwnPropertyNames } from "../class-static-metadata.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
@@ -3013,6 +3014,34 @@ export function compileBuiltinStaticCall(
       fctx.body.push({ op: "unreachable" });
       return { kind: "externref" };
     }
+
+    // A compiled class constructor is a closed WasmGC carrier, not a `$Object`,
+    // so the standalone `__getOwnPropertyNames` native cannot inspect it.  The
+    // class-definition pass already collected its own static method names;
+    // materialize the constructor's standard keys plus those methods directly
+    // into the host-free `$ObjVec`.  Keep this syntactically narrow (a direct
+    // class identifier only) so aliases and dynamic values retain the generic
+    // ToObject/reflection path.
+    if (noJsHost(ctx)) {
+      const className = classIdentityFromExpression(ctx, arg);
+      if (className !== undefined) {
+        const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
+        if (argResult) fctx.body.push({ op: "drop" });
+
+        const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+        const namesLocal = allocLocal(fctx, `__class_own_names_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: namesLocal });
+        for (const name of classStaticOwnPropertyNames(ctx, className)) {
+          addStringConstantGlobal(ctx, name);
+          fctx.body.push({ op: "local.get", index: namesLocal });
+          fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+          fctx.body.push({ op: "call", funcIdx: pushIdx });
+        }
+        fctx.body.push({ op: "local.get", index: namesLocal });
+        return { kind: "externref" };
+      }
+    }
+
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (!argResult) {
       fctx.body.push({ op: "ref.null.extern" });
