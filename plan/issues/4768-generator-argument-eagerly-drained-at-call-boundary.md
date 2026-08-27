@@ -165,6 +165,31 @@ So this is **not** a destructuring bug, not a budgeting bug, and not an
 aliasing bug. Array-pattern elision is simply the family that makes it
 observable, because §8.5.3 pins the exact IteratorStep count.
 
+### How the buffer is produced
+
+`src/runtime.ts:15673` — `st.materialize`:
+
+```ts
+setEager(1);                 // exports.__gen_set_eager
+inner = callFn0(thunk);      // run the compiled generator body to completion
+setEager(0);
+const innerSt = _GeneratorState.get(inner);
+st.buf = innerSt.buf;        // adopt the fully-populated buffer
+```
+
+The compiled body is invoked once, in **eager mode**, and yields are collected
+into `buf`. The in-tree name for this is "the buffer lowering" (see the #3032
+comment just above: *"the eager-at-creation side effects of the buffer
+lowering"*). #3032 deferred the body from creation-time to first-resume, which
+fixed `var it = g()` observing side effects — but a resume still runs
+**everything**.
+
+Note `__gen_set_eager` is a flag, so the compiled generator has an eager and a
+non-eager mode. Whether the non-eager mode is a usable incremental path, or only
+the inner bookkeeping for the eager run, is the first thing to establish — it
+decides whether this is a lowering rewrite or a matter of driving an existing
+state machine.
+
 ### Why this is a design change
 
 `state.buf` + `state.materialize` is the generator representation. Making a
