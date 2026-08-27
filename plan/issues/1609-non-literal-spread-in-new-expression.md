@@ -1,17 +1,18 @@
 ---
 id: 1609
 title: "codegen: non-literal spread argument in new-expression not supported"
-status: blocked
+status: in_progress
 created: 2026-05-24
-updated: 2026-05-27
-priority: medium
-feasibility: medium
+updated: 2026-08-27
+priority: high
+feasibility: hard
+assignee: ttraenkler/codex-es6-new-spread
 task_type: feature
 area: codegen
 language_feature: spread, new-expression
 goal: compiler-correctness
 sprint: Backlog
-blocked_on: [1620, 1633]
+related: [1320, 1620, 1633]
 es_edition: es2015
 test262_count: 18
 ---
@@ -84,3 +85,43 @@ dynamic-length argv, and (b) a dynamic-argv lifted constructor to build
 **blocked on #1620 / #1633**, not a localized dev fix. Re-route after the
 iterator bridge lands; reassess then whether the array-literal/typed-array
 subset can be carved off as a partial win.
+
+## Resume plan — 2026-08-27
+
+The old dependency state is stale: #1620 and #1320 are now complete, and the
+compiler has since gained native iterator/generator and dynamic call-boundary
+infrastructure. #1633 still tracks broader `Array.from`/`Array.of` constructor
+semantics, but it is no longer accepted as proof that these 18 `new` spread
+rows remain structurally blocked. This checkpoint reopens #1609 for a bounded,
+verify-first implementation attempt.
+
+1. Rebuild the exact current ES2015 `language/expressions/new/spread-*` cohort
+   from the maintained 11,704-path edition filter. Run every candidate alone
+   in standalone and host modes with the pinned Test262 checkout, QuickJS
+   artifact, LLVM 18, and at most two compiler workers; record exact statuses
+   and signatures rather than carrying forward the historical count.
+2. Partition the cohort into compiled-array/typed-array operands, arbitrary
+   custom iterables, multiple spreads, and iterator abrupt-completion cases.
+   Confirm whether the current ordinary-call spread and iterator drivers can
+   produce a runtime argv carrier that constructor lowering can consume.
+3. Select the largest cohesive host-pass cluster with a shared constructor
+   call-boundary root cause. Implement dynamic argument collection once in
+   shared construction machinery; preserve evaluation order, `this`/prototype
+   construction, dynamic `arguments`, IteratorClose, and abrupt completion.
+4. Add focused host/standalone controls for zero/one/multiple spread operands,
+   mixed fixed and spread arguments, a custom iterable, `arguments.length` and
+   indexed reads, constructor identity, iterator throws, and an adjacent
+   already-passing literal-spread case.
+5. Rerun the exact selected slice and complete candidate cohort in both lanes,
+   mandatory repository gates, and a same-base pass-to-nonpass comparison.
+   Record artifacts, counts, residual ownership, commit SHA, and handoff here.
+
+### Acceptance
+
+- The current candidate denominator and both-lane baseline are exact.
+- The selected cohesive cluster reaches 100% standalone and host pass with
+  zero failures, compile errors, timeouts, or skips and no pass regression.
+- The implementation contains no fixture rewrites, runner exemptions, host
+  oracle shortcuts, or forced array-only semantics for arbitrary iterables.
+- The upstream PR uses the repository Description/CLA template and stays draft
+  until the scoped fix is complete, current-main based, CI-green, and mergeable.
