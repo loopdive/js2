@@ -11212,6 +11212,10 @@ assert._isSameValue = isSameValue;
       // what the conformance tests compare. Used by the vec computed-get when
       // the key is a `Symbol.iterator` (host-mode only).
       if (name === "__array_proto_values") return () => Array.prototype.values;
+      // (#4765 slice 1) `%Array.prototype.<m>%` — the value of a NON-CALL method
+      // read on a vec (`[].includes`), which used to read as null. Rationale and
+      // scope: `src/codegen/array-method-value.ts`.
+      if (name === "__array_proto_method") return (k: any) => (Array.prototype as any)[String(k)];
       if (name === "__extern_set")
         return (obj: any, key: any, val: any) => {
           // (#860) When a Wasm closure struct is stored as a property value

@@ -13,6 +13,18 @@ language_feature: arrays
 goal: spec-completeness
 sprint: current
 horizon: xl
+loc-budget-allow:
+  # 2026-08-27 — slice 1 (host-lane method value). Both are the minimum wiring
+  # for a NEW mechanism whose logic lives in the leaf module
+  # src/codegen/array-method-value.ts, not in the god files:
+  #   property-access.ts +7 — the intercept call in compilePropertyAccess
+  #   runtime.ts         +4 — the __array_proto_method intrinsic
+  - src/codegen/property-access.ts
+  - src/runtime.ts
+func-budget-allow:
+  # Same +4: resolveImport is the single switch every host import is registered
+  # in, so a new import necessarily grows it.
+  - src/runtime.ts::resolveImport
 ---
 
 # #4765 — `Array.prototype` method values and the generic array-like algorithm
@@ -88,7 +100,46 @@ Far more than 19 rows depend on this outside ES2016: every
 `Array.prototype.<m>.call(arrayLike, …)` test262 row in every edition, and the
 `Function.prototype.{call,apply,bind}`-on-builtin family.
 
-## Implementation Plan
+## Slice 1 — DONE (host lane), and it re-sized the issue
+
+The original sizing above ("XL, not a by-product of an includes fix") was wrong
+about the first step, because it missed that **two call spellings behave
+differently**:
+
+| spelling | uses in the includes/reverse/splice/unshift/pop/slice dirs | status before slice 1 |
+| --- | --- | --- |
+| `Array.prototype.includes.call(obj, …)` | 72 | already resolved — runs the real generic algorithm through the host `Array` global |
+| `[].includes.call(obj, …)` | 40 | `null` — no route from a vec receiver in non-call position |
+
+So the generic algorithm was never the blocker for the first tranche; the
+missing piece was only a **route from a vec-typed receiver to the intrinsic**.
+`src/codegen/array-method-value.ts` adds it, modelled on the #2743b
+`vec[Symbol.iterator]` → `%Array.prototype.values%` intercept: host lane, non-call
+position, array/tuple receiver, receiver evaluated for effect then dropped,
+intrinsic fetched via a new `__array_proto_method` import.
+
+**Measured: ES2016 in-scope 102/124 → 109/124**, no regressions (full
+before/after run of the 124 in-scope files with
+`scripts/run-test262-paths.mts`). Seven of the nine `includes` rows flipped.
+
+Remaining from the original 19, now 12:
+
+- 2 `includes` rows fail on **`fromIndex` observation order**, not on the value
+  read: `length-zero-returns-false.js` ("length is checked before
+  ToInteger(fromIndex)" — we observe `valueOf` when we should not) and
+  `return-abrupt-tointeger-fromindex-symbol.js` ("Expected a TypeError to be
+  thrown but no exception was thrown"). Both point at argument marshalling
+  coercing a WasmGC struct on its way to the host call, ahead of the host
+  algorithm's own step order.
+- 10 rows in the 2^53-length family, which now genuinely need the length
+  arithmetic, not the method value.
+
+**Standalone is untouched** — the intercept returns early under
+`ctx.standalone || ctx.wasi`. A native answer still needs the generic array-like
+algorithm below, so the rest of this plan stands for standalone and for the
+2^53 work.
+
+## Implementation Plan (remaining slices)
 
 1. **Reify the value.** Extend the static-method closure machinery in
    `src/codegen/property-access.ts` to prototype methods: a

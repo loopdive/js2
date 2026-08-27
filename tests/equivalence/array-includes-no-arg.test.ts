@@ -140,3 +140,59 @@ describe("Array.prototype.includes with a non-numeric search value", () => {
     );
   });
 });
+
+// (#4765 slice 1) An `Array.prototype` method read as a VALUE. `arr.m(x)` is
+// inlined against the WasmGC vec, so the method never needed to exist as a
+// value — and it didn't: `[].includes` read as `null`, so
+// `[].includes.call(obj, "a")` died with "Cannot read properties of null
+// (reading 'call')". The sibling spelling `Array.prototype.includes.call(obj, …)`
+// already worked, which is why the gap stayed invisible.
+describe("Array.prototype methods read as values (host lane)", () => {
+  it("is callable through .call on an array-like object", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var obj: any = { length: 3, 0: "a", 1: "b", 2: "c" };
+        // No \`as any\` on the receiver: the intercept keys on the STATIC array
+        // fact, and a cast erases it. test262 is plain JS, so this is the shape
+        // that matters.
+        var arr: string[] = [];
+        var found: any = arr.includes.call(obj, "b");
+        var missing: any = arr.includes.call(obj, "z");
+        return (found ? 2 : 0) + (missing ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
+  it("has the same identity as the Array.prototype spelling", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var arr: string[] = [];
+        return (arr.includes as any) === (Array.prototype as any).includes ? 1 : 0;
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
+  it("leaves the inlined call path alone", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var arr: number[] = [4, 5, 6];
+        return (arr.includes(5) ? 2 : 0) + (arr.includes(9) ? 1 : 0);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
+  it("evaluates a side-effecting receiver exactly once", async () => {
+    await assertEquivalent(
+      `export function test(): number {
+        var calls: number = 0;
+        function mk(): number[] { calls = calls + 1; return [1, 2]; }
+        var f: any = mk().includes;
+        return (f ? 10 : 0) + calls;
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+});

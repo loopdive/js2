@@ -157,6 +157,7 @@ import {
   localGlobalIdx,
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
+import { tryCompileArrayMethodValue } from "./array-method-value.js";
 import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
@@ -3679,6 +3680,12 @@ export function compilePropertyAccess(
   if (expr.questionDotToken) {
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
+
+  // (#4765 slice 1) `[].includes` as a VALUE — the host intrinsic, so
+  // `[].includes.call(obj, …)` runs the generic algorithm instead of dying on a
+  // null. Non-call position and an array receiver only; see the module comment.
+  const arrayMethodValue = tryCompileArrayMethodValue(ctx, fctx, expr);
+  if (arrayMethodValue !== undefined) return arrayMethodValue;
 
   // Static field initializers can contain a folded direct eval. Its AST is
   // foreign, but `this.<name>` still denotes the surrounding class constructor
