@@ -10,6 +10,10 @@ import type { IrIntegrationError, IrIntegrationReport } from "../ir/integration.
 import type { IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import {
+  planMultiPreparedModuleInit,
+  type MultiPreparedModuleInitPlanningInput,
+} from "./multi-prepared-module-init.js";
+import {
   createMultiPreparedProgramOwner,
   type MultiPreparedProgramCallableComponent,
   type MultiPreparedProgramOwner,
@@ -453,6 +457,10 @@ export interface MultiPreparedProgramRoutePlanningInput {
     legacyName: string,
   ) => MultiPreparedFunctionValueSupportReceipt | undefined;
   readonly projectLoweringPlans: (plan: IrOverlayPlan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly moduleInit?: Omit<
+    MultiPreparedModuleInitPlanningInput,
+    "ctx" | "multiAst" | "identityContext" | "options" | "planSource" | "safeSelection" | "projectLoweringPlans"
+  >;
   readonly callable: Omit<
     MultiPreparedCallableOrchestrationInput,
     "owner" | "multiAst" | "ctx" | "identityContext" | "planSource" | "safeSelection"
@@ -510,7 +518,20 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     projectLoweringPlans: input.projectLoweringPlans,
     stringShapes,
   });
-  if (input.ctx.irProgramCallableCutoverEnabled) {
+  const preparedModuleInit = input.moduleInit
+    ? planMultiPreparedModuleInit({
+        ...input.moduleInit,
+        ctx: input.ctx,
+        multiAst: input.multiAst,
+        identityContext: input.identityContext,
+        ...(input.options ? { options: input.options } : {}),
+        planSource,
+        safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
+        projectLoweringPlans: input.projectLoweringPlans,
+      })
+    : undefined;
+  if (preparedModuleInit) input.owner.registerPreparedModuleInit(preparedModuleInit);
+  if (input.ctx.irProgramCallableCutoverEnabled && !preparedModuleInit) {
     planMultiPreparedCallableComponents({
       owner: input.owner,
       multiAst: input.multiAst,

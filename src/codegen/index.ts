@@ -2428,8 +2428,13 @@ function recordObservedIrOutcomes(
     target,
   });
   const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  const preparedModuleInitUnitId = ctx.irProgramPreparedModuleInitUnitId;
   ctx.irOutcomes.push(
-    ...reconciled.outcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)),
+    ...reconciled.outcomes.filter(
+      (outcome) =>
+        (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
+        outcome.unitId !== preparedModuleInitUnitId,
+    ),
   );
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
@@ -3710,6 +3715,15 @@ function compileMultiIrOverlaySource(
     });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
+  // M2 owns the exact contributor's module-init body at the program level.
+  // The ordinary per-source overlay must not rediscover or patch that unit.
+  if (
+    ctx.irProgramPreparedModuleInitUnitId !== undefined &&
+    plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) ===
+      ctx.irProgramPreparedModuleInitUnitId
+  ) {
+    safeSelection = { ...safeSelection, moduleInit: undefined };
+  }
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
   safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = applyIrFinalContextFunctionUnitIds(
@@ -6452,7 +6466,7 @@ function drainStackBalanceTelemetry(ctx: CodegenContext, fileLabel: string): voi
  * simple prologue/epilogue wrap is sufficient; WASI/standalone never reach here
  * (the read site only records the flag when `!ctx.wasi`).
  */
-function finalizeInModuleInitFlag(ctx: CodegenContext): void {
+function finalizeInModuleInitFlag(ctx: CodegenContext, preferredUnitId?: IrUnitId): void {
   const reads = ctx.inModuleInitFlagReads;
   if (!reads || reads.length === 0) return;
 
@@ -6477,7 +6491,16 @@ function finalizeInModuleInitFlag(ctx: CodegenContext): void {
   // Wrap the exact compiler-created initializer (when present): flag = 1 for
   // the body, 0 on completion. Preserve the legacy multi-source first-pass
   // choice until R5 replaces cumulative initializer emission.
-  const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
+  const initFn = preferredUnitId
+    ? ctx.programAbiModuleInitCallables?.functionForUnit(preferredUnitId)
+    : ctx.programAbiModuleInitCallables?.firstFunction();
+  if (preferredUnitId !== undefined && !initFn) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "patch",
+      `prepared module-init ${preferredUnitId} has no exact function for __in_module_init finalization`,
+    );
+  }
   if (!initFn) return;
   initFn.body = [
     { op: "i32.const", value: 1 },
@@ -6486,6 +6509,14 @@ function finalizeInModuleInitFlag(ctx: CodegenContext): void {
     { op: "i32.const", value: 0 },
     { op: "global.set", index: flagIdx },
   ];
+}
+
+function finalizeMultiPreparedModuleInitStartup(
+  ctx: CodegenContext,
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+): void {
+  finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
+  owner?.finalizePreparedModuleInitStartup();
 }
 
 function applyModuleInitGuard(ctx: CodegenContext): void {
@@ -8951,6 +8982,10 @@ function planMultiPreparedProgramRoutes(
     prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
       prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+    moduleInit: {
+      selectExactLexicalModuleInit: (sourceFile, selection, planning) =>
+        preparedExactLexicalModuleInit(ctx, sourceFile, selection, planning, identityContext),
+    },
     callable: {
       directCallerActivationTargets: (plan, sourceFile) =>
         collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan),
@@ -9932,7 +9967,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // delete-aware read `global.get` placeholders and wrapping `__module_init`.
     // Runs before dead-elim (which never prunes/remaps live globals) and the
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
-    finalizeInModuleInitFlag(ctx);
+    finalizeMultiPreparedModuleInitStartup(ctx, multiPreparedProgram);
 
     // (#4150/#4157) Same module-value caches as the single-module pipeline.
     finalizeModuleValueCaches(ctx);
