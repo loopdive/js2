@@ -685,6 +685,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     /** Native indexOf returns i32 while JavaScript's numeric carrier is f64. */
     resultRep?: "i32-number";
   } | null;
+  /** Exact #3521 global underscore replacement inside the linked parser. */
+  fnctorNativeStringReplace?(call: ts.CallExpression): boolean;
   /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
   preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
   /**
@@ -7929,6 +7931,34 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // the active string backend. Returns null when the method isn't supported
   // by Phase 1 (caller falls through to the existing `string` arm below).
   if (recvType.kind === "string") {
+    const exactFnctorStringReplace =
+      methodName === "replace" &&
+      cx.resolver?.fnctorNativeStringReplace?.(expr) === true &&
+      expr.arguments.length === 2 &&
+      expr.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
+      expr.arguments[0]!.getText() === "/_/g" &&
+      ts.isStringLiteralLike(expr.arguments[1]!) &&
+      expr.arguments[1]!.text === "";
+    if (exactFnctorStringReplace) {
+      const replacement = lowerExpr(expr.arguments[1]!, cx, { kind: "string" });
+      const replacementType = cx.builder.typeOf(replacement);
+      if (replacementType.kind !== "string") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: exact fnctor replacement lost its string carrier (${cx.funcName})`,
+        );
+      }
+      const result = cx.builder.emitCall(
+        irRuntimeFuncRef("__str_replaceAll"),
+        [recv, cx.builder.emitStringConst("_"), replacement],
+        { kind: "string" },
+      );
+      if (result === null) {
+        throw new Error(`ir/from-ast: exact fnctor string replace produced void result (${cx.funcName})`);
+      }
+      return result;
+    }
     if (
       methodName === "replace" &&
       (expr.arguments.length !== 2 ||

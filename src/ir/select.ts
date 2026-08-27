@@ -408,6 +408,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   ) => "f64" | "bool" | "string" | "object" | "dynamic" | undefined;
   /** Exact #3521 parseInt/parseFloat native-string boundary call sites. */
   readonly fnctorNativeStringBoundary?: (call: ts.CallExpression) => boolean;
+  /** Exact #3521 global underscore replacement inside the linked parser. */
+  readonly fnctorNativeStringReplace?: (call: ts.CallExpression) => boolean;
   /**
    * Exact legacy callable-ABI proof for an unannotated parameter projected as
    * the ordinary non-fast numeric vec. General object/any evidence is not
@@ -8816,6 +8818,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
         }
         if (expr.expression.name.text === "replace") {
+          if (currentSelectionOptions?.fnctorNativeStringReplace?.(expr) === true) {
+            if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
+            return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
+          }
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-backend", expr);
           }

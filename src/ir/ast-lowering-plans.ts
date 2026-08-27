@@ -121,6 +121,8 @@ export interface IrFnctorParameterPreselectionPlan {
   readonly fieldReads: readonly IrFnctorFieldReadPlan[];
   readonly stringSliceCall: ts.CallExpression;
   readonly valueConsumerCall: ts.CallExpression;
+  /** Exact `/\_/g` replacement inside the linked numeric parser. */
+  readonly nativeStringReplaceCall?: ts.CallExpression;
   readonly physical: {
     readonly instanceCarrier: ValType;
     readonly fieldCarrier: ValType;

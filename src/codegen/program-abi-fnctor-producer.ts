@@ -222,7 +222,7 @@ export function buildStandaloneIrFnctorObservation(
     ctx.fnctorReservedTypeIdx.get(input.functionName) !== input.structTypeIdx ||
     ctx.structMap.get(input.structName) !== input.structTypeIdx ||
     ctx.fnctorLayoutInfo?.has(input.structName) ||
-    ctx.fnctorColdTailTypeIdx?.has(input.functionName)
+    ctx.fnctorColdTailStructName?.has(input.structName)
   ) {
     return undefined;
   }

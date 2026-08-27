@@ -2897,6 +2897,13 @@ function planIrOverlay(
               fnctorParameterPreselection.nativeStringBoundaries!.some((boundary) => boundary.call === call),
           }
         : {}),
+      ...(fnctorParameterPreselection?.nativeStringReplaceCall
+        ? {
+            fnctorNativeStringReplace: (call: ts.CallExpression) =>
+              fnctorParameterPreselectionIsCurrent?.() === true &&
+              fnctorParameterPreselection.nativeStringReplaceCall === call,
+          }
+        : {}),
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,

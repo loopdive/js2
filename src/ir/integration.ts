@@ -1154,6 +1154,13 @@ export function compileIrPathFunctions(
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsLiteralStringReplace: true,
+      ...(loweringPlans?.fnctorParameterPreselection?.nativeStringReplaceCall
+        ? {
+            fnctorNativeStringReplace: (call: ts.CallExpression) =>
+              loweringPlans.fnctorParameterPreselection?.nativeStringReplaceCall === call &&
+              loweringPlans.fnctorParameterPreselectionIsCurrent?.() === true,
+          }
+        : {}),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
@@ -1451,6 +1458,8 @@ export function compileIrPathFunctions(
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
     standaloneDomCapability,
+    loweringPlans?.fnctorParameterPreselection,
+    loweringPlans?.fnctorParameterPreselectionIsCurrent,
   );
 
   // -------------------------------------------------------------------------
@@ -4413,6 +4422,8 @@ function makeFromAstResolver(
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
+  fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
+  fnctorParameterPreselectionIsCurrent?: () => boolean,
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -4509,6 +4520,12 @@ function makeFromAstResolver(
     },
     dynamicCarrierIsExternref() {
       return !ctx.fast;
+    },
+    fnctorNativeStringReplace(call: ts.CallExpression) {
+      return (
+        fnctorParameterPreselection?.nativeStringReplaceCall === call &&
+        fnctorParameterPreselectionIsCurrent?.() === true
+      );
     },
     // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
     // interface no longer carries the mode discriminator; every mode
@@ -5145,6 +5162,11 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === "__str_replaceAll") {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, symbol);
+    }
   } else if (ref.binding.kind === "runtime" && (symbol === "parseInt" || symbol === "parseFloat")) {
     // Exact parser boundaries use the source-qualified ambient builtin map;
     // a same-named source function in funcMap must never steal the call.
@@ -5382,7 +5404,9 @@ function makeResolver(
           `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] became stale during lowering`,
         );
       }
-      return { type: consumer.parameterPhysicalType, refineNonNull: true as const };
+      return consumer.parameterPhysicalType.kind === "ref_null"
+        ? { type: consumer.parameterPhysicalType, refineNonNull: true as const }
+        : { type: consumer.parameterPhysicalType };
     },
     // -------------------------------------------------------------------
     // Vec dispatch (slice 6 part 2 — #1181).
@@ -6108,6 +6132,8 @@ function preregisterNativeStringHelpers(ctx: CodegenContext, fns: readonly Built
     switch (instr.kind) {
       case "forof.string":
         return true;
+      case "call":
+        return instr.target.binding.kind === "runtime" && instr.target.binding.symbol === "__str_replaceAll";
       case "forof.vec":
       case "forof.iter":
         for (const sub of instr.body) {

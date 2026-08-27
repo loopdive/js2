@@ -257,12 +257,58 @@ function exactSourceCallable(
   return Object.freeze({ handle, func, typeIdx, type });
 }
 
+/**
+ * The exact linked parser consumer keeps the native-string carrier in its
+ * current source-callable slot. The carrier may be nullable or non-null and
+ * the boolean may retain its branded i32 marker, so this proof checks the
+ * authenticated shape without manufacturing either physical type.
+ */
+function exactNativeStringSourceCallable(
+  ctx: CodegenContext,
+  ownerUnitId: IrFnctorArgumentProjection["calleeUnitId"],
+): IrFnctorSourceCallablePlan | undefined {
+  const registry = ctx.programAbiSourceCallables;
+  if (registry?.ctx !== ctx || registry.identityContext !== ctx.irPlanningIdentityContext || ctx.anyStrTypeIdx < 0) {
+    return undefined;
+  }
+  const handle = registry.handleForUnit(ownerUnitId);
+  const func = registry.functionForUnit(ownerUnitId);
+  if (
+    handle === undefined ||
+    !Number.isSafeInteger(handle) ||
+    handle < 0 ||
+    !func ||
+    definedFuncAt(ctx, handle) !== func
+  ) {
+    return undefined;
+  }
+  const typeIdx = func.typeIdx;
+  const type = Number.isSafeInteger(typeIdx) && typeIdx >= 0 ? ctx.mod.types[typeIdx] : undefined;
+  const stringParam = type?.kind === "func" ? type.params[0] : undefined;
+  const booleanParam = type?.kind === "func" ? type.params[1] : undefined;
+  if (
+    !type ||
+    type.kind !== "func" ||
+    ctx.mod.types[typeIdx] !== type ||
+    type.params.length !== 2 ||
+    (stringParam?.kind !== "ref" && stringParam?.kind !== "ref_null") ||
+    stringParam.typeIdx !== ctx.anyStrTypeIdx ||
+    booleanParam?.kind !== "i32" ||
+    type.results.length !== 1 ||
+    !sameValType(type.results[0]!, { kind: "f64" })
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ handle, func, typeIdx, type });
+}
+
 interface ExactStringToNumberTopology {
   readonly declaration: ts.FunctionDeclaration;
   readonly stringParameter: ts.ParameterDeclaration;
   readonly booleanParameter: ts.ParameterDeclaration;
   readonly parseIntCall: ts.CallExpression;
   readonly parseFloatCall: ts.CallExpression;
+  readonly replaceCall: ts.CallExpression;
 }
 
 function exactStringToNumberTopology(
@@ -356,6 +402,7 @@ function exactStringToNumberTopology(
     booleanParameter,
     parseIntCall: parseIntExpression,
     parseFloatCall,
+    replaceCall,
   });
 }
 
@@ -466,12 +513,7 @@ export function planIrFnctorParameterPreselection(
     ? identityContext.unitIdByDeclaration.get(consumerTopology.declaration)
     : undefined;
   if (consumerTopology && consumerUnitId !== undefined) {
-    const consumerPreselection = exactSourceCallable(
-      ctx,
-      consumerUnitId,
-      [physical.fieldCarrier, { kind: "i32", boolean: true }],
-      { kind: "f64" },
-    );
+    const consumerPreselection = exactNativeStringSourceCallable(ctx, consumerUnitId);
     const boundaries = exactNativeStringBoundaries(sourceId, sourceFile, consumerUnitId, consumerTopology, ctx);
     if (consumerPreselection && boundaries) {
       valueConsumer = Object.freeze({
@@ -479,7 +521,7 @@ export function planIrFnctorParameterPreselection(
         declaration: consumerTopology.declaration,
         parameterDeclaration: consumerTopology.stringParameter,
         parameterIndex: 0,
-        parameterPhysicalType: cloneProgramAbiValType(physical.fieldCarrier),
+        parameterPhysicalType: cloneProgramAbiValType(consumerPreselection.type.params[0]!),
         signature: {
           params: [{ kind: "string" as const }, irVal({ kind: "i32", boolean: true })],
           returnType: irVal({ kind: "f64" }),
@@ -508,6 +550,7 @@ export function planIrFnctorParameterPreselection(
     fieldReads: topology.fieldReads,
     stringSliceCall: topology.stringSliceCall,
     valueConsumerCall: topology.valueConsumerCall,
+    ...(valueConsumer && consumerTopology ? { nativeStringReplaceCall: consumerTopology.replaceCall } : {}),
     physical,
     preselection,
     ...(valueConsumer ? { valueConsumer } : {}),
@@ -547,22 +590,19 @@ export function irFnctorParameterPreselectionIsCurrent(
   if (
     !topology ||
     topology.declaration !== plan.valueConsumer.declaration ||
-    topology.stringParameter !== plan.valueConsumer.parameterDeclaration
+    topology.stringParameter !== plan.valueConsumer.parameterDeclaration ||
+    topology.replaceCall !== plan.nativeStringReplaceCall
   ) {
     return false;
   }
-  const consumer = exactSourceCallable(
-    ctx,
-    plan.valueConsumer.unitId,
-    [plan.physical.fieldCarrier, { kind: "i32", boolean: true }],
-    { kind: "f64" },
-  );
+  const consumer = exactNativeStringSourceCallable(ctx, plan.valueConsumer.unitId);
   if (
     consumer === undefined ||
     consumer.handle !== plan.valueConsumer.preselection.handle ||
     consumer.func !== plan.valueConsumer.preselection.func ||
     consumer.typeIdx !== plan.valueConsumer.preselection.typeIdx ||
-    consumer.type !== plan.valueConsumer.preselection.type
+    consumer.type !== plan.valueConsumer.preselection.type ||
+    !sameValType(consumer.type.params[0]!, plan.valueConsumer.parameterPhysicalType)
   ) {
     return false;
   }
