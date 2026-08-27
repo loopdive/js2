@@ -15,6 +15,12 @@ area: ir
 language_feature: exponentiation
 goal: ir-first
 related: [2135, 4681]
+files:
+  - src/ir/capability.ts
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - tests/issue-2135.test.ts
+  - tests/issue-4787-ir-numeric-exponentiation.test.ts
 loc-budget-allow:
   - src/ir/capability.ts
   - src/ir/from-ast.ts
@@ -68,17 +74,16 @@ everything outside that contract.
 
 ## Status notes
 
-- The issue reservation is supplied by the task handoff as
-  `ttraenkler/codex`; the local claim endpoint was unavailable in this
-  environment, so no competing reservation is being inferred.
+- The issue reservation was atomically allocated and verified on
+  `upstream/issue-assignments` for `ttraenkler/codex` before implementation.
 - Existing runtime-manifest and `math.pow` provider definitions are being
   reused. No #3525, module-init, or multi-prepared implementation files are in
   scope.
 - The bounded selector claim and from-AST semantic lowering are implemented.
 - Focused `tests/issue-4787-ir-numeric-exponentiation.test.ts` passes 15/15;
   focused #2135/#4787 together pass 20/20 after the final test additions.
-- The repository TypeScript source check passes with the available Node type
-  root explicitly supplied; the worktree dependency install is incomplete.
+- The repository `pnpm run typecheck` check passes in the provisioned
+  worktree.
 - Targeted Prettier, `git diff --check`, and the repository LOC/function budget
   checks pass. The function budget records the intentionally expanded
   `isPhase1Expr` allowance above.
@@ -89,8 +94,7 @@ everything outside that contract.
   passed.
 - `vitest run tests/issue-2135.test.ts tests/issue-4787-ir-numeric-exponentiation.test.ts`:
   20/20 passed.
-- `tsc --noEmit --pretty false --types node` with the available explicit Node
-  `typeRoots`: passed.
+- `pnpm run typecheck`: passed.
 - Targeted Prettier check: passed.
 - LOC and function budgets: passed with the scoped allowances in frontmatter.
 - Coverage proves a non-vacuous eligible denominator, exact `math.pow`
