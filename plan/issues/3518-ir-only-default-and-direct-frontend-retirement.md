@@ -2022,3 +2022,26 @@ This is parity/no-regression evidence only. The direct handler and builder
 switch remain live controls until R9 and the refreshed R10 reachability audit.
 The driver/ledger suites pass 22/22, both TypeScript 7 and TypeScript 5 pass,
 and repository lint and formatting checks are green.
+
+#### C2e checkpoint: contract the temporary C1 dead-export baseline (2026-08-27)
+
+PR #4982 merged the dormant C1 planner together with 29 entries in
+`scripts/dead-export-baseline.json`, despite this plan's explicit requirement
+that C1 remain unpublished until a real production consumer made the complete
+planner graph reachable. The subsequent C2a–C2d checkpoints now provide that
+consumer through `multi-prepared-callable-orchestration.ts` and
+`multi-prepared-program.ts`; retaining the exemptions would hide genuine
+retirement progress and weaken the #3090 denominator.
+
+On live `main` `db872cf39ffcda8775fa11b0385c896337ab611e`,
+`pnpm run check:dead-exports` reports exactly **29 baseline entries gone**, all
+from `src/codegen/multi-prepared-string-leaf.ts`, with 23 unrelated known rows
+remaining and zero new rows. Remove those exact 29 string-leaf entries now.
+This cleanup changes no source, test, route, artifact, optimization evidence,
+or runtime behavior; it merely makes the baseline match the production
+reachability already proved by C2.
+
+Acceptance is a clean dead-export check with 23 known entries, zero new rows,
+and no stale-baseline progress notice, plus formatting, issue integrity, LOC
+and function ratchets, and the normal unskipped precommit and prepush hooks.
+Do not remove or reclassify any of the remaining 23 rows in this checkpoint.
