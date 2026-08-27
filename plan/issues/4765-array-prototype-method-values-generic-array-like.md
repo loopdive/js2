@@ -420,6 +420,41 @@ same staleness) does not fix even the isolated probe, so `proxy` is not sitting 
 an externref slot and the materialisation is elsewhere. Written and reverted, not
 shipped.
 
+### COMPLETE causal chain (2026-08-27) — and it lands on a deliberate trade-off
+
+Instrumenting `buildVecFromExternref` to dump a stack, then naming the coerced
+expression, gives the whole path with no guesswork left:
+
+```
+COERCE externref -> ref_null: new Proxy(array, { get(t, pk, r) { … } })
+  compileExpressionBody → coerceType → buildVecFromExternref
+```
+
+The materialisation is **at the declaration** `var proxy = new Proxy(array, h)`,
+not at any later use. TypeScript types `new Proxy(t, h)` as its target, so the
+binding gets a vec slot and the host proxy is materialised into it — reading
+`__extern_length` (2**53+2), narrowing to a saturated i32, and allocating.
+
+**And this is already governed by an existing, deliberate rule.**
+`moduleInitForcesExternref` in `src/codegen/declarations.ts` (~L2431) DOES force
+externref for `isDirectProxyConstruction(decl.initializer)` — except when
+`proxyBindingEscapesToCall(ctx, decl)`, where it keeps the structural slot on
+purpose, because (quoting the code) "widening it would make the consumer cast a
+host Proxy externref back to the target struct and trap."
+
+Our rows hand `proxy` to a call (`Array.prototype.slice.call(proxy, …)`), so the
+escape gate fires, the vec slot is preserved, and the materialisation traps.
+The heuristic trades one trap for another, and #4707 / #4754 / #4931 already
+tuned this seam (`proxyModuleEscapeGateEnabled` is described there as "the sole
+attribution seam").
+
+**So this is a policy decision on a tuned heuristic, not a defect to patch.**
+The options are to make the escape gate distinguish "handed to a typed consumer
+that will cast" from "handed to a generic host algorithm that will not", or to
+make the materialisation itself refuse a length it cannot represent with a
+catchable RangeError instead of a Wasm trap. Whoever owns #4931 should pick;
+flipping the gate blind would re-open whatever it was introduced to close.
+
 **The allocation site itself is `buildVecFromExternref`** (`src/codegen/type-coercion.ts:757`).
 It materialises a host array-like into a vec by calling `__extern_length` (which
 returns **f64**), narrowing that to an i32 `lenLocal`, and allocating a backing
