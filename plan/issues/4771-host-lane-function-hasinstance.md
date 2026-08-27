@@ -1,7 +1,7 @@
 ---
 id: 4771
 title: "Host lane: `f[Symbol.hasInstance]` is null — the method-CALL form never reaches the runtime"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-27
 updated: 2026-08-27
