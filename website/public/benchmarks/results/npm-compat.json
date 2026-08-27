@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-27T02:41:07.007Z",
+  "generatedAt": "2026-08-27T03:33:06.498Z",
   "measuredRange": {
-    "oldest": "2026-08-26T23:56:50.733Z",
-    "newest": "2026-08-27T02:40:29.088Z"
+    "oldest": "2026-08-27T00:05:47.503Z",
+    "newest": "2026-08-27T03:32:20.546Z"
   },
   "correctness": {
     "definition": {
@@ -12,13 +12,14 @@
     },
     "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
     "counts": {
-      "verified": 7,
-      "divergent": 17,
+      "verified": 8,
+      "divergent": 16,
       "unverified": 0
     },
     "verified": [
       "acorn",
       "clsx",
+      "cookie",
       "jsdom",
       "styled-components",
       "stylelint",
@@ -27,7 +28,6 @@
     ],
     "divergent": [
       "axios",
-      "cookie",
       "eslint",
       "hono",
       "jest",
@@ -68,30 +68,10 @@
   "refresh": {
     "status": "partial",
     "stalePackages": [
-      "acorn",
-      "axios",
-      "clsx",
-      "cookie",
-      "eslint",
-      "hono",
-      "jest",
-      "jsdom",
-      "lodash",
-      "lodash-es",
-      "marked",
-      "moment",
-      "prettier",
-      "react",
-      "redux",
-      "styled-components",
-      "stylelint",
-      "tailwindcss",
-      "three",
-      "typescript",
-      "uuid",
-      "webpack"
+      "lit",
+      "react-dom"
     ],
-    "freshCount": 2,
+    "freshCount": 22,
     "totalCount": 24
   },
   "packages": [
@@ -103,7 +83,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7166,
+        "durationMs": 5398,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -557,7 +537,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 8210.293136,
+            "compileDurationMs": 5834.494957999999,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -567,7 +547,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7576.361968000001,
+            "compileDurationMs": 4875.4062730000005,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -577,19 +557,14 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7067.091318999999,
+            "compileDurationMs": 4907.822489000002,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:57:01.328Z",
-      "weeklyDownloads": 275892096,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:57:01.328Z"
-      }
+      "measuredAt": "2026-08-27T03:21:17.283Z",
+      "weeklyDownloads": 275892096
     },
     {
       "name": "typescript",
@@ -599,7 +574,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600221,
+        "durationMs": 600154,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -2029,13 +2004,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-27T00:06:58.966Z",
-      "weeklyDownloads": 250686863,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:06:58.966Z"
-      }
+      "measuredAt": "2026-08-27T03:31:33.029Z",
+      "weeklyDownloads": 250686863
     },
     {
       "name": "acorn",
@@ -2045,7 +2015,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 18900,
+        "durationMs": 22786,
         "errorCount": 0,
         "binaryBytes": 686011,
         "categories": {}
@@ -2264,7 +2234,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt -O4 failed: [parse exception: popping from empty stack (at 0:1057483)]\nFatal: error parsing wasm (try --debug for more info)",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 41269.330103,
+            "compileDurationMs": 64293.295902,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -2274,7 +2244,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt -O4 failed: [parse exception: popping from empty stack (at 0:1057591)]\nFatal: error parsing wasm (try --debug for more info)",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 40449.680574,
+            "compileDurationMs": 61162.732359000016,
             "optimizationLevel": 4
           }
         }
@@ -2289,13 +2259,8 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "measuredAt": "2026-08-26T23:58:51.249Z",
-      "weeklyDownloads": 240886853,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:58:51.249Z"
-      }
+      "measuredAt": "2026-08-27T03:24:28.649Z",
+      "weeklyDownloads": 240886853
     },
     {
       "name": "cookie",
@@ -2305,7 +2270,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 813,
+        "durationMs": 1163,
         "errorCount": 9,
         "binaryBytes": 21231,
         "categories": {
@@ -2328,9 +2293,9 @@
       "capabilities": null,
       "tests": {
         "kind": "upstream-suite",
-        "passed": 212,
+        "passed": 63740,
         "total": 63740,
-        "passRatePct": 0.3,
+        "passRatePct": 100,
         "admitted": 63740,
         "executed": 63740,
         "upstreamTestsSeen": 63740,
@@ -2509,10 +2474,9 @@
         }
       },
       "correctness": {
-        "status": "divergent",
-        "passed": 212,
-        "total": 63740,
-        "reason": "63528 of 63740 operations diverged from native node"
+        "status": "verified",
+        "passed": 63740,
+        "total": 63740
       },
       "perf": {
         "sampleOp": "parseCookie(8-pair header); verify a/h",
@@ -2531,54 +2495,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0008400547954497287,
-            "nodeUs": 0.4440106005513356,
-            "wasmStdUs": 0.000002913498683721815,
-            "nodeStdUs": 0.002182740459640963,
-            "ratio": 528.2624218731722,
-            "ratioStd": 3.785436962351946,
+            "wasmUs": 0.0009513228495840628,
+            "nodeUs": 0.6224779459913873,
+            "wasmStdUs": 0.000014522098350305341,
+            "nodeStdUs": 0.0023555981240514262,
+            "ratio": 654.2073359046598,
+            "ratioStd": 11.459511445150394,
             "ratioSamples": [
-              537.0020301608387,
-              530.8461334026313,
-              525.8475392374961,
-              527.6210216688486,
-              528.2624218731722,
-              526.0376852429528,
-              523.0715646008186,
-              530.3891831967956,
-              530.8488043726418
+              664.1106546086702,
+              646.3625262047351,
+              654.2073359046598,
+              635.1196107916338,
+              674.0774742395868,
+              650.8600815996875,
+              665.8832551011275,
+              643.5473568678868,
+              655.7594889832134
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 591290,
+            "iters": 409268,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0008363780885865905,
-              0.0008400547954497287,
-              0.0008437298110824818,
-              0.0008394273537512297,
-              0.0008405114241836718,
-              0.0008393427928841443,
-              0.0008471849684632737,
-              0.0008392920563540489,
-              0.0008415616702545134
+              0.0009402616378662537,
+              0.0009583988975303213,
+              0.0009507877478869359,
+              0.0009798200689860722,
+              0.0009268718785714085,
+              0.0009563928770396512,
+              0.0009359783809194593,
+              0.0009587678489269299,
+              0.0009513228495840628
             ],
             "nodeSamplesUs": [
-              0.44913673155304085,
-              0.4459398400108268,
-              0.44367324493904053,
-              0.44289951800300176,
-              0.4440106005513356,
-              0.4415259398941304,
-              0.4431383669603798,
-              0.4451514282331829,
-              0.44674200646045187
+              0.6244377718267782,
+              0.6194731325195315,
+              0.6220123195559036,
+              0.6223029408602659,
+              0.624783454851116,
+              0.6224779459913873,
+              0.6232523309909326,
+              0.6170125150268352,
+              0.6238389857012994
             ],
-            "compileDurationMs": 420.25197999999364,
-            "moduleCompileDurationMs": 0.34912700000131736,
-            "instantiateDurationMs": 0.0301949999993667,
-            "firstBatchDurationMs": 0.05856599999970058,
+            "compileDurationMs": 560.8971209999945,
+            "moduleCompileDurationMs": 0.38633199999458157,
+            "instantiateDurationMs": 0.02981599999475293,
+            "firstBatchDurationMs": 0.06913899999926798,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2599,55 +2563,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 2.724094748779962,
-            "nodeUs": 0.5831231241551341,
-            "wasmStdUs": 0.019117207176102834,
-            "nodeStdUs": 0.004341584966345191,
-            "ratio": 0.21515695078182606,
-            "ratioStd": 0.0018928605565374712,
+            "wasmUs": 3.867743107054531,
+            "nodeUs": 0.8563282165638816,
+            "wasmStdUs": 0.010009900388853273,
+            "nodeStdUs": 0.005439820394278603,
+            "ratio": 0.2210910353938458,
+            "ratioStd": 0.001382545821161709,
             "ratioSamples": [
-              0.21370772643621458,
-              0.21626597039473644,
-              0.21844559801412422,
-              0.21556222516833154,
-              0.21515695078182606,
-              0.21306499368071039,
-              0.21666471388750153,
-              0.21188672308897474,
-              0.21425652101508388
+              0.22107255076584023,
+              0.2210341205684048,
+              0.2210910353938458,
+              0.2243564604363108,
+              0.22190736750688142,
+              0.22050772675953217,
+              0.22117747664544968,
+              0.22419934138528688,
+              0.22069273467206593
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 87294,
+            "iters": 57849,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              2.7286010378720635,
-              2.727468577450906,
-              2.665401047036409,
-              2.728687767773255,
-              2.729072903063218,
-              2.7203511466997132,
-              2.720583109950266,
-              2.724094748779962,
-              2.7118163791325625
+              3.8974877007381488,
+              3.867743107054531,
+              3.861568825735965,
+              3.8680720150737202,
+              3.8649936040381125,
+              3.8680924302926463,
+              3.871679112862774,
+              3.8661790350740484,
+              3.865485574512867
             ],
             "nodeSamplesUs": [
-              0.5831231241551341,
-              0.5898586386235716,
-              0.5822451256673412,
-              0.5882020070108104,
-              0.587179004284388,
-              0.5796115998808876,
-              0.5894543611245435,
-              0.57719950970287,
-              0.5810243430246645
+              0.8616275475806723,
+              0.8549031962523078,
+              0.8537582499265618,
+              0.8678269460146881,
+              0.8576705561030316,
+              0.8529442686995856,
+              0.8563282165638816,
+              0.8667947933412056,
+              0.8530845822746665
             ],
-            "compileDurationMs": 2873.1932340000058,
-            "moduleCompileDurationMs": 0.8203750000029686,
-            "instantiateDurationMs": 0.20880900000338443,
-            "moduleInitDurationMs": 0.09483999999793014,
-            "firstBatchDurationMs": 1.394505999996909,
+            "compileDurationMs": 3937.9619079999975,
+            "moduleCompileDurationMs": 0.9031949999989592,
+            "instantiateDurationMs": 0.2178669999993872,
+            "moduleInitDurationMs": 0.11567600000125822,
+            "firstBatchDurationMs": 1.5923919999986538,
             "binaryBytes": 67488,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2673,13 +2637,8 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "measuredAt": "2026-08-26T23:57:07.160Z",
-      "weeklyDownloads": 173435452,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:57:07.160Z"
-      }
+      "measuredAt": "2026-08-27T03:22:02.322Z",
+      "weeklyDownloads": 173435452
     },
     {
       "name": "lodash",
@@ -2689,7 +2648,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 70166,
+        "durationMs": 57558,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 8,
@@ -3098,13 +3057,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:57:39.872Z",
-      "weeklyDownloads": 164859858,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:57:39.872Z"
-      }
+      "measuredAt": "2026-08-27T03:22:10.489Z",
+      "weeklyDownloads": 164859858
     },
     {
       "name": "react",
@@ -3114,7 +3068,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 5942,
+        "durationMs": 5811,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -4162,7 +4116,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3978.283484000014,
+            "compileDurationMs": 3978.895800999977,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -4172,8 +4126,8 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 3272.429529999994,
-            "moduleCompileDurationMs": 0.9219419999863021,
+            "compileDurationMs": 3388.314557000005,
+            "moduleCompileDurationMs": 0.9497730000002775,
             "binaryBytes": 111312,
             "moduleImportCount": 1,
             "functionImportCount": 1,
@@ -4186,8 +4140,8 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 3074.4707550000167,
-            "moduleCompileDurationMs": 0.9679979999782518,
+            "compileDurationMs": 3139.3175749999937,
+            "moduleCompileDurationMs": 1.0217500000144355,
             "binaryBytes": 111554,
             "moduleImportCount": 1,
             "functionImportCount": 1,
@@ -4196,13 +4150,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:59:14.138Z",
-      "weeklyDownloads": 162687688,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:59:14.138Z"
-      }
+      "measuredAt": "2026-08-27T03:24:02.708Z",
+      "weeklyDownloads": 162687688
     },
     {
       "name": "eslint",
@@ -4212,7 +4161,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180167,
+        "durationMs": 180148,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -4338,13 +4287,8 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "measuredAt": "2026-08-26T23:59:30.367Z",
-      "weeklyDownloads": 152308132,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:59:30.367Z"
-      }
+      "measuredAt": "2026-08-27T03:24:09.213Z",
+      "weeklyDownloads": 152308132
     },
     {
       "name": "react-dom",
@@ -10618,7 +10562,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-27T02:40:29.088Z",
-      "weeklyDownloads": 139740993
+      "weeklyDownloads": 139740993,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-27T02:40:29.088Z"
+      }
     },
     {
       "name": "prettier",
@@ -10628,11 +10577,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 43948,
+        "durationMs": 43131,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 4,
-        "binaryBytes": 8053427,
+        "binaryBytes": 8053506,
         "categories": {
           "compiler-diagnostic": {
             "count": 4,
@@ -10672,7 +10621,7 @@
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #159:\"Ne_diff\" failed: any.convert_extern[0] expected type externref, found ref.cast null of type (ref null 61) @+146780"
+        "firstError": "WebAssembly.Module(): Compiling function #160:\"Ne_diff\" failed: any.convert_extern[0] expected type externref, found ref.cast null of type (ref null 61) @+146807"
       },
       "capabilities": {
         "nodeFs": false
@@ -10746,13 +10695,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-27T00:06:55.636Z",
-      "weeklyDownloads": 117242232,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:06:55.636Z"
-      }
+      "measuredAt": "2026-08-27T03:31:10.189Z",
+      "weeklyDownloads": 117242232
     },
     {
       "name": "tailwindcss",
@@ -10762,7 +10706,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120145,
+        "durationMs": 120165,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -11124,13 +11068,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:58:34.441Z",
-      "weeklyDownloads": 117155768,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:58:34.441Z"
-      }
+      "measuredAt": "2026-08-27T03:23:13.647Z",
+      "weeklyDownloads": 117155768
     },
     {
       "name": "axios",
@@ -11140,7 +11079,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 66002,
+        "durationMs": 50982,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -11273,7 +11212,7 @@
             "status": "fail",
             "passed": 2,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_416 (wasm://wasm/001c3e2a:wasm-function[913]:0x54e2a)\n    at __closure_451 (wasm://wasm/001c3e2a:wasm-function[962]:0x57d30)\n    at __closure_338 (wasm://wasm/001c3e2a:wasm-function[814]:0x40257)\n    at __call_fn_method_1 (wasm://wasm/001c3e2a:wasm-function[1403]:0x633bd)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001c3e2a:wasm-function[1404]:0x6392a)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13604:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17737:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/001c3e2a:wasm-function[837]:0x4d4c0)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_416 (wasm://wasm/001c3e2a:wasm-function[913]:0x54e2a)\n    at __closure_451 (wasm://wasm/001c3e2a:wasm-function[962]:0x57d30)\n    at __closure_338 (wasm://wasm/001c3e2a:wasm-function[814]:0x40257)\n    at __call_fn_method_1 (wasm://wasm/001c3e2a:wasm-function[1403]:0x633bd)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001c3e2a:wasm-function[1404]:0x6392a)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13620:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17753:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/001c3e2a:wasm-function[837]:0x4d4c0)",
             "tests": [
               {
                 "name": "should abort when any of the signals abort",
@@ -11455,7 +11394,7 @@
             "status": "fail",
             "passed": 0,
             "total": 57,
-            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12767:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17749:20)\n    at __runtime_eval_push_globals (wasm://wasm/009153d6:wasm-function[620]:0xc3074)\n    at __module_init (wasm://wasm/009153d6:wasm-function[1703]:0x19e612)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:291:39)",
+            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12783:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17765:20)\n    at __runtime_eval_push_globals (wasm://wasm/009154ae:wasm-function[621]:0xc308f)\n    at __module_init (wasm://wasm/009154ae:wasm-function[1704]:0x19e62d)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "accepts undefined for second argument",
@@ -11751,7 +11690,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12767:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17749:20)\n    at __runtime_eval_push_globals (wasm://wasm/0085a5f2:wasm-function[619]:0xc053f)\n    at __module_init (wasm://wasm/0085a5f2:wasm-function[1575]:0x1788a1)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:291:39)",
+            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12783:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17765:20)\n    at __runtime_eval_push_globals (wasm://wasm/0085a6ca:wasm-function[620]:0xc055a)\n    at __module_init (wasm://wasm/0085a6ca:wasm-function[1576]:0x1788bc)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "supports a single transformer",
@@ -11806,7 +11745,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12767:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17749:20)\n    at __runtime_eval_push_globals (wasm://wasm/007ca42a:wasm-function[608]:0xb9f81)\n    at __module_init (wasm://wasm/007ca42a:wasm-function[1505]:0x158c97)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:291:39)",
+            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12783:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17765:20)\n    at __runtime_eval_push_globals (wasm://wasm/007ca50e:wasm-function[609]:0xb9f9c)\n    at __module_init (wasm://wasm/007ca50e:wasm-function[1506]:0x158cb5)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "should return buffer from data uri",
@@ -11877,7 +11816,7 @@
             "status": "fail",
             "passed": 0,
             "total": 20,
-            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12767:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17749:20)\n    at __runtime_eval_push_globals (wasm://wasm/0083f796:wasm-function[613]:0xbf170)\n    at __module_init (wasm://wasm/0083f796:wasm-function[1580]:0x172b9f)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:291:39)",
+            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12783:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17765:20)\n    at __runtime_eval_push_globals (wasm://wasm/0083f86e:wasm-function[614]:0xbf18b)\n    at __module_init (wasm://wasm/0083f86e:wasm-function[1581]:0x172bba)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "should support null params",
@@ -12187,7 +12126,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12767:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17749:20)\n    at __runtime_eval_push_globals (wasm://wasm/005c839e:wasm-function[448]:0x93694)\n    at __module_init (wasm://wasm/005c839e:wasm-function[1078]:0x101660)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:291:39)",
+            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12783:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17765:20)\n    at __runtime_eval_push_globals (wasm://wasm/005c8476:wasm-function[449]:0x936af)\n    at __module_init (wasm://wasm/005c8476:wasm-function[1079]:0x10167b)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "should generate a string of the specified length using the default alphabet",
@@ -12230,7 +12169,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12767:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17749:20)\n    at __runtime_eval_push_globals (wasm://wasm/0085124a:wasm-function[620]:0xc0581)\n    at __module_init (wasm://wasm/0085124a:wasm-function[1580]:0x17683b)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:291:39)",
+            "error": "module init: TypeError: Cannot redefine property: undefined\nTypeError: Cannot redefine property: undefined\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:12783:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17765:20)\n    at __runtime_eval_push_globals (wasm://wasm/00851322:wasm-function[621]:0xc059c)\n    at __module_init (wasm://wasm/00851322:wasm-function[1581]:0x176856)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "parses json",
@@ -12555,13 +12494,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-27T00:03:21.743Z",
-      "weeklyDownloads": 112353408,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:03:21.743Z"
-      }
+      "measuredAt": "2026-08-27T03:26:40.819Z",
+      "weeklyDownloads": 112353408
     },
     {
       "name": "clsx",
@@ -12571,7 +12505,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 840,
+        "durationMs": 761,
         "errorCount": 0,
         "binaryBytes": 8704,
         "categories": {}
@@ -12764,54 +12698,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0009699820468090521,
-            "nodeUs": 0.016914565941084685,
-            "wasmStdUs": 0.0000013719398898674385,
-            "nodeStdUs": 0.0001073971643297106,
-            "ratio": 17.447920340209897,
-            "ratioStd": 0.1005207977985154,
+            "wasmUs": 0.000969871622609829,
+            "nodeUs": 0.016290573950186755,
+            "wasmStdUs": 0.000009288296621066234,
+            "nodeStdUs": 0.00019454888731331972,
+            "ratio": 16.790907802560703,
+            "ratioStd": 0.22626430185444438,
             "ratioSamples": [
-              17.26411315423817,
-              17.47784642044196,
-              17.65633836104857,
-              17.35619886883844,
-              17.44928330951124,
-              17.48899545854912,
-              17.411994799744107,
-              17.402378589907816,
-              17.447920340209897
+              16.771676835347364,
+              17.160248540669777,
+              17.154406551364733,
+              16.739653944577256,
+              16.811328055690417,
+              16.77508368757274,
+              16.790907802560703,
+              17.382267824826005,
+              16.74482824040193
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4418156,
+            "iters": 4242180,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009689456415756525,
-              0.0009707393763369573,
-              0.0009710569296334068,
-              0.0009684083133320756,
-              0.0009699820468090521,
-              0.0009687620808326489,
-              0.0009712973014090985,
-              0.0009719686222028276,
-              0.0009678435980977934
+              0.0009720490408236701,
+              0.0009493203965885521,
+              0.0009475491374724437,
+              0.000969871622609829,
+              0.000969833906151962,
+              0.0009706556534614657,
+              0.0009713996105775835,
+              0.0009715980934333993,
+              0.0009691750467918374
             ],
             "nodeSamplesUs": [
-              0.016727987196467967,
-              0.01696643373389295,
-              0.017145309717448362,
-              0.01680788727242791,
-              0.016925491539910742,
-              0.016942675632096792,
-              0.016912223561140707,
-              0.016914565941084685,
-              0.016886858001392422
+              0.01630289238080397,
+              0.016290573950186755,
+              0.01625464313159729,
+              0.016235315333154168,
+              0.016304195955852304,
+              0.01628282981863169,
+              0.016310681300651574,
+              0.016888578278149668,
+              0.01622866969341282
             ],
-            "compileDurationMs": 551.657180000002,
-            "moduleCompileDurationMs": 0.31154400000013993,
-            "instantiateDurationMs": 0.026149000001169043,
-            "firstBatchDurationMs": 0.0546119999999064,
+            "compileDurationMs": 548.5127780000003,
+            "moduleCompileDurationMs": 0.32574600000225473,
+            "instantiateDurationMs": 0.03017600000021048,
+            "firstBatchDurationMs": 0.06368900000234134,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12832,55 +12766,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.36501817250838686,
-            "nodeUs": 0.0554537756938525,
-            "wasmStdUs": 0.00204638047248,
-            "nodeStdUs": 0.00017335028863043963,
-            "ratio": 0.1519733052205683,
-            "ratioStd": 0.0007948572568208308,
+            "wasmUs": 0.36423284714597864,
+            "nodeUs": 0.054937750726049596,
+            "wasmStdUs": 0.0012763732578380989,
+            "nodeStdUs": 0.0002392244276707435,
+            "ratio": 0.1509205159027059,
+            "ratioStd": 0.0008411529516821461,
             "ratioSamples": [
-              0.1520650399138694,
-              0.1532092478061681,
-              0.1520720536766306,
-              0.1509712621292153,
-              0.15208984941913692,
-              0.1505115281279726,
-              0.15078351260553247,
-              0.15133112686355232,
-              0.1519733052205683
+              0.15136299631349032,
+              0.14995848038899515,
+              0.15033653676124176,
+              0.15039463558499416,
+              0.15192833891816365,
+              0.15088735750504245,
+              0.1518229342123876,
+              0.15272802911479896,
+              0.1509205159027059
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 720649,
+            "iters": 744089,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.364671430890768,
-              0.3624817130114572,
-              0.3622995369451672,
-              0.3652430711761148,
-              0.36501817250838686,
-              0.367339281675259,
-              0.36888848524039236,
-              0.366876454418174,
-              0.3644236472957103
+              0.361546747768078,
+              0.3644249962034107,
+              0.36423284714597864,
+              0.36424190789004346,
+              0.36204837324567307,
+              0.3645113689357078,
+              0.36185409675455404,
+              0.3632166299999072,
+              0.36522877505244233
             ],
             "nodeSamplesUs": [
-              0.0554537756938525,
-              0.055535550593976656,
-              0.05509563462934388,
-              0.055141207439408875,
-              0.0555155588920491,
-              0.055288796626374995,
-              0.05562230156428048,
-              0.05551982726680696,
-              0.05538266618006371
+              0.054724799049574,
+              0.05464861864642879,
+              0.05475750481461317,
+              0.054780029001906094,
+              0.05500540795523843,
+              0.05500015723925457,
+              0.054937750726049596,
+              0.05547336004160499,
+              0.05512051515342792
             ],
-            "compileDurationMs": 2461.0136330000023,
-            "moduleCompileDurationMs": 0.880870999993931,
-            "instantiateDurationMs": 0.18032900000252994,
-            "moduleInitDurationMs": 0.04727900000580121,
-            "firstBatchDurationMs": 0.8286630000002333,
+            "compileDurationMs": 2372.285253999995,
+            "moduleCompileDurationMs": 0.7444250000044121,
+            "instantiateDurationMs": 0.19391999999788823,
+            "moduleInitDurationMs": 0.044002000002365094,
+            "firstBatchDurationMs": 0.7504959999932908,
             "binaryBytes": 53650,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12903,13 +12837,8 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "measuredAt": "2026-08-26T23:56:50.733Z",
-      "weeklyDownloads": 104930549,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:56:50.733Z"
-      }
+      "measuredAt": "2026-08-27T03:21:31.739Z",
+      "weeklyDownloads": 104930549
     },
     {
       "name": "jsdom",
@@ -12919,7 +12848,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180094,
+        "durationMs": 180189,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -13124,13 +13053,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:59:36.472Z",
-      "weeklyDownloads": 89317829,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:59:36.472Z"
-      }
+      "measuredAt": "2026-08-27T03:24:13.131Z",
+      "weeklyDownloads": 89317829
     },
     {
       "name": "marked",
@@ -13140,7 +13064,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 12386,
+        "durationMs": 15227,
         "errorCount": 0,
         "binaryBytes": 4166286,
         "categories": {}
@@ -13264,7 +13188,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt -O4 failed: ",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 611086.384739,
+            "compileDurationMs": 614498.9765519999,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -13274,7 +13198,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 8190.854717000038,
+            "compileDurationMs": 10021.926922000013,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -13284,7 +13208,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6569.067263999954,
+            "compileDurationMs": 7976.385756999953,
             "optimizationLevel": 4
           }
         }
@@ -13295,13 +13219,8 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "measuredAt": "2026-08-27T00:07:23.138Z",
-      "weeklyDownloads": 60496071,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:07:23.138Z"
-      }
+      "measuredAt": "2026-08-27T03:32:20.546Z",
+      "weeklyDownloads": 60496071
     },
     {
       "name": "webpack",
@@ -13311,7 +13230,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120127,
+        "durationMs": 120162,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -13971,13 +13890,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:58:46.635Z",
-      "weeklyDownloads": 55617769,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:58:46.635Z"
-      }
+      "measuredAt": "2026-08-27T03:23:20.670Z",
+      "weeklyDownloads": 55617769
     },
     {
       "name": "hono",
@@ -13987,7 +13901,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 10284,
+        "durationMs": 9786,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -14306,7 +14220,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/00369706:wasm-function[267]:0x229cb)\n    at __closure_201 (wasm://wasm/00369706:wasm-function[817]:0x60868)\n    at __closure_200 (wasm://wasm/00369706:wasm-function[818]:0x60999)\n    at __call_fn_method_2 (wasm://wasm/00369706:wasm-function[1846]:0xc46b9)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/00369706:wasm-function[1847]:0xc621d)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13604:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17737:20)\n    at __async_resume_fanon_42500 (wasm://wasm/00369706:wasm-function[1371]:0xb10d7)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/00369706:wasm-function[267]:0x229cb)\n    at __closure_201 (wasm://wasm/00369706:wasm-function[817]:0x60868)\n    at __closure_200 (wasm://wasm/00369706:wasm-function[818]:0x60999)\n    at __call_fn_method_2 (wasm://wasm/00369706:wasm-function[1846]:0xc46b9)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/00369706:wasm-function[1847]:0xc621d)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13620:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17753:20)\n    at __async_resume_fanon_42500 (wasm://wasm/00369706:wasm-function[1371]:0xb10d7)",
             "tests": [
               {
                 "name": "Should return the correct search result",
@@ -14762,7 +14676,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 36,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:7071\n/home/runner/work/js2/js2/src/runtime.ts:13593\n            throw new TypeError(method + \" is not a function\");\n                  ^\n\nTypeError: text is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13593:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17725:20)\n    at __closure_360 (wasm://wasm/0022520a:wasm-function[912]:0x5fc9f)\n    at __async_resume_fanon_57346 (wasm://wasm/0022520a:wasm-function[1067]:0x6d52a)\n    at __cb_158 (wasm://wasm/0022520a:wasm-function[1068]:0x6e21b)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n    at dispatch (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:105:42)\n    at body (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:114:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:131:34)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:7349\n/home/runner/work/js2/js2/src/runtime.ts:13609\n            throw new TypeError(method + \" is not a function\");\n                  ^\n\nTypeError: text is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13609:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17741:20)\n    at __closure_360 (wasm://wasm/0022520a:wasm-function[912]:0x5fc9f)\n    at __async_resume_fanon_57346 (wasm://wasm/0022520a:wasm-function[1067]:0x6d52a)\n    at __cb_158 (wasm://wasm/0022520a:wasm-function[1068]:0x6e21b)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n    at dispatch (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:105:42)\n    at body (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:114:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:131:34)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "req.query() and req.queries()",
@@ -15116,7 +15030,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 37,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:6133\nwasm://wasm/001dd652:1\n\n\nRuntimeError: dereferencing a null pointer\n    at __closure_362 (wasm://wasm/001dd652:wasm-function[958]:0x575e7)\n    at __call_fn_method_1 (wasm://wasm/001dd652:wasm-function[1396]:0x6aa22)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001dd652:wasm-function[1397]:0x6b0c1)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13604:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17737:20)\n    at __async_resume_fparseFormData (wasm://wasm/001dd652:wasm-function[543]:0x3020c)\n    at __cb_57 (wasm://wasm/001dd652:wasm-function[544]:0x302e9)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:6442\nwasm://wasm/001dd652:1\n\n\nRuntimeError: dereferencing a null pointer\n    at __closure_362 (wasm://wasm/001dd652:wasm-function[958]:0x575e7)\n    at __call_fn_method_1 (wasm://wasm/001dd652:wasm-function[1396]:0x6aa22)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001dd652:wasm-function[1397]:0x6b0c1)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13620:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17753:20)\n    at __async_resume_fparseFormData (wasm://wasm/001dd652:wasm-function[543]:0x3020c)\n    at __cb_57 (wasm://wasm/001dd652:wasm-function[544]:0x302e9)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "should parse `multipart/form-data`",
@@ -15274,7 +15188,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 10,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:3866\n/home/runner/work/js2/js2/src/runtime.ts:10126\n          return new Ctor(...args);\n                 ^\n\nTypeError: TextEncoder is not a constructor\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10126:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17713:20)\n    at __async_resume_fanon_494 (wasm://wasm/0014b5a2:wasm-function[621]:0x38b4f)\n    at __closure_233 (wasm://wasm/0014b5a2:wasm-function[626]:0x38f0f)\n    at __async_resume_fanon_35 (wasm://wasm/0014b5a2:wasm-function[609]:0x385eb)\n    at __closure_230 (wasm://wasm/0014b5a2:wasm-function[612]:0x386dd)\n    at __closure_238 (wasm://wasm/0014b5a2:wasm-function[629]:0x3993c)\n    at __closure_239 (wasm://wasm/0014b5a2:wasm-function[630]:0x3a86e)\n    at __async_resume_fanon_43343 (wasm://wasm/0014b5a2:wasm-function[685]:0x3ef8b)\n    at __closure_277 (wasm://wasm/0014b5a2:wasm-function[688]:0x3f862)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:3936\n/home/runner/work/js2/js2/src/runtime.ts:10138\n          return new Ctor(...args);\n                 ^\n\nTypeError: TextEncoder is not a constructor\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10138:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17729:20)\n    at __async_resume_fanon_494 (wasm://wasm/0014b5a2:wasm-function[621]:0x38b4f)\n    at __closure_233 (wasm://wasm/0014b5a2:wasm-function[626]:0x38f0f)\n    at __async_resume_fanon_35 (wasm://wasm/0014b5a2:wasm-function[609]:0x385eb)\n    at __closure_230 (wasm://wasm/0014b5a2:wasm-function[612]:0x386dd)\n    at __closure_238 (wasm://wasm/0014b5a2:wasm-function[629]:0x3993c)\n    at __closure_239 (wasm://wasm/0014b5a2:wasm-function[630]:0x3a86e)\n    at __async_resume_fanon_43343 (wasm://wasm/0014b5a2:wasm-function[685]:0x3ef8b)\n    at __closure_277 (wasm://wasm/0014b5a2:wasm-function[688]:0x3f862)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "should return true for identical ArrayBuffers",
@@ -16043,7 +15957,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 15315.518405999988,
+            "compileDurationMs": 13462.881274999992,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -16053,7 +15967,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4199.769893999997,
+            "compileDurationMs": 4000.499312,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -16063,19 +15977,14 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 2966.8117770000244,
+            "compileDurationMs": 2867.27691700001,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:59:47.370Z",
-      "weeklyDownloads": 53123258,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:59:47.370Z"
-      }
+      "measuredAt": "2026-08-27T03:24:21.927Z",
+      "weeklyDownloads": 53123258
     },
     {
       "name": "jest",
@@ -16085,7 +15994,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 4946,
+        "durationMs": 6161,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -17514,7 +17423,7 @@
             "status": "fail",
             "passed": 1,
             "total": 7,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_522 (wasm://wasm/0023f802:wasm-function[963]:0x6d83a)\n    at __closure_390 (wasm://wasm/0023f802:wasm-function[802]:0x4d595)\n    at __call_fn_method_1 (wasm://wasm/0023f802:wasm-function[1461]:0x7c4c3)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0023f802:wasm-function[1462]:0x7cc17)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13604:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17737:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0023f802:wasm-function[825]:0x604f7)\n    at runUpstreamTest (wasm://wasm/0023f802:wasm-function[262]:0x290f4)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_522 (wasm://wasm/0023f802:wasm-function[963]:0x6d83a)\n    at __closure_390 (wasm://wasm/0023f802:wasm-function[802]:0x4d595)\n    at __call_fn_method_1 (wasm://wasm/0023f802:wasm-function[1461]:0x7c4c3)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0023f802:wasm-function[1462]:0x7cc17)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13620:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17753:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0023f802:wasm-function[825]:0x604f7)\n    at runUpstreamTest (wasm://wasm/0023f802:wasm-function[262]:0x290f4)",
             "tests": [
               {
                 "name": "returns the result if passed.",
@@ -18391,7 +18300,7 @@
             "status": "fail",
             "passed": 7,
             "total": 12,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_249 (wasm://wasm/0011c28a:wasm-function[632]:0x34f3d)\n    at __closure_197 (wasm://wasm/0011c28a:wasm-function[552]:0x287e7)\n    at __call_fn_method_1 (wasm://wasm/0011c28a:wasm-function[906]:0x3e017)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0011c28a:wasm-function[907]:0x3e465)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13604:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17737:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0011c28a:wasm-function[575]:0x30f41)\n    at runUpstreamTest (wasm://wasm/0011c28a:wasm-function[221]:0x14d0a)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_249 (wasm://wasm/0011c28a:wasm-function[632]:0x34f3d)\n    at __closure_197 (wasm://wasm/0011c28a:wasm-function[552]:0x287e7)\n    at __call_fn_method_1 (wasm://wasm/0011c28a:wasm-function[906]:0x3e017)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0011c28a:wasm-function[907]:0x3e465)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2051:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2070:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13620:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17753:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0011c28a:wasm-function[575]:0x30f41)\n    at runUpstreamTest (wasm://wasm/0011c28a:wasm-function[221]:0x14d0a)",
             "tests": [
               {
                 "name": "returns the same value for primitive or function values",
@@ -18954,13 +18863,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:59:06.351Z",
-      "weeklyDownloads": 46631732,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:59:06.351Z"
-      }
+      "measuredAt": "2026-08-27T03:24:35.023Z",
+      "weeklyDownloads": 46631732
     },
     {
       "name": "lodash-es",
@@ -18970,11 +18874,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 84870,
+        "durationMs": 82042,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 12,
-        "binaryBytes": 5139787,
+        "binaryBytes": 5139813,
         "categories": {
           "compiler-diagnostic": {
             "count": 12,
@@ -19384,7 +19288,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 200351.23352,
+            "compileDurationMs": 210301.279964,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -19394,7 +19298,7 @@
             "diagnostic": "IR path: could not resolve types for keys: object TypeNode TypeReference could not be lowered to IrType.object",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 85345.51783099998,
+            "compileDurationMs": 79888.41533599998,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -19404,19 +19308,14 @@
             "diagnostic": "IR path: could not resolve types for keys: object TypeNode TypeReference could not be lowered to IrType.object",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 79053.51188400004,
+            "compileDurationMs": 78227.98768999998,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-27T00:04:02.910Z",
-      "weeklyDownloads": 42294984,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:04:02.910Z"
-      }
+      "measuredAt": "2026-08-27T03:28:43.152Z",
+      "weeklyDownloads": 42294984
     },
     {
       "name": "redux",
@@ -19426,7 +19325,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6790,
+        "durationMs": 6771,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -19911,7 +19810,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5922.432182000004,
+            "compileDurationMs": 5942.230396999992,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -19921,7 +19820,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 8727.44755299999,
+            "compileDurationMs": 8742.895819000012,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -19931,19 +19830,14 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 8126.8681979999965,
+            "compileDurationMs": 8111.870471000002,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:57:58.881Z",
-      "weeklyDownloads": 40344956,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:57:58.881Z"
-      }
+      "measuredAt": "2026-08-27T03:22:42.839Z",
+      "weeklyDownloads": 40344956
     },
     {
       "name": "moment",
@@ -19953,11 +19847,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 24123,
+        "durationMs": 24142,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 505080,
+        "binaryBytes": 505153,
         "categories": {}
       },
       "validation": {
@@ -20713,7 +20607,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/003387ee:wasm-function[399]:0x46647)\n    at createLocalOrUTC (wasm://wasm/003387ee:wasm-function[401]:0x47a3f)\n    at createLocal (wasm://wasm/003387ee:wasm-function[402]:0x47adb)\n    at __fn_tramp_createLocal_102 (wasm://wasm/003387ee:wasm-function[807]:0x622f0)\n    at __call_fn_method_4 (wasm://wasm/003387ee:wasm-function[2124]:0xbc51c)\n    at __apply_closure (wasm://wasm/003387ee:wasm-function[535]:0x5a90e)\n    at hooks (wasm://wasm/003387ee:wasm-function[269]:0x3360e)\n    at __fn_tramp_hooks_53 (wasm://wasm/003387ee:wasm-function[752]:0x6085e)\n    at __closure_622 (wasm://wasm/003387ee:wasm-function[1575]:0xabf70)\n    at __closure_505 (wasm://wasm/003387ee:wasm-function[1430]:0x8f6de)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/003388e2:wasm-function[400]:0x46662)\n    at createLocalOrUTC (wasm://wasm/003388e2:wasm-function[402]:0x47a5a)\n    at createLocal (wasm://wasm/003388e2:wasm-function[403]:0x47af6)\n    at __fn_tramp_createLocal_102 (wasm://wasm/003388e2:wasm-function[808]:0x62309)\n    at __call_fn_method_4 (wasm://wasm/003388e2:wasm-function[2125]:0xbc542)\n    at __apply_closure (wasm://wasm/003388e2:wasm-function[536]:0x5a927)\n    at hooks (wasm://wasm/003388e2:wasm-function[270]:0x33629)\n    at __fn_tramp_hooks_53 (wasm://wasm/003388e2:wasm-function[753]:0x60877)\n    at __closure_622 (wasm://wasm/003388e2:wasm-function[1576]:0xabf96)\n    at __closure_505 (wasm://wasm/003388e2:wasm-function[1431]:0x8f6ff)",
             "tests": [
               {
                 "name": "YYYYDDD should not parse DDD=000",
@@ -20819,7 +20713,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/00338cb2:wasm-function[399]:0x46a48)\n    at createLocalOrUTC (wasm://wasm/00338cb2:wasm-function[401]:0x47d96)\n    at createLocal (wasm://wasm/00338cb2:wasm-function[402]:0x47e32)\n    at __fn_tramp_createLocal_102 (wasm://wasm/00338cb2:wasm-function[807]:0x62647)\n    at __call_fn_method_4 (wasm://wasm/00338cb2:wasm-function[2139]:0xbc554)\n    at __apply_closure (wasm://wasm/00338cb2:wasm-function[535]:0x5ac65)\n    at hooks (wasm://wasm/00338cb2:wasm-function[269]:0x33965)\n    at __fn_tramp_hooks_53 (wasm://wasm/00338cb2:wasm-function[752]:0x60bb5)\n    at __closure_632 (wasm://wasm/00338cb2:wasm-function[1588]:0xabe4b)\n    at __closure_515 (wasm://wasm/00338cb2:wasm-function[1440]:0x8f844)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/00338da6:wasm-function[400]:0x46a63)\n    at createLocalOrUTC (wasm://wasm/00338da6:wasm-function[402]:0x47db1)\n    at createLocal (wasm://wasm/00338da6:wasm-function[403]:0x47e4d)\n    at __fn_tramp_createLocal_102 (wasm://wasm/00338da6:wasm-function[808]:0x62660)\n    at __call_fn_method_4 (wasm://wasm/00338da6:wasm-function[2140]:0xbc57a)\n    at __apply_closure (wasm://wasm/00338da6:wasm-function[536]:0x5ac7e)\n    at hooks (wasm://wasm/00338da6:wasm-function[270]:0x33980)\n    at __fn_tramp_hooks_53 (wasm://wasm/00338da6:wasm-function[753]:0x60bce)\n    at __closure_632 (wasm://wasm/00338da6:wasm-function[1589]:0xabe71)\n    at __closure_515 (wasm://wasm/00338da6:wasm-function[1441]:0x8f865)",
             "tests": [
               {
                 "name": "is moment object",
@@ -20887,7 +20781,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0032d0a2:wasm-function[403]:0x46917)\n    at createLocalOrUTC (wasm://wasm/0032d0a2:wasm-function[405]:0x47c65)\n    at createLocal (wasm://wasm/0032d0a2:wasm-function[406]:0x47d01)\n    at __fn_tramp_createLocal_102 (wasm://wasm/0032d0a2:wasm-function[811]:0x62516)\n    at __call_fn_method_4 (wasm://wasm/0032d0a2:wasm-function[2130]:0xb96d8)\n    at __apply_closure (wasm://wasm/0032d0a2:wasm-function[539]:0x5ab34)\n    at hooks (wasm://wasm/0032d0a2:wasm-function[273]:0x33834)\n    at __fn_tramp_hooks_53 (wasm://wasm/0032d0a2:wasm-function[756]:0x60a84)\n    at __closure_624 (wasm://wasm/0032d0a2:wasm-function[1580]:0xa9d2c)\n    at __closure_507 (wasm://wasm/0032d0a2:wasm-function[1435]:0x8d91f)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0032d196:wasm-function[404]:0x46932)\n    at createLocalOrUTC (wasm://wasm/0032d196:wasm-function[406]:0x47c80)\n    at createLocal (wasm://wasm/0032d196:wasm-function[407]:0x47d1c)\n    at __fn_tramp_createLocal_102 (wasm://wasm/0032d196:wasm-function[812]:0x6252f)\n    at __call_fn_method_4 (wasm://wasm/0032d196:wasm-function[2131]:0xb96fe)\n    at __apply_closure (wasm://wasm/0032d196:wasm-function[540]:0x5ab4d)\n    at hooks (wasm://wasm/0032d196:wasm-function[274]:0x3384f)\n    at __fn_tramp_hooks_53 (wasm://wasm/0032d196:wasm-function[757]:0x60a9d)\n    at __closure_624 (wasm://wasm/0032d196:wasm-function[1581]:0xa9d52)\n    at __closure_507 (wasm://wasm/0032d196:wasm-function[1436]:0x8d940)",
             "tests": [
               {
                 "name": "min",
@@ -20905,7 +20799,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0032a3c2:wasm-function[401]:0x4689b)\n    at createLocalOrUTC (wasm://wasm/0032a3c2:wasm-function[403]:0x47be9)\n    at createLocal (wasm://wasm/0032a3c2:wasm-function[404]:0x47c85)\n    at __fn_tramp_createLocal_102 (wasm://wasm/0032a3c2:wasm-function[809]:0x6249a)\n    at __call_fn_method_4 (wasm://wasm/0032a3c2:wasm-function[2128]:0xb8bcc)\n    at __apply_closure (wasm://wasm/0032a3c2:wasm-function[537]:0x5aab8)\n    at hooks (wasm://wasm/0032a3c2:wasm-function[271]:0x337b8)\n    at __fn_tramp_hooks_53 (wasm://wasm/0032a3c2:wasm-function[754]:0x60a08)\n    at __closure_624 (wasm://wasm/0032a3c2:wasm-function[1578]:0xa955d)\n    at __closure_507 (wasm://wasm/0032a3c2:wasm-function[1433]:0x8d173)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0032a4b6:wasm-function[402]:0x468b6)\n    at createLocalOrUTC (wasm://wasm/0032a4b6:wasm-function[404]:0x47c04)\n    at createLocal (wasm://wasm/0032a4b6:wasm-function[405]:0x47ca0)\n    at __fn_tramp_createLocal_102 (wasm://wasm/0032a4b6:wasm-function[810]:0x624b3)\n    at __call_fn_method_4 (wasm://wasm/0032a4b6:wasm-function[2129]:0xb8bf2)\n    at __apply_closure (wasm://wasm/0032a4b6:wasm-function[538]:0x5aad1)\n    at hooks (wasm://wasm/0032a4b6:wasm-function[272]:0x337d3)\n    at __fn_tramp_hooks_53 (wasm://wasm/0032a4b6:wasm-function[755]:0x60a21)\n    at __closure_624 (wasm://wasm/0032a4b6:wasm-function[1579]:0xa9583)\n    at __closure_507 (wasm://wasm/0032a4b6:wasm-function[1434]:0x8d194)",
             "tests": [
               {
                 "name": "manipulation methods",
@@ -21036,7 +20930,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 36041.451008000004,
+            "compileDurationMs": 35333.791939999996,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -21046,7 +20940,7 @@
             "diagnostic": "Codegen error: standalone RegExp engine does not support replace with a function (or non-string) replacer (#1913 follow-up) (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 27641.60982199997,
+            "compileDurationMs": 27513.94170799997,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -21056,19 +20950,14 @@
             "diagnostic": "Codegen error: standalone RegExp engine does not support replace with a function (or non-string) replacer (#1913 follow-up) (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 25833.052104000002,
+            "compileDurationMs": 24337.058168000018,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-27T00:01:27.421Z",
-      "weeklyDownloads": 34294671,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:01:27.421Z"
-      }
+      "measuredAt": "2026-08-27T03:25:58.676Z",
+      "weeklyDownloads": 34294671
     },
     {
       "name": "three",
@@ -21078,7 +20967,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180202,
+        "durationMs": 180158,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -22408,13 +22297,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:59:43.458Z",
-      "weeklyDownloads": 12487515,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:59:43.458Z"
-      }
+      "measuredAt": "2026-08-27T03:24:14.295Z",
+      "weeklyDownloads": 12487515
     },
     {
       "name": "styled-components",
@@ -22424,7 +22308,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 12423,
+        "durationMs": 12444,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -22745,7 +22629,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 16301.955473999995,
+            "compileDurationMs": 16833.895009,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -22755,7 +22639,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6983.064836999991,
+            "compileDurationMs": 7187.036789999998,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -22765,19 +22649,14 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5406.988998000001,
+            "compileDurationMs": 5592.6419250000035,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-26T23:57:27.719Z",
-      "weeklyDownloads": 11029759,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-26T23:57:27.719Z"
-      }
+      "measuredAt": "2026-08-27T03:22:05.954Z",
+      "weeklyDownloads": 11029759
     },
     {
       "name": "stylelint",
@@ -22787,7 +22666,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120174,
+        "durationMs": 120168,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -24836,13 +24715,8 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-27T00:01:25.531Z",
-      "weeklyDownloads": 10427988,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-27T00:01:25.531Z"
-      }
+      "measuredAt": "2026-08-27T03:26:00.048Z",
+      "weeklyDownloads": 10427988
     },
     {
       "name": "lit",
@@ -27221,7 +27095,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-08-27T00:05:47.503Z",
-      "weeklyDownloads": 6829692
+      "weeklyDownloads": 6829692,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-08-27T00:05:47.503Z"
+      }
     }
   ]
 }
