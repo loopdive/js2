@@ -15,6 +15,8 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { ensureStandaloneRegExpToStringDyn, standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
+import { allocLocal } from "./context/locals.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /**
  * The reflective `String.prototype` members that take NO arguments and return a
@@ -130,8 +132,87 @@ export function emitStringProtoToStringFlat(
   const generic: Instr[] = [{ op: "local.get", index: paramIdx }];
   if (toPrimitive !== null) generic.push(...toPrimitive);
   generic.push({ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStrIdx }, { op: "call", funcIdx: flattenIdx });
-  body.push(...withNullExternArm(ctx, paramIdx, withRegExpReceiverArm(ctx, paramIdx, flattenIdx, generic)));
+  body.push(
+    ...withNullExternArm(
+      ctx,
+      paramIdx,
+      withBuiltinNamespaceTagArm(ctx, fctx, paramIdx, withRegExpReceiverArm(ctx, paramIdx, flattenIdx, generic)),
+    ),
+  );
   for (const instr of body) fctx.body.push(instr);
+}
+
+/**
+ * `Math` and `JSON` are ordinary namespace objects whose inherited
+ * Object.prototype.toString observes their @@toStringTag. Their standalone
+ * carriers are `$Object` singletons, so the generic ToPrimitive fallback loses
+ * the brand and emits `[object Object]`. Recover it by exact singleton identity.
+ */
+function withBuiltinNamespaceTagArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  paramIdx: number,
+  inner: Instr[],
+): Instr[] {
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (objectTypeIdx === undefined || ctx.mod.types[ctx.nativeStrTypeIdx] === undefined) return inner;
+  const candidates = (["Math", "JSON"] as const).flatMap((name) => {
+    const globalIdx = ctx.builtinObjectGlobals.get(name);
+    return globalIdx === undefined ? [] : [{ name, globalIdx }];
+  });
+  if (candidates.length === 0) return inner;
+  const receiverAny = allocLocal(fctx, `__str_ns_recv_${fctx.locals.length}`, { kind: "anyref" });
+  const tagLocal = allocLocal(fctx, `__str_ns_tag_${fctx.locals.length}`, { kind: "externref" });
+  const checks: Instr[] = [{ op: "ref.null.extern" }, { op: "local.set", index: tagLocal }];
+  for (const { name, globalIdx } of candidates) {
+    checks.push(
+      { op: "local.get", index: paramIdx },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: receiverAny },
+      { op: "ref.test", typeIdx: objectTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "global.get", index: globalIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: receiverAny },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "global.get", index: globalIdx },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "ref.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...stringConstantExternrefInstrs(ctx, `[object ${name}]`), { op: "local.set", index: tagLocal }],
+              },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  return [
+    ...checks,
+    { op: "local.get", index: tagLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.nativeStrTypeIdx } },
+      then: inner,
+      else: [
+        { op: "local.get", index: tagLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
+      ],
+    },
+  ];
 }
 
 /**

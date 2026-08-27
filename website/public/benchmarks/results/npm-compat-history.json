@@ -9548,6 +9548,134 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-26T20:27:02.048Z",
+      "sourceRevision": "362b8297461e8698a5a01c9f73b486fc3d623843",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 637.8575310151305,
+            "dynamic": 0.21357932096240473
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 15.235751553875314,
+            "dynamic": 0.16141307751781056
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-26T22:28:50.115Z",
+      "sourceRevision": "9894d1ead59ef2d7dfbaa0e64d9d4df9c4a420eb",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 645.43491663976,
+            "dynamic": 0.22045479511037622
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 21.668509774509886,
+            "dynamic": 0.11237191091814318
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T00:08:06.240Z",
+      "sourceRevision": "06f368376c7db3513efff08eff5a420204fb41bd",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 528.2624218731722,
+            "dynamic": 0.21515695078182606
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 17.447920340209897,
+            "dynamic": 0.1519733052205683
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T02:41:07.007Z",
+      "sourceRevision": "bdbf62c3fcffb34cb27b028e33d6900fed31879e",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.008954791965489083
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T03:33:06.498Z",
+      "sourceRevision": "de35a52d978e328d46a9929b5438837385ddea5b",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 654.2073359046598,
+            "dynamic": 0.2210910353938458
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.790907802560703,
+            "dynamic": 0.1509205159027059
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-27T05:20:57.708Z",
+      "sourceRevision": "14e8e17b6789ee65ca345849df42e33e635ea2b9",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010942463690549829
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

@@ -45,6 +45,7 @@ import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
 import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolated sparse-carrier proof
+import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-carrier.js"; // (#4670)
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -103,6 +104,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
+    const descriptorArrayReceiver = indexedDescriptorArrayReceiver(node);
+    if (descriptorArrayReceiver !== undefined) {
+      recordDescriptorArrayReceiver(ctx, descriptorArrayReceiver);
+    }
     if (!ctx.inheritedSetDescriptorDirty) {
       // (#4602) Statically-named triggers poison only their own keys; a
       // trigger whose key cannot be named sets the module-wide flag, which
@@ -124,8 +129,12 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
     }
-    if (!ctx.vecOwnKeysDirty && isOwnKeysOrDescriptorDefineUse(node)) {
+    if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
+      // ArraySetLength can expose absent f64 indices even when every literal
+      // starts dense. Arm the read-side marker before body compilation for
+      // any descriptor builtin that may reach a vec through an alias.
+      if (isDescriptorDefineReference(node)) ctx.usesArrayHoles = true;
     }
     // (#4159/#4160) Dynamic code defeats the whole pre-scan: static eval
     // inlining (#1163) splices parsed statements in during BODY compilation,
@@ -286,6 +295,27 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
     return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
   }
   return false;
+}
+
+/**
+ * (#4670) Return a direct identifier receiver for a non-data descriptor on a
+ * canonical array-index key. This is intentionally narrower than the module
+ * dirty flag: only these writes need an identity-preserving array carrier.
+ */
+function indexedDescriptorArrayReceiver(node: ts.Node): string | undefined {
+  if (!isNonDataDescriptorDefine(node) || !ts.isCallExpression(node)) return undefined;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "defineProperty") return undefined;
+  const key = literalPropertyKeyOf(node.arguments[1]);
+  if (!isCanonicalArrayIndexKey(key)) return undefined;
+  const receiver = unwrapExpr(node.arguments[0]);
+  return ts.isIdentifier(receiver) ? receiver.text : undefined;
+}
+
+function isCanonicalArrayIndexKey(key: string | undefined): boolean {
+  if (key === undefined) return false;
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key;
 }
 
 /**
@@ -618,6 +648,14 @@ function isOwnKeysOrDescriptorDefineUse(node: ts.Node): boolean {
   const ns = node.expression.text;
   if (ns !== "Object" && ns !== "Reflect") return false;
   return OWN_KEYS_OR_DEFINE_METHODS.has(node.name.text);
+}
+
+function isDescriptorDefineReference(node: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  return (
+    (node.expression.text === "Object" || node.expression.text === "Reflect") &&
+    (node.name.text === "defineProperty" || node.name.text === "defineProperties")
+  );
 }
 
 /**

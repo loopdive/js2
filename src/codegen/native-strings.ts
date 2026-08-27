@@ -7,6 +7,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
+import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { ensureDateAnyToStringHelper } from "./date-any-to-string.js"; // (#4491 T4-B)
 import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
 import { emitStrSearchHelpers } from "./native-strings-search.js";
@@ -600,7 +601,7 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   // renderings, and the spelling one reaches for when checking is the correct
   // one. `__date_any_to_string` calls that same formatter, so the two cannot
   // drift.
-  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] =>
+  const objectOrErrorTagBase = (loadRef: () => Instr[]): Instr[] =>
     dateToStrIdx !== undefined && dateStructTypeIdx >= 0
       ? [
           ...loadRef(),
@@ -613,6 +614,29 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
           },
         ]
       : objectOrErrorTagInner(loadRef);
+
+  // Arguments objects use the same vec carrier as Arrays, but §10.6's
+  // ordinary Object tag is `[object Arguments]`. Keep this brand check outside
+  // the Error/Date/ordinary-object terminal so every residual ToString route
+  // (dynamic concat, String(), and borrowed String methods) observes the same
+  // class tag. `loadRef` is a factory because the value is consumed once by
+  // the brand query and again by the fallback arm.
+  const argumentsVecTypeIdx = getArgumentsVecTypeIdx(ctx);
+  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] => {
+    const brandIdx = ctx.funcMap.get("__args_is_branded");
+    if (brandIdx === undefined || argumentsVecTypeIdx < 0) return objectOrErrorTagBase(loadRef);
+    return [
+      ...loadRef(),
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: brandIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: strRef },
+        then: litStr("[object Arguments]"),
+        else: objectOrErrorTagBase(loadRef),
+      },
+    ];
+  };
 
   // #1910/#1472 S2 — recover the string for an externref that is tagged as a
   // string (tag 5) but is NOT actually a `$AnyString`. The generic
@@ -1242,6 +1266,12 @@ export function tryCompileNativeVecConcatOperand(
   if (vecValType.kind !== "ref" && vecValType.kind !== "ref_null") return false;
   const vecTypeIdx = (vecValType as { typeIdx: number }).typeIdx;
   if (vecTypeIdx === undefined) return false;
+  // `arguments` is represented by the canonical externref vec subtype so its
+  // indexed/length machinery can stay shared with Arrays. It is nevertheless
+  // not an Array, and §10.6's ordinary ToString must not take this join
+  // fast-path. The residual native-string dispatcher performs the brand-aware
+  // `[object Arguments]` classification instead.
+  if (vecTypeIdx === getArgumentsVecTypeIdx(ctx)) return false;
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0) return false;
   // Confirm this typeIdx is actually a registered vec (not some other struct

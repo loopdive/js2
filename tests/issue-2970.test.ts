@@ -3,9 +3,13 @@
 // identity: stable within a module, distinct across modules
 // (sec-meta-properties). Mirrors test262
 // language/expressions/import.meta/distinct-for-each-module.js.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { compileMulti } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { buildImports, compileAndInstantiate } from "../src/runtime.js";
+import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import { assembleOriginalHarness } from "./test262-original-harness.js";
+import { createTestSandbox, parseMeta, runTest262File } from "./test262-runner.js";
 
 async function runMulti(files: Record<string, string>, entry: string): Promise<number> {
   const r: any = await compileMulti(files, entry);
@@ -25,6 +29,18 @@ async function runStr(src: string): Promise<string> {
 }
 
 describe("#2970 import.meta per-module identity", () => {
+  it.each([
+    "language/expressions/import.meta/same-object-returned.js",
+    "language/expressions/dynamic-import/assignment-expression/import-meta.js",
+  ])(
+    "preserves the host Test262 row %s",
+    async (file) => {
+      const result = await runTest262File(new URL(`../test262/test/${file}`, import.meta.url).pathname, "issue-4922");
+      expect(result.status, result.reason ?? result.error).toBe("pass");
+    },
+    60_000,
+  );
+
   it("distinct across modules, stable within (distinct-for-each-module)", async () => {
     const files = {
       "fixture.ts": `
@@ -46,6 +62,33 @@ describe("#2970 import.meta per-module identity", () => {
     };
     expect(await runMulti(files, "entry.ts")).toBe(7);
   });
+
+  it("keeps fixture identity distinct when standalone Array prototype glue is linked", async () => {
+    const testPath = "language/expressions/import.meta/distinct-for-each-module.js";
+    const fixturePath = "./language/expressions/import.meta/distinct-for-each-module_FIXTURE.js";
+    const source = readFileSync(new URL(`../test262/test/${testPath}`, import.meta.url), "utf8");
+    const files = {
+      [fixturePath]: readFileSync(new URL(`../test262/test/${fixturePath.slice(2)}`, import.meta.url), "utf8"),
+      [`./${testPath}`]: assembleOriginalHarness(source, parseMeta(source)).primary.source,
+    };
+    const result = await compileMulti(files, `./${testPath}`, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      target: "standalone",
+      deferTopLevelInit: true,
+      hostBridge: "always",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool, {
+      globalSandbox: createTestSandbox(),
+    });
+    const instance = await instantiateTest262Module(result.binary, imports, {
+      target: "standalone",
+      providerLabel: "issue-4922",
+    });
+    imports.setInstance?.(instance);
+    expect(() => (instance.exports as { __module_init?: () => void }).__module_init?.()).not.toThrow();
+  }, 60_000);
 
   it("import.meta === import.meta within one module (stable identity)", async () => {
     expect(await runBool(`export function test(): boolean { const a = import.meta; return a === import.meta; }`)).toBe(

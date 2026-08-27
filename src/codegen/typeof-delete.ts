@@ -4,7 +4,7 @@
  * Extracted from expressions.ts (issue #688 step 5).
  */
 import { ts } from "../ts-api.js";
-import { chainRootIsGrowable, runtimeAccessorDescriptorKey } from "./property-access.js";
+import { chainRootIsGrowable, isNumericIndexExpression, runtimeAccessorDescriptorKey } from "./property-access.js";
 import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
@@ -53,6 +53,8 @@ import {
 } from "./global-environment.js";
 import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
+import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
@@ -60,6 +62,51 @@ import * as tf from "./typeof-static-folds.js";
 // these must evaluate to `false`; every OTHER built-in global property
 // (`JSON`/`Object`/`Math`/`parseInt`/…) is configurable ⇒ `delete` returns `true`.
 const NON_CONFIGURABLE_GLOBALS = new Set(["NaN", "Infinity", "undefined"]);
+
+function isFunctionPrototypeExpression(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "prototype" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Function"
+  );
+}
+
+// Ambient names supplied by lib.dom but absent from host-free Wasm targets.
+// Their declaration-file symbols must not make `typeof name` claim that the
+// value exists. A certified standalone DOM module is the one exception for
+// `document`: its capability provider owns that global explicitly (#4576).
+const HOST_ONLY_AMBIENT_GLOBALS = new Set([
+  "document",
+  "window",
+  "navigator",
+  "location",
+  "history",
+  "HTMLElement",
+  "Element",
+  "Node",
+  "Event",
+  "EventTarget",
+  "DocumentFragment",
+  "Text",
+  "Comment",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+]);
+
+function ambientIdentifierIsUnavailable(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ident: ts.Identifier,
+  sym: ts.Symbol | undefined,
+): boolean {
+  if (!(ctx.standalone || ctx.wasi)) return false;
+  if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) return false;
+  if (!sym?.declarations?.length || !sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)) return false;
+  if (ident.text === "structuredClone") return true;
+  if (!HOST_ONLY_AMBIENT_GLOBALS.has(ident.text)) return false;
+  return !(ctx.standalone && ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
+}
 
 /**
  * (#2703, #3422) Terminal `throw` for `delete`'s spec error cases (§13.5.1.2):
@@ -518,6 +565,38 @@ export function compileDeleteExpression(
   // are unaffected; this arm only claims static NON-index keys.
   if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
     if (emitArgumentsOrdinaryNamedDelete(ctx, fctx, inner)) return { kind: "i32", boolean: true };
+  }
+
+  if (
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(inner) &&
+    inner.name.text === "prototype" &&
+    isFunctionPrototypeExpression(inner.expression)
+  ) {
+    // `Function.prototype` is represented by the shared native-prototype
+    // companion, not by the null placeholder returned by the generic static
+    // builtin-value path. Delete the runtime descriptor from that actual
+    // object so a configurable expando/accessor really disappears.
+    const brand = ensureFunctionNativeProtoGlue(ctx);
+    if (brand !== undefined && emitLazyNativeProtoGet(ctx, fctx, brand)) {
+      const keyResult = compileStringLiteral(ctx, fctx, "prototype", inner.name);
+      const delIdx = ensureLateImport(
+        ctx,
+        "__delete_property",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (keyResult && delIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: delIdx });
+        emitStrictDeleteCheck(ctx, fctx, expr);
+        return { kind: "i32" };
+      }
+      if (keyResult) fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+    }
+    fctx.body.push({ op: "i32.const", value: 1 });
+    return { kind: "i32" };
   }
 
   // Try to resolve struct type and field for property access: delete obj.prop
@@ -1580,6 +1659,29 @@ function typeofFoldUnsoundForJsParam(ctx: CodegenContext, operand: ts.Expression
   return /\.(js|mjs|cjs|jsx)$/.test(fileName);
 }
 
+/** Same-name function declarations replace an existing var/parameter binding. */
+function hoistedFnTypeof(ctx: CodegenContext, fctx: FunctionContext, ident: ts.Identifier): string | null {
+  return fctx.hoistedFunctionValueBindings?.has(ident.text) === true &&
+    ctx.oracle
+      .declarationsOf(ident)
+      .some((declaration) => ts.isFunctionDeclaration(declaration) && !declaration.getSourceFile().isDeclarationFile)
+    ? "function"
+    : null;
+}
+
+function stringWrapperIndexNeedsRuntimeTypeof(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+): boolean {
+  if (!ctx.standalone || !ts.isElementAccessExpression(operand)) return false;
+  if (!isNumericIndexExpression(ctx, operand.argumentExpression, fctx)) return false;
+  return (
+    ctx.oracle.builtinReceiverOf(operand.expression) === "String" ||
+    ctx.oracle.staticJsTypeOf(operand.expression) === "string"
+  );
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1591,8 +1693,8 @@ export function compileTypeofExpression(
   if (realmGlobalTypeof !== undefined) return realmGlobalTypeof;
 
   // typeof Math.<constant> -> "number", typeof Math.<method> -> "function"
-  const mathTypeof = tf.tryCompileMathMemberTypeof(ctx, fctx, operand);
-  if (mathTypeof !== undefined) return mathTypeof;
+  const builtinTypeof = tf.tryCompileBuiltinMemberTypeof(ctx, fctx, operand);
+  if (builtinTypeof !== undefined) return builtinTypeof;
 
   // typeof import.meta -> "object"
   if (
@@ -1635,7 +1737,7 @@ export function compileTypeofExpression(
       ident = (ident as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(ident)) {
-      const argumentsTypeof = staticTypeofForArgumentsIdentifier(ctx, fctx, ident);
+      const argumentsTypeof = staticTypeofForArgumentsIdentifier(ctx, fctx, ident) ?? hoistedFnTypeof(ctx, fctx, ident);
       if (argumentsTypeof !== null) return compileStringLiteral(ctx, fctx, argumentsTypeof);
       // (#2200 Phase 2) An Annex B B.3.3 block-fn outer binding must be handled
       // BEFORE the `!hasValueDecl` const-fold below: the checker reports its
@@ -1697,13 +1799,7 @@ export function compileTypeofExpression(
       // error). Restricted to standalone/WASI + the exact unprovided name +
       // an ambient-lib-only symbol (a user-declared `structuredClone` lives in a
       // non-declaration file and keeps "function"), so host mode is byte-inert.
-      if (
-        (ctx.standalone || ctx.wasi) &&
-        ident.text === "structuredClone" &&
-        !runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text) &&
-        !!sym?.declarations?.length &&
-        sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)
-      ) {
+      if (ambientIdentifierIsUnavailable(ctx, fctx, ident, sym)) {
         return compileStringLiteral(ctx, fctx, "undefined");
       }
       if (!hasValueDecl) {
@@ -1760,6 +1856,14 @@ export function compileTypeofExpression(
   // closure built inside a `for (let x in …)` head's receiver that captures the
   // never-initialized head binding (scope-head/​body-lex-open/close).
   let forceRuntimeTypeof = false;
+  // A folded direct-eval body carries its caller's strictness through the
+  // explicit context flag because the foreign AST has no enclosing function.
+  // TypeScript nevertheless types its `this` as the ordinary global receiver,
+  // so static typeof would turn strict `typeof this` into "object" before the
+  // context-aware ThisKeyword lowering gets a chance to emit undefined.
+  if (operand.kind === ts.SyntaxKind.ThisKeyword && fctx.directEvalSloppyThisFallback !== undefined) {
+    forceRuntimeTypeof = true;
+  }
   {
     let bareTdz: ts.Expression = operand;
     while (
@@ -1787,7 +1891,7 @@ export function compileTypeofExpression(
     }
     // (#4428) Same disagreement one level down: `typeof x[0]` on an array whose
     // element representation was widened must read the value, not the type.
-    if (elementReadOfRebindWidenedArray(ctx, bareTdz)) {
+    if (elementReadOfRebindWidenedArray(ctx, bareTdz) || stringWrapperIndexNeedsRuntimeTypeof(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#2668) Indexed reads can become `undefined` after a descriptor-overlay
@@ -1825,6 +1929,19 @@ export function compileTypeofExpression(
       ts.isPropertyAccessExpression(bareTdz) &&
       !ts.isPrivateIdentifier(bareTdz.name) &&
       runtimeAccessorDescriptorKey(ctx, bareTdz.expression, bareTdz.name.text) !== undefined
+    ) {
+      forceRuntimeTypeof = true;
+    }
+    // (#4491) A dynamic descriptor may replace a statically-typed field with
+    // undefined. The pre-pass records the receiver/key pair only for the
+    // runtime-descriptor route, so an unrelated field on the same open object
+    // keeps its ordinary static typeof fold.
+    if (
+      !forceRuntimeTypeof &&
+      ctx.standalone &&
+      ts.isPropertyAccessExpression(bareTdz) &&
+      ts.isIdentifier(bareTdz.expression) &&
+      ctx.sidecarDefinedPropertyKeys.has(`${bareTdz.expression.text}:${bareTdz.name.text}`)
     ) {
       forceRuntimeTypeof = true;
     }
@@ -1959,6 +2076,15 @@ export function compileTypeofComparison(
   // Static resolution: if the typeof result is known at compile time,
   // emit a constant comparison result without any runtime call.
   const operand = typeofExpr.expression;
+  let guardOperand: ts.Expression = operand;
+  while (
+    ts.isParenthesizedExpression(guardOperand) ||
+    ts.isAsExpression(guardOperand) ||
+    ts.isTypeAssertionExpression(guardOperand) ||
+    ts.isNonNullExpression(guardOperand)
+  ) {
+    guardOperand = (guardOperand as ts.ParenthesizedExpression | ts.AsExpression).expression;
+  }
 
   const realmGlobalComparison = tf.tryCompileRealmGlobalTypeofComparison(ctx, fctx, operand, stringLiteral, isEq);
   if (realmGlobalComparison !== undefined) return realmGlobalComparison;
@@ -2049,13 +2175,7 @@ export function compileTypeofComparison(
       // `$262.detachArrayBuffer` guard (which must throw the honest "unsupported
       // by this host"). Ambient-lib-only symbol + exact name + standalone/WASI,
       // so a user-declared `structuredClone` and host mode are byte-inert.
-      if (
-        (ctx.standalone || ctx.wasi) &&
-        ident.text === "structuredClone" &&
-        !runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text) &&
-        !!sym.declarations?.length &&
-        sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)
-      ) {
+      if (ambientIdentifierIsUnavailable(ctx, fctx, ident, sym)) {
         const matches = "undefined" === stringLiteral;
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });
@@ -2075,7 +2195,7 @@ export function compileTypeofComparison(
     const mathConstants = new Set(["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"]);
     staticTypeof = mathConstants.has(operand.name.text) ? "number" : "function";
   } else {
-    staticTypeof = staticTypeofForType(ctx, tsType);
+    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? staticTypeofForType(ctx, tsType);
   }
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
@@ -2084,7 +2204,6 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
   }
-  // (#4491) `typeof x <cmp> "…"` read before `var x = <init>` runs — the hoisted
   // binding still holds `undefined`, so the checker's initializer-derived fold is
   // wrong for that window. Emit the same one-sided live-ness guard the plain
   // `typeof` arm uses: a NULL backing global answers "undefined", anything else
@@ -2108,7 +2227,8 @@ export function compileTypeofComparison(
     staticTypeof !== null &&
     ctx.standalone === true &&
     overlayRouteActive(ctx) &&
-    ts.isElementAccessExpression(operand)
+    ts.isElementAccessExpression(operand) &&
+    tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) === null
   ) {
     staticTypeof = null;
   }
@@ -2134,8 +2254,20 @@ export function compileTypeofComparison(
   if (
     staticTypeof !== null &&
     ctx.standalone &&
-    (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) &&
-    chainRootIsGrowable(ctx, operand.expression)
+    (ts.isPropertyAccessExpression(guardOperand) || ts.isElementAccessExpression(guardOperand)) &&
+    chainRootIsGrowable(ctx, guardOperand.expression)
+  ) {
+    staticTypeof = null;
+  }
+  // A dynamic descriptor may replace an existing typed field with undefined
+  // while the checker retains the initializer type. The pre-pass marker is
+  // receiver/key-specific, so an unrelated field keeps its static result.
+  if (
+    staticTypeof !== null &&
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(guardOperand) &&
+    ts.isIdentifier(guardOperand.expression) &&
+    ctx.sidecarDefinedPropertyKeys.has(`${guardOperand.expression.text}:${guardOperand.name.text}`)
   ) {
     staticTypeof = null;
   }

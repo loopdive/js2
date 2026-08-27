@@ -565,6 +565,58 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
  */
 export function createNewFunctionShim(options: EvalShimOptions = {}): (params: any, body: any) => any {
   const filename = options.filename ?? "__new_function__.js";
+  /**
+   * The child module used by the compat Function shim has no lexical view of
+   * the parent's global object.  A free identifier such as `f()` therefore
+   * reaches the compiler's ordinary unresolved-name diagnostic before the
+   * child ever crosses the host boundary, even though §20.2.1.1 requires a
+   * Function-constructor body to resolve names in the running realm's global
+   * environment.  Collect only identifier references that are present on the
+   * supplied realm object; property names (`obj.f`) and declaration names are
+   * not references and must not cause eager global reads.
+   *
+   * The prelude is intentionally generated from the body, not from a test
+   * filename or a fixed binding list.  It snapshots a referenced global at
+   * child-module initialization.  This is the same limitation as the existing
+   * compat shim's fresh child-module environment for global writes, but it
+   * restores the read-only global binding needed by dynamic Function bodies
+   * without granting the child an unrestricted host-eval escape hatch.
+   */
+  const referencedRealmNames = (paramString: string, bodyString: string): string[] => {
+    const realm = options.globalSandbox;
+    if (realm === undefined) return [];
+    const source = `function __new_fn(${paramString}) {\n${bodyString}\n}`;
+    const sf = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const names = new Set<string>();
+    const isReference = (node: ts.Identifier): boolean => {
+      const parent = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+      if (ts.isElementAccessExpression(parent) && parent.argumentExpression === node) return false;
+      if (ts.isQualifiedName(parent) && parent.right === node) return false;
+      if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
+      if (ts.isMethodDeclaration(parent) && parent.name === node) return false;
+      if (ts.isGetAccessorDeclaration(parent) && parent.name === node) return false;
+      if (ts.isSetAccessorDeclaration(parent) && parent.name === node) return false;
+      if (ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) return false;
+      if (ts.isVariableDeclaration(parent) && parent.name === node) return false;
+      if (ts.isParameter(parent) && parent.name === node) return false;
+      if (
+        (ts.isFunctionDeclaration(parent) || ts.isFunctionExpression(parent) || ts.isClassDeclaration(parent)) &&
+        parent.name === node
+      )
+        return false;
+      return Object.prototype.hasOwnProperty.call(realm, node.text);
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && isReference(node)) names.add(node.text);
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sf, visit);
+    // `globalThis` itself must remain the compiler-provided realm object; a
+    // prelude declaration with the same name would self-shadow its RHS.
+    names.delete("globalThis");
+    return [...names].sort();
+  };
   const FN_CACHE_MAX = 256;
   // key (`${params} ${body}`) → the callable child-export wrapper.
   const fnCache = new Map<string, Function>();
@@ -584,7 +636,10 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
     const neg = fnNegCache.get(key);
     if (neg !== undefined) throw neg;
 
-    const src = `export function __new_fn(${paramStr}) {\n${bodyStr}\n}`;
+    const prelude = referencedRealmNames(paramStr, bodyStr)
+      .map((name) => `var ${name} = (0, globalThis)[${JSON.stringify(name)}];`)
+      .join("\n");
+    const src = `${prelude}${prelude.length > 0 ? "\n" : ""}export function __new_fn(${paramStr}) {\n${bodyStr}\n}`;
     let result:
       | { success: boolean; binary: Uint8Array; imports: any; stringPool: string[]; errors?: { message: string }[] }
       | undefined;

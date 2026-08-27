@@ -95,7 +95,7 @@ import {
 } from "./disposable-runtime.js";
 import { tryCompileNativeSetSizeGet } from "./set-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
-import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { resolveUserFnctorName, tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -157,6 +157,7 @@ import {
   localGlobalIdx,
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
+import { tryCompileArrayMethodValue } from "./array-method-value.js";
 import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
@@ -220,10 +221,12 @@ import {
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
 import {
   elementAccessTypedArrayName,
+  emitDynamicVecElementGet,
   emitDynamicStringVecElementGet,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
+  isDynamicPropertyKeyExpression,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
 // so their `from "./property-access.js"` imports keep resolving unchanged.
@@ -395,6 +398,7 @@ import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
 import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
+import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
   finalizeStructAndDynamicMemberGet,
@@ -1363,6 +1367,7 @@ export function emitNullCheckThrow(
   refType: ValType,
   node?: ts.Node,
   proof?: ReceiverProofHint,
+  isUndefinedIdx?: number,
 ): void {
   const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
   if (receiverProofHolds(ctx, fctx, proof, (e) => isProvablyNonNull(e, ctx.checker))) return;
@@ -1417,6 +1422,16 @@ export function emitNullCheckThrow(
       then: [...nullThrowInstrs],
       else: [],
     });
+  }
+
+  // Under the standalone undefined-singleton regime, a dynamic member read
+  // can leave a non-null externref carrying JavaScript `undefined`.  Element
+  // access has the same RequireObjectCoercible obligation as dot access, so
+  // test that carrier in addition to the structural null check.
+  if (isUndefinedIdx !== undefined && refType.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: tmp });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, node), else: [] });
   }
 
   fctx.body.push({ op: "local.get", index: tmp });
@@ -3407,10 +3422,17 @@ function tryOpenObjectDynamicGet(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
+  // A dynamic member read can itself produce JavaScript `undefined` without
+  // using the null externref (standalone's tag-1 singleton regime). Reserve
+  // the predicate AFTER compiling the receiver, because that compilation may
+  // register imports which must be settled before the guard captures its idx.
+  const baseExpr = skipTransparentExpressions(expr.expression);
+  const isUndefinedIdx = ctx.standalone && !ts.isIdentifier(baseExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+  flushLateImportShifts(ctx, fctx);
   // §13.3 member access on null/undefined throws TypeError (keep parity with
   // the default read path's null guard).
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
-  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, expr.expression, expr, "growable-get:recv");
+  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, expr.expression, expr, "growable-get:recv", isUndefinedIdx);
   fctx.body.push({ op: "local.get", index: recvTmp });
   releaseTempLocal(fctx, recvTmp);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
@@ -3488,8 +3510,10 @@ function tryKnownFnctorDynamicObjectCarrierGet(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
+  const isUndefinedIdx = ctx.standalone ? ensureExternIsUndefinedImport(ctx) : undefined;
+  flushLateImportShifts(ctx, fctx);
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
-  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv");
+  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv", isUndefinedIdx);
   fctx.body.push({ op: "local.get", index: recvTmp });
   releaseTempLocal(fctx, recvTmp);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
@@ -3510,6 +3534,7 @@ function emitExternRecvNullGuard(
   recvExpr: ts.Expression,
   throwNode: ts.Node,
   site: string,
+  isUndefinedIdx?: number,
 ): void {
   emitReceiverNullGuard(
     ctx,
@@ -3522,6 +3547,14 @@ function emitExternRecvNullGuard(
     // and both hold the receiver in an externref local.
     () => (receiverIsUndefinedIdentifier(recvExpr) ? undefined : nullishExternTestInstrs(ctx, recvTmp)),
   );
+  // `ref.is_null` catches the legacy null/undefined carrier, but standalone
+  // now preserves a distinct undefined singleton.  A chained dynamic read
+  // such as `o.missing.x` must reject that value before the second lookup.
+  if (isUndefinedIdx !== undefined && recvType?.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: recvTmp });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, throwNode), else: [] });
+  }
 }
 
 /**
@@ -3648,6 +3681,60 @@ export function compilePropertyAccess(
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
 
+  // (#4765 slice 1) `[].includes` as a VALUE — the host intrinsic, so
+  // `[].includes.call(obj, …)` runs the generic algorithm instead of dying on a
+  // null. Non-call position and an array receiver only; see the module comment.
+  const arrayMethodValue = tryCompileArrayMethodValue(ctx, fctx, expr);
+  if (arrayMethodValue !== undefined) return arrayMethodValue;
+
+  // Static field initializers can contain a folded direct eval. Its AST is
+  // foreign, but `this.<name>` still denotes the surrounding class constructor
+  // and must see compiler-owned static-field storage. Handle that one receiver
+  // shape before the generic foreign-eval lane; all other foreign property
+  // accesses remain dynamic because the checker cannot type their bindings.
+  const foreignStaticClassName =
+    isForeignEvalNode(expr) &&
+    fctx.isStaticContext &&
+    fctx.enclosingClassName !== undefined &&
+    skipTransparentExpressions(expr.expression).kind === ts.SyntaxKind.ThisKeyword
+      ? fctx.enclosingClassName
+      : undefined;
+  if (foreignStaticClassName !== undefined) {
+    const staticPropName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+    const globalIdx = ctx.staticProps.get(`${foreignStaticClassName}_${staticPropName}`);
+    if (globalIdx !== undefined) {
+      fctx.body.push({ op: "global.get", index: globalIdx });
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+      return globalDef?.type ?? { kind: "externref" };
+    }
+  }
+
+  // Static standalone Function bodies are parsed in a synthetic foreign source
+  // file; their identifiers are compiled as externrefs, but the checker cannot
+  // answer property-access queries for those unbound declarations. Keep this
+  // lane dynamic so expressions such as `a1.length` and `this.shifted` remain evaluable.
+  if (isForeignEvalNode(expr)) {
+    const foreignPoison = tryCompileFunctionPoisonRead(ctx, fctx, expr);
+    if (foreignPoison !== undefined) return foreignPoison;
+    const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (getIdx === undefined) return null;
+
+    const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+    if (!recvType) return null;
+    if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+    addStringConstantGlobal(ctx, propName);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    fctx.body.push({ op: "call", funcIdx: getIdx });
+    return { kind: "externref" };
+  }
+
   const namespaceFunctionValue = tryEmitNamespaceImportFunctionValue(ctx, fctx, expr);
   if (namespaceFunctionValue !== undefined) return namespaceFunctionValue;
 
@@ -3683,7 +3770,11 @@ export function compilePropertyAccess(
   // Descriptor accessors are runtime state even when shape analysis widened
   // the receiver with a same-named field. Consult them before any struct-field
   // fast path so the getter remains observable after a rejected assignment.
-  if (runtimeAccessorDescriptorKey(ctx, expr.expression, propName) !== undefined) {
+  // An ordinary function's mandatory own `prototype` data property shadows an
+  // inherited accessor installed on `Function.prototype`; let the established
+  // fnctor-prototype arm below emit that own object in its normal ordering.
+  const shadowsRuntimeAccessor = propName === "prototype" && resolveUserFnctorName(ctx, expr.expression) !== undefined;
+  if (!shadowsRuntimeAccessor && runtimeAccessorDescriptorKey(ctx, expr.expression, propName) !== undefined) {
     const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr);
     if (runtimeResult !== null) return runtimeResult;
   }
@@ -4989,7 +5080,11 @@ export function compileElementAccess(
   // Null-guard for externref: null[x] and undefined[x] throw TypeError (#775)
   if (objType.kind === "externref") {
     if (!isProvablyNonNull(expr.expression, ctx.checker)) {
-      emitNullCheckThrow(ctx, fctx, objType, expr);
+      const receiverExpr = skipTransparentExpressions(expr.expression);
+      const isUndefinedIdx =
+        ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+      flushLateImportShifts(ctx, fctx);
+      emitNullCheckThrow(ctx, fctx, objType, expr, undefined, isUndefinedIdx);
     }
   }
 
@@ -5963,10 +6058,29 @@ export function compileElementAccessBody(
       elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
       !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments")
     ) {
-      const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression);
+      const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression, true);
       if (namedKey !== undefined) {
         if (emitNonIndexVecElementGet(ctx, fctx, namedKey)) return { kind: "externref" };
       }
+    }
+
+    const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
+    // Dynamic object-like keys must be canonicalized with ToPropertyKey before
+    // the receiver-specific runtime dispatch. This is the read twin of the
+    // assignment fallback above: numeric results (for example an object's
+    // `toString() { return 0; }`) still reach the vec element, while ordinary
+    // names use the expando/prototype lookup (`S15.4_A1.1_T9`). Constant
+    // numeric-looking names have already taken the dedicated bag route above.
+    if (
+      elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
+      !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments") &&
+      !isRegexMatchVec &&
+      isDynamicPropertyKeyExpression(ctx, expr.argumentExpression, expr.expression)
+    ) {
+      const dynamic = emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+      if (dynamic) return dynamic;
     }
 
     // (#2743 b) `vec[Symbol.iterator]` is %Array.prototype.values%
@@ -6009,7 +6123,6 @@ export function compileElementAccessBody(
     // below. Other `i32` elements (packed-number / other handle reps) and
     // externref elements keep the shared-helper path; WasmGC `ref` / `ref_null`
     // elements use the dedicated reference-array widen below.
-    const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
     const numericHint = expectedType?.kind === "f64" || expectedType?.kind === "i32";
     const taClass = classifyTypedArrayType(ctx.checker.getTypeAtLocation(expr.expression), ctx.checker);
     const oobUndefined = !numericHint && taClass === "other" && !isRegexMatchVec;
@@ -6302,43 +6415,4 @@ export function classifyPlainCtorReceiverNamespace(
     return "Object";
   }
   return undefined;
-}
-
-/**
- * (#3133) Module-wide shadowing guard for the static `.constructor` identity
- * fold: if the module ever ASSIGNS to or DELETES a `.constructor` property
- * (any receiver — syntactic scan, cached per source file), decline the fold so
- * runtime-shadowed reads keep their current dynamic behavior.
- */
-const constructorPropTouchCache = new WeakMap<ts.SourceFile, boolean>();
-export function moduleTouchesConstructorProp(sourceFile: ts.SourceFile): boolean {
-  let touched = constructorPropTouchCache.get(sourceFile);
-  if (touched === undefined) {
-    touched = false;
-    const isCtorMember = (e: ts.Expression): boolean =>
-      (ts.isPropertyAccessExpression(e) && e.name.text === "constructor") ||
-      (ts.isElementAccessExpression(e) &&
-        ts.isStringLiteralLike(e.argumentExpression) &&
-        e.argumentExpression.text === "constructor");
-    const walk = (node: ts.Node): void => {
-      if (touched) return;
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-        isCtorMember(node.left)
-      ) {
-        touched = true;
-        return;
-      }
-      if (ts.isDeleteExpression(node) && isCtorMember(node.expression)) {
-        touched = true;
-        return;
-      }
-      ts.forEachChild(node, walk);
-    };
-    walk(sourceFile);
-    constructorPropTouchCache.set(sourceFile, touched);
-  }
-  return touched;
 }

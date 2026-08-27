@@ -47,6 +47,7 @@ import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
+import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
@@ -93,6 +94,7 @@ import {
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
+import { compileOneElementArray, widenDenseArrayElementType } from "./expressions/array-constructor-carrier.js";
 import {
   S5C_STRUCT_ACCESSOR_CLOSURE,
   buildAccessorClosure,
@@ -101,7 +103,7 @@ import {
 } from "./struct-accessor-closure.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
-
+import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -546,6 +548,14 @@ export function compileObjectLiteralAsExternref(
       }
       const valLocal = allocLocal(fctx, `__objlit_v_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: valLocal });
+      if (ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+        const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+        fctx.body.push(
+          { op: "local.get", index: valLocal },
+          { op: "call", funcIdx: wrapCallableIdx },
+          { op: "local.set", index: valLocal },
+        );
+      }
       // __extern_set(obj, "<key>", value)
       fctx.body.push({ op: "local.get", index: objLocal });
       addStringConstantGlobal(ctx, keyText);
@@ -590,12 +600,53 @@ export function compileObjectLiteralAsExternref(
       // rejects — see issue note 2), store `undefined` to keep the stack balanced,
       // matching the sibling arm's `ref.null.extern` fallback.
       if (!ok) fctx.body.push({ op: "ref.null.extern" });
+      if (ok && ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+        const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+        fctx.body.push({ op: "call", funcIdx: wrapCallableIdx });
+      }
       fctx.body.push({ op: "call", funcIdx: setIdx });
     }
   }
 
   fctx.body.push({ op: "local.get", index: objLocal });
   return { kind: "externref" };
+}
+
+/** Route an exact builtin-prototype override through the companion-backed gOPD reader. */
+export function tryCompileOverriddenBuiltinProtoDescriptor(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  builtinName: string | undefined,
+  memberName: string | undefined,
+): boolean {
+  if (
+    !ctx.standalone ||
+    builtinName === undefined ||
+    memberName === undefined ||
+    !sourceOverridesBuiltinPrototypeMember(expr, builtinName, memberName)
+  ) {
+    return false;
+  }
+  const receiver = expr.arguments[0];
+  const key = expr.arguments[1];
+  if (receiver === undefined || key === undefined) return false;
+  const receiverType = compileExpression(ctx, fctx, receiver, { kind: "externref" });
+  if (receiverType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  const keyType = compileExpression(ctx, fctx, key, { kind: "externref" });
+  if (keyType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
+  const descriptorIdx = ensureLateImport(
+    ctx,
+    "__getOwnPropertyDescriptor",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (descriptorIdx !== undefined) fctx.body.push({ op: "call", funcIdx: descriptorIdx });
+  else fctx.body.push({ op: "ref.null.extern" });
+  return true;
 }
 
 /**
@@ -1685,6 +1736,34 @@ export function objectLiteralIsStandaloneAnyObjectCarrier(
 }
 
 /**
+ * Runtime-eval arguments may be read back by the provider through the open
+ * object membrane. A closed object literal stores its function-valued fields
+ * in a module-local closure slot, which a separately compiled provider can
+ * classify but cannot invoke. Promote callable-bearing literals to the open
+ * object representation so construction can install the canonical callable
+ * carrier in each property before the object crosses the seam.
+ */
+function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
+  for (const prop of expr.properties) {
+    const name = resolvePropertyNameText(ctx, prop);
+    if (name !== "toString" && name !== "valueOf") continue;
+    if (ts.isMethodDeclaration(prop)) {
+      // Async-generator methods must keep their native lowering so parameter-
+      // default eval observes the generator body's own `arguments` binding.
+      const isAsyncGenerator =
+        prop.asteriskToken !== undefined && prop.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+      if (!isAsyncGenerator) return true;
+      continue;
+    }
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const initializer = prop.initializer;
+    if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) return true;
+  }
+  return false;
+}
+
+/**
  * (#1901/#2542, extracted for #3128) The standalone open-`$Object` divert
  * decision for a NON-EMPTY object literal: `compileObjectLiteral` builds the
  * literal as an open `$Object` handed back as **externref** (via
@@ -1708,6 +1787,7 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   ctx: CodegenContext,
   expr: ts.ObjectLiteralExpression,
 ): boolean {
+  if (ctx.standalone && ctx.redeclaredObjectIdentityLiterals.has(expr)) return true;
   if (
     // (#2542) `ctx.wasi` admitted so the PURE string-index arm below can fire on
     // the other host-free target; the #1901 any-context arm stays standalone-only,
@@ -1775,6 +1855,7 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   // so diverting its literal to `$Object` would mismatch that struct local.
   const strIndex = ctxTypeNonEmpty ? ctx.checker.getIndexInfoOfType(ctxTypeNonEmpty, ts.IndexKind.String) : undefined;
   const isPureStringIndexContext = !!strIndex && !!ctxTypeNonEmpty && ctxTypeNonEmpty.getProperties().length === 0;
+  if (objectLiteralHasCallableProperty(ctx, expr)) return true;
   // #1901's any-context arm stays standalone-only (widening it would change every
   // any-typed literal's lowering under wasi); #2542's index arm covers both.
   return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;
@@ -3974,8 +4055,8 @@ export function compileObjectLiteralForStruct(
 
         const bodyInstrs: Instr[] = [];
         const outerBody = methodFctx.body;
+        ctx.liveBodies.add(outerBody);
         methodFctx.body = bodyInstrs;
-
         methodFctx.generatorReturnDepth = 0;
         methodFctx.blockDepth++;
         for (let i = 0; i < methodFctx.breakStack.length; i++) methodFctx.breakStack[i]!++;
@@ -3989,8 +4070,8 @@ export function compileObjectLiteralForStruct(
         for (let i = 0; i < methodFctx.breakStack.length; i++) methodFctx.breakStack[i]!--;
         for (let i = 0; i < methodFctx.continueStack.length; i++) methodFctx.continueStack[i]!--;
         methodFctx.generatorReturnDepth = undefined;
-
         methodFctx.body = outerBody;
+        ctx.liveBodies.delete(outerBody);
 
         // Wrap generator body block in try/catch to capture exceptions as pending throw
         const tagIdx = ensureExnTag(ctx);
@@ -5956,6 +6037,9 @@ export function compileArrayConstructorCall(
     elemWasm = { kind: "f64" };
   }
 
+  const widenedElemWasm = widenDenseArrayElementType(args, elemWasm);
+  if (widenedElemWasm.kind !== elemWasm.kind) elemWasm = widenedElemWasm;
+
   const elemKind =
     elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
       ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
@@ -5984,17 +6068,7 @@ export function compileArrayConstructorCall(
     // number) take this path; `mixed` (any-typed) keeps length behavior.
     const argTag = ctx.oracle.staticJsTypeOf(args[0]!);
     if (argTag !== "number" && argTag !== "mixed" && !ts.isSpreadElement(args[0]!)) {
-      const oneVecIdx =
-        elemWasm.kind === "externref" ? vecTypeIdx : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
-      const oneArrIdx = getArrTypeIdxFromVec(ctx, oneVecIdx);
-      compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-      fctx.body.push({ op: "array.new_fixed", typeIdx: oneArrIdx, length: 1 });
-      const oneData = allocLocal(fctx, `__arr_data_${fctx.locals.length}`, { kind: "ref", typeIdx: oneArrIdx });
-      fctx.body.push({ op: "local.set", index: oneData });
-      fctx.body.push({ op: "i32.const", value: 1 });
-      fctx.body.push({ op: "local.get", index: oneData });
-      fctx.body.push({ op: "struct.new", typeIdx: oneVecIdx });
-      return { kind: "ref_null", typeIdx: oneVecIdx };
+      return compileOneElementArray(ctx, fctx, args[0]!, elemWasm, vecTypeIdx);
     }
     // Array(n) → sparse array of length n with default values.
     // #2000 — §23.1.1.1 step 4.b: when the single argument is a Number it is a

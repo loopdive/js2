@@ -17,6 +17,11 @@ import {
   isCanonicalClosureHeader,
 } from "./closures/closure-header-layout.js";
 import { requireIrClassShapeClassId } from "./ir-class-shapes.js";
+import {
+  describePreparedClassLayouts as describePreparedClassLayoutDescriptor,
+  type PreparedClassLayoutDescriptor,
+  type PreparedClassLayoutObservation,
+} from "./program-abi-prepared-transaction.js";
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import { DOM_CALLBACK_AUTHORITY_FIELD } from "../dom-capability-contract.js";
@@ -243,12 +248,6 @@ export function canonicalProgramAbiObjectShapeKey(objectType: Extract<IrType, { 
   return JSON.stringify(canonicalClosureSupportIrType(objectType, new Set<object>()));
 }
 
-interface ProgramAbiClassLayoutObservation {
-  readonly classId: IrClassId;
-  readonly displayName: string;
-  readonly cell: ProgramAbiTypeCell;
-}
-
 /** True when every index-bearing edge can participate in Program-ABI remapping. */
 export function isEarlyPreparableClassLayout(type: StructTypeDef): boolean {
   // `-1` is the module IR's explicit "no supertype" sentinel for hierarchy
@@ -300,7 +299,7 @@ function vectorLogicalOrdinal(logicalKey: string): number {
  * generic retained-type entry.
  */
 export class ProgramAbiTypeRegistry {
-  private readonly classes = new Map<IrClassId, ProgramAbiClassLayoutObservation[]>();
+  private readonly classes = new Map<IrClassId, PreparedClassLayoutObservation[]>();
   private readonly vectorLayouts = new Map<
     string,
     {
@@ -389,28 +388,19 @@ export class ProgramAbiTypeRegistry {
     return layout !== undefined && isEarlyPreparableClassLayout(layout.type);
   }
 
-  /** Publish one remappable class layout for an early prepared component. */
-  prepareClassLayout(classId: IrClassId): void {
-    if (this.planned) {
-      throw new ProgramAbiInvariantError(
-        "planning-sealed",
-        `cannot prepare class layout ${classId} after retained type planning`,
-      );
-    }
-    const classRecord = this.session.inventory.classes.find((record) => record.id === classId);
-    const observations = this.classes.get(classId) ?? [];
-    const canonical = observations.filter((observation) => observation.cell.current !== null).at(-1);
-    const current = canonical?.cell.current;
-    if (!classRecord || !canonical || !current || current.kind !== "struct" || !isEarlyPreparableClassLayout(current)) {
-      throw new ProgramAbiInvariantError(
-        "type-remap-mismatch",
-        `prepared class ${classId} has no retained remappable layout ` +
-          `(inventory=${classRecord ? "present" : "missing"}, observations=${observations.length}, ` +
-          `canonical=${canonical ? "present" : "missing"}, current=${current?.kind ?? "missing"}, ` +
-          `preparable=${current?.kind === "struct" ? isEarlyPreparableClassLayout(current) : false})`,
-      );
-    }
-    this.planClass(classId, canonical.displayName, current, canonical.cell);
+  /** Describe exact remappable class rows without publishing Program-ABI state. */
+  describePreparedClassLayouts(classIds: ReadonlySet<IrClassId>): PreparedClassLayoutDescriptor {
+    return describePreparedClassLayoutDescriptor(
+      {
+        session: this.session,
+        module: this.ctx.mod,
+        planningSealed: () => this.planned,
+        observation: (classId) => this.classes.get(classId)?.at(-1),
+        isPreparable: isEarlyPreparableClassLayout,
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.classLayout,
+      },
+      classIds,
+    );
   }
 
   /** Return the backend-neutral Program-ABI identity used by final string IR. */

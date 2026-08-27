@@ -399,6 +399,91 @@ export class ProgramAbiSourceCallableRegistry {
     return match;
   }
 
+  private canonicalObservationForUnit(
+    unitId: IrUnitId,
+  ): { readonly observation: SourceCallableObservation; readonly func: WasmFunction } | undefined {
+    return this.observations
+      .get(unitId)
+      ?.map((observation) => ({ observation, func: definedFuncAt(this.ctx, observation.funcIdx) }))
+      .filter((entry): entry is { observation: SourceCallableObservation; func: WasmFunction } => !!entry.func)
+      .at(-1);
+  }
+
+  private planObservedUnit(unitId: IrUnitId, required: boolean): void {
+    const { session } = this;
+    if (!session) return;
+    const canonical = this.canonicalObservationForUnit(unitId);
+    if (!canonical) {
+      if (required) {
+        throw new ProgramAbiInvariantError(
+          "missing-source-unit",
+          `source callable unit ${unitId} has no exact live allocator observation`,
+        );
+      }
+      return;
+    }
+
+    const expectedBindingId = irUnitCallableBindingId(unitId);
+    if (session.hasPlan(expectedBindingId)) {
+      if (!session.hasLocator(expectedBindingId, canonical.func)) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `retained source callable ${canonical.observation.displayName} is not the exact allocator owned by ${expectedBindingId}`,
+        );
+      }
+      return;
+    }
+    const bindingId = planProgramAbiUnitCallable(this.ctx, {
+      ref: irUnitFuncRef({ unitId, name: canonical.observation.displayName }),
+      signature: functionSignature(this.ctx, canonical.func),
+      func: canonical.func,
+    });
+    if (bindingId !== expectedBindingId) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `retained source callable ${canonical.observation.displayName} was not accepted for exact unit ${unitId}`,
+      );
+    }
+  }
+
+  /**
+   * Plan only the exact source callable units that a prepared component owns.
+   * This deliberately leaves the registry open for unrelated retained
+   * callables; the global {@link planRetained} latch remains the final sweep.
+   */
+  planUnits(unitIds: readonly IrUnitId[]): void {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot plan a targeted source-callable population after retained planning",
+      );
+    }
+    const { session, identityContext } = this;
+    if (!session || !identityContext) return;
+    const requested = new Set(unitIds);
+    if (requested.size !== unitIds.length) {
+      throw new ProgramAbiInvariantError(
+        "duplicate-session-draft",
+        "targeted source-callable planning received a duplicate unit",
+      );
+    }
+    const inventoryOrder = new Map(identityContext.inventory.allUnits.map((unit, index) => [unit.id, index] as const));
+    const ordered = [...requested].sort(
+      (left, right) =>
+        (inventoryOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+          (inventoryOrder.get(right) ?? Number.MAX_SAFE_INTEGER) || (left < right ? -1 : left > right ? 1 : 0),
+    );
+    for (const unitId of ordered) {
+      if (!identityContext.unitByUnitId.has(unitId)) {
+        throw new ProgramAbiInvariantError(
+          "unknown-inventory-unit",
+          `targeted source-callable planning references unknown unit ${unitId}`,
+        );
+      }
+      this.planObservedUnit(unitId, true);
+    }
+  }
+
   /** Assign exact source-unit owners before generic retained callable planning. */
   planRetained(): void {
     if (this.planned) return;
@@ -413,28 +498,7 @@ export class ProgramAbiSourceCallableRegistry {
         .filter((entry): entry is { observation: SourceCallableObservation; func: WasmFunction } => !!entry.func)
         .at(-1);
       if (!canonical) continue;
-
-      const expectedBindingId = irUnitCallableBindingId(unitId);
-      if (session.hasPlan(expectedBindingId)) {
-        if (!session.hasLocator(expectedBindingId, canonical.func)) {
-          throw new ProgramAbiInvariantError(
-            "duplicate-slot-locator",
-            `retained source callable ${canonical.observation.displayName} is not the exact allocator owned by ${expectedBindingId}`,
-          );
-        }
-        continue;
-      }
-      const bindingId = planProgramAbiUnitCallable(this.ctx, {
-        ref: irUnitFuncRef({ unitId, name: canonical.observation.displayName }),
-        signature: functionSignature(this.ctx, canonical.func),
-        func: canonical.func,
-      });
-      if (bindingId !== expectedBindingId) {
-        throw new ProgramAbiInvariantError(
-          "missing-source-unit",
-          `retained source callable ${canonical.observation.displayName} was not accepted for exact unit ${unitId}`,
-        );
-      }
+      this.planObservedUnit(unitId, false);
     }
 
     const liveGlobals = new Set(this.ctx.mod.globals);

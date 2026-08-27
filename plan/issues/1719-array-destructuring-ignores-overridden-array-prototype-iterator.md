@@ -3,7 +3,7 @@ id: 1719
 title: "Array destructuring ignores overridden Array.prototype[Symbol.iterator] ('items[Symbol.iterator] must be a function', 71 fails)"
 status: ready
 created: 2026-05-29
-updated: 2026-08-26
+updated: 2026-08-27
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -1252,3 +1252,33 @@ signed checkpoints, keep GC/WASI and override-free artifacts byte-exact, run the
 strict `cores - 2` load gate before every heavy command/commit/push, and never
 skip precommit or prepush hooks. The #4755 regression in PR #4997 is the
 mandatory downstream ordering control.
+
+## 2026-08-27 dispatch update — finish the standalone CPR contract
+
+The reopened residual is still the standalone producer/consumer contract, not
+the historical intactness-gate approach. Before dispatch, refresh live
+`upstream/main`, verify the #4755 prerequisite and open-PR collision state, and
+re-run the exact raw-iterator reproducer against the current baseline.
+
+The bounded implementation sequence is:
+
+1. Land the shared AST-only CPR assignment predicate and the standalone-only
+   normalizer/fill/finalization parity. The first checkpoint must prove all five
+   existing consumers use `drive → __iterator → __iterator_next` with a
+   non-receiver generator and must leave GC/WASI and override-free artifacts
+   unchanged.
+2. Add only the immutable call-time-`this` receiver slot to `GenState`, with
+   resume rehydration and the capture/two-array reentrancy controls. Preserve
+   the current receiver until the generator completes; no broad generator or
+   `Array.prototype` admission is allowed.
+3. Mirror the guarded multi-source finalizers and add the exact standalone
+   receiver/override matrix. Require structural driver/next evidence, zero
+   host imports, strict native fill, and a value-level result; a compilation
+   that merely returns the expected value without the iterator path is not
+   acceptance evidence.
+
+This work is file-bounded to the CPR producer/consumer and its focused tests.
+Route unrelated iterator, GC eager-buffering, `#1750`, and array object-value
+representation findings to their existing owners. Land each coherent
+checkpoint as a ready PR only after its own static, focused, and normal hook
+gates pass.

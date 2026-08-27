@@ -284,7 +284,7 @@
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:711",
       "why": "This is `%String.prototype%[@@iterator]` inlined as a statement form. The per-iteration element is a CODE POINT rendered as a one-element string — the intent field resolves to `__str_charAt_cp`, deliberately not the code-unit `string.char_at` next door. Its general sibling `forof.iter` is already in the dialect, so keeping the string specialization in core splits one protocol across the boundary.",
-      "evidence": ["src/ir/dialect/js.ts:720", "src/ir/integration.ts:5080"]
+      "evidence": ["src/ir/dialect/js.ts:720", "src/ir/integration.ts:5092"]
     },
     "forof.vec": {
       "verdict": "neutral",
@@ -599,14 +599,14 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1733",
       "why": "Builds a dense vector from statically-known elements. Sparse literals are explicitly out of scope and fall back to legacy, so no hole can reach this node.",
-      "evidence": ["src/ir/from-ast.ts:4482"]
+      "evidence": ["src/ir/from-ast.ts:4497"]
     },
     "vec.set": {
       "verdict": "neutral",
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1703",
       "why": "One planned in-bounds store. Bounds and growth policy stay explicit in the surrounding IR; a holey-array store is routed to a runtime helper instead.",
-      "evidence": ["src/ir/nodes.ts:1697", "src/ir/from-ast.ts:370"]
+      "evidence": ["src/ir/nodes.ts:1697", "src/ir/from-ast.ts:375"]
     },
     "vec.set_length": {
       "verdict": "neutral",

@@ -46,6 +46,7 @@
  * `.constructor` to the runtime path, where it currently reads `undefined`.
  */
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
 
@@ -159,6 +160,58 @@ function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression)
   if (arg === undefined) return false;
   const tag = ctx.oracle.staticJsTypeOf(arg);
   return tag === "string" || tag === "number" || tag === "boolean";
+}
+
+/**
+ * Return the statically object-valued argument preserved by `Object(x)` /
+ * `new Object(x)`, when the receiver can be traced to that exact coercion.
+ *
+ * The checker gives every Object-constructor result the broad `Object` type,
+ * even though §20.1.1.1 returns an object argument unchanged.  That erasure is
+ * observable by native receiver dispatch: `new Object(date).getFullYear()`
+ * needs the Date lowering and `Object(fn).constructor` needs the Function
+ * lowering.  Keep this proof narrow: only exact, non-primitive oracle facts
+ * are returned, while primitives, nullish values, unions, `any`, and unknown
+ * values continue through the existing Object carrier paths.
+ */
+export function objectCoercionObjectArgumentOf(
+  ctx: CodegenContext,
+  recvExpr: ts.Expression,
+): ts.Expression | undefined {
+  const producer = traceToProducer(ctx, recvExpr);
+  if (producer === undefined || (!ts.isNewExpression(producer) && !ts.isCallExpression(producer))) return undefined;
+  const callee = producer.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "Object") return undefined;
+  const decl = ctx.oracle.valueDeclarationOf(callee);
+  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return undefined;
+  const argument = producer.arguments?.[0];
+  if (argument === undefined) return undefined;
+  return isObjectLikeFact(ctx.oracle.typeFactOf(argument)) ? argument : undefined;
+}
+
+/** Whether a TypeOracle fact proves a value is already an object identity. */
+export function isObjectLikeFact(fact: TypeFact): boolean {
+  if (fact.kind === "union") return fact.parts.length > 0 && fact.parts.every(isObjectLikeFact);
+  return (
+    fact.kind === "array" ||
+    fact.kind === "tuple" ||
+    fact.kind === "builtin" ||
+    fact.kind === "class" ||
+    fact.kind === "function" ||
+    fact.kind === "object"
+  );
+}
+
+export function objectCoercionPreservesDate(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  const argument = objectCoercionObjectArgumentOf(ctx, recvExpr);
+  return argument !== undefined && ctx.oracle.builtinReceiverOf(argument) === "Date";
+}
+
+export function objectCoercionPreservesFunction(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  const argument = objectCoercionObjectArgumentOf(ctx, recvExpr);
+  if (argument === undefined) return false;
+  const fact = ctx.oracle.typeFactOf(argument);
+  return fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function");
 }
 
 /**

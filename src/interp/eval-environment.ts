@@ -762,6 +762,20 @@ function prepareGlobalDeclarations(plan: EvalDeclarationPlan, globalEnv: EnvRec)
       throw new SyntaxError(`Identifier '${name}' has already been declared`);
     }
   }
+  // GlobalDeclarationInstantiation checks lexical declarations against both
+  // the declarative half and restricted global object properties. A static
+  // Script-level var/function binding is represented by the latter at this
+  // boundary, so a later global Script `let` must reject it even when the
+  // property itself is otherwise readable and writable.
+  for (const name of plan.lexicalNames) {
+    if (declarativeHasOwnBinding(globalEnv, name)) {
+      throw new SyntaxError(`Identifier '${name}' has already been declared`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(globalObject, name);
+    if (descriptor !== undefined && descriptor.configurable === false) {
+      throw new SyntaxError(`Identifier '${name}' has already been declared`);
+    }
+  }
   for (const name of plan.functionNames) {
     if (!canDeclareGlobalFunction(globalObject, name)) {
       throw new TypeError(`Cannot declare global function ${name}`);
@@ -798,20 +812,21 @@ export function prepareEvalEnvironment(
   variableEnv: EnvRec,
   strictEval: boolean,
   existingVarEnv?: EnvRec,
+  persistGlobalLexicals = false,
 ): EnvRec {
   const plan = collectEvalDeclarations(program);
   let varEnv = variableEnv;
   let executionEnv = lexicalEnv;
   registerVariableEnvironment(variableEnv, variableEnv);
   registerVariableEnvironment(lexicalEnv, variableEnv);
-  if (strictEval) {
+  if (strictEval && !(persistGlobalLexicals && variableEnv.kind === ENV_GLOBAL)) {
     const privateNames: string[] = [];
     for (const name of plan.varNames) appendUnique(privateNames, name);
     varEnv = declarativeWithBindings(lexicalEnv, privateNames, undefined);
     executionEnv = varEnv;
     registerVariableEnvironment(varEnv, varEnv);
   } else {
-    validateNonStrictEvalVarNames(plan, lexicalEnv, varEnv);
+    if (!strictEval) validateNonStrictEvalVarNames(plan, lexicalEnv, varEnv);
     if (existingVarEnv !== undefined && existingVarEnv !== null) {
       EXISTING_VARIABLE_ENVIRONMENTS.set(varEnv as object, existingVarEnv);
     }
@@ -830,6 +845,16 @@ export function prepareEvalEnvironment(
   if (plan.lexicalNames.length === 0) {
     registerVariableEnvironment(executionEnv, varEnv);
     return executionEnv;
+  }
+  if (persistGlobalLexicals && varEnv.kind === ENV_GLOBAL && executionEnv === varEnv) {
+    const names = varEnv.names as JSValue[];
+    const slots = varEnv.slots as Regs;
+    for (const name of plan.lexicalNames) {
+      names.push(name);
+      slots.push({ value: EVAL_TDZ });
+    }
+    registerVariableEnvironment(varEnv, varEnv);
+    return varEnv;
   }
   const result = declarativeWithBindings(executionEnv, plan.lexicalNames, EVAL_TDZ);
   registerVariableEnvironment(result, varEnv);

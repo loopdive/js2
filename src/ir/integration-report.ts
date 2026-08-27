@@ -30,6 +30,9 @@ export interface IrIntegrationReport {
   readonly preparedCountedStringAppendReceipts?: readonly PreparedCountedStringAppendReceipt[];
 }
 
+/** Whether one terminal failure is also part of the public fallback channel. */
+export type IrIntegrationDiagnosticVisibility = "report" | "outcome-only";
+
 export type IrIntegrationTerminalEvidence =
   | {
       readonly kind: "patched";
@@ -46,6 +49,8 @@ export type IrIntegrationTerminalEvidence =
       readonly error: IrIntegrationError;
       /** Every public diagnostic object covered by this one logical event. */
       readonly errors?: readonly IrIntegrationError[];
+      /** Exact authority for whether this failure owns public diagnostics. */
+      readonly diagnosticVisibility: IrIntegrationDiagnosticVisibility;
     };
 
 export interface IrIntegrationTerminalFailureEvent {
@@ -54,6 +59,7 @@ export interface IrIntegrationTerminalFailureEvent {
   readonly legacyName: string;
   readonly error: IrIntegrationError;
   readonly errors: readonly IrIntegrationError[];
+  readonly diagnosticVisibility: IrIntegrationDiagnosticVisibility;
 }
 
 export interface IrIntegrationCompiledArtifactEvidence {
@@ -138,7 +144,15 @@ export class IrIntegrationFailureLog {
   readonly errors: IrIntegrationError[] = [];
   readonly terminalFailureEvents: IrIntegrationTerminalFailureEvent[] = [];
 
-  record(owner: IrLegacyUnitProjectionEntry, error: IrIntegrationError): void {
+  record(
+    owner: IrLegacyUnitProjectionEntry,
+    error: IrIntegrationError,
+    diagnosticVisibility: IrIntegrationDiagnosticVisibility = "report",
+  ): void {
+    if (diagnosticVisibility === "outcome-only") {
+      this.recordOutcomeOnly(owner, error);
+      return;
+    }
     if (error.func !== owner.legacyName) {
       throw new TypeError(
         `integration failure owner ${owner.unitId} / ${JSON.stringify(owner.legacyName)} ` +
@@ -151,6 +165,29 @@ export class IrIntegrationFailureLog {
       legacyName: owner.legacyName,
       error,
       errors: [error],
+      diagnosticVisibility: "report",
+    });
+  }
+
+  /** Record exact terminal withdrawal evidence without a public fallback row. */
+  recordOutcomeOnly(owner: IrLegacyUnitProjectionEntry, error: IrIntegrationError): void {
+    if (
+      error.func !== owner.legacyName ||
+      error.outcome.kind !== "unsupported" ||
+      error.outcome.code !== "late-preparation-unsupported" ||
+      error.outcome.stage !== "resolve"
+    ) {
+      throw new TypeError(
+        `outcome-only failure owner ${owner.unitId} / ${JSON.stringify(owner.legacyName)} ` +
+          `does not match one typed Unsupported event`,
+      );
+    }
+    this.terminalFailureEvents.push({
+      unitId: owner.unitId,
+      legacyName: owner.legacyName,
+      error,
+      errors: [],
+      diagnosticVisibility: "outcome-only",
     });
   }
 
@@ -195,6 +232,7 @@ export class IrIntegrationFailureLog {
         legacyName: owner.legacyName,
         error,
         errors: terminalErrors,
+        diagnosticVisibility: "report",
       });
     }
     return error !== undefined;
@@ -305,6 +343,7 @@ export function buildIrIntegrationReport(
             ...ownerProjection.requireLegacyName(failureEvent.func),
             error: failureEvent,
             errors: [failureEvent],
+            diagnosticVisibility: "report" as const,
           };
     const owner = ownerProjection.requirePair({
       unitId: event.unitId,
@@ -320,6 +359,7 @@ export function buildIrIntegrationReport(
       legacyName: owner.legacyName,
       error: event.error,
       errors: event.errors,
+      diagnosticVisibility: event.diagnosticVisibility,
     });
   }
   return {

@@ -172,6 +172,17 @@ export class IrInvariantError extends Error {
   }
 }
 
+/** Fatal marker for a prepared ABI commit that threw after publication began. */
+export class PreparedProgramAbiCommitError extends Error {
+  constructor(
+    readonly scopeId: string,
+    cause: unknown,
+  ) {
+    super(`prepared ABI scope ${scopeId} failed after atomic commit began`, { cause });
+    this.name = "PreparedProgramAbiCommitError";
+  }
+}
+
 /**
  * (#4035) Throw a DESIGNED demote-to-legacy at a build-stage site.
  *

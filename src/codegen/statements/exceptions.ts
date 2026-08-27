@@ -312,11 +312,22 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
 
   if (stmt.expression) {
     // Compile the thrown expression — coerce to externref for the exception tag
-    const resultType = compileExpression(ctx, fctx, stmt.expression, {
-      kind: "externref",
-    });
-    // If the expression didn't produce externref, coerce it properly
-    if (resultType && resultType.kind !== "externref") {
+    // Do not pass an externref result hint here: compileExpression applies that
+    // hint eagerly, which can materialize a GC object before this function gets
+    // a chance to preserve the throw identity. Convert the native result only
+    // after it has been emitted.
+    const resultType = compileExpression(ctx, fctx, stmt.expression);
+    // Throw evaluates and transports the value itself; it never applies
+    // ToPrimitive. In standalone, the general ref→externref coercion may
+    // materialize an object-literal struct carrying user `valueOf`/`toString`
+    // fields into a fresh `$Object` so a later dynamic coercion can find those
+    // methods. That boundary copy is incorrect for `throw`: a caught object
+    // must retain identity, so `catch (e) { e.x = v }` updates the original
+    // object. GC refs are already anyrefs; erase only the Wasm representation.
+    if (resultType && (resultType.kind === "ref" || resultType.kind === "ref_null")) {
+      fctx.body.push({ op: "extern.convert_any" });
+    } else if (resultType && resultType.kind !== "externref") {
+      // If the expression didn't produce externref, coerce it properly.
       coerceType(ctx, fctx, resultType, { kind: "externref" });
     } else if (!resultType) {
       // Expression produced no value (void) — push null externref

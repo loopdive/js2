@@ -5,7 +5,6 @@
  * Extracted from expressions.ts to keep concerns separated.
  * Contains: coerceType, pushDefaultValue, defaultValueInstrs, coercionInstrs.
  */
-
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { coercionPlan } from "./coercion-plan.js";
 import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
@@ -24,6 +23,7 @@ import { symbolBoundaryCoercionInstrs } from "./symbol-field-carrier.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
   elemGetOp,
   ensureExternrefToStringProvider,
@@ -2634,7 +2634,7 @@ export function coerceType(
       // and the standalone any-box tag-1 recovery (any-helpers.ts) — which box
       // a value read from a slot that genuinely holds `undefined`, never a
       // fresh arithmetic result.
-      fctx.body.push({ op: "call", funcIdx });
+      fctx.body.push(...f64HoleToExternrefInstrs(ctx, fctx, [{ op: "call", funcIdx }]));
       return;
     }
     // Fallback: drop f64 and push null externref

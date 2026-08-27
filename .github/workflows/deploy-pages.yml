@@ -30,7 +30,13 @@ env:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  # false, not true: with push + workflow_run + workflow_dispatch triggers all
+  # sharing this group, cancel-in-progress livelocks whenever triggers arrive
+  # faster than one build+deploy completes — each run gets killed by the next
+  # before finishing, and none ever reaches "deploy" (same failure mode as the
+  # npm-compat-refresh incident this file's history warns about). Queueing
+  # instead means a burst of triggers still drains to a real deploy.
+  cancel-in-progress: false
 
 jobs:
   build:

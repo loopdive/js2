@@ -1,10 +1,10 @@
 ---
 id: 4260
 title: "Prepared callable-provider plans leak across an aborted component seal"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-08-09
-updated: 2026-08-26
+updated: 2026-08-27
 priority: medium
 horizon: m
 feasibility: hard
@@ -541,3 +541,92 @@ speculatively. Immediately before every normal signed commit, rerun
 push run every normal pre-push hook; never use a skip flag or `--no-verify`.
 Every heavy command and every commit/push boundary requires a fresh finite,
 nonnegative one-minute load strictly below `logical cores - 2`.
+
+## 2026-08-26 implementation handover
+
+Draft PR #4996 carries the atomic-publication checkpoint on branch
+`codex/4260-b-atomic-publication`, exact implementation head before this
+handover-only update
+`493ad47d316d69b16c0db802bb7bbe8eba6d269e`. It stages callable imports,
+providers, class layouts, export aliases, and Program-ABI session writes in one
+authenticated prepared-component overlay, validates the complete batch before
+publication, and retains terminal diagnostic evidence across component-local
+aborts. Its focused transaction suite passed 19/19, and its signed checkpoint
+passed the normal LOC/function ratchets plus unskipped precommit and prepush
+hooks.
+
+This is not final #4260 acceptance. Keep the PR draft until prerequisite #4755
+lands and the literal B.7 matrix below passes on current main. The branch is
+behind the live integration seams; after #4755 merges, merge live `main` into
+this branch without rebasing and semantically review the overlapping
+`integration-report.ts` and `integration.ts` changes.
+
+The missing proof must use a prepared component that is the sole
+`__new_ReferenceError` requester and cover injected pre-seal failure,
+uninjected Prepared, and direct controls in GC and standalone. Require exact
+Unsupported/direct-only evidence (`legacyBodyEmitted: true`,
+`irBodyEmitted: false`, no `preparedComponentId`, zero post-claim errors), no
+stale host import or orphan standalone constructor, and a healthy
+shared-provider component that remains sealed/emitted with one canonical
+provider. Change production only if that matrix exposes a current-main defect.
+
+The detached `/private/tmp/js2-4260-baseline-debug` worktree contains deliberate
+diagnostic edits and is not an implementation source. The cross-lane stop
+point and resume order are also recorded in
+`plan/agent-context/ir-migration-handover-2026-08-26.md` on draft PR #5000.
+
+## 2026-08-27 dispatch update — B.7 atomic fallback proof
+
+Keep this tracker in progress until the #4755 direct-TDZ prerequisite is
+verified on live `upstream/main`. Then dispatch the B.7 behavioral checkpoint
+against the descriptor contract above; do not reopen the descriptor design or
+add an issue-specific provider cleanup path.
+
+The implementation task is narrowly defined:
+
+1. Use one sole `__new_ReferenceError` requester in a prepared class-setter
+   component. Inject the failure immediately before component seal and prove
+   typed Unsupported plus exactly one direct emission in both GC and
+   standalone. The uninjected/direct controls must retain their established
+   outcomes.
+2. Compare the aborted artifacts with their direct controls: no unused host
+   error import, no orphan standalone constructor, no stale provider/import
+   registry row, and no post-claim error. Keep the healthy two-component
+   shared-provider control sealed with one canonical provider.
+3. Re-run the provider/import planning, scoped dependency, transaction, direct
+   fallback, TypeScript 7/5, layering, fallback/oracle/coercion/optimization,
+   dead-export, LOC, function-growth, and ordinary hook gates. Reject empty
+   receipts and value-only success; the counters and public outcomes are part
+   of the proof.
+
+The worker must not touch #3521's linked-Parser selector, #1719's CPR route,
+global baselines, or the shared issue-plan files outside this tracker. Land
+the behavioral checkpoint only after its descriptor predecessor is on live
+main and the exact injection matrix is green.
+
+## 2026-08-27 implementation update — class-setter fallback boundary
+
+The literal B.7 matrix now passes 21/21 in GC and standalone on live `main`
+after #4755 and the atomic-publication checkpoint. The matrix covers the
+uninjected Prepared artifact, the injected pre-seal Unsupported/direct-only
+fallback, an explicit direct control, and the healthy shared-provider control.
+It compares terminal outcomes plus exact import, provider, and physical call
+inventories; the injected artifacts have no post-claim errors, stale registry
+rows, unused host import, or orphan standalone constructor.
+
+The proof exposed one current-main IR ownership defect outside the transaction
+machinery: a prepared class setter whose parameter has the canonical `dynamic`
+carrier demoted after lowering a concrete RHS because the setter boundary did
+not perform the same concrete-to-dynamic boxing already used at direct-call
+boundaries. `lowerPropertyAssignment` now uses that canonical boxing helper
+before assignability validation and still demotes when no supported carrier can
+be produced. No provider cleanup, special-case ReferenceError handling,
+registry relaxation, or baseline increase was added.
+
+Standalone direct lowering physically contains both the setter and trigger
+ReferenceError call chains, while the prepared component remains the sole
+semantic provider requester. The assertions therefore keep exact physical
+chain evidence separate from the one canonical Program-ABI provider row. The
+focused #4259 accessor suite remains 17/21 on both the checkpoint and an
+unmodified live-main control; those four inherited failures are not acceptance
+regressions for this checkpoint.

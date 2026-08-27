@@ -16,7 +16,6 @@ import { ensureAnyFromExternHelper, undefinedSingletonActive } from "./any-helpe
 import { reportError } from "./context/errors.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
@@ -32,13 +31,7 @@ import {
   compileI64BinaryOp,
   compileNumericBinaryOp,
 } from "./binary-ops.js";
-
-function equalityOperandHasStaleStaticType(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
-  return (
-    ts.isIdentifier(expr) &&
-    (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))
-  );
-}
+import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already

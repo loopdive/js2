@@ -1,9 +1,9 @@
 ---
 id: 1240
 title: "perf: per-iteration eval compile budget for `comments/S7.4_A6.js` (still ~25s with #1229 cache)"
-status: ready
+status: in_progress
 created: 2026-05-02
-updated: 2026-05-02
+updated: 2026-08-25
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -18,6 +18,16 @@ test262_fail: 0
 origin: "Surfaced after #1229 (PR #145, 2026-05-02). The eval LRU cache + RegExp peephole rewrite fix 6 of 7 target tests outright (<60ms exec); the remaining one — `test/language/comments/S7.4_A6.js` — passes but takes ~25 s, which is uncomfortably close to the 30 s pool ceiling and will flap as `compile_timeout` under CI load."
 ---
 # #1240 — Per-iteration eval compile budget needed for the `S7.4_A6.js` comment-loop test
+
+## 2026-08-25 standalone aggregate result
+
+The two ES5 exhaustive comment rows had regressed to 10-second compile
+timeouts on the combined standalone branch. A source-proven peephole now
+compiles away only the two safe one-code-unit forms while preserving argument
+evaluation and the single-line terminator assignment. Both authoritative rows
+pass: `S7.4_A5.js` executes in 817 ms and `S7.4_A6.js` in 492 ms on the local
+aggregate run. Reassignment and local-shadow controls explicitly decline to
+the runtime-eval provider.
 
 ## Problem
 

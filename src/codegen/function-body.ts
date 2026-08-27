@@ -74,6 +74,7 @@ import {
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, emitLinearU8ArenaReset } from "./linear-uint8-arena.js";
 import { walkInstructions } from "./walk-instructions.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { normalizeSloppyExplicitThisParameter } from "./helpers/sloppy-this-global.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -441,13 +442,13 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   ctx.currentFunc = fctx;
   initializeFunctionPoisonPillContext(ctx, fctx, decl);
 
-  // Mark function entry with source position
   const funcPos = getSourcePos(ctx, decl);
   if (funcPos) {
     const nop: Instr = { op: "nop" };
     attachSourcePos(nop, funcPos);
     fctx.body.push(nop);
   }
+  normalizeSloppyExplicitThisParameter(ctx, fctx, decl);
   if (containsLinearU8Allocation(ctx, decl.body)) {
     fctx.linearU8ArenaMarkLocalIdx = emitLinearU8ArenaMark(ctx, fctx, "__linu8_fn_mark");
   }

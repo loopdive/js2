@@ -78,6 +78,8 @@ import { selectWithEnvironmentClosures } from "./with-environment.js";
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
+import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
+import { isAffineThreeDeepElementAccess, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
@@ -406,6 +408,10 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly resolveImplicitParamType?: (
     parameter: ts.ParameterDeclaration,
   ) => "f64" | "bool" | "string" | "object" | "dynamic" | undefined;
+  /** Exact #3521 parseInt/parseFloat native-string boundary call sites. */
+  readonly fnctorNativeStringBoundary?: (call: ts.CallExpression) => boolean;
+  /** Exact #3521 global underscore replacement inside the linked parser. */
+  readonly fnctorNativeStringReplace?: (call: ts.CallExpression) => boolean;
   /**
    * Exact legacy callable-ABI proof for an unannotated parameter projected as
    * the ordinary non-fast numeric vec. General object/any evidence is not
@@ -8115,34 +8121,6 @@ function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boole
   );
 }
 
-/**
- * The shared IR currently widens affine multi-dimensional indices to f64 and
- * re-truncates them in the innermost loop. Keep genuine three-deep numeric
- * kernels on the legacy path, whose promoted-i32 induction variables and
- * proven-in-bounds element accesses are substantially cheaper. This is a
- * selector-owned capability decision so the lowerer never has to fail after
- * the function has already been claimed.
- */
-function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression): boolean {
-  let enclosingForDepth = 0;
-  for (let parent: ts.Node | undefined = expr.parent; parent; parent = parent.parent) {
-    if (ts.isForStatement(parent)) enclosingForDepth++;
-    if (ts.isFunctionLike(parent)) break;
-  }
-  if (enclosingForDepth < 3) return false;
-
-  let indexHasMultiply = false;
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AsteriskToken) {
-      indexHasMultiply = true;
-      return;
-    }
-    forEachChild(node, visit);
-  };
-  visit(expr.argumentExpression);
-  return indexHasMultiply;
-}
-
 function phase1FnctorNewExpression(
   expr: ts.NewExpression,
   scope: ReadonlySet<string>,
@@ -8265,19 +8243,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
-  // (#3583) Type-erased assertion wrappers emit NOTHING at runtime, so the
-  // claimable shape is exactly the operand's; `lowerExpr` unwraps identically.
-  // The other `isAsExpression` sites here are helper-local unwrappers for one
-  // analysis each, NOT this shape gate — which is why these really did reject
-  // at `expr-unhandled` before this arm. Full measurement in #3583.
-  if (
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    return isPhase1Expr(expr.expression, scope, localClasses);
-  }
+  // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
+  // Other `isAsExpression` sites are analysis-local, not this shape gate; these
+  // wrappers previously reached `expr-unhandled`. Full measurement in #3583.
+  const unwrappedTypeErased = unwrapTypeErasedExpression(expr);
+  if (unwrappedTypeErased) return isPhase1Expr(unwrappedTypeErased, scope, localClasses);
   // (#1373b C-1) `await <e>` inside a C-1 async body mirrors legacy sync-model lowering:
   //   - `await Promise.resolve(x)` → static substitution; zero args settle to
   //     `undefined`, which from-ast cannot lower.
@@ -8564,7 +8534,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
-    if (!phase1CallPreambleIsBuildable(expr)) return false;
+    const programCallableVerdict = programCallablePhase1Verdict(
+      currentSelectionOptions?.resolveProgramCallableUse,
+      expr,
+      () => phase1CallPreambleIsBuildable(expr),
+      (argument) => isPhase1Expr(argument, scope, localClasses),
+      () => capabilityNo("call-resolution-unsupported", "expr-program-callable-dynamic-shape", expr),
+      (spread) => shapeNo("expr-program-callable-spread", spread),
+    );
+    if (programCallableVerdict !== undefined) return programCallableVerdict;
     const indirectEvalStatement = exactIndirectEvalStatement(expr);
     if (indirectEvalStatement) {
       const certified = certifiedHostIndirectEval(expr, scope);
@@ -8814,6 +8792,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return capabilityNo("string-method-unsupported", "expr-string-method-surface", expr);
         }
         if (expr.expression.name.text === "replace") {
+          if (currentSelectionOptions?.fnctorNativeStringReplace?.(expr) === true) {
+            if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
+            return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
+          }
           if (currentSelectionOptions?.supportsLiteralStringReplace !== true) {
             return capabilityNo("string-method-unsupported", "expr-string-replace-backend", expr);
           }
@@ -9762,6 +9744,12 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        if (
+          visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
+            hasExternalCall.add(callerName),
+          )
+        )
+          return;
         const indirectEval = certifiedHostIndirectEval(node);
         if (indirectEval) {
           visit(indirectEval.source);
@@ -9790,9 +9778,19 @@ export function buildLocalCallGraph(
           } else if (decls.has(callee)) {
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
+          } else if (currentSelectionOptions?.fnctorNativeStringBoundary?.(node) === true) {
+            if (node.arguments) {
+              for (const argument of node.arguments) visit(argument);
+            }
+            return;
           } else if (
             currentDynamicRuntimeBuildable &&
             callerName === "stringToNumber" &&
+            // Keep the pre-#3521 dynamic compatibility escape restricted to
+            // checker-proven ambient bindings. A source/import binding named
+            // `parseInt` or `parseFloat` must not become an authenticated
+            // runtime boundary when the exact L3 plan is absent.
+            selectorSeesAmbientBinding(node.expression) &&
             parseNumberCallUsesDynamicCarrier(callerName, node) &&
             ((callee === "parseFloat" && node.arguments.length === 1) ||
               (callee === "parseInt" && node.arguments.length === 2))

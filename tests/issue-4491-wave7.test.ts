@@ -414,12 +414,10 @@ describe("#4491 wave-7 — measured residuals (it.fails)", () => {
   });
 
   // `built-ins/String/prototype/trim/15.5.4.20-2-51.js` — a DIFFERENT root, in
-  // the borrowed-String-receiver coercion, not in the class tag: measured on
-  // this branch it answers "1,2,true" (the elements joined) where the spec
-  // wants ToString(argObj) = "[object Arguments]". Pinned here so the two are
-  // not confused; owner is the `emitBorrowedStringReceiverToString` (#3254)
-  // lane.
-  it.fails("String.prototype.trim.call(<arguments>) coerces via join, not the class tag", async () => {
+  // the borrowed-String-receiver coercion, not in the class tag. Arguments
+  // shares the indexed vec carrier with Array, but its ordinary ToString is
+  // the class tag rather than the elements joined by Array.prototype.toString.
+  it("String.prototype.trim.call(<arguments>) observes the Arguments class tag", async () => {
     expect(
       await runStandalone(`
         var Fun = function () { return arguments; };
@@ -427,6 +425,16 @@ describe("#4491 wave-7 — measured residuals (it.fails)", () => {
         Object.defineProperty(argObj, "p", { value: 1, enumerable: true });
         var t = String.prototype.trim.call(argObj);
         export function main() { return t === "[object Arguments]" ? 1 : 0; }
+      `),
+    ).toBe(1);
+  });
+
+  it("keeps Array join coercion distinct from Arguments", async () => {
+    expect(
+      await runStandalone(`
+        var arr = [1, 2, 3];
+        var t = String.prototype.trim.call(arr);
+        export function main() { return t === "1,2,3" ? 1 : 0; }
       `),
     ).toBe(1);
   });

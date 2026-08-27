@@ -428,7 +428,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
       }
     }
   }
-  shiftMap(ctx.moduleGlobals);
+  for (const globals of [ctx.moduleGlobals, ctx.importMetaGlobals]) shiftMap(globals);
   shiftMap(ctx.capturedGlobals);
   // (#3039) `capturedBoxGlobals` values are objects, not bare indices — shift
   // each entry's `globalIdx` in place like `protoOverrides` below. The

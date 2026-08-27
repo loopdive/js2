@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-27
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -16,7 +16,8 @@ parent: 3518
 depends_on: [3520, 4260]
 required_by: [3522, 3523, 3525, 3526, 3792, 4601]
 assignee: ttraenkler/codex-ir-lead
-branch: codex/3521-r2-replay-4608-5d55
+pr: 5000
+branch: codex/3521-linked-owner-closure-current
 horizon: xl
 complexity: XL
 es_edition: n/a
@@ -27,11 +28,37 @@ loc-budget-allow:
   - src/ir/propagate.ts
   - src/ir/select.ts
   - src/codegen/expressions/new-super.ts
+  - src/codegen/index.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/lower.ts
+  - src/codegen/context/types.ts
+  - src/codegen/program-abi-session.ts
+  - src/ir/backend/porffor/assembler.ts
+  - src/ir/nodes.ts
+  - src/ir/verify.ts
+  - src/ir/builder.ts
+  - src/ir/prepared-component-dependencies.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts
   - src/codegen/program-abi-fnctor-producer.ts
+  - src/codegen/ir-fnctor-parameter-planning.ts
 func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/index.ts::generateModule
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
+  - src/ir/verify.ts::verifyInstrStructure
+  - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/codegen/context/create-context.ts::createCodegenContext
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -84,30 +111,6 @@ files:
   - tests/ir/fnctor-admission.test.ts
   - scripts/check-ir-kind-neutrality.mjs
   - scripts/ir-kind-neutrality-baseline.json
-loc-budget-allow:
-  - src/codegen/context/types.ts
-  - src/codegen/program-abi-session.ts
-  - src/codegen/index.ts
-  - src/ir/backend/porffor/assembler.ts
-  - src/ir/from-ast.ts
-  - src/ir/integration.ts
-  - src/ir/lower.ts
-  - src/ir/nodes.ts
-  - src/ir/verify.ts
-  - src/ir/builder.ts
-  - src/ir/prepared-component-dependencies.ts
-func-budget-allow:
-  - src/codegen/index.ts::planIrOverlay
-  - src/codegen/index.ts::generateModule
-  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
-  - src/ir/integration.ts::compileIrPathFunctions
-  - src/ir/integration.ts::makeFromAstResolver
-  - src/ir/integration.ts::makeResolver
-  - src/ir/lower.ts::lowerIrFunctionBody
-  - src/ir/lower.ts::emitInstrTree
-  - src/ir/verify.ts::verifyInstrStructure
-  - src/ir/passes/inline-small.ts::renameInstrOperands
-  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 
@@ -2567,3 +2570,37 @@ retained before semantic assertions. Its strict gate remains finite,
 non-negative one-minute load strictly below `logical cores - 2` (10 cores means
 `< 8`). C36/C37 stay scheduled for the final aggregate rerun, and the unchanged
 #4035 size ceiling is not reported as a new regression.
+
+## 2026-08-27 dispatch update — execute the linked-Parser L3 edge
+
+This tracker remains the owner of the linked-Parser pre-claim gap. The next
+checkpoint is production wiring on the existing PR #5000 branch, not a new
+issue and not a dead-export baseline waiver. The planner module is intentionally
+dormant until its exact authority is consumed by the late-overlay route.
+
+Implementation order:
+
+1. Revalidate the current late-overlay route and retain the immutable
+   `planIrFnctorParameterPreselection` result only after the legacy constructor,
+   `input`, `$constructor`, and `$bag` records exist. Keep default IR-first and
+   every non-candidate tuple Unsupported.
+2. Carry the plan copy-on-write through `planIrOverlay`, the implicit-parameter
+   resolver, identity selection, and `IrIntegrationLoweringPlans`; never mutate
+   shared name-keyed signatures, `funcMap`, or cross-source state.
+3. Make the exact `fnctor.get input` field read and the semantic-string to
+   physical-nullable-carrier refinement consume that plan. Revalidate the
+   current handle, function object, type, locator, index, source, owner, and AST
+   site immediately before lowering, parity, and patching.
+4. Join the same owner-qualified effective signature and the two authenticated
+   parser builtin boundary plans to the existing `readNumber` → `stringToNumber`
+   direct-call plan. Any stale or missing fact withdraws the caller to typed
+   Unsupported; no selector bypass or generic dynamic exception is allowed.
+5. Prove the route with the existing focused static/runtime matrix, then run the
+   normal type, layering, fallback, optimization, LOC, function, and hook gates.
+   Preserve the asymmetric `direct=1, IR=1` late-overlay accounting; this slice
+   does not claim compile-once or final R2 completion.
+
+The dead-export check is a stop condition, not a ratchet to widen: the eight
+planner helpers must become survivor-reachable through production consumption.
+The implementation worker owns only the bounded L3 source/tests listed in the
+preceding sections and must leave the adjacent #1719 and #4260 plans untouched.

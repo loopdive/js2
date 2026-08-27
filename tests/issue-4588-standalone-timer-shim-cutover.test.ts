@@ -108,6 +108,7 @@ describe("#4588 exact compiler timer-shim physical-route cutover", () => {
       kind: "failed",
       unitId,
       legacyName,
+      diagnosticVisibility: "report",
       error: {
         func: legacyName,
         message: `${legacyName} is not ready for prepared lowering`,

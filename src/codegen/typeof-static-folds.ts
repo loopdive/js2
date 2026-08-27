@@ -12,6 +12,58 @@ function isUnshadowedRealmGlobal(ctx: CodegenContext, fctx: FunctionContext, ope
   return !(ts.isIdentifier(bare) && fctx.localMap.has("globalThis"));
 }
 
+function isUnshadowedFunctionPrototype(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
+  const bare = skipTransparentExpressions(operand);
+  const receiver =
+    (ts.isPropertyAccessExpression(bare) && bare.name.text === "prototype") ||
+    (ts.isElementAccessExpression(bare) &&
+      ts.isStringLiteralLike(bare.argumentExpression) &&
+      bare.argumentExpression.text === "prototype")
+      ? skipTransparentExpressions(bare.expression)
+      : undefined;
+  return (
+    ctx.standalone === true &&
+    receiver !== undefined &&
+    ts.isIdentifier(receiver) &&
+    receiver.text === "Function" &&
+    !fctx.localMap.has("Function") &&
+    !(fctx.boxedCaptures?.has("Function") ?? false)
+  );
+}
+
+/** Harness-safe static type of `%Function.prototype%` bracket reads. */
+export function staticFunctionPrototypeTypeof(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+): "function" | "number" | null {
+  const bare = skipTransparentExpressions(operand);
+  if (isUnshadowedFunctionPrototype(ctx, fctx, bare)) return "function";
+  return ts.isElementAccessExpression(bare) &&
+    ts.isStringLiteralLike(bare.argumentExpression) &&
+    bare.argumentExpression.text === "length" &&
+    isUnshadowedFunctionPrototype(ctx, fctx, bare.expression)
+    ? "number"
+    : null;
+}
+
+export function tryCompileFunctionPrototypeTypeof(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+): ValType | null | undefined {
+  const result = staticFunctionPrototypeTypeof(ctx, fctx, operand);
+  return result === null ? undefined : compileStringLiteral(ctx, fctx, result);
+}
+
+export function tryCompileBuiltinMemberTypeof(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+): ValType | null | undefined {
+  return tryCompileMathMemberTypeof(ctx, fctx, operand) ?? tryCompileFunctionPrototypeTypeof(ctx, fctx, operand);
+}
+
 /** Static `typeof globalThis`/top-level-this fold, or undefined to decline. */
 export function tryCompileRealmGlobalTypeof(
   ctx: CodegenContext,

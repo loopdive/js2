@@ -58,7 +58,14 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { buildArgumentsLengthAbsentMiss, buildArgumentsLengthAbsentTail } from "./arguments-length-brand.js"; // (#4658)
+import {
+  buildArgumentsToPrimitiveArm,
+  buildArgumentsLengthAbsentMiss,
+  buildArgumentsLengthAbsentTail,
+  ARGUMENTS_LENGTH_OVERRIDE_FIELD,
+  ARGUMENTS_LENGTH_VALUE_FIELD,
+  reserveArgumentsLengthBrand,
+} from "./arguments-length-brand.js"; // (#4658/#4491)
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
@@ -86,8 +93,13 @@ import {
   isVecBaseSubtype,
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
-import { builtinCtorCallableArmInstrs } from "./builtin-ctor-callable.js"; // (#4394) wrapper-ctor [[Call]] arm
+import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
+import {
+  buildTransferredNativeProtoVariadicApplyInstrs,
+  collectTransferredNativeProtoReceivers,
+} from "./closures/transferred-native-proto.js";
+import type { TransferredNativeReceiverEntry } from "./closures/transferred-native-proto.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
@@ -101,6 +113,7 @@ import {
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
+import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -128,6 +141,8 @@ import {
   reserveVecPropHelpers,
 } from "./vec-props.js";
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureVecElemSet } from "./vec-elem-set.js";
+import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
@@ -156,6 +171,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
+import { buildTemplateRawGetArm } from "./object-runtime-template-raw.js";
 import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983) strict [[Set]] TypeError
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -165,6 +181,7 @@ import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // 
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
+import { allocatedStructTypeIndices } from "./walk-instructions.js";
 import {
   type ColdFieldLocation,
   coldFieldNameAt,
@@ -208,6 +225,7 @@ import {
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   buildOwnToPrimitiveOverridePresent,
@@ -1108,44 +1126,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // Look up an already-emitted native string helper.
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals")!;
-  // A tagged-template callback written in JavaScript commonly leaves its
-  // `strings` parameter as `any`, so its `.raw` read reaches this dynamic
-  // property helper rather than the statically typed vec dispatcher. The
-  // template object is a WasmGC subtype of the ordinary vec; recognize only
-  // the exact `raw` key and return the extra field when the runtime value has
-  // that subtype. Other keys and other receivers continue through the normal
-  // object/vec/closure lookup ladder.
-  const templateVecTypeIdx = ctx.templateVecTypeIdx;
-  const templateRawGetArm: Instr[] =
-    templateVecTypeIdx >= 0 && strFlattenIdx !== undefined && strEqualsIdx !== undefined
-      ? [
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: anyStrTypeIdx },
-          { op: "call", funcIdx: strFlattenIdx },
-          ...nativeStringLiteralInstrs(ctx, "raw"),
-          { op: "call", funcIdx: strEqualsIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 4 },
-              { op: "ref.test", typeIdx: templateVecTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 4 },
-                  { op: "ref.cast", typeIdx: templateVecTypeIdx },
-                  { op: "struct.get", typeIdx: templateVecTypeIdx, fieldIdx: 2 },
-                  { op: "extern.convert_any" },
-                  { op: "return" },
-                ],
-              },
-            ],
-          },
-        ]
-      : [];
+  const templateRawGetArm = buildTemplateRawGetArm(ctx, ctx.templateVecTypeIdx, strFlattenIdx, strEqualsIdx);
 
   // ── (#2896) Reserved builtin-fn metadata natives (standalone only) ────────
   //
@@ -4569,7 +4550,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // `__to_primitive`, so we reserve the placeholder here (stable call target)
     // and fill it in post-processing. `$__vec_base` is the shared supertype with
     // `length` at field 0 (#2186) — one `ref.test` detects every element kind.
-    const arrayLikeReduce = ctx.standalone;
+    const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
     const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
     const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
     // (#2638) Standalone CLASS-instance → primitive. A nominal class struct is
@@ -4588,7 +4569,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const typeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined")!;
     const typeofBigintIdx = ctx.funcMap.get("__typeof_bigint")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
-
     const typeErrorMessage = "Cannot convert object to primitive value";
     addStringConstantGlobal(ctx, typeErrorMessage);
     emitWasiErrorConstructor(ctx, "TypeError", 1);
@@ -4853,6 +4833,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then:
           arrayLikeReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
             ? [
+                ...buildArgumentsToPrimitiveArm(ctx, isStringHint, tryOrdinaryMethod, stringExtern),
                 // (#2358 #10) A real array (`$__vec_base`) reduces to its
                 // Array.prototype.toString (`join(",")`) — a primitive string the
                 // caller's hint then coerces (`__str_to_number` / string concat).
@@ -6722,6 +6703,43 @@ export function reserveApplyClosure(ctx: CodegenContext): number {
   return funcIdx;
 }
 
+interface VariadicNativeApplyState {
+  entries: TransferredNativeReceiverEntry[];
+  anyLocal: number;
+}
+
+function reserveVariadicNativeApplyState(
+  ctx: CodegenContext,
+  locals: { name: string; type: ValType }[],
+): VariadicNativeApplyState | undefined {
+  const entries = collectTransferredNativeProtoReceivers(ctx, 0).filter((entry) => entry.variadic !== undefined);
+  if (entries.length === 0) return undefined;
+  const anyLocal = 3 + locals.length;
+  locals.push({ name: "__variadic_native_any", type: { kind: "anyref" } });
+  return { entries, anyLocal };
+}
+
+function buildVariadicNativeApplyDispatch(
+  ctx: CodegenContext,
+  state: VariadicNativeApplyState | undefined,
+  objVecTypeIdx: number | undefined,
+  objVecArrTypeIdx: number | undefined,
+): Instr[] {
+  if (!state) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: state.anyLocal },
+    ...buildTransferredNativeProtoVariadicApplyInstrs(ctx, state.entries, {
+      receiverLocal: 1,
+      argsLocal: 2,
+      anyLocal: state.anyLocal,
+      objVecTypeIdx,
+      objVecArrTypeIdx,
+    }),
+  ];
+}
+
 /**
  * (#1888 Slice 1) Fill the reserved `__apply_closure` bridge body at FINALIZE,
  * AFTER `emitClosureMethodCallExportN(0..4)` have registered
@@ -6796,13 +6814,11 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const resultLocal = 3 + locals.length;
   locals.push({ name: "result", type: { kind: "externref" } });
 
-  // (#3673) $ObjVec fast path: the args carrier built by every in-module call
-  // site (`__extern_method_call`, field-stored-closure arms, accessor/HOF
-  // drivers) is the runtime's own $ObjVec. Read its length + elements with
-  // direct struct.get/array.get instead of paying `__extern_length` + a full
-  // dynamic `__extern_get_idx` (overlay prologue + carrier ladder) PER
-  // ARGUMENT — measured as the top remaining cost of a standalone
-  // compiled-acorn parse. Non-$ObjVec args keep the generic path.
+  const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
+
+  // (#3673) Read the in-module $ObjVec argument carrier directly, avoiding a
+  // dynamic `__extern_get_idx` per argument. Non-$ObjVec args keep the generic
+  // path; this is a measured standalone compiled-acorn hot path.
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
   const fastObjArgs = objVecTypeIdx !== undefined && objVecArrTypeIdx !== undefined;
@@ -6961,6 +6977,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     ...computeN,
     { op: "local.tee", index: 3 },
     { op: "global.set", index: argcGlobalIdx },
+    ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...widen,
     ...dispatch,
     { op: "local.set", index: resultLocal },
@@ -7321,14 +7338,14 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     );
   }
 
+  body.unshift(...bc.appendBuiltinObjectArrayCallableArms(ctx, ARG_OF, emitStandaloneArrayConstructor, locals));
   // (#4394) Wrapper-constructor carrier [[Call]] arm — `String`/`Number`/
   // `Boolean` used as a first-class callable (a HOF callback, `fn.call(...)`).
-  // The carrier is a `$Object` singleton (identity is load-bearing — see the
-  // reverted conversion-closure attempt in #4394), so the closure-cast ladder
-  // below can never dispatch it; this identity-compare guard performs the
+  // The carrier is a `$Object` singleton; the closure-cast ladder below cannot
+  // dispatch it; this identity-compare guard performs the
   // spec's no-`new` conversion instead. Empty for modules that never demanded
   // a wrapper carrier.
-  body.unshift(...builtinCtorCallableArmInstrs(ctx, ARG_OF));
+  body.unshift(...bc.builtinCtorCallableArmInstrs(ctx, ARG_OF));
 
   bridgeFn.body = [...buildTransferredCharAtApplyArm(ctx, ARG_OF), ...body];
   bridgeFn.locals = locals;
@@ -7459,11 +7476,11 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
     { op: "extern.convert_any" },
     { op: "return" },
   ];
-
   const body: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.set", index: ANY },
+    ...bc.builtinConstructorBindArmInstrs(ctx, ANY, mintArm),
     ...buildClosureRefTestArms(ctx, ANY, mintArm),
   ];
   const jsBoundaryFallback =
@@ -8053,6 +8070,337 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
 }
 
 /**
+ * (#4446 / ES5 Array.prototype.concat) Keep the native concat result's hole
+ * marker private to the runtime substrate.
+ *
+ * Native concat materialises a fresh `$ObjVec`, but §23.1.3.1 copies an index
+ * only when `HasProperty(source, k)` is true. A `$Hole` in the result backing
+ * array is therefore an absent own property, while every other externref —
+ * including an explicit `undefined`/`null` — is present. The three dynamic
+ * readers below are the only paths needed to keep that distinction intact:
+ * `__extern_get_idx` maps the marker back to `undefined`, `__extern_has_idx`
+ * rejects it, and the own-property predicates report a present non-marker.
+ *
+ * The same finalize pass adds a physical-backing guard to concrete vec arms in
+ * `__extern_has_idx`. `arr.length = N` is allowed to leave the logical length
+ * beyond `data.length`; concat must observe those indices as holes, while a
+ * prototype-index consult still gets one chance to supply an inherited value.
+ * Both additions are gated by `holeGlobalIdx`, which concat creates only in a
+ * module that actually needs this substrate, keeping unrelated standalone
+ * output byte-neutral.
+ */
+export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
+  if (!ctx.standalone || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
+  const types = ctx.objectRuntimeTypes;
+  if (!types) return;
+
+  const objVecTypeIdx = types.objVecTypeIdx;
+  const objVecArrTypeIdx = types.objVecArrTypeIdx;
+  const holeGet = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" as const }];
+
+  // The overlay reader is finalized before this pass and can legitimately
+  // claim an ObjVec receiver when the module has already created the numeric
+  // overlay state (for example, a sparse source array was length-grown before
+  // concat ran).  That path returns the raw backing slot, so it can expose the
+  // private concat marker before the ordinary ObjVec arm below gets a chance
+  // to translate it.  Keep the marker private at the *entry* boundary: a
+  // marker is a missing own index, so consult the numeric prototype chain and
+  // otherwise return the ordinary undefined sentinel.
+  const getIdxForEntry = ctx.funcMap.get("__extern_get_idx");
+  if (getIdxForEntry !== undefined) {
+    const fn = definedFuncAt(ctx, getIdxForEntry);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_hole_objvec_any")) {
+      const anyLocal = 2 + fn.locals.length;
+      const indexLocal = anyLocal + 1;
+      const indexFLocal = anyLocal + 2;
+      fn.locals.push(
+        { name: "__cat_hole_objvec_any", type: { kind: "anyref" } },
+        { name: "__cat_hole_objvec_i", type: { kind: "i32" } },
+        { name: "__cat_hole_objvec_f", type: { kind: "f64" } },
+      );
+      const miss = protoIndexGetIdxMissInstrs(ctx, 0, indexFLocal, 1) ?? holeGet;
+      const arm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "local.set", index: indexFLocal },
+            { op: "local.get", index: indexFLocal },
+            { op: "i32.trunc_sat_f64_s" },
+            { op: "local.set", index: indexLocal },
+            { op: "local.get", index: indexLocal },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            { op: "local.get", index: indexLocal },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: objVecTypeIdx },
+            { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+            { op: "i32.lt_s" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: objVecTypeIdx },
+                { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: indexLocal },
+                { op: "array.get", typeIdx: objVecArrTypeIdx },
+                ...holeTestInstrs(ctx),
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [...miss, { op: "return" }],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      fn.body.splice(0, 0, ...arm);
+    }
+  }
+
+  // `__extern_get_idx`'s `$ObjVec` arm ends in the one `array.get` against its
+  // backing array. Patch that tail in place after the typed-vec finalize fill;
+  // rebuilding the whole helper here would invalidate the late-import shift
+  // bookkeeping of its eager `$Object` arm.
+  const getIdx = ctx.funcMap.get("__extern_get_idx");
+  if (getIdx !== undefined) {
+    const fn = definedFuncAt(ctx, getIdx);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_hole_get_value")) {
+      let tail = -1;
+      for (let i = fn.body.length - 1; i >= 0; i--) {
+        const instr = fn.body[i];
+        if (instr?.op === "array.get" && instr.typeIdx === objVecArrTypeIdx) {
+          tail = i;
+          break;
+        }
+      }
+      if (tail >= 0) {
+        const valueLocal = 2 + fn.locals.length;
+        fn.locals.push({ name: "__cat_hole_get_value", type: { kind: "externref" } });
+        fn.body.splice(
+          tail,
+          1,
+          { op: "array.get", typeIdx: objVecArrTypeIdx },
+          { op: "local.tee", index: valueLocal },
+          ...holeTestInstrs(ctx),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: holeGet.map((instr) => ({ ...instr })),
+            else: [{ op: "local.get", index: valueLocal }],
+          },
+        );
+      }
+    }
+  }
+
+  // Reject `$Hole` in the `$ObjVec` branch of __extern_has_idx. The ordinary
+  // tail remains responsible for non-marker values and for out-of-bounds
+  // prototype behaviour.
+  const hasIdx = ctx.funcMap.get("__extern_has_idx");
+  if (hasIdx !== undefined) {
+    const fn = definedFuncAt(ctx, hasIdx);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_hole_has_any")) {
+      const anyLocal = 2 + fn.locals.length;
+      const indexLocal = anyLocal + 1;
+      fn.locals.push(
+        { name: "__cat_hole_has_any", type: { kind: "anyref" } },
+        { name: "__cat_hole_has_i", type: { kind: "i32" } },
+      );
+      const arm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "i32.trunc_sat_f64_s" },
+            { op: "local.set", index: indexLocal },
+            { op: "local.get", index: indexLocal },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            { op: "local.get", index: indexLocal },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: objVecTypeIdx },
+            { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+            { op: "i32.lt_s" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: objVecTypeIdx },
+                { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: indexLocal },
+                { op: "array.get", typeIdx: objVecArrTypeIdx },
+                ...holeTestInstrs(ctx),
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      fn.body.splice(0, 0, ...arm);
+    }
+  }
+
+  // Add a physical-backing guard to every concrete vec carrier. The shared
+  // `$__vec_base` arm knows logical length but not the concrete `data` field,
+  // so this per-type prologue is the safe place to model `arr.length = N`
+  // tails without risking a trap on `array.get` or inventing an own index.
+  if (hasIdx !== undefined) {
+    const fn = definedFuncAt(ctx, hasIdx);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_sparse_has_any")) {
+      const anyLocal = 2 + fn.locals.length;
+      const indexLocal = anyLocal + 1;
+      fn.locals.push(
+        { name: "__cat_sparse_has_any", type: { kind: "anyref" } },
+        { name: "__cat_sparse_has_i", type: { kind: "i32" } },
+      );
+      const protoMiss = () => protoIndexHasIdxInstrs(ctx, 1, 1) ?? [{ op: "i32.const", value: 0 as const }];
+      const carriers: { typeIdx: number; arrTypeIdx: number }[] = [];
+      const seen = new Set<number>();
+      for (const typeIdx of ctx.vecTypeMap.values()) {
+        if (seen.has(typeIdx)) continue;
+        const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
+        if (arrTypeIdx < 0) continue;
+        const arrDef = ctx.mod.types[arrTypeIdx];
+        if (!arrDef || arrDef.kind !== "array") continue;
+        seen.add(typeIdx);
+        carriers.push({ typeIdx, arrTypeIdx });
+      }
+      carriers.sort((a, b) => a.typeIdx - b.typeIdx);
+      const arms: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: anyLocal },
+      ];
+      for (const { typeIdx, arrTypeIdx } of carriers) {
+        arms.push(
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "i32.trunc_sat_f64_s" },
+              { op: "local.set", index: indexLocal },
+              // Only an in-logical-range index can be a sparse tail. Negative
+              // and logical-OOB keys fall through to the existing answer.
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: 0 },
+              { op: "i32.lt_s" },
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: 1 },
+              { op: "array.len" },
+              { op: "i32.ge_u" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...protoMiss(), { op: "return" }],
+              },
+            ],
+          },
+        );
+      }
+      if (carriers.length > 0) fn.body.splice(0, 0, ...arms);
+    }
+  }
+
+  // `$ObjVec` own-property predicates receive the same canonical numeric key
+  // treatment as real vectors. `__obj_index_of_key` rejects leading zeroes,
+  // decimals, signs, and overflow, so non-index names simply fall through to
+  // the existing `$Object`/carrier-bag ladder.
+  const indexOfKeyIdx = ctx.funcMap.get("__obj_index_of_key");
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  if (indexOfKeyIdx !== undefined && anyStrTypeIdx >= 0) {
+    for (const name of ["__hasOwnProperty", "__object_hasOwn", "__propertyIsEnumerable"]) {
+      const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+      if (!fn || fn.locals.some((local) => local.name === "__cat_objvec_own_any")) continue;
+      const anyLocal = 2 + fn.locals.length;
+      const keyAnyLocal = anyLocal + 1;
+      const indexLocal = anyLocal + 2;
+      fn.locals.push(
+        { name: "__cat_objvec_own_any", type: { kind: "anyref" } },
+        { name: "__cat_objvec_own_key", type: { kind: "anyref" } },
+        { name: "__cat_objvec_own_i", type: { kind: "i32" } },
+      );
+      const arm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: keyAnyLocal },
+            { op: "ref.test", typeIdx: anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: keyAnyLocal },
+                { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                { op: "call", funcIdx: indexOfKeyIdx },
+                { op: "local.tee", index: indexLocal },
+                { op: "i32.const", value: 0 },
+                { op: "i32.ge_s" },
+                { op: "local.get", index: indexLocal },
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: objVecTypeIdx },
+                { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+                { op: "i32.lt_s" },
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: anyLocal },
+                    { op: "ref.cast", typeIdx: objVecTypeIdx },
+                    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                    { op: "local.get", index: indexLocal },
+                    { op: "array.get", typeIdx: objVecArrTypeIdx },
+                    ...holeTestInstrs(ctx),
+                    { op: "i32.eqz" },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      fn.body.splice(0, 0, ...arm);
+    }
+  }
+}
+
+/**
  * (#3183) Finalize-time `$__vec_base` arms for the standalone DYNAMIC-path
  * for-in / string-key helpers `__object_keys_forin` / `__extern_has` /
  * `__extern_get`.
@@ -8200,7 +8548,6 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     }
   }
   if (byField.size === 0) return;
-
   // Factory, not a shared Instr tree: finalize remaps every function body in
   // place, so sharing these objects between the two predicates would remap all
   // embedded type indices twice (#1719 reserve/fill discipline).
@@ -8740,6 +9087,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
   type Entry = {
     typeIdx: number;
     fieldIdx: number;
@@ -8752,18 +9100,14 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     cold?: ColdFieldLocation;
     /** (#3927 per-type layouts) Read through the family's `$resid` carrier. */
     resid?: ResidFieldLocation;
-    /**
-     * (#3927 per-type layouts) Family stamp-RANGE guard on a resid (base-
-     * keyed) arm — `ref.test $base` also matches a canonical-twin family.
-     * Layout arms use the exact-stamp `shapeFieldIdx`/`shapeId` pair instead.
-     */
+    /** Family stamp-range guard for a resid/base arm; layout arms use exact stamps. */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName) || isOpenDescriptorShape(structName, fields)) continue;
     const typeIdx = ctx.structMap.get(structName);
-    if (typeIdx === undefined) continue;
+    if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
@@ -9207,15 +9551,15 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const applyClosureIdx = ctx.funcMap.get("__apply_closure");
   if (!fn || externGetIdx === undefined || applyClosureIdx === undefined) return;
 
-  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor
-  // arm. The slow path below calls `__extern_get`, which walks its prepended
-  // ladder + `__fnctor_proto_start` before reaching the round-9b cache — but
+  const fnctorMissingMethod = buildFnctorMissingMethodDispatch(ctx, fn, externGetIdx, applyClosureIdx);
+
+  // (#3673 round 12) Inline per-key method-lookup cache in each per-fnctor arm.
+  // The slow path calls `__extern_get` before reaching the round-9b cache, but
   // HERE the fnctor's prototype is a KNOWN GLOBAL, so the cache check is a
-  // handful of loads with zero calls: interned key + generation match +
-  // owner `ref.eq` against `global.get <proto>` + live-DATA entry flags →
-  // apply the cached method closure directly. Any miss falls to the exact
-  // old `__extern_get` path (which also populates the cache). Locals for the
-  // key/entry scratch are appended once below.
+  // handful of loads with zero calls: interned key + generation match + owner
+  // `ref.eq` against `global.get <proto>` + live-DATA entry flags. Any miss
+  // falls to the exact old `__extern_get` path, which also populates the cache;
+  // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
@@ -9240,7 +9584,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         ? (objStructDef.type.fields[1].type as { typeIdx: number }).typeIdx
         : undefined;
 
-  const arms: Instr[] = [];
+  const arms: Instr[] = [...fnctorMissingMethod.noPrototypeArms];
   for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
     const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
     if (typeIdx === undefined) continue;
@@ -9334,9 +9678,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: externGetIdx },
-          ...(ctx.funcMap.has("__nullish_to_null")
-            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-            : []),
+          ...fnctorMissingMethod.missingMethodGuard,
+          { op: "local.get", index: fnctorMissingMethod.missingMethodLocal },
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
           { op: "call", funcIdx: applyClosureIdx },
@@ -9396,6 +9739,149 @@ export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
     { op: "ref.test", typeIdx: anyStrTypeIdx },
     { op: "if", blockType: { kind: "empty" }, then: arm.instrs },
   );
+}
+
+/**
+ * String-wrapper own indexed reads have String-exotic semantics even when the
+ * receiver and property key arrive through the fully dynamic __extern_get
+ * boundary (for example verifyProperty(new String("abc"), "0", desc)).
+ *
+ * The ordinary $Object path sees only the wrapper's property map, so it misses
+ * the virtual indexed properties and the indexed read falls through to the
+ * numeric $Object adapter, which historically boxed the missing value as 0.
+ * Recover the wrapper's [[StringData]] slot and answer an in-range canonical
+ * integer key from the native string. Out-of-range and non-canonical keys
+ * deliberately fall through to the ordinary reader so user expandos remain
+ * visible.
+ */
+export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
+  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  const objectTypes = ctx.objectRuntimeTypes;
+  if (!objectTypes) return;
+  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
+  if (!fn) return;
+
+  const slotIdx = ensureWrapperStringValueHelper(ctx);
+  const strToNumIdx = ctx.funcMap.get("__str_to_number");
+  const numToStringIdx = ctx.funcMap.get("number_toString");
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
+  if (
+    slotIdx < 0 ||
+    strToNumIdx === undefined ||
+    numToStringIdx === undefined ||
+    flattenIdx === undefined ||
+    equalsIdx === undefined ||
+    charAtIdx === undefined
+  )
+    return;
+
+  const base = 2 + fn.locals.length;
+  const stringData = base;
+  const index = base + 1;
+  const keyFlat = base + 2;
+  const numberFlat = base + 3;
+  const indexI32 = base + 4;
+  fn.locals.push(
+    { name: "__string_exotic_data", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
+    { name: "__string_exotic_index", type: { kind: "f64" } },
+    { name: "__string_exotic_key", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    { name: "__string_exotic_number", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    { name: "__string_exotic_i32", type: { kind: "i32" } },
+  );
+
+  const arm: Instr[] = [
+    // data = StringData(receiver); a null result means this is not a String
+    // wrapper and leaves the existing dynamic reader authoritative.
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: slotIdx },
+    { op: "local.set", index: stringData },
+    { op: "local.get", index: stringData },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // The key must be a String. Numeric keys are already handled by the
+        // existing __extern_get_idx arm; this branch is for dynamic obj[name].
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // n = ToNumber(key), then require Number::toString(n) to equal the
+            // original key. This rejects 01, 1.0, NaN, and other non-canonical
+            // numeric strings before the String-exotic arm runs.
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: strToNumIdx },
+            { op: "local.tee", index: index },
+            { op: "local.get", index: index },
+            { op: "f64.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                { op: "call", funcIdx: flattenIdx },
+                { op: "local.set", index: keyFlat },
+                { op: "local.get", index: index },
+                { op: "call", funcIdx: numToStringIdx },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                { op: "call", funcIdx: flattenIdx },
+                { op: "local.set", index: numberFlat },
+                { op: "local.get", index: keyFlat },
+                { op: "local.get", index: numberFlat },
+                { op: "call", funcIdx: equalsIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // Canonical integer keys only. The unsigned length check
+                    // below is guarded by >= 0 so negative indices fall
+                    // through without being reinterpreted as huge unsigned
+                    // values.
+                    { op: "local.get", index: index },
+                    { op: "i32.trunc_sat_f64_s" },
+                    { op: "local.set", index: indexI32 },
+                    { op: "local.get", index: indexI32 },
+                    { op: "i32.const", value: 0 },
+                    { op: "i32.ge_s" },
+                    { op: "local.get", index: indexI32 },
+                    { op: "local.get", index: stringData },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 },
+                    { op: "i32.lt_s" },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: stringData },
+                        { op: "ref.as_non_null" },
+                        { op: "call", funcIdx: flattenIdx },
+                        { op: "local.get", index: indexI32 },
+                        { op: "call", funcIdx: charAtIdx },
+                        { op: "extern.convert_any" },
+                        { op: "return" },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  fn.body.unshift(...arm);
 }
 
 /**
@@ -9622,24 +10108,22 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // `keys` listed `0,1,2,3`. All three now consult `__extern_has_idx`, which
   // `fillF64HoleHasIdxArms` teaches about the absence marker.
   const gateKeysOnPresence = (overlayRouteActive(ctx) || f64HolesActive(ctx)) && externHasIdxIdx !== undefined;
+  // __vec_index_enumerable was originally reserved only for a for-in site,
+  // leaving Object.keys with no way to exclude a non-enumerable array-index
+  // descriptor. Own-key enumeration has the same overlay source, so reserve
+  // the helper here when the module's own-key demand gate is active.
+  reserveVecIndexEnumerable(ctx);
   /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
-  const pushKeyI = (outLocal: number, iLocal: number): Instr[] => {
-    const push: Instr[] = [
-      { op: "local.get", index: outLocal },
-      { op: "local.get", index: iLocal },
-      { op: "f64.convert_i32_s" },
-      { op: "call", funcIdx: numToStringIdx as number },
-      { op: "call", funcIdx: objVecPushIdx as number },
-    ];
-    if (!gateKeysOnPresence) return push;
-    return [
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: iLocal },
-      { op: "f64.convert_i32_s" },
-      { op: "call", funcIdx: externHasIdxIdx as number },
-      { op: "if", blockType: { kind: "empty" }, then: push },
-    ];
-  };
+  const pushKeyI = (outLocal: number, iLocal: number): Instr[] =>
+    buildVecIndexKeyPush(ctx, {
+      objLocal: 0,
+      outLocal,
+      indexLocal: iLocal,
+      numToStringIdx: numToStringIdx as number,
+      objVecPushIdx: objVecPushIdx as number,
+      externHasIdxIdx,
+      gatePresence: gateKeysOnPresence,
+    });
   for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
     if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
       continue;
@@ -9850,6 +10334,44 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                 // fold on a vec-typed receiver still reads the field; that
                 // residual is pinned in tests/issue-4658.test.ts.
                 ...buildArgumentsLengthAbsentMiss(ctx, 0, getMiss),
+                // An arguments object's `length` is an ordinary writable data
+                // property. It can therefore hold any JS value, unlike the
+                // physical i32 vec length used by Array-like indexing. The
+                // setter records such a value in the nominal arguments subtype
+                // and this arm returns it before the numeric fallback below.
+                ...(ctx.structMap.get("__arguments_vec") === undefined
+                  ? []
+                  : ([
+                      { op: "local.get", index: gAny },
+                      { op: "ref.test", typeIdx: ctx.structMap.get("__arguments_vec")! },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: gAny },
+                          { op: "ref.cast", typeIdx: ctx.structMap.get("__arguments_vec")! },
+                          {
+                            op: "struct.get",
+                            typeIdx: ctx.structMap.get("__arguments_vec")!,
+                            fieldIdx: ARGUMENTS_LENGTH_OVERRIDE_FIELD,
+                          },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: [
+                              { op: "local.get", index: gAny },
+                              { op: "ref.cast", typeIdx: ctx.structMap.get("__arguments_vec")! },
+                              {
+                                op: "struct.get",
+                                typeIdx: ctx.structMap.get("__arguments_vec")!,
+                                fieldIdx: ARGUMENTS_LENGTH_VALUE_FIELD,
+                              },
+                              { op: "return" },
+                            ],
+                          },
+                        ],
+                      },
+                    ] satisfies Instr[])),
                 { op: "local.get", index: gAny },
                 { op: "ref.cast", typeIdx: vecBaseIdx },
                 { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
@@ -9940,6 +10462,11 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const descriptorDecisionAvailable =
     ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+  // Descriptor overlay writes are the lossless storage for canonical numeric
+  // keys that cannot be represented by the signed i32 backing lane. The
+  // overlay helper is reserved before this finalize-time fill and receives its
+  // real body later in the same finalize pass.
+  const vecDpValueIdx = ctx.funcMap.get("__vec_dp_value");
   const RESULT_SUCCESS = 1;
   const RESULT_REFUSED = 2;
   const publishSuccess = (): Instr[] =>
@@ -10007,6 +10534,60 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
               { op: "return" },
             ],
           },
+        ];
+
+  // The ordinary dynamic setter historically handled only in-bounds vec
+  // overwrites. Object-valued keys can canonicalize to a new numeric index,
+  // however (`x[object] = v` in ES5 T9), so use the same grow-and-set helper as
+  // the typed element-assignment lane for a canonical, non-negative index.
+  // Keep the 16M ceiling here as a trap guard for physical growth. Larger
+  // canonical indices use the descriptor overlay's companion map below, so a
+  // sparse write/read round-trips without allocating a four-billion-slot
+  // backing array.
+  const growCarrierArms: Instr[] = [];
+  for (const { typeIdx, elemType } of carriers) {
+    const unbox = unboxExternrefToVecElement(ctx, elemType);
+    const elemSetIdx = unbox === null ? null : ensureVecElemSet(ctx, typeIdx);
+    if (elemSetIdx === null) continue;
+    growCarrierArms.push(
+      { op: "local.get", index: setAny },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: setAny },
+          { op: "ref.cast", typeIdx },
+          { op: "local.get", index: setI },
+          { op: "local.get", index: 2 },
+          ...unboxExternrefToVecElement(ctx, elemType)!,
+          { op: "call", funcIdx: elemSetIdx },
+          ...publishSuccess(),
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
+  // A canonical array-index string at or above the physical-growth ceiling is
+  // still a real property. Store it in the existing vec overlay rather than
+  // converting it through `i32.trunc_sat_f64_s` (which would saturate
+  // 4294967294 to i32.max and lose the original key). `__vec_dp_value` accepts
+  // the already-ToPropertyKey'd key and marks the companion value authoritative
+  // for the dynamic read prologue. Without an overlay helper, retain the
+  // historical lenient no-op.
+  const sparseOverlayStore: Instr[] =
+    vecDpValueIdx === undefined
+      ? buildNumericMissDecision()
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "f64.const", value: 0xbf },
+          { op: "call", funcIdx: vecDpValueIdx },
+          { op: "drop" },
+          ...publishSuccess(),
+          { op: "return" },
         ];
 
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
@@ -10100,7 +10681,56 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
               op: "if",
               blockType: { kind: "empty" },
               then: carrierArms,
-              else: buildNumericMissDecision(),
+              else:
+                growCarrierArms.length === 0
+                  ? buildNumericMissDecision()
+                  : [
+                      // A grow is safe only for a canonical non-negative
+                      // integer. The signed conversion above is exact for
+                      // the small indices this path grows; the ceiling keeps
+                      // it away from the signed saturation boundary.
+                      { op: "local.get", index: setI },
+                      { op: "f64.convert_i32_s" },
+                      { op: "local.get", index: setN },
+                      { op: "f64.eq" },
+                      { op: "local.get", index: setI },
+                      { op: "i32.const", value: 0 },
+                      { op: "i32.ge_s" },
+                      { op: "i32.and" },
+                      { op: "local.get", index: setI },
+                      { op: "i32.const", value: SPARSE_INDEX_CEILING },
+                      { op: "i32.lt_u" },
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: growCarrierArms,
+                        else: [
+                          // The signed i32 conversion above cannot represent
+                          // the high half of the canonical array-index domain.
+                          // Test the original f64 first, then hand the exact
+                          // property key to the sparse companion store.
+                          { op: "local.get", index: setN },
+                          { op: "f64.floor" },
+                          { op: "local.get", index: setN },
+                          { op: "f64.eq" },
+                          { op: "local.get", index: setN },
+                          { op: "f64.const", value: 0 },
+                          { op: "f64.ge" },
+                          { op: "i32.and" },
+                          { op: "local.get", index: setN },
+                          { op: "f64.const", value: 4294967295 },
+                          { op: "f64.lt" },
+                          { op: "i32.and" },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: sparseOverlayStore,
+                            else: buildNumericMissDecision(),
+                          },
+                        ],
+                      },
+                    ],
             },
             // NUMERIC key on a vec: handled here terminally — in-bounds stored
             // above (each carrier arm returns), OOB/grow/unsupported kind stays
@@ -10345,10 +10975,10 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       const isObjectRefLength =
         (cand.lengthFieldType.kind === "ref" || cand.lengthFieldType.kind === "ref_null") &&
         !isStringRefType(cand.lengthFieldType);
-      const objectRefRead: Instr[] =
+      const primitiveNumberRead = (convertAny: boolean): Instr[] =>
         toPrimIdx !== undefined && typeofStringIdx !== undefined && unboxNumIdx !== undefined
           ? [
-              { op: "extern.convert_any" },
+              ...(convertAny ? ([{ op: "extern.convert_any" }] satisfies Instr[]) : []),
               { op: "ref.null.extern" }, // hint: number/default
               { op: "call", funcIdx: toPrimIdx },
               { op: "local.tee", index: L_PRIM },
@@ -10373,19 +11003,19 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               },
             ]
           : [{ op: "drop" }, { op: "f64.const", value: 0 }];
+      const objectRefRead = primitiveNumberRead(true);
+      const externRefRead = primitiveNumberRead(false);
       const readAsF64: Instr[] =
         cand.lengthFieldType.kind === "i32"
           ? [{ op: "f64.convert_i32_s" }]
           : cand.lengthFieldType.kind === "externref"
-            ? unboxNumIdx !== undefined
-              ? [{ op: "call", funcIdx: unboxNumIdx }]
-              : [{ op: "drop" }, { op: "f64.const", value: 0 }]
+            ? externRefRead
             : isStringRefType(cand.lengthFieldType) && strToNumIdx !== undefined
               ? [{ op: "extern.convert_any" }, { op: "call", funcIdx: strToNumIdx }]
               : isObjectRefLength
                 ? objectRefRead
                 : [];
-      if (isObjectRefLength && !lenPrimLocalAdded && primExtPos < 0) {
+      if ((isObjectRefLength || cand.lengthFieldType.kind === "externref") && !lenPrimLocalAdded && primExtPos < 0) {
         // Scratch externref local for the ToPrimitive result — appended once,
         // and only when the registration did not already provide it (#4556).
         lenFn.locals.push({ name: "primExt", type: { kind: "externref" } });

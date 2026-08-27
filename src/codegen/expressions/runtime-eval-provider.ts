@@ -50,6 +50,8 @@ export const HOST_RUNTIME_DIRECT_EVAL_IMPORT = "__extern_direct_eval";
  * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
  * the slot itself is deliberately non-enumerable and non-configurable. */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+/** Extensible map for lexical names introduced by a global Script source. */
+export const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
 /**
  * (#4308 slice C) One extra activation-seed entry emitted at every
  * FUNCTION-scoped direct-eval call site, so a provider can tell an activation
@@ -251,8 +253,8 @@ function ensureRuntimeEvalGlobalLexicalCell(
   return { globalIdx, refCellTypeIdx };
 }
 
-function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
-  return {
+function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string): FunctionContext {
+  const fctx: FunctionContext = {
     name,
     params: [],
     locals: [],
@@ -265,6 +267,14 @@ function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
     labelMap: new Map(),
     savedBodies: [],
   };
+  // Attach the reserved body before populating it. Global-string imports may
+  // be registered by later names while this helper is still being built;
+  // fixupModuleGlobalIndices walks module function bodies, so keeping this
+  // array reachable makes earlier global.get/set instructions shift with them.
+  const funcIdx = ctx.funcMap.get(name);
+  const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+  if (func) func.body = fctx.body;
+  return fctx;
 }
 
 function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
@@ -532,9 +542,9 @@ function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: Functio
 function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   reserveRuntimeEvalGlobalBindingSync(ctx);
   if (ctx.runtimeEvalGlobalSyncFilled) return;
-  const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+  const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
   emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx);
-  const pullFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PULL_GLOBALS);
+  const pullFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PULL_GLOBALS);
   emitRuntimeEvalGlobalBindingPullBody(ctx, pullFctx);
   const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
   const pullFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS)!);
@@ -556,12 +566,12 @@ function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
  * correctly resolve them through GlobalEnvironmentRecord. Seeding the shared
  * object closes the AOT→interpreter visibility half without exposing compiler
  * helper globals or requiring a second provider-side callable ABI. */
-export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext, activate = true): void {
   if (!ctx.standalone) return;
   ensureRuntimeEvalGlobalBindingSync(ctx);
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
-  emitRuntimeEvalProviderActive(ctx, fctx, true);
+  if (activate) emitRuntimeEvalProviderActive(ctx, fctx, true);
 }
 
 /** Publish AOT script bindings before a captured host `%eval%` can run. */
@@ -569,7 +579,7 @@ export function emitHostEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Functio
   if (ctx.standalone || ctx.wasi) return;
   reserveRuntimeEvalGlobalBindingSync(ctx);
   if (!ctx.runtimeEvalGlobalSyncFilled) {
-    const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+    const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
     emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx, false);
     const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
     if (pushFn) {

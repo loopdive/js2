@@ -20,6 +20,7 @@ import {
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
+import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import {
   arrayLiteralEscapeWidensToExternref,
@@ -50,6 +51,7 @@ import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
 import { tryCompileWithScopedVarDeclaration } from "../with-var-decl.js";
 import {
+  bindingHasAnnexBExistingVarUpdate,
   bindingHasMixedAssignmentCarrier,
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
@@ -62,6 +64,7 @@ import { tryCompileSingleUnitSplitLengthBinding } from "../derived-split-scalar.
 import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-ascii-case.js";
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
+import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
@@ -685,12 +688,11 @@ function isPropertyDescriptorResultExpression(expr: ts.Expression | undefined): 
  * `any`/`unknown`-typed local binding is ToNumber-invariant — otherwise `null`,
  * leaving the caller's boxed-carrier resolution in place. Gated by
  * `ctx.useUsageInfer`. This is the SINGLE codegen entry point for the inference,
- * shared by all local-slot minting sites (var hoister, let/const pre-hoister,
- * `localTypeForDeclaration`) so every site agrees on the slot type.
+ * shared by all local-slot minting sites so every site agrees on the slot type.
  */
 export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDeclaration | undefined): ValType | null {
   if (!decl || !ctx.useUsageInfer) return null;
-  if (!ts.isIdentifier(decl.name)) return null;
+  if (!ts.isIdentifier(decl.name) || bindingHasAnnexBExistingVarUpdate(decl)) return null;
   return ctx.usageInference.scalarForDecl(decl) === "number" ? { kind: "f64" } : null;
 }
 
@@ -701,6 +703,7 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
   if (nativeLocal) return nativeLocal;
   if (decl && ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
+  if (ctx.standalone && decl && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // (#4121) A mixed-assignment demotion is "could not rule out"; a positive
   // unboxing proof is "ruled in", and outranks it. See
   // `numericProofOverridesMixedCarrier`.
@@ -744,6 +747,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   if (!ts.isIdentifier(decl.name)) return null;
   const name = decl.name.text;
   if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
+  if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // Names the main-body analysis already routed to a host / externref slot
   // (accessor literal, host-spread literal, growable / out-of-shape object).
   if (ctx.externrefAccessorVars.has(name)) return { kind: "externref" };
@@ -1463,16 +1467,24 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             // Box on store: precise closure struct → externref (A2).
             fctx.body.push({ op: "extern.convert_any" });
           }
-          fctx.body.push({ op: "local.tee", index: localIdx });
-          fctx.body.push({ op: "global.set", index: modGlobalIdx });
+          fctx.body.push({ op: "local.set", index: localIdx });
+          emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, localIdx, { kind: "externref" });
+          fctx.body.push(
+            { op: "local.get", index: localIdx },
+            { op: "global.set", index: ctx.moduleGlobals.get(name) ?? modGlobalIdx },
+          );
           (fctx.moduleBindingShadowLocals ??= new Map()).set(name, localIdx);
         } else {
           // Legacy non-externref pre-decl arm (closure globals never take
           // this): duplicate value on stack — one for the global, one for the
           // (precise) local.
           const localIdx = allocLocal(fctx, name, closureType);
-          fctx.body.push({ op: "local.tee", index: localIdx });
-          fctx.body.push({ op: "global.set", index: modGlobalIdx });
+          fctx.body.push({ op: "local.set", index: localIdx });
+          emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, localIdx, closureType);
+          fctx.body.push(
+            { op: "local.get", index: localIdx },
+            { op: "global.set", index: ctx.moduleGlobals.get(name) ?? modGlobalIdx },
+          );
         }
         // Set TDZ flag to 1 (initialized)
         emitTdzInit(ctx, fctx, name);
@@ -1528,6 +1540,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           if (slot && slot.type.kind !== "externref") slot.type = closureType;
         }
         emitCoercedLocalSet(ctx, fctx, localIdx, closureType);
+        // Builtin-named script bindings such as `var toString = fn` are
+        // intentionally kept out of `moduleGlobals`; they still become own
+        // properties of the script realm object, which OrdinaryToPrimitive
+        // must observe through `globalThis`. Mirror the initializer after the
+        // local store just like the module-global arm above.
+        emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, localIdx, closureType);
         emitLocalTdzInit(fctx, name);
       }
       continue;
@@ -1603,9 +1621,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         compileExpression(ctx, fctx, decl.initializer, wasmType);
+        const initLocal = allocLocal(fctx, `__module_global_init_${fctx.locals.length}`, wasmType);
+        fctx.body.push({ op: "local.set", index: initLocal });
+        emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, initLocal, wasmType);
         // Re-read index: compileExpression may shift globals via addStringConstantGlobal
         const moduleGlobalIdxPost = ctx.moduleGlobals.get(name)!;
-        fctx.body.push({ op: "global.set", index: moduleGlobalIdxPost });
+        fctx.body.push({ op: "local.get", index: initLocal }, { op: "global.set", index: moduleGlobalIdxPost });
       } else {
         // No initializer: `let x;` at module level — in JS, uninitialized
         // variables are `undefined`. For externref globals, emit __get_undefined()
@@ -1710,6 +1731,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       ts.isIdentifier(decl.name) &&
       ctx.growableObjectLiteralVars.has(decl.name.text);
     const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+    const initIsRedeclaredObjectIdentityLiteral = ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
     // (#802 Slice A) A proto-receiver object literal is built as an open `$Object`
     // (externref) in compileObjectLiteral so `Object.setPrototypeOf(o, p)` &
     // inherited reads work; the local must be externref so reads/writes route
@@ -1726,6 +1748,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       initIsHostSpreadLiteral ||
       initIsGrowableObjectLiteral ||
       initIsOrdinaryToPrimitiveObjectLiteral ||
+      initIsRedeclaredObjectIdentityLiteral ||
       initIsProtoReceiverLiteral
     ) {
       ctx.externrefAccessorVars.add(name);
@@ -1806,6 +1829,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       arrayLiteralEscapeWidensToExternref(ctx, decl.initializer)
         ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
         : undefined;
+    const filterResultDynamicCarrier = filterResultNeedsDynamicCarrier(ctx, decl.initializer);
     const nativeGenBindingType = nativeGeneratorBindingType(ctx, decl.initializer);
     const wasmTypeBase: ValType =
       nativeGenBindingType ??
@@ -1839,40 +1863,42 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                           ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
                           : widenedTypeIdx !== undefined
                             ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                            : (escapeWidenedVecType ??
-                              taViewType ??
-                              subarraySubviewType ??
-                              inferredVecType ??
-                              standaloneRegExpMatchArrayType ??
-                              // (#4655) `var arr = x.concat(y, z)` — the concat
-                              // lowering yields a dynamic `$ObjVec` externref
-                              // for these shapes while the checker types the
-                              // binding `number[]` from the lib signature; the
-                              // vec-typed slot ToNumber'd every non-numeric
-                              // element to NaN. Same predicate the lowering's
-                              // dispatcher asks (array-concat-carrier.ts), so
-                              // slot and value cannot disagree.
-                              (concatCallYieldsDynamicCarrier(ctx, decl.initializer)
-                                ? { kind: "externref" as const }
-                                : decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
+                            : filterResultDynamicCarrier
+                              ? { kind: "externref" as const }
+                              : (escapeWidenedVecType ??
+                                taViewType ??
+                                subarraySubviewType ??
+                                inferredVecType ??
+                                standaloneRegExpMatchArrayType ??
+                                // (#4655) `var arr = x.concat(y, z)` — the concat
+                                // lowering yields a dynamic `$ObjVec` externref
+                                // for these shapes while the checker types the
+                                // binding `number[]` from the lib signature; the
+                                // vec-typed slot ToNumber'd every non-numeric
+                                // element to NaN. Same predicate the lowering's
+                                // dispatcher asks (array-concat-carrier.ts), so
+                                // slot and value cannot disagree.
+                                (concatCallYieldsDynamicCarrier(ctx, decl.initializer)
                                   ? { kind: "externref" as const }
-                                  : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+                                  : decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                                     ? { kind: "externref" as const }
-                                    : // (#2615/#4397) Proxy and revocable-handle results are
-                                      // externref carriers in both provider profiles. A
-                                      // checker-derived struct slot would cast them to null
-                                      // before their MOP/result fields can be observed.
-                                      initIsProxy
+                                    : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                                       ? { kind: "externref" as const }
-                                      : // (#1337/#4397) In a JS environment, both the
-                                        // compatibility exotic and native `$__bound_fn`
-                                        // are externref carriers, never the target struct.
-                                        decl.initializer &&
-                                          !ctx.standalone &&
-                                          !noJsHost(ctx) &&
-                                          isBindCarrierCall(decl.initializer)
+                                      : // (#2615/#4397) Proxy and revocable-handle results are
+                                        // externref carriers in both provider profiles. A
+                                        // checker-derived struct slot would cast them to null
+                                        // before their MOP/result fields can be observed.
+                                        initIsProxy
                                         ? { kind: "externref" as const }
-                                        : localTypeForDeclaration(ctx, varType, decl))));
+                                        : // (#1337/#4397) In a JS environment, both the
+                                          // compatibility exotic and native `$__bound_fn`
+                                          // are externref carriers, never the target struct.
+                                          decl.initializer &&
+                                            !ctx.standalone &&
+                                            !noJsHost(ctx) &&
+                                            isBindCarrierCall(decl.initializer)
+                                          ? { kind: "externref" as const }
+                                          : localTypeForDeclaration(ctx, varType, decl))));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
@@ -2066,6 +2092,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // is the same "undefined" sentinel a hoisted externref would carry
         // before its first assignment).
         if (initIsAccessorLiteral && existingIsRef && wasmType.kind === "externref") {
+          localSlot.type = wasmType;
+        } else if (filterResultDynamicCarrier && existingIsRef && wasmType.kind === "externref") {
+          // A typed numeric filter can widen its result when an inherited
+          // accessor returns a non-number. Its pre-hoisted number[] slot is
+          // safe to narrow to externref because the hoister emits no value
+          // initialization before this declaration.
           localSlot.type = wasmType;
         } else if (initIsProxy && existingIsRef && wasmType.kind === "externref") {
           // (#2615) A `const p = new Proxy(...)` was pre-hoisted as the target's

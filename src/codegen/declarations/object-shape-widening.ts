@@ -14,12 +14,13 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
-import { collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206)
+import { collectEvalAccessorObjectNames, collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206/#4249)
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
   bindingUsesOnlyIrPlannedOpenObjectOperations,
 } from "./dynamic-with-shape.js";
+import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -77,28 +78,66 @@ function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValTy
 export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
   // Avoid an AST walk for files that cannot contain a direct property write.
   // The scanner skips comments and strings, so this is a conservative lexical
-  // preflight: every `PropertyAccessExpression = ...` has the token sequence
-  // `. <property-name> =`, including keyword-named properties.
+  // preflight: every direct property write has either `. <property-name> =` or
+  // `[<key>] =`. The latter is admitted because a numeric/string literal key
+  // is still a fixed struct field at codegen time.
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, sourceFile.text);
   let token = scanner.scan();
   let hasPropertyAssignment = false;
   while (token !== ts.SyntaxKind.EndOfFileToken) {
     if (token === ts.SyntaxKind.DotToken) {
       scanner.scan();
-      if (scanner.scan() === ts.SyntaxKind.EqualsToken) {
+      const next = scanner.scan();
+      if (next === ts.SyntaxKind.EqualsToken) {
         hasPropertyAssignment = true;
         break;
       }
+      token = next;
+      continue;
+    }
+    if (token === ts.SyntaxKind.OpenBracketToken) {
+      let depth = 1;
+      let next = scanner.scan();
+      while (next !== ts.SyntaxKind.EndOfFileToken && depth > 0) {
+        if (next === ts.SyntaxKind.OpenBracketToken) depth++;
+        else if (next === ts.SyntaxKind.CloseBracketToken) depth--;
+        next = scanner.scan();
+      }
+      if (depth === 0 && next === ts.SyntaxKind.EqualsToken) {
+        hasPropertyAssignment = true;
+        break;
+      }
+      token = next;
+      continue;
     }
     token = scanner.scan();
   }
   if (!hasPropertyAssignment) return;
 
+  const staticElementKey = (expr: ts.Expression | undefined): string | undefined => {
+    if (!expr) return undefined;
+    while (
+      ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isSatisfiesExpression(expr) ||
+      ts.isTypeAssertionExpression(expr) ||
+      ts.isNonNullExpression(expr)
+    ) {
+      expr = expr.expression;
+    }
+    if (ts.isStringLiteralLike(expr)) return expr.text;
+    if (ts.isNumericLiteral(expr)) {
+      const value = Number(expr.text);
+      return Number.isFinite(value) ? String(value) : undefined;
+    }
+    return undefined;
+  };
+
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left)
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
     ) {
       let rhs: ts.Expression = node.right;
       while (
@@ -108,6 +147,17 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         ts.isTypeAssertionExpression(rhs)
       ) {
         rhs = rhs.expression;
+      }
+      // Element writes were added to this pre-pass after the direct-property
+      // path. Test262's synthetic harness installs many computed methods as
+      // `obj[key] = function () {}`; asking the checker for the contextual
+      // type of those detached function nodes can enter TypeScript's
+      // late-bound-symbol path before their parent symbol exists and throw.
+      // The pre-element-write behavior was to leave these callable carriers to
+      // the dynamic element-write lowering, so retain that proven fallback.
+      if (ts.isElementAccessExpression(node.left) && (ts.isFunctionExpression(rhs) || ts.isArrowFunction(rhs))) {
+        forEachChild(node, visit);
+        return;
       }
       const rhsType = getTypeAtLocationBounded(ctx.checker, rhs);
       const mayCarryObject =
@@ -119,7 +169,22 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         (rhsType.flags &
           (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !==
           0;
-      if (mayCarryObject) {
+      const indexedName = ts.isElementAccessExpression(node.left)
+        ? staticElementKey(node.left.argumentExpression)
+        : undefined;
+      if (indexedName !== undefined && ts.isElementAccessExpression(node.left)) {
+        // Indexed writes are the narrow dynamic-carrier case: a closed field
+        // may start as a string/number and receive a different primitive on a
+        // later `obj["key"] = rhs`. Record every concrete RHS type so the
+        // field-registration pass can widen the slot before any body emits.
+        const indexedProperty =
+          ctx.oracle.declarationsOf(node.left.argumentExpression)[0] ?? ctx.oracle.declarationsOf(node.left)[0];
+        if (indexedProperty && (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
+          const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedProperty) ?? [];
+          writes.push(rhsType);
+          ctx.objectLiteralIndexedAssignedPropertyTypes.set(indexedProperty, writes);
+        }
+      } else if (mayCarryObject && ts.isPropertyAccessExpression(node.left)) {
         const name = node.left.name.text;
         ctx.objectLiteralAssignedPropertyNames.add(name);
         const writes = ctx.objectLiteralAssignedPropertyTypes.get(name) ?? [];
@@ -766,6 +831,13 @@ function isOrdinaryToPrimitiveLiteralCandidate(literal: ts.ObjectLiteralExpressi
 function isNumericOrdinaryToPrimitiveUse(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (!parent) return false;
+  // A computed property key applies ToPropertyKey (and therefore the
+  // OrdinaryToPrimitive valueOf/toString sequence) to the identifier. Treat
+  // this as a coercive use too: ES5 Array tests commonly redeclare the same
+  // `var object` with different valueOf/toString shapes before using it as
+  // `array[object]`. Keeping those sibling literals as closed structs loses
+  // the later shape behind the checker-identity-selected first declaration.
+  if (ts.isElementAccessExpression(parent) && parent.argumentExpression === identifier) return true;
   if (ts.isPrefixUnaryExpression(parent) && parent.operand === identifier) {
     return (
       parent.operator === ts.SyntaxKind.PlusToken ||
@@ -864,6 +936,157 @@ function collectRepeatedOrdinaryToPrimitiveObjects(
 }
 
 /**
+ * Preserve the identity of object-literal fields fed by a redeclaration-
+ * widened module binding (#4491 residual).  A declaration such as
+ * `var x = true; ... var x = new Boolean(true)` is one externref binding after
+ * the redeclaration pass, but `{ prop: x }` still has a closed field whose
+ * carrier was inferred from the first initializer.  Route only those exact
+ * literal/declaration nodes through `$Object`; unrelated literals and locals
+ * keep their existing closed-shape lowering.
+ */
+function collectRedeclaredObjectIdentityLiterals(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  if (!ctx.standalone) return;
+  const widenedNames = collectRedeclarationWidenedModuleVarNames(ctx.oracle, sourceFile);
+  if (widenedNames.size === 0) return;
+
+  const widenedSymbols = new Set<ts.Symbol>();
+  const collectBindings = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      widenedNames.has(node.name.text) &&
+      isModuleScopedDeclaration(node)
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) widenedSymbols.add(symbol);
+    }
+    forEachChild(node, collectBindings);
+  };
+  collectBindings(sourceFile);
+
+  if (widenedSymbols.size === 0) return;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.type === undefined &&
+      node.initializer !== undefined &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length > 0
+    ) {
+      const readsWidenedBinding = node.initializer.properties.some((property) => {
+        const value = ts.isPropertyAssignment(property)
+          ? property.initializer
+          : ts.isShorthandPropertyAssignment(property)
+            ? property.name
+            : undefined;
+        if (!value || !ts.isIdentifier(value)) return false;
+        const symbol = checker.getSymbolAtLocation(value);
+        return symbol !== undefined && widenedSymbols.has(symbol);
+      });
+      if (readsWidenedBinding) {
+        ctx.redeclaredObjectIdentityDeclarations.add(node);
+        ctx.redeclaredObjectIdentityLiterals.add(node.initializer);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+/**
+ * A module `var` may be redeclared with a differently shaped object literal and
+ * then used as a `with` target after each initializer. Both declarations are
+ * one binding, so selecting the first declaration's anonymous struct for the
+ * shared slot loses keys introduced by the later literal. Keep only this
+ * identity-sensitive shape on the open-object carrier; declaration-keyed
+ * markers avoid changing unrelated same-named locals.
+ */
+function collectRedeclaredWithTargetObjects(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
+  const withTargetSymbols = new Set<ts.Symbol>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      literalShapeNames(node.initializer) !== null
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) {
+        const declarations = declarationsBySymbol.get(symbol) ?? [];
+        declarations.push(node);
+        declarationsBySymbol.set(symbol, declarations);
+      }
+    }
+    if (ts.isWithStatement(node)) {
+      let target: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) {
+        const symbol = checker.getSymbolAtLocation(target);
+        if (symbol) withTargetSymbols.add(symbol);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const [symbol, declarations] of declarationsBySymbol) {
+    if (declarations.length < 2 || !withTargetSymbols.has(symbol)) continue;
+    const shapes = declarations.map(
+      (declaration) => literalShapeNames(declaration.initializer as ts.ObjectLiteralExpression)!,
+    );
+    const first = shapes[0]!;
+    if (shapes.every((shape) => shape.size === first.size && [...shape].every((name) => first.has(name)))) continue;
+    for (const declaration of declarations) {
+      recordOpenObjectConsumerTypes(ctx, checker, declaration, (declaration.name as ts.Identifier).text, false);
+      ctx.irWithOpenObjectTargetKeys.add(widenedVarKeyFromDecl(declaration.name as ts.Identifier));
+    }
+  }
+}
+
+/** True for a declaration hoisted to this source file's module/script scope. */
+function isModuleScopedDeclaration(node: ts.Node): boolean {
+  for (let parent = node.parent; parent !== undefined && !ts.isSourceFile(parent); parent = parent.parent) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isModuleDeclaration(parent)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * (#2837) Detection pre-pass: mark variables initialized by a NON-EMPTY object
  * literal that later receive an OUT-OF-SHAPE property write, so `compileObjectLiteral`
  * (literals.ts) routes them through the recursive externref `$Object` builder
@@ -895,7 +1118,32 @@ export function collectGrowableObjectLiterals(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  const markRealmGlobalWithTargets = (node: ts.Node): void => {
+    if (ts.isWithStatement(node)) {
+      let target: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) {
+        const declaration = ctx.oracle.valueDeclarationOf(target);
+        if (
+          declaration !== undefined &&
+          ts.isBinaryExpression(declaration) &&
+          declaration.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(declaration.left) &&
+          declaration.left.expression.kind === ts.SyntaxKind.ThisKeyword &&
+          declaration.left.name.text === target.text &&
+          ts.isObjectLiteralExpression(declaration.right)
+        ) {
+          ctx.redeclaredObjectIdentityLiterals.add(declaration.right);
+          ctx.growableObjectLiteralVars.add(target.text);
+        }
+      }
+    }
+    forEachChild(node, markRealmGlobalWithTargets);
+  };
+  markRealmGlobalWithTargets(sourceFile);
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
+  collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
+  collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.
@@ -903,6 +1151,15 @@ export function collectGrowableObjectLiterals(
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
   // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
   const evalMutableNames = collectEvalMutableNames(sourceFile);
+  // (#4249) An accessor-bearing object created by foreign eval syntax must
+  // stay on the dynamic host-object path after the eval assignment as well.
+  // The declaration pass cannot see a variable-declaration parent on that
+  // foreign AST, so seed the same representation guard used by ordinary
+  // accessor literals before shape inference runs.
+  for (const name of collectEvalAccessorObjectNames(sourceFile)) {
+    ctx.evalAccessorObjectVars.add(name);
+    ctx.externrefAccessorVars.add(name);
+  }
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/
@@ -1021,7 +1278,7 @@ export function collectGrowableObjectLiterals(
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
-              markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
+              markStandaloneOutOfShapeDataDefineTargets(ctx, s, varName, shape, mopSet); // #4524
               // (#4491) `m.foo++` on a field the literal typed non-numerically —
               // or on no field at all — cannot land in the closed struct.
               markStandaloneNumericUpdateKindChangeTargets(s, varName, decl.initializer, mopSet);
@@ -1756,13 +2013,28 @@ function staticDefineKey(keyArg: ts.Expression | undefined): string | undefined 
  * #739. This decides only whether the define can land at all.
  */
 function markStandaloneOutOfShapeDataDefineTargets(
+  ctx: CodegenContext,
   node: ts.Node,
   varName: string,
   shapeNames: ReadonlySet<string>,
   poisonSet: Set<string>,
 ): void {
   const outOfShapeDataDefine = (keyArg: ts.Expression | undefined, descArg: ts.Expression | undefined): boolean => {
-    if (!descArg || descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
+    // A descriptor variable is applied through the native `$Object` runtime,
+    // even when its eventual key is already in the literal shape.  Keeping the
+    // receiver as a closed struct would split the define from subsequent reads:
+    // `__obj_define_from_desc` updates the open runtime store while a typed
+    // member access still reads the fixed field.  The empty-literal widening
+    // pass already guards this case; keep non-empty literals on the same
+    // representation for parity.
+    if (!descArg) return false;
+    if (!ts.isObjectLiteralExpression(descArg)) {
+      ctx.dynamicDescriptorWidenVars.add(varName);
+      const key = staticDefineKey(keyArg);
+      if (key !== undefined) ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+      return true;
+    }
+    if (descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
     const key = staticDefineKey(keyArg);
     return key === undefined || !shapeNames.has(key);
   };
@@ -2141,6 +2413,7 @@ export function collectPropsFromStatements(
           // reflects back through the live-mirror Proxy onto the struct sidecar).
           if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
+            ctx.sidecarDefinedPropertyKeys.add(`${varName}:${propName}`);
           }
           recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
         }
@@ -2232,6 +2505,15 @@ export function applyShapeInference(ctx: CodegenContext, checker: ts.TypeChecker
   for (const [varName, shape] of shapes) {
     const globalIdx = ctx.moduleGlobals.get(varName);
     if (globalIdx === undefined) continue;
+
+    // Standalone accessor/MOP analysis deliberately keeps these receivers on
+    // the identity-bearing open-object carrier.  Shape inference runs after
+    // that analysis and used to overwrite the decision for a plain `{}` whose
+    // accessor body happened to write a numeric key (for example the
+    // self-writing `length` getter in Array.prototype.filter's generic
+    // receiver tests).  A vec has Array-exotic `length` semantics, so applying
+    // the shape here makes the accessor define throw before filter runs.
+    if (ctx.objectHashConsumerVars.has(varName) || ctx.growableObjectLiteralVars.has(varName)) continue;
 
     // Determine element type for the vec struct from the shape's numeric value type
     let elemType: ValType;

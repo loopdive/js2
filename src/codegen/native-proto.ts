@@ -35,7 +35,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 // (#4491 T9) `constructor` is an own data property of every builtin prototype and
@@ -166,6 +166,13 @@ export interface NativeProtoBuiltinGlue {
    */
   memberParamSlots?: (member: string) => number;
   /**
+   * True when a method uses the receiver-aware variadic closure ABI:
+   * `(self, thisValue, (ref null $vec_externref)) -> result`. The method
+   * dispatcher supplies `thisValue`, and packs the complete JavaScript
+   * argument list into the vector, so omitted arguments remain omitted.
+   */
+  memberIsVariadic?: (member: string) => boolean;
+  /**
    * (#4485) Member-IDENTITY alias. Some spec members are not merely equivalent
    * to another member, they ARE the same function object: §B.2.4.3 says "the
    * function object that is the initial value of `Date.prototype.toGMTString`
@@ -278,6 +285,27 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   // byte-identical to before this slice. Self-gated (see its doc): a module
   // that is not `protoMemberDirty` gets `undefined` and pays nothing.
   ensureNativeProtoCompanionSeeder(ctx, brand);
+
+  // A flowing builtin prototype is a read-only value in the common reflection
+  // shape (`var p = Date.prototype; Object.getOwnPropertyDescriptor(p, k)`).
+  // The own-property and descriptor helpers deliberately use a consult-only
+  // companion lookup (`create = 0`), so without an initial mint the freshly
+  // registered seeder is never reached: dynamic reads see an empty
+  // `$NativeProto` and static `Date.prototype.k` reads are the only ones that
+  // work. Materialize the companion once, immediately after the prototype
+  // singleton, only for the same demand-gated standalone/member-dirty lane.
+  // This keeps ordinary prototype materialization byte-inert and lets the
+  // seeder install the spec `{ writable: true, enumerable: false,
+  // configurable: true }` entries before any flowing read occurs.
+  const companionIdx = ctx.funcMap.get("__protoidx_companion");
+  if (ctx.standalone && ctx.protoMemberDirty === true && companionIdx !== undefined) {
+    initBody.push(
+      { op: "i32.const", value: brand - BUILTIN_BRAND_BASE },
+      { op: "i32.const", value: 1 },
+      { op: "call", funcIdx: companionIdx },
+      { op: "drop" },
+    );
+  }
 
   return [
     { op: "global.get", index: globalIdx },
@@ -530,7 +558,11 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     const member = rawMember.trim();
     if (member.length === 0) continue;
     const kind = glue.memberKind(member);
-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind, {
+    // Annex B requires Date.prototype.toGMTString and toUTCString to be the
+    // same function object. Seed the alias key with the canonical closure
+    // singleton instead of minting a second per-member wrapper.
+    const closureMember = glue.name === "Date" && member === "toGMTString" ? "toUTCString" : member;
+    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
       // Reify un-wired members as throwing function VALUES (#2984 Phase 2 /
       // #3250). The companion is a REFLECTION surface: `typeof p.m ===
       // "function"`, `p.m.name`, `p.m.length` and `isConstructor(p.m) ===
@@ -719,9 +751,20 @@ export function ensureStandaloneNativeMethodClosure(
   // stays honest regardless — it reads `nativeClosureMeta` (set below from the
   // spec arity), never the func type.
   const arity = kind === "getter" ? 0 : glue.memberLength(member);
+  const isVariadic = kind === "method" && glue.memberIsVariadic?.(member) === true;
   const paramSlots = kind === "getter" ? 0 : Math.max(arity, glue.memberParamSlots?.(member) ?? 0);
   const userParams: ValType[] = [{ kind: "externref" }];
-  for (let i = 0; i < paramSlots; i++) userParams.push({ kind: "externref" });
+  if (isVariadic) {
+    // The receiver-aware variadic ABI keeps the receiver separate from the
+    // JavaScript argument list. The vector is the same canonical externref
+    // carrier used by genuinely variadic static builtin values, but unlike a
+    // source rest closure it is reached through the native-proto method
+    // dispatcher and therefore has an internal receiver slot before it.
+    const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    userParams.push({ kind: "ref_null", typeIdx: vecTypeIdx });
+  } else {
+    for (let i = 0; i < paramSlots; i++) userParams.push({ kind: "externref" });
+  }
 
   // Probe the member body to learn its result type by emitting into a throwaway
   // fctx, then keep that body (it's the real body — no double emission).
@@ -730,6 +773,7 @@ export function ensureStandaloneNativeMethodClosure(
   const selfType: ValType = { kind: "ref", typeIdx: wrapperProbe.liftedSelfTypeIdx };
   const bodyFctx = makeNativeClosureFctx(`__probe_${brand}_${member}`, selfType, userParams, null);
   const probedResult = glue.emitMemberBody(ctx, bodyFctx, member, kind);
+  if (isVariadic) wrapperProbe.closureInfo.nativeProtoVariadic = true;
   // (#2984 Phase 2) Refusal + opted-in fallback (methods only): keep going with
   // a uniform externref result; the committed emission below swaps the refused
   // body for a catchable-TypeError throw. Every non-opted-in caller keeps the
@@ -757,6 +801,7 @@ export function ensureStandaloneNativeMethodClosure(
   const resultTypes = [resultType];
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, resultTypes);
   if (!wrapperTypes) return null;
+  if (isVariadic) wrapperTypes.closureInfo.nativeProtoVariadic = true;
 
   const funcName = kind === "getter" ? `__proto_method_${brand}_get_${member}` : `__proto_method_${brand}_${member}`;
   let funcIdx = ctx.funcMap.get(funcName);

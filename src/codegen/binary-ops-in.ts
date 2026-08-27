@@ -29,6 +29,7 @@ import { emitInPresence } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
+import { identifierEscapesToCall } from "./in-escaped-receiver.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 // (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
@@ -420,7 +421,18 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       ctx.standalone &&
       !hasExplicitNullObjectPrototype(ctx, expr.right) &&
       objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
-    const has = inheritsFromObjectPrototype || (!growableReceiver && (hasInStruct || tsTypeHasProperty));
+    // (#4765) Host lane: the receiver was handed to a callee the compiler
+    // cannot see through, so its compile-time struct shape is no longer a fact
+    // about this site — the callee may have DELETED the key and the field list
+    // does not shrink. Suppress the fold and take the `__extern_has` arm, which
+    // consults the delete tombstone. See `in-escaped-receiver.ts`.
+    const escapedReceiverRoute =
+      !ctx.standalone &&
+      !ctx.wasi &&
+      ts.isIdentifier(expr.right) &&
+      identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
+    const has =
+      inheritsFromObjectPrototype || (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -462,6 +474,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         rightWasm.kind === "anyref" ||
         vecNamedKeyRoute ||
         reassignedReceiverRoute ||
+        escapedReceiverRoute ||
         fnctorProtoRoute)
     ) {
       const hasIdx = ensureLateImport(
