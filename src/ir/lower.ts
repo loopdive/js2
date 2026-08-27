@@ -417,6 +417,46 @@ export function wasmValueTypeConverter(
   };
 }
 
+/**
+ * Validate the one semantic-to-physical parameter exception currently owned by
+ * the linked Parser route. The resolver is the source of the physical slot,
+ * but the lowerer still has to reject a stale or foreign heap type before it
+ * emits `ref.as_non_null` or publishes the function signature. Otherwise a
+ * resolver bug can manufacture a Wasm body whose local and result carriers do
+ * not agree even though both are reference-shaped.
+ */
+function requireExactPhysicalStringParameter(
+  resolver: IrLowerResolver,
+  backend: IrBackendKind,
+  funcName: string,
+  parameterIndex: number,
+  logicalType: IrType,
+  physical: { readonly type: ValType; readonly refineNonNull?: true },
+): void {
+  if (backend !== "wasmgc") {
+    throw new IrInvariantError(
+      "backend-legality-failure",
+      "lower",
+      `ir/lower: exact physical parameter refinement is only supported by WasmGC in ${funcName}`,
+    );
+  }
+  const canonical = resolver.resolveString?.();
+  const physicalType = physical.type;
+  const physicalCarrierMatches =
+    canonical?.kind === "ref" &&
+    (physicalType.kind === "ref" || physicalType.kind === "ref_null") &&
+    physicalType.typeIdx === canonical.typeIdx;
+  const refinementMatches =
+    physicalType.kind === "ref_null" ? physical.refineNonNull === true : physical.refineNonNull !== true;
+  if (logicalType.kind !== "string" || !physicalCarrierMatches || !refinementMatches) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: exact physical parameter ${parameterIndex} in ${funcName} is not the canonical native-string carrier/refinement`,
+    );
+  }
+}
+
 function flattenWasmValues(values: readonly IrLoweredValue<ValType>[]): LocalDef[] {
   return values.flatMap((value) =>
     value.slots.map((type, slot) => ({
@@ -1359,14 +1399,10 @@ export function lowerIrFunctionBody<S, Slot>(
     if (pi !== undefined) {
       emitter.emitLocalGet(pi, out);
       const physical = resolver.resolveParamPhysicalType?.(func.unitId, pi, paramTypeOf.get(v)!);
+      if (physical) {
+        requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, pi, paramTypeOf.get(v)!, physical);
+      }
       if (physical?.refineNonNull) {
-        if (emitter.backend !== "wasmgc" || physical.type.kind !== "ref_null") {
-          throw new IrInvariantError(
-            "backend-legality-failure",
-            "lower",
-            `ir/lower: non-null parameter refinement has no WasmGC nullable carrier in ${func.name}`,
-          );
-        }
         // pushraw-ok(#3521): exact prepared nullable native-string parameter refinement
         emitter.pushRaw(out, { op: "ref.as_non_null" });
       }
@@ -3733,13 +3769,7 @@ export function lowerIrFunctionBody<S, Slot>(
     const physical =
       parameterIndex === undefined ? undefined : resolver.resolveParamPhysicalType?.(func.unitId, parameterIndex, type);
     if (physical) {
-      if (emitter.backend !== "wasmgc") {
-        throw new IrInvariantError(
-          "backend-legality-failure",
-          "lower",
-          `ir/lower: exact physical parameter refinement is only supported by WasmGC in ${func.name}`,
-        );
-      }
+      requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, parameterIndex!, type, physical);
       return [physical.type as unknown as Slot];
     }
     const slots = typeConverter.convertType(type);
