@@ -107,11 +107,18 @@ describe("#3525 whole-program callable binding graph", () => {
       target: "standalone" as const,
       trackIrOutcomes: true,
     };
-    vi.stubEnv("JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER", "1");
+    const fixture = makeGraph(files, "./entry.ts");
+    const expectedUnitIds = new Set([
+      functionUnitId(fixture, "/dep.ts", "add"),
+      functionUnitId(fixture, "/entry.ts", "run"),
+    ]);
     const generated = generateMultiModule(analyzeMultiSource(files, "./entry.ts"), options);
     expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
     expect(generated.multiPreparedProgramAudit?.bodyPlan.reservations).toHaveLength(2);
-    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "add");
+    expect(new Set(generated.multiPreparedProgramAudit?.bodyPlan.reservations.map(({ unitId }) => unitId))).toEqual(
+      expectedUnitIds,
+    );
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "add,run");
     const ir = await compileMulti(files, "./entry.ts", options);
     vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "");
     const legacy = await compileMulti(files, "./entry.ts", {
@@ -126,7 +133,7 @@ describe("#3525 whole-program callable binding graph", () => {
     const preparedOutcomes = ir.irOutcomes?.filter((outcome) => outcome.irBodyEmitted) ?? [];
     const preparedUnitIds = new Set(preparedOutcomes.map((outcome) => outcome.unitId));
     expect(preparedOutcomes).toHaveLength(2);
-    expect(preparedUnitIds.size).toBe(2);
+    expect(preparedUnitIds).toEqual(expectedUnitIds);
     expect(new Set(preparedOutcomes.map((outcome) => outcome.preparedComponentId)).size).toBe(1);
     expect(preparedOutcomes[0]?.preparedComponentId).toMatch(/^prepared-component:/);
     expect(
@@ -143,6 +150,53 @@ describe("#3525 whole-program callable binding graph", () => {
     const legacyExports = (await instantiateWithRuntime(legacy)).exports as unknown as { run(value: number): number };
     expect(irExports.run(5)).toBe(legacyExports.run(5));
     expect(irExports.run(5)).toBe(7);
+  }, 120_000);
+
+  it("honors an explicit env=0 direct route and preserves clean runtime parity", async () => {
+    const files = {
+      "./dep.ts": `
+        export function add(left: number, right: number): number {
+          return left + right;
+        }
+      `,
+      "./entry.ts": `
+        import { add as plus } from "./dep";
+        export function run(value: number): number {
+          return plus(value, 2);
+        }
+      `,
+    };
+    const options = {
+      experimentalIR: true,
+      nativeStrings: true,
+      target: "standalone" as const,
+      trackIrOutcomes: true,
+    };
+    vi.stubEnv("JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER", "0");
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "add,run");
+    const poisoned = await compileMulti(files, "./entry.ts", options);
+    const poisonMessages = poisoned.errors.map((error) => error.message).join("\n");
+    expect(poisoned.success).toBe(false);
+    expect(poisonMessages).toContain("injected direct function-body poison: add");
+    expect(poisonMessages).toContain("injected direct function-body poison: run");
+
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "");
+    const direct = await compileMulti(files, "./entry.ts", options);
+    const legacy = await compileMulti(files, "./entry.ts", {
+      experimentalIR: false,
+      nativeStrings: true,
+      target: "standalone",
+    });
+    expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(legacy.success, legacy.errors.map((error) => error.message).join("\n")).toBe(true);
+    const directExports = (await instantiateWithRuntime(direct)).exports as unknown as {
+      run(value: number): number;
+    };
+    const legacyExports = (await instantiateWithRuntime(legacy)).exports as unknown as {
+      run(value: number): number;
+    };
+    expect(directExports.run(5)).toBe(legacyExports.run(5));
+    expect(directExports.run(5)).toBe(7);
   }, 120_000);
 
   it("rejects a matching legacy name when the source-qualified unit projection disagrees", () => {
