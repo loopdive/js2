@@ -1910,3 +1910,48 @@ next implementation transaction must:
 The broader syntax/provider mutation matrix and final R9 switch deletion remain
 separate follow-ups. No performance, retirement-ready, linear cutover, or
 repository-wide IR-only claim follows from this checkpoint.
+
+#### C2c checkpoint: authenticated counted-native repeat provider (2026-08-27)
+
+The accepted-output regression is removed without weakening generic
+`String.prototype.repeat`. IR format v5.4 adds the optional
+`countedStringAppendTripCount` proof to `string.repeat`. Production from-AST
+lowering emits it only for the exact checker-retained counted-loop trip count in
+the signed-i32 range. The verifier requires a matching source-qualified
+`countedStringAppendSite`, an integer in `[2, 2147483647]`, and an exact f64
+constant definition for the instruction's `count` SSA value. The fragment is
+canonicalized from the checker-proven literal/const-alias chain to an exact
+`string.const`; its UTF-16 length times the trip count must stay at or below the
+native kernel's `0x40000000` result bound. Final provenance association joins
+the same trip count and fragment back to the retained syntax plan. Missing,
+borrowed, out-of-range, non-constant, non-literal, oversized-result, and
+provider-without-proof variants fail closed.
+
+Native WasmGC preparation maps only that authenticated form to
+`__ir_string_repeat_counted_native`, whose physical provider is the existing
+`__str_repeat (string, i32) -> string` kernel. Lowering performs the proven-safe
+`i32.trunc_f64_s` conversion at the call site. It does not materialize the
+generic `__ir_string_repeat_native (string, f64) -> string` validation adapter.
+Site-less repeats, out-of-i32-range counted repeats, host strings, and the linear
+backend retain the generic f64 provider and its complete ToIntegerOrInfinity /
+RangeError behavior. Adapter-manifest string-pool metadata remains byte-for-byte
+compatible with direct output even though the counted artifact has no dead
+RangeError path.
+
+On the current arm64 host, the accepted raw and requested-`optimize: 4`
+artifacts both measure **130,062 bytes Prepared versus 130,308 bytes direct**:
+Prepared is now **246 bytes smaller** and 533 bytes smaller than C2b's 130,595
+byte artifact. Both accepted binaries pass `WebAssembly.validate`, preserve DTS,
+imports/exports, string-pool membership, target UnitId, non-target route rows,
+and return `5000`. Named WAT evidence contains `__str_repeat`, contains no
+`__ir_string_repeat_native`, uses non-saturating `i32.trunc_f64_s`, and reduces
+the target's static call count from four to two with no increase in target
+`array.new` or `struct.new` operations. The focused verifier/provider/contract,
+cutover, and phase-tamper suites pass 36/36, and the TypeScript 7 typecheck
+passes.
+
+The no-growth and structural output gates are therefore met. Promotion of
+`IR-OPT-COUNTED-LITERAL-STRING-APPEND` remains withheld until the durable
+30-valid-sample ABBA runtime driver satisfies the existing 5% direct/direct,
+1.05 median, and 1.10 bootstrap-upper-bound gates. The broader syntax/provider
+mutation matrix and final R9 switch deletion remain later transactions.

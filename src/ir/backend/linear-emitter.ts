@@ -197,8 +197,14 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     inputEncoding: IrStringEncoding,
     out: Instr[],
     provider?: IrFuncRef,
+    countedStringAppendTripCount?: number,
   ): void {
-    const ops = this.options.stringRuntime?.emitStringRepeat?.(alloc, inputEncoding, provider);
+    const ops = this.options.stringRuntime?.emitStringRepeat?.(
+      alloc,
+      inputEncoding,
+      provider,
+      countedStringAppendTripCount,
+    );
     if (!ops) throw new Error("LinearEmitter: string.repeat runtime is unavailable");
     out.push(...ops);
   }

@@ -40,6 +40,7 @@ export interface IrCountedStringAppendPlan {
   readonly fragmentSymbol?: ts.Symbol;
   readonly fragmentConstDeclarations: readonly ts.VariableDeclaration[];
   readonly fragmentType: "string";
+  readonly fragmentValue: string;
   readonly tripCount: number;
 }
 
@@ -78,6 +79,7 @@ interface ResolvedStringFragment {
   readonly declaration?: ts.VariableDeclaration;
   readonly symbol?: ts.Symbol;
   readonly declarations: readonly ts.VariableDeclaration[];
+  readonly value: string;
 }
 
 const ASSIGNMENT_OPERATORS = new Set<ts.SyntaxKind>([
@@ -353,7 +355,7 @@ function resolveStringFragment(
 ): ResolvedStringFragment | null {
   const current = unwrapExpression(expression);
   if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
-    return { expression, declarations: [] };
+    return { expression, declarations: [], value: current.text };
   }
   if (!ts.isIdentifier(current) || context.oracle.staticJsTypeOf(current) !== "string") return null;
   const exact = exactVariableDeclaration(context.checker, current, ts.NodeFlags.Const);
@@ -386,6 +388,7 @@ function resolveStringFragment(
     declaration: exact.declaration,
     symbol: exact.symbol,
     declarations: [exact.declaration, ...initializer.declarations],
+    value: initializer.value,
   };
 }
 
@@ -612,6 +615,7 @@ export function planCountedStringAppend(
     fragmentSymbol: fragment.symbol,
     fragmentConstDeclarations: Object.freeze([...fragment.declarations]),
     fragmentType: "string",
+    fragmentValue: fragment.value,
     tripCount,
   });
 }
@@ -651,6 +655,7 @@ export function countedStringAppendPlanIsCurrent(context: ProofContext, plan: Ir
     current.fragmentSymbol === plan.fragmentSymbol &&
     sameDeclarations(current.fragmentConstDeclarations, plan.fragmentConstDeclarations) &&
     current.fragmentType === plan.fragmentType &&
+    current.fragmentValue === plan.fragmentValue &&
     current.tripCount === plan.tripCount
   );
 }

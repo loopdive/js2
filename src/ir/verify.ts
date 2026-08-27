@@ -43,7 +43,12 @@ import type { TagDomain } from "./tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
 import { irFnctorShapeEquals, validateIrFnctorShape } from "./fnctor-abi.js";
-import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
+import {
+  IR_COUNTED_STRING_REPEAT_I32_MAX,
+  IR_STRING_REPEAT_COUNTED_NATIVE_FN,
+  IR_STRING_REPEAT_FN,
+  irCountedStringRepeatFitsNativeKernel,
+} from "./string-runtime.js";
 import { parseIrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
 // computation in this file, #1850).
@@ -1919,6 +1924,7 @@ export function typeRuleCoverageProblem(kind: IrInstr["kind"], status: TypeRuleS
 interface RoadmapRuleCtx {
   readonly func: IrFunction;
   readonly typeOf: ReadonlyMap<IrValueId, IrType>;
+  readonly definitions: ReadonlyMap<IrValueId, IrInstr>;
   readonly errors: IrVerifyError[];
   /** `func.slots.length` — the bound every `forof.*` slot index must respect. */
   readonly numSlots: number;
@@ -2361,12 +2367,58 @@ function checkStringRepeatTypeRule(
   if (!(["ascii", "utf8-guaranteed", "wtf16"] as readonly unknown[]).includes(instr.encodingEvidence)) {
     roadmapError(ctx, blockId, `string.repeat has invalid encoding evidence ${String(instr.encodingEvidence)}`);
   }
+  const providerSymbol = instr.provider?.binding.kind === "intrinsic" ? instr.provider.binding.symbol : undefined;
   if (
     instr.provider &&
-    (instr.provider.binding.kind !== "intrinsic" || instr.provider.binding.symbol !== IR_STRING_REPEAT_FN)
+    providerSymbol !== IR_STRING_REPEAT_FN &&
+    providerSymbol !== IR_STRING_REPEAT_COUNTED_NATIVE_FN
   ) {
     roadmapError(ctx, blockId, "string.repeat carries a non-canonical provider binding");
   }
+  const exactTripCount = instr.countedStringAppendTripCount;
+  if (exactTripCount === undefined) {
+    if (providerSymbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
+      roadmapError(ctx, blockId, "string.repeat counted-native provider requires an exact counted trip-count proof");
+    }
+    return;
+  }
+  if (instr.countedStringAppendSite === undefined) {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof requires counted-loop provenance");
+  }
+  if (
+    !Number.isSafeInteger(exactTripCount) ||
+    exactTripCount < 2 ||
+    exactTripCount > IR_COUNTED_STRING_REPEAT_I32_MAX
+  ) {
+    roadmapError(ctx, blockId, `string.repeat has invalid counted trip-count proof ${String(exactTripCount)}`);
+  }
+  const countDefinition = ctx.definitions.get(instr.count);
+  if (
+    countDefinition?.kind !== "const" ||
+    countDefinition.value.kind !== "f64" ||
+    !Object.is(countDefinition.value.value, exactTripCount)
+  ) {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof does not match its exact f64 constant");
+  }
+  const valueDefinition = ctx.definitions.get(instr.value);
+  if (valueDefinition?.kind !== "string.const") {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof requires an exact string.const fragment");
+  } else if (!irCountedStringRepeatFitsNativeKernel(exactTripCount, valueDefinition.value.length)) {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof exceeds the native result-length bound");
+  }
+}
+
+function collectIrDefinitions(func: IrFunction): ReadonlyMap<IrValueId, IrInstr> {
+  const definitions = new Map<IrValueId, IrInstr>();
+  const collect = (instr: IrInstr): void => {
+    forEachInstrDeep(instr, (nested) => {
+      if (nested.result !== null) definitions.set(nested.result, nested);
+    });
+  };
+  for (const block of func.blocks) for (const instr of block.instrs) collect(instr);
+  for (const state of func.asyncPlan?.states ?? []) for (const instr of state.body) collect(instr);
+  for (const state of func.asyncRuntime?.states ?? []) for (const instr of state.body) collect(instr);
+  return definitions;
 }
 
 function verifyInstrTypeRules(
@@ -2395,6 +2447,7 @@ function verifyInstrTypeRules(
   const roadmap: RoadmapRuleCtx = {
     func,
     typeOf,
+    definitions: collectIrDefinitions(func),
     errors,
     numSlots,
     callSignatures: new Map(),
