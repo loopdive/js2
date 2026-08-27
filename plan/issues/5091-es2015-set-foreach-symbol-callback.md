@@ -134,6 +134,7 @@ for the selected row before the source change.
 Upstream tracking issue: #5091. The provisional local reservation `#4789`
 collided with an existing merged PR and was replaced before publication. The
 canonical delivery branch is `codex/5091-set-foreach-symbol` in
-`/private/tmp/js2-5091-set-foreach-symbol`. The completed fix is ready for its
-single non-draft PR against `loopdive/js2:main`; root owns merge-queue
-shepherding and will append the PR URL after publication.
+`/private/tmp/js2-5091-set-foreach-symbol`. The completed fix is published as
+non-draft upstream PR #5093 against `loopdive/js2:main`. Root owns CI and
+merge-queue shepherding; implementation heads are `e0a1d88454` and
+`13d94cbc9b` before this publication handoff checkpoint.
