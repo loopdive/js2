@@ -180,6 +180,13 @@ export function tryCompileEs5GetPrototypeOfEarly(
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
+    // (#4781) The ES2015 WeakMap constructor is itself a built-in function,
+    // so its [[Prototype]] is %Function.prototype%. Keep this query on the
+    // intrinsic path in both lanes; the native collection path below models
+    // WeakMap instances and must not answer for the constructor object.
+    if (arg0.text === "WeakMap") {
+      return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
+    }
     if (ES5_NATIVE_ERROR_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicConstructor(ctx, fctx, expr, "Error");
     }

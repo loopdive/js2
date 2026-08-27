@@ -44,27 +44,38 @@ as `null` instead of the host `Function.prototype`. The JS-host cache row also
 fails the same identity assertion, so the host lane is retained as a
 regression control rather than a completion denominator.
 
-Before implementation, rerun this exact row through the assembled official
-harness on the clean `upstream/main` baseline and record the fresh host and
-standalone JSONL artifacts here. The authoritative standalone acceptance
-target is one pass with zero failures, compile errors, timeouts, or skips.
+The fresh assembled-harness baseline on `upstream/main` was 1 failure and 6
+passes in each lane. The target failed in host mode with a non-identical
+function object and in standalone mode with `null` versus `[object Function]`.
+The six selected controls all passed in both lanes:
+`prototype/prototype-attributes.js`, `no-iterable.js`, `length.js`,
+`is-a-constructor.js`, `prototype/set/set.js`, and `prototype/has/has.js`.
+
+Baseline artifacts (exact seven-file list, assembled official harness):
+
+```text
+.tmp/4781-baseline-host.jsonl       sha256 6db1782989d965a4df054e488d6c9aeae438ce1557c31e6b45cf91c885a838b2
+.tmp/4781-baseline-standalone.jsonl sha256 ab0e49808672eae112a55c40d2523906a359fbcc7b4aa3f8ea05c7ab6f9d0ecc
+```
+
+The authoritative standalone acceptance target is one pass with zero
+failures, compile errors, timeouts, or skips.
 
 ## Root-cause hypothesis
 
-The compiler's static builtin constructor materialization gives the native
-`WeakMap` constructor a missing or non-identity-stable `[[Prototype]]` in the
-standalone path. `Object.getPrototypeOf` therefore returns a null/opaque
-carrier when the source asks for the constructor's prototype, while the host
-runtime's constructor has the ordinary intrinsic function prototype. The
-existing native WeakMap collection operations are not part of this issue.
+The static `Object.getPrototypeOf` lowering recognized the ES5 constructor set
+but not the ES2015 `WeakMap` constructor. The later native-collection path is
+for WeakMap instances, so it returned the wrong opaque/null value when asked
+about the constructor object. The existing native WeakMap collection
+operations are not part of this issue.
 
 ## Implementation plan
 
 1. Reproduce the exact row on the current upstream baseline in both host and
    standalone lanes, inspect the generated constructor/prototype path, and
    identify the narrowest existing builtin-constructor identity hook.
-2. Repair only the `WeakMap` constructor `[[Prototype]]` materialization or
-   its `Object.getPrototypeOf` observation path, preserving the existing
+2. Route only a global `WeakMap` constructor identity query through the
+   compiler-owned `%Function.prototype%` singleton, preserving the existing
    standalone WeakMap `new`/`get`/`set`/`has` behavior and all other builtin
    constructor identities.
 3. Add a focused regression test covering the exact Test262 row in both lanes,
@@ -91,7 +102,24 @@ existing native WeakMap collection operations are not part of this issue.
 
 ## Implementation / evidence
 
-To be filled as the exact baseline, implementation, and post-fix evidence are
-produced. Do not claim the ES2015 edition complete from this one-row result;
-the umbrella's final 11,704/11,704 authoritative run remains required.
+Implemented in `src/codegen/expressions/object-get-prototype-of.ts` with the
+focused regression `tests/issue-4781-weakmap-constructor-prototype.test.ts`.
+The branch keeps the guard on `isGlobalBuiltinIdentifier`, so a local or
+captured `WeakMap` binding cannot use this intrinsic shortcut.
 
+Exact post-fix A/B (same seven-file list and assembled harness):
+
+```text
+.tmp/4781-after-host.jsonl       sha256 c653a824bdee14ffb06e71102bf18cca86b0e22917d23c629150b2cabd39ce5e
+.tmp/4781-after-standalone.jsonl sha256 36811f35f37ebccbd6fb202cdcf373f0c4ad7e8b7bfb282e72c26c633c1a8427
+```
+
+Both lanes changed from `{"fail":1,"pass":6}` to `{"pass":7}`. The
+`--diff` partitions each lane as `fail -> pass: 1`, `pass -> fail: 0`,
+`other: 0`, `unchanged: 6`; the only gained row is
+`prototype-of-weakmap.js`. Determinism checks report 0 disagreements in both
+lanes. The focused Vitest suite passes 14/14 (target plus six controls in host
+and standalone). TypeScript, lint, formatting, and issue-integrity gates pass.
+
+Do not claim the ES2015 edition complete from this one-row result; the
+umbrella's final 11,704/11,704 authoritative run remains required.
