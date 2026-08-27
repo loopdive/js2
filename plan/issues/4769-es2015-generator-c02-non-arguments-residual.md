@@ -221,11 +221,13 @@ default-materialization case (`TypeError: [object Object] is not a
 constructor`), reproduced with the source gate reverted; the four task-related
 files passed and no new skip was introduced.
 
-The implementation is carried by commits `eaa7b48e5` (bounded zero-suspend
-class-default admission and focused semantic pin) and `5118e8c61` (guard the
-class-default syntax probe for absent initializers). The issue-plan checkpoint
-is `8e116f40b`. These commits are the pending checkpoint for the separate
-upstream draft PR
+The initial implementation is carried by commits `eaa7b48e5` (bounded
+zero-suspend class-default admission and focused semantic pin) and `5118e8c61`
+(guard the class-default syntax probe for absent initializers). The issue-plan
+checkpoint is `8e116f40b`. The next class-expression checkpoint is
+`ba6331110a8711537400eca5a646b41f7bf331a2`, carrying the bounded source,
+focused controls, and refreshed evidence below. These commits are the pending
+checkpoint for the separate upstream draft PR
 [#5037](https://github.com/loopdive/js2/pull/5037), sourced from
 `ttraenkler/js2` and targeting `loopdive/js2:main`; the PR remains draft until
 the parent agent confirms the implementation push and refreshed CI.
