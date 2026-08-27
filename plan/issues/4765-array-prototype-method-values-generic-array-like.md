@@ -382,11 +382,30 @@ Array.prototype.slice.call(proxy, 9007199254740989);
   → RuntimeError: requested new array is too large   (and NOT catchable by a JS try/catch)
 ```
 
-The host `slice` should create a 3-element result (`len - start`); something on
-our side sizes the result from the proxy's fake `length` instead. That is a
-host-bridge / ArraySpeciesCreate question in `_wrapForHost`, and it is where
-`slice/length-exceeding-integer-limit-proxied-array.js` and
-`splice/create-species-length-exceeding-integer-limit.js` actually fail.
+Narrowed further, and `slice` is not required either — this alone traps:
+
+```js
+var array = []; array["9007199254740989"] = "a";
+var proxy = new Proxy(array, { get: (t,pk,r) => pk === "length" ? 2 ** 53 + 2 : Reflect.get(t,pk,r) });
+proxy.length;            // no slice, no splice
+```
+
+while each ingredient on its own is fine:
+
+```js
+var a = []; a[9007199254740988] = "x";              // ok
+var b = []; b["9007199254740988"] = "y";            // ok
+var c = []; c[9007199254740988] = "z"; new Proxy(c, {});   // ok
+```
+
+So the trigger needs a Proxy whose `get` REPORTS a length past 2^53 over a
+sparse vec — something on our side then materialises a backing of that reported
+length. `slice`/`splice` are downstream victims, not the cause.
+
+**Deliberately not asserting the exact statement.** The runner's error line names
+the frame, not the failing statement, and believing it has now produced two wrong
+diagnoses in this issue. Whoever picks this up should bisect by deleting
+statements, not read the location out of the message.
 
 This is the second time this session an error STRING drove a wrong diagnosis
 (the first was the stale baseline text on `includes/samevaluezero.js`). Isolate
