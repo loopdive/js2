@@ -29,6 +29,19 @@ async function runHost(source: string): Promise<number> {
   return (instance.exports as { test: () => number }).test();
 }
 
+async function runStandalone(source: string): Promise<number> {
+  const result = await compile(source, {
+    fileName: "issue-4768-standalone.ts",
+    target: "standalone",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, result.success ? "" : result.errors?.map((e) => e.message).join("; ")).toBe(true);
+  const module = await WebAssembly.compile(result.binary);
+  expect(WebAssembly.Module.imports(module), "standalone regression control must not need host imports").toEqual([]);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  return (instance.exports as { test: () => number }).test();
+}
+
 const generator = `
   let steps = 0;
   function* g() { steps += 1; yield 1; steps += 1; yield 2; }
@@ -82,6 +95,16 @@ describe("#4768 native generator ordinary-call boundary", () => {
         let target: any = consume;
         target = consume;
         export function test(): number { target(g()); return steps; }`),
+    ).toBe(2);
+  });
+
+  it("keeps an unbounded rest pattern on the fallback path in standalone", async () => {
+    expect(
+      await runStandalone(`
+        let steps = 0;
+        function* g() { steps += 1; yield 1; steps += 1; yield 2; }
+        function consume([...[,]]: any): void {}
+        export function test(): number { consume(g()); return steps; }`),
     ).toBe(2);
   });
 });
