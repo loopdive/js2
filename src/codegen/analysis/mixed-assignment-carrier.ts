@@ -29,6 +29,16 @@ function containingScope(decl: ts.VariableDeclaration): ts.Node {
   return decl.getSourceFile();
 }
 
+/**
+ * True when Annex B will write a block-level function object into this
+ * existing `var` binding while evaluating the enclosing var scope. That write
+ * is implicit in the AST, so the binding must remain boxed even when usage
+ * inference proves all visible uses numeric.
+ */
+export function bindingHasAnnexBExistingVarUpdate(decl: ts.VariableDeclaration): boolean {
+  return ts.isIdentifier(decl.name) && annexBExistingVarUpdateNames(containingScope(decl)).has(decl.name.text);
+}
+
 function carrierDomain(tag: JsTag): string {
   // Boolean and symbol both use i32 physically, but their boxing semantics are
   // distinct, so crossing between them still requires a dynamic carrier.
@@ -151,7 +161,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   // evaluated. No `F = …` BinaryExpression exists for the walk below to see, so
   // without this the slot keeps the initializer's narrow representation
   // (`var f = 123` → f64) and the write-back is unrepresentable.
-  if (initialDomain !== "function" && annexBExistingVarUpdateNames(scope).has(decl.name.text)) return true;
+  if (initialDomain !== "function" && bindingHasAnnexBExistingVarUpdate(decl)) return true;
   let mixed = false;
 
   // (#4122) `"mixed"` is the oracle's answer for UNRESOLVABLE, not for "proven

@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-27
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -2405,36 +2405,6 @@ Land a second independently reviewed PR with no selector consumer.
    capability, allocator, source/unit, and support binding. Existing host
    observation tests must remain byte-for-byte valid.
 
-#### L2 implementation evidence (2026-08-26)
-
-The dormant logical-to-physical contract is now implemented without enabling
-the selector or standalone AST producer. `IrFnctorField.ordinal` is the exact
-physical reserved-layout index, and every logical field has one unique mapping
-to its physical name/carrier plus an explicit refinement. The bounded
-standalone shape is exactly mutable `input: ref null $AnyString`, immutable
-`$constructor: externref`, then mutable `$bag: externref`; the latter two use
-the shared field factories, and presence words, padding, splits, cold tails,
-reordering, and extra fields reject.
-
-The resolved handle now distinguishes the synthesized constructor's non-null
-`ref $__fnctor_Parser` result from the nullable
-`ref null $__fnctor_Parser` instance carrier used by the legacy caller slot.
-It also carries separate construction and field-read capabilities. The
-standalone Parser observation is deliberately get-only: its semantic
-constructor parameter is `string`, while the live synthesized constructor
-still takes physical `externref`, so `fnctor.new` remains illegal and only the
-validated `fnctor.get input` path can later activate. Lowering emits
-`ref.as_non_null` only for the exact certified
-`ref null $AnyString -> string` field refinement.
-
-The focused fnctor ABI/admission/argument-projection/producer matrix passes
-90/90, including mutations for physical field order and extras, ordinals,
-carriers, refinements, semantic and physical parameters, result/instance
-carriers, source identity, split/cold-tail/fast/host lanes, and capability
-drift. TypeScript 7 and scoped formatting pass. No selection, compiler/runtime
-A/B, emitted outcome, bundle relock, or R2 replay is claimed by this L2
-checkpoint; L3 remains the first production consumer.
-
 ### Checkpoint L3 — late-overlay selector and `fnctor.get` activation
 
 Only after L1 and L2 are merged and independently approved may the production
@@ -2598,12 +2568,36 @@ non-negative one-minute load strictly below `logical cores - 2` (10 cores means
 `< 8`). C36/C37 stay scheduled for the final aggregate rerun, and the unchanged
 #4035 size ceiling is not reported as a new regression.
 
-## 2026-08-26 session handover
+## 2026-08-27 dispatch update — execute the linked-Parser L3 edge
 
-The exact signed checkpoint, remaining L3 ordering, adjacent #1719/#4755/#4260
-dependencies, queue state, and resume protocol are recorded in
-`plan/agent-context/ir-migration-handover-2026-08-26.md`. Draft PR #5000 is the
-continuation PR. Its implementation head before the handover-only checkpoint is
-`9f9d978c743b054d05b01702639a914f268e3c6a`; selector activation, runtime A/B,
-and the final R2 replay remain unclaimed. Do not open a replacement #3522 or a
-new issue for this measured pre-claim gap.
+This tracker remains the owner of the linked-Parser pre-claim gap. The next
+checkpoint is production wiring on the existing PR #5000 branch, not a new
+issue and not a dead-export baseline waiver. The planner module is intentionally
+dormant until its exact authority is consumed by the late-overlay route.
+
+Implementation order:
+
+1. Revalidate the current late-overlay route and retain the immutable
+   `planIrFnctorParameterPreselection` result only after the legacy constructor,
+   `input`, `$constructor`, and `$bag` records exist. Keep default IR-first and
+   every non-candidate tuple Unsupported.
+2. Carry the plan copy-on-write through `planIrOverlay`, the implicit-parameter
+   resolver, identity selection, and `IrIntegrationLoweringPlans`; never mutate
+   shared name-keyed signatures, `funcMap`, or cross-source state.
+3. Make the exact `fnctor.get input` field read and the semantic-string to
+   physical-nullable-carrier refinement consume that plan. Revalidate the
+   current handle, function object, type, locator, index, source, owner, and AST
+   site immediately before lowering, parity, and patching.
+4. Join the same owner-qualified effective signature and the two authenticated
+   parser builtin boundary plans to the existing `readNumber` → `stringToNumber`
+   direct-call plan. Any stale or missing fact withdraws the caller to typed
+   Unsupported; no selector bypass or generic dynamic exception is allowed.
+5. Prove the route with the existing focused static/runtime matrix, then run the
+   normal type, layering, fallback, optimization, LOC, function, and hook gates.
+   Preserve the asymmetric `direct=1, IR=1` late-overlay accounting; this slice
+   does not claim compile-once or final R2 completion.
+
+The dead-export check is a stop condition, not a ratchet to widen: the eight
+planner helpers must become survivor-reachable through production consumption.
+The implementation worker owns only the bounded L3 source/tests listed in the
+preceding sections and must leave the adjacent #1719 and #4260 plans untouched.

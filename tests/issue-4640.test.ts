@@ -111,7 +111,7 @@ describe.skipIf(!TEST262)("#4640 statements/expressions smalls round 3 (standalo
     // /#4519 member-guard line.
     pinResidual("language/expressions/call/11.2.3-3_3.js", "callee-ref must throw BEFORE args (#4519 line)");
     pinResidual("language/expressions/call/11.2.3-3_4.js", "runtime IsCallable on a member callee (#4519 line)");
-    pinResidual("language/expressions/call/11.2.3-3_8.js", "runtime IsCallable on `this.bar` (#4519 line)");
+    pinRow("language/expressions/call/11.2.3-3_8.js", "runtime IsCallable on `this.bar` (#4519 line)");
 
     // ── Mixed-return functions. This escalation was filed as #4641 and the
     // RETURN-slot half has since LANDED there: a declaration whose checker

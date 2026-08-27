@@ -704,3 +704,46 @@ export function tryBorrowedPrototypeNullishThisThrow(
       : `Object.prototype.${method} called on null or undefined`;
   return emitBrandThrowWithSentinel(ctx, fctx, `TypeError: ${what}`, expectedType ?? result);
 }
+
+/**
+ * Emit the nullish-receiver TypeError for a detached builtin-prototype call.
+ *
+ * A comma expression such as `(0, Object.prototype.valueOf)()` evaluates the
+ * member value first and then calls it without a receiver.  Rebuilding the
+ * right-hand side as `Object.prototype.valueOf()` loses that distinction and
+ * incorrectly supplies `Object.prototype` as `this`.  At this call boundary
+ * the absent receiver is unconditionally `undefined`, so the same static
+ * table used by the borrowed `.call` gate can answer the methods whose first
+ * step rejects it.  Methods such as `Object.prototype.toString`, which have a
+ * defined nullish-receiver result, deliberately decline.
+ */
+export function tryDetachedBuiltinPrototypeNullishThisThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  detachedMethod: ts.Expression,
+  compileArg: (arg: ts.Expression) => ValType | null,
+  expectedType?: ValType,
+): ValType | undefined {
+  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
+  let base: ts.Expression = detachedMethod;
+  while (ts.isParenthesizedExpression(base)) base = base.expression;
+  if (!ts.isPropertyAccessExpression(base)) return undefined;
+  const method = base.name.text;
+  const ctor = builtinPrototypeReceiver(ctx, base.expression);
+  if (ctor === undefined) return undefined;
+  const result = NULLISH_THIS_THROWS.get(ctor)?.get(method);
+  if (result === undefined) return undefined;
+
+  // ArgumentListEvaluation still precedes the call, even though the receiver
+  // is absent. Preserve every argument's side effects before throwing.
+  for (const arg of expr.arguments) {
+    const t = compileArg(arg);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+  const what =
+    ctor === "Function"
+      ? `Function.prototype.${method} called on non-callable receiver`
+      : `Object.prototype.${method} called on null or undefined`;
+  return emitBrandThrowWithSentinel(ctx, fctx, `TypeError: ${what}`, expectedType ?? result);
+}

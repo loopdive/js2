@@ -90,6 +90,16 @@ export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "
   return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
 }
 
+/**
+ * Build a raw-runtime ToNumber call for an externref already on the stack.
+ * Keeping this lookup in the coercion engine prevents detached runtime
+ * emitters from growing their own `__unbox_number` vocabulary.
+ */
+export function runtimeToNumberInstrs(ctx: CodegenContext): Instr[] | null {
+  const funcIdx = ctx.funcMap.get("__unbox_number");
+  return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
+}
+
 /** True when the active mode represents strings as a native `$AnyString` GC ref. */
 function isNativeStringMode(mode: CoercionMode): boolean {
   return mode === "standalone" || mode === "native-strings-host";

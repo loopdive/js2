@@ -16,7 +16,9 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { compileExpression, ensureLateImport, flushLateImportShifts, skipTransparentExpressions } from "./shared.js";
+import { ensureExternIsUndefinedImport } from "./expressions/late-imports.js";
 
 /**
  * (#3973) Emit a runtime-guarded native-string ELEMENT read (`recv[idx]`) for a
@@ -66,7 +68,27 @@ export function emitGuardedNativeStringElementGet(
   // Receiver ONCE → externref local.
   const recvLocal = allocLocal(fctx, `__strix_recv_${fctx.locals.length}`, { kind: "externref" });
   compileExpression(ctx, fctx, recvExpr, { kind: "externref" });
+  // `__extern_get` represents a missing property with standalone's distinct
+  // undefined singleton.  This helper owns the fallback arm for `any[i]`, so
+  // it must enforce RequireObjectCoercible on the captured receiver before
+  // either string probing or the dynamic index read.
+  const receiverExpr = skipTransparentExpressions(recvExpr);
+  const isUndefinedIdx =
+    ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+  flushLateImportShifts(ctx, fctx);
   fctx.body.push({ op: "local.set", index: recvLocal });
+  const receiverTypeError = (): Instr[] =>
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot access property on null or undefined", {
+      forceInModuleCtor: true,
+    });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: receiverTypeError(), else: [] });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: receiverTypeError(), else: [] });
+  }
 
   // Index ONCE → f64 local (shared by the string arm and the fallback call).
   const idxF64 = allocLocal(fctx, `__strix_idx_${fctx.locals.length}`, { kind: "f64" });

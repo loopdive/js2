@@ -61,7 +61,13 @@ export function resolveStandaloneProtoMemberValueClosure(
   // Tier 1 — own member.
   if (glue.memberCsv.split(",").includes(member)) {
     const kind = glue.memberKind(member);
-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind, { refusalBodyFallback: true });
+    // Annex B §B.2.6 defines toGMTString as the same function object as
+    // toUTCString. Value reads bypass prototype seeding, so canonicalize here
+    // as well as in the seeded-property path.
+    const closureMember = builtinName === "Date" && member === "toGMTString" ? "toUTCString" : member;
+    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
+      refusalBodyFallback: true,
+    });
     return closure ? { closure, kind } : null;
   }
 

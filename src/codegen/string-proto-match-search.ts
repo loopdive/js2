@@ -105,6 +105,7 @@ import {
   RE_FIELD_CLASS_TABLE,
   RE_FIELD_FLAGS,
   RE_FIELD_LASTINDEX,
+  RE_FIELD_LASTINDEX_RAW_PRESENT,
   RE_FIELD_NGROUPS,
   RE_FIELD_NSCRATCH,
   RE_FIELD_PROG,
@@ -380,6 +381,9 @@ function emitMatchResult(
     { op: "local.get", index: regexpLocal },
     { op: "f64.const", value: 0 },
     { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
     { op: "local.get", index: allLocal },
   );
 

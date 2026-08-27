@@ -45,7 +45,13 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { buildArgumentsLengthAbsentTail, buildArgumentsLengthReviveCall } from "./arguments-length-brand.js"; // (#4658)
+import {
+  ARGUMENTS_LENGTH_ABSENT_FIELD,
+  ARGUMENTS_LENGTH_OVERRIDE_FIELD,
+  ARGUMENTS_LENGTH_VALUE_FIELD,
+  buildArgumentsLengthAbsentTail,
+  buildArgumentsLengthReviveCall,
+} from "./arguments-length-brand.js"; // (#4658)
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -153,6 +159,44 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
       { name: "__veclen_newdata", type: { kind: "anyref" } },
     );
 
+    // An arguments object's `length` is an ordinary, configurable data
+    // property (§10.4.4), not the Array-exotic index-domain length carried by
+    // the shared vec prefix.  In particular, propertyHelper writes the string
+    // "unlikelyValue" through `__extern_set` while checking writability.  The
+    // numeric ArraySetLength arm below must not feed that value through
+    // `__unbox_number` and silently leave the old physical length unchanged.
+    // Preserve the value in the nominal arguments subtype and let the dynamic
+    // read arm return it.  The static member-set dispatcher has the same
+    // fields/semantics; this is its runtime-keyed counterpart.
+    const argumentsTypeIdx = ctx.structMap.get("__arguments_vec");
+    const argumentsLengthWrite: Instr[] =
+      argumentsTypeIdx === undefined
+        ? []
+        : [
+            { op: "local.get", index: lAny },
+            { op: "ref.test", typeIdx: argumentsTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: lAny },
+                { op: "ref.cast", typeIdx: argumentsTypeIdx },
+                { op: "local.get", index: 2 },
+                { op: "struct.set", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_LENGTH_VALUE_FIELD },
+                { op: "local.get", index: lAny },
+                { op: "ref.cast", typeIdx: argumentsTypeIdx },
+                { op: "i32.const", value: 1 },
+                { op: "struct.set", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_LENGTH_OVERRIDE_FIELD },
+                { op: "local.get", index: lAny },
+                { op: "ref.cast", typeIdx: argumentsTypeIdx },
+                { op: "i32.const", value: 0 },
+                { op: "struct.set", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_LENGTH_ABSENT_FIELD },
+                ...publishSuccess(),
+                { op: "return" },
+              ],
+            },
+          ];
+
     const growArms: Instr[] = [];
     for (const { typeIdx, arrTypeIdx } of carriers) {
       growArms.push(
@@ -215,6 +259,7 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "empty" },
             then: [
+              ...argumentsLengthWrite,
               // n = ToNumber(ToPrimitive(value)); valid: integral ∧ 0 ≤ n ≤ 2**32-1.
               { op: "local.get", index: 2 },
               ...toNumberInstrs,

@@ -99,6 +99,12 @@ export const ENV_GLOBAL = 2; //      global record wrapping globalThis          
  * with the caller-side codegen constant; this is data, not a function ABI. */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
 
+/** Private shared map carrying lexical bindings created by a global Script
+ * evaluated across the runtime-eval boundary. Unlike the WasmGC cell vector,
+ * this map is extensible from the provider side: a source-level global Script
+ * can introduce a name that was not visible to the AOT compiler. */
+export const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
+
 /**
  * One mutable boxed binding shared by AOT code and the interpreter.
  *

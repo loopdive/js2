@@ -105,10 +105,10 @@ export function reserveClassToPrimitive(ctx: CodegenContext): number {
  * standalone class dispatchers box only primitive method results, and the
  * dynamic-`$Object` path (which DOES do the full walk) is unaffected.
  *
- * No-op when the driver was not reserved or the dispatchers are missing — the
- * placeholder `unreachable` stays (it is unreachable from any live arm, because
- * `__to_primitive` only `call`s the driver when it itself was emitted in the
- * standalone class-capable path).
+ * When no per-struct dispatcher exists, the runtime prototype walk below still
+ * gets a chance to resolve an inherited `toString`/`valueOf`. If that walk is
+ * unavailable too, the driver returns the input unchanged (the historical
+ * fall-through).
  */
 export function fillClassToPrimitive(ctx: CodegenContext): void {
   if (!ctx.classToPrimitiveReserved) return;
@@ -120,13 +120,18 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   const callValueOfIdx = ctx.funcMap.get("__call_valueOf");
   const callToStringIdx = ctx.funcMap.get("__call_toString");
   if (callValueOfIdx === undefined && callToStringIdx === undefined) {
-    // No nominal-struct dispatchers were emitted (no class with valueOf/
-    // toString in this module). Leave the unreachable stub: `__to_primitive`'s
-    // class arm still routes here, but only after the $Object/$Vec misses, and
-    // for a class with no such method the correct result is "unchanged" — so
-    // make the stub return the input unchanged rather than trap.
-    fn.locals = [];
-    fn.body = [{ op: "local.get", index: 0 }];
+    // A prototype override is not represented by a per-struct dispatcher, but
+    // it is still observable through the runtime property chain. Keep the
+    // ordinary-to-primitive walk active in this dispatcher-free module; it
+    // will append its scratch locals when the runtime property helpers exist.
+    // With no helpers, the walk is empty and this remains the old unchanged
+    // fall-through.
+    fn.locals = [
+      { name: "rv", type: { kind: "externref" } },
+      { name: "rs", type: { kind: "externref" } },
+    ];
+    const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn);
+    fn.body = [...runtimeWalk, { op: "local.get", index: 0 }];
     return;
   }
 

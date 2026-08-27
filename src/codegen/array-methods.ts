@@ -28,6 +28,7 @@ import {
   typedArrayPackedSignedness,
 } from "./index.js";
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+import { getFuncSignature } from "./closures/funcref-wrapper-types.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { reserveVecMethodHelper } from "./vec-access-exports.js"; // (#4531) extern-receiver push/pop dual-lane
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
@@ -104,6 +105,7 @@ const {
   isLocalizedJoin,
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { emitRuntimeEvalCarrierUnwrapAny } from "./runtime-eval-callable.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -308,6 +310,17 @@ function emitCallbackTypeCheck(
   }
   // Known non-callable literal → compile arg for side effects, then throw
   const cbArg = callExpr.arguments[0]!;
+  // ArgumentListEvaluation reads the callback before Array.prototype.forEach
+  // (or its siblings) can perform IsCallable. A genuinely unresolvable bare
+  // identifier therefore throws ReferenceError, and must not fall through to
+  // the generic `__call_*` callback bridge after identifier lowering has
+  // already emitted that throw. Besides choosing the wrong error, that stale
+  // bridge introduces an unsatisfiable host import in standalone output.
+  // Runtime-eval globals remain dynamic and keep the ordinary callback path.
+  if (ts.isIdentifier(cbArg) && ctx.oracle.isUnresolvableIdentifier(cbArg) && !ctx.runtimeEvalGlobalFunctionBindings) {
+    compileExpression(ctx, fctx, cbArg);
+    return true;
+  }
   if (isKnownNonCallable(ctx, cbArg)) {
     const cbType = compileExpression(ctx, fctx, cbArg);
     if (cbType) fctx.body.push({ op: "drop" });
@@ -5816,20 +5829,29 @@ function resolveDynamicCallbackClosure(
   // mirrors `compileArrowAsClosure`'s `computeClosureWrapperSig` lowering so the
   // key MATCHES the arrow value-site's — they share the wrapper struct + func
   // type, which is exactly what makes the runtime `ref.cast` + `call_ref` valid.
+  const loweredSig =
+    ts.isIdentifier(cbArg) && ctx.funcMap.get(cbArg.text) !== undefined
+      ? getFuncSignature(ctx, ctx.funcMap.get(cbArg.text)!)
+      : undefined;
   const cbType = ctx.checker.getTypeAtLocation(cbArg);
   const sigs = cbType.getCallSignatures();
-  if (sigs.length !== 1) return undefined;
-  const sig = sigs[0]!;
-  const paramValTypes: ValType[] = [];
-  for (const p of sig.parameters) {
-    const loc = p.valueDeclaration ?? p.declarations?.[0] ?? cbArg;
-    paramValTypes.push(resolveWasmType(ctx, ctx.checker.getTypeOfSymbolAtLocation(p, loc)));
-  }
-  const retTsType = ctx.checker.getReturnTypeOfSignature(sig);
-  const results: ValType[] =
-    isVoidType(retTsType) || (retTsType.flags & ts.TypeFlags.Never) !== 0
-      ? []
-      : [resolveWasmTypeForClosureReturn(ctx, retTsType)];
+  if (loweredSig === undefined && sigs.length !== 1) return undefined;
+  const paramValTypes: ValType[] = loweredSig
+    ? loweredSig.params.map((param) => ({ ...param }))
+    : sigs[0]!.parameters.map((p) =>
+        resolveWasmType(
+          ctx,
+          ctx.checker.getTypeOfSymbolAtLocation(p, p.valueDeclaration ?? p.declarations?.[0] ?? cbArg),
+        ),
+      );
+  const results: ValType[] = loweredSig
+    ? loweredSig.results.map((result) => ({ ...result }))
+    : (() => {
+        const retTsType = ctx.checker.getReturnTypeOfSignature(sigs[0]!);
+        return isVoidType(retTsType) || (retTsType.flags & ts.TypeFlags.Never) !== 0
+          ? []
+          : [resolveWasmTypeForClosureReturn(ctx, retTsType)];
+      })();
   const wrapper = getOrCreateFuncRefWrapperTypes(ctx, paramValTypes, results);
   if (!wrapper) return undefined;
   const selfStructTypeIdx = getClosureFuncSelfTypeIdx(ctx, wrapper.liftedFuncTypeIdx) ?? wrapper.structTypeIdx;
@@ -5898,6 +5920,7 @@ function setupArrayCallback(
       // `call_ref` self argument, whose param type is `(ref root)` — non-null,
       // matching the arrow branch's `(ref …)` `closureTmp`.
       fctx.body.push({ op: "any.convert_extern" });
+      emitRuntimeEvalCarrierUnwrapAny(ctx, fctx);
       emitGuardedRefCast(fctx, dyn.selfStructTypeIdx);
       fctx.body.push({ op: "ref.as_non_null" });
       closureTmp = allocLocal(fctx, `__arr_${tag}_dyncb_${fctx.locals.length}`, {
@@ -6655,7 +6678,6 @@ function compileArrayFilter(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", undefined, 1);
   if (!setup) return null;
 
-  const resData = allocLocal(fctx, `__arr_flt_rd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const resLen = allocLocal(fctx, `__arr_flt_rl_${fctx.locals.length}`, { kind: "i32" });
   const elemTmp = allocLocal(fctx, `__arr_flt_el_${fctx.locals.length}`, elemType);
 
@@ -6664,10 +6686,23 @@ function compileArrayFilter(
   // §15.4.4.20 step 3: `len` is captured ONCE — see array-filter-spec-access.ts
   // for why the overlay route walks the LOGICAL length and the dense route the
   // #3215 backing-clamped one. Result capacity = one push per visited index.
-  const overlay = overlayFilterAccess(ctx, fctx, loop, elemType, elemTmp);
+  const rawOverlayElemLocal =
+    elemType.kind === "f64" && ctx.protoIndexDirty
+      ? allocLocal(fctx, `__arr_flt_raw_${fctx.locals.length}`, { kind: "externref" })
+      : undefined;
+  const overlay = overlayFilterAccess(ctx, fctx, loop, elemType, elemTmp, rawOverlayElemLocal);
+  const resultVecTypeIdx =
+    overlay?.rawElemLocal === undefined ? vecTypeIdx : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  const resultArrTypeIdx =
+    overlay?.rawElemLocal === undefined ? arrTypeIdx : getArrTypeIdxFromVec(ctx, resultVecTypeIdx);
+  const resultElemLocal = overlay?.rawElemLocal ?? elemTmp;
+  const resData = allocLocal(fctx, `__arr_flt_rd_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: resultArrTypeIdx,
+  });
   const boundTmp = overlay ? loop.logicalLenTmp : loop.lenTmp;
   fctx.body.push({ op: "local.get", index: boundTmp });
-  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "array.new_default", typeIdx: resultArrTypeIdx });
   fctx.body.push({ op: "local.set", index: resData });
 
   fctx.body.push({ op: "i32.const", value: 0 });
@@ -6700,8 +6735,8 @@ function compileArrayFilter(
       then: [
         { op: "local.get", index: resData },
         { op: "local.get", index: resLen },
-        { op: "local.get", index: elemTmp },
-        { op: "array.set", typeIdx: arrTypeIdx },
+        { op: "local.get", index: resultElemLocal },
+        { op: "array.set", typeIdx: resultArrTypeIdx },
         { op: "local.get", index: resLen },
         { op: "i32.const", value: 1 },
         { op: "i32.add" },
@@ -6717,8 +6752,8 @@ function compileArrayFilter(
   fctx.body.push({ op: "local.get", index: resLen });
   fctx.body.push({ op: "local.get", index: resData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 /**

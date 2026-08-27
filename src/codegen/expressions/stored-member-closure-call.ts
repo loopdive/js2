@@ -82,6 +82,7 @@ import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
 
 /**
  * `fillApplyClosure` dispatches arities 0..8 and answers the undefined sentinel
@@ -327,6 +328,22 @@ export function tryEmitStoredMemberClosureCall(
   // and only block #2 threw.
   if (!sourceHasMethodOverride(ctx, expr, memberName)) return undefined;
 
+  // The ES5 generic-concat rows install the actual intrinsic as a stored
+  // value (`x.concat = Array.prototype.concat`) and then invoke it through
+  // this dynamic shape. Keep that coherent two-row cluster on the same
+  // host-free §23.1.3.1 lowering as a direct `x.concat(...)` call. The generic
+  // apply bridge intentionally remains the fallback for arbitrary overrides;
+  // this narrow RHS check avoids turning a user-defined `concat` into the
+  // builtin by accident.
+  if (
+    memberName === "concat" &&
+    ts.isPropertyAccessExpression(callee) &&
+    sourceInstallsArrayConcat(ctx, recvExpr, memberName)
+  ) {
+    const nativeResult = compileArrayConcatNativeSpec(ctx, fctx, callee, expr);
+    if (nativeResult !== undefined && nativeResult !== null) return nativeResult;
+  }
+
   // Register the bridge + the arg-vector builders BEFORE compiling anything, so
   // any import they pull in shifts function indices while the body is still
   // empty (#1839/#117/#1886 late-registration class).
@@ -422,6 +439,44 @@ export function tryEmitStoredMemberClosureCall(
     else: applyCall,
   });
   return { kind: "externref" };
+}
+
+function sourceInstallsArrayConcat(ctx: CodegenContext, receiver: ts.Expression, memberName: string): boolean {
+  if (!ts.isIdentifier(receiver) || memberName !== "concat") return false;
+  const sf = receiver.getSourceFile();
+  if (!sf) return false;
+  // The assembled Test262 source is intentionally preserved byte-for-byte;
+  // this lexical prefilter also keeps the AST walk out of the common path.
+  const assignment = new RegExp(
+    `\\b${receiver.text}\\s*\\.\\s*concat\\s*=\\s*Array\\s*\\.\\s*prototype\\s*\\.\\s*concat\\b`,
+  );
+  if (assignment.test(sf.text)) return true;
+  let found = false;
+  const isNativeConcat = (node: ts.Expression): boolean =>
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "concat" &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "prototype" &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === "Array";
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      ts.isIdentifier(node.left.expression) &&
+      node.left.expression.text === receiver.text &&
+      node.left.name.text === memberName &&
+      isNativeConcat(node.right)
+    ) {
+      found = true;
+      return;
+    }
+    for (const child of node.getChildren(sf)) visit(child);
+  };
+  visit(sf);
+  return found;
 }
 
 /**

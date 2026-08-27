@@ -29,6 +29,10 @@ loc-budget-allow:
   # `__extern_method_call` arm). Five instructions each; every line of the
   # logic itself is in the subsystem module above.
   - src/codegen/expressions/call-receiver-method.ts
+  # The reflective Function path opts into explicit `this` for a constant
+  # reconstructed body; the two-parameter option is local to this synthesis
+  # helper and cannot be moved to the provider lane without losing AOT bodies.
+  - src/codegen/expressions/eval-inline.ts
 func-budget-allow:
   # Same +4 lines, same rationale — the bail-out fork lives inside
   # `compileBinaryExpression` and the continuation needs its two operand
@@ -40,6 +44,15 @@ func-budget-allow:
   # the function without also hoisting the receiver compile — which is the
   # dispatcher's whole job. The logic is in `closed-method-dispatch.ts`.
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  # The carrier predicate now includes reserved standalone Function layouts;
+  # the shared helper computes both slotted and slotless carrier partitions.
+  - src/codegen/closure-props.ts::fillClosurePropHelpers
+oracle-ratchet-allow:
+  # The two syntactic global-Function checks reuse the existing
+  # `isGlobalFunctionIdentifier` helper, whose binding check intentionally
+  # consumes the raw checker. This lane keeps the recognizer restricted to
+  # global `Function` without changing the shared helper's oracle contract.
+  - src/codegen/expressions/calls.ts
 created: 2026-08-23
 updated: 2026-08-23
 priority: high
@@ -62,29 +75,30 @@ guessed. Read those records before touching anything: `#4647`'s Root-cause
 table (representation-split matrix), and `#4643`'s flip-list section (the
 bag/intrinsic finding).
 
-## A. this-binding writes to opaque compiled receivers — 6 rows (#4647's decline)
+## A. this-binding writes to opaque compiled receivers — 4 fixed, 2 residual
 
 ```
-built-ins/Function/prototype/call/S15.3.4.4_A5_T8.js   obj.touched must be true
-built-ins/Function/prototype/call/S15.3.4.4_A6_T6.js   obj["shifted"] must be "42"
-built-ins/Function/prototype/apply/S15.3.4.3_A5_T8.js  obj.touched must be true
-built-ins/Function/prototype/apply/S15.3.4.3_A7_T6.js  obj["shifted"] must be "42"
+built-ins/Function/prototype/call/S15.3.4.4_A5_T8.js   FIXED — obj.touched is true
+built-ins/Function/prototype/call/S15.3.4.4_A6_T6.js   FIXED — obj["shifted"] is "42"
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T8.js  FIXED — obj.touched is true
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T6.js  FIXED — obj["shifted"] is "42"
 built-ins/Function/prototype/call/S15.3.4.4_A7_T6.js   helper crash "Cannot access property on null or undefined at 320:18"
 built-ins/Function/prototype/apply/S15.3.4.3_A8_T6.js  same crash
 ```
 
 #4647 fixed the case where the receiver is a **membrane-wrapped** compiled
-object. What remains, per its measured table: a receiver whose representation
-is a **module-private nominal struct** (a shape-inferred object literal
-`{pre:44}` lowering to `(struct (field f64))`, or a closure struct) is opaque to
-the provider's dynamic property runtime **in both directions** — the write does
-not even stick inside the provider. Its stated verdict: this needs a **reverse
-membrane** or an **allocation-time escape rule**, not a patch.
+object. This lane now fixes the four constant-body rows: standalone
+`Function(...).call/apply` is recognized at the call site, routed through the
+canonical `__apply_closure` bridge with its explicit receiver, and its foreign
+body's reads/writes use the dynamic externref path. Reserved fnctor layouts are
+also included in the closure-property carrier registry so expandos created by
+the body remain visible on the compiled Function receiver.
 
-That is your design decision. Both options are real; pick one on measurement
-and record why. The two `A7_T6`/`A8_T6` crashes are the same family failing
-harder — treat trap-first (absent-not-wrong) even if the correct answer is out
-of scope.
+The two `A7_T6`/`A8_T6` crashes remain trap-first (absent-not-wrong): their
+receiver is the constructor's opaque `this` and the foreign body cannot obtain
+a usable dynamic member lane. Closing those needs the reverse membrane or an
+allocation-time escape rule described under Root cause → A; this change does
+not broaden into either design.
 
 ## B. `bind` — 3 rows (#4647's correction: bind is NOT unimplemented)
 
@@ -322,35 +336,50 @@ a value; a builtin carrier with a real `[[Construct]]`), so B is **declined as a
 dependent of C**, not as independent work. Sequencing it before C would build
 the carrier twice.
 
-### A — reverse membrane (declined, per #4647's measured verdict)
+### A — four explicit-this rows fixed; two opaque-constructor rows remain
 
-#4647's representation-split table is the evidence and this lane adds nothing to
-it: a receiver whose runtime representation is a **module-private nominal
-struct** (a shape-inferred object literal lowering to `(struct (field f64))`, or
-a closure struct) is opaque to the provider's dynamic property runtime in BOTH
-directions — the write does not even stick inside the provider. Its stated
-verdict, which this lane accepts: closing it needs a **reverse membrane** (the
-caller hands the provider get/set callbacks bound to the object; the provider
-can already call compiled closures via `__apply_closure`) or an
-**allocation-time escape rule** (any object that can reach a runtime-eval
-boundary is allocated in the canonical `$Object` representation —
-identity-preserving, where converting at the crossing is not).
+#4647's representation-split table still explains the two remaining crashes:
+a receiver whose runtime representation is a **module-private nominal struct**
+(a shape-inferred object literal lowering to `(struct (field f64))`, or a
+closure struct) is opaque to the provider's dynamic property runtime in BOTH
+directions. The body cannot obtain a usable receiver lane, so the `A7_T6` and
+`A8_T6` operations remain absent-not-wrong rather than being silently treated
+as successful writes.
 
-Recording the choice this lane would make, since the issue asks for one: the
-**allocation-time escape rule**, because the reverse membrane does not obviously
-reach the two `A7_T6`/`A8_T6` crashes — those are the same family failing
-harder, and a membrane that forwards get/set still has nothing to forward when
-the callee never gets a usable receiver. The escape rule is also the only one of
-the two that preserves identity by construction rather than by agreement between
-two emitters — the property #4442 made a rule of after `%Function%` was built
-twice and shipped neither. It is a whole-issue slice and is **not** started
-here.
+The four constant-body rows have a narrower mechanism and are fixed here.
+`standaloneDynamicFunctionCtorArgs` recognizes only global `Function(...)` and
+`new Function(...)` syntax in standalone code. The reflective call arm then
+uses `tryStaticNewFunction(..., allowExplicitThis = true)` when all constructor
+arguments are constant, compiles the foreign body in the caller module, and
+routes `.call`/`.apply` through `__apply_closure` with the explicit receiver and
+materialized argument vector. Foreign property reads and writes use
+`__extern_get`/`__extern_set`, and reserved fnctor layouts are registered as
+slotless closure-property carriers so the expando is visible after return.
+
+Closing the two remaining rows needs the reverse membrane (the caller hands the
+provider get/set callbacks bound to the object) or an allocation-time escape
+rule (objects that can reach runtime eval are allocated in canonical `$Object`
+representation). This change deliberately does not broaden into either design.
 
 ## Fix
 
-Three changes, each standalone/WASI-gated so the JS-host lane is byte-identical
+Six changes, each standalone/WASI-gated so the JS-host lane is byte-identical
 (with a host the engine throws on its own, and the host bridge owns the
 ordering).
+
+**A — `src/codegen/expressions/calls.ts`, `eval-inline.ts`,
+`property-access.ts`, `expressions/assignment.ts`, and `closure-props.ts`.**
+Standalone `Function(...)` and `new Function(...)` constructor syntax is
+recognized only for the reflective `.call`/`.apply` lane. Constant constructor
+arguments use the existing AOT body synthesis with an explicit-this opt-in;
+non-constant bodies retain the provider path. The reflective arm materializes
+the actual `call` arguments or `apply` vector and invokes `__apply_closure` with
+the supplied receiver. Foreign eval property reads/writes bypass checker type
+queries and lower through the dynamic externref get/set helpers. Fnctor layouts
+are added to the slotless closure-property carrier registry, making expandos
+written on a compiled Function receiver observable after the call returns.
+This flips A5/A6 for both call and apply; A7/A8 remain the documented opaque-
+constructor trap residuals.
 
 **D1 — `src/codegen/equality-void-operand.ts` (+ 4 lines in
 `binary-ops.ts`).** The module gains `provablyNonNullish`, which looks THROUGH a
@@ -441,7 +470,8 @@ Two things worth stating rather than assuming:
   (`standalone Reflect.construct cannot preserve an arbitrary distinct
   NewTarget…`, #3371), not infrastructure.
 
-**Pins — `tests/issue-4656.test.ts`, 27 tests, BOTH eval tiers:**
+**Historical D1–D3 pins — `tests/issue-4656.test.ts`, 27 tests, BOTH eval tiers
+(before the A regression pins were added):**
 
 | run | result |
 | --- | --- |
@@ -458,6 +488,22 @@ F2 pins, the F3 pin and the two rows demoted below. The fourth F1 pin
 pinned separately for exactly that: on base `===` and `!==` both answered
 `false`, and a fix that repaired one and broke the other would otherwise read
 as green.
+
+**Current A-focused standalone census (2026-08-25):** the authoritative
+131-row nonpass list compared the aggregate base at **81/131** with this branch
+at **85/131**, for four gains and zero losses. The exact flips are:
+
+```
++ built-ins/Function/prototype/apply/S15.3.4.3_A5_T8.js
++ built-ins/Function/prototype/apply/S15.3.4.3_A7_T6.js
++ built-ins/Function/prototype/call/S15.3.4.4_A5_T8.js
++ built-ins/Function/prototype/call/S15.3.4.4_A6_T6.js
+```
+
+The focused issue file now contains 36 tests. Both quickjs and the
+`JS2WASM_EVAL_ENGINE=interpreter` refusal tier passed all 36. The four new tests
+execute the writes and reads (including the `arguments` vector), rather than
+merely checking that compilation succeeds.
 
 ### Three corrections this lane owes its own first draft
 
@@ -480,7 +526,7 @@ as green.
 
 ## Residuals, with owners
 
-20 of the issue's 23 rows remain. All are pinned `it.fails` in
+16 of the issue's 23 rows remain. All are pinned `it.fails` in
 `tests/issue-4656.test.ts` where a pin is meaningful, and each is routed to the
 family that owns the substrate — not left unassigned.
 
@@ -488,7 +534,7 @@ family that owns the substrate — not left unassigned.
 | --- | --- | --- |
 | a builtin prototype's MEMBER as a value, reached by an opaque KEY, an opaque RECEIVER, or a dynamically-typed receiver — `%Function.prototype%.{apply,call}` and `%Object.prototype%.toString` alike | C's 5, plus 2 demoted controls | **#4480/#4481/#4483 — the builtin-prototype surface** (dev-4515's C1). Narrowed above: the prototype LINK works; the members are not values. |
 | `bind` of a builtin constructor · curried `[[Construct]]` · `%Function.prototype.bind%` as a value | B's 3 | **dependent on the row above.** `construct-bound.ts` (#4196) already does §10.4.1.2 for user targets; only the builtin-carrier arms are missing. Sequencing B first would build the carrier twice. |
-| this-binding writes to a receiver whose runtime representation is a module-private nominal struct | A's 6 | **#4647's recorded decline**, unchanged. Needs a reverse membrane or an allocation-time escape rule; this lane's recommendation (allocation-time) and its reasoning are under *Root cause → A*. |
+| this-binding writes to a receiver whose runtime representation is a module-private nominal struct | A7/A8 (2) | **#4647's recorded decline**, unchanged. Needs a reverse membrane or an allocation-time escape rule; this lane's residual reasoning is under *Root cause → A*. |
 | the `this` value of a plain function call — global object in sloppy mode, `undefined` in strict | D4's 5 | **#4480** (a real global object). `11.2.3-3_8` needs it *plus* D3, which is now landed. |
 | a function DECLARATION must override a same-named PARAMETER (§10.2.11 order) | 1, inside `S10.2.1_A4_T1` | **unowned — file it.** Isolated here with two controls that pass: the same collision against a `var` DOES override, and a non-colliding inner declaration hoists, so the hoist itself is sound; only the parameter case loses. |
 
@@ -501,7 +547,7 @@ have been re-derived wrongly by the next lane.
 
 ## Status — PARTIAL, deliberately
 
-**3 of 23 rows land here; the other 20 are routed above, none dropped.** The
+**7 of 23 rows land here; the other 16 are routed above, none dropped.** The
 issue stays `in-progress` rather than `done` so the remainder does not become
 invisible — but note that every remaining row's substrate belongs to a
 DIFFERENT issue (#4480/#4481/#4483, #4647, #4196) except the one §10.2.11

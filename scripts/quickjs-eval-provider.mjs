@@ -191,6 +191,7 @@ const RUNTIME_EVAL_DELETABLE_BINDING_MARKER = "\0js2wasm:deletable-eval-binding"
  * src/codegen/expressions/runtime-eval-provider.ts and src/interp/types.ts.
  */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+export const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
 
 /**
  * The remaining typed refusals. Slice 2 retired the slice-1 value-bridge
@@ -1040,7 +1041,8 @@ function qjsWrapOutbound(c: number, value: any): number {
   // The shared closure classifier includes the cross-module AOT callable
   // carrier, so a compiled function pushed through the seam answers "function"
   // here and gets the class whose \`call\` routes back into compiled code.
-  const callable: number = typeof value === "function" ? 1 : 0;
+  const callable: number =
+    typeof value === "function" || __typeof_function(value) !== 0 || __runtime_eval_is_aot_callable(value) ? 1 : 0;
   return qjs_new_wrapper(c, id, callable);
 }
 
@@ -2488,6 +2490,67 @@ function qjsCollectGlobalLexicalNames(globalObject: any, into: string[]): void {
   }
 }
 
+/** Names of lexical bindings introduced by the global-Script bridge. The
+ * QuickJS realm owns their actual bindings; this sidecar is the AOT-visible
+ * name/value view used by compiled identifier reads and later collision checks.
+ */
+function qjsCollectGlobalDynamicLexicalNames(globalObject: any, into: string[]): void {
+  if (globalObject === undefined || globalObject === null) return;
+  const map: any = globalObject[${j(RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY)}];
+  if (map === undefined || map === null) return;
+  const names: any = Object.getOwnPropertyNames(map);
+  for (let i = 0; i < (names.length as number); i += 1) {
+    const name: any = names[i];
+    if (typeof name === "string" && !qjsNameListHas(into, name as string)) into.push(name as string);
+  }
+}
+
+/** Collect conservative identifier candidates for the lexical-name probe.
+ * False positives are harmless: each candidate is tested against QuickJS's
+ * parser, so strings/comments and nested declarations never become bindings.
+ */
+function qjsCollectSourceIdentifierTokens(source: string, into: string[]): void {
+  let i = 0;
+  while (i < source.length) {
+    const first: number = source.charCodeAt(i) as number;
+    const digit: boolean = first >= 48 && first <= 57;
+    if (digit || !qjsIsIdentChar(first)) {
+      i += 1;
+      continue;
+    }
+    let end = i + 1;
+    while (end < source.length && qjsIsIdentChar(source.charCodeAt(end) as number)) end += 1;
+    const name: string = source.slice(i, end);
+    if (qjsIsSafeConstName(name) && !qjsNameListHas(into, name)) into.push(name);
+    i = end;
+  }
+}
+
+/** Probe top-level lexical declarations without executing user code. A
+ * top-level \`var name\` prologue conflicts with \`let\`/\`const\`/\`class name\`;
+ * declarations nested in a block and mere textual mentions do not. */
+function qjsProbeGlobalLexicalNames(source: string, out: string[]): boolean {
+  if (qjsRuntimeHandle === 0) return false;
+  const baseline: number = qjs_new_context(qjsRuntimeHandle);
+  if (baseline === 0) return false;
+  const parsed: number = qjsSentinelProbe(baseline, "", source);
+  qjs_free_context(baseline);
+  if (parsed !== 0) return false;
+
+  const candidates: string[] = [];
+  qjsCollectSourceIdentifierTokens(source, candidates);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const name: string = candidates[i] as string;
+    const probe: number = qjs_new_context(qjsRuntimeHandle);
+    if (probe === 0) return false;
+    const verdict: number = qjsSentinelProbe(probe, "var " + name + ";\\n", source);
+    qjs_free_context(probe);
+    if (verdict === 1) out.push(name);
+    else if (verdict === 2) return false;
+  }
+  return true;
+}
+
 /**
  * Compute the EDI declared-names plan for \`source\` into \`plan\`.
  * Returns FALSE when EDI must throw a SyntaxError (\`qjsEdiRedeclaration\` names
@@ -2544,6 +2607,7 @@ function qjsPlanEdiNames(source: string, globalObject: any, plan: string[]): boo
 
   const lexical: string[] = [];
   qjsCollectGlobalLexicalNames(globalObject, lexical);
+  qjsCollectGlobalDynamicLexicalNames(globalObject, lexical);
   const collide: string[] = [];
   for (let i = 0; i < unseeded.length; i += 1) {
     const name: string = unseeded[i] as string;
@@ -2590,6 +2654,34 @@ function qjsPlanEdiNames(source: string, globalObject: any, plan: string[]): boo
   return true;
 }
 
+/** Plan the persistent lexical side of a global Script before evaluation.
+ * GlobalDeclarationInstantiation rejects an existing lexical binding and any
+ * restricted global property, while a configurable object property may be
+ * shadowed by the new lexical binding. */
+function qjsPlanGlobalScriptLexicals(source: string, globalObject: any, lexicalNames: string[]): boolean {
+  qjsEdiRedeclaration = "";
+  if (!qjsProbeGlobalLexicalNames(source, lexicalNames)) return true;
+  const existing: string[] = [];
+  qjsCollectGlobalLexicalNames(globalObject, existing);
+  qjsCollectGlobalDynamicLexicalNames(globalObject, existing);
+  for (let i = 0; i < lexicalNames.length; i += 1) {
+    const name: string = lexicalNames[i] as string;
+    if (qjsNameListHas(existing, name)) {
+      qjsEdiRedeclaration = name;
+      return false;
+    }
+    const descriptor: any =
+      globalObject === undefined || globalObject === null
+        ? undefined
+        : Object.getOwnPropertyDescriptor(globalObject, name);
+    if (descriptor !== undefined && descriptor !== null && descriptor.configurable === false) {
+      qjsEdiRedeclaration = name;
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * EDI's creation step at global scope: \`CreateGlobalVarBinding\` /
  * \`CreateGlobalFunctionBinding(F, undefined, true)\`.
@@ -2607,6 +2699,43 @@ function qjsCreateEdiBindings(globalObject: any, plan: string[]): void {
     qjsEdiNames.push(name);
     if (qjsHasOwnName(globalObject, name)) continue;
     globalObject[name] = __runtime_eval_wrap_result(undefined);
+  }
+}
+
+/** Read a top-level lexical binding from the persistent QuickJS realm. */
+function qjsReadGlobalLexicalValue(c: number, name: string): number {
+  if (!qjsIsSafeConstName(name)) return 0;
+  return qjsEvalInternal(c, "typeof " + name + " === 'undefined' ? undefined : " + name);
+}
+
+/** Publish the current values of global-Script lexical bindings into the
+ * caller-owned sidecar. The sidecar is deliberately private/non-enumerable so
+ * ordinary global mirroring cannot mistake it for a user global property. */
+function qjsPersistGlobalLexicals(c: number, globalObject: any, names: string[]): void {
+  if (globalObject === undefined || globalObject === null || names.length === 0) return;
+  let map: any = globalObject[${j(RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY)}];
+  if (map === undefined || map === null) {
+    map = {};
+    Object.defineProperty(globalObject, ${j(RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY)}, {
+      value: map,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+  for (let i = 0; i < names.length; i += 1) {
+    const name: string = names[i] as string;
+    const handle: number = qjsReadGlobalLexicalValue(c, name);
+    if (handle === 0) {
+      map[name] = __runtime_eval_wrap_result(undefined);
+      continue;
+    }
+    qjsPullRefusal = "";
+    const value: any = qjsToGc(c, handle);
+    if (qjsPullRefusal === "") map[name] = __runtime_eval_wrap_result(value);
+    else map[name] = __runtime_eval_wrap_result(undefined);
+    qjsPullRefusal = "";
+    qjs_free_value(c, handle);
   }
 }
 
@@ -2699,6 +2828,80 @@ function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   return runtimeEvalResult(true, value);
 }
 
+/** Evaluate source as a real global Script. Unlike ordinary eval, top-level
+ * lexical declarations remain installed in the QuickJS realm and are exposed
+ * through the caller-side dynamic lexical sidecar for compiled reads. */
+function qjsEvaluateGlobalScript(source: string, globalObject: any): any {
+  const c: number = qjsEnsureContext();
+  if (c === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+  qjsPushGlobals(c, globalObject);
+  qjsPushGlobalLexicalCells(c, globalObject);
+  qjsEdiNames = [];
+  const lexicalNames: string[] = [];
+  if (!qjsPlanGlobalScriptLexicals(source, globalObject, lexicalNames)) {
+    qjsPullGlobalLexicalCells(c, globalObject);
+    qjsPullGlobals(c, globalObject);
+    return runtimeEvalResult(false, new SyntaxError("redeclaration of '" + qjsEdiRedeclaration + "'"));
+  }
+  const persistedLexicalNames: string[] = [];
+  qjsCollectGlobalDynamicLexicalNames(globalObject, persistedLexicalNames);
+  for (let i = 0; i < lexicalNames.length; i += 1) {
+    const name: string = lexicalNames[i] as string;
+    if (!qjsNameListHas(persistedLexicalNames, name)) persistedLexicalNames.push(name);
+  }
+  const plan: string[] = [];
+  if (!qjsPlanEdiNames(source, globalObject, plan)) {
+    qjsPullGlobalLexicalCells(c, globalObject);
+    qjsPullGlobals(c, globalObject);
+    return runtimeEvalResult(false, new SyntaxError("redeclaration of '" + qjsEdiRedeclaration + "'"));
+  }
+  qjsCreateEdiBindings(globalObject, plan);
+  const realmNamesBefore: string[] = [];
+  qjsRealmOwnNames(c, realmNamesBefore);
+  if (qjsEvalDepth === 0) qjsSyncBoxes(c, true);
+  qjsEvalDepth = qjsEvalDepth + 1;
+  const buf: number = qjsPushUtf8(source);
+  let handle: number = 0;
+  if (buf !== 0) {
+    const byteLen: number = qjsUtf8Len;
+    handle = qjs_eval(c, buf, byteLen);
+    qjs_free_raw(buf);
+  }
+  qjsEvalDepth = qjsEvalDepth - 1;
+  if (handle === 0) {
+    if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
+    qjsPersistGlobalLexicals(c, globalObject, persistedLexicalNames);
+    qjsMirrorNewRealmGlobals(c, globalObject, realmNamesBefore);
+    qjsPullGlobalLexicalCells(c, globalObject);
+    qjsPullGlobals(c, globalObject);
+    return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+  }
+  if (qjs_is_exception(handle) !== 0) {
+    qjs_free_value(c, handle);
+    const thrown: any = qjsThrewResult(c);
+    if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
+    qjsPersistGlobalLexicals(c, globalObject, persistedLexicalNames);
+    qjsMirrorNewRealmGlobals(c, globalObject, realmNamesBefore);
+    qjsPullGlobalLexicalCells(c, globalObject);
+    qjsPullGlobals(c, globalObject);
+    return thrown;
+  }
+  qjsPullRefusal = "";
+  const value: any = qjsToGc(c, handle);
+  qjs_free_value(c, handle);
+  if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
+  qjsPersistGlobalLexicals(c, globalObject, persistedLexicalNames);
+  qjsMirrorNewRealmGlobals(c, globalObject, realmNamesBefore);
+  qjsPullGlobalLexicalCells(c, globalObject);
+  qjsPullGlobals(c, globalObject);
+  if (qjsPullRefusal !== "") {
+    const refusal: string = qjsPullRefusal;
+    qjsPullRefusal = "";
+    return runtimeEvalResult(false, new TypeError(refusal));
+  }
+  return runtimeEvalResult(true, value);
+}
+
 // Intrinsic materialization follows the REFUSAL provider's precedent exactly
 // (scripts/runtime-eval-provider.mjs): reading first-class \`eval\`/\`Function\`
 // is not itself dynamic code execution, and the markers must be MEMOIZED so
@@ -2762,6 +2965,11 @@ export function __runtime_indirect_eval(source: any, globalObject: any): any {
   // Indirect eval's VariableEnvironment IS the global environment record, so
   // EvalDeclarationInstantiation runs against the caller's realm.
   return qjsEvaluate(source as string, globalObject, true);
+}
+
+export function __runtime_script_eval(source: any, globalObject: any): any {
+  if (typeof source !== "string") return runtimeEvalResult(true, source);
+  return qjsEvaluateGlobalScript(source as string, globalObject);
 }
 
 /** §20.2.1.1.1 CreateDynamicFunction's source form. QuickJS performs the early
@@ -4192,6 +4400,7 @@ export function instantiateQuickjsEvalNamespace(bundle) {
     __runtime_new_function: adapter.exports.__runtime_new_function,
     __runtime_indirect_eval: adapter.exports.__runtime_indirect_eval,
     __runtime_direct_eval: adapter.exports.__runtime_direct_eval,
+    __runtime_script_eval: adapter.exports.__runtime_script_eval,
     __runtime_apply_interpreted: adapter.exports.__runtime_apply_interpreted,
   };
 }

@@ -8,7 +8,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { allocLocal, getLocalType } from "../context/locals.js";
+import { allocLocal, ensureForInIdentifierLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
 import {
@@ -91,6 +91,7 @@ import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
+import { isOpenForInReceiver } from "../for-in-open-object.js";
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
  * for-of assignment head. The declaration/destructuring paths intentionally
@@ -3736,8 +3737,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
           // post-loop read all resolve to the SAME slot. Allocating a fresh
           // local here shadowed the hoisted one (writes never reached the body's
           // view of `x`).
-          const existingLocal = fctx.localMap.get(varName);
-          keyLocal = existingLocal !== undefined ? existingLocal : allocLocal(fctx, varName, { kind: "externref" });
+          keyLocal = ensureForInIdentifierLocal(fctx, varName);
         } else {
           // let/const head: fresh block-scoped local (Slice B refines this into
           // a per-iteration ref cell + TDZ flag).
@@ -3880,10 +3880,9 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) &&
     (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first")
   ) {
-    // No-JS-host target: the `__for_in_*` host imports are intentionally not
-    // registered (#2572, declarations.ts). For a receiver that lowers to the
-    // dynamic `$Object` representation (an `any`/index-signature object whose
-    // keys are determined at runtime), route through the native object runtime:
+    // No-JS-host target: the `__for_in_*` host imports are intentionally not registered (#2572, declarations.ts).
+    // A receiver that lowers to the dynamic `$Object` representation (an `any`/index-signature object whose keys are
+    // determined at runtime), route through the native object runtime:
     // `__object_keys` returns a `$ObjVec` of the live + enumerable own keys in
     // OrdinaryOwnPropertyKeys order (#1837); `__extern_length`/`__extern_get_idx`
     // /`__extern_has` are `$ObjVec`-aware native helpers with signatures 1:1
@@ -3892,7 +3891,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
     const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
-    const isDynamicReceiver = forInReceiverIsDynamic(ctx, recvWasmType);
+    const isDynamicReceiver = isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route

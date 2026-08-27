@@ -50,6 +50,7 @@ import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-calla
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
 import { emitRuntimeEvalFunctionPrototypeSeed } from "../runtime-eval-construct.js"; // (#4438) §20.2.1.1
 import { currentDirectEvalLexicalBindingNames, reifyCurrentDirectEvalBindings } from "../direct-eval-environment.js";
+import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -914,6 +915,25 @@ function restoreFoldedEvalLexicalScope(fctx: FunctionContext, scope: FoldedEvalL
   }
 }
 
+/** Add an inherited strict directive to a foreign direct-eval Script. */
+function inheritedStrictEvalSource(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+  directEval: boolean,
+  src: string,
+): { source: string; injected: boolean } {
+  if (!directEval || !isStrictContext(call, false)) return { source: src, injected: false };
+  // Foreign eval nodes have no parent chain back to the caller. A directive is
+  // equivalent to inherited strictness and lets every nested emitter observe it.
+  return { source: `"use strict";\n${src}`, injected: true };
+}
+
+function evalSourceStatements(sf: ts.SourceFile, injectedStrictDirective: boolean): ts.NodeArray<ts.Statement> {
+  // The synthetic directive makes strictness observable through foreign-node
+  // parents, but it is not source text and cannot become a completion value.
+  return injectedStrictDirective ? ts.factory.createNodeArray(sf.statements.slice(1)) : sf.statements;
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -950,12 +970,12 @@ export function tryStaticEvalInline(
     src = resolveConstantString(expr.arguments[0]!, ctx.checker);
   }
   if (src === null) return undefined;
-
   // Parse the eval source as a Script with parent pointers set so the
   // nested codegen paths (which walk upward via node.parent) work.
+  const evalSource = inheritedStrictEvalSource(ctx, expr, directEval, src);
   const sf = ts.createSourceFile(
     EVAL_SOURCE_FILENAME,
-    src,
+    evalSource.source,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ true,
     ts.ScriptKind.JS,
@@ -971,7 +991,7 @@ export function tryStaticEvalInline(
     return { kind: "externref" };
   }
 
-  const stmts = sf.statements;
+  const stmts = evalSourceStatements(sf, evalSource.injected);
 
   // PerformEval parses the string as a fresh Script and applies that Script's
   // early errors before executing any statement. The foreign AST splice used
@@ -1557,10 +1577,11 @@ export function tryStaticNewFunction(
   ctx: CodegenContext,
   fctx: FunctionContext,
   args: readonly ts.Expression[],
+  allowExplicitThis = false,
 ): ValType | undefined {
-  const synth = synthesizeStaticNewFunction(ctx, fctx, args);
+  const synth = synthesizeStaticNewFunction(ctx, fctx, args, allowExplicitThis);
   if (!synth) return undefined;
-
+  emitRuntimeEvalFunctionPrototypeSeed(ctx);
   // Materialize the callable value (closure struct over the funcref), then wrap
   // to externref to match `new Function`'s `any`/callable result.
   const closureRef = emitFuncRefAsClosure(ctx, fctx, synth.fnName, synth.funcIdx);
@@ -1571,6 +1592,10 @@ export function tryStaticNewFunction(
   if (closureRef.kind !== "externref") {
     fctx.body.push({ op: "extern.convert_any" });
   }
+  // The synthesized AOT closure is still an ordinary constructable function.
+  // Seed its fresh own `prototype` object just like the runtime-eval lane;
+  // the no-fctx call above only links its inherited Function.prototype.
+  emitRuntimeEvalFunctionPrototypeSeed(ctx, fctx);
   return { kind: "externref" };
 }
 
@@ -1585,6 +1610,7 @@ function synthesizeStaticNewFunction(
   ctx: CodegenContext,
   fctx: FunctionContext,
   args: readonly ts.Expression[],
+  allowExplicitThis = false,
 ): { fnName: string; funcIdx: number; params: readonly ts.ParameterDeclaration[] } | undefined {
   // Every argument must be a compile-time-constant string. A single non-constant
   // arg → dynamic body → fall through (Tier-2 interpreter, #2928).
@@ -1633,15 +1659,12 @@ function synthesizeStaticNewFunction(
   }
   if (sf.statements.length !== 1 || !ts.isFunctionDeclaration(sf.statements[0]!)) return undefined;
   const fnDecl = sf.statements[0] as ts.FunctionDeclaration;
+  recordStaticFunctionSelfName(ctx, fnName, args);
 
   // (#2923 park-fix parity) A `"use strict"` directive prologue in the
-  // synthesized body switches on strict early-errors (`function f(eval){}`,
-  // duplicate params, …) the splice does NOT enforce — keep such bodies on the
-  // existing fallback path.
+  // synthesized body switches on strict early-errors (`function f(eval){}`, duplicate params, …) the splice does
+  // NOT enforce — keep such bodies on the existing fallback path.
   if (fnDecl.body && evalBodyHasUseStrictDirective(fnDecl.body.statements)) return undefined;
-
-  // (#3301) The widened-constant regex bail is gone — the foreign-node
-  // regex-literal arm now produces a correct value (see tryStaticEvalInline).
 
   // (#2924 park fix) A SLOPPY dynamic function's bare call must see
   // `this === globalThis` (§10.4.3 OrdinaryCallBindThis with a non-strict
@@ -1652,7 +1675,7 @@ function synthesizeStaticNewFunction(
   // (nested functions included — they share the same wrong binding) so the
   // legacy path keeps the baseline behavior. Diagnosis by the parallel
   // session's [CI-FIX] handoff on PR #2474.
-  if (containsThisKeyword(fnDecl)) return undefined;
+  if (!allowExplicitThis && containsThisKeyword(fnDecl)) return undefined;
 
   // The body must be safely liftable (no function/arrow expression, class, etc.
   // that would need checker bindings the foreign SourceFile lacks — same guard
@@ -1821,6 +1844,7 @@ export function tryStaticFunctionCtorCall(
 
   // Shape 1: `Function("...")` — plain-call value form.
   if (ts.isIdentifier(callee) && isGlobalFunctionIdentifier(callee, ctx.checker)) {
+    noteStaticFunctionOwner(ctx, expr);
     return tryStaticNewFunction(ctx, fctx, expr.arguments);
   }
 
@@ -1977,6 +2001,46 @@ export function emitStandaloneIndirectEvalRuntime(
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
 }
 
+/** Standalone host-facing global Script route. This is distinct from
+ * indirect eval: lexical declarations belong to the persistent realm
+ * GlobalEnvironmentRecord and are visible to later global Script calls. */
+export function emitStandaloneGlobalScriptEvalRuntime(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (args.length === 0) {
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
+  if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+  const sourceType = compileExpression(ctx, fctx, args[0]!);
+  if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
+  for (let i = 1; i < args.length; i++) {
+    const extraType = compileExpression(ctx, fctx, args[i]!);
+    if (extraType !== null) fctx.body.push({ op: "drop" });
+  }
+  if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
+  const evalIdx = ensureLateImport(
+    ctx,
+    "__runtime_script_eval",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (evalIdx === undefined) {
+    fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+    emitRuntimeEvalProviderActive(ctx, fctx, false);
+    return { kind: "externref" };
+  }
+  const liveIdx = ctx.funcMap.get("__runtime_script_eval") ?? evalIdx;
+  fctx.body.push({ op: "call", funcIdx: liveIdx });
+  return emitRuntimeEvalResultUnwrap(ctx, fctx);
+}
+
 /** Hoist the realm's first-class `%eval%` wrapper without executing eval. */
 export function ensureStandaloneIntrinsicEvalWrapper(
   ctx: CodegenContext,
@@ -2063,8 +2127,6 @@ export function emitStandaloneDynamicFunctionRuntime(
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
-
   const liveParts: Instr[][] = [];
   const compilePart = (arg: ts.Expression): Instr[] => {
     const part: Instr[] = [];
@@ -2073,6 +2135,16 @@ export function emitStandaloneDynamicFunctionRuntime(
     const savedBody = fctx.body;
     fctx.body = part;
     try {
+      const unwrappedArg = unwrapParens(arg);
+      if (ts.isObjectLiteralExpression(unwrappedArg) && unwrappedArg.properties.length === 0) {
+        // An empty ordinary object has no literal-side effects and its
+        // string-hint OrdinaryToPrimitive result is the inherited canonical
+        // Object.prototype.toString value. Avoid routing that closed literal
+        // through the reflective prototype closure, whose runtime classifier
+        // intentionally refuses nominal structs it cannot otherwise prove.
+        fctx.body.push(...repr.literal("[object Object]"));
+        return part;
+      }
       let tsType: ts.Type;
       try {
         tsType = ctx.checker.getTypeAtLocation(arg);
@@ -2109,6 +2181,12 @@ export function emitStandaloneDynamicFunctionRuntime(
   if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
     fctx.body.push({ op: "ref.null.extern" });
   }
+
+  // Function's parameter/body ToString steps run in the caller realm before
+  // CreateDynamicFunction enters the provider. Seed the provider only after
+  // all user-controlled coercions have completed, so their side effects are
+  // part of the snapshot and a throwing coercion never pulls a stale one.
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx, true);
 
   const newFnIdx = ensureLateImport(
     ctx,

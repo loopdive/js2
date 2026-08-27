@@ -154,6 +154,55 @@ export function ensureDynamicValueOfHelper(ctx: CodegenContext): number {
   const nullishIdx = ctx.funcMap.get("__nullish_to_null");
   const normalizeMiss: Instr[] = nullishIdx !== undefined ? [{ op: "call", funcIdx: nullishIdx }] : [];
 
+  // Function-constructor instances are closed WasmGC structs rather than the
+  // open `$Object` carrier.  `Object(x)` preserves such an argument by
+  // identity, so a subsequent `Object(x).valueOf()` must still see an own
+  // `valueOf` field installed by the constructor.  The dynamic helper's
+  // historical `$Object` test skipped these receivers and returned the
+  // receiver itself (Object.prototype.valueOf), even though the same field
+  // call on `x` was lowered by the closed-method dispatcher.  Add only the
+  // fnctor structs that actually carry a callable `valueOf` field; unrelated
+  // closed shapes stay on the existing fallback path.
+  const fnctorApplyClosureIdx = ctx.funcMap.get("__apply_closure");
+  const fnctorValueOfArms: Instr[] = [];
+  if (fnctorApplyClosureIdx !== undefined) {
+    for (const [name, fields] of ctx.structFields) {
+      if (!name.startsWith("__fnctor_")) continue;
+      const typeIdx = ctx.structMap.get(name);
+      const fieldIdx = fields.findIndex((field) => field.name === "valueOf");
+      if (typeIdx === undefined || fieldIdx < 0) continue;
+      const field = fields[fieldIdx]!;
+      if (
+        field.type.kind !== "externref" &&
+        field.type.kind !== "ref" &&
+        field.type.kind !== "ref_null" &&
+        field.type.kind !== "eqref"
+      ) {
+        continue;
+      }
+      fnctorValueOfArms.push(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx },
+            { op: "struct.get", typeIdx, fieldIdx },
+            ...(field.type.kind === "externref" ? [] : ([{ op: "extern.convert_any" }] satisfies Instr[])),
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: objVecNewIdx },
+            { op: "call", funcIdx: fnctorApplyClosureIdx },
+            { op: "return" },
+          ],
+        },
+      );
+    }
+  }
+
   // Arm 3 → Arm 2: no `valueOf` property. Return the wrapper's
   // [[PrimitiveValue]] slot when the FLAG_INTERNAL entry is present, else the
   // receiver (Object.prototype.valueOf).
@@ -219,7 +268,7 @@ export function ensureDynamicValueOfHelper(ctx: CodegenContext): number {
         },
       ],
       // Non-`$Object` receiver — unchanged, exactly the blanket fallback.
-      else: [{ op: "local.get", index: 0 }],
+      else: [...fnctorValueOfArms, { op: "local.get", index: 0 }],
     },
   ];
 

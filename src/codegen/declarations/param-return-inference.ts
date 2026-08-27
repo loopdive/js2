@@ -338,6 +338,43 @@ export function functionNameEscapesAsValue(funcName: string, sourceFile: ts.Sour
 }
 
 /**
+ * A String replacement callback is the one escaping function boundary whose
+ * parameter ABI is deliberately dynamic here: replace supplies a mixture of
+ * strings and numeric offsets that body-only arithmetic cannot soundly narrow.
+ * Other host callbacks (notably Array HOF predicates) have established native
+ * scalar ABIs, so treating every value escape as dynamic corrupts their call
+ * frames and their synthesized `arguments` objects.
+ */
+function functionNameIsStringReplacement(funcName: string, sourceFile: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(node) && node.arguments.length >= 2) {
+      const replacement = node.arguments[1];
+      if (ts.isIdentifier(replacement) && replacement.text === funcName) {
+        let methodName: string | undefined;
+        if (ts.isPropertyAccessExpression(node.expression)) {
+          methodName = node.expression.name.text;
+        } else if (
+          ts.isElementAccessExpression(node.expression) &&
+          node.expression.argumentExpression &&
+          ts.isStringLiteralLike(node.expression.argumentExpression)
+        ) {
+          methodName = node.expression.argumentExpression.text;
+        }
+        if (methodName === "replace" || methodName === "replaceAll") {
+          found = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  return found;
+}
+
+/**
  * An `any` identifier is only a transparent forwarding carrier when its local
  * definition is transparent too. A named alias does not make a dynamic member
  * read or call result safer than the same expression passed directly:
@@ -1011,7 +1048,14 @@ export function inferImplicitAnyParamType(
   ) {
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
   }
-  if (callSites.sawCallSite) return null;
+  // A function value passed to a host/API boundary is a first-class callable
+  // even when this source file contains no direct call to it. Body inference
+  // is not an ABI proof for that case: a replacer such as
+  // `function (a, b, c) { return a + b + c; }` receives strings and numbers
+  // from the host, so narrowing its implicit-any parameters to f64 makes the
+  // callback coerce those string arguments to NaN. Keep the dynamic carrier
+  // whenever the function escapes, just as for an inconclusive call site.
+  if (callSites.sawCallSite || functionNameIsStringReplacement(funcName, sourceFile)) return null;
   // (#743) Truly-uncalled exported entrypoint: the shipped `.d.ts` claim is the
   // only signal and its export boundary is guarded (ToNumber for f64; a typed
   // ref that traps a violating external call for native strings). Declared

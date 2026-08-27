@@ -101,10 +101,13 @@
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+import { tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitStandaloneIntrinsicFunctionValue } from "./expressions/eval-inline.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { moduleTouchesConstructorProp } from "./property-access.js";
+import { emitLazyNativeProtoGet } from "./native-proto.js";
+import { objectCoercionPreservesFunction } from "./object-ctor-primitive-receiver.js";
+import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
 import { compileExpression } from "./shared.js";
 
 /**
@@ -191,6 +194,45 @@ export function isFunctionValuedReceiverType(type: ts.Type): boolean {
 }
 
 /**
+ * TypeScript deliberately reports `any` for the ES5-legal collision between a
+ * var/parameter and a same-named FunctionDeclaration.  The runtime binding is
+ * nevertheless the hoisted function value (§10.2.1), e.g.
+ * `function f(x) { return x; function x() {} }`.  Keep the constructor arm
+ * available for that narrow, source-proven shape even though the checker type
+ * of `f()` is `any`; ordinary `any` calls continue through the dynamic path.
+ */
+function callResultIsHoistedFunctionValue(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) {
+    return false;
+  }
+  const owner = ctx.oracle.valueDeclarationOf(expr.expression);
+  if (!owner || !ts.isFunctionDeclaration(owner) || !owner.body) {
+    return false;
+  }
+  const ownerBody = owner.body;
+  let result = false;
+  const visit = (node: ts.Node): void => {
+    if (result || (node !== owner && ts.isFunctionLike(node))) return;
+    if (ts.isReturnStatement(node) && node.expression && ts.isIdentifier(node.expression)) {
+      const returnIdent = node.expression;
+      const declaration = ctx.oracle.valueDeclarationOf(returnIdent);
+      if (
+        (declaration && ts.isFunctionDeclaration(declaration)) ||
+        ownerBody.statements.some(
+          (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === returnIdent.text,
+        )
+      ) {
+        result = true;
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ownerBody);
+  return result;
+}
+
+/**
  * The `<function value>.constructor` arm itself (§20.2.3.1) — the whole thing,
  * so `property-access-dispatch.ts` spends four lines on it rather than growing
  * a subsystem inside the dispatcher (#3102's rule, and the reason this module
@@ -214,9 +256,50 @@ export function tryEmitFunctionValueConstructorRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
   objType: ts.Type,
+  objectCoercionFunction = false,
 ): ValType | undefined {
-  if (!ctx.standalone || propName !== "constructor") return undefined;
-  if (!isFunctionValuedReceiverType(objType)) return undefined;
+  if (!ctx.standalone) return undefined;
+
+  // A function's inherited `constructor` is `%Function%`, and its inherited
+  // `prototype` is therefore the *same* `%Function.prototype%` object as the
+  // direct `Function.prototype` spelling.  When the source reads
+  // `f().constructor.prototype`, the inner constructor arm intentionally uses
+  // the provider-owned callable `%Function%` if the module also reads bare
+  // `Function`; asking the generic externref MOP for that provider value's
+  // `.prototype` would then produce a provider-side object, not the compiler's
+  // native-proto singleton used by `Function.prototype` below.  Resolve this
+  // compound form as one semantic read: evaluate `f()` for side effects, then
+  // return the canonical native Function prototype.  The source-wide
+  // constructor-write gate remains in force because an own `constructor` could
+  // shadow the inherited path.
+  if (
+    propName === "prototype" &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    expr.expression.name.text === "constructor"
+  ) {
+    const receiver = expr.expression.expression;
+    if (!isFunctionValuedReceiverType(objType) && !callResultIsHoistedFunctionValue(ctx, receiver)) {
+      return undefined;
+    }
+    if (moduleTouchesConstructorProp(expr.getSourceFile())) return undefined;
+    const receiverResult = compileExpression(ctx, fctx, receiver);
+    if (receiverResult) fctx.body.push({ op: "drop" });
+    const brand = tryEnsureNativeProtoBrand(ctx, "Function");
+    if (brand !== undefined && emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
+    return undefined;
+  }
+
+  if (propName !== "constructor") return undefined;
+  // `Object(fn)` / `new Object(fn)` is typed as `Object`, although ToObject
+  // returns the function argument unchanged. The caller proves that narrow
+  // producer shape with the codegen oracle and opts into this same arm.
+  if (
+    !objectCoercionFunction &&
+    !isFunctionValuedReceiverType(objType) &&
+    !callResultIsHoistedFunctionValue(ctx, expr.expression)
+  ) {
+    return undefined;
+  }
   if (moduleTouchesConstructorProp(expr.getSourceFile())) return undefined;
 
   // Spec order: the object expression is evaluated for its side effects before
@@ -230,4 +313,21 @@ export function tryEmitFunctionValueConstructorRead(
   // push the pre-#4442 answer rather than leaving the stack short.
   emitUndefined(ctx, fctx);
   return { kind: "externref" };
+}
+
+export function tryEmitObjectCoercionFunctionConstructorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+  objType: ts.Type,
+): ValType | undefined {
+  return tryEmitFunctionValueConstructorRead(
+    ctx,
+    fctx,
+    expr,
+    propName,
+    objType,
+    objectCoercionPreservesFunction(ctx, expr.expression),
+  );
 }

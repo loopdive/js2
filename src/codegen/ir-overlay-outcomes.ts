@@ -183,10 +183,23 @@ export function auditIrIntegrationTerminalEvidence(input: {
     } else {
       const eventErrors = evidence.errors ?? [evidence.error];
       const mismatchOwnerId = localUnit?.unitId ?? projectedByName?.unitId;
-      if (eventErrors[0] !== evidence.error) {
+      const outcomeOnly = evidence.diagnosticVisibility === "outcome-only";
+      if (evidence.diagnosticVisibility !== "report" && evidence.diagnosticVisibility !== "outcome-only") {
+        recordMismatch(mismatchOwnerId, `failed integration event ${evidence.unitId} has invalid visibility`);
+      } else if (
+        outcomeOnly &&
+        (evidence.error.outcome.kind !== "unsupported" ||
+          evidence.error.outcome.code !== "late-preparation-unsupported" ||
+          evidence.error.outcome.stage !== "resolve")
+      ) {
+        recordMismatch(mismatchOwnerId, `outcome-only integration event ${evidence.unitId} has invalid evidence`);
+      }
+      if (outcomeOnly ? eventErrors.length !== 0 : eventErrors[0] !== evidence.error) {
         recordMismatch(
           mismatchOwnerId,
-          `failed integration event ${evidence.unitId} does not retain its representative public error first`,
+          outcomeOnly
+            ? `outcome-only integration event ${evidence.unitId} retained public errors`
+            : `failed integration event ${evidence.unitId} does not retain its representative public error first`,
         );
       }
       for (const error of eventErrors) {

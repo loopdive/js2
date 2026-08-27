@@ -4,7 +4,7 @@
     {
       "name": "Primitive types (string, number, boolean, null, undefined)",
       "testCategories": ["language/types", "language/literals"],
-      "passCount": 638,
+      "passCount": 641,
       "totalCount": 647
     },
     {
@@ -52,7 +52,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 48,
+      "passCount": 51,
       "totalCount": 59
     },
     {
@@ -82,19 +82,19 @@
     {
       "name": "arguments object (full)",
       "testCategories": ["language/arguments-object"],
-      "passCount": 135,
+      "passCount": 138,
       "totalCount": 263
     },
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 339,
+      "passCount": 341,
       "totalCount": 357
     },
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 165,
+      "passCount": 166,
       "totalCount": 181
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1049,
+      "passCount": 1076,
       "totalCount": 1177
     },
     {
@@ -132,7 +132,7 @@
     {
       "name": "try / catch / finally",
       "testCategories": ["language/statements/try"],
-      "passCount": 189,
+      "passCount": 190,
       "totalCount": 201
     },
     {
@@ -144,19 +144,19 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4182,
+      "passCount": 4206,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1073,
+      "passCount": 1082,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 626,
+      "passCount": 628,
       "totalCount": 667
     },
     {
@@ -173,31 +173,31 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 90,
+      "passCount": 98,
       "totalCount": 234
     },
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2038,
+      "passCount": 2087,
       "totalCount": 3161
     },
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1625,
+      "passCount": 1633,
       "totalCount": 1896
     },
     {
       "name": "Property accessors (get / set)",
       "testCategories": ["language/expressions/property-accessors"],
-      "passCount": 20,
+      "passCount": 21,
       "totalCount": 21
     },
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1123,
+      "passCount": 1127,
       "totalCount": 1131
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1845,
+      "passCount": 1848,
       "totalCount": 2486
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 876,
+      "passCount": 880,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 527,
+      "passCount": 528,
       "totalCount": 1106
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2709,
+      "passCount": 2656,
       "totalCount": 3812
     },
     {
@@ -396,7 +396,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3592,
+      "passCount": 3589,
       "totalCount": 4979
     },
     {
@@ -444,7 +444,7 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 5,
+      "passCount": 7,
       "totalCount": 25
     },
     {
@@ -460,13 +460,13 @@
         "built-ins/Array/prototype/toReversed",
         "built-ins/Array/prototype/toSpliced"
       ],
-      "passCount": 56,
+      "passCount": 55,
       "totalCount": 132
     },
     {
       "name": "Hashbang (#!) comments",
       "testCategories": ["language/comments/hashbang", "language/source-text"],
-      "passCount": 28,
+      "passCount": 26,
       "totalCount": 29
     },
     {

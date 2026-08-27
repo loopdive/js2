@@ -156,6 +156,28 @@ describe("#4492 wave-5 — ToString of a CALLABLE (§20.2.3.5, never Object.prot
   // a test of it.
 });
 
+describe("#4492 residual — builtin carriers observe transferred toString", () => {
+  it("Array constructor uses Object.prototype.toString after Function prototype transfer", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Function]")}` +
+          ` Function.prototype.toString = Object.prototype.toString;` +
+          ` var got = Array.toString(); return got === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("a RegExp own toString transfer observes the RegExp brand", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object RegExp]")}` +
+          ` var re = new RegExp(); re.toString = Object.prototype.toString;` +
+          ` var got = re.toString(); return got === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+});
+
 describe("#4492 wave-5 — a PROTOTYPE-installed toString reaches the runtime ToPrimitive walk", () => {
   it("`Function.prototype.toString = …` is honoured through the EXTERNREF dispatcher too", async () => {
     // The `__extern_toString` twin of the `String(f)` override pin above: inside
@@ -434,9 +456,9 @@ describe("#4492 wave-5 — residual R3: no §20.1.3.6 brand classifier on the RU
     ).toBe(1);
   });
 
-  it.fails("`String(<arguments>)` answers the array join instead (test262 trim/15.5.4.20-2-51)", async () => {
-    // The census row is `String.prototype.trim.call(argObj)`, whose internal
-    // ToString lands on the same terminal and answers "1,2,true".
+  it("`String(<arguments>)` observes the Arguments tag (test262 trim/15.5.4.20-2-51)", async () => {
+    // The census row is `String.prototype.trim.call(argObj)`; both spellings
+    // must apply ordinary ToString to the Arguments carrier, not Array.join.
     expect(
       await runStandalone(
         `${loopBuilt("want", "[object Arguments]")}` +

@@ -21,6 +21,7 @@ import { ensureHoleyArrayNew } from "../vec-elem-set.js";
 import { sparseArrayNewSplitInstrs } from "../vec-sparse-index.js";
 import { compileExpression } from "../shared.js";
 import { buildThrowJsErrorInstrs } from "./helpers.js";
+import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { inferArrayElementType } from "./new-super.js";
 
@@ -590,6 +591,13 @@ export function tryCompileIndexedBuiltinNew(
 
     const args = expr.arguments ?? [];
 
+    const widenedElemWasm = widenDenseArrayElementType(args, elemWasm);
+    if (widenedElemWasm.kind !== elemWasm.kind) {
+      elemWasm = widenedElemWasm;
+      vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+      arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    }
+
     if (args.length === 0) {
       // new Array() → empty array with default backing capacity
       // JS arrays are dynamically resizable; wasm arrays are fixed-size.
@@ -613,23 +621,7 @@ export function tryCompileIndexedBuiltinNew(
       // args keep the historical length behavior.
       const argTag = ctx.oracle.staticJsTypeOf(args[0]!);
       if (argTag !== "number" && argTag !== "mixed") {
-        let oneVecIdx = vecTypeIdx;
-        let oneArrIdx = arrTypeIdx;
-        if (elemWasm.kind !== "externref") {
-          oneVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
-          oneArrIdx = getArrTypeIdxFromVec(ctx, oneVecIdx);
-        }
-        compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-        fctx.body.push({ op: "array.new_fixed", typeIdx: oneArrIdx, length: 1 });
-        const oneData = allocLocal(fctx, `__arr_data_${fctx.locals.length}`, {
-          kind: "ref",
-          typeIdx: oneArrIdx,
-        });
-        fctx.body.push({ op: "local.set", index: oneData });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: "local.get", index: oneData });
-        fctx.body.push({ op: "struct.new", typeIdx: oneVecIdx });
-        return { kind: "ref_null", typeIdx: oneVecIdx };
+        return compileOneElementArray(ctx, fctx, args[0]!, elemWasm, vecTypeIdx);
       }
       // new Array(n) → array with capacity n, length 0
       // For test262 patterns like `var a = new Array(16); a[0] = x;`

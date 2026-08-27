@@ -12,6 +12,8 @@ export type IrRuntimeEvalSiteKind =
   | "indirect-eval"
   | "function-constructor"
   | "intrinsic-value"
+  | "global-eval-property"
+  | "global-script-eval"
   | "provider-definition";
 
 export interface IrRuntimeEvalSite {
@@ -55,6 +57,7 @@ const PROVIDER_NAMES = new Set([
   "__runtime_new_function",
   "__runtime_indirect_eval",
   "__runtime_direct_eval",
+  "__runtime_script_eval",
   "__runtime_apply_interpreted",
 ]);
 
@@ -152,6 +155,22 @@ function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
   return false;
 }
 
+/**
+ * A small syntactic gate for the realm object's first-class `eval` property.
+ * The global binding is commonly reached as `globalThis.eval`, `this.eval`, or
+ * Node's `global.eval`; the latter also covers the ES5 Test262 row's
+ * `var global = this` alias. A property on an arbitrary object is deliberately
+ * excluded so the global-object seed does not pull the runtime-eval provider
+ * into unrelated `obj.eval` programs.
+ */
+function isLikelyGlobalObjectReceiver(expression: ts.Expression): boolean {
+  const unwrapped = unwrapExpression(expression);
+  return (
+    unwrapped.kind === ts.SyntaxKind.ThisKeyword ||
+    (ts.isIdentifier(unwrapped) && (unwrapped.text === "globalThis" || unwrapped.text === "global"))
+  );
+}
+
 /** Build the single immutable runtime-eval routing authority for a program. */
 export function buildIrRuntimeEvalBoundaryPlan(
   sourceFiles: readonly ts.SourceFile[],
@@ -195,7 +214,13 @@ export function buildIrRuntimeEvalBoundaryPlan(
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
         const callee = unwrapExpression(node.expression);
-        if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
+        if (ts.isIdentifier(callee) && callee.text === "__js2wasm_global_script_eval") {
+          const source = node.arguments?.[0];
+          const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
+          addSite(sourceFile, id, node, "global-script-eval", "required", literalSource);
+          if (literalSource !== undefined) dynamicSourceFragments.push(literalSource);
+          else if (source !== undefined) unknownDynamicSource = true;
+        } else if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
           if (callee.text === "eval") {
             const source = node.arguments?.[0];
             const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
@@ -218,6 +243,29 @@ export function buildIrRuntimeEvalBoundaryPlan(
             else if (source !== undefined) unknownDynamicSource = true;
           }
         }
+      }
+
+      // `eval` is normally accounted for by the identifier walk below, but a
+      // realm-object read (`global.eval` / `globalThis.eval`) has the property
+      // name in AST member position and therefore intentionally does not count
+      // as an `intrinsic-value` site. It still needs the provider-backed,
+      // identity-stable wrapper when the compiler seeds the native global
+      // object, so record this narrow demand separately.
+      const elementKey = ts.isElementAccessExpression(node) ? unwrapExpression(node.argumentExpression) : undefined;
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        node.name.text === "eval" &&
+        isLikelyGlobalObjectReceiver(node.expression)
+      ) {
+        addSite(sourceFile, id, node, "global-eval-property", "required");
+      } else if (
+        ts.isElementAccessExpression(node) &&
+        elementKey !== undefined &&
+        ts.isStringLiteralLike(elementKey) &&
+        elementKey.text === "eval" &&
+        isLikelyGlobalObjectReceiver(node.expression)
+      ) {
+        addSite(sourceFile, id, node, "global-eval-property", "required");
       }
 
       if (

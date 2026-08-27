@@ -129,6 +129,39 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
   return tag !== "mixed" && HETEROGENEOUS_PRIMITIVE_SLOT_TAGS.has(tag);
 }
 
+/**
+ * Keep a closure's result ABI aligned with a module binding whose storage was
+ * widened after heterogeneous assignment. The checker still infers the
+ * binding's initializer type, so a getter such as `function () { return x; }`
+ * would otherwise narrow an externref value back to that stale primitive type
+ * at the function boundary.
+ */
+export function widenClosureReturnForDynamicModuleBinding(
+  ctx: CodegenContext,
+  fn: ts.SignatureDeclaration & { body?: ts.Node },
+  inferred: ValType,
+): ValType {
+  if (inferred.kind === "externref" || fn.body === undefined) return inferred;
+
+  let returnsDynamicBinding = false;
+  const visit = (node: ts.Node): void => {
+    if (returnsDynamicBinding) return;
+    if (node !== fn && ts.isFunctionLike(node)) return;
+    if (
+      ts.isReturnStatement(node) &&
+      node.expression !== undefined &&
+      ts.isIdentifier(node.expression) &&
+      moduleGlobalIsDynamicButStaticallyPrimitive(ctx, node.expression)
+    ) {
+      returnsDynamicBinding = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return returnsDynamicBinding ? { kind: "externref" } : inferred;
+}
+
 /** True when `node` is hoisted to module scope — i.e. no function-like ancestor. */
 function isModuleScoped(node: ts.Node): boolean {
   for (let parent = node.parent; parent !== undefined && !ts.isSourceFile(parent); parent = parent.parent) {

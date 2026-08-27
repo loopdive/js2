@@ -34,7 +34,6 @@ import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
-import type { TypeFact } from "../checker/oracle.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -145,7 +144,20 @@ import {
   registerIrAsyncPromiseDelayResolver,
 } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
+import {
+  functionHasCallableBoundary,
+  hasMultiIrProgramCallableBoundary,
+  initializeIrProgramCallableBindingGraph,
+  initializeMultiPreparedProgram,
+  isMultiIrProgramCallableCall,
+  multiIrFunctionValueLeafHasForeignLateProvider,
+  planMultiPreparedCallableComponents,
+  planMultiPreparedProgramEarlyRoutes,
+  programCallableSelectionOptions,
+  removeMultiIrAttemptedCallableUnits,
+} from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
+import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
@@ -216,20 +228,17 @@ import {
   assertMultiPreparedScalarLeafRouteCurrent,
   buildMultiIrGraphSafety,
   collectMultiIrFunctionNameCollisions,
-  compileMultiPreparedScalarLeafDeclarations,
-  planEarlyMultiPreparedScalarLeafRoute,
   type EarlyMultiPreparedScalarLeafState,
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
+import { assertMultiPreparedArrayLeafRouteCurrent } from "./multi-prepared-array-leaf.js";
+import { assertMultiPreparedFibonacciPairRouteCurrent } from "./multi-prepared-fibonacci-pair.js";
 import {
-  assertMultiPreparedArrayLeafRouteCurrent,
-  planEarlyMultiPreparedArrayLeafRoute,
-} from "./multi-prepared-array-leaf.js";
-import {
-  assertMultiPreparedFibonacciPairRouteCurrent,
-  planEarlyMultiPreparedFunctionValueRoutes,
-} from "./multi-prepared-fibonacci-pair.js";
+  MultiPreparedProgramOwner,
+  publishMultiPreparedProgram,
+  type MultiPreparedProgramAudit,
+} from "./multi-prepared-program.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import {
@@ -323,10 +332,12 @@ import {
   fillExternArrayLikeStructArms,
   fillExternGetIdxVecArms,
   fillExternSetVecArms,
+  fillConcatNativeHoleArms,
   fillFnctorPrototypeDispatchArms,
   fillExternIsArray,
   fillProxyDispatch,
   unshiftExternGetProtoCacheArm,
+  unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
@@ -340,13 +351,13 @@ import { fillAsyncClosurePromiseWrappers } from "./async-closure-promise.js"; //
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
-// import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F) — DISABLED, see call sites
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
+import { fillNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js"; // shared dynamic HasInstance identity probes
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -354,7 +365,7 @@ import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) nominal sparse carrier
-import { fillF64HoleHasIdxArms } from "./vec-f64-hole-presence.js"; // (#4491 T11) f64 absence marker
+import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -507,6 +518,7 @@ import {
   irNativeNumberToStringAvailable,
 } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
+import { fillStandaloneObjectProtoToStringFnctorArms } from "./object-proto-tostring-native.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
   hasExportModifier,
@@ -2242,7 +2254,7 @@ export function formatIrPathFallbackDiagnostic(
 // preserves the opt-out pipeline's type-index and body-emission behavior.
 // ---------------------------------------------------------------------------
 
-interface IrOverlayPlan {
+export interface IrOverlayPlan {
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
   readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
   readonly selection: import("../ir/select.js").IrSelection;
@@ -2631,8 +2643,7 @@ function planIrOverlay(
           identityMaps.unitTypeMap,
           options.fnctorArgumentProjectionRoute,
         );
-  // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS is set, request the
-  // selector to track every top-level FunctionDeclaration that didn't
+  // #1169q telemetry — JS2WASM_LOG_IR_FALLBACKS tracks every top-level FunctionDeclaration that didn't
   // make it into `funcs` along with the rejection reason. Logged to
   // stderr at end of compile. Off by default (zero overhead).
   // #1530 — `trackFallbacks` is also enabled when one or more
@@ -2924,6 +2935,7 @@ function planIrOverlay(
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
       ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
+      ...programCallableSelectionOptions(ctx, identityContext, ast.sourceFile),
       // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
@@ -3380,30 +3392,6 @@ function functionBodyContainsNestedRuntimeDeclaration(fn: ts.FunctionDeclaration
   return found;
 }
 
-function typeFactCouldBeCallable(fact: TypeFact): boolean {
-  if (fact.kind === "function") return true;
-  if (fact.kind === "union") return fact.parts.some(typeFactCouldBeCallable);
-  // This is a safety gate: an incomplete fact must reduce M0 coverage rather
-  // than let a legacy caller cross an ABI boundary we have not proven.
-  return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable";
-}
-
-/** Callable parameters/returns still have a legacy↔IR wrapper ABI boundary. */
-function functionHasCallableBoundary(ctx: CodegenContext, declaration: ts.FunctionDeclaration): boolean {
-  for (const parameter of declaration.parameters) {
-    const typeNode = effectiveIrParamTypeNode(parameter);
-    // A checker-certified exact FunctionTypeNode uses the same canonical
-    // callable ABI in both front-ends. Host A+B1 can therefore retain an
-    // imported HOF target instead of demoting its whole cross-file component.
-    if (typeNode && ts.isFunctionTypeNode(typeNode) && irClosureSignatureFromFunctionTypeNode(typeNode)) continue;
-    if (typeFactCouldBeCallable(ctx.oracle.typeFactOf(parameter))) return true;
-  }
-  const signature = ctx.oracle.signatureOf(declaration);
-  // Unknown callable shape is ABI-sensitive until the canonical callable ABI
-  // slice makes legacy/IR wrappers interchangeable.
-  return signature === undefined || typeFactCouldBeCallable(signature.returns);
-}
-
 /**
  * Bound the M0 multi-module overlay to unambiguous top-level functions.
  *
@@ -3472,9 +3460,12 @@ function makeMultiIrSafeSelection(
   if (moduleInitUnitId) blocked.add(moduleInitUnitId);
   const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
 
-  for (const callPlan of plan.importedCalls.values()) {
+  for (const [call, callPlan] of plan.importedCalls) {
     requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
-    if (!multiIrTargetHasExactRegistryEntry(ctx, callPlan.target, plan.identityPlan.identityContext, safety)) {
+    if (
+      !isMultiIrProgramCallableCall(ctx, call, callPlan) &&
+      !multiIrTargetHasExactRegistryEntry(ctx, callPlan.target, plan.identityPlan.identityContext, safety)
+    ) {
       blocked.add(callPlan.ownerUnitId);
     }
   }
@@ -3486,20 +3477,26 @@ function makeMultiIrSafeSelection(
   }
   for (const unitId of retained) {
     const { legacyName: name, declaration } = requireMultiIrOwnerClaim(plan, unitId);
+    const hasProgramCallableBoundary =
+      hasMultiIrProgramCallableBoundary(ctx, plan.identityPlan.identityContext, unitId) ||
+      [...plan.importedCalls].some(
+        ([call, callPlan]) => callPlan.ownerUnitId === unitId && isMultiIrProgramCallableCall(ctx, call, callPlan),
+      );
     const crossFileTarget = safety.crossFileFunctionNames.has(name);
     const hasCallableBoundary = crossFileTarget && functionHasCallableBoundary(ctx, declaration);
     const registeredIdx = ctx.funcMap.get(name);
     const registeredFunction = registeredIdx === undefined ? undefined : definedFuncAt(ctx, registeredIdx);
     if (
-      safety.collisions.has(name) ||
+      (!hasProgramCallableBoundary &&
+        (safety.collisions.has(name) ||
+          safety.importAliasNames.has(name) ||
+          safety.occupiedFunctionNameCounts.get(name) !== 1 ||
+          registeredFunction?.name !== name ||
+          safety.occupiedFunctionKeys.some((key) => key.startsWith(`${name}$`)) ||
+          (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary)))) ||
       functionBodyHasUnsupportedImportUse(declaration, plan) ||
       functionBodyContainsNestedRuntimeDeclaration(declaration, plan) ||
-      (declaration.typeParameters?.length ?? 0) > 0 ||
-      safety.importAliasNames.has(name) ||
-      safety.occupiedFunctionNameCounts.get(name) !== 1 ||
-      registeredFunction?.name !== name ||
-      safety.occupiedFunctionKeys.some((key) => key.startsWith(`${name}$`)) ||
-      (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary))
+      (declaration.typeParameters?.length ?? 0) > 0
     ) {
       blocked.add(unitId);
     }
@@ -3671,108 +3668,6 @@ function collectMultiIrLateProviderOwnerUnitIds(
   ]);
 }
 
-function multiIrFunctionValueLeafHasForeignLateProvider(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  plan: IrOverlayPlan,
-  unitId: IrUnitId,
-  functionValueTarget: boolean,
-): boolean {
-  const valueTargets = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
-  return (
-    (functionValueTarget ? valueTargets.size !== 1 || !valueTargets.has(unitId) : valueTargets.has(unitId)) ||
-    collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
-    [...plan.importedCalls.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.topLevelFunctionValues.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostDateSnapshots.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.hostDateGetters.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    [...plan.promiseDelays.constructions.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
-    plan.suspendingAsyncUnitIds.has(unitId) ||
-    irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds.has(unitId)
-  );
-}
-
-function planEarlyMultiIrOverlay(
-  ctx: CodegenContext,
-  multiAst: MultiTypedAST,
-  identityContext: IrPlanningIdentityContext,
-  options: CodegenOptions | undefined,
-): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<IrOverlayPlan>> {
-  const active =
-    !!options?.experimentalIR &&
-    !options.disableIrFirst &&
-    !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST) &&
-    ctx.standalone &&
-    !ctx.wasi &&
-    !ctx.fast &&
-    multiAst.sourceFiles.length > 1;
-  if (!active) return new Map();
-  const scalarStates = planEarlyMultiPreparedScalarLeafRoute({
-    active,
-    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  const arrayStates = planEarlyMultiPreparedArrayLeafRoute({
-    active,
-    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
-    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  for (const [sourceFile, state] of arrayStates) {
-    if (scalarStates.has(sourceFile)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `multi-source early routes both claimed ${sourceFile.fileName}`,
-      );
-    }
-    scalarStates.set(sourceFile, state);
-  }
-  const functionValueStates = planEarlyMultiPreparedFunctionValueRoutes({
-    active,
-    leafCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
-    fibonacciPairCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
-    ctx,
-    sourceFiles: multiAst.sourceFiles,
-    entryFile: multiAst.entryFile,
-    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
-    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
-      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId, functionValueTarget),
-    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
-    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
-  });
-  for (const [sourceFile, state] of functionValueStates) {
-    if (scalarStates.has(sourceFile)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `multi-source early routes both claimed ${sourceFile.fileName}`,
-      );
-    }
-    scalarStates.set(sourceFile, state);
-  }
-  return scalarStates;
-}
-
 function compileMultiIrOverlaySource(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
@@ -3790,8 +3685,9 @@ function compileMultiIrOverlaySource(
       irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
     });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
-  safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
+  safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
+  safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = applyIrFinalContextFunctionUnitIds(
     plan,
     safeSelection,
@@ -4698,6 +4594,8 @@ export interface GeneratedCodegenModule extends CodegenResult {
   irPostClaimErrors?: { kind: string; func: string; message: string }[];
   irCompiledFuncs?: readonly string[];
   programAbi?: PublishedProgramAbi;
+  /** Internal M0 whole-program Prepared ownership evidence. */
+  multiPreparedProgramAudit?: MultiPreparedProgramAudit;
 }
 
 export interface GeneratedModule extends GeneratedCodegenModule {
@@ -4807,6 +4705,7 @@ export function generateModule(
   const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, collectMemberDeleteReceivers);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
+  ctx.deletedBuiltinPrototypeMembers = memberDeletes.builtinPrototypeMembers;
   // (#2660 S1) Whole-program escape / dynamic-use classification of `new F()`
   // fnctor instances. INERT: the result is stored for the future S3
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
@@ -5937,14 +5836,6 @@ export function generateModule(
     // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
     unshiftRegExpAccessorSetGuard(ctx);
-    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
-    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
-    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
-    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
-    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
-    // this call commented. Re-enable only with a fix for the descriptor
-    // side-effect and a control run over Object/defineProperty prop-desc rows.
-    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -6014,6 +5905,10 @@ export function generateModule(
     // reads (`arr[k]`, `arr["length"]`) instead of empty / undefined. Standalone
     // only (no-op otherwise).
     fillDynamicForinVecArms(ctx);
+    // Dynamic descriptor helpers read String-wrapper index properties through
+    // __extern_get; answer the String-exotic virtual character before the
+    // ordinary $Object numeric adapter can box its miss as 0.
+    unshiftExternGetStringExoticArm(ctx);
 
     // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
     // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
@@ -6113,7 +6008,11 @@ export function generateModule(
     // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
-    fillF64HoleHasIdxArms(ctx);
+    fillSparseHoleHasIdxArms(ctx);
+    // (#4446) Native concat preserves absent source indices in `$ObjVec` via
+    // the shared `$Hole` marker. Patch its dynamic readers and add the sparse
+    // physical-backing HasProperty guard after every competing vec fill.
+    fillConcatNativeHoleArms(ctx);
 
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
@@ -6170,6 +6069,17 @@ export function generateModule(
     // closure wrapper structs (closures registered after the typeof helpers were
     // synthesised mid-compile). Edits the helper bodies in place — no funcIdx churn.
     fillStandaloneTypeofClosureArms(ctx);
+
+    // Function-constructor instances use nominal `$__fnctor_<Name>` carriers;
+    // their Object.prototype.toString classifier may have been probed before
+    // the late carrier reservation completed. Fill those ref.test arms in the
+    // existing classifier/closure bodies without changing function indices.
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
+
+    // Fill the reserve/fill identity probes used by the fully-dynamic
+    // `instanceof` substrate after all builtin carrier globals and native
+    // prototype types have been published.
+    fillNativeDynamicInstanceOf(ctx);
 
     // (#4492 wave-5) …then the CALLABLE OrdinaryToPrimitive consult in front of
     // the #3540 closure arm that call just installed, so an own / inherited
@@ -8955,6 +8865,86 @@ function restoreNativeGeneratorEndState(ctx: CodegenContext, endState: OwnNative
   }
 }
 
+function planMultiPreparedProgramRoutes(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  multiAst: MultiTypedAST,
+  options: CodegenOptions | undefined,
+  ctx: CodegenContext,
+  identityContext: IrPlanningIdentityContext | undefined,
+): void {
+  if (!owner || !identityContext) return;
+  planMultiPreparedProgramEarlyRoutes({
+    owner,
+    multiAst,
+    ...(options ? { options } : {}),
+    identityContext,
+    ctx,
+    explicitlyDisabled: explicitlyDisabledEnv,
+    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
+    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
+    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
+    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
+      multiIrFunctionValueLeafHasForeignLateProvider(
+        plan,
+        unitId,
+        functionValueTarget,
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+        collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+        irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
+      ),
+    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
+      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+    callable: {
+      directCallerActivationTargets: (plan, sourceFile) =>
+        collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      preparedFunctionValueTargets: (plan, sourceFile) =>
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      timerOwnerUnitIds: (plan) => irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
+      formatFailure: (error) => formatIrPathFallbackDiagnostic(error, ctx),
+    },
+  });
+}
+
+function compileMultiPreparedProgramOverlays(
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+  multiAst: MultiTypedAST,
+  options: CodegenOptions | undefined,
+  ctx: CodegenContext,
+  identityContext: IrPlanningIdentityContext | undefined,
+): void {
+  // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
+  // ABI cannot safely be replaced by the current f64 IR ABI.
+  if (!options?.experimentalIR || ctx.fast) return;
+  const hostImportedFunctions =
+    ctx.standalone || ctx.wasi || ctx.strictNoHostImports
+      ? undefined
+      : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, identityContext!);
+  const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
+  profilePhase("ir-overlay", () => {
+    for (const sourceFile of multiAst.sourceFiles) {
+      profilePhase(sourceFile.fileName, () => {
+        const compile = (early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>) =>
+          compileMultiIrOverlaySource(
+            ctx,
+            multiAst,
+            sourceFile,
+            identityContext!,
+            safety,
+            hostImportedFunctions,
+            early,
+          );
+        if (owner) owner.withOverlayState(sourceFile, compile);
+        else compile();
+      });
+    }
+  });
+  // Overlay preparation can create callback trampolines after legacy finalization.
+  finalizeMethodTrampolines(ctx);
+  frameStage(ctx, "ir-overlay");
+}
+
 export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOptions): GeneratedCodegenModule {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
@@ -8970,7 +8960,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
-  ctx.irBodyRouteAuditSession?.registerGenerator("multi", "generateMultiModule");
+  const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
@@ -9006,6 +8996,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // fnctor NAME collisions, which are refused and COUNTED).
   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
   try {
+    // M1A: construct the checker-owned callable graph exactly once, before
+    // declaration/body emission can observe a partial program. All later
+    // source overlays consume this immutable identity projection.
+    initializeIrProgramCallableBindingGraph(ctx, multiAst, irPlanningIdentityContext);
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
       registerWasiImports(ctx, multiAst.entryFile);
@@ -9356,8 +9350,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 
-    // (#4589) Prepare one exact standalone scalar leaf before direct bodies.
-    const earlyMultiIr = planEarlyMultiIrOverlay(ctx, multiAst, irPlanningIdentityContext!, options);
+    planMultiPreparedProgramRoutes(multiPreparedProgram, multiAst, options, ctx, irPlanningIdentityContext);
 
     // Phase 3: Compile all function bodies.
     //
@@ -9406,9 +9399,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.funcMap.set(name, idx);
         }
         rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
-        profilePhase(sf.fileName, () =>
-          compileMultiPreparedScalarLeafDeclarations(ctx, sf, earlyMultiIr.get(sf), moduleInitMode),
-        );
+        profilePhase(sf.fileName, () => {
+          if (multiPreparedProgram) multiPreparedProgram.compileBodySource(sf, moduleInitMode);
+          else compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode);
+        });
       }
     });
     restoreNativeGeneratorEndState(ctx, nativeGenEndState);
@@ -9420,44 +9414,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     frameStage(ctx, "finalizeMethodTrampolines");
     profileCount("functions-after-bodies", ctx.mod.functions.length);
 
-    // (#2138 M0) Late IR overlay for multi-module top-level functions. Ordinary
-    // owners have direct bodies and finalized trampolines here; #4589's one
-    // exact standalone scalar singleton instead carries its Prepared body and
-    // correlated skip into this report. Imported calls remain an external
-    // selector boundary. Class members and module init stay direct-owned; never
-    // patch the shared `__module_init` once per source file.
-    // Fast-mode legacy declarations use i32 for `number`, while the current IR
-    // overlay uses f64. A multi-file target can be reached by a legacy caller,
-    // so replacing only that target would change its live Wasm ABI. Keep the
-    // whole multi-file overlay pre-claim disabled until those numeric boundary
-    // representations are planned mode-aware.
-    if (options?.experimentalIR && !ctx.fast) {
-      const hostImportedFunctions =
-        ctx.standalone || ctx.wasi || ctx.strictNoHostImports
-          ? undefined
-          : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, irPlanningIdentityContext!);
-      const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
-      profilePhase("ir-overlay", () => {
-        for (const sourceFile of multiAst.sourceFiles) {
-          profilePhase(sourceFile.fileName, () =>
-            compileMultiIrOverlaySource(
-              ctx,
-              multiAst,
-              sourceFile,
-              irPlanningIdentityContext!,
-              safety,
-              hostImportedFunctions,
-              earlyMultiIr.get(sourceFile),
-            ),
-          );
-        }
-      });
-      // A+B1 may create callback singleton trampolines after the legacy
-      // finalization pass. Rebuild those late declarations against the target's
-      // final signature before any fixup/validation pass observes them.
-      finalizeMethodTrampolines(ctx);
-      frameStage(ctx, "ir-overlay");
-    }
+    compileMultiPreparedProgramOverlays(multiPreparedProgram, multiAst, options, ctx, irPlanningIdentityContext);
+
+    multiPreparedProgram?.sealRoutesComplete();
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
@@ -9636,14 +9595,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
     unshiftRegExpAccessorSetGuard(ctx);
-    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
-    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
-    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
-    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
-    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
-    // this call commented. Re-enable only with a fix for the descriptor
-    // side-effect and a control run over Object/defineProperty prop-desc rows.
-    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -9694,6 +9645,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // fill, the backing vec contains the right values but every indexed read
     // silently returns the undefined sentinel.
     fillExternGetIdxVecArms(ctx);
+    unshiftExternGetStringExoticArm(ctx);
     // (#3666/#3251) Multi-source parity after every carrier/dynamic reader is complete.
     fillObjVecReflectionHelpers(ctx);
     // (#4098) Multi-source parity: the helper bodies were filled above; now
@@ -9716,7 +9668,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
-    fillF64HoleHasIdxArms(ctx);
+    fillSparseHoleHasIdxArms(ctx);
+    // (#4446) Multi-source parity for concat's `$Hole`-aware ObjVec readers
+    // and sparse-tail HasProperty guard.
+    fillConcatNativeHoleArms(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 
@@ -9804,6 +9759,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).
     fillStandaloneTypeofClosureArms(ctx);
+
+    // Same late fnctor-carrier fill on the multi-source finalize path.
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
+
+    // Same reserve/fill identity probes as the single-source pipeline.
+    fillNativeDynamicInstanceOf(ctx);
 
     // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
     fillSymbolAnyToStringArm(ctx);
@@ -9961,7 +9922,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // addImport/ensureLateImport after here throws at the producer site.
     finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
-    ctx.programAbiSession?.publish(mod);
+    publishMultiPreparedProgram(multiPreparedProgram, ctx.programAbiSession, mod);
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
@@ -10016,6 +9977,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     irOutcomes: ctx.irOutcomes,
     irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
+    multiPreparedProgramAudit: multiPreparedProgram?.audit,
   };
 }
 
@@ -11112,6 +11074,25 @@ function typeMayCarryObjectValue(type: ts.Type): boolean {
   return false;
 }
 
+function widenObjectLiteralFieldType(
+  wasmType: ValType,
+  receivesIndexedCarrier: boolean,
+  receivesObjectCarrier: boolean,
+  nullishScalarSeed: boolean,
+): ValType {
+  if (
+    receivesIndexedCarrier ||
+    (receivesObjectCarrier &&
+      (wasmType.kind === "ref" ||
+        wasmType.kind === "ref_null" ||
+        (wasmType.kind === "i32" && wasmType.boolean === true) ||
+        nullishScalarSeed))
+  ) {
+    return { kind: "externref" };
+  }
+  return wasmType;
+}
+
 /**
  * Ensure a ts.Type that's an object type is registered as a struct.
  * For named types already in structMap, this is a no-op.
@@ -11287,20 +11268,20 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         if (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return false;
         return typeMayCarryObjectValue(rhsType) && !ctx.checker.isTypeAssignableTo(rhsType, propType);
       }) ?? false;
+    const indexedPropertyDeclaration = prop.valueDeclaration ?? prop.declarations?.[0];
+    const assignedIndexedWrites = indexedPropertyDeclaration
+      ? ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedPropertyDeclaration)
+      : undefined;
+    const hasIncompatibleIndexedWrite =
+      assignedIndexedWrites?.some((rhsType) => !ctx.checker.isTypeAssignableTo(rhsType, propType)) ?? false;
     const receivesObjectCarrier =
       ctx.objectLiteralAssignedPropertyNames.has(prop.name) &&
       ((propType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
         hasIncompatibleObjectWrite ||
         nullishScalarSeed);
-    if (
-      receivesObjectCarrier &&
-      (wasmType.kind === "ref" ||
-        wasmType.kind === "ref_null" ||
-        (wasmType.kind === "i32" && wasmType.boolean === true) ||
-        nullishScalarSeed)
-    ) {
-      wasmType = { kind: "externref" };
-    }
+    const receivesIndexedCarrier = assignedIndexedWrites !== undefined && hasIncompatibleIndexedWrite;
+    if (receivesIndexedCarrier && indexedPropertyDeclaration) markIndexedPropertyStale(ctx, indexedPropertyDeclaration);
+    wasmType = widenObjectLiteralFieldType(wasmType, receivesIndexedCarrier, receivesObjectCarrier, nullishScalarSeed);
     // (#1468) `{ k: undefined }` makes TS infer the property's type as the
     // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for
     // function return types `undefined`/`void` indicate "no result". For a
@@ -11807,6 +11788,9 @@ function hoistVarDecl(
     let initForcesExternref = false;
     if (decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
       if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) {
+        initForcesExternref = true;
+      }
+      if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) {
         initForcesExternref = true;
       }
       // (#802 Slice A) A proto-receiver object literal is built as an open
@@ -12569,11 +12553,14 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.growableObjectLiteralVars.has(name);
         const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+        const initIsRedeclaredObjectIdentityLiteral =
+          ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
           initIsHostSpreadLiteral ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
+          initIsRedeclaredObjectIdentityLiteral ||
           initIsProtoReceiverLiteral;
         if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);

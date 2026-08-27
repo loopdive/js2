@@ -61,16 +61,91 @@
  * `expressions/calls.ts` describes, applied one level finer: the fold wins where
  * it KNOWS, the runtime wins where the fold was guessing.
  */
-import type { Instr, ValType } from "../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitObjectProtoToStringClassifier } from "./object-proto-tostring.js";
 
 /** `ctx.funcMap` key for the minted classifier. */
 export const OBJECT_PROTO_TOSTRING_CLASSIFY_FN = "__opts_classify";
+
+/**
+ * Finalize the function-constructor-instance arms of the shared Object tag
+ * classifier.  Fnctor structs are reserved before the body pass, but native
+ * prototype closures (and the classifier helper itself) can be probed during
+ * the earlier pass, before the dynamic-object carrier gate has published all
+ * `$__fnctor_<Name>` indices.  Re-emitting the classifier there would shift
+ * no function indices and would still leave the already-minted closures stale,
+ * so splice the late nominal tests into both existing consumers in place.
+ */
+export function fillStandaloneObjectProtoToStringFnctorArms(ctx: CodegenContext): void {
+  if (!ctx.nativeStrings) return;
+
+  const fnctors = [
+    ...new Set([
+      ...ctx.fnctorReservedTypeIdx.values(),
+      ...[...ctx.structMap.entries()]
+        .filter(([name]) => name.startsWith("__fnctor_") && !name.endsWith("__cold"))
+        .map(([, typeIdx]) => typeIdx),
+    ]),
+  ];
+  if (fnctors.length === 0) return;
+  const objectTag = (): Instr[] => {
+    addStringConstantGlobal(ctx, "[object Object]");
+    return [...stringConstantExternrefInstrs(ctx, "[object Object]"), { op: "return" }];
+  };
+  const fnByName = (name: string): WasmFunction | undefined =>
+    ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
+
+  const appendMissingArms = (fn: WasmFunction | undefined, receiverIndex: number, insertAt: number): void => {
+    if (!fn || insertAt < 0 || insertAt > fn.body.length) return;
+    const existing = new Set(
+      fn.body
+        .filter((instr): instr is Extract<Instr, { op: "ref.test" }> => instr.op === "ref.test")
+        .map((instr) => instr.typeIdx),
+    );
+    const arms: Instr[] = [];
+    for (const typeIdx of fnctors) {
+      if (existing.has(typeIdx)) continue;
+      arms.push(
+        { op: "local.get", index: receiverIndex },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: objectTag() },
+      );
+    }
+    if (arms.length > 0) fn.body.splice(insertAt, 0, ...arms);
+  };
+
+  // The decline form ends in `ref.null extern`.
+  const classifier = fnByName(OBJECT_PROTO_TOSTRING_CLASSIFY_FN);
+  if (classifier?.body.at(-1)?.op === "ref.null.extern") {
+    appendMissingArms(classifier, 0, classifier.body.length - 1);
+  }
+
+  // The reflective native closure ends in the catchable TypeError sequence
+  // emitted by `emitObjectProtoOrRefusal`: global.get / extern.convert_any /
+  // call / throw.  Keep the new arms ahead of that sequence so an ordinary
+  // fnctor instance returns its tag instead of reaching the refusal.
+  const objectToString = fnByName(`__proto_method_${BUILTIN_BRAND_TABLE.Object}_toString`);
+  if (objectToString) {
+    const b = objectToString.body;
+    const n = b.length;
+    const refusalStart =
+      n >= 4 &&
+      b[n - 1]?.op === "throw" &&
+      b[n - 2]?.op === "call" &&
+      b[n - 3]?.op === "extern.convert_any" &&
+      b[n - 4]?.op === "global.get"
+        ? n - 4
+        : -1;
+    appendMissingArms(objectToString, 1, refusalStart);
+  }
+}
 
 /**
  * Mint (once per module) `__opts_classify(receiver externref) -> externref`.
