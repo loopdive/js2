@@ -44,6 +44,8 @@ import {
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { isForeignEvalNode } from "../expressions/eval-source.js";
+import { ensureNativeArrayFromIterN } from "../iterator-native.js";
+import { ensureObjectRuntime } from "../object-runtime.js";
 import {
   collectClassDeclaration,
   compileClassBodies,
@@ -2897,20 +2899,41 @@ export function emitSetExtrasArgv(
   //     (native vecs) and avoids the lossy `coerce-to-externref` round-trip that
   //     dropped an inline-literal vec's elements (host `__array_from_iter` saw
   //     length 0). This is the path the failing test262 `...[lit]` cases need.
-  //   - otherwise (opaque externref / JS iterable, JS-host only) → materialize
-  //     via `__array_from_iter` and index with `__extern_length`/`__extern_get_idx`.
+  //   - otherwise (opaque externref / JS iterable) → materialize via the
+  //     host `__array_from_iter`, or the native `__array_from_iter_n` plus the
+  //     native indexed readers in standalone. Keeping the materializer and
+  //     readers in this shared path is important: constructor calls and
+  //     ordinary calls must observe the same iterator protocol and argument
+  //     order in both lanes.
   const hasSpread = args.slice(startIdx).some((a) => ts.isSpreadElement(a));
   if (hasSpread) {
-    const externIndexingOk = !noJsHost(ctx);
-    const lenFn = externIndexingOk
-      ? ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }])
-      : 0;
-    const getFn = externIndexingOk
-      ? ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }])
-      : 0;
-    const iterFn = externIndexingOk
-      ? ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }])
-      : 0;
+    // Standalone has no JS host to satisfy `__array_from_iter`. Its native
+    // materializer returns the canonical externref vec, and the native object
+    // runtime supplies the matching length/index readers. WASI deliberately
+    // stays on the existing best-effort path: unlike standalone, its object
+    // runtime does not expose the array-like reader arm yet.
+    const useNativeMaterializer = ctx.standalone;
+    let lenFn: number | undefined;
+    let getFn: number | undefined;
+    let iterFn: number | undefined;
+    if (useNativeMaterializer) {
+      ensureObjectRuntime(ctx);
+      ensureNativeArrayFromIterN(ctx);
+      lenFn = ctx.funcMap.get("__extern_length");
+      getFn = ctx.funcMap.get("__extern_get_idx");
+      iterFn = ctx.funcMap.get("__array_from_iter_n");
+    } else if (!noJsHost(ctx)) {
+      lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+      getFn = ensureLateImport(
+        ctx,
+        "__extern_get_idx",
+        [{ kind: "externref" }, { kind: "f64" }],
+        [{ kind: "externref" }],
+      );
+      // ArgumentListEvaluation uses GetIterator, so a non-callable or missing
+      // @@iterator is a TypeError rather than Array.from's array-like fallback.
+      iterFn = ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
+    }
     flushLateImportShifts(ctx, fctx);
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {
       const boxIdx = ctx.funcMap.get("__box_number");
@@ -3016,10 +3039,11 @@ export function emitSetExtrasArgv(
           }
           // Opaque source (host iterable). Coerce to externref, materialize, index.
           coerceTopToExternref(st);
-          if (!externIndexingOk || lenFn === 0 || getFn === 0 || iterFn === 0) {
-            // Standalone with a non-vec spread source — can't expand natively
-            // here. Drop the value and treat as a single slot (best effort; the
-            // static path would have done the same).
+          if (lenFn === undefined || getFn === undefined || iterFn === undefined) {
+            // A host-free target without the native reader substrate keeps the
+            // historical best-effort behavior. Standalone normally reaches the
+            // native branch above; this guard is only a defensive fallback for
+            // a target profile that declines that substrate.
             const valLocal = allocLocal(fctx, `__xa_val_${fctx.locals.length}`, { kind: "externref" });
             fctx.body.push({ op: "local.set", index: valLocal });
             fctx.body.push({ op: "local.get", index: totalLenLocal });
@@ -3029,6 +3053,10 @@ export function emitSetExtrasArgv(
             slots.push({ kind: "single", valLocal });
             continue;
           }
+          // The native materializer also accepts a step bound. A spread is an
+          // unbounded ArgumentListEvaluation, so pass -1; the host strict
+          // import has the historical one-argument signature.
+          if (useNativeMaterializer) fctx.body.push({ op: "f64.const", value: -1 });
           fctx.body.push({ op: "call", funcIdx: iterFn });
           const srcLocal = allocLocal(fctx, `__xa_src_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: srcLocal });
