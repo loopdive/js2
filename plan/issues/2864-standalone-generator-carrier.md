@@ -1808,3 +1808,20 @@ The local push was attempted after verification but was denied by the execution
 environment's external-egress policy; the parent integration task must push this
 fast-forward checkpoint to the PR branch. The worktree has no tracked or
 dependency-artifact residue.
+
+### PR #5035 merge-result regression repair
+
+The first upstream quality run exposed two JS-host-only invalid modules after
+merging current `main`: both focused host controls failed because the native
+generator factory's already-emitted `arguments` prologue retained stale global
+indices while the detached resume-function build registered late host imports.
+The standalone controls stayed green because that lane adds no host imports.
+
+`compileNativeGeneratorFunction` now registers the not-yet-attached factory
+body in `ctx.liveBodies` for exactly the duration of
+`ensureNativeGeneratorResumeFunction`. The shared late-index shifter therefore
+updates the arguments prologue along with the detached resume body, and the
+registration is removed in `finally` without leaking a live body. After the
+latest upstream merge, the focused suite is again 10/10, including both
+JS-host validation failures and all standalone controls. PR #5035 remains
+draft until the refreshed upstream quality run passes.

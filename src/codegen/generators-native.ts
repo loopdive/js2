@@ -4256,7 +4256,18 @@ export function compileNativeGeneratorFunction(
   decl: GeneratorDecl,
   info: NativeGeneratorInfo,
 ): void {
-  ensureNativeGeneratorResumeFunction(ctx, info);
+  // The factory prologue is not yet registered in `mod.functions`. Building
+  // the detached resume function can add host-lane imports, so keep the
+  // already-emitted arguments setup visible to the late-index shifter for the
+  // duration of that build. Standalone has no such imports, which is why this
+  // corruption previously appeared only in the JS-host controls.
+  const factoryBodyWasLive = ctx.liveBodies.has(fctx.body);
+  if (!factoryBodyWasLive) ctx.liveBodies.add(fctx.body);
+  try {
+    ensureNativeGeneratorResumeFunction(ctx, info);
+  } finally {
+    if (!factoryBodyWasLive) ctx.liveBodies.delete(fctx.body);
+  }
   // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, error=⊥,
   // optional frame-carried arguments, params…, spills(NaN)…
   // (#2864 F1) `sent`/`abrupt` init to the carrier default — `f64 NaN` for the
