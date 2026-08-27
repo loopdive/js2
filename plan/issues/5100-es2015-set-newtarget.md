@@ -3,7 +3,7 @@ id: 5100
 title: "ES2015 standalone Set constructor preserves intrinsic add"
 created: 2026-08-28
 updated: 2026-08-28
-status: in-progress
+status: done
 priority: medium
 depends_on: []
 es_edition: es2015
@@ -86,9 +86,8 @@ was green:
 | Biome lint, Prettier, LOC/function budgets | pass / pass / pass with issue-local allowance |
 | Oracle and coercion-site ratchets | pass / pass |
 
-The branch is clean and contains one repair commit with Thomas authorship and
-the Codex trailer.  The initial fork push is pending the execution environment
-allowing the explicitly requested `git push`; no GitHub issue or API mutation
-was performed from this lane.  Once pushed, the PR should be non-draft with
-this exact body and the lane may enter the queue only after fresh PR CI is
-green.
+The completed fix is published from `codex/5100-set-newtarget` as non-draft
+upstream PR #5106 against `loopdive/js2:main`.  This markdown file is the only
+issue record; no GitHub issue was opened.  Root owns fresh PR CI and merge-queue
+shepherding, and the lane may enter the queue only after the published head is
+mergeable with every required check green.
