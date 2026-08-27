@@ -16,6 +16,8 @@ sprint: current
 related: [3995, 4756, 4898]
 files:
   - tests/dogfood/upstream-suite-compile-worker.mjs
+  - tests/dogfood/upstream-suite-worker-protocol.mjs
+  - tests/issue-4767.test.ts
 ---
 
 ## Problem
@@ -117,6 +119,23 @@ process.stdout.write(`${JSON.stringify(value)}\n`, () => {
 This preserves #4898's guarantee (the child still exits regardless of lingering
 handles) while making the result survive an arbitrarily large report.
 
+The emit path moves into `tests/dogfood/upstream-suite-worker-protocol.mjs` as
+`emitWorkerResult()` — it is transport, it belongs beside the rest of the worker
+protocol, and putting it there makes it directly testable without standing up a
+compile.
+
+## Repro
+
+`tests/issue-4767.test.ts` guards the transport rather than any one package:
+it spawns a child that emits an over-buffer payload through the real
+`emitWorkerResult`, reads it back over a real pipe, and requires it byte-for-byte.
+
+Confirmed to catch the original defect — with the pre-fix
+`writeFileSync` + immediate `process.exit()` restored, the large-report case
+fails with `SyntaxError: Unterminated string in JSON at position 146176`, while
+the small-report case still passes, which is exactly the size-dependence that
+made this look package-specific.
+
 ## Acceptance criteria
 
 - [x] `pnpm run dogfood:cookie-upstream-suite` reports **63740/63740**, with
@@ -126,6 +145,8 @@ handles) while making the result survive an arbitrarily large report.
 - [x] No `__JS2WASM_COMPILE_COMPLETE__` sentinel appears in any recorded
       `errors[].message`
 - [x] The three small cookie spec files stay at 30/30, 85/85 and 97/97
+- [x] `tests/issue-4767.test.ts` passes on the fix and fails on the pre-fix
+      emit path
 
 ## Notes
 
