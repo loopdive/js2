@@ -294,6 +294,7 @@ import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
+import { noteRetUnboxStats } from "./ret-unbox-abi.js"; // (#4406 Phase 0) return-ABI funnel census
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
 import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
 import { fillLazyIterLadderArms } from "./iter-lazy-native.js"; // (#2903 R3)
@@ -582,7 +583,11 @@ import {
   emitStructFieldSetters,
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
-import { analyzeBooleanPropertyNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
+import {
+  analyzeBooleanNames,
+  analyzeBooleanPropertyNames,
+  recoverBooleanStructFieldBrands,
+} from "./struct-field-boolean-brand.js";
 import {
   analyzeNumericPropertyNames,
   applyNumericPropertyAnalysis,
@@ -5120,7 +5125,13 @@ export function generateModule(
     ctx.numericReturnTypes = inferNumericReturnTypes(ctx, ast.sourceFile);
     ctx.bindingAwareNumericReturnTypes = inferBindingAwareNumericReturnTypes(ctx, [ast.sourceFile]);
     applyCallReturnRefinement(ctx, numericAnalysisHost, [ast.sourceFile], priorNumericFunctions);
-    ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, [ast.sourceFile]);
+    // (#4406) One traversal, two verdicts — the function set is the fixpoint
+    // the property set already computed internally, published rather than
+    // discarded. Nothing reads `booleanFunctionNames` unless
+    // `JS2WASM_RET_UNBOX_ABI` is on, so this assignment is byte-inert.
+    const booleanNames = analyzeBooleanNames(ctx, [ast.sourceFile]);
+    ctx.booleanPropertyNames = booleanNames.properties;
+    ctx.booleanFunctionNames = booleanNames.functions;
 
     // #1677 — final reconcile of native-string helper indices before any USER
     // function is registered. Any imports added by the deferred-helper
@@ -5782,6 +5793,9 @@ export function generateModule(
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     fillDirectCallTrampolines(ctx);
+    // (#4406 Phase 0) The return-ABI funnel. A statement, never a condition —
+    // inert without `JS2WASM_RET_UNBOX_STATS=1`.
+    noteRetUnboxStats(ctx);
 
     // (#3125) Fill the reserved `__promise_has_callable_then` predicate — the
     // native-Promise resolve path's §27.2.1.3.2 Get("then")+IsCallable test —
@@ -9194,9 +9208,14 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       }
       ctx.numericReturnTypes = merged;
     });
-    ctx.booleanPropertyNames = profilePhase("boolean-property-analysis", () =>
-      analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles),
+    // (#4406) Same one-traversal/two-verdicts wiring as the single-source lane
+    // above; assigning in only one of the two makes the lanes disagree about
+    // which methods get an unboxed-boolean twin.
+    const linkedBooleanNames = profilePhase("boolean-property-analysis", () =>
+      analyzeBooleanNames(ctx, multiAst.sourceFiles),
     );
+    ctx.booleanPropertyNames = linkedBooleanNames.properties;
+    ctx.booleanFunctionNames = linkedBooleanNames.functions;
     // (#3765 multi-source parity) The standalone single-source path installs
     // the definition-site numeric-local oracle before declarations are minted,
     // but linked `compileMulti` graphs never did. That left JS-package locals
@@ -9582,6 +9601,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     fillDirectCallTrampolines(ctx);
+    // (#4406 Phase 0) Same funnel report in the linked lane.
+    noteRetUnboxStats(ctx);
 
     // (#3493) compileMulti shares the same property-access lowering as the
     // single-source path, so a dynamic property write/read can reserve one of

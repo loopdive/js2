@@ -3403,9 +3403,19 @@ export function compileArrowAsClosure(
         // the twin above may have added late imports, which shift every
         // function index (the same reason `twinFuncIdx` is minted after it).
         // A module without the helper keeps the tail call and the boxed twin.
-        const boxNumberIdx = refinedReturn !== undefined ? ctx.funcMap.get("__box_number") : undefined;
+        // (#4406) Select the box helper on the BRAND, not on "there is a refined
+        // result": a `{i32, boolean}` twin re-boxed with `__box_number` would
+        // hand the generic body's dynamic callers the NUMBER 1 where JS says
+        // `true`, which `===`/`typeof`/stringification all observe.
+        const boxHelperName =
+          refinedReturn === undefined
+            ? undefined
+            : refinedReturn.kind === "i32" && refinedReturn.boolean === true
+              ? "__box_boolean"
+              : "__box_number";
+        const boxHelperIdx = boxHelperName === undefined ? undefined : ctx.funcMap.get(boxHelperName);
         const boxTwinResult: Instr[] | undefined =
-          boxNumberIdx === undefined ? undefined : [{ op: "call", funcIdx: boxNumberIdx }];
+          boxHelperIdx === undefined ? undefined : [{ op: "call", funcIdx: boxHelperIdx }];
         // `refinedTwinReturnType` already required the helper to be resolvable,
         // so this cannot normally miss; if it ever did, emit NO shim rather than
         // an ill-typed tail call. The generic body then simply stays generic —
