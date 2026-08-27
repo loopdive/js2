@@ -14,6 +14,7 @@ import type { MultiTypedAST } from "../checker/index.js";
 import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import type { IrSourceId, IrSourceKind, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjectionEntry, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
@@ -21,15 +22,23 @@ import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, CodegenOptions } from "./context/types.js";
 import {
+  EMPTY_MULTI_PREPARED_ROUTE_CLAIMS,
+  extendMultiPreparedRouteClaims,
   compileMultiPreparedScalarLeafDeclarations,
   planEarlyMultiPreparedScalarLeafRoute,
   type EarlyMultiPreparedScalarLeafState,
   type MultiPreparedFunctionValuePlan,
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
+  type MultiPreparedRouteClaimSnapshot,
 } from "./multi-prepared-scalar-leaf.js";
 import { planEarlyMultiPreparedArrayLeafRoute } from "./multi-prepared-array-leaf.js";
 import { planEarlyMultiPreparedFunctionValueRoutes } from "./multi-prepared-fibonacci-pair.js";
+import {
+  planEarlyMultiPreparedStringLeafRoute,
+  type MultiPreparedStringLeafProofContext,
+  type MultiPreparedStringLeafShape,
+} from "./multi-prepared-string-leaf.js";
 import type {
   MultiPreparedEarlyLeafRoute,
   MultiPreparedScalarLeafPlan,
@@ -50,6 +59,7 @@ export type MultiPreparedProgramState =
 export type MultiPreparedProgramRouteKind =
   | "scalar"
   | "array"
+  | "string"
   | "function-value"
   | "fibonacci-pair"
   | "cross-source-callable";
@@ -95,30 +105,44 @@ export interface MultiPreparedProgramAudit {
   readonly abiSessionBound: true;
 }
 
+/** The overlay consumer is run only after the owner authenticates its report. */
+export interface MultiPreparedProgramOverlayResult {
+  readonly report: IrIntegrationReport;
+  readonly consume: () => void;
+}
+
 export interface MultiPreparedProgramRoutePlanners<Plan extends MultiPreparedScalarLeafPlan> {
-  readonly scalar: () => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
-  readonly array: () => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
-  readonly functionValue: () => ReadonlyMap<
-    import("../ts-api.js").ts.SourceFile,
-    EarlyMultiPreparedScalarLeafState<Plan>
-  >;
-  readonly fibonacciPair: () => ReadonlyMap<
-    import("../ts-api.js").ts.SourceFile,
-    EarlyMultiPreparedScalarLeafState<Plan>
-  >;
+  readonly scalar: (
+    claimedRouteClaims?: MultiPreparedRouteClaimSnapshot,
+  ) => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
+  readonly array: (
+    claimedRouteClaims?: MultiPreparedRouteClaimSnapshot,
+  ) => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
+  readonly string?: (
+    claimedRouteClaims: MultiPreparedRouteClaimSnapshot,
+  ) => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
+  readonly functionValue: (
+    claimedRouteClaims?: MultiPreparedRouteClaimSnapshot,
+  ) => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
+  readonly fibonacciPair: (
+    claimedRouteClaims?: MultiPreparedRouteClaimSnapshot,
+  ) => ReadonlyMap<import("../ts-api.js").ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>;
 }
 
 export interface MultiPreparedProgramEarlyRouteInput<Plan extends MultiPreparedFunctionValuePlan> {
   readonly active: boolean;
   readonly scalarCutoverEnabled: boolean;
   readonly arrayCutoverEnabled: boolean;
+  readonly stringCutoverEnabled: boolean;
+  readonly stringProofContext: MultiPreparedStringLeafProofContext;
   readonly functionValueLeafCutoverEnabled: boolean;
   readonly fibonacciPairCutoverEnabled: boolean;
   readonly ctx: CodegenContext;
   readonly sourceFiles: readonly SourceFile[];
   readonly entryFile: SourceFile;
   readonly safety: () => MultiPreparedScalarLeafGraphSafety;
-  readonly planSource: (sourceFile: SourceFile) => Plan;
+  readonly planSource: (sourceFile: SourceFile, stringShape?: MultiPreparedStringLeafShape) => Plan;
+  readonly stringShapes?: readonly MultiPreparedStringLeafShape[];
   readonly safeSelection: (
     plan: Plan,
     sourceFile: SourceFile,
@@ -370,6 +394,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   readonly #callableSkippedUnitIds = new Set<IrUnitId>();
   readonly #callableSkippedNamesBySourceFile = new Map<SourceFile, Set<string>>();
   readonly #routeSnapshots: RouteSnapshot<Plan>[] = [];
+  #claimedRouteClaims: MultiPreparedRouteClaimSnapshot = EMPTY_MULTI_PREPARED_ROUTE_CLAIMS;
   readonly #bodySourceIds: IrSourceId[] = [];
   readonly #overlaySourceIds: IrSourceId[] = [];
   #bodyPlan: MultiPreparedProgramBodyPlan | undefined;
@@ -440,6 +465,25 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           lateProviderOwnerUnitIds: input.lateProviderOwnerUnitIds,
           prepareFunctionValueSupport: input.prepareFunctionValueSupport,
           projectLoweringPlans: input.projectLoweringPlans,
+          claimedRouteClaims: this.#claimedRouteClaims,
+        }),
+      string: () =>
+        planEarlyMultiPreparedStringLeafRoute({
+          active: input.active,
+          cutoverEnabled: input.stringCutoverEnabled,
+          ctx: input.ctx,
+          proofContext: input.stringProofContext,
+          sourceFiles: input.sourceFiles,
+          entryFile: input.entryFile,
+          safety: input.safety,
+          planSource: input.planSource,
+          safeSelection: input.safeSelection,
+          hasForeignLateProvider: (plan, sourceFile, unitId) =>
+            input.hasForeignLateProvider(plan, sourceFile, unitId, true),
+          prepareFunctionValueSupport: input.prepareFunctionValueSupport,
+          projectLoweringPlans: input.projectLoweringPlans,
+          shapes: input.stringShapes ?? [],
+          claimedRouteClaims: this.#claimedRouteClaims,
         }),
       functionValue: () =>
         planEarlyMultiPreparedFunctionValueRoutes({
@@ -455,19 +499,37 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           hasForeignLateProvider: input.hasForeignLateProvider,
           prepareFunctionValueSupport: input.prepareFunctionValueSupport,
           projectLoweringPlans: input.projectLoweringPlans,
+          claimedRouteClaims: this.#claimedRouteClaims,
         }),
       // The function-value planner owns both the leaf and Fibonacci pair.
       fibonacciPair: () => new Map(),
     });
   }
 
-  /** Merge the four existing route planner outputs under this owner. */
+  /** Merge the existing route planner outputs under this owner. */
   planEarlyRoutes(planners: MultiPreparedProgramRoutePlanners<Plan>): void {
     this.#requireState("collecting");
     if (this.#routesPlanned) this.#fail("routes-already-planned", "early routes were already planned");
     try {
-      for (const planner of [planners.scalar, planners.array, planners.functionValue, planners.fibonacciPair]) {
-        for (const [sourceFile, state] of planner()) this.#registerState(sourceFile, state);
+      for (const planner of [
+        planners.scalar,
+        planners.array,
+        ...(planners.string ? [planners.string] : []),
+        planners.functionValue,
+        planners.fibonacciPair,
+      ]) {
+        const states = planner(this.#claimedRouteClaims);
+        for (const [sourceFile, state] of states) this.#registerState(sourceFile, state);
+        for (const state of states.values()) {
+          if (!state.route) continue;
+          const slots = slotsForRoute(state.route);
+          this.#claimedRouteClaims = extendMultiPreparedRouteClaims(
+            this.#claimedRouteClaims,
+            state.route.sourceFile,
+            slots.map((slot) => slot.unitId),
+            slots.map((slot) => slot.unitId),
+          );
+        }
       }
       this.#routesPlanned = true;
     } catch (error) {
@@ -701,10 +763,25 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
    * The mutable state never escapes this callback and the owner records the
    * source visit even when that source had no early route.
    */
-  withOverlayState(sourceFile: SourceFile, consumer: (state: RouteState<Plan> | undefined) => void): void {
+  withOverlayState(
+    sourceFile: SourceFile,
+    consumer: (state: RouteState<Plan> | undefined) => MultiPreparedProgramOverlayResult | undefined,
+  ): void {
     const state = this.#stateForOverlaySource(sourceFile);
     try {
-      consumer(state);
+      if (state?.route?.routeKind === "string") state.route.sealAfterDirectCurrentness();
+      if (state?.route) {
+        const snapshot = this.#routeSnapshots.find((candidate) => candidate.state === state);
+        if (!snapshot) this.#fail("route-plan-mismatch", `overlay source ${sourceFile.fileName} lost its sealed route`);
+        this.#assertRouteFields(sourceFile, state, state.route, slotsForRoute(state.route), snapshot.componentId);
+      }
+      const result = consumer(state);
+      if (state?.route?.routeKind === "string" && !result) {
+        this.#fail("route-report-mismatch", `string route ${state.route.unitId} produced no merged overlay report`);
+      }
+      if (state?.route && result) this.#assertMergedIntegrationReport(state.route, result.report);
+      result?.consume();
+      if (state?.route?.routeKind === "string") state.route.sealAfterOverlayCurrentness();
       this.#assertBodySkip(sourceFile, state);
       this.#assertCallableBodySkip(sourceFile);
       for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
@@ -719,6 +796,43 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     } catch (error) {
       this.#state = "failed";
       throw error;
+    }
+  }
+
+  #assertMergedIntegrationReport(route: MultiPreparedEarlyLeafRoute, report: IrIntegrationReport): void {
+    if (route.routeKind !== "string") return;
+    const receipts = report.preparedCountedStringAppendReceipts ?? [];
+    const stored = route.preparedCountedStringAppendReceipt;
+    if (receipts.length !== 1 || receipts[0] !== stored) {
+      this.#fail(
+        "route-report-mismatch",
+        `string route ${route.unitId} did not retain exactly one stored counted-string receipt in the merged report`,
+      );
+    }
+    try {
+      const identity = requireValidPreparedCountedStringAppendReceipt(stored);
+      if (identity.ownerUnitId !== route.unitId || stored.plan !== route.candidate.loweringPlan) {
+        this.#fail("route-report-mismatch", `string route ${route.unitId} retained a foreign counted-string receipt`);
+      }
+    } catch (error) {
+      if (error instanceof IrInvariantError) throw error;
+      this.#fail("route-report-mismatch", `string route ${route.unitId} retained an invalid counted-string receipt`);
+    }
+  }
+
+  /** Seal string-route instruction identity after the final trampoline rebuild. */
+  sealPostOverlayFinalization(): void {
+    this.#requireState("body-boundary-sealed");
+    for (const state of this.#states.values()) {
+      if (state.route?.routeKind === "string") state.route.sealAfterFinalizationCurrentness();
+    }
+  }
+
+  /** Seal final optimized instruction identity immediately before ABI publication. */
+  sealBeforePublication(): void {
+    this.#requireState("routes-complete");
+    for (const state of this.#states.values()) {
+      if (state.route?.routeKind === "string") state.route.sealBeforePublicationCurrentness();
     }
   }
 
@@ -1001,6 +1115,21 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     }
     if (route.routeKind === "fibonacci-pair" && !supportIsCurrent(snapshotSupport(route.support), route.support)) {
       this.#fail("route-support-mismatch", `Fibonacci route ${route.unitId} has stale support`);
+    }
+    if (route.routeKind === "string") {
+      try {
+        const identity = requireValidPreparedCountedStringAppendReceipt(route.preparedCountedStringAppendReceipt);
+        if (
+          identity.ownerUnitId !== route.unitId ||
+          route.preparedCountedStringAppendReceipt.plan !== route.candidate.loweringPlan
+        ) {
+          this.#fail("route-report-mismatch", `string route ${route.unitId} has a foreign counted-string receipt`);
+        }
+      } catch (error) {
+        if (error instanceof IrInvariantError) throw error;
+        this.#fail("route-report-mismatch", `string route ${route.unitId} has an invalid counted-string receipt`);
+      }
+      route.assertCurrent();
     }
     // Force the route's unit population to be checked as a source-local set;
     // this catches a swapped recursive/wrapper receipt even when names happen
@@ -1341,6 +1470,7 @@ export function publishMultiPreparedProgram<Plan extends MultiPreparedScalarLeaf
   programAbiSession: ProgramAbiSession | undefined,
   mod: WasmModule,
 ): void {
+  owner?.sealBeforePublication();
   const publication = programAbiSession?.publish(mod);
   if (publication) owner?.complete(publication);
 }

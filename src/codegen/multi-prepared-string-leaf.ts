@@ -16,8 +16,12 @@ import {
   type IrCountedStringAppendPlan,
 } from "../ir/analysis/counted-string-append.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
-import { irSupportGlobalRef, sameIrGlobalBinding } from "../ir/abi-bindings.js";
-import type { IrCountedStringAppendLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import { irGlobalBindingKey, irSupportGlobalRef, sameIrGlobalBinding } from "../ir/abi-bindings.js";
+import type {
+  IrCountedStringAppendLoweringPlan,
+  IrIntegrationLoweringPlans,
+  PreparedCountedStringAppendReceipt,
+} from "../ir/ast-lowering-plans.js";
 import {
   irCallableBindingKey,
   irSupportFuncRef,
@@ -25,7 +29,10 @@ import {
   irUnitFuncRef,
   sameIrCallableBinding,
 } from "../ir/callable-bindings.js";
-import { requireCurrentIrCountedStringAppendPlanSite } from "../ir/counted-string-append-provenance.js";
+import {
+  requireCurrentIrCountedStringAppendPlanSite,
+  requireValidPreparedCountedStringAppendReceipt,
+} from "../ir/counted-string-append-provenance.js";
 import type { IrSourceId, IrUnitId } from "../ir/identity.js";
 import { asVal } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -48,8 +55,15 @@ import {
   type MultiPreparedFunctionValuePlan,
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
+  type MultiPreparedScalarLeafReceipt,
+  type MultiPreparedLeafRouteBase,
+  type EarlyMultiPreparedScalarLeafState,
+  multiPreparedRouteClaimsOverlap,
+  type MultiPreparedRouteClaimSnapshot,
 } from "./multi-prepared-scalar-leaf.js";
+import { prepareIrBodies } from "./ir-prepared-free-functions.js";
 import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
+import { localGlobalIdx } from "./registry/imports.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import {
   canonicalProgramAbiCallableTypeContract,
@@ -83,6 +97,23 @@ export interface MultiPreparedStringLeafCandidateEvidence extends MultiPreparedF
   readonly callerDeclaration: ts.FunctionDeclaration;
   readonly importedTarget: ts.FunctionDeclaration;
   readonly importedTargetSourceId: IrSourceId;
+}
+
+/**
+ * The first production consumer of the dormant C1 proof.  The route owns the
+ * exact prepared receipt and the live allocator body; the whole-program owner
+ * authenticates those objects at every later phase boundary.
+ */
+export interface MultiPreparedStringLeafRoute extends MultiPreparedLeafRouteBase {
+  readonly routeKind: "string";
+  readonly candidate: MultiPreparedStringLeafCandidateEvidence;
+  readonly support: MultiPreparedFunctionValueSupportReceipt;
+  readonly preparedCountedStringAppendReceipt: PreparedCountedStringAppendReceipt;
+  readonly sealAfterDirectCurrentness: () => void;
+  readonly sealAfterOverlayCurrentness: () => void;
+  readonly sealAfterFinalizationCurrentness: () => void;
+  readonly sealBeforePublicationCurrentness: () => void;
+  readonly assertCurrent: () => void;
 }
 
 export interface MultiPreparedStringLeafResolverInput<Plan extends MultiPreparedFunctionValuePlan> {
@@ -951,6 +982,10 @@ function stringLeafInvariant(stage: "resolve" | "patch", candidate: MultiPrepare
   );
 }
 
+function requiredStringLeafInvariant(stage: "resolve" | "patch", detail: string): never {
+  throw new IrInvariantError("selection-preparation-mismatch", stage, `multi-source string leaf: ${detail}`);
+}
+
 /** Explicit invariant form for the final pre-support boundary. */
 export function requireCurrentMultiPreparedStringLeafCandidate<Plan extends MultiPreparedFunctionValuePlan>(
   input: MultiPreparedStringLeafResolverInput<Plan>,
@@ -984,7 +1019,12 @@ function exactSupportReceipt(
     !Object.isFrozen(support.trampolineRef.binding) ||
     !Object.isFrozen(support.cacheGlobalRef) ||
     !Object.isFrozen(support.cacheGlobalRef.binding) ||
-    !functionValueSupportIsCurrent(ctx, candidate, support, boundary === "before-prepare")
+    // Finalization and the default IR inliner may legitimately rewrite the
+    // trampoline body after support allocation. At later boundaries the exact
+    // allocator, registry, binding, locator, index, cache, and target joins
+    // below are authoritative; only the pre-prepare boundary pins the initial
+    // one-call forwarding body.
+    (boundary === "before-prepare" && !functionValueSupportIsCurrent(ctx, candidate, support, true))
   ) {
     return false;
   }
@@ -1018,12 +1058,31 @@ function exactSupportReceipt(
     sameIrGlobalBinding(support.cacheGlobalRef.binding, expectedCache.binding) &&
     support.trampolineBindingId === expectedTrampoline.binding.bindingId &&
     support.cacheGlobalBindingId === expectedCache.binding.bindingId &&
+    definedFuncAt(ctx, support.trampolineHandle) === support.trampolineFunction &&
+    ctx.mod.globals[localGlobalIdx(ctx, support.cacheGlobalHandle)] === support.cacheGlobal &&
+    ctx.funcMap.get(trampolineName) === support.trampolineHandle &&
+    ctx.funcClosureGlobals.get(candidate.legacyName) === support.cacheGlobalHandle &&
+    support.trampolineFunction.body.length > 0 &&
+    support.cacheGlobal.type.kind === "externref" &&
+    support.cacheGlobal.mutable &&
+    support.cacheGlobal.init.length === 1 &&
+    support.cacheGlobal.init[0]?.op === "ref.null.extern" &&
     session.hasPlan(support.trampolineBindingId) &&
     session.hasPlan(support.cacheGlobalBindingId) &&
     session.hasLocator(support.trampolineBindingId, support.trampolineFunction) &&
     session.hasLocator(support.cacheGlobalBindingId, support.cacheGlobal) &&
     session.locatorBindingId(support.trampolineFunction) === support.trampolineBindingId &&
     session.locatorBindingId(support.cacheGlobal) === support.cacheGlobalBindingId &&
+    session.resolveCurrentIndex(
+      support.trampolineBindingId,
+      "function",
+      irCallableBindingKey(support.trampolineRef.binding),
+    ) === absoluteFuncIndex(ctx.mod, support.trampolineHandle) &&
+    session.resolveCurrentIndex(
+      support.cacheGlobalBindingId,
+      "global",
+      irGlobalBindingKey(support.cacheGlobalRef.binding),
+    ) === support.cacheGlobalHandle &&
     ctx.funcClosureSingletonKeyByFuncIdx.get(support.targetHandle) === candidate.legacyName &&
     [...ctx.funcClosureSingletonKeyByFuncIdx].filter(([, key]) => key === candidate.legacyName).length === 1 &&
     ctx.mod.functions.filter((func) => func.name === trampolineName || func.name.startsWith(`${trampolineName}$`))
@@ -1048,4 +1107,311 @@ export function requireCurrentMultiPreparedStringLeafSupport<Plan extends MultiP
   boundary: MultiPreparedStringLeafSupportBoundary,
 ): void {
   if (!supportIsCurrent(input, candidate, support, boundary)) stringLeafInvariant("patch", candidate);
+}
+
+function exactStringPreparedReceipt(
+  candidate: MultiPreparedStringLeafCandidateEvidence,
+  prepared: ReturnType<typeof prepareIrBodies>,
+): PreparedCountedStringAppendReceipt {
+  const receipts = prepared.report.preparedCountedStringAppendReceipts ?? [];
+  const receipt = receipts.length === 1 ? receipts[0] : undefined;
+  if (
+    !receipt ||
+    receipt.plan !== candidate.loweringPlan ||
+    receipt.siteId !== candidate.loweringPlan.siteId ||
+    prepared.report.errors.length !== 0 ||
+    prepared.report.compiled.length !== 1 ||
+    prepared.report.compiled[0] !== candidate.legacyName ||
+    (prepared.report.terminalCompiledOwners?.length ?? 0) !== 1 ||
+    prepared.report.terminalCompiledOwners?.[0] !== candidate.legacyName
+  ) {
+    stringLeafInvariant("patch", candidate);
+  }
+  try {
+    requireValidPreparedCountedStringAppendReceipt(receipt);
+  } catch {
+    stringLeafInvariant("patch", candidate);
+  }
+  return receipt;
+}
+
+function exactStringPreparedBody(
+  candidate: MultiPreparedStringLeafCandidateEvidence,
+  prepared: ReturnType<typeof prepareIrBodies>,
+): MultiPreparedScalarLeafReceipt {
+  const requested = prepared.freeFunctions.requestedSkipProjection.entries;
+  const exactSets =
+    requested.length === 1 &&
+    requested[0]?.unitId === candidate.unitId &&
+    requested[0]?.legacyName === candidate.legacyName &&
+    prepared.freeFunctions.skipBodies.size === 1 &&
+    prepared.freeFunctions.skipBodies.has(candidate.legacyName) &&
+    prepared.freeFunctions.preserveBodies.size === 1 &&
+    prepared.freeFunctions.preserveBodies.has(candidate.legacyName) &&
+    prepared.freeFunctions.completedBodies.size === 1 &&
+    prepared.freeFunctions.completedBodies.has(candidate.legacyName) &&
+    prepared.freeFunctions.requestedSkipProjection.entries.every(
+      (entry) => entry.legacyName === candidate.legacyName && entry.unitId === candidate.unitId,
+    ) &&
+    (prepared.report.terminalEvidence?.length ?? 0) === 1 &&
+    (prepared.report.compiledArtifactEvidence?.length ?? 0) === 1 &&
+    (prepared.report.syntheticCompiledArtifacts?.length ?? 0) === 0;
+  const evidence = prepared.report.terminalEvidence?.[0];
+  const artifact = prepared.report.compiledArtifactEvidence?.[0];
+  if (
+    !exactSets ||
+    !evidence ||
+    evidence.kind !== "patched" ||
+    evidence.unitId !== candidate.unitId ||
+    evidence.legacyName !== candidate.legacyName ||
+    !evidence.preparedComponentId ||
+    !artifact ||
+    artifact.artifactUnitId !== candidate.unitId ||
+    artifact.terminalOwnerUnitId !== candidate.unitId ||
+    artifact.name !== candidate.legacyName ||
+    artifact.preparedComponentId !== evidence.preparedComponentId
+  ) {
+    stringLeafInvariant("patch", candidate);
+  }
+  return {
+    kind: "prepared",
+    unitId: candidate.unitId,
+    legacyName: candidate.legacyName,
+    preparedComponentId: evidence.preparedComponentId,
+  };
+}
+
+/**
+ * Prepare the exact C1 string leaf through the same free-function body
+ * consumer as the existing scalar/array routes.  The route is deliberately
+ * assembled only after support allocation and the counted-string receipt
+ * have both authenticated against the captured target-only projection.
+ */
+export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPreparedFunctionValuePlan>(input: {
+  readonly active: boolean;
+  readonly cutoverEnabled: boolean;
+  readonly ctx: CodegenContext;
+  readonly proofContext: MultiPreparedStringLeafProofContext;
+  readonly sourceFiles: readonly ts.SourceFile[];
+  readonly entryFile: ts.SourceFile;
+  readonly safety: () => MultiPreparedScalarLeafGraphSafety;
+  readonly planSource: (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape) => Plan;
+  readonly safeSelection: (
+    plan: Plan,
+    sourceFile: ts.SourceFile,
+    safety: MultiPreparedScalarLeafGraphSafety,
+  ) => IrSelection;
+  readonly hasForeignLateProvider: (plan: Plan, sourceFile: ts.SourceFile, unitId: IrUnitId) => boolean;
+  readonly prepareFunctionValueSupport: (
+    plan: Plan,
+    sourceFile: ts.SourceFile,
+    unitId: IrUnitId,
+    legacyName: string,
+  ) => MultiPreparedFunctionValueSupportReceipt | undefined;
+  readonly projectLoweringPlans: (plan: Plan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly shapes: readonly MultiPreparedStringLeafShape[];
+  readonly claimedRouteClaims?: MultiPreparedRouteClaimSnapshot;
+}): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>> {
+  const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
+  if (!input.active || input.shapes.length !== 1) return states;
+  const shape = input.shapes[0]!;
+  if (shape.sourceFile !== input.entryFile) return states;
+  const sourceFile = shape.sourceFile;
+  const plan = input.planSource(sourceFile, shape);
+  const safety = input.safety();
+  const preparedSelection: IrSelection = {
+    funcs: new Set([shape.declaration.name!.text]),
+    classMembers: new Set(),
+    classMemberUnitIds: new Set(),
+    moduleInit: undefined,
+  };
+  const projectedLoweringPlans = input.projectLoweringPlans(plan, preparedSelection);
+  const resolverInput: MultiPreparedStringLeafResolverInput<Plan> = {
+    ctx: input.ctx,
+    entrySource: input.entryFile,
+    plan,
+    safeSelection: input.safeSelection(plan, sourceFile, safety),
+    projectedLoweringPlans,
+    safety,
+    proofContext: input.proofContext,
+    shapes: input.shapes,
+    hasForeignLateProvider: (unitId) => input.hasForeignLateProvider(plan, sourceFile, unitId),
+  };
+  const candidate = resolveMultiPreparedStringLeafCandidate(resolverInput);
+  if (!candidate) {
+    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_STRING_LEAF === "1") {
+      requiredStringLeafInvariant("resolve", "required candidate failed exact C1 certification");
+    }
+    return states;
+  }
+  if (
+    input.claimedRouteClaims &&
+    multiPreparedRouteClaimsOverlap(input.claimedRouteClaims, sourceFile, [candidate.unitId], [candidate.unitId])
+  ) {
+    return states;
+  }
+  const state: EarlyMultiPreparedScalarLeafState<Plan> = {
+    plan,
+    skippedFunctionUnitIds: new Set(),
+  };
+  states.set(sourceFile, state);
+  if (!input.cutoverEnabled) return states;
+
+  // This is the first mutation in the route.  Recheck all pure C1 evidence
+  // immediately before requesting the shared support graph.
+  requireCurrentMultiPreparedStringLeafCandidate(resolverInput, candidate);
+  const support = input.prepareFunctionValueSupport(plan, sourceFile, candidate.unitId, candidate.legacyName);
+  if (!support) stringLeafInvariant("patch", candidate);
+  requireCurrentMultiPreparedStringLeafSupport(resolverInput, candidate, support, "before-prepare");
+
+  const prepared = prepareIrBodies({
+    ctx: input.ctx,
+    sourceFile,
+    selection: preparedSelection,
+    identityPlan: plan.identityPlan,
+    functionClaimsByUnitId: plan.functionClaimsByUnitId,
+    overrideMap: plan.overrideMap,
+    classShapes: plan.classShapes,
+    classShapesById: plan.classShapesById,
+    projectLoweringPlans: () => projectedLoweringPlans,
+  });
+  if (prepared.classMembers || prepared.moduleInit || prepared.implicitConstructorUnitIds.size !== 0) {
+    stringLeafInvariant("patch", candidate);
+  }
+  const countedReceipt = exactStringPreparedReceipt(candidate, prepared);
+  const preparedReceipt = exactStringPreparedBody(candidate, prepared);
+  const allocated = exactAllocatedNumericCallable(input.ctx, candidate.unitId, candidate.legacyName, 0, false);
+  if (!allocated || allocated.func.body.length === 0) stringLeafInvariant("patch", candidate);
+
+  let expectedInstructions: readonly (typeof allocated.func.body)[number][] = Object.freeze([...allocated.func.body]);
+  let afterDirectSealed = false;
+  let afterOverlaySealed = false;
+  let afterFinalizationSealed = false;
+  let beforePublicationSealed = false;
+  const captureCurrentInstructions = (): void => {
+    const currentSafety = input.safety();
+    const currentSafeSelection = input.safeSelection(plan, sourceFile, currentSafety);
+    if (!currentSafeSelection.funcs.has(candidate.legacyName)) {
+      requiredStringLeafInvariant("patch", `final selection lost ${candidate.unitId}`);
+    }
+    requireCurrentMultiPreparedStringLeafSupport(
+      { ...resolverInput, safeSelection: preparedSelection, safety: currentSafety },
+      candidate,
+      support,
+      "after-direct",
+    );
+    if (!allocated.func || allocated.func !== route.allocatedFunction || allocated.func.body !== route.preparedBody) {
+      requiredStringLeafInvariant("patch", `allocated body identity for ${candidate.unitId} drifted`);
+    }
+    expectedInstructions = Object.freeze([...allocated.func.body]);
+  };
+  const sealAfterDirectCurrentness = (): void => {
+    if (afterDirectSealed) {
+      requiredStringLeafInvariant("patch", `post-direct currentness for ${candidate.unitId} was sealed twice`);
+    }
+    captureCurrentInstructions();
+    afterDirectSealed = true;
+  };
+  const sealAfterOverlayCurrentness = (): void => {
+    if (!afterDirectSealed || afterOverlaySealed) {
+      requiredStringLeafInvariant("patch", `post-overlay currentness for ${candidate.unitId} was sealed out of order`);
+    }
+    captureCurrentInstructions();
+    afterOverlaySealed = true;
+  };
+  const sealAfterFinalizationCurrentness = (): void => {
+    if (!afterOverlaySealed || afterFinalizationSealed) {
+      requiredStringLeafInvariant(
+        "patch",
+        `post-finalization currentness for ${candidate.unitId} was sealed out of order`,
+      );
+    }
+    captureCurrentInstructions();
+    afterFinalizationSealed = true;
+  };
+  const sealBeforePublicationCurrentness = (): void => {
+    if (!afterFinalizationSealed || beforePublicationSealed) {
+      requiredStringLeafInvariant(
+        "patch",
+        `pre-publication currentness for ${candidate.unitId} was sealed out of order`,
+      );
+    }
+    captureCurrentInstructions();
+    beforePublicationSealed = true;
+  };
+  const assertCurrent = (): void => {
+    const currentSafety = input.safety();
+    const currentSafeSelection = input.safeSelection(plan, sourceFile, currentSafety);
+    if (!currentSafeSelection.funcs.has(candidate.legacyName)) {
+      requiredStringLeafInvariant("patch", `final selection lost ${candidate.unitId}`);
+    }
+    const currentInput: MultiPreparedStringLeafResolverInput<Plan> = {
+      ...resolverInput,
+      // C1 currentness is intentionally checked against the captured
+      // target-only projection; the whole-program owner separately checks the
+      // final selection contains the same target.
+      safeSelection: preparedSelection,
+      safety: currentSafety,
+    };
+    requireCurrentMultiPreparedStringLeafSupport(currentInput, candidate, support, "after-direct");
+    let currentReceipt: Readonly<PreparedCountedStringAppendReceipt>;
+    try {
+      requireValidPreparedCountedStringAppendReceipt(route.preparedCountedStringAppendReceipt);
+      currentReceipt = route.preparedCountedStringAppendReceipt;
+    } catch {
+      requiredStringLeafInvariant("patch", `stored counted-string receipt for ${candidate.unitId} is invalid`);
+    }
+    if (
+      currentReceipt! !== countedReceipt ||
+      currentReceipt!.plan !== candidate.loweringPlan ||
+      route.preparedCountedStringAppendReceipt.siteId !== candidate.loweringPlan.siteId
+    ) {
+      requiredStringLeafInvariant("patch", `stored counted-string receipt for ${candidate.unitId} drifted`);
+    }
+    if (!allocated.func || allocated.func !== route.allocatedFunction || allocated.func.body !== route.preparedBody) {
+      requiredStringLeafInvariant("patch", `allocated body identity for ${candidate.unitId} drifted`);
+    }
+    if (
+      allocated.func.body.length !== expectedInstructions.length ||
+      allocated.func.body.some((instruction, index) => instruction !== expectedInstructions[index])
+    ) {
+      const boundaryName = beforePublicationSealed
+        ? "publication sealing"
+        : afterFinalizationSealed
+          ? "finalization sealing"
+          : afterOverlaySealed
+            ? "overlay sealing"
+            : afterDirectSealed
+              ? "direct sealing"
+              : "preparation";
+      requiredStringLeafInvariant(
+        "patch",
+        `prepared instructions for ${candidate.unitId} drifted after ${boundaryName}`,
+      );
+    }
+  };
+  const route: MultiPreparedStringLeafRoute = Object.freeze({
+    routeKind: "string" as const,
+    sourceFile,
+    declaration: candidate.declaration,
+    unitId: candidate.unitId,
+    legacyName: candidate.legacyName,
+    preparedSelection,
+    preparedReport: prepared.report,
+    preparedFreeFunctions: prepared.freeFunctions,
+    receipt: preparedReceipt,
+    allocatedFunction: allocated.func,
+    preparedBody: allocated.func.body,
+    preparedInstructions: Object.freeze([...allocated.func.body]),
+    candidate,
+    support,
+    preparedCountedStringAppendReceipt: countedReceipt,
+    sealAfterDirectCurrentness,
+    sealAfterOverlayCurrentness,
+    sealAfterFinalizationCurrentness,
+    sealBeforePublicationCurrentness,
+    assertCurrent,
+  });
+  states.set(sourceFile, { plan, route, skippedFunctionUnitIds: new Set() });
+  return states;
 }

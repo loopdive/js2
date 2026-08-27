@@ -469,7 +469,7 @@ describe("#3525 whole-program Prepared ownership census", () => {
     expectInvariant(() => owner.complete(publication), "publication-inventory-mismatch");
   });
 
-  it("records all four existing early routes and removes only their own reservation", () => {
+  it("records all five existing early routes and removes only their own reservation", () => {
     const benchmarkHelpers = resolve(import.meta.dirname, "../website/playground/examples/benchmarks/helpers.ts");
     const helperSource = readFileSync(benchmarkHelpers, "utf8");
     const cases = [
@@ -521,6 +521,19 @@ describe("#3525 whole-program Prepared ownership census", () => {
         cutover: "JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER",
         required: "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_ARRAY_LEAF",
         routeKind: "array" as const,
+      },
+      {
+        files: {
+          "./helpers.ts": helperSource,
+          "./string.ts": readFileSync(
+            resolve(import.meta.dirname, "../website/playground/examples/benchmarks/string.ts"),
+            "utf8",
+          ),
+        },
+        entryFile: "./string.ts",
+        cutover: "JS2WASM_MULTI_PREPARED_STRING_CUTOVER",
+        required: "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_STRING_LEAF",
+        routeKind: "string" as const,
       },
     ];
 
