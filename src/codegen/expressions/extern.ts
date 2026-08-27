@@ -459,7 +459,15 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   // module (jest's convertDescriptorToString over a `class Named {}` value)
   // answers the declared name instead of undefined. Host lane only; synthetic
   // class names (`__…`) are never stamped.
-  if (!ctx.standalone && !ctx.wasi && !className.startsWith("__")) {
+  // A static accessor named `name` replaces the constructor's standard data
+  // property during ClassDefinitionEvaluation. The host-side metadata stamp
+  // is an implementation detail, not another Set operation: emitting it for
+  // a setter-only `name` accessor would invoke the setter while the class is
+  // being defined (and a throwing test262 setter must remain idle). A static
+  // `length` accessor does not own the `name` key, so it must not suppress the
+  // independent class-name stamp for dynamic class-object reads.
+  const hasStaticNameAccessor = ctx.staticAccessorSet.has(`${className}_name`);
+  if (!ctx.standalone && !ctx.wasi && !className.startsWith("__") && !hasStaticNameAccessor) {
     const setIdx = ctx.funcMap.get("__extern_set");
     if (setIdx !== undefined) {
       addStringConstantGlobal(ctx, "name");
