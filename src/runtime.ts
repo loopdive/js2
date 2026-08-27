@@ -1663,6 +1663,29 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+/**
+ * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
+ * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a
+ * host-native bound function exposes no `prototype` at all — so without this
+ * edge `x instanceof f.bind()` reads `prototype === undefined` and reports the
+ * §7.3.20 step-5 TypeError instead of forwarding.
+ */
+const _boundFunctionTargets = new WeakMap<Function, unknown>();
+
+/**
+ * (#4771) Remember `bound`'s [[BoundTargetFunction]]. `target` is the ORIGINAL
+ * receiver of `.bind()` — the wasm closure struct when there is one, not the
+ * host bridge that was actually bound, because the bridge carries no prototype
+ * edge back to the compiled function.
+ */
+function _recordBoundTarget(bound: any, target: unknown): any {
+  try {
+    _boundFunctionTargets.set(bound, target);
+  } catch {
+    /* non-extensible / exotic bound value — `instanceof` keeps its old answer */
+  }
+  return bound;
+}
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
 const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
@@ -2564,6 +2587,15 @@ function _instanceofResult(
     // `x instanceof C` (a class held in an any-typed variable, spec answer
     // true/false) into a spurious TypeError. Return `false` instead.
     return 0;
+  }
+
+  // §7.3.20 step 2: if C has a [[BoundTargetFunction]] slot, the answer is
+  // InstanceofOperator(V, BC) — a bound function never consults its OWN
+  // `prototype` (it has none). Placed before the step-3 primitive short-circuit
+  // so a custom `@@hasInstance` on the bound TARGET still gets its chance.
+  const boundTarget = _boundFunctionTargets.get(target as Function);
+  if (boundTarget !== undefined) {
+    return _instanceofResult(v, boundTarget, callbackState, strict);
   }
 
   // §13.10.2 step 5: Return OrdinaryHasInstance(target, V). (§7.3.20)
@@ -5529,6 +5561,18 @@ const _fnctorInstanceofHooks: FnctorIoHooks = {
   expectedPrototype: (target, exports) => _getOrVivifyFnPrototype(target, { getExports: () => exports }),
   instancePrototype: _fnctorCtorProto,
   parentPrototype: _structUserProto,
+  recordedPrototype: (instance, exports) => {
+    if (_isWasmStruct(instance) && _canBeWeakKey(instance)) {
+      if (_wasmStructProto.has(instance)) return _wasmStructProto.get(instance);
+      return _fnctorCtorProto(instance, exports);
+    }
+    // A HOST object — `Object.create(new f())` hands back a real JS object whose
+    // [[Prototype]] is the WasmGC struct. §7.3.20 step 7a is literally
+    // `O.[[GetPrototypeOf]]()`, so performing it here is the spec's own step,
+    // and a Proxy trap that throws must propagate (ReturnIfAbrupt) rather than
+    // be swallowed.
+    return Reflect.getPrototypeOf(instance);
+  },
 };
 /** JS-owned objects explicitly admitted through a native dynamic export. */
 const _nativeBoundaryHostObjects = new WeakMap<object, WeakSet<object>>();
@@ -14214,7 +14258,7 @@ assert._isSameValue = isSameValue;
             throw new TypeError("Function.prototype.bind called on non-callable");
           }
           const partial: any[] = _nativeIsArray(argsArray) ? argsArray : [];
-          return Function.prototype.bind.apply(callable, [thisArg, ...partial]);
+          return _recordBoundTarget(Function.prototype.bind.apply(callable, [thisArg, ...partial]), target);
         };
       // (#1337) Invoke an arbitrary callable externref with an arguments array.
       // Used to call values that the codegen knows are JS-functional externrefs

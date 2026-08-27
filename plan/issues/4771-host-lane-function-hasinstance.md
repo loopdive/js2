@@ -16,6 +16,19 @@ language_feature: symbol-hasInstance, function-prototype
 goal: core-semantics
 related: [4676, 4739, 2702, 2740]
 origin: "ES2015 failure bucketing 2026-08-27; host twin of the standalone-only #4676/#4739"
+assignee: ttraenkler/senior-dev
+loc-budget-allow:
+  # 2026-08-27 (#4771): the host lane's OrdinaryHasInstance IS `_instanceofResult`
+  # + `_fnctorInstanceofHooks` in runtime.ts. Both missing spec steps — §7.3.20
+  # step 2 (bound-target forwarding) and step 7 (chain walk for an instance with
+  # no recorded constructor) — have to be added where that predicate lives;
+  # hoisting them out would split one ~30-line spec algorithm across two files
+  # for no reader's benefit.
+  - src/runtime.ts
+  # A 6-line arm delegating to the new src/codegen/host-function-has-instance.ts,
+  # placed immediately beside the standalone twin it mirrors so the pair reads
+  # as one decision.
+  - src/codegen/expressions/calls-closures.ts
 ---
 
 # #4771 — host-lane `%Function.prototype%[@@hasInstance]`
