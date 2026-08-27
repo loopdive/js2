@@ -1664,6 +1664,11 @@ const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
+// Keep runtime bookkeeping independent of a user-mutated Set.prototype. The
+// Set constructor intentionally reads Set.prototype.add after user code has
+// installed an abrupt getter, so every internal `.add` on a live bookkeeping
+// set must retain the primordial method captured while this module loads.
+const _nativeSetAdd = Set.prototype.add;
 const _closurePropertyMirrorActive = new WeakMap<object, Set<PropertyKey>>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
@@ -3203,15 +3208,15 @@ function _mirrorClosurePropertyToHostBridges(
   let active = _closurePropertyMirrorActive.get(closure);
   if (!active) _closurePropertyMirrorActive.set(closure, (active = new Set<PropertyKey>()));
   if (active.has(key)) return;
-  active.add(key);
+  _nativeSetAdd.call(active, key);
   try {
     const bridges = new Set<Function>();
     const dynamic = _wasmClosureDynamicWrapperCache.get(closure);
-    if (typeof dynamic === "function") bridges.add(dynamic);
+    if (typeof dynamic === "function") _nativeSetAdd.call(bridges, dynamic);
     const known = _wasmClosureWrapperCache.get(closure);
-    if (known) for (const bridge of known.values()) bridges.add(bridge);
+    if (known) for (const bridge of known.values()) _nativeSetAdd.call(bridges, bridge);
     const callable = _hostCallableCache.get(closure);
-    if (typeof callable === "function") bridges.add(callable);
+    if (typeof callable === "function") _nativeSetAdd.call(bridges, callable);
     if (bridges.size === 0) return;
     const hostValue = _maybeWrapCallableUnknownArity(val, callbackState);
     for (const bridge of bridges) {

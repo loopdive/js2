@@ -3,7 +3,7 @@ id: 4763
 title: "ES2015 Set constructor adder lookup/call abrupt completion"
 status: ready
 created: 2026-08-26
-updated: 2026-08-26
+updated: 2026-08-27
 priority: high
 horizon: s
 feasibility: medium
@@ -19,6 +19,11 @@ files:
   - src
   - tests
   - plan/issues/4763-es2015-set-constructor-add-abrupt.md
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/proto-index-store.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
 ---
 
 # #4763 — ES2015 Set constructor adder abrupt completion
@@ -42,6 +47,28 @@ the Set constructor's `Get(set, "add")`/adder call path as the original error.
    fixture rewrite, or lane-specific expected result.
 4. Add focused regressions for getter throw, call throw, single lookup/call,
    and normal insertion, then rerun the exact Test262 row in both lanes.
+
+## Evidence
+
+Permanent focused coverage is in `tests/issue-4763.test.ts` (8 cases: getter
+throw, callable-adder throw, per-element custom adder dispatch, and ordinary
+construction in both host and standalone lanes).
+
+The exact Test262 row is
+`test/built-ins/Set/set-get-add-method-failure.js`, with a denominator of one
+row in each run:
+
+- Before this work, host run `20260827-015117`: 0/1 (opaque uncaught Wasm-GC
+  exception); standalone run `20260827-015450`: 0/1 (`MyError` was not thrown).
+- After the standalone constructor dispatch/classification change, standalone
+  run `20260827-021212`: 1/1; host run `20260827-021129` remained 0/1 because
+  runtime bookkeeping called the user-replaced `Set.prototype.add`.
+- After the primordial runtime bookkeeping fix, host run `20260827-023303`:
+  1/1 (100%); standalone run `20260827-023349`: 1/1 (100%).
+
+The maintained runner creates 16 shard files for this path filter; the other
+15 are empty and report `No test suite found`. They do not contribute rows to
+the one-row result denominator.
 
 ## Acceptance
 
