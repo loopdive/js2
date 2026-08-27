@@ -156,3 +156,28 @@ pass** with at most two workers. Final artifacts are:
 PR #5069 remains draft with `hold` and a null merge-queue entry until the
 evidence checkpoint passes normal hooks and refreshed upstream CI is CLEAN and
 mergeable.
+
+## Merge-group regression guard handoff — 2026-08-27
+
+The first merge-group attempt compiled and executed all 48,735 host Test262
+rows plus the full standalone matrix. Ordinary CI and differential testing
+passed, every shard completed, and the aggregate guard reported exactly one
+host transition:
+
+- `test/built-ins/TypedArray/prototype/map/return-new-typedarray-conversion-operation-consistent-nan.js`
+  (`pass -> fail`, bucket signature `ca79065c32d815d4`)
+
+This row is outside the Map/Set iterator-prototype change and is demonstrably
+nondeterministic. The maintained harness' `--check-determinism` probe produced
+the identical **fail then pass** sequence on both the PR branch and a detached
+current-main control at `7edc857f10b47bcdee8990fbe0dec79b8b6c3d41`.
+Therefore the captured transition is not a #4777 regression; it is a pre-existing
+TypedArray NaN-consistency flake that the merge-group artifact happened to
+sample on its failing side. No product or quarantine change is bundled here.
+
+After the guard failure, the branch non-rewriting-merged that current upstream
+tip. Fresh focused verification remains **6/6 pass** with at most two workers:
+the exact host cohort is **2/2**, exact standalone is **2/2**, and the two
+identity/descriptor controls pass. The next delivery step is to push this
+current-main checkpoint, retain `hold` until refreshed PR checks are green, and
+re-enter the merge queue for a new full-matrix sample.
