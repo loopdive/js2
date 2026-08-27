@@ -9786,6 +9786,11 @@ export function buildLocalCallGraph(
           } else if (
             currentDynamicRuntimeBuildable &&
             callerName === "stringToNumber" &&
+            // Keep the pre-#3521 dynamic compatibility escape restricted to
+            // checker-proven ambient bindings. A source/import binding named
+            // `parseInt` or `parseFloat` must not become an authenticated
+            // runtime boundary when the exact L3 plan is absent.
+            selectorSeesAmbientBinding(node.expression) &&
             parseNumberCallUsesDynamicCarrier(callerName, node) &&
             ((callee === "parseFloat" && node.arguments.length === 1) ||
               (callee === "parseInt" && node.arguments.length === 2))
