@@ -488,11 +488,25 @@ Object.getOwnPropertySymbols(new Proxy(t, { ownKeys: () => [] }))
                                            does NOT throw   ✗
 ```
 
-Extensibility is tracked correctly, so the failure is upstream of it: the host's
-check calls `target.[[OwnPropertyKeys]]()` on our wrapped struct, and if the
-wrapper's **`ownKeys` trap** does not report `"prop"`, `targetConfigurableKeys`
-is empty and step 21 never throws. That is a `_wrapForHost` gap, independent of
-the escape gate — the gate flip merely stops hiding it.
+Extensibility is tracked correctly. So is everything else on the target — probed
+one level further:
+
+```
+Object.getOwnPropertyNames(t)              ["prop"]              ✓
+Object.getOwnPropertyDescriptor(t, "prop") { configurable: true } ✓
+Reflect.ownKeys(t)                         ["prop"]              ✓
+Object.isExtensible(t)                     false                 ✓
+```
+
+Every input §10.5.11 step 21 needs is present and correct, and the wrapper's
+`ownKeys` trap does report `"prop"` (it returns `collectKeys()`). So the check is
+never running: **our `Object.getOwnPropertySymbols` lowering is not routing to
+the host Proxy's `[[OwnPropertyKeys]]` at all** — it answers from our own
+reflection instead, where the user `ownKeys` trap returning `[]` is simply never
+consulted.
+
+That makes the −1 a `getOwnPropertySymbols`-routing gap, not a wrapper-trap gap.
+Correcting my own note one line above, which blamed the `ownKeys` trap.
 
 Fix that trap and the gate flip becomes **+19 / −0** on this population, which
 would make it a clean decision rather than a trade.
