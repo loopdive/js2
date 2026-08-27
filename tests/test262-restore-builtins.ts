@@ -48,6 +48,12 @@ const PROTOS: ReadonlyArray<[string, object]> = [
   // StringIteratorPrototype[@@toStringTag]; restore it before the strict
   // rerun in this in-process realm, matching scripts/test262-worker.mjs.
   ["%StringIteratorPrototype%", Object.getPrototypeOf(""[Symbol.iterator]())],
+  // (#4777) Map/Set iterator @@toStringTag descriptors are likewise
+  // configurable and verifyProperty() deletes them during the sloppy variant.
+  // Keep both intrinsic prototypes in the in-process snapshot so the strict
+  // rerun sees the fresh-realm initial values instead of inherited "Iterator".
+  ["%MapIteratorPrototype%", Object.getPrototypeOf(new Map()[Symbol.iterator]())],
+  ["%SetIteratorPrototype%", Object.getPrototypeOf(new Set()[Symbol.iterator]())],
   ["Number.prototype", Number.prototype],
   ["Boolean.prototype", Boolean.prototype],
   ["Function.prototype", Function.prototype],

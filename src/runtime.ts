@@ -302,6 +302,14 @@ function _getOrVivifyFnPrototype(
   if (!_isWasmStruct(obj)) return undefined;
   const existing = _sidecarGet(obj, "prototype");
   if (existing !== undefined) return existing;
+  // (#4771) `f.prototype = undefined` writes a REAL slot value that reads back
+  // as `undefined` — indistinguishable from "never written" by value alone.
+  // Vivifying over it silently restored an object prototype, so §7.3.20 step 5
+  // never saw the non-object the program installed. Presence, not value.
+  if (_canBeWeakKey(obj)) {
+    const sidecar = _wasmStructProps.get(obj);
+    if (sidecar && "prototype" in sidecar) return undefined;
+  }
   // Gate on `__is_closure` when exports are reachable. During the module
   // START function (where acorn's `Parser.prototype.m = fn` writes run)
   // `getExports()` is still undefined — WebAssembly.instantiate has not
@@ -1668,6 +1676,29 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+/**
+ * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
+ * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a
+ * host-native bound function exposes no `prototype` at all — so without this
+ * edge `x instanceof f.bind()` reads `prototype === undefined` and reports the
+ * §7.3.20 step-5 TypeError instead of forwarding.
+ */
+const _boundFunctionTargets = new WeakMap<Function, unknown>();
+
+/**
+ * (#4771) Remember `bound`'s [[BoundTargetFunction]]. `target` is the ORIGINAL
+ * receiver of `.bind()` — the wasm closure struct when there is one, not the
+ * host bridge that was actually bound, because the bridge carries no prototype
+ * edge back to the compiled function.
+ */
+function _recordBoundTarget(bound: any, target: unknown): any {
+  try {
+    _boundFunctionTargets.set(bound, target);
+  } catch {
+    /* non-extensible / exotic bound value — `instanceof` keeps its old answer */
+  }
+  return bound;
+}
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
 // Keep internal Set bookkeeping safe from user-mutation of Set.prototype.add.
 const _nativeSetAdd = Set.prototype.add;
@@ -2473,6 +2504,31 @@ function _markAccessorGetterReturn(getterFn: any): any {
  * exception (ReturnIfAbrupt) — it is NOT swallowed.
  */
 const _INSTANCEOF_THROW = 2;
+
+/** (#4771) "this receiver owns no readable `prototype` slot" — distinct from a slot holding `undefined`. */
+const _SLOT_ABSENT: unique symbol = Symbol("js2:prototype-slot-absent");
+
+/**
+ * (#4771) §7.3.20 step 4 `Get(C, "prototype")` when C is a compiled closure.
+ *
+ * The host wrapper `_maybeWrapCallableUnknownArity` mints is an ordinary JS
+ * function with its OWN fresh `.prototype`, so reading `target.prototype`
+ * answers about the BRIDGE, not about the compiled function — `f.prototype =
+ * undefined` stayed invisible and step 5's TypeError never fired. Read the
+ * compiled slot instead, and distinguish "written `undefined`" (a real slot
+ * value, which MUST throw) from "never written" (vivify, as every other reader
+ * of a closure's prototype does).
+ */
+function _compiledFnPrototypeSlot(
+  raw: unknown,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): unknown {
+  if (!_isWasmStruct(raw) || !_canBeWeakKey(raw)) return _SLOT_ABSENT;
+  const sidecar = _wasmStructProps.get(raw as object);
+  if (sidecar && "prototype" in sidecar) return sidecar.prototype;
+  const vivified = _getOrVivifyFnPrototype(raw, callbackState);
+  return vivified === undefined ? _SLOT_ABSENT : vivified;
+}
 function _fnctorInstanceofResult(
   v: any,
   target: Function,
@@ -2573,6 +2629,15 @@ function _instanceofResult(
     return 0;
   }
 
+  // §7.3.20 step 2: if C has a [[BoundTargetFunction]] slot, the answer is
+  // InstanceofOperator(V, BC) — a bound function never consults its OWN
+  // `prototype` (it has none). Placed before the step-3 primitive short-circuit
+  // so a custom `@@hasInstance` on the bound TARGET still gets its chance.
+  const boundTarget = _boundFunctionTargets.get(target as Function);
+  if (boundTarget !== undefined) {
+    return _instanceofResult(v, boundTarget, callbackState, strict);
+  }
+
   // §13.10.2 step 5: Return OrdinaryHasInstance(target, V). (§7.3.20)
   //
   // ORDER MATTERS (#2702): §7.3.20 step 3 ("If Type(O) is not Object, return
@@ -2592,11 +2657,13 @@ function _instanceofResult(
 
   // §7.3.20 step 4/5: P = Get(target, "prototype"); if Type(P) is not Object →
   // TypeError. Reached only for an object V, per the step-3 short-circuit above.
-  let proto: unknown;
-  try {
-    proto = (target as { prototype?: unknown }).prototype;
-  } catch (e) {
-    throw e;
+  let proto = _compiledFnPrototypeSlot(rawTarget, callbackState);
+  if (proto === _SLOT_ABSENT) {
+    try {
+      proto = (target as { prototype?: unknown }).prototype;
+    } catch (e) {
+      throw e;
+    }
   }
   if (proto === null || proto === undefined || (typeof proto !== "object" && typeof proto !== "function")) {
     return _INSTANCEOF_THROW;
@@ -3595,6 +3662,97 @@ function _toPropertyKey(key: any, callbackState?: { getExports: () => Record<str
 }
 
 /**
+ * (#3481) Does `struct` OWN the field `name`, per the compiler's own presence
+ * bits? `__sget_<name>` is a shape-DISPATCHED getter: it answers for any shape
+ * carrying that field, and for a conditionally-initialized slot it happily
+ * returns the untouched default. `__shas_<name>` (#2847) is the query that
+ * distinguishes "explicitly set" from "default slot" — consult it when the
+ * module emitted one, and assume presence otherwise (it is only emitted when
+ * some field is presence-tracked, so its absence means every slot is always
+ * present). Used to keep the exotic-@@toPrimitive probe from reading a default
+ * slot as a user-supplied `Symbol.toPrimitive`.
+ */
+function _hasOwnStructField(struct: any, name: string, exports: Record<string, Function> | undefined): boolean {
+  const shas = exports?.[`__shas_${name}`];
+  if (typeof shas !== "function") return true;
+  try {
+    return Number(shas(struct)) !== 0;
+  } catch (e: any) {
+    if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    return false;
+  }
+}
+
+/**
+ * (#3481) Invoke an exotic `@@toPrimitive` that was read out of a WasmGC struct
+ * FIELD (the object-literal `{ [Symbol.toPrimitive]: … }` shape).
+ *
+ * §7.1.1 step 2 is `Call(exoticToPrim, input, «hint»)` — a METHOD call on the
+ * receiver that is handed the hint — so the receiver-threading
+ * `__call_fn_method_*` dispatchers are tried before the receiver-less ones, and
+ * the 1-arg forms before the 0-arg ones. (The generic dispatchers tolerate an
+ * arity mismatch, so a `function () { … }` that ignores the hint still runs on
+ * the 1-arg arm; the cascade is the belt-and-braces order the sibling sidecar
+ * branch in `_toPrimitive` already uses.)
+ *
+ * Returns the produced primitive, or `_PRIM_ABSENT` when the module exports no
+ * dispatcher that could run the closure — the caller then continues with
+ * OrdinaryToPrimitive, i.e. keeps the pre-#3481 behaviour rather than inventing
+ * a failure. Both spec violations throw a real TypeError: a non-callable slot
+ * (step 2d) and a method that returns an object (step 5).
+ */
+function _callExoticToPrimitiveSlot(
+  receiver: any,
+  slot: any,
+  hint: "number" | "string" | "default",
+  exports: Record<string, Function> | undefined,
+): any {
+  // A host-bridged JS function (proxy-wrapped closure or a real binding).
+  if (typeof slot === "function") {
+    const prim = slot.call(receiver, hint);
+    if (prim == null || typeof prim !== "object") return prim;
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  // §7.1.1 step 2d — the slot holds a non-callable (a number, a string, a
+  // plain object, …). IsCallable is false, so this is a TypeError, not a
+  // fall-through to valueOf/toString.
+  if (typeof slot !== "object" || !_isWasmStruct(slot)) {
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  const isClosure = exports?.["__is_closure"];
+  if (typeof isClosure === "function") {
+    let callable = 1;
+    try {
+      callable = Number(isClosure(slot));
+    } catch (e: any) {
+      if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    }
+    if (!callable) throw new TypeError("Cannot convert object to primitive value");
+  }
+  const attempts: [string, (dispatch: Function) => any][] = [
+    ["__call_fn_method_1", (dispatch) => dispatch(receiver, slot, hint)],
+    ["__call_fn_1", (dispatch) => dispatch(slot, hint)],
+    ["__call_fn_method_0", (dispatch) => dispatch(receiver, slot)],
+    ["__call_fn_0", (dispatch) => dispatch(slot)],
+  ];
+  for (const [name, invoke] of attempts) {
+    const dispatch = exports?.[name];
+    if (typeof dispatch !== "function") continue;
+    try {
+      const prim = invoke(dispatch);
+      if (prim == null || typeof prim !== "object") return prim;
+      // §7.1.1 step 5 — exotic @@toPrimitive returned an object.
+      throw new TypeError("Cannot convert object to primitive value");
+    } catch (e: any) {
+      // Only a wasm type-mismatch trap falls through to the next dispatcher;
+      // a user throw and the step-5 TypeError above propagate.
+      if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    }
+  }
+  return _PRIM_ABSENT;
+}
+
+/**
  * Full ToPrimitive for proxied WasmGC structs and plain JS objects (#1090).
  * Unlike _toPrimitive (which only checks sidecar + Wasm exports), this function
  * also checks real JS properties on the object/proxy. This handles the case where
@@ -3698,6 +3856,36 @@ function _hostToPrimitive(
         // we can fall through to valueOf/toString; user throws + the TypeError
         // above propagate.
         if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+      }
+    }
+    // (#3481) An object LITERAL with a computed `[Symbol.toPrimitive]` key —
+    // `{ [Symbol.toPrimitive]: function () { … } }` — is a THIRD shape, and it
+    // was reaching none of the three probes above. Codegen stores the closure
+    // in a struct FIELD whose wasm name is `@@toPrimitive` and emits only the
+    // field accessor `__sget_@@toPrimitive`: there is no sidecar slot (the key
+    // is physical, not dynamic), no host proxy (the struct arrives raw), and no
+    // `__call_@@toPrimitive` wrapper (that export is produced for a *method*
+    // body, #1716). So the walker fell through to the `"[object Object]"`
+    // fallback at the end, which is why `{[Symbol.toPrimitive]: () => 2n} * 2n`
+    // reported "Cannot mix BigInt and other types" — the host binop multiplied
+    // a STRING by a BigInt. Probe the field accessor here, still at §7.1.1
+    // step 2 (before OrdinaryToPrimitive), mirroring the `__sget_${mName}`
+    // fallback the valueOf/toString loop below already relies on.
+    const sgetTP = exports?.["__sget_@@toPrimitive"];
+    if (typeof sgetTP === "function" && _hasOwnStructField(raw, "@@toPrimitive", exports)) {
+      let slot: any = null;
+      try {
+        slot = sgetTP(raw);
+      } catch (e: any) {
+        // Shape-dispatch miss on an unrelated struct — not our field.
+        if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+      }
+      // §7.1.1 step 2a: an undefined/null exotic means OrdinaryToPrimitive.
+      // `__sget_*` also answers null for "this shape has no such field", so the
+      // two collapse onto the same (correct) fall-through.
+      if (slot != null) {
+        const prim = _callExoticToPrimitiveSlot(raw, slot, hint, exports);
+        if (prim !== _PRIM_ABSENT) return prim;
       }
     }
   }
@@ -5536,6 +5724,18 @@ const _fnctorInstanceofHooks: FnctorIoHooks = {
   expectedPrototype: (target, exports) => _getOrVivifyFnPrototype(target, { getExports: () => exports }),
   instancePrototype: _fnctorCtorProto,
   parentPrototype: _structUserProto,
+  recordedPrototype: (instance, exports) => {
+    if (_isWasmStruct(instance) && _canBeWeakKey(instance)) {
+      if (_wasmStructProto.has(instance)) return _wasmStructProto.get(instance);
+      return _fnctorCtorProto(instance, exports);
+    }
+    // A HOST object — `Object.create(new f())` hands back a real JS object whose
+    // [[Prototype]] is the WasmGC struct. §7.3.20 step 7a is literally
+    // `O.[[GetPrototypeOf]]()`, so performing it here is the spec's own step,
+    // and a Proxy trap that throws must propagate (ReturnIfAbrupt) rather than
+    // be swallowed.
+    return Reflect.getPrototypeOf(instance);
+  },
 };
 /** JS-owned objects explicitly admitted through a native dynamic export. */
 const _nativeBoundaryHostObjects = new WeakMap<object, WeakSet<object>>();
@@ -14221,7 +14421,7 @@ assert._isSameValue = isSameValue;
             throw new TypeError("Function.prototype.bind called on non-callable");
           }
           const partial: any[] = _nativeIsArray(argsArray) ? argsArray : [];
-          return Function.prototype.bind.apply(callable, [thisArg, ...partial]);
+          return _recordBoundTarget(Function.prototype.bind.apply(callable, [thisArg, ...partial]), target);
         };
       // (#1337) Invoke an arbitrary callable externref with an arguments array.
       // Used to call values that the codegen knows are JS-functional externrefs

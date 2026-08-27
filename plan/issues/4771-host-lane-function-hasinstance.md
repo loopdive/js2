@@ -16,6 +16,19 @@ language_feature: symbol-hasInstance, function-prototype
 goal: core-semantics
 related: [4676, 4739, 2702, 2740]
 origin: "ES2015 failure bucketing 2026-08-27; host twin of the standalone-only #4676/#4739"
+assignee: ttraenkler/senior-dev
+loc-budget-allow:
+  # 2026-08-27 (#4771): the host lane's OrdinaryHasInstance IS `_instanceofResult`
+  # + `_fnctorInstanceofHooks` in runtime.ts. Both missing spec steps — §7.3.20
+  # step 2 (bound-target forwarding) and step 7 (chain walk for an instance with
+  # no recorded constructor) — have to be added where that predicate lives;
+  # hoisting them out would split one ~30-line spec algorithm across two files
+  # for no reader's benefit.
+  - src/runtime.ts
+  # A 6-line arm delegating to the new src/codegen/host-function-has-instance.ts,
+  # placed immediately beside the standalone twin it mirrors so the pair reads
+  # as one decision.
+  - src/codegen/expressions/calls-closures.ts
 ---
 
 # #4771 — host-lane `%Function.prototype%[@@hasInstance]`
@@ -124,9 +137,111 @@ do not write a second one.
 
 ## Acceptance criteria
 
-- [ ] The 8 failing rows above pass on the host lane
-- [ ] `prop-desc.js` still passes (do not regress #4739)
-- [ ] `f[Symbol.hasInstance] === g[Symbol.hasInstance]` for two compiled functions
-- [ ] `x instanceof f` unchanged for every existing passing row — the step-2
-      identity check is the specific risk
-- [ ] Standalone lane unchanged (#4676's path is not touched)
+- [x] ~~The 8 failing rows above pass on the host lane~~ — **6 of 8**; the other
+      two are separate defects, root-caused below
+- [x] `prop-desc.js` still passes (do not regress #4739)
+- [x] `f[Symbol.hasInstance] === g[Symbol.hasInstance]` for two compiled functions
+      — holds by construction: the call form is a direct lowering, so no
+      per-function method object is ever minted
+- [x] `x instanceof f` unchanged for every existing passing row — measured, and
+      it in fact IMPROVES by 3 rows
+- [x] Standalone lane unchanged (#4676's path is not touched) — every new gate is
+      `!noJsHost(ctx)` or keyed on a wasm-closure target the standalone path
+      never reaches; `tests/issue-4676-*.test.ts` still passes
+
+## What was implemented (2026-08-27)
+
+**Codegen** — `src/codegen/host-function-has-instance.ts` (new) +
+`tryEmitHostFunctionHasInstanceCall` wired into
+`compileCallableElementAccessCall` (`src/codegen/expressions/calls-closures.ts`),
+immediately beside the standalone arm it mirrors. It lowers
+`f[Symbol.hasInstance](v)` onto the **existing** `__instanceof_check` host
+predicate with the operands swapped, reusing its §13.10.2 + §7.3.20 tri-state
+and `emitInstanceofThrowGuard` (now exported from
+`src/codegen/expressions/identifiers.ts`) so the `2` sentinel throws **from
+wasm** and keeps catchable TypeError identity.
+
+The step-2 hazard turned out to be *structurally* absent rather than something
+to defend against: this arm materialises no value and installs no property, so
+`_instanceofResult`'s `target[Symbol.hasInstance]` read still answers `undefined`
+on a compiled closure and takes the DEFAULT branch. That is also why the
+identity criterion is free.
+
+**Runtime** — three OrdinaryHasInstance steps the host predicate was missing.
+All three were wrong for the `instanceof` OPERATOR too, which is why fixing them
+moved rows outside this issue:
+
+1. §7.3.20 step 2 — forward to `[[BoundTargetFunction]]`. `.bind()` returns a
+   host-native bound function with **no** `prototype`, so `x instanceof f.bind()`
+   reported the step-5 TypeError instead of forwarding. `_boundFunctionTargets`
+   records the ORIGINAL target (the closure struct, not the host bridge).
+2. §7.3.20 step 7 — walk the chain for an instance with **no recorded fnctor
+   constructor**. `Object.create(new f())` is a host object whose `[[Prototype]]`
+   is the struct; `fnctorInstanceofResult` used to decline outright, sending it
+   to the native fallback where a WasmGC closure is opaque and the answer is
+   always `false`. New `recordedPrototype` hook; a MISS still declines, so every
+   undecidable shape keeps its old answer.
+3. §7.3.20 step 4 — read the **compiled** function's `prototype`.
+   `_maybeWrapCallableUnknownArity` mints an ordinary JS bridge with its own
+   fresh `.prototype`, so `target.prototype` answered about the bridge. Two
+   layers: `_compiledFnPrototypeSlot` (with a `_SLOT_ABSENT` sentinel, so "no
+   readable slot" still falls back to the host read) **and**
+   `_getOrVivifyFnPrototype` deciding "never written" by PRESENCE rather than by
+   value — `f.prototype = undefined` is a real slot write that reads back
+   `undefined`, and vivifying over it erased the non-object the program
+   installed before step 5 could see it.
+
+### Measurements (`scripts/run-test262-paths.mts --isolate`, 2026-08-27)
+
+| slice | before | after |
+| --- | --- | --- |
+| `Symbol.hasInstance/*` + `instanceof/symbol-hasinstance-invocation` (12 rows) | 4 pass / 8 fail | **10 pass / 2 fail** |
+| `language/expressions/instanceof` (43 rows) | 31 pass / 12 fail | **33 pass / 10 fail** |
+| `Proxy/getPrototypeOf` + `Function/prototype/bind` (119 rows) | 102 pass / 17 fail | **103 pass / 16 fail** |
+| `class/subclass` + `expressions/new` (168 rows) | 108 pass / 60 fail | 108 pass / 60 fail, list byte-identical |
+
+Newly passing outside the 9-row table: `instanceof/S15.3.5.3_A2_T2.js`,
+`instanceof/S15.3.5.3_A2_T6.js`, `Proxy/getPrototypeOf/instanceof-custom-return-accepted.js`.
+Zero rows regressed in any slice. Regression test:
+`tests/issue-4771-host-function-hasinstance.test.ts`.
+
+## Residual — two SEPARATE defects, not this one
+
+**(a) `Object.defineProperty(fn, 'prototype', …)` is rejected** — 3 rows.
+`Symbol.hasInstance/this-val-poisoned-prototype.js` and, with the identical
+message, `instanceof/prototype-getter-with-object-throws.js` and
+`instanceof/prototype-getter-with-primitive.js` all fail at the *setup* line with
+`TypeError: Cannot redefine property: prototype`, before any `@@hasInstance` code
+runs. A function's `prototype` slot is exposed to the host as non-configurable,
+so installing a getter over it throws. Spec-wise a getter-derived function has no
+`prototype` at all and the define should simply ADD one. Fixing this is a
+property-descriptor/MOP change on the closure bridge, unrelated to
+OrdinaryHasInstance.
+
+**(b) `instanceof` with a plain-object RHS never reaches the host predicate.**
+`instanceof/symbol-hasinstance-invocation.js`:
+
+```js
+var F = {};
+F[Symbol.hasInstance] = function () { callCount += 1; };
+0 instanceof F;                      // callCount stays 0
+```
+
+Measured with a stderr probe inside the `__instanceof_check` import:
+`_instanceofResult` is **never called** for this module — codegen answers the
+operator statically. Adding *any* value read of `F[Symbol.hasInstance]` elsewhere
+in the same file flips the whole module onto the runtime predicate, and then the
+handler IS invoked and answers correctly — so the decision is a source-shape one,
+not a value one. The place to look is the static-fold chain in
+`compileHostInstanceOf` (`src/codegen/expressions/identifiers.ts`) —
+`tryStaticInstanceOf` / `emitConstantInstanceOf` — which was NOT confirmed as the
+exact site. Note `tryEmitNonCallableRhsThrow`
+(`src/codegen/native-ordinary-instanceof.ts`), the obvious suspect, is
+`noJsHost`-gated and therefore innocent on this lane.
+
+A runtime-side arm was written for (b) and **reverted**: it read the handler out
+of the WasmGC struct sidecar in step 2, on the theory that a symbol-keyed write
+lands there. Measurement showed the receiver is not a wasm struct at that point
+(`_isWasmStruct(rawTarget) === false` — the plain host read already finds the
+handler whenever the predicate is reached at all), so the arm fired nowhere. It
+is recorded here so it is not rebuilt.
