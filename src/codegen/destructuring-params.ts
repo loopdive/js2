@@ -51,6 +51,9 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo } from "./type-coercion.js";
+// (#4768) Value-level import: used only inside function bodies at codegen time,
+// long after module init, so the codegen↔generators cycle is safe.
+import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 // (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
@@ -1505,6 +1508,110 @@ export function destructureParamObject(
 }
 
 /**
+ * (#4768) Emit the native-generator arms of an externref pattern-parameter
+ * destructure. A Wasm-native generator's state struct reaches a pattern
+ * parameter as an `extern.convert_any`-wrapped GC ref — either as a call
+ * argument (`f(g())`) or as the parameter's own default (`([,] = g()) => …`).
+ * The caller has already recovered the GC ref into `anyTmp` with
+ * `any.convert_extern`, so a `ref.test` against each registered state struct
+ * identifies it and the compile-time resume drain (`emitNativeGeneratorToVec`)
+ * consumes EXACTLY the §8.5.3 budget. Each arm is gated on `dstrDoneLocal`
+ * still being 0 and sets it to 1, exactly like the tuple-struct fast paths.
+ *
+ * Without these arms the value falls through to `__array_from_iter_n_strict`,
+ * i.e. the JS-host iterator protocol over a raw WasmGC struct — which is why
+ * `hostLaneGeneratorUsesAreSafe` rejects those positions unless the arm exists.
+ * Registration order is safe: `collectDeclarations` registers every native
+ * generator before any function body is compiled.
+ */
+function emitNativeGeneratorPatternArms(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  pattern: ts.ArrayBindingPattern,
+  opts: DestructureOpts,
+  anyTmp: number,
+  dstrDoneLocal: number,
+): void {
+  // (#4768) Native-generator fast path. A Wasm-native generator's state
+  // struct reaches a pattern parameter as an `extern.convert_any`-wrapped
+  // GC ref — either as a call argument (`f(g())`) or as this parameter's
+  // own default (`([,] = g()) => …`). `any.convert_extern` above already
+  // recovered the GC ref, so a `ref.test` against each registered state
+  // struct identifies it and the compile-time resume drain
+  // (`emitNativeGeneratorToVec`) consumes EXACTLY the §8.5.3 budget.
+  //
+  // Without this arm the value falls through to `__array_from_iter_n_strict`
+  // below, i.e. the JS-host iterator protocol over a raw WasmGC struct —
+  // which is why `hostLaneGeneratorUsesAreSafe` rejects these positions
+  // outright unless this arm exists. Registration order is safe:
+  // `collectDeclarations` registers every native generator before any
+  // function body is compiled.
+  //
+  // REST patterns are deliberately excluded (`stepCount < 0`). The arm
+  // destructures from a `__vec_f64`, while the legacy fallthrough below
+  // destructures from a `__vec_externref`; a REST binding local is
+  // re-allocated at the source's vec type (`#971`, ~L2463), so the two
+  // arms would end up writing DIFFERENT local slots and the body would
+  // read the one the taken branch never set (`rest.length` → null deref,
+  // measured). Fixed bindings are f64-vs-externref compatible and reuse
+  // one slot, so they are safe. `hostLaneGeneratorUsesAreSafe` mirrors
+  // this exclusion, keeping `f([a, ...rest])` on the eager host path.
+  const nativeGenStepCount = patternIteratorStepCount(pattern.elements);
+  const seenGenStateTypes = new Set<number>();
+  for (const genInfo of nativeGenStepCount < 0 ? [] : ctx.nativeGenerators.values()) {
+    if (seenGenStateTypes.has(genInfo.stateTypeIdx)) continue;
+    seenGenStateTypes.add(genInfo.stateTypeIdx);
+    const genElemKind = genInfo.elemValType.kind === "externref" ? "externref" : "f64";
+    const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
+    const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
+    const genVecType: ValType = { kind: "ref", typeIdx: genVecTypeIdx };
+    const genStateType: ValType = { kind: "ref", typeIdx: genInfo.stateTypeIdx };
+    // `struct.new` yields a NON-null ref; typing the local `ref` keeps the
+    // nested destructure on the same OOB→default logic as a literal array
+    // (mirrors the decl-form drain in statements/destructuring.ts).
+    const genVecLocal = allocLocal(fctx, `__dparam_genvec_${genInfo.stateTypeIdx}_${fctx.locals.length}`, genVecType);
+
+    // Build the arm body through pushBody so late-import index shifts
+    // triggered inside the drain reach it (same reason as the tuple path).
+    const savedGenBody = pushBody(fctx);
+    const genFastPathInstrs = fctx.body;
+    try {
+      fctx.body.push({ op: "local.get", index: anyTmp });
+      fctx.body.push({ op: "ref.cast", typeIdx: genInfo.stateTypeIdx });
+      emitNativeGeneratorToVec(
+        ctx,
+        fctx,
+        genInfo,
+        genStateType,
+        genVecTypeIdx,
+        genArrTypeIdx,
+        true,
+        nativeGenStepCount,
+      );
+      fctx.body.push({ op: "local.set", index: genVecLocal });
+      destructureParamArray(ctx, fctx, genVecLocal, pattern, genVecType, opts);
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+    } finally {
+      popBody(fctx, savedGenBody);
+    }
+
+    fctx.body.push({ op: "local.get", index: dstrDoneLocal });
+    fctx.body.push({ op: "i32.eqz" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: anyTmp },
+        { op: "ref.test", typeIdx: genInfo.stateTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: genFastPathInstrs, else: [] },
+      ],
+      else: [],
+    });
+  }
+}
+
+/**
  * Destructure a function parameter that is an ArrayBindingPattern.
  * The parameter value (a vec struct ref) is at param index `paramIdx`.
  * We extract each element into a new local.
@@ -1602,11 +1709,12 @@ export function destructureParamArray(
       // to NaN when assigned to f64 locals (PR #255 regression pattern).
       //
       // The sentinel `__dparam_done` is set to 1 if the fast path fires; the
-      // existing externref logic below is gated on it being 0.
+      // existing externref logic below is gated on it being 0 — as are the
+      // (#4768) native-generator arms, which share that sentinel and run first.
       const dstrDoneLocal = allocLocal(fctx, `__dparam_done_${fctx.locals.length}`, { kind: "i32" });
       fctx.body.push({ op: "i32.const", value: 0 });
       fctx.body.push({ op: "local.set", index: dstrDoneLocal });
-
+      emitNativeGeneratorPatternArms(ctx, fctx, pattern, opts, anyTmp, dstrDoneLocal);
       for (let ti = 0; ti < ctx.mod.types.length; ti++) {
         const def = ctx.mod.types[ti];
         if (!def || def.kind !== "struct") continue;
