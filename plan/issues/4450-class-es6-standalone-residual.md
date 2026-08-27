@@ -46,8 +46,9 @@ failure.
 The class-own-key registry is now expressed without the redundant helper and
 duplicated explanatory block. This preserves the separate static-method and
 constructor-own-key registries—so `length`, `name`, and `prototype` cannot be
-mistaken for writable static methods—while reducing `runtime.ts` to 18,261
-policy-counted lines. `check:host-import-policy`, lint, formatting, typecheck,
+mistaken for writable static methods—while keeping `runtime.ts` at the 18,275
+policy-counted-line ceiling after the branch's latest `main` merge.
+`check:host-import-policy`, lint, formatting, typecheck,
 and the 2/2 focused host/standalone tests pass locally. The repair must be
 pushed to the existing standalone fix PR #5024; no separate PR is warranted
 because it is a CI repair for that completed fix.

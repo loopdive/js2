@@ -5690,8 +5690,6 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
   return fn;
 }
 
-/** (#1395) Ordered static method names for descriptor synthesis on `$ClassMeta`
- * constructors; their descriptors use the ES2015 §15.7.1 flags. */
 const _staticMethodNames = new WeakMap<object, string[]>();
 const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
 // Static methods are invoked by host frameworks through the generic closure
