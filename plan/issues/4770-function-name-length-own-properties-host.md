@@ -55,10 +55,11 @@ full focused controls, and current-main/CI gates are complete.
 ## Reduced scope and measured handoff (Codex, 2026-08-27)
 
 The original function `name`/`length` hypothesis is not the shipped scope. The
-official edition map has `ES2015` at index 2; its 11,778 labels include 74
-`intl402/` rows excluded by the maintained official runner, leaving the exact
-11,704-row denominator. Filtering that cohort leaves exactly one row for this
-defect: `test/language/statements/class/name.js`.
+claimed-base edition map had `ES2015` at index 2; upstream's metadata
+refresh moves that label to index 3 without changing the population. Its 11,778
+labels include 74 `intl402/` rows excluded by the maintained official runner,
+leaving the exact 11,704-row denominator. Filtering that cohort leaves exactly
+one row for this defect: `test/language/statements/class/name.js`.
 The nearby class-expression row is untagged and is not counted in this cohort.
 
 The maintained `harness-flip-probe.ts` was run with the pinned QuickJS artifact
@@ -103,6 +104,37 @@ known errors.
 Handoff: keep PR #5056 draft with `hold` and `mergeQueueEntry: null`. Do not
 mark ready or enqueue until the reduced checkpoint is pushed, rebased onto
 current `main`, and its CI is green/mergeable.
+
+## Post-merge revalidation (Codex, 2026-08-27)
+
+The branch was updated without rebasing by fetching `upstream/main` at
+`03ebf325013a241d5609a457fbdfea78bdf48ee2` and merging it as
+`726995d0df1937f097ce46aa99bc94586e4cdf4a`. The reduced PR delta against
+that current main remains five files (three source files plus this issue record
+and the focused test), 450 additions and four deletions.
+
+The exact one-row probes were rerun after that merge with the maintained
+runner, LLVM18, and the pinned artifact directory
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`. Its reproducibility hashes
+are `qjs-abi.json`
+`0aab187dade1dfc988d5054bc54b4b04f2ad14dae0fb897b4b660b5d8bb028a9` and
+`libquickjs.wasm`
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+The final host and standalone JSONL outputs are
+`/private/tmp/4770-merge-host.jsonl` and
+`/private/tmp/4770-merge-standalone.jsonl`.
+
+- Host: `fail: 1`, with exact transition `fail -> fail: 1`; the existing
+  descriptor-attribute failure remains host-only.
+- Standalone: `pass: 1`, with exact transition `fail -> pass: 1` against the
+  claimed baseline. The row is exactly
+  `test/language/statements/class/name.js`.
+- The three standalone function/class/redefinition controls remain `pass: 3`
+  in `/private/tmp/4770-merge-controls.jsonl`.
+- `tests/issue-4770-class-name-descriptor.test.ts` passes under Vitest with one
+  worker. PR #5056 remains draft with `hold` and `mergeQueueEntry: null`; the
+  normal push is still pending because the environment refused source egress
+  to the unverified private `fork` remote.
 
 ## What is confirmed
 
