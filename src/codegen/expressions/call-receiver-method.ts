@@ -2106,6 +2106,32 @@ export function compileReceiverMethodCall(
       }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
+        // (#4775) A fnctor receiver gets its devirtualization chance HERE.
+        // `tryEmitDirectTwinCall` — #3754's numeric-return twins and #3685's
+        // receiver-flow devirtualization — is otherwise reached only from
+        // `tryCompileLateFnctorPrototypeMethodCall`, ~1400 lines below, and this
+        // block RETURNS before it: `resolveStructNameForExpr`'s wasm-carrier
+        // fallback (`ad543a660e`) resolves every standalone fnctor local, since
+        // `var p = new P(0)` has no checker struct but carries `(ref null
+        // $__fnctor_P)`; `__fnctor_P_inc` is then absent from `funcMap`
+        // (prototype methods are never struct fields, #1712), so
+        // `compileCallablePropertyCall`'s dynamic arm claimed the call. Route
+        // (c) — `recv.m()` on a non-`this` receiver — stopped devirtualizing
+        // entirely, at 27.8x on the `method` axis.
+        //
+        // The ORDER is the fix; nothing is removed. A decline falls through to
+        // exactly the lowering below, so every non-devirtualizable receiver is
+        // byte-identical. Do not move this after the callable-property probe.
+        if (structTypeName.startsWith("__fnctor_")) {
+          const devirtualized = tryEmitDirectTwinCall(ctx, fctx, expr, propAccess, {
+            computeSig: (fn) => computeClosureWrapperSig(ctx, fn),
+            reserveLegacyDispatch: (name, arity) => reserveClosedMethodDispatch(ctx, name, arity),
+            ensureCurrentThisGlobal: () => ensureCurrentThisGlobal(ctx),
+            ensureArgcGlobal: () => ensureArgcGlobal(ctx),
+            undefinedExtern: () => undefinedExternInstrs(ctx),
+          });
+          if (devirtualized !== undefined) return devirtualized;
+        }
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
