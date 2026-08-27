@@ -352,6 +352,9 @@ interface ObjCarrierDeps {
   /** `__sget_return(externref) -> externref` — same for IteratorClose's
    *  `return` read on a closed-struct iterator object. */
   sgetReturnIdx?: number;
+  /** `__sget_throw(externref) -> externref` — the closed-struct iterator's
+   *  `throw` method read used by the §14.4.14 delegation arm. */
+  sgetThrowIdx?: number;
   /** Fresh instrs pushing the string key `name` as externref. */
   keyInstrs: (name: string) => Instr[];
   /** Fresh instrs pushing the miss/undefined externref (matches `__extern_get`). */
@@ -533,6 +536,27 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
       { name: "res", type: { kind: "externref" } },
     ],
     buildIteratorNextBody(types, undefined),
+  );
+
+  // --- __iterator_throw(recExt, error) -> (i32 done, externref value) ---
+  // The native body is rebuilt at finalize once the object/closed-struct
+  // readers are known. Keep the reserve-time locals wide enough for every
+  // carrier arm so the late fill never changes the function ABI.
+  registerNative(
+    "__iterator_throw",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }, { kind: "externref" }],
+    [
+      { name: "recAny", type: { kind: "anyref" } },
+      { name: "rec", type: iterRecRef },
+      { name: "userIter", type: { kind: "externref" } },
+      { name: "method", type: { kind: "externref" } },
+      { name: "result", type: { kind: "externref" } },
+      { name: "done", type: { kind: "i32" } },
+      { name: "value", type: { kind: "externref" } },
+      { name: "argsArr", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
+    ],
+    [{ op: "unreachable" }],
   );
 
   // --- __iterator_return(recExt: externref) -> ()  (IteratorClose §7.4.8) ---
@@ -1287,7 +1311,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         sgetDoneIdx: ctx.funcMap.get("__sget_done"),
         sgetDoneIsExtern,
         sgetNextIdx: ctx.funcMap.get("__sget_next"),
-        sgetReturnIdx: ctx.funcMap.get("__sget_return"),
+        sgetReturnIdx: externSgetIdx(ctx, "__sget_return"),
+        sgetThrowIdx: externSgetIdx(ctx, "__sget_throw"),
         keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
         missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
       };
@@ -1408,6 +1433,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
 
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
+  const iteratorThrowIdx = ctx.funcMap.get("__iterator_throw");
   if (iteratorIdx === undefined || iteratorNextIdx === undefined) return;
 
   const iteratorFn = definedFuncAt(ctx, iteratorIdx);
@@ -1433,6 +1459,14 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       iteratorNextFn.locals.push({ name: "__gen_f64tmp", type: { kind: "f64" } });
     }
     iteratorNextFn.body = buildIteratorNextBody(types, deps, objDeps, hostDeps, agDeps, sgDeps);
+  }
+
+  // Rebuild the abrupt-step helper after the late object readers are known.
+  // The eager placeholder is intentionally unreachable; a generic native
+  // delegation can only reach this helper once a real carrier arm exists.
+  const iteratorThrowFn = iteratorThrowIdx !== undefined ? definedFuncAt(ctx, iteratorThrowIdx) : undefined;
+  if (iteratorThrowFn && objDeps) {
+    iteratorThrowFn.body = buildIteratorThrowBody(types, objDeps, nonIterableThrowInstrs(ctx));
   }
 
   // (#3100 S5) `__iterator_rest` was VEC-only — a USER record (custom iterable)
@@ -1766,6 +1800,224 @@ function buildIteratorReturnBody(
     ...hostClose,
     ...objClose,
     ...userClose,
+  ];
+}
+
+/**
+ * Build `__iterator_throw(recExt, error) -> (i32 done, externref value)` for
+ * the plain-object iterator carrier.  This is the native counterpart of the
+ * §14.4.14 `yield*` throw arm: read `throw`, call it with the original error,
+ * and return its IteratorResult; when `throw` is absent, call `return()` for
+ * IteratorClose and then throw a fresh TypeError.  Errors from either getter
+ * or call are deliberately left on the Wasm exception path so the enclosing
+ * generator state route can deliver the original error to its catch block.
+ *
+ * Locals (the reserve-time ABI is fixed in `ensureNativeIteratorRuntime`):
+ *  2 = recAny, 3 = rec, 4 = userIter, 5 = method, 6 = result,
+ *  7 = done, 8 = value, 9 = one-argument array scratch.
+ */
+function buildIteratorThrowBody(
+  types: IterRuntimeTypes,
+  objDeps: ObjCarrierDeps | undefined,
+  nonIterableThrow?: Instr[],
+): Instr[] {
+  const { iterRecTypeIdx } = types;
+  const fail = (): Instr[] =>
+    nonIterableThrow && nonIterableThrow.length > 0
+      ? nonIterableThrow.map((instr) => ({ ...instr }))
+      : [{ op: "unreachable" }];
+
+  if (!objDeps) return fail();
+  const od = objDeps;
+
+  const readMethod = (name: string, closedGetterIdx: number | undefined): Instr[] => [
+    ...objCarrierTest(od, () => [{ op: "local.get", index: 4 }, { op: "any.convert_extern" }]),
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: 4 }, ...od.keyInstrs(name), { op: "call", funcIdx: od.externGetIdx }],
+      else:
+        closedGetterIdx !== undefined
+          ? [
+              { op: "local.get", index: 4 },
+              { op: "call", funcIdx: closedGetterIdx },
+            ]
+          : od.missInstrs(),
+    },
+  ];
+
+  // The closure bridge consumes the canonical `$Vec` argument carrier.  Build
+  // a fresh one-element vector containing the original abrupt error.
+  const oneArgVec = (): Instr[] => [
+    { op: "i32.const", value: 1 },
+    { op: "array.new_default", typeIdx: types.arrTypeIdx },
+    { op: "local.set", index: 9 },
+    { op: "local.get", index: 9 },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: 1 },
+    { op: "array.set", typeIdx: types.arrTypeIdx },
+    { op: "i32.const", value: 1 },
+    { op: "local.get", index: 9 },
+    { op: "struct.new", typeIdx: types.vecTypeIdx },
+    { op: "extern.convert_any" },
+  ];
+
+  const readResult: Instr[] = [
+    // A normal object/proxy result uses the dynamic property reader.
+    ...objCarrierTest(od, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 6 },
+        ...od.keyInstrs("done"),
+        { op: "call", funcIdx: od.externGetIdx },
+        { op: "call", funcIdx: od.isTruthyIdx },
+        { op: "local.set", index: 7 },
+        { op: "local.get", index: 7 },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          // §14.4.14 only performs IteratorValue when the throw result is
+          // complete.  A non-done result is yielded as-is, so reading its
+          // `value` member here would trigger an observable getter too early.
+          then: [{ op: "local.get", index: 6 }, ...od.keyInstrs("value"), { op: "call", funcIdx: od.externGetIdx }],
+          else: od.missInstrs(),
+        },
+        { op: "local.set", index: 8 },
+      ],
+      else:
+        od.sgetDoneIdx !== undefined && (od.sgetValueIdx !== undefined || od.sgetDoneIsExtern === true)
+          ? [
+              { op: "local.get", index: 6 },
+              { op: "call", funcIdx: od.sgetDoneIdx },
+              { op: "call", funcIdx: od.isTruthyIdx },
+              { op: "local.set", index: 7 },
+              { op: "local.get", index: 7 },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                // A done throw result completes the delegation and therefore
+                // reads `value`; a non-done result is forwarded without an
+                // eager value read (the Test262 getter-observability case).
+                then:
+                  od.sgetValueIdx !== undefined
+                    ? [
+                        { op: "local.get", index: 6 },
+                        { op: "call", funcIdx: od.sgetValueIdx },
+                      ]
+                    : od.missInstrs(),
+                else: od.missInstrs(),
+              },
+              { op: "local.set", index: 8 },
+            ]
+          : fail(),
+    },
+  ];
+
+  const callThrow: Instr[] = [
+    ...readMethod("throw", od.sgetThrowIdx),
+    { op: "local.tee", index: 5 },
+    { op: "call", funcIdx: od.isTruthyIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        // result = throw.call(userIter, error)
+        { op: "local.get", index: 5 },
+        { op: "local.get", index: 4 },
+        ...oneArgVec(),
+        { op: "call", funcIdx: od.applyClosureIdx },
+        { op: "local.set", index: 6 },
+        ...readResult,
+        { op: "local.get", index: 7 },
+        { op: "local.get", index: 8 },
+        { op: "return" },
+      ],
+    },
+  ];
+
+  const closeThenThrow: Instr[] = [
+    ...readMethod("return", od.sgetReturnIdx),
+    { op: "local.tee", index: 5 },
+    { op: "call", funcIdx: od.isTruthyIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: fail(),
+      else: [
+        // IteratorClose requires the return result to be an object. The
+        // closure bridge's non-object and non-callable cases are already
+        // represented by its null/undefined sentinel; both paths end in the
+        // required TypeError after a successful call.
+        { op: "local.get", index: 5 },
+        { op: "local.get", index: 4 },
+        ...emptyArgsVecInstrs(types),
+        { op: "call", funcIdx: od.applyClosureIdx },
+        { op: "local.set", index: 6 },
+        ...fail(),
+      ],
+    },
+  ];
+
+  const objArm: Instr[] = [
+    { op: "local.get", index: 3 },
+    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+    { op: "local.set", index: 4 },
+    { op: "local.get", index: 4 },
+    { op: "call", funcIdx: od.isTruthyIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: fail(),
+      else: [
+        // If throw is present, it is the only method called. Otherwise the
+        // fallback performs IteratorClose and then throws TypeError.
+        ...callThrow,
+        { op: "local.get", index: 5 },
+        { op: "call", funcIdx: od.isTruthyIdx },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: closeThenThrow,
+          else: [],
+        },
+      ],
+    },
+  ];
+
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: 2 },
+    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: fail(),
+      else: [
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx: iterRecTypeIdx },
+        { op: "local.set", index: 3 },
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: ITER_KIND_OBJ },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: objArm, else: fail() },
+      ],
+    },
+    // Every normal path above either returns an IteratorResult or throws. The
+    // explicit fallback keeps the multi-value ABI well-typed if a future arm
+    // leaves the outer discriminator reachable.
+    { op: "i32.const", value: 1 },
+    { op: "ref.null.extern" },
+    { op: "return" },
   ];
 }
 

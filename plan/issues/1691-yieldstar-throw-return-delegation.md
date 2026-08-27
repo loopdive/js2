@@ -15,6 +15,16 @@ goal: spec-completeness
 parent: 1665
 assignee: ttraenkler/codex-es6-yieldstar-throw
 related: [1042, 1665, 2170, 2173, 3711]
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+  - src/codegen/iterator-native.ts
+  - src/codegen/registry/imports.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/generators-native.ts::compileState
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
+  - src/runtime.ts::resolveImport
 ---
 # #1691 — yield* does not delegate throw()/return() to the inner iterator
 
@@ -221,6 +231,38 @@ bounded protocol-completion slice.
    regression suites, same-base pass-to-nonpass comparison, and mandatory
    gates. Record artifacts, counts, root cause, residual ownership, commit SHA,
    and handoff here.
+
+### Checkpoint evidence — 2026-08-27
+
+The exact candidate list is the 13 sorted files matching
+`language/expressions/yield/star-rhs-iter-thrw-` in the pinned Test262 checkout
+at `b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+- Host lane, maintained runner `20260827-134605`: **0/13 pass, 13/13 fail**;
+  all rows reached execution through the eager/native host helpers. The report
+  is `benchmarks/results/test262-report-20260827-134605.json`.
+- Standalone lane, maintained runner `20260827-134804`: **0/13 pass,
+  13/13 compile_error**. Every row was rejected by the generic `#680`
+  complex-native-generator-shape diagnostic before execution. The report is
+  `benchmarks/results/test262-standalone-report-20260827-134804.json`.
+  Both runs used LLVM 18, two workers, and the pinned QuickJS artifact
+  `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` (sha256 prefix
+  `073742801ba76347`).
+
+The first native protocol prototype reached execution after widening the
+post-hoc `Symbol.iterator` proof to the enclosing source file. Exact standalone
+runner `20260827-145641` measured **1/13 pass, 2/13 assertion failures, and
+10/13 wasm_compile failures** (the latter were resume branch-depth validation
+errors in `__gen_resume_g`; the two runtime residuals were delegate completion
+value/access-order cases). The generated report is
+`benchmarks/results/test262-standalone-report-20260827-145641.json`.
+
+The current checkpoint additionally fixes the shared resume branch-depth
+calculation and validates the formerly failing `thrw-call-non-obj.js` binary
+directly; the exact 13-row regression is intentionally still pending. The
+remaining semantic work is to preserve the delegate's non-done result identity
+while keeping `IteratorValue` lazy, and to complete the throw/return fallback
+and host-lane parity checks.
 
 ### Resume acceptance
 
