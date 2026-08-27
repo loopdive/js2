@@ -293,6 +293,8 @@ export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = 
   floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
   ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
+  asin: { arity: 1, intrinsic: "math.asin" },
+  acos: { arity: 1, intrinsic: "math.acos" },
   atan: { arity: 1, intrinsic: "math.atan" },
   sin: { arity: 1, intrinsic: "math.sin" },
   cos: { arity: 1, intrinsic: "math.cos" },
@@ -6471,6 +6473,8 @@ function selectorPrimitiveWrapperOrGenericBinary(
 }
 
 function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
+  if (plan.intrinsic === "math.asin" && process.env.JS2WASM_IR_MATH_ASIN === "0") return false;
+  if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
   if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
   if (plan.intrinsic === "math.tan" && process.env.JS2WASM_IR_MATH_TAN === "0") return false;
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
