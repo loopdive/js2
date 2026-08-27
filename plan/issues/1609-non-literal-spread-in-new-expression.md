@@ -187,6 +187,26 @@ same-base before artifacts are `/private/tmp/js2-1609-host-before.jsonl`
 and `/private/tmp/js2-1609-standalone-before.jsonl` (sha256
 `9c56db7098bcea28292d4a03dbaa196c2c181aa634de52bec8abd3fc8f35a6cb`).
 
+### Current-main reconciliation and final scoped rerun
+
+The branch was reconciled with fetched `upstream/main` at
+`95eec5404a384a0565bf0abb9cda1a93a413e2cf` (merge commit
+`8e4e68203f9feb9e6e3701459d8025dedac2a5bf`). The post-merge compiler bundle
+sha256 is `100a3368b0b43637b3057813ae9b38a7e31da85a5fca4ec94a703648425a6354`;
+the standalone provider is
+`.test262-cache/quickjs-eval-adapter-4ea4451a6433d336.wasm` (sha256
+`f3d9e8ee112dc1e041fa19ca9890809adbc10289e739d27917d6ed00e10819de`, bundle
+key `100a3368b0b43637`, QuickJS artifact key `2e2d7736713beeda`). The exact
+post-merge host artifact
+`/private/tmp/js2-1609-host-postmerge.jsonl` has sha256
+`59890cece6993e2392c658f1475ecdc0ddf42fe6395989636b62fa1b4874f088`; the
+standalone artifact `/private/tmp/js2-1609-standalone-postmerge.jsonl` has
+sha256 `2ae861807d121c26e71a1336110b69930fd68c8903b2fab3d842ee68e73e52c3`.
+Both post-merge runs remain `{"pass":14}` with 14/14 rows, no compile errors,
+timeouts, skips, or nondeterminism. Comparing each post-merge lane against
+the same-base before artifact independently verifies 14 fail→pass, 0
+pass→fail, 0 other, and 0 unchanged.
+
 ### Root cause and implementation
 
 The current constructor lowering had a static-only assumption: when the
@@ -223,13 +243,19 @@ steps, and the adjacent literal-spread control.
 ### Gates, residuals, and handoff
 
 Passed gates on this checkpoint: TypeScript 5 and TypeScript 7 typechecks,
-Biome lint, Prettier check, the focused 8-test suite, and the pinned exact
-14-path two-lane harness (including determinism and A/B partition checks).
+Biome lint, Prettier check, `git diff --check`, issue-index consistency,
+the focused 8-test suite, and the pinned exact 14-path two-lane harness
+(including determinism and A/B partition checks), both before and after
+current-main reconciliation. The implementation checkpoint is commit
+`74aad2b0cdfe64cdf88cad85b9920debb416e654`; the current-main reconciliation
+is commit `8e4e68203f9feb9e6e3701459d8025dedac2a5bf`.
 
 The scoped ES2015 cohort is complete. Dynamic spreads on a function expression
 with declared formal parameters still retain the existing diagnostic because
 they are outside this zero-formal cohort; WASI remains outside this host /
 standalone slice and keeps its prior best-effort route. Those are explicit
-follow-ups, not hidden residual failures. PR #5048 remains draft pending
-current-main reconciliation, full CI, and mergeability. Commit SHA and the
-final ownership handoff are recorded here once the checkpoint is committed.
+follow-ups, not hidden residual failures. PR #5048 remains draft pending full
+remote CI and mergeability; it is not marked ready from local evidence alone.
+Ownership handoff: `ttraenkler/codex-es6-new-spread`, implementation owner
+`ttraenkler/codex-es6-new-spread`, with the exact artifacts and residual
+follow-ups recorded in this checkpoint.
