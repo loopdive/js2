@@ -1,7 +1,7 @@
 ---
 id: 4763
 title: "ES2015 Set constructor adder lookup/call abrupt completion"
-status: ready
+status: done
 created: 2026-08-26
 updated: 2026-08-27
 priority: high
@@ -65,6 +65,11 @@ row in each run:
   runtime bookkeeping called the user-replaced `Set.prototype.add`.
 - After the primordial runtime bookkeeping fix, host run `20260827-023303`:
   1/1 (100%); standalone run `20260827-023349`: 1/1 (100%).
+- After integration onto refreshed upstream head `9e0c7a1b9`, combined commit
+  `b4174c29b` independently reran the focused suite at 8/8, host run
+  `20260827-025256` at 1/1, and standalone run `20260827-025349` at 1/1, with
+  zero failures, compile errors, compile timeouts, or skips in either Test262
+  lane.
 
 The maintained runner creates 16 shard files for this path filter; the other
 15 are empty and report `No test suite found`. They do not contribute rows to
