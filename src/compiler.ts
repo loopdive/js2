@@ -40,6 +40,7 @@ import { buildCompileExplanation } from "./compile-explain.js";
 import {
   findSmallestNodeAtPosition,
   isBindingPatternFalsePositive,
+  isArraySearchElementDiagnostic,
   isJsDefaultInferredParamFalsePositive,
 } from "./compiler/argument-diagnostics.js";
 import {
@@ -504,6 +505,17 @@ function isInOperatorOperandDiagnostic(diag: ts.Diagnostic): boolean {
   return false;
 }
 
+/** Warning when codegen handles the construct anyway — by diagnostic code, or by a
+ * node-shape predicate for a TypeScript typing stricter than the language it models.
+ * Shared by all three collection loops so single-source and multi-file cannot drift. */
+function diagnosticSeverity(diag: ts.Diagnostic, checker: ts.TypeChecker): "warning" | "error" {
+  return DOWNGRADE_DIAG_CODES.has(diag.code) ||
+    isGuardedNullablePrimitiveDiagnostic(diag, checker) ||
+    isArraySearchElementDiagnostic(diag)
+    ? "warning"
+    : "error";
+}
+
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
@@ -511,6 +523,7 @@ function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecke
   if (checker && isGuardedNullablePrimitiveDiagnostic(diag, checker)) return false;
   if (isProxyHandlerTrapDiagnostic(diag)) return false;
   if (isInOperatorOperandDiagnostic(diag)) return false;
+  if (isArraySearchElementDiagnostic(diag)) return false;
   return true;
 }
 
@@ -1630,10 +1643,7 @@ export function compileSourceSync(
       // user wrote rather than the rewritten text. A no-op when no rewrite fired
       // (identity map) — same result as the old direct lookup.
       const pos = remapDiagnosticPosition(diag, source, positionMap);
-      const severity =
-        DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, ast.checker)
-          ? "warning"
-          : "error";
+      const severity = diagnosticSeverity(diag, ast.checker);
       // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
       // elaboration) instead of only the head .messageText.
       let message = ts.flattenDiagnosticMessageText(diag.messageText, "\n");
@@ -1818,10 +1828,7 @@ export async function compileMultiSource(
   for (const diag of multiAst.diagnostics) {
     if (diag.category === 1 && isEntryDiag(diag)) {
       const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity =
-        DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, multiAst.checker)
-          ? "warning"
-          : "error";
+      const severity = diagnosticSeverity(diag, multiAst.checker);
       errors.push({
         // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
         // elaboration) and attribute the source file for multi-file compiles.
@@ -1950,10 +1957,7 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
   for (const diag of multiAst.diagnostics) {
     if (diag.category === 1) {
       const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity =
-        DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, multiAst.checker)
-          ? "warning"
-          : "error";
+      const severity = diagnosticSeverity(diag, multiAst.checker);
       errors.push({
         // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
         // elaboration) and attribute the source file for multi-file compiles.

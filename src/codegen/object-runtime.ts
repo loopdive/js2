@@ -181,6 +181,7 @@ import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // 
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
+import { allocatedStructTypeIndices } from "./walk-instructions.js";
 import {
   type ColdFieldLocation,
   coldFieldNameAt,
@@ -8547,7 +8548,6 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     }
   }
   if (byField.size === 0) return;
-
   // Factory, not a shared Instr tree: finalize remaps every function body in
   // place, so sharing these objects between the two predicates would remap all
   // embedded type indices twice (#1719 reserve/fill discipline).
@@ -9087,6 +9087,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
   type Entry = {
     typeIdx: number;
     fieldIdx: number;
@@ -9099,18 +9100,14 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     cold?: ColdFieldLocation;
     /** (#3927 per-type layouts) Read through the family's `$resid` carrier. */
     resid?: ResidFieldLocation;
-    /**
-     * (#3927 per-type layouts) Family stamp-RANGE guard on a resid (base-
-     * keyed) arm — `ref.test $base` also matches a canonical-twin family.
-     * Layout arms use the exact-stamp `shapeFieldIdx`/`shapeId` pair instead.
-     */
+    /** Family stamp-range guard for a resid/base arm; layout arms use exact stamps. */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName) || isOpenDescriptorShape(structName, fields)) continue;
     const typeIdx = ctx.structMap.get(structName);
-    if (typeIdx === undefined) continue;
+    if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {

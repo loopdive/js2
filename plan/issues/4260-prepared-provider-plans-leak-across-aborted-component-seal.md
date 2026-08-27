@@ -603,3 +603,30 @@ The worker must not touch #3521's linked-Parser selector, #1719's CPR route,
 global baselines, or the shared issue-plan files outside this tracker. Land
 the behavioral checkpoint only after its descriptor predecessor is on live
 main and the exact injection matrix is green.
+
+## 2026-08-27 implementation update — class-setter fallback boundary
+
+The literal B.7 matrix now passes 21/21 in GC and standalone on live `main`
+after #4755 and the atomic-publication checkpoint. The matrix covers the
+uninjected Prepared artifact, the injected pre-seal Unsupported/direct-only
+fallback, an explicit direct control, and the healthy shared-provider control.
+It compares terminal outcomes plus exact import, provider, and physical call
+inventories; the injected artifacts have no post-claim errors, stale registry
+rows, unused host import, or orphan standalone constructor.
+
+The proof exposed one current-main IR ownership defect outside the transaction
+machinery: a prepared class setter whose parameter has the canonical `dynamic`
+carrier demoted after lowering a concrete RHS because the setter boundary did
+not perform the same concrete-to-dynamic boxing already used at direct-call
+boundaries. `lowerPropertyAssignment` now uses that canonical boxing helper
+before assignability validation and still demotes when no supported carrier can
+be produced. No provider cleanup, special-case ReferenceError handling,
+registry relaxation, or baseline increase was added.
+
+Standalone direct lowering physically contains both the setter and trigger
+ReferenceError call chains, while the prepared component remains the sole
+semantic provider requester. The assertions therefore keep exact physical
+chain evidence separate from the one canonical Program-ABI provider row. The
+focused #4259 accessor suite remains 17/21 on both the checkpoint and an
+unmodified live-main control; those four inherited failures are not acceptance
+regressions for this checkpoint.

@@ -3,6 +3,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { HOLE_F64_BITS } from "./value-tags.js";
 
 export interface OverlayCarrier {
   vecTypeIdx: number;
@@ -10,6 +11,8 @@ export interface OverlayCarrier {
   elemType: ValType;
   kind: "f64" | "externref" | "any" | "anystr";
 }
+
+export type CarrierDefaultMode = "default" | "undefined" | "holes";
 
 export function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
   const seen = new Set<number>();
@@ -47,11 +50,15 @@ export function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
 export function carrierDefaultInstrs(
   ctx: CodegenContext,
   carrier: OverlayCarrier,
-  externAsUndefined: boolean,
+  mode: CarrierDefaultMode,
   missExtern: () => Instr[],
 ): Instr[] {
-  if (carrier.kind === "f64") return [{ op: "f64.const", value: 0 }];
-  if (carrier.kind === "externref") return externAsUndefined ? missExtern() : [{ op: "ref.null.extern" }];
+  if (carrier.kind === "f64") {
+    return mode === "holes" && ctx.standalone && ctx.usesArrayHoles
+      ? [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }]
+      : [{ op: "f64.const", value: 0 }];
+  }
+  if (carrier.kind === "externref") return mode === "undefined" ? missExtern() : [{ op: "ref.null.extern" }];
   return carrier.kind === "any"
     ? [{ op: "ref.null", typeIdx: ctx.anyValueTypeIdx }]
     : [{ op: "ref.null", typeIdx: -15 }];
