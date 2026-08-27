@@ -133,7 +133,6 @@ import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
 import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
-import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4783)
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
 import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
 import {

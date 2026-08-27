@@ -88,7 +88,7 @@ object! | at L22: assert.throws(TypeError...)`.
   formatting.
 - Host behavior and unrelated BigInt prototype rows do not regress.
 - The dedicated upstream PR follows the repository Description/CLA template,
-  stays draft with `hold` until current-main verification and green CI prove it
+  stays non-draft with `hold` until current-main verification and green CI prove it
   mergeable, and keeps `mergeQueueEntry: null` before readiness.
 
 ## Evidence and handoff before implementation
@@ -142,7 +142,7 @@ was not needed for this bounded change; no unrelated files are modified.
 
 The implementation is ready for a dedicated upstream PR from
 `ttraenkler:codex/es2015-next-bounded-fix-4` to `loopdive/js2:main`. Keep the
-PR draft with `hold` until it is rebased or non-rewriting-merged onto the
+PR non-draft with `hold` until it is rebased or non-rewriting-merged onto the
 current upstream tip, the exact A/B and focused checks are rerun there, CI is
 green, and GitHub reports CLEAN/MERGEABLE with `mergeQueueEntry: null`. The
 branch currently has the issue-plan checkpoint `e985e13`; the implementation
@@ -162,7 +162,7 @@ Refreshed artifacts are `.tmp/issue-4779-refresh-host.jsonl`
 (`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`) and
 `.tmp/issue-4779-refresh-standalone.jsonl`
 (`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`).
-The PR remains draft+hold because queued PR #5074 will advance upstream main;
+The PR remains non-draft+hold because queued PR #5074 will advance upstream main;
 after #5074 lands, perform one final minimal sync and repeat these checks
 before readiness. Keep `mergeQueueEntry: null` until then.
 
@@ -184,6 +184,61 @@ Final artifacts:
   (`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`)
 
 The implementation and issue handoff are complete. PR #5073 must remain
-draft+hold until its body uses the exact durable CLA prompt/link, all checks
+non-draft+hold until its body uses the exact durable CLA prompt/link, all checks
 are green on this final head, GitHub reports CLEAN/MERGEABLE, and
 `mergeQueueEntry` is confirmed null before readiness and enqueue.
+
+## Stacked regression repair and handoff (2026-08-27)
+
+After PR #5079 merged, upstream/main advanced to
+`893d0a17ed47b7f6c4f7084cc532adf250e80275`. The first merge-group candidate
+for this PR used synthetic head `77e9132303e7b1239b7fe2e94789188a0097f06c`
+and failed the required quality job `98659868552` in run `33112846540`.
+Lint reported `noRedeclare` and TypeScript reported TS2300 for duplicate
+`emitSymbolArgToNumberThrow` imports in this file: line 133 from #4779 and
+line 136 from #4783. Format passed. The Test262 run `33112846318` was
+cancelled after this fail-fast quality failure, so it produced no aggregate
+or regression verdict; Differential `33112846321` and CLA `33112846093`
+passed. This is a genuine stacked source conflict, not runner
+infrastructure: both PRs added the same helper import while their other
+call sites can share one binding.
+
+The isolated branch was refreshed by the non-rewriting merge commit
+`9c9b6cee` from current origin/main. The repair removes only the duplicate
+`#4783` import and retains the original `#4779` binding; all four call sites
+continue to use that shared import. No lowering, test, workflow, or harness
+behavior changes are included in this repair.
+
+The PR body and checked CLA statement remain unchanged. PR #5073 stays
+non-draft with `hold` and outside the merge queue until the repaired head's
+PR checks are green. After local and PR validation, remove `hold` through the
+REST label endpoint, verify the label is gone and the exact body/head remain,
+then enqueue once and require fresh merge-group CI, Differential, every
+Test262 shard, merged report, and regression gate before merge.
+
+## Post-repair validation (2026-08-27)
+
+The exact one-row harness run passed in both lanes with structural controls:
+host **1/1 pass** and standalone **1/1 pass**, with no failure, compile
+error, timeout, or skip. The focused regression suite remains **4/4 passed**
+with `TEST262_WORKERS=2`. The two row artifacts are
+`.tmp/issue-4779-repair-host.jsonl`
+(`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`) and
+`.tmp/issue-4779-repair-standalone.jsonl`
+(`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`).
+
+TypeScript 7, TypeScript 5.9, full Biome lint, full Prettier check,
+`git diff --check`, oracle ratchet, and issue integrity all passed. The
+unoptimized differential corpus measured **114/120 matches**; its delta gate
+reported **0 new regressions** and two improvements against the 99/104 frozen
+baseline. The optimized corpus also measured **114/120 matches**, and the
+optimizer outcome gate reported **0 regressions** against the unoptimized
+lane. The six non-match rows are the same in both differential outputs and
+remain existing corpus coverage outside this bounded fix; the local
+optimizer emitted its known Binaryen assertion text on two rows but did not
+change any outcome or the zero-regression gate.
+
+The committed repair therefore has one source-line deletion, one merge-group
+conflict record, and no new behavioral or differential regression. The normal
+pre-push hook must still pass on this committed tree before publishing the
+checkpoint; keep `hold` until the fresh PR checks complete.
