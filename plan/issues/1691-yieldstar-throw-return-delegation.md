@@ -310,3 +310,42 @@ committed separately from the remaining standalone work.
   rewrite, runner exemption, or host-oracle dependency is introduced.
 - The upstream PR uses the exact Description/CLA template and remains draft
   until the scoped fix is complete, current-main based, CI-green, and mergeable.
+
+### Closeout handoff — 2026-08-27
+
+The final bounded rerun used the exact 13-row list above, the pinned Test262
+checkout, the maintained assembled harness, the pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`, LLVM 18, and two workers.
+The fresh local JSONL artifacts are:
+
+- host: `/private/tmp/js2-1691-host-exact-closeout.jsonl` — **13/13 pass**;
+  0 assertion failures, 0 compile errors, 0 timeouts, 0 skips;
+- standalone: `/private/tmp/js2-1691-standalone-exact-closeout.jsonl` —
+  **9/13 pass**, 4 assertion failures, 0 compile errors, 0 timeouts, 0 skips.
+
+The four standalone residuals are:
+
+- `star-rhs-iter-thrw-thrw-call-non-obj.js`: the delegated primitive result
+  reaches the protocol path, but the caught native `TypeError` is observed as
+  `undefined`;
+- `star-rhs-iter-thrw-violation-no-rtrn.js`: the missing-`throw` getter/fallback
+  count remains `0`;
+- `star-rhs-iter-thrw-violation-rtrn-call-non-obj.js`: the caught native
+  `TypeError` is observed as `undefined`;
+- `star-rhs-iter-thrw-violation-rtrn-invoke.js`: the missing-`throw` getter
+  count remains `0`.
+
+The current source checkpoint is `66d8238c4` (`fix(generators): preserve
+yield-star throw protocol results ✓`), with a clean worktree. It is retained
+because it is materially above the prior 548b34de2 checkpoint: host **13/13**
+and standalone **9/13** on the exact cohort. No additional uncommitted
+experiment is being carried forward.
+
+The host lane is complete for this slice. The remaining standalone failures
+are handed off as a substrate follow-up: native `$Error_struct` payloads do not
+survive the standardized `try_table` catch binding in the generic standalone
+path, and the native plain-object fallback does not observe the accessor
+method reads in these two return-fallback rows. Fixing those requires a
+separate standalone exception/property-dispatch investigation; no further
+scope expansion is made here. Keep the implementation PR draft/hold until
+that follow-up (or an explicitly narrowed acceptance decision) is resolved.
