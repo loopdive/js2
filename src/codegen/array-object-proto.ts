@@ -1775,7 +1775,12 @@ function makeGlue(
     // (#3181) `Number.prototype.toString(radix)` is arity 1 (§21.1.3.7) — the
     // only family where `toString` differs from the shared default of 0. Every
     // other family (Array/String/Object/Boolean/Date/…) keeps 0 from the table.
-    memberLength: (member) => (name === "Number" && member === "toString" ? 1 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    memberLength: (member) =>
+      name === "Number" && member === "toString"
+        ? 1
+        : name === "String" && member === "next"
+          ? 0
+          : (PROTO_METHOD_LENGTH[member] ?? 1),
     // (#2875 slice 3) String search-family members carry an uncounted optional
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
@@ -2955,6 +2960,32 @@ export function emitIteratorPrototypeSingleton(
       { op: "call", funcIdx: defineValueIdx },
       { op: "drop" },
     );
+  }
+
+  // (#5099) `%StringIteratorPrototype%.next` is an own data property whose
+  // value is a function (`name: "next"`, `length: 0`). The iterator records
+  // themselves still use the existing native stepping path; this singleton
+  // only needs a descriptor-carrying closure so the two metadata rows can
+  // inspect the prototype without pulling iterator dispatch into this slice.
+  // Keep the property off String.prototype's glue CSV: `next` is own only on
+  // the iterator prototype, not on the primitive wrapper prototype.
+  if (kind === "String" && defineValueIdx !== undefined) {
+    const brand = ensureStringNativeProtoGlue(ctx);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
   }
   initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });

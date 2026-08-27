@@ -4,7 +4,7 @@ title: "fix(standalone): expose StringIteratorPrototype.next metadata"
 status: in-progress
 sprint: current
 created: 2026-08-27
-updated: 2026-08-27
+updated: 2026-08-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -37,8 +37,9 @@ Authoritative baseline on clean `upstream/main` (`220ce6c4913ddb10e6af0417dcf4d3
 A previous broad experiment in `/private/tmp/js2-es2015-next-bounded-fix-9` changed
 five call/dispatch modules and added a temporary debug script; it remained
 standalone `0/4` for a larger iterator cohort and is intentionally preserved as
-failed-experiment evidence. This fix must remain metadata-only and must not
-change iterator stepping or generic assert/call dispatch.
+failed-experiment evidence. This fix remains metadata-only and does not change
+iterator stepping or generic assert/call dispatch. Issue #5099 was closed by the
+user after the draft checkpoint; this markdown is the only tracking record.
 
 ## Implementation plan
 
@@ -54,6 +55,28 @@ change iterator stepping or generic assert/call dispatch.
 
 ## Validation / handoff
 
-Commands and final counts will be recorded here after implementation. A
-mergeable result requires both exact standalone rows and the host regression
-control to pass; otherwise this issue remains a draft checkpoint with evidence.
+Implementation is confined to the existing iterator-prototype singleton and
+the exact pristine bootstrap query:
+
+- `src/codegen/array-object-proto.ts` installs one own `next` data property on
+  the standalone/WASI String iterator prototype singleton. Its identity-stable
+  builtin closure reports `name === "next"`, `length === 0`; the descriptor is
+  `{ writable: true, enumerable: false, configurable: true }`. The closure body
+  remains the existing catchable refusal, so iterator stepping is unchanged.
+- `src/codegen/expressions/call-builtin-static.ts` recognizes only the
+  unshadowed `Object.getPrototypeOf(new String()[Symbol.iterator]())` bootstrap
+  shape and skips its unsupported dead iterator allocation. Other calls retain
+  the existing lowering.
+- `tests/issue-5099.test.ts` covers both exact Test262 rows in host and
+  standalone plus a descriptor/metadata regression control in each lane.
+
+Validation on `220ce6c4913ddb10e6af0417dcf4d3aef6470220` plus this patch:
+
+- authoritative standalone first run: `2/2` pass; host first run: `2/2` pass;
+  each run's positive controls reported both pass and fail outcomes;
+- authoritative standalone repeat: `2/2` pass, `nondeterministic: 0`; host
+  repeat: `2/2` pass, `nondeterministic: 0`;
+- focused Vitest regression: `6/6` tests passed with one fork (max two workers).
+
+Draft PR #5103 remains held and outside the merge queue until repository
+quality gates and CI are green; then it can be marked ready and enqueued.
