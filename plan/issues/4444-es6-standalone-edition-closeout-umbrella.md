@@ -82,11 +82,12 @@ generator row).
   or a landed fix; the edition table in this file is refreshed per measurement
   (name the artifact + date per project measurement discipline).
 
-## 2026-08-27 authoritative dual-lane closeout status
+## 2026-08-27 authoritative standalone closeout status
 
-This umbrella now tracks the user's stricter dual-lane goal, not only the
-standalone edition score. The latest complete maintained-runner ES2015
-measurements on the combined closeout lineage are:
+The active goal is the standalone ES2015 edition score. Host measurements are
+retained as regression controls but are not part of the completion denominator.
+The latest complete maintained-runner ES2015 measurements on the combined
+closeout lineage are:
 
 - host run `20260826-180615`: 9,435 pass / 11,704 total, 2,163 fail,
   59 compile errors, 46 compile timeouts, 1 skip;
@@ -105,7 +106,8 @@ The active Luna/max wave is issue-backed and isolated: #4449 owns the exact
 precedence rows, and #2765 owns three `instanceof` getter/prototype rows. The
 single integration target remains upstream draft PR #5010.
 
-Completion requires fresh authoritative host and standalone runs on the same
-final combined head, each reporting exactly 11,704 pass / 11,704 total with
-zero fail, compile error, compile timeout, or skip. Until then this umbrella
-and the PR remain in progress/draft.
+Completion requires a fresh authoritative standalone run on the final
+integrated head reporting exactly 11,704 pass / 11,704 total with zero fail,
+compile error, compile timeout, or skip. Host runs remain required per-slice
+regression controls, not a second completion bar. Until the standalone proof
+exists, this umbrella and its PRs remain in progress/draft.
