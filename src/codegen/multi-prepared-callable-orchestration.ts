@@ -5,6 +5,7 @@ import type { TypeFact } from "../checker/oracle.js";
 import type { IrImportedCallLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
+import { collectModuleInitPopulation } from "../ir/module-init.js";
 import type { IrIntegrationError, IrIntegrationReport } from "../ir/integration.js";
 import type { IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -42,7 +43,6 @@ export function initializeMultiPreparedProgram(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
   options: CodegenOptions | undefined,
-  explicitlyDisabled: (value: string | undefined) => boolean,
 ): MultiPreparedProgramOwner<IrOverlayPlan> | undefined {
   ctx.irProgramCallableCutoverEnabled =
     !!options?.experimentalIR &&
@@ -51,7 +51,8 @@ export function initializeMultiPreparedProgram(
     !ctx.wasi &&
     !ctx.fast &&
     ctx.nativeStrings &&
-    !explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
+    process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER === "1";
+  ctx.irProgramCallableLateOverlayEnabled = ctx.irProgramCallableCutoverEnabled;
   return createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
 }
 
@@ -226,7 +227,9 @@ function ownerIsEligible(
     return false;
   }
   if (
+    collectModuleInitPopulation(sourceFile).length > 0 ||
     input.identityContext.moduleInitUnitIdBySourceId.has(sourceId) ||
+    (plan.identityPlan.identitySelection.moduleInit?.stmtCount ?? 0) > 0 ||
     input.identityContext.inventory.classes.some((record) => record.sourceId === sourceId)
   ) {
     return false;
@@ -284,6 +287,10 @@ function recordAggregateFailure(
 export function planMultiPreparedCallableComponents(input: MultiPreparedCallableOrchestrationInput): void {
   const graph = input.ctx.irProgramCallableBindingGraph;
   if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
+  // Dedicated Prepared owners freeze graph-wide allocator/support identity.
+  // Generic component composition remains fail-closed until that shared
+  // transaction is certified rather than shifting an established route.
+  if (input.owner.existingRouteUnitIds.size > 0) return;
   const records = new Map(graph.records.map((record) => [record.bindingId, record] as const));
   const candidates = new Map<IrUnitId, MultiPreparedCallableCandidate>();
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
@@ -331,7 +338,9 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
   const union = (left: IrUnitId, right: IrUnitId): void => {
     const leftRoot = find(left);
     const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot < rightRoot ? leftRoot : rightRoot);
+    if (leftRoot === rightRoot) return;
+    if (leftRoot < rightRoot) parent.set(rightRoot, leftRoot);
+    else parent.set(leftRoot, rightRoot);
   };
   for (const candidate of candidates.values()) {
     for (const target of candidate.plan.identityPlan.identitySelection.localCallees?.get(candidate.unitId) ?? []) {
@@ -394,12 +403,19 @@ export function removeMultiIrAttemptedCallableUnits(
   plan: IrOverlayPlan,
   selection: IrSelection,
 ): IrSelection {
-  const attempted = ctx.irProgramCallableAttemptedUnitIds;
-  if (!attempted?.size) return selection;
+  const withdrawn = new Set(ctx.irProgramCallableAttemptedUnitIds ?? []);
+  if (ctx.irProgramCallableLateOverlayEnabled !== true) {
+    const dedicated = ctx.irProgramCallableDedicatedRouteUnitIds ?? new Set<IrUnitId>();
+    for (const use of ctx.irProgramCallableBindingGraph?.uses ?? []) {
+      if (!dedicated.has(use.ownerUnitId)) withdrawn.add(use.ownerUnitId);
+      if (!dedicated.has(use.targetUnitId)) withdrawn.add(use.targetUnitId);
+    }
+  }
+  if (withdrawn.size === 0) return selection;
   const funcs = new Set(
     [...selection.funcs].filter((name) => {
       const unitId = plan.identityPlan.functionUnitIdByLegacyName.get(name);
-      return !unitId || !attempted.has(unitId);
+      return !unitId || !withdrawn.has(unitId);
     }),
   );
   return funcs.size === selection.funcs.size
@@ -468,6 +484,8 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     !input.ctx.wasi &&
     !input.ctx.fast &&
     input.multiAst.sourceFiles.length > 1;
+  const callableCutoverEnabled = input.ctx.irProgramCallableCutoverEnabled === true;
+  if (callableCutoverEnabled) input.ctx.irProgramCallableCutoverEnabled = false;
   input.owner.planExistingRoutes({
     active,
     scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
@@ -488,7 +506,20 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     projectLoweringPlans: input.projectLoweringPlans,
     stringShapes,
   });
-  if (input.ctx.irProgramCallableCutoverEnabled) {
+  input.ctx.irProgramCallableDedicatedRouteUnitIds = new Set(input.owner.existingRouteUnitIds);
+  if (input.owner.existingRouteUnitIds.size === 0) {
+    input.ctx.irProgramCallableCutoverEnabled = callableCutoverEnabled;
+    if (callableCutoverEnabled) plans.clear();
+  } else {
+    input.ctx.irProgramCallableLateOverlayEnabled = false;
+  }
+  const genericBlockedByModuleInit = input.multiAst.sourceFiles.some(
+    (sourceFile) => collectModuleInitPopulation(sourceFile).length > 0,
+  );
+  if (input.ctx.irProgramCallableCutoverEnabled && genericBlockedByModuleInit) {
+    input.ctx.irProgramCallableLateOverlayEnabled = false;
+  }
+  if (input.ctx.irProgramCallableCutoverEnabled && !genericBlockedByModuleInit) {
     planMultiPreparedCallableComponents({
       owner: input.owner,
       multiAst: input.multiAst,
@@ -498,6 +529,9 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
       safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
       ...input.callable,
     });
+    if (input.owner.callableComponentUnitIds.size === 0) {
+      input.ctx.irProgramCallableLateOverlayEnabled = false;
+    }
   }
   input.owner.sealBodyBoundary();
 }

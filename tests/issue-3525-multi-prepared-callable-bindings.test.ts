@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { analyzeMultiSource } from "../src/checker/index.js";
+import { generateMultiModule } from "../src/codegen/index.js";
+import { resolvePreparedFunctionBodyRoute } from "../src/codegen/declarations.js";
 import { compileMulti } from "../src/index.js";
-import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
 import {
   buildIrProgramCallableBindingGraph,
   IrProgramCallableBindingInvariantError,
@@ -80,6 +82,10 @@ const ALIAS_FILES = {
   `,
 } as const;
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("#3525 whole-program callable binding graph", () => {
   it("prepares one exact cross-source component before direct bodies", async () => {
     const files = {
@@ -95,17 +101,79 @@ describe("#3525 whole-program callable binding graph", () => {
         }
       `,
     };
-    const ir = await compileMulti(files, "./entry.ts", { experimentalIR: true, target: "standalone" });
-    const legacy = await compileMulti(files, "./entry.ts", { experimentalIR: false, target: "standalone" });
+    const options = {
+      experimentalIR: true,
+      nativeStrings: true,
+      target: "standalone" as const,
+      trackIrOutcomes: true,
+    };
+    vi.stubEnv("JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER", "1");
+    const generated = generateMultiModule(analyzeMultiSource(files, "./entry.ts"), options);
+    expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+    expect(generated.multiPreparedProgramAudit?.bodyPlan.reservations).toHaveLength(2);
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "add");
+    const ir = await compileMulti(files, "./entry.ts", options);
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "");
+    const legacy = await compileMulti(files, "./entry.ts", {
+      experimentalIR: false,
+      nativeStrings: true,
+      target: "standalone",
+    });
     expect(ir.success, ir.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(legacy.success, legacy.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(new Set(ir.irCompiledFuncs ?? [])).toEqual(new Set(["add", "run"]));
     expect(ir.irPostClaimErrors ?? []).toEqual([]);
+    const preparedOutcomes = ir.irOutcomes?.filter((outcome) => outcome.irBodyEmitted) ?? [];
+    const preparedUnitIds = new Set(preparedOutcomes.map((outcome) => outcome.unitId));
+    expect(preparedOutcomes).toHaveLength(2);
+    expect(preparedUnitIds.size).toBe(2);
+    expect(new Set(preparedOutcomes.map((outcome) => outcome.preparedComponentId)).size).toBe(1);
+    expect(preparedOutcomes[0]?.preparedComponentId).toMatch(/^prepared-component:/);
+    expect(
+      ir.irBodyRouteAudit?.legacyEntries.filter(
+        (entry) => entry.unitId !== undefined && preparedUnitIds.has(entry.unitId),
+      ),
+    ).toEqual([]);
+    expect(
+      ir.irBodyRouteAudit?.dispositions
+        .filter((entry) => preparedUnitIds.has(entry.unitId))
+        .every((entry) => entry.disposition === "terminal-ir"),
+    ).toBe(true);
     const irExports = (await instantiateWithRuntime(ir)).exports as unknown as { run(value: number): number };
     const legacyExports = (await instantiateWithRuntime(legacy)).exports as unknown as { run(value: number): number };
     expect(irExports.run(5)).toBe(legacyExports.run(5));
     expect(irExports.run(5)).toBe(7);
   }, 120_000);
+
+  it("rejects a matching legacy name when the source-qualified unit projection disagrees", () => {
+    const reservedUnit = "unit:source-a:shared" as IrUnitId;
+    const foreignUnit = "unit:source-b:shared" as IrUnitId;
+    const routing = {
+      skipBodyUnitIds: new Set([reservedUnit]),
+      preserveSkippedBodyUnitIds: new Set([reservedUnit]),
+      skippedUnitIds: [],
+    };
+    expect(
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "source-a.ts",
+        functionName: "shared",
+        unitId: reservedUnit,
+        skipBodies: new Set(["shared"]),
+        preserveSkippedBodies: new Set(["shared"]),
+        routing,
+      }),
+    ).toEqual({ skip: true, preserve: true });
+    expect(() =>
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "source-b.ts",
+        functionName: "shared",
+        unitId: foreignUnit,
+        skipBodies: new Set(["shared"]),
+        preserveSkippedBodies: new Set(["shared"]),
+        routing,
+      }),
+    ).toThrow(/routing disagrees/);
+  });
 
   it("resolves renamed/default/namespace/re-export calls to exact units", () => {
     const fixture = makeGraph(ALIAS_FILES, "./entry.ts");

@@ -2426,7 +2426,10 @@ function recordObservedIrOutcomes(
     existingOutcomes: ctx.irOutcomes,
     target,
   });
-  ctx.irOutcomes.push(...reconciled.outcomes);
+  const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  ctx.irOutcomes.push(
+    ...reconciled.outcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)),
+  );
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
 
@@ -9005,7 +9008,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
-  const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
+  const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
