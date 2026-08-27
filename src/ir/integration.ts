@@ -701,6 +701,7 @@ function prepareClosureTransaction(input: {
   readonly entries: readonly BuiltFn[];
   readonly originalArtifactUnitIds: ReadonlySet<IrUnitId>;
   readonly inventory: IrUnitInventory;
+  readonly atomicTerminalPopulation?: boolean;
   readonly callableImports: ReadonlyMap<string, Import>;
   readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
   readonly onSealFailure: PreparedComponentSealFailureHandler;
@@ -721,6 +722,7 @@ function prepareClosureTransaction(input: {
     ctx: input.ctx,
     entries: input.entries,
     inventory: input.inventory,
+    ...(input.atomicTerminalPopulation ? { atomicTerminalPopulation: true } : {}),
     closureSupport,
     classAccessorWritebacks,
     callableImports: input.callableImports,
@@ -2754,6 +2756,7 @@ export function compileIrPathFunctions(
         entries: healthyForLower,
         originalArtifactUnitIds,
         inventory: moduleBindingIdentityContext.inventory,
+        ...(options.atomicComponent ? { atomicTerminalPopulation: true } : {}),
         callableImports: importedCallableCatalog,
         ...(options.preparedBindingIdsByTerminalUnitId
           ? { preparedBindingIdsByTerminalUnitId: options.preparedBindingIdsByTerminalUnitId }
