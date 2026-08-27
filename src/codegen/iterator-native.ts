@@ -329,6 +329,11 @@ interface ObjCarrierDeps {
   boxSymbolIdx: number;
   /** The `(externref) -> i32` §7.1.2 ToBoolean helper (reused USER-deps funcIdx). */
   isTruthyIdx: number;
+  /** `__typeof_object(externref) -> i32` — validates an IteratorResult before
+   * falling through to closed-struct field readers. A primitive throw result
+   * (for example `throw() { return 23; }`) must raise TypeError rather than
+   * being mistaken for a closed struct whose `done` field is absent. */
+  typeofObjectIdx: number;
   /** `$Object` struct typeIdx — discriminates the step-result read path. */
   objectTypeIdx: number;
   /** `$Proxy` struct typeIdx — Proxy iterators use the same property path. */
@@ -1298,6 +1303,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       boxSymbolIdx !== undefined &&
       objectTypeIdx !== undefined &&
       isTruthyIdx !== undefined &&
+      ctx.funcMap.get("__typeof_object") !== undefined &&
       ctx.nativeStrTypeIdx >= 0
     ) {
       objDeps = {
@@ -1306,6 +1312,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         objectTypeIdx,
         proxyTypeIdx: ctx.objectRuntimeTypes?.proxyTypeIdx,
         isTruthyIdx,
+        typeofObjectIdx: ctx.funcMap.get("__typeof_object")!,
         applyClosureIdx: reserveApplyClosure(ctx),
         sgetValueIdx: ctx.funcMap.get("__sget_value"),
         sgetDoneIdx: ctx.funcMap.get("__sget_done"),
@@ -1862,6 +1869,33 @@ function buildIteratorThrowBody(
     { op: "extern.convert_any" },
   ];
 
+  const closedResultRead: Instr[] =
+    od.sgetDoneIdx !== undefined && (od.sgetValueIdx !== undefined || od.sgetDoneIsExtern === true)
+      ? [
+          { op: "local.get", index: 6 },
+          { op: "call", funcIdx: od.sgetDoneIdx },
+          { op: "call", funcIdx: od.isTruthyIdx },
+          { op: "local.set", index: 7 },
+          { op: "local.get", index: 7 },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            // A done throw result completes the delegation and therefore
+            // reads `value`; a non-done result is forwarded without an
+            // eager value read (the Test262 getter-observability case).
+            then:
+              od.sgetValueIdx !== undefined
+                ? [
+                    { op: "local.get", index: 6 },
+                    { op: "call", funcIdx: od.sgetValueIdx },
+                  ]
+                : od.missInstrs(),
+            else: od.missInstrs(),
+          },
+          { op: "local.set", index: 8 },
+        ]
+      : fail();
+
   const readResult: Instr[] = [
     // A normal object/proxy result uses the dynamic property reader.
     ...objCarrierTest(od, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
@@ -1886,32 +1920,25 @@ function buildIteratorThrowBody(
         },
         { op: "local.set", index: 8 },
       ],
-      else:
-        od.sgetDoneIdx !== undefined && (od.sgetValueIdx !== undefined || od.sgetDoneIsExtern === true)
-          ? [
-              { op: "local.get", index: 6 },
-              { op: "call", funcIdx: od.sgetDoneIdx },
-              { op: "call", funcIdx: od.isTruthyIdx },
-              { op: "local.set", index: 7 },
-              { op: "local.get", index: 7 },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "externref" } },
-                // A done throw result completes the delegation and therefore
-                // reads `value`; a non-done result is forwarded without an
-                // eager value read (the Test262 getter-observability case).
-                then:
-                  od.sgetValueIdx !== undefined
-                    ? [
-                        { op: "local.get", index: 6 },
-                        { op: "call", funcIdx: od.sgetValueIdx },
-                      ]
-                    : od.missInstrs(),
-                else: od.missInstrs(),
-              },
-              { op: "local.set", index: 8 },
-            ]
-          : fail(),
+      else: [
+        // A closed struct result is not visible to `__extern_get`, so use the
+        // generated field readers only after confirming that the value is an
+        // ECMAScript Object. In particular, a numeric/string primitive from
+        // `throw()` must take the IteratorResult TypeError path; treating a
+        // missing `done` field as false would incorrectly yield NaN/undefined.
+        { op: "local.get", index: 6 },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        { op: "local.get", index: 6 },
+        { op: "call", funcIdx: od.typeofObjectIdx },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: closedResultRead,
+          else: fail(),
+        },
+      ],
     },
   ];
 

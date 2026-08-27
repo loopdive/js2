@@ -655,7 +655,13 @@ export function tryCompileNativeGeneratorResultProperty(
     // ref-identity and answers UNEQUAL, so the test262 harness shape
     // `assert_sameValue_bool(g.next().done, true)` failed on every native
     // generator (the residual "returned 2" of the #2938 no-yield relax).
-    return propName === "value" ? valVT : { kind: "i32", boolean: true };
+    // Native numeric IteratorResult values use the NaN payload as an internal
+    // stand-in for `undefined`. Preserve that identity through the typed read
+    // as well as the open-result reader; the coercion engine can then restore
+    // canonical `undefined` when an any-valued consumer (for example
+    // `assert.sameValue(result.value, undefined)`) boxes this value.
+    const valueType = valVT.kind === "f64" ? { ...valVT, undefSentinel: true as const } : valVT;
+    return propName === "value" ? valueType : { kind: "i32", boolean: true };
   }
 
   if (resultType?.kind === "externref") {

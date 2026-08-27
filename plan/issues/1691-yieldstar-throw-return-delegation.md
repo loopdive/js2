@@ -264,6 +264,20 @@ remaining semantic work is to preserve the delegate's non-done result identity
 while keeping `IteratorValue` lazy, and to complete the throw/return fallback
 and host-lane parity checks.
 
+The bounded exact regression was rerun after the branch-depth and native
+IteratorResult validation changes. Maintained runner `20260827-154226` (the
+standalone/QuickJS lane) records **7/13 pass, 6/13 assertion failures, 0
+compile errors, 0 timeouts, and 0 skips**. Maintained runner `20260827-154404`
+(the host/GC lane) records **3/13 pass, 10/13 assertion failures, 0 compile
+errors, 0 timeouts, and 0 skips**. Both reports contain exactly the 13 filtered
+candidate rows; the empty local shard files are harness noise and are not part
+of the denominator. The standalone failures now execute far enough to expose
+the remaining semantic cases (primitive result/error propagation, lazy
+`value`/getter observation, and return fallback); the host failures remain the
+pre-existing native-host parity residuals. The generated reports are
+`benchmarks/results/test262-standalone-report-20260827-154226.json` and
+`benchmarks/results/test262-report-20260827-154404.json`.
+
 ### Resume acceptance
 
 - The current candidate denominator and both-lane baseline are exact.
