@@ -1763,11 +1763,13 @@ function makeGlue(
   brand: number,
   name: string,
   members: readonly string[],
+  symbolTag?: string,
 ): NativeProtoBuiltinGlue {
   return {
     brand,
     name,
     memberCsv: members.join(","),
+    ...(symbolTag === undefined ? {} : { symbolTag }),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2123,7 +2125,7 @@ export function ensureWeakMapNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "WeakMap");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakMap", WEAKMAP_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakMap", WEAKMAP_PROTO_METHODS, "WeakMap"));
   }
   return brand;
 }
@@ -2133,7 +2135,7 @@ export function ensureWeakSetNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "WeakSet");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakSet", WEAKSET_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakSet", WEAKSET_PROTO_METHODS, "WeakSet"));
   }
   return brand;
 }
