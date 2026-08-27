@@ -50,7 +50,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
-import { planCountedStringAppend } from "../ir/analysis/counted-string-append.js";
+import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
@@ -238,6 +238,7 @@ import {
   MultiPreparedProgramOwner,
   publishMultiPreparedProgram,
   type MultiPreparedProgramAudit,
+  type MultiPreparedProgramOverlayResult,
 } from "./multi-prepared-program.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
@@ -2606,6 +2607,11 @@ function planIrOverlay(
     readonly enableCountedStringAppendProof?: boolean;
     /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
     readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
+    /** C2 supplies the already-certified multi-source string loop only. */
+    readonly countedStringAppendProof?: {
+      readonly loop: ts.ForStatement;
+      readonly plan: IrCountedStringAppendPlan;
+    };
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
@@ -2855,10 +2861,14 @@ function planIrOverlay(
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
-      ...(options.enableCountedStringAppendProof
+      ...(options.enableCountedStringAppendProof || options.countedStringAppendProof
         ? {
-            planCountedStringAppend: (loop: ts.ForStatement) =>
-              planCountedStringAppend({ checker: ast.checker, oracle: ctx.oracle }, loop),
+            planCountedStringAppend: (loop: ts.ForStatement) => {
+              if (options.countedStringAppendProof) {
+                return loop === options.countedStringAppendProof.loop ? options.countedStringAppendProof.plan : null;
+              }
+              return planCountedStringAppend({ checker: ast.checker, oracle: ctx.oracle }, loop);
+            },
           }
         : {}),
       jsHostExterns,
@@ -3635,6 +3645,7 @@ function planMultiIrOverlaySource(
   identityContext: IrPlanningIdentityContext,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
+  countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan },
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3647,6 +3658,7 @@ function planMultiIrOverlaySource(
     resolveModuleBindings: false,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
     ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
+    ...(countedStringAppendProof ? { countedStringAppendProof } : {}),
   });
 }
 
@@ -3676,7 +3688,7 @@ function compileMultiIrOverlaySource(
   safety: MultiIrGraphSafety,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
-): void {
+): MultiPreparedProgramOverlayResult {
   const plan =
     early?.plan ??
     planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions, {
@@ -3725,6 +3737,9 @@ function compileMultiIrOverlaySource(
       finalSelection: safeSelection,
       safety,
     });
+  } else if (early?.route?.routeKind === "string") {
+    // MultiPreparedProgramOwner authenticates the string route before and
+    // after this consumer, including its C1 currentness contract.
   } else if (early?.route) {
     assertMultiPreparedScalarLeafRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
   }
@@ -3738,7 +3753,10 @@ function compileMultiIrOverlaySource(
     ...(early?.route ? { preparedLegacyNames: early.route.preparedFreeFunctions.completedBodies } : {}),
     projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
   });
-  consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, early?.skippedFunctionUnitIds);
+  return {
+    report,
+    consume: () => consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, early?.skippedFunctionUnitIds),
+  };
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
@@ -8880,7 +8898,16 @@ function planMultiPreparedProgramRoutes(
     identityContext,
     ctx,
     explicitlyDisabled: explicitlyDisabledEnv,
-    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    planSource: (sourceFile, stringShape) =>
+      planMultiIrOverlaySource(
+        ctx,
+        multiAst,
+        sourceFile,
+        identityContext,
+        undefined,
+        undefined,
+        stringShape ? { loop: stringShape.loop, plan: stringShape.plan } : undefined,
+      ),
     buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
@@ -8936,12 +8963,13 @@ function compileMultiPreparedProgramOverlays(
             early,
           );
         if (owner) owner.withOverlayState(sourceFile, compile);
-        else compile();
+        else compile()?.consume();
       });
     }
   });
   // Overlay preparation can create callback trampolines after legacy finalization.
   finalizeMethodTrampolines(ctx);
+  owner?.sealPostOverlayFinalization();
   frameStage(ctx, "ir-overlay");
 }
 

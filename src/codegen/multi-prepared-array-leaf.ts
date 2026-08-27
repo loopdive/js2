@@ -32,6 +32,8 @@ import {
   type MultiPreparedScalarLeafGraphSafety,
   type MultiPreparedScalarLeafPlan,
   type MultiPreparedScalarLeafReceipt,
+  multiPreparedRouteClaimsOverlap,
+  type MultiPreparedRouteClaimSnapshot,
 } from "./multi-prepared-scalar-leaf.js";
 import {
   multiPreparedFunctionValueUseIsCurrent,
@@ -591,6 +593,8 @@ export function planEarlyMultiPreparedArrayLeafRoute<Plan extends MultiPreparedS
     legacyName: string,
   ) => MultiPreparedFunctionValueSupportReceipt | undefined;
   readonly projectLoweringPlans: (plan: Plan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  /** Earlier successful route families, frozen by MultiPreparedProgramOwner. */
+  readonly claimedRouteClaims?: MultiPreparedRouteClaimSnapshot;
 }): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>> {
   const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
   if (!input.active) return states;
@@ -626,6 +630,18 @@ export function planEarlyMultiPreparedArrayLeafRoute<Plan extends MultiPreparedS
     if (candidate) eligible.push({ declaration, sourceFile, plan: state.plan, candidate });
   }
   const exact = eligible.length === 1 ? eligible[0] : undefined;
+  if (
+    exact &&
+    input.claimedRouteClaims &&
+    multiPreparedRouteClaimsOverlap(
+      input.claimedRouteClaims,
+      exact.sourceFile,
+      [exact.candidate.unitId],
+      [exact.candidate.unitId],
+    )
+  ) {
+    return states;
+  }
   if (!input.cutoverEnabled || !exact || exact.sourceFile !== input.entryFile) return states;
   const route = tryPrepareMultiSourceArrayLeaf({
     ctx: input.ctx,
