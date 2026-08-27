@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loopdive.github.io/js2wasm/ir/ir-module.schema.json",
-  "title": "js2wasm IR interchange module (v5.3)",
+  "title": "js2wasm IR interchange module (v5.4)",
   "description": "One serialized IR module (#3030 D1). Normative companion: docs/ir/ir-contract.md — the schema is the syntax gate; per-instruction operand/result typing is enforced by the IR verifier (the semantic conformance checker). Enum tables are append-only with frozen order (D2); any shape change requires an IR_FORMAT_VERSION bump.",
   "type": "object",
   "properties": {
@@ -532,7 +532,13 @@
               "count": { "$ref": "#/$defs/valueId" },
               "encodingEvidence": { "enum": ["ascii", "utf8-guaranteed", "wtf16"] },
               "provider": { "$ref": "#/$defs/funcRef" },
-              "countedStringAppendSite": { "$ref": "#/$defs/countedStringAppendSiteId" }
+              "countedStringAppendSite": { "$ref": "#/$defs/countedStringAppendSiteId" },
+              "countedStringAppendTripCount": {
+                "description": "Exact checker-authenticated f64 constant eligible for the bounded string.const native i32 repeat provider.",
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 2147483647
+              }
             },
             "required": ["value", "count", "encodingEvidence", "provider", "alloc"]
           }

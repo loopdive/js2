@@ -81,3 +81,33 @@ generator row).
 - Interim checkpoints: each cluster row either has an owning issue with a plan
   or a landed fix; the edition table in this file is refreshed per measurement
   (name the artifact + date per project measurement discipline).
+
+## 2026-08-27 authoritative standalone closeout status
+
+The active goal is the standalone ES2015 edition score. Host measurements are
+retained as regression controls but are not part of the completion denominator.
+The latest complete maintained-runner ES2015 measurements on the combined
+closeout lineage are:
+
+- host run `20260826-180615`: 9,435 pass / 11,704 total, 2,163 fail,
+  59 compile errors, 46 compile timeouts, 1 skip;
+- standalone run `20260826-194014`: 8,402 pass / 11,704 total, 2,728 fail,
+  571 compile errors, 2 compile timeouts, 1 skip.
+
+Later bounded checkpoints have fixed or classified #4758 (40 host
+destructuring timeouts), #4759 (20 module-namespace self-import bindings),
+#4760 (Promise poisoned-thenable slice), #4762 (mutation-safe realm cleanup),
+#4763 (Set replaced-adder abrupt completion), and #3423 (11 nested-object
+destructuring rows). Those bounded results do not replace a fresh full 11,704
+measurement and are not added arithmetically to the headline.
+
+The active Luna/max wave is issue-backed and isolated: #4449 owns the exact
+55-row TypedArray species cohort, #4450 owns four class static `name`/`length`
+precedence rows, and #2765 owns three `instanceof` getter/prototype rows. The
+single integration target remains upstream draft PR #5010.
+
+Completion requires a fresh authoritative standalone run on the final
+integrated head reporting exactly 11,704 pass / 11,704 total with zero fail,
+compile error, compile timeout, or skip. Host runs remain required per-slice
+regression controls, not a second completion bar. Until the standalone proof
+exists, this umbrella and its PRs remain in progress/draft.

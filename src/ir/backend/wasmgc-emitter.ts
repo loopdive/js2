@@ -81,8 +81,9 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     inputEncoding: IrStringEncoding,
     out: Instr[],
     provider?: IrFuncRef,
+    countedStringAppendTripCount?: number,
   ): void {
-    const ops = this.stringRuntime?.emitStringRepeat?.(alloc, inputEncoding, provider);
+    const ops = this.stringRuntime?.emitStringRepeat?.(alloc, inputEncoding, provider, countedStringAppendTripCount);
     if (!ops) throw new Error("WasmGcEmitter: string.repeat runtime is unavailable");
     out.push(...ops);
   }

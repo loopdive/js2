@@ -9208,6 +9208,19 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     }
   }
   if (byField.size === 0) return;
+  // A closed struct's f64 field may carry the identity-preserving undefined
+  // sentinel.  The native computed getter returns externref, so reserve one
+  // scratch f64 local for the exact-bit test before boxing.  Keep this local
+  // ahead of the key locals appended below; all appended indices are relative
+  // to the final local list.
+  const closedF64ScratchIdx =
+    boxNumberIdx !== undefined &&
+    [...byField.values()].some((entries) => entries.some((entry) => entry.fieldType.kind === "f64"))
+      ? 2 + fn.locals.length
+      : -1;
+  if (closedF64ScratchIdx >= 0) {
+    fn.locals.push({ name: "__closed_get_f64", type: { kind: "f64" } });
+  }
   const readAndBox = (entry: Entry): Instr[] => {
     if (entry.cold !== undefined) {
       return [
@@ -9244,7 +9257,24 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
     ];
     if (entry.fieldType.kind === "f64") {
-      read.push({ op: "call", funcIdx: boxNumberIdx! });
+      // Closed f64 fields use UNDEF_F64_BITS when the source value is
+      // genuinely undefined. Recover that identity at the property boundary
+      // while ordinary NaN payloads still take the number-boxing branch.
+      read.push(
+        { op: "local.tee", index: closedF64ScratchIdx },
+        { op: "i64.reinterpret_f64" },
+        { op: "i64.const", value: UNDEF_F64_BITS },
+        { op: "i64.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+          else: [
+            { op: "local.get", index: closedF64ScratchIdx },
+            { op: "call", funcIdx: boxNumberIdx! },
+          ],
+        },
+      );
     } else if (entry.fieldType.kind === "i32") {
       if (entry.jsBoolean) read.push({ op: "call", funcIdx: boxBooleanIdx! });
       else read.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx! });

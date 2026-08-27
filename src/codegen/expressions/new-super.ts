@@ -3602,6 +3602,7 @@ function seedNativeSetFromArrayArg(
   arg: ts.Expression,
   collTmp: number,
   addFuncIdx: number,
+  adderDispatch?: NativeSetAdderDispatch,
 ): boolean {
   // Bail helper: drop a stray compiled value (if any) and restore the collection.
   const bail = (dropArg: boolean): boolean => {
@@ -3628,6 +3629,7 @@ function seedNativeSetFromArrayArg(
   });
   const idxLocal = allocLocal(fctx, `__collctor_i_${fctx.locals.length}`, { kind: "i32" });
   const lenLocal = allocLocal(fctx, `__collctor_len_${fctx.locals.length}`, { kind: "i32" });
+  const elemLocal = allocLocal(fctx, `__collctor_elem_${fctx.locals.length}`, { kind: "anyref" });
 
   // vec → local; data = vec.data (field 1); len = vec.length (field 0); i = 0.
   fctx.body.push({ op: "local.set", index: vecLocal });
@@ -3656,8 +3658,26 @@ function seedNativeSetFromArrayArg(
   loopBody.push({ op: "local.get", index: idxLocal });
   loopBody.push(emitArrayGetForElem(arrTypeIdx, elemType));
   emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, elemType);
-  loopBody.push({ op: "call", funcIdx: addFuncIdx });
-  loopBody.push({ op: "drop" });
+  loopBody.push({ op: "local.set", index: elemLocal });
+  if (adderDispatch !== undefined) {
+    loopBody.push({ op: "local.get", index: adderDispatch.modeLocal });
+    loopBody.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: emitNativeSetAdderCall(adderDispatch, collTmp, elemLocal),
+      else: [
+        { op: "local.get", index: collTmp },
+        { op: "local.get", index: elemLocal },
+        { op: "call", funcIdx: addFuncIdx },
+        { op: "drop" },
+      ],
+    });
+  } else {
+    loopBody.push({ op: "local.get", index: collTmp });
+    loopBody.push({ op: "local.get", index: elemLocal });
+    loopBody.push({ op: "call", funcIdx: addFuncIdx });
+    loopBody.push({ op: "drop" });
+  }
 
   // i += 1; continue
   loopBody.push({ op: "local.get", index: idxLocal });
@@ -3675,6 +3695,86 @@ function seedNativeSetFromArrayArg(
   // Leave the collection on the stack.
   fctx.body.push({ op: "local.get", index: collTmp });
   return true;
+}
+
+/** Runtime state for a standalone Set constructor's user-visible `add`.
+ * `modeLocal` is set when the Set prototype companion owns an override; the
+ * intrinsic fast path remains the fallback when it does not. */
+interface NativeSetAdderDispatch {
+  modeLocal: number;
+  adderLocal: number;
+  argsLocal: number;
+  objVecNewIdx: number;
+  objVecPushIdx: number;
+  applyClosureIdx: number;
+}
+
+/**
+ * Prepare the one-time `Get(set, "add")` used by the native Set constructor.
+ * The proto-index companion is populated by standalone `Object.defineProperty`
+ * / assignment writes, so this lookup observes user getters and data values
+ * without exposing a host import. A missing companion entry means the intrinsic
+ * native adder is still authoritative and keeps the existing fast path.
+ */
+function prepareNativeSetAdderDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  collTmp: number,
+): NativeSetAdderDispatch | undefined {
+  const hasIdx = ctx.funcMap.get("__protoidx_has_r");
+  const getIdx = ctx.funcMap.get("__protoidx_get_r");
+  if (hasIdx === undefined || getIdx === undefined) return undefined;
+
+  const builders = ensureObjVecBuilders(ctx);
+  const applyClosureIdx = reserveApplyClosure(ctx);
+  const modeLocal = allocLocal(fctx, `__setctor_custom_add_${fctx.locals.length}`, { kind: "i32" });
+  const adderLocal = allocLocal(fctx, `__setctor_adder_${fctx.locals.length}`, { kind: "externref" });
+  const argsLocal = allocLocal(fctx, `__setctor_add_args_${fctx.locals.length}`, { kind: "externref" });
+
+  addStringConstantGlobal(ctx, "add");
+  fctx.body.push({ op: "local.get", index: collTmp });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "add"));
+  fctx.body.push({ op: "call", funcIdx: hasIdx });
+  fctx.body.push({ op: "local.tee", index: modeLocal });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: collTmp },
+      { op: "extern.convert_any" },
+      ...stringConstantExternrefInstrs(ctx, "add"),
+      { op: "call", funcIdx: getIdx },
+      { op: "local.set", index: adderLocal },
+    ],
+  });
+
+  return {
+    modeLocal,
+    adderLocal,
+    argsLocal,
+    objVecNewIdx: builders.newIdx,
+    objVecPushIdx: builders.pushIdx,
+    applyClosureIdx,
+  };
+}
+
+/** Emit one `Call(adder, set, «value»)` through the native closure bridge. */
+function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: number, valueLocal: number): Instr[] {
+  return [
+    { op: "call", funcIdx: dispatch.objVecNewIdx },
+    { op: "local.set", index: dispatch.argsLocal },
+    { op: "local.get", index: dispatch.argsLocal },
+    { op: "local.get", index: valueLocal },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: dispatch.objVecPushIdx },
+    { op: "local.get", index: dispatch.adderLocal },
+    { op: "local.get", index: collTmp },
+    { op: "extern.convert_any" },
+    { op: "local.get", index: dispatch.argsLocal },
+    { op: "call", funcIdx: dispatch.applyClosureIdx },
+    { op: "drop" },
+  ];
 }
 
 /**
@@ -4030,13 +4130,37 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             typeIdx: ctx.mapTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: mTmp });
+          // §24.2.1.1 gets `add` before it starts consuming the iterable. Do
+          // this only for an actual iterable argument: `new Set()` returns the
+          // empty set without touching Set.prototype.add.
+          const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp);
+          const elemLocal =
+            adderDispatch === undefined
+              ? undefined
+              : allocLocal(fctx, `__setctor_elem_${fctx.locals.length}`, { kind: "anyref" });
           for (const el of arrArg.elements) {
             if (ts.isOmittedExpression(el)) continue; // hole → undefined element
-            fctx.body.push({ op: "local.get", index: mTmp });
+            if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
             const et = compileExpression(ctx, fctx, el);
             coerceMapKeyToAnyref(ctx, fctx, et);
-            fctx.body.push({ op: "call", funcIdx: setAddIdx }); // returns ref $Map
-            fctx.body.push({ op: "drop" }); // discard chained set
+            if (adderDispatch !== undefined && elemLocal !== undefined) {
+              fctx.body.push({ op: "local.set", index: elemLocal });
+              fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+              fctx.body.push({
+                op: "if",
+                blockType: { kind: "empty" },
+                then: emitNativeSetAdderCall(adderDispatch, mTmp, elemLocal),
+                else: [
+                  { op: "local.get", index: mTmp },
+                  { op: "local.get", index: elemLocal },
+                  { op: "call", funcIdx: setAddIdx },
+                  { op: "drop" },
+                ],
+              });
+            } else {
+              fctx.body.push({ op: "call", funcIdx: setAddIdx }); // returns ref $Map
+              fctx.body.push({ op: "drop" }); // discard chained set
+            }
           }
           fctx.body.push({ op: "local.get", index: mTmp });
         } else if (nonLiteralArrArg && setAddIdx !== undefined) {
@@ -4045,9 +4169,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             typeIdx: ctx.mapTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: mTmp });
+          // The adder lookup precedes GetIterator/array consumption, matching
+          // the literal path above and the Set constructor algorithm.
+          const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp);
           // On a non-vec / unsupported-element arg the helper leaves the empty
           // collection on the stack (graceful: empty Set, never a host-import leak).
-          seedNativeSetFromArrayArg(ctx, fctx, nonLiteralArrArg, mTmp, setAddIdx);
+          seedNativeSetFromArrayArg(ctx, fctx, nonLiteralArrArg, mTmp, setAddIdx, adderDispatch);
         }
         return { kind: "ref", typeIdx: ctx.mapTypeIdx };
       }

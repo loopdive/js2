@@ -1,15 +1,15 @@
 ---
 id: 2765
 title: "instanceof hard residuals: Function.prototype getter / WasmGC array proto-chain + undeclared-global ReferenceError"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-06-28
 updated: 2026-08-27
 priority: low
 horizon: l
 feasibility: hard
-model: fable
-reasoning_effort: high
+model: gpt-5.6-luna
+reasoning_effort: max
 task_type: bugfix
 area: codegen
 language_feature: instanceof
@@ -92,6 +92,7 @@ Re-verified against current main (baseline jsonl + probes):
   read throws — the two must be designed together).
 
 This issue now tracks ONLY cluster 5.
+
 ## ES2015 closeout correction (2026-08-26)
 
 Cluster 4 is observable again once #4762 prevents the Test262 realm canary from

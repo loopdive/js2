@@ -13,6 +13,18 @@ reasoning_effort: max
 sprint: current
 horizon: l
 related: [3370, 3188, 3417]
+loc-budget-allow:
+  - src/codegen/declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/destructuring-params.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/object-runtime.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  - src/codegen/destructuring-params.ts::destructureParamObject
 ---
 
 # #3423 — top-level module-global bindings read as undefined under the literal harness
@@ -109,3 +121,85 @@ not the full historical ~600-row umbrella:
 
 Acceptance for this milestone is 82/82 pass in both lanes with no timeout,
 compile error, skip, filter, fixture rewrite, or oracle-only workaround.
+
+## 2026-08-26 first-milestone checkpoint — reduced array slice
+
+The exact-path extraction remains 82 host rows, 82 standalone rows, and an
+identical 82-path intersection (82/82). I stopped before the requested full
+82-row solo sweep as directed after the representative reduction.
+
+Fresh bounded-process representative results are:
+
+| path | host | standalone |
+| --- | --- | --- |
+| `language/statements/variable/dstr/ary-ptrn-rest-obj-prop-id.js` | pass (`cb0700bc3aa4`) | pass (`5ce0187eef9e`) |
+| `language/statements/variable/dstr/obj-ptrn-prop-obj.js` | fail: `SameValue(NaN, undefined)` (`ac476ff4e548`) | fail: `SameValue(NaN, undefined)` (`701bb611de5b`) |
+
+The retained checkpoint is the smallest proven array-rest slice. It widens
+no-default scalar f64 destructuring slots to `externref` consistently across
+the checker binding resolver, module-global registration, and `var` hoisting;
+the array-like object-rest extraction also brands its f64 source as
+undefined-capable before coercing it into the widened slot. This preserves the
+dedicated f64 undefined sentinel while ordinary NaN remains a number. The
+checkpoint touches only `src/checker/type-mapper.ts`,
+`src/codegen/declarations.ts`, `src/codegen/index.ts`, and
+`src/codegen/destructuring-params.ts`.
+
+The object representative is not counted as fixed. Its module globals are now
+`externref`, but the nested object source still crosses a closed-struct
+f64-field/externref boundary (`y` is materialized as NaN before the binding
+read), so the remaining fix belongs to source-shape/property loading rather
+than this proven array-rest storage path. Do not expand the denominator until
+that path is isolated and separately verified. The interrupted dependency
+provisioning left no artifact in the worktree; the linked dependency and
+pinned QuickJS artifact were used for this checkpoint.
+
+## 2026-08-27 nested-object source-shape checkpoint — exact 11-row denominator
+
+The owned source-shape slice is the 11 exact `obj-ptrn-prop-obj.js` paths in
+the statement/expressions function, generator, async-generator, try, and
+`let`/`const`/`var` contexts. It is intentionally narrower than the historical
+82-row family; no 82-row rerun was performed in this checkpoint.
+
+Fresh controls before the source-boundary fix were the variable representative:
+host run `20260827-015237` = 0/1 and standalone run `20260827-015424` = 0/1,
+both failing with `SameValue(NaN, undefined)`. After the closed-struct f64
+field → externref boundary and shared binding allocation fixes, the exact
+11-row denominator measured as follows (empty filtered shard files are not
+rows):
+
+| run | lane | rows | result |
+| --- | --- | --- | --- |
+| `20260827-022532` | host | 11/11 | pass |
+| `20260827-022648` | standalone | 9/11 | two async-generator resume rows still failed |
+| `20260827-023944` | standalone | 11/11 | pass after async-frame binding-marker fix |
+| `20260827-024058` | host | 11/11 | pass after the same shared fix |
+
+The remaining 2/11 standalone failures were the async-generator expression and
+statement paths. Their entry destructuring had already widened `x`, `y`, and
+`z` to `externref`, but the independently compiled async resume function still
+applied checker-type `__unbox_number` reads. The shared async-frame metadata now
+threads the undefined-preserving pattern-binding marker into that resume context;
+ordinary NaN is still boxed as a number because only the dedicated undefined
+sentinel bit pattern is restored. Permanent host and standalone coverage is in
+`tests/issue-3423-nested-object-dstr.test.ts`.
+
+After narrowing the host runtime edit to the proven string-key property path,
+the exact denominator was re-measured again: standalone run `20260827-025828`
+= 11/11 and host run `20260827-025951` = 11/11. These are the final checkpoint
+results for this branch; the five empty filtered shard files in each run are
+not Test262 rows.
+
+After integration onto refreshed upstream head `9e0c7a1b9` plus completed Set
+slice #4763, combined commit `f1aaaca7d` independently passed the focused
+regression at 2/2, host run `20260827-030825` at 11/11, and standalone run
+`20260827-030955` at 11/11. Both maintained-runner Test262 runs had zero
+failures, compile errors, compile timeouts, or skips.
+
+The async-frame binding classification was then routed through the existing
+oracle facts instead of adding a raw checker query. The oracle ratchet reports
+zero raw-query growth, the focused regression remains 2/2, and the final code
+was re-measured with the exact 11-row filter: host run `20260827-031536` and
+standalone run `20260827-031714` both pass 11/11 with zero failures, compile
+errors, compile timeouts, or skips. These final run IDs supersede the earlier
+combined-head measurements above.

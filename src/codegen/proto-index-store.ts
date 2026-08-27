@@ -136,6 +136,13 @@ const ERROR_OFF = builtinBrandOffsetOf("Error")!;
 const STRING_OFF = builtinBrandOffsetOf("String")!;
 const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
 const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
+const SET_OFF = builtinBrandOffsetOf("Set")!;
+
+/** `$Map.kind` field / `COLLECTION_KIND.SET` values (map-runtime.ts). Kept as
+ * literals here to avoid an import cycle: map-runtime already consumes the
+ * receiver-brand helper. */
+const MAP_KIND_FIELD = 4;
+const SET_KIND = 1;
 
 /**
  * (#4176) The boxed-primitive wrapper internal-slot key — MUST equal
@@ -1451,6 +1458,30 @@ function fillBrandOffBody(ctx: CodegenContext): void {
     }
   }
   body.push(...testArm(ctx.vecPropBaseTypeIdx, ARR_OFF));
+  // Native Map-backed Sets are the one non-`$Object` carrier whose implicit
+  // prototype participates in the companion store.  The collection runtime
+  // shares `$Map` for Map/Set/WeakMap/WeakSet, so discriminate by its immutable
+  // kind tag before the generic Object fallback.  This lets a standalone Set
+  // constructor honor a user-installed `Set.prototype.add` without changing
+  // the existing native fast path when the companion has no override.
+  if (ctx.mapTypeIdx >= 0) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: ctx.mapTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: ctx.mapTypeIdx },
+          { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: MAP_KIND_FIELD },
+          { op: "i32.const", value: SET_KIND },
+          { op: "i32.eq" },
+          { op: "if", blockType: { kind: "empty" }, then: ret(SET_OFF) },
+        ],
+      },
+    );
+  }
   body.push(...testArm(ctx.structMap.get("__StandaloneRegExp"), REGEXP_OFF));
   body.push(...testArm(ctx.structMap.get("__Date"), DATE_OFF));
   // (#4207) BARE primitive receiver — a native string / boxed number / boxed
