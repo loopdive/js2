@@ -3595,6 +3595,97 @@ function _toPropertyKey(key: any, callbackState?: { getExports: () => Record<str
 }
 
 /**
+ * (#3481) Does `struct` OWN the field `name`, per the compiler's own presence
+ * bits? `__sget_<name>` is a shape-DISPATCHED getter: it answers for any shape
+ * carrying that field, and for a conditionally-initialized slot it happily
+ * returns the untouched default. `__shas_<name>` (#2847) is the query that
+ * distinguishes "explicitly set" from "default slot" — consult it when the
+ * module emitted one, and assume presence otherwise (it is only emitted when
+ * some field is presence-tracked, so its absence means every slot is always
+ * present). Used to keep the exotic-@@toPrimitive probe from reading a default
+ * slot as a user-supplied `Symbol.toPrimitive`.
+ */
+function _hasOwnStructField(struct: any, name: string, exports: Record<string, Function> | undefined): boolean {
+  const shas = exports?.[`__shas_${name}`];
+  if (typeof shas !== "function") return true;
+  try {
+    return Number(shas(struct)) !== 0;
+  } catch (e: any) {
+    if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    return false;
+  }
+}
+
+/**
+ * (#3481) Invoke an exotic `@@toPrimitive` that was read out of a WasmGC struct
+ * FIELD (the object-literal `{ [Symbol.toPrimitive]: … }` shape).
+ *
+ * §7.1.1 step 2 is `Call(exoticToPrim, input, «hint»)` — a METHOD call on the
+ * receiver that is handed the hint — so the receiver-threading
+ * `__call_fn_method_*` dispatchers are tried before the receiver-less ones, and
+ * the 1-arg forms before the 0-arg ones. (The generic dispatchers tolerate an
+ * arity mismatch, so a `function () { … }` that ignores the hint still runs on
+ * the 1-arg arm; the cascade is the belt-and-braces order the sibling sidecar
+ * branch in `_toPrimitive` already uses.)
+ *
+ * Returns the produced primitive, or `_PRIM_ABSENT` when the module exports no
+ * dispatcher that could run the closure — the caller then continues with
+ * OrdinaryToPrimitive, i.e. keeps the pre-#3481 behaviour rather than inventing
+ * a failure. Both spec violations throw a real TypeError: a non-callable slot
+ * (step 2d) and a method that returns an object (step 5).
+ */
+function _callExoticToPrimitiveSlot(
+  receiver: any,
+  slot: any,
+  hint: "number" | "string" | "default",
+  exports: Record<string, Function> | undefined,
+): any {
+  // A host-bridged JS function (proxy-wrapped closure or a real binding).
+  if (typeof slot === "function") {
+    const prim = slot.call(receiver, hint);
+    if (prim == null || typeof prim !== "object") return prim;
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  // §7.1.1 step 2d — the slot holds a non-callable (a number, a string, a
+  // plain object, …). IsCallable is false, so this is a TypeError, not a
+  // fall-through to valueOf/toString.
+  if (typeof slot !== "object" || !_isWasmStruct(slot)) {
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  const isClosure = exports?.["__is_closure"];
+  if (typeof isClosure === "function") {
+    let callable = 1;
+    try {
+      callable = Number(isClosure(slot));
+    } catch (e: any) {
+      if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    }
+    if (!callable) throw new TypeError("Cannot convert object to primitive value");
+  }
+  const attempts: [string, (dispatch: Function) => any][] = [
+    ["__call_fn_method_1", (dispatch) => dispatch(receiver, slot, hint)],
+    ["__call_fn_1", (dispatch) => dispatch(slot, hint)],
+    ["__call_fn_method_0", (dispatch) => dispatch(receiver, slot)],
+    ["__call_fn_0", (dispatch) => dispatch(slot)],
+  ];
+  for (const [name, invoke] of attempts) {
+    const dispatch = exports?.[name];
+    if (typeof dispatch !== "function") continue;
+    try {
+      const prim = invoke(dispatch);
+      if (prim == null || typeof prim !== "object") return prim;
+      // §7.1.1 step 5 — exotic @@toPrimitive returned an object.
+      throw new TypeError("Cannot convert object to primitive value");
+    } catch (e: any) {
+      // Only a wasm type-mismatch trap falls through to the next dispatcher;
+      // a user throw and the step-5 TypeError above propagate.
+      if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    }
+  }
+  return _PRIM_ABSENT;
+}
+
+/**
  * Full ToPrimitive for proxied WasmGC structs and plain JS objects (#1090).
  * Unlike _toPrimitive (which only checks sidecar + Wasm exports), this function
  * also checks real JS properties on the object/proxy. This handles the case where
@@ -3698,6 +3789,36 @@ function _hostToPrimitive(
         // we can fall through to valueOf/toString; user throws + the TypeError
         // above propagate.
         if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+      }
+    }
+    // (#3481) An object LITERAL with a computed `[Symbol.toPrimitive]` key —
+    // `{ [Symbol.toPrimitive]: function () { … } }` — is a THIRD shape, and it
+    // was reaching none of the three probes above. Codegen stores the closure
+    // in a struct FIELD whose wasm name is `@@toPrimitive` and emits only the
+    // field accessor `__sget_@@toPrimitive`: there is no sidecar slot (the key
+    // is physical, not dynamic), no host proxy (the struct arrives raw), and no
+    // `__call_@@toPrimitive` wrapper (that export is produced for a *method*
+    // body, #1716). So the walker fell through to the `"[object Object]"`
+    // fallback at the end, which is why `{[Symbol.toPrimitive]: () => 2n} * 2n`
+    // reported "Cannot mix BigInt and other types" — the host binop multiplied
+    // a STRING by a BigInt. Probe the field accessor here, still at §7.1.1
+    // step 2 (before OrdinaryToPrimitive), mirroring the `__sget_${mName}`
+    // fallback the valueOf/toString loop below already relies on.
+    const sgetTP = exports?.["__sget_@@toPrimitive"];
+    if (typeof sgetTP === "function" && _hasOwnStructField(raw, "@@toPrimitive", exports)) {
+      let slot: any = null;
+      try {
+        slot = sgetTP(raw);
+      } catch (e: any) {
+        // Shape-dispatch miss on an unrelated struct — not our field.
+        if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+      }
+      // §7.1.1 step 2a: an undefined/null exotic means OrdinaryToPrimitive.
+      // `__sget_*` also answers null for "this shape has no such field", so the
+      // two collapse onto the same (correct) fall-through.
+      if (slot != null) {
+        const prim = _callExoticToPrimitiveSlot(raw, slot, hint, exports);
+        if (prim !== _PRIM_ABSENT) return prim;
       }
     }
   }
