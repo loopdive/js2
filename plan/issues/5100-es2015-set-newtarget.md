@@ -69,8 +69,26 @@ Validation covers the exact Test262 row on host and standalone, the three
 nearby controls on both lanes, a focused constructor/prototype identity probe,
 and the normal typecheck, lint, formatting, ratchet, oracle, and hook checks.
 
-## Handoff
+## Validation and handoff
 
-Status and exact post-repair counts will be appended here before the initial
-push.  The PR must remain non-draft only after the focused validation is green;
-the repository-local issue is the only issue tracker entry for this lane.
+Post-repair focused validation on commit `d14dade81693cbbd8b0004edf9305f652cdc40cc`
+was green:
+
+| Check | Result |
+| --- | --- |
+| Exact Test262 row, host | pass |
+| Exact Test262 row, standalone | pass |
+| Three host/standalone controls | 6/6 pass |
+| Standalone + host constructor/prototype probe | 2/2 pass |
+| Repeat exact row (host + standalone, twice) | 4/4 pass |
+| Normal changed-root hook (`TEST262_WORKERS=2`) | 10/10 pass |
+| TypeScript 5 / TypeScript 7 | pass / pass |
+| Biome lint, Prettier, LOC/function budgets | pass / pass / pass with issue-local allowance |
+| Oracle and coercion-site ratchets | pass / pass |
+
+The branch is clean and contains one repair commit with Thomas authorship and
+the Codex trailer.  The initial fork push is pending the execution environment
+allowing the explicitly requested `git push`; no GitHub issue or API mutation
+was performed from this lane.  Once pushed, the PR should be non-draft with
+this exact body and the lane may enter the queue only after fresh PR CI is
+green.
