@@ -355,7 +355,44 @@ receiver) while `_wasmStructHasOwn` consults the JS-side
 `_wasmStructDeletedKeys` WeakMap. That divergence is the thing to verify next,
 and it is a runtime question, not a codegen one.
 
-### The "requested new array is too large" trap — diagnosed
+### CORRECTION (2026-08-27): the sparse-write diagnosis below is WRONG
+
+I read the runner's error line as naming the failing statement. It does not —
+`"in __module_init() at source L30 | at L40: <text>"` puts the FRAME first and
+the statement second, so the trap was never at the setup assignment.
+
+Measured directly, both spellings of the huge-index write are fine:
+
+```
+var a = []; a[9007199254740988]  = "num";   // ok
+var b = []; b["9007199254740988"] = "str";  // ok
+```
+
+They are fine because the mechanism already exists: `SPARSE_INDEX_CEILING`
+(16,777,216) in `src/codegen/vec-sparse-index.ts` marks an index "unbackable",
+and `emitUnbackableIndexFlag` / `needsGrowCondInstrs` / `guardedElementSetInstrs`
+suppress both the growth and the store, with reads answering `undefined`. So the
+write path already does what I claimed it did not.
+
+The trap is in the METHOD, isolated:
+
+```js
+var proxy = new Proxy(array, { get: (t, pk, r) => pk === "length" ? 2 ** 53 + 2 : Reflect.get(t, pk, r) });
+Array.prototype.slice.call(proxy, 9007199254740989);
+  → RuntimeError: requested new array is too large   (and NOT catchable by a JS try/catch)
+```
+
+The host `slice` should create a 3-element result (`len - start`); something on
+our side sizes the result from the proxy's fake `length` instead. That is a
+host-bridge / ArraySpeciesCreate question in `_wrapForHost`, and it is where
+`slice/length-exceeding-integer-limit-proxied-array.js` and
+`splice/create-species-length-exceeding-integer-limit.js` actually fail.
+
+This is the second time this session an error STRING drove a wrong diagnosis
+(the first was the stale baseline text on `includes/samevaluezero.js`). Isolate
+the failing operation in a probe before believing a location.
+
+### Superseded: the "requested new array is too large" trap — diagnosed
 
 `slice/length-exceeding-integer-limit-proxied-array.js` and
 `splice/create-species-length-exceeding-integer-limit.js` do NOT trap inside the
