@@ -133,7 +133,52 @@ come from tier 1 partially consuming before failing, or from the whole chain
 running twice. That is the next thing to measure — instrument which tier sets
 local 6.
 
-### The measurement that does NOT compose — read this first
+### LOCALISED: one host-side `next()` resumes the generator TWICE
+
+The `finally` probe separates a `return()` from a `next()` — only a `next()`
+resumes past the yield:
+
+```js
+function* g() { try { log.push("y1"); yield 1; log.push("AFTER"); yield 2; } finally { log.push("fin"); } }
+function f([,]) { return 1; }
+f(g());
+
+  expected  y1,fin              (one next, then IteratorClose → return → finally)
+  actual    y1,AFTER,fin        ← the body resumed past the yield
+```
+
+And the drain that drives it calls `next()` exactly **once**:
+
+```
+DI nextCalls=1 out=1 limit=1
+```
+
+So a **single host-side `it.next()` on a compiled generator resumes it twice**
+and then completes it. That is the extra IteratorStep, and it is not a
+budgeting bug anywhere in the destructuring chain — every budget measured
+correct.
+
+Crucially this is **boundary-specific**: the same generator driven from compiled
+code is correct —
+
+```js
+var it = g(); it.next();     first=1 second=0     ✓
+it.return(42);               first=1 second=0 done=true val=42   ✓
+```
+
+— so the fault is in the host-facing `next()` wrapper for a wasm generator
+(the `_resolveIterProp` / `__call_fn_*` path that JS uses to drive a compiled
+iterator), not in the generator lowering itself.
+
+**This supersedes every earlier hypothesis in this issue** (eager drain on
+alias, an unbounded materialiser tier, IteratorClose calling the wrong method,
+generator-method prologue timing). All are measured-and-discarded; the sections
+below are kept only so they are not retried.
+
+Start here: find where JS-side code invokes a compiled generator's `next` and
+determine why one invocation produces two resumes.
+
+### The measurement that does NOT compose — SUPERSEDED, kept for the exclusions
 
 Instrumenting the actual failing row end to end gives three facts that cannot
 all be true together. Resolving that contradiction is the task:
