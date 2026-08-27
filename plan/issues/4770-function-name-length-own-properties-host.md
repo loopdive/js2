@@ -1,10 +1,11 @@
 ---
 id: 4770
 title: "Compiled functions have no own `name` or `length` property (ES2015, ~85 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-27
 updated: 2026-08-27
+assignee: ttraenkler/codex-4770-function-name-length
 priority: high
 horizon: l
 feasibility: hard
@@ -19,6 +20,28 @@ origin: "ES2015 failure bucketing against the merged baseline, 2026-08-27"
 ---
 
 # #4770 — compiled functions have no own `name` / `length`
+
+## Checkpoint plan (Codex, 2026-08-27)
+
+The claimed cohort is the measured 85-row floor in the official ES2015
+standalone population (11,704 rows): 66 `name` descriptor/value rows and 19
+`length` descriptor/value rows. The implementation is split into two
+independently testable seams so a host-lane metadata change cannot alter the
+already-passing standalone closure carrier:
+
+1. Port the existing per-function `$fnmeta` carrier and resolver from the
+   standalone-only gate to the host lane, then make descriptor, own-key,
+   `hasOwn`, dynamic-read, and delete paths agree on the same metadata while
+   preserving sidecar overrides and tombstones.
+2. Repair the compile-time literal-key descriptor fold for class constructors
+   (`name`, `length`, and `prototype`) so `Object.getOwnPropertyDescriptor`
+   converges with the already-correct `Reflect` mirror path.
+3. Pin each seam with exact Test262-shaped probes and both-lane controls;
+   retain the existing standalone function metadata as a non-regression lane.
+
+The first pushed checkpoint records this plan and the exact baseline command
+before any production source change. The PR remains draft until both seams,
+full focused controls, and current-main/CI gates are complete.
 
 ## What is confirmed
 
