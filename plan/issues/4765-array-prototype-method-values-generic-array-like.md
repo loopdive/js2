@@ -284,13 +284,34 @@ Array.prototype.unshift.call(a, "new");
 hot-path change with a perf trade-off, bought with no measured conformance, is
 not a trade worth making unilaterally.
 
-`unshift/length-near-integer-limit.js` still fails on its `in` assertion, not on
-a read — so slice 2's escape route did not fire for THAT receiver. The
-distinguishing feature is that its object literal declares a **getter**
-(`get "9007199254740986"() { throw … }`), which almost certainly moves the
-receiver off the `ref`/`ref_null` struct type that `escapedReceiverRoute`
-requires. Widening that gate is the next thing to try for this row, and it is
-cheap — but it must be measured, not assumed.
+### Why `unshift/length-near-integer-limit.js` still fails — traced, not guessed
+
+It fails on its `in` assertion, not on a read, so slice 2's escape route did not
+fire for that receiver. Two hypotheses were tried and both were wrong; the
+answer came from tracing the site:
+
+```
+IN2 key=9007199254740989 rightWasm=externref escaped=false tsHas=true has=true
+```
+
+The receiver is **externref**, not a struct ref, so `escapedReceiverRoute`'s
+`ref`/`ref_null` gate excluded it and `tsTypeHasProperty` folded the answer to
+`true`. (The getter in the object literal was a red herring — hypothesis 1.)
+
+Widening the gate to drop the `ref`/`ref_null` requirement makes it fire exactly
+as intended — traced `escaped=true`, `has=false`, so the fold is suppressed and
+the existing `__extern_has` arm is taken — **and the row still fails.** Measured
+across the full 124: still 113, no regressions, no gains. So it was reverted
+(hypothesis 2 wrong).
+
+That localises the real blocker one layer down: **`__extern_has` itself answers
+`true` for this key.** The earlier probe showed it answering correctly for a
+plain object literal, so something about THIS receiver puts the deletion
+somewhere `_wasmStructHasOwn` does not look — most likely the host `unshift`
+deleted through the native `__delete_property` path (an `_isNativeOpenObject`
+receiver) while `_wasmStructHasOwn` consults the JS-side
+`_wasmStructDeletedKeys` WeakMap. That divergence is the thing to verify next,
+and it is a runtime question, not a codegen one.
 
 **Genuinely separate from all of the above** — `reverse` ×2 need host
 observation of a throwing accessor on the wrapped struct; `slice` and
