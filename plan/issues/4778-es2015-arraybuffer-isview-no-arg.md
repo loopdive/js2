@@ -134,7 +134,9 @@ Focused Vitest regression: `tests/issue-4778-arraybuffer-isview-no-arg.test.ts`
 passed **9/9**, including host and standalone runs for all four pins, plus a
 direct standalone compile assertion that `result.imports` is empty.  The
 standalone target therefore no longer emits `env::__get_builtin` for the
-omitted-argument call.
+omitted-argument call.  The adjacent `tests/issue-2594.test.ts` suite was
+rerun with the new test and remained **16/16** green.  Repeated target probes
+reported `nondeterministic: 0` in both host and standalone lanes.
 
 ## Intended files
 
