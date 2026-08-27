@@ -1,6 +1,6 @@
 ---
 id: 4768
-title: "Array binding-pattern elision consumes too many iterator steps (20 rows confirmed; mechanism UNCONFIRMED)"
+title: "Compiled generators are buffer-backed: one host-side next() runs the whole body (elision + every iterator-step row)"
 status: ready
 created: 2026-08-27
 updated: 2026-08-27
@@ -15,13 +15,12 @@ sprint: current
 horizon: l
 ---
 
-# #4768 — elision consumes too many iterator steps
+# #4768 — compiled generators run to completion on first host-side next()
 
 
-> **Status of the mechanism: UNCONFIRMED.** The FAILING ROWS are real and
-> reproducible through the runner. The explanation below — that aliasing a
-> generator drains it — is **not** supported by the emitted code, and a later
-> check contradicts it. Read "What is confirmed" before acting on any of it.
+> **Root cause CONFIRMED** (see the section below). Everything after it is the
+> reduction trail — eight superseded hypotheses, kept only so they are not
+> retried.
 
 ## What is confirmed
 
@@ -133,7 +132,52 @@ come from tier 1 partially consuming before failing, or from the whole chain
 running twice. That is the next thing to measure — instrument which tier sets
 local 6.
 
-### LOCALISED: one host-side `next()` resumes the generator TWICE
+## ROOT CAUSE — compiled generators are BUFFER-BACKED, not lazy
+
+`src/runtime/iterator-polyfills.ts:278` — `Generator.prototype.next`:
+
+```ts
+// (#3032) Lazy generator: run the deferred body now (first resume).
+if (state.materialize) state.materialize();
+if (state.index < state.buf.length) {
+  return { value: state.buf[state.index++], done: false };
+}
+```
+
+The first `next()` calls `state.materialize()`, which runs the **entire
+generator body to completion** into `state.buf`. Every later `next()` just reads
+the buffer. "Lazy" here means the body is deferred until the first resume — not
+that resumption is incremental.
+
+**This explains every measurement in this issue, and they now compose:**
+
+| observation | explained by |
+| --- | --- |
+| `[,]` observes 2 steps on a 2-yield generator | one `next()` runs the whole body |
+| `y1,AFTER,fin` instead of `y1,fin` | the body runs to completion, `finally` included |
+| the drain calls `next()` exactly once (`DI nextCalls=1`) | correct — one call is enough to run everything |
+| every budget measured correct (materialiser once, `limit=1`) | correct — the budget was never the problem |
+| an infinite generator reaches 1,000,001 | `materialize()` hits its runaway cap |
+| a plain parameter (`plain(g())`) drains | any host-side `next()` triggers it |
+| `.return()` before any `next()` is clean | `return` drops the thunk without materialising |
+
+So this is **not** a destructuring bug, not a budgeting bug, and not an
+aliasing bug. Array-pattern elision is simply the family that makes it
+observable, because §8.5.3 pins the exact IteratorStep count.
+
+### Why this is a design change
+
+`state.buf` + `state.materialize` is the generator representation. Making a
+compiled generator resume incrementally means real suspend/resume — a
+coroutine — rather than run-to-completion-then-replay. That is a substantial
+piece of work with its own performance profile, not a patch.
+
+Scope note: the failing rows are host-lane. A generator driven from **compiled**
+code was measured correct (`var it = g(); it.next()` → `first=1 second=0`), so
+whatever path that takes is already incremental; the buffering polyfill is what
+JS-side consumers get.
+
+### Superseded: LOCALISED — one host-side `next()` resumes the generator TWICE
 
 The `finally` probe separates a `return()` from a `next()` — only a `next()`
 resumes past the yield:
