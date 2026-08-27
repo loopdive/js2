@@ -444,10 +444,12 @@ export interface MultiPreparedProgramRoutePlanningInput {
 export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramRoutePlanningInput): void {
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
   const stringProofContext = { checker: input.multiAst.checker, oracle: input.ctx.oracle };
-  const stringShapes = collectMultiPreparedStringLeafShapes({
-    proofContext: stringProofContext,
-    sourceFiles: input.multiAst.sourceFiles,
-  });
+  const stringShapes = input.explicitlyDisabled(process.env.JS2WASM_IR_STRING_BUILDER)
+    ? []
+    : collectMultiPreparedStringLeafShapes({
+        proofContext: stringProofContext,
+        sourceFiles: input.multiAst.sourceFiles,
+      });
   const stringShapeBySource = new Map(stringShapes.map((shape) => [shape.sourceFile, shape] as const));
   const planSource = (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape): IrOverlayPlan => {
     const cached = plans.get(sourceFile);

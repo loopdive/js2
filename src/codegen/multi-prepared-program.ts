@@ -750,6 +750,8 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         preserveBodies: this.#callableSkipNames(sourceFile),
         onSkippedNames: (names) => this.#recordCallableSkippedNames(sourceFile, names),
       });
+      const route = state?.route;
+      if (state && route?.routeKind === "string") route.tamperSkipReport(state.skippedFunctionUnitIds);
       this.#assertBodySkip(sourceFile, state);
       this.#assertCallableBodySkip(sourceFile);
     } catch (error) {
@@ -779,7 +781,11 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       if (state?.route?.routeKind === "string" && !result) {
         this.#fail("route-report-mismatch", `string route ${state.route.unitId} produced no merged overlay report`);
       }
-      if (state?.route && result) this.#assertMergedIntegrationReport(state.route, result.report);
+      if (state?.route && result) {
+        const route = state.route;
+        const reportForAudit = route.routeKind === "string" ? route.mergedReportForTest(result.report) : result.report;
+        this.#assertMergedIntegrationReport(state.route, reportForAudit);
+      }
       result?.consume();
       if (state?.route?.routeKind === "string") state.route.sealAfterOverlayCurrentness();
       this.#assertBodySkip(sourceFile, state);
