@@ -324,3 +324,22 @@ an attached view offset, and the setter-abrupt/IteratorClose proof,
 respectively. The maintained Test262 `20260827-055904` 3/3 evidence is
 unchanged because this only replaces equivalent fallback instruction
 construction.
+
+## Upstream quality follow-up (2026-08-27)
+
+PR #5027's merge-result quality job ran the whole shared
+`tests/issue-3177.test.ts` file because this branch had added two byteOffset
+controls there. Two unrelated existing assertions failed. A detached control
+worktree at upstream `main` `a59353475` reproduced exactly those same failures
+without this branch: 59/61 passed, with only the cross-constructor identity and
+integer-index delete assertions failing. They are therefore upstream residuals,
+not regressions introduced by #4761.
+
+The two new detached-byteOffset controls now live with this fix in
+`tests/issue-4761.test.ts`, and the standalone helper constructs a
+`WebAssembly.Module` before calling `WebAssembly.Module.imports`. This matches
+the current compiler result contract. The focused file passes 5/5 after the
+latest `upstream/main` merge, covering the `$ObjVec` constructor carrier,
+ordinary dynamic byteOffset fallback, dynamic and static detach-to-zero rules,
+and setter-abrupt IteratorClose. PR #5027 remains draft until the refreshed
+upstream quality run is green.

@@ -9,9 +9,10 @@ async function runStandalone(source: string): Promise<unknown> {
   });
   expect(result.success, result.success ? undefined : JSON.stringify(result.errors)).toBe(true);
   if (!result.success) throw new Error("standalone control did not compile");
-  const imports = WebAssembly.Module.imports(result.binary);
+  const module = new WebAssembly.Module(result.binary);
+  const imports = WebAssembly.Module.imports(module);
   expect(imports).toHaveLength(0);
-  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  const instance = await WebAssembly.instantiate(module, {});
   return (instance.exports.test as () => unknown)();
 }
 
@@ -41,6 +42,37 @@ describe("issue #4761 standalone controls", () => {
         }
       `),
     ).resolves.toBe(15);
+  });
+
+  it("reports zero byteOffset for detached dynamic views, including empty views", async () => {
+    await expect(
+      runStandalone(`
+        export function test(): number {
+          const TA: any = Uint8Array;
+          const buffer: any = new ArrayBuffer(16);
+          const view: any = new TA(buffer, 8, 1);
+          const empty: any = new TA(buffer, 8, 0);
+          const before = view.byteOffset;
+          const emptyBefore = empty.byteOffset;
+          buffer.__detached__ = true;
+          return before * 1000 + emptyBefore * 100 + view.byteOffset * 10 + empty.byteOffset;
+        }
+      `),
+    ).resolves.toBe(8800);
+  });
+
+  it("reports zero byteOffset for a detached statically typed view", async () => {
+    await expect(
+      runStandalone(`
+        export function test(): number {
+          const buffer: ArrayBuffer = new ArrayBuffer(16);
+          const view: Uint8Array = new Uint8Array(buffer, 8, 1);
+          const before = view.byteOffset;
+          (buffer as any).__detached__ = true;
+          return before * 10 + view.byteOffset;
+        }
+      `),
+    ).resolves.toBe(80);
   });
 
   it("closes an iterator when a for-of assignment setter throws", async () => {
