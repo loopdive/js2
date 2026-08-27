@@ -249,9 +249,13 @@ position any identifier scan can see.
 
 ### Measured — acorn runtime-dynamic driver
 
-Base `2d72807370`, same reduced driver as the diagnosis above.
+All numbers in this section and the next were re-measured on the final head
+**`bcd5403051`** — the merge of `origin/main` at `842ea5ca0b` into this branch,
+which brought 12 changed `src/codegen` files, so the earlier run against
+`2d72807370` could not be carried forward. Same reduced driver as the diagnosis
+above.
 
-| | main `2d72807370` | this branch |
+| | main (without the change) | this branch `bcd5403051` |
 | --- | --- | --- |
 | emitted | 26/43 | **31/43** |
 | post-claim withdrawals | 0 | **0** |
@@ -267,9 +271,12 @@ i.e. the precise whitelist recovers everything the disable did and no more.
 
 ### Validation
 
-Every suite was run **both** with and without the change (file-copy A/B on the
-same head), because several of these suites are already red on main and a raw
-failure count would have been unreadable.
+Every suite was run **both** with and without the change (file-copy A/B on head
+`bcd5403051`, swapping only `param-return-inference.ts` so the base is exactly
+"this head minus the change"), because several of these suites are already red
+on main and a raw failure count would have been unreadable. Failing-test **name
+sets** were compared, not just counts — equal counts could hide a swap. All
+three groups: identical names, identical counts.
 
 | suite | with change | on base | verdict |
 | --- | --- | --- | --- |
