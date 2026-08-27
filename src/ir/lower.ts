@@ -1367,6 +1367,7 @@ export function lowerIrFunctionBody<S, Slot>(
             `ir/lower: non-null parameter refinement has no WasmGC nullable carrier in ${func.name}`,
           );
         }
+        // pushraw-ok(#3521): exact prepared nullable native-string parameter refinement
         emitter.pushRaw(out, { op: "ref.as_non_null" });
       }
       return;
