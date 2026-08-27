@@ -9,6 +9,7 @@
 // walk-until-found shape and have no dependency on `CodegenContext`.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { directArrayProtoIteratorAssignment } from "./array-proto-iterator-override-ast.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
@@ -648,6 +649,12 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
   }
   function walk(node: ts.Node): void {
     if (found) return;
+    // Exact direct assignment statements share the same AST-only predicate as
+    // the CPR write arm and checkpoint-2's bounded generator admission seam.
+    if (directArrayProtoIteratorAssignment(node) !== undefined) {
+      found = true;
+      return;
+    }
     // (i) assignment: Array.prototype[Symbol.iterator] = … / Array.prototype.values = …
     if (
       ts.isBinaryExpression(node) &&
