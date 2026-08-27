@@ -29,6 +29,19 @@ async function runHost(source: string): Promise<number> {
   return (instance.exports as { test: () => number }).test();
 }
 
+async function runStandalone(source: string): Promise<number> {
+  const result = await compile(source, {
+    fileName: "issue-4768-standalone.ts",
+    target: "standalone",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, result.success ? "" : result.errors?.map((e) => e.message).join("; ")).toBe(true);
+  const module = await WebAssembly.compile(result.binary);
+  expect(WebAssembly.Module.imports(module), "standalone regression control must not need host imports").toEqual([]);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  return (instance.exports as { test: () => number }).test();
+}
+
 const generator = `
   let steps = 0;
   function* g() { steps += 1; yield 1; steps += 1; yield 2; }
@@ -83,5 +96,35 @@ describe("#4768 native generator ordinary-call boundary", () => {
         target = consume;
         export function test(): number { target(g()); return steps; }`),
     ).toBe(2);
+  });
+
+  it("keeps an unbounded rest pattern on the fallback path in standalone", async () => {
+    expect(
+      await runStandalone(`
+        let steps = 0;
+        function* g() { steps += 1; yield 1; steps += 1; yield 2; }
+        function consume([...[,]]: any): void {}
+        export function test(): number { consume(g()); return steps; }`),
+    ).toBe(2);
+  });
+
+  it("completes a native generator after an abrupt iterator step", async () => {
+    expect(
+      await runStandalone(`
+        let following = 0;
+        function* g() { throw new Error("boom"); following += 1; }
+        function consume([,]: any): void {}
+        const iter: any = g();
+        export function test(): number {
+          let first = 0;
+          try { consume(iter); } catch (_) { first = 1; }
+          let second = 0;
+          try {
+            const result = iter.next();
+            second = result.done ? 1 : 2;
+          } catch (_) { second = 3; }
+          return first * 10 + second * 100 + following;
+        }`),
+    ).toBe(110);
   });
 });

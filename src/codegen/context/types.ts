@@ -2582,6 +2582,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * the generic `__any_add` with a tag-dispatch unbox after it.
    */
   numericFunctionNames?: ReadonlySet<string>;
+  /**
+   * (#4406) Function names proven to return a BOOLEAN on every path, from
+   * #2847's fixpoint (`analyzeBooleanNames`). A strict subset of
+   * {@link numericFunctionNames} in practice — `Prover.isNumeric` deliberately
+   * answers true for booleans and the function loop has no boolean filter — so
+   * `refinedTwinReturnType` must consult THIS set first, or every predicate is
+   * claimed as `f64` and the boolean twin is dead code.
+   */
+  booleanFunctionNames?: ReadonlySet<string>;
   /** (#4122) Grounded "every definition of this slot is numeric" verdict from
    *  `analyzeNumericPropertyNames`; absent in the host lane / when disabled. */
   numericLocalVerdict?: (node: ts.Node, name: string) => boolean;

@@ -1,7 +1,8 @@
 ---
 id: 4768
 title: "Compiled generators are buffer-backed: one host-side next() runs the whole body (elision + every iterator-step row)"
-status: ready
+status: in-progress
+assignee: ttraenkler/codex-4768-es6-step-errors
 created: 2026-08-27
 updated: 2026-08-27
 priority: high
@@ -19,9 +20,185 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/destructuring-params.ts::destructureParamArray
   - src/codegen/generators-native.ts::hostLaneGeneratorUsesAreSafe
+  - src/codegen/generators-native.ts::ensureNativeGeneratorResumeFunction
 ---
 
 # #4768 — compiled generators run to completion on first host-side next()
+
+## Post-merge audit: the #5044 standalone regression
+
+**Status: reproduced as a real source regression; bounded repair implemented on
+the follow-up checkpoint branch.** This remains owned by #4768; no separate
+issue is needed.
+
+The merge-group run for PR #5044 was
+[`33066137515`](https://github.com/loopdive/js2/actions/runs/33066137515), with
+candidate merge `c5dc152fc5d7d16512983eab09cf75740070fbd0` and pre-PR parent
+`0d25094e953381672e1b161cc5c4337234b6cad6`. The standalone guard job was
+`merge shard reports` (`98501096552`). Its exact baseline/current comparison
+was 48,735 rows:
+
+```
+                 baseline   candidate   delta
+pass                33,107      32,962    -145
+fail                10,210      10,355    +145
+compile_error         5,291       5,291       0
+compile_timeout          13          13       0
+skip                    114         114       0
+```
+
+The baseline was the `js2wasm-baselines` `main` snapshot checked out by the
+run (commit `2e011fe83a0f244ca82af4c456f8f82a3e05485b2`); the standalone JSONL
+SHA-256 is
+`278931e96d230cdbb92afc8ac54a2e1d73bf7dba6b6d348239cbb23089f22e57`.
+`diff-test262.ts` reports **145 pass→fail**, **0 improvements**, **0
+wasm-identical noise**, **0 timeout transitions**, and all 145 rows have a
+changed wasm hash. The exact regression bucket signature is
+`c12d78255ab4839c` with categories `assertion_fail: 96`, `other: 42`, and
+`type_error: 7`; the four filename families are `rest-ary-elision: 86`,
+`rest-id-elision-next-err: 26`, `rest-ary-empty: 26`, and
+`elem-ary-rest-iter: 7`.
+
+All 145 rows are `scope=standard` and `scope_official=true`. The maintained
+edition classifier places 77 in ES2015, 40 in ES2018 (async iteration), and 28
+in ES2022 (private class methods). The host artifact shares 36 of the 145
+failures (35 `other`, one `runtime_error`); the other 109 are standalone-only.
+That is a source/target interaction, not baseline drift or report arithmetic:
+the failed job ran both lanes, the row set is unchanged, and every regression
+is a real pass→fail with a changed binary.
+
+### Smallest reproduction and cause
+
+Using the maintained `harness-flip-probe.ts`, the pinned QuickJS-ng artifact
+(`954dc53628e36891f93c359aa60895c2ae3dac6b`), wasi-libc
+(`8d8348ec24253d0638a693b8af82445c13d92d32`), clang 18.1.3, and at most two
+workers:
+
+```
+language/expressions/generators/dstr/ary-ptrn-rest-ary-elision.js
+merge parent 0d25094e: pass (deterministic)
+merged #5044 c5dc152f: fail (deterministic)
+```
+
+The failure is `Expected SameValue(«0», «1»)`: #5044's new standalone recovery
+branch calls `patternIteratorStepCount`, whose `-1` sentinel means “unbounded
+rest”, and passes that value to `emitNativeGeneratorToVec` as a step limit.
+The materializer checks `len >= stepLimit` before its first resume, so `0 >= -1`
+stops the generator without resuming it. Nested patterns such as `[[...x]]`
+reach the same condition through the recursive destructurer. The host-only
+known-call safety gate's rest rejection does not protect standalone, where the
+recovery loop was unconditional.
+
+### Bounded repair and evidence
+
+The follow-up checkpoint skips the native state-recovery arm when the current
+binding pattern has an unbounded/rest step count, preserving the pre-#5044
+tuple/host fallback until a rest-aware state carrier exists. Finite patterns
+(`[]`, `[,]`, `[a,b]`, and nested finite patterns) remain on the #5044 bounded
+path. A standalone unit control for `function consume([...[,]]) {}` was added
+to `tests/issue-4768-generator-call-boundary.test.ts`.
+
+Measured after the repair on branch `codex/audit-5044-regressions`:
+
+- the exact three-family sample (elision, iterator-throw, nested-rest) is 3/3
+  pass, matching the pre-#5044 parent;
+- the official ES2015 regression slice is **77/77 pass**;
+- all 145 inherited regression paths are **145/145 pass**, run as 50/50 +
+  50/50 + 45/45 with the assembled-harness controls green;
+- the adjacent native-generator/destructuring suites are **92/92 pass**;
+- TypeScript 7 typecheck, Prettier, and Biome changed-file checks pass.
+
+### Handoff / investigation plan
+
+1. Review and merge the bounded rest guard in the follow-up PR from
+   `codex/audit-5044-regressions`.
+2. Re-run the merge-group standalone guard after that PR lands and verify the
+   145-row cohort has no pass→fail transitions.
+3. Keep the original full 375-row ES2015 `dstr` sweep acceptance item below
+   open; the 77-row official-edition regression cohort is complete, but that
+   broader historical sweep was not claimed by this audit.
+
+## Residual follow-up: abrupt iterator-step cohort (2026-08-27)
+
+The first implementation for this issue landed in upstream `main`, but its
+acceptance record left the abrupt-completion family unmeasured. This follow-up
+owns exactly the 40 official ES2015 rows whose path ends in
+`dstr/*ary-ptrn-elision-step-err.js` (the complete list is below). These rows
+exercise the same array-pattern IteratorStep boundary with a throwing
+generator, while avoiding the active yield-star delegation work in #1691 and
+the function `name`/`length` work in #4770.
+
+The authoritative source is a fresh fetch of both JSONL lanes from
+`loopdive/js2wasm-baselines` `main` on 2026-08-27, classified with
+`scripts/generate-editions.ts` against the pinned test262 checkout. The full
+official ES2015 population is **11,704 rows**:
+
+| lane | pass | fail | compile error | compile timeout | total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| host | 9,565 | 2,083 | 55 | 1 | 11,704 |
+| standalone (host-free) | 8,568 | 2,625 | 510 | 1 | 11,704 |
+
+The selected cohort is **host 40/40 pass, standalone 0/40 pass**. Every
+standalone failure is a reached `assertion_fail` from the abrupt iterator-step
+fixture; no row is a skip or an unmeasured compile failure. The exact local
+baseline was rerun through `scripts/harness-flip-probe.ts` with both positive
+controls reporting the expected pass and fail directions, the pinned QuickJS
+artifact `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`, and at most two
+workers.
+
+Exact cohort paths:
+
+```text
+language/expressions/arrow-function/dstr/ary-ptrn-elision-step-err.js
+language/expressions/arrow-function/dstr/dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-static-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/gen-meth-static-dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-dflt-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-static-ary-ptrn-elision-step-err.js
+language/expressions/class/dstr/meth-static-dflt-ary-ptrn-elision-step-err.js
+language/expressions/function/dstr/ary-ptrn-elision-step-err.js
+language/expressions/function/dstr/dflt-ary-ptrn-elision-step-err.js
+language/expressions/generators/dstr/ary-ptrn-elision-step-err.js
+language/expressions/generators/dstr/dflt-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/gen-meth-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/meth-ary-ptrn-elision-step-err.js
+language/expressions/object/dstr/meth-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-static-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-dflt-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-static-ary-ptrn-elision-step-err.js
+language/statements/class/dstr/meth-static-dflt-ary-ptrn-elision-step-err.js
+language/statements/const/dstr/ary-ptrn-elision-step-err.js
+language/statements/for-of/dstr/const-ary-ptrn-elision-step-err.js
+language/statements/for-of/dstr/let-ary-ptrn-elision-step-err.js
+language/statements/for-of/dstr/var-ary-ptrn-elision-step-err.js
+language/statements/for/dstr/const-ary-ptrn-elision-step-err.js
+language/statements/for/dstr/let-ary-ptrn-elision-step-err.js
+language/statements/for/dstr/var-ary-ptrn-elision-step-err.js
+language/statements/function/dstr/ary-ptrn-elision-step-err.js
+language/statements/function/dstr/dflt-ary-ptrn-elision-step-err.js
+language/statements/generators/dstr/ary-ptrn-elision-step-err.js
+language/statements/generators/dstr/dflt-ary-ptrn-elision-step-err.js
+language/statements/let/dstr/ary-ptrn-elision-step-err.js
+language/statements/try/dstr/ary-ptrn-elision-step-err.js
+language/statements/variable/dstr/ary-ptrn-elision-step-err.js
+```
+
+Plan: first reproduce these 40 rows on both targets; then trace why the
+standalone generator path fails to propagate a throwing `next()` through the
+bounded destructuring call; make the narrowest native-generator boundary fix
+that preserves unknown/reassignable callees on the conservative path; and
+rerun the exact 40-row A/B plus native-generator and iterator-close controls.
+The issue is complete only when both lanes pass all 40 rows, the full focused
+regression set is unchanged, and the current-main CI/mergeability gates are
+green.
 
 
 > **Root cause CONFIRMED** (see the section below), and the fix is **bounded**:
@@ -574,3 +751,62 @@ integration, required CI, and mergeability are verified by the handoff owner.
 Infinite generators are currently unusable as arguments in compiled code — the
 call hangs for a million steps and then silently truncates. That is a
 correctness and a performance bug independent of test262.
+
+## Residual follow-up result — abrupt iterator-step completion (2026-08-27)
+
+The remaining ES2015 `dstr/*ary-ptrn-elision-step-err.js` failures were traced
+to the standalone/WASI native generator resume boundary. The bounded native
+destructuring path correctly performed the required `IteratorStep`, but an
+exception raised by the generator body escaped the resume trampoline without
+advancing its state to `done`. A later `.next()` therefore re-entered the
+throwing state and surfaced the same exception again. The host lane already
+used its established exception path and was not changed.
+
+The follow-up implementation in `src/codegen/generators-native.ts` wraps only
+the standalone/WASI native resume trampoline in the existing target-specific
+exception scaffold. On an escaping `__exn`, it writes `STATE_FIELD = doneState`
+and rethrows the original payload; the normal result is carried through the
+wrapper unchanged. Existing explicit return/throw/yield* paths and the host
+lowering remain untouched.
+
+Evidence was collected from the dedicated branch with the pinned QuickJS
+artifact `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` (libquickjs SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`, QuickJS
+0.16.1), using the assembled harness, structural pass/fail controls, and two
+lane processes at most:
+
+- The exact 40-row cohort (`.tmp/4768-step-err-es2015.txt`, SHA-256
+  `17be685df22453c486af7ec1fb2155df960ae3ecb7472dc2b718b5ddd19f6ec2`) moved
+  from standalone **0/40 pass** (`fail: 40`) to **40/40 pass** (`pass: 40`).
+  The local A/B partition is 40 fail→pass, 0 pass→fail, 0 other changes.
+- Host stayed **40/40 pass** before and after; the host A/B partition is 40
+  unchanged, 0 lost. The before/after host artifact SHA-256 is
+  `fd0979b6de3197a235de5409f148c2a50235be248f694286b5f60eceae276f0a`.
+- Standalone artifact SHA-256 changed from
+  `eba6364bc08d4f05922fa80f6af62c8433186d9aab6f3aaaadfc108343f3d1e7` to
+  `f80a8b8bfd00ebca6eaba93f04cbc229caf712a4cb8ab046453fdc5f69a99e43`.
+- Focused #4768 coverage is **12/12 pass**, including a direct abrupt-step
+  regression that catches the first `next()` error and verifies the following
+  `next()` returns `{ done: true }` without rethrowing.
+- Adjacent native-generator and IteratorClose controls are green: **43/43**
+  (#4718, #3023, #3040, #3100 S5), **23/23** (#1665, #2169, #2170, #2035),
+  **24/24** (#3164, #3271, #3302; three expected skips), and **51/51**
+  (#2864 carrier, #2941, #2169 destructure/spread).
+
+### Handoff
+
+The implementation and test evidence are on branch
+`codex/4768-es6-step-errors`, with upstream PR **#5060** kept draft and on
+hold while current-main integration, required CI, and mergeability are
+checked. The queue entry remains null until those gates are green; only then
+should the hold be removed and the PR marked ready.
+
+Current-main integration was completed at merge checkpoint `daea8728a` after
+upstream main advanced through PRs #5048, #5058, and #5059. The exact rerun on
+that checkpoint remained host **40/40 pass** and standalone **40/40 pass**;
+the refreshed artifacts are `.tmp/4768-host-current-main.jsonl` (SHA-256
+`fd0979b6de3197a235de5409f148c2a50235be248f694286b5f60eceae276f0a`) and
+`.tmp/4768-standalone-current-main.jsonl` (SHA-256
+`f80a8b8bfd00ebca6eaba93f04cbc229caf712a4cb8ab046453fdc5f69a99e43`).
+Focused #4768 coverage also remained **12/12 pass**. The remaining landing
+gates are the normal push hooks and refreshed required upstream CI.

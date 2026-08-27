@@ -1629,11 +1629,20 @@ export function destructureParamArray(
       // IteratorBindingInitialization: the pattern's elision count is the
       // maximum number of resume calls, and the caller already returned for
       // empty-only patterns above (zero steps, no generator execution).
-      const nativeStateInfos = [...ctx.nativeGenerators.values()].filter(
-        (info, index, values) =>
-          values.findIndex((candidate) => candidate.stateTypeIdx === info.stateTypeIdx) === index,
-      );
       const nativeStateStepLimit = patternIteratorStepCount(pattern.elements);
+      // A rest element consumes the iterator to completion. The native state
+      // carrier below is intentionally bounded by the finite prefix, so it
+      // must not claim an unbounded pattern (the sentinel is -1): treating
+      // that sentinel as a limit would stop before the first resume.
+      // Keep the existing tuple/host fallback for rest patterns. It retains
+      // the pre-#4768 behavior until a rest-aware native carrier exists.
+      const nativeStateInfos =
+        nativeStateStepLimit < 0
+          ? []
+          : [...ctx.nativeGenerators.values()].filter(
+              (info, index, values) =>
+                values.findIndex((candidate) => candidate.stateTypeIdx === info.stateTypeIdx) === index,
+            );
       for (const nativeInfo of nativeStateInfos) {
         const genElemKind = nativeInfo.elemValType.kind === "externref" ? "externref" : "f64";
         const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
