@@ -129,9 +129,9 @@ describe("#4589 multi-source Prepared scalar-leaf cutover", () => {
     expect(direct.irCompiledFuncs).toEqual(["entryPure"]);
     expect(prepared.irFirstSkipped).toBeUndefined();
     expect(direct.irFirstSkipped).toBeUndefined();
-    expect(digest(prepared.binary)).toBe("eea62478d48e657956a877b74652beaf33677f1b9ebf3ae536b70efbbffd4161");
+    expect(digest(prepared.binary)).toBe("2394fef022ba9dc661a3038b15eec9d4be0c7225d2c3e0a3251591c50052110b");
     expect(digest(direct.binary)).toBe(digest(prepared.binary));
-    expect(digest(prepared.wat)).toBe("9e3c53b147043f2b44a0f49e691380c7a5889cfa50ffdc56e9778ed321b3b196");
+    expect(digest(prepared.wat)).toBe("a9c0d63255bf5af00baac446d8315fcb4019be84e6bada20e70c01617567b7ba");
     expect(digest(direct.wat)).toBe(digest(prepared.wat));
 
     const preparedRows = prepared.irBodyRouteAudit?.legacyEntries ?? [];
