@@ -173,6 +173,16 @@ export function tryNonCallableValueCall(
   // Belt-and-braces: a primitive fact with a call signature is a contradiction,
   // but never throw over one.
   if (ctx.oracle.signatureOf(callee) !== undefined) return undefined;
+  // A call expression can return a callable carrier even when its inferred
+  // JavaScript type is the broad `{}` object shape (Redux's
+  // `bindActionCreators` is one such published-JS example).  The nominal
+  // `class` fact is therefore not proof that this binding is non-callable;
+  // leave the value for identifier/dynamic-call lowering to inspect its
+  // runtime closure carrier.
+  const variableInitializer = ts.isIdentifier(callee) ? ctx.oracle.variableInitializerOf(callee) : undefined;
+  if (variableInitializer !== undefined && ts.isCallExpression(variableInitializer)) {
+    return undefined;
+  }
   if (isEvolvingAnyBinding(ctx, callee)) return undefined;
 
   // Callee first (side effects), then the argument list, then the throw.

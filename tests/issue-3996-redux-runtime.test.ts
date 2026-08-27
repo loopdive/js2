@@ -136,6 +136,68 @@ export function test() {
     }
   });
 
+  it("retains destructured callable parameters in a linked middleware closure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "js2-redux-middleware-capture-"));
+    try {
+      writeFileSync(
+        join(dir, "store.js"),
+        `export function dispatch(action) { return action; }
+export function getState() { return []; }
+export function createStore(reducer) {
+  let currentState = reducer(void 0, { type: "@@INIT" });
+  const store = {
+    dispatch(action) { currentState = reducer(currentState, action); return action; },
+    getState() { return currentState; },
+  };
+  return store;
+}
+export function applyMiddleware(middleware) {
+  return (createStore2) => (reducer) => {
+    const store = createStore2(reducer);
+    let dispatch = () => { throw new Error("early"); };
+    const middlewareAPI = {
+      getState: store.getState,
+      dispatch: (action) => dispatch(action),
+    };
+    const chain = middleware(middlewareAPI);
+    dispatch = chain(store.dispatch);
+    return { ...store, dispatch };
+  };
+}
+`,
+      );
+      writeFileSync(
+        join(dir, "entry.js"),
+        `import { applyMiddleware, createStore } from "./store.js";
+const thunk = ({ dispatch, getState }) => next => action =>
+  typeof action === "function" ? action(dispatch, getState) : next(action);
+function reducer(state = [], action) { return action.type === "ADD" ? [...state, action.value] : state; }
+function add(value) { return (dispatch, getState) => getState().length === 0 ? dispatch({ type: "ADD", value }) : 0; }
+export function test() {
+  const store = applyMiddleware(thunk)(createStore)(reducer);
+  store.dispatch(add(1));
+  return store.getState().length;
+}
+`,
+      );
+
+      const result = await compileProject(join(dir, "entry.js"), {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "gc",
+        platform: "node",
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const module = new WebAssembly.Module(result.binary);
+      const imports = result.importObject ?? buildImports(result.imports, undefined, result.stringPool);
+      const instance = await WebAssembly.instantiate(module, imports);
+      imports.__setInstance?.(instance);
+      expect((instance.exports.test as () => number)()).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("materializes a compiled namespace member when it is passed as a function value", async () => {
     const dir = mkdtempSync(join(tmpdir(), "js2-redux-namespace-value-"));
     try {

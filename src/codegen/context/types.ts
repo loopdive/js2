@@ -1374,6 +1374,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Exact prepared class-body routing retained while nested bodies compile in scope. */
   irClassBodyRouting?: import("../class-bodies.js").ClassBodyCompileRouting;
   checker: ts.TypeChecker;
+  /** Source set available to cross-module callable wrapper pre-registration. */
+  callableSourceFiles?: readonly ts.SourceFile[];
   /** True when the single-file input is an ECMAScript Module goal. Script-goal
    * module init uses the host global object for top-level `this`; module goal
    * keeps top-level `this` undefined (#3365). */
