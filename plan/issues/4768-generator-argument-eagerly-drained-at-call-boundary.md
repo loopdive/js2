@@ -111,6 +111,42 @@ Option 2 is smaller if the guard condition turns out to be the only reason the
 unbounded arm is reached; option 1 is the one that fixes every other caller too.
 Either needs a before/after run of the 20 rows plus the wider `dstr` families.
 
+### The emitted chain is THREE tiers, and tier 3 may never run
+
+Reading the full WAT region, all three arms are guarded on the *same* local
+being null, so they are mutually exclusive:
+
+```
+   …build vec fast path…            local.set 6      ← tier 1
+   local.get 6 / ref.is_null / (if (then
+       local.get 1 / f64.const 1 / call 16           ← tier 2  BOUNDED (correct budget)
+       …                            local.set 6
+   local.get 6 / ref.is_null / (if (then
+       local.get 1 /              call 18            ← tier 3  UNBOUNDED
+       …                            local.set 6
+```
+
+For a generator, tier 2 (`__array_from_iter_n_strict(gen, 1)`) should return a
+one-element array, so **tier 3 probably never executes** and the unbounded
+`call 18` may be a red herring for this row. The extra IteratorStep then has to
+come from tier 1 partially consuming before failing, or from the whole chain
+running twice. That is the next thing to measure — instrument which tier sets
+local 6.
+
+### Also ruled out: IteratorClose
+
+§8.5.3 does call IteratorClose when a pattern stops early, and
+`_stepClosureIterator` passes `closeOnStop: true`, so a `.return()` that wrongly
+resumed the generator body would explain the extra step exactly. It does not —
+`.return()` is correct:
+
+```
+var it = g(); it.next();      first=1 second=0
+it.return(42);                first=1 second=0  done=true  val=42
+```
+
+The body is not resumed. So the extra step is not the close.
+
 ## What is NOT confirmed — and the evidence against it
 
 The step-count tables below were produced by test262-shaped probes that count a
