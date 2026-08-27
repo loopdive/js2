@@ -170,3 +170,29 @@ This is a verified partial checkpoint only. PR #5033 remains draft because the
 standalone join row and the seven independent push/reverse/unshift method-value
 rows are not yet zero-nonpass. The source checkpoint preserves the four direct
 controls and is not an issue closure.
+
+## 2026-08-27 first-class Array method-value checkpoint
+
+The transferred first-class `Array.prototype.push`, `reverse`, and `unshift`
+closures now use a receiver-aware variadic ABI and the host-free dynamic
+array-like substrate. The mutator bodies preserve present-but-`undefined`
+properties, holes, and the original receiver for `reverse`; the proof accepts
+the numeric element writes used by these historical rows while remaining
+conservative for dynamic method-slot writes. A narrow declaration-carrier
+proof keeps `var result = obj.reverse()` on the open externref carrier, because
+the borrowed TypeScript return type otherwise materializes a fresh typed array
+and loses object identity.
+
+The exact seven non-`join` surviving rows were rerun once through the
+maintained official-scope runner at the pinned revision with the fixed
+Node/LLVM/artifact paths and `COMPILER_POOL_SIZE=2`:
+
+* Standalone: denominator 7, pass 7, fail 0, compile errors 0, timeouts 0,
+  skips 0.
+
+The focused direct controls remain green (4/4 missing, explicit `null`,
+inherited, and getter cases), and TypeScript typechecking passes. The exact
+`join` row is still the only owned non-pass: its standalone method-value call
+requires the next shared join closure implementation. PR #5033 remains draft
+and this checkpoint is not an issue closure until the exact eight-row slice is
+8/8 with zero non-passes.

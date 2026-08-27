@@ -57,6 +57,7 @@ import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared 
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
+import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -502,6 +503,7 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     forEach: 1,
     push: 1,
     reduce: 1,
+    reverse: 0,
     slice: 2,
     splice: 2,
     unshift: 1,
@@ -788,6 +790,14 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   if (member === "concat") {
     return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
   }
+
+  // ES2015 §23.1.3.23/.25/.30 — these three methods are intentionally
+  // generic.  Their first-class values are transferred onto ordinary objects
+  // by the historical Test262 rows, so their reflective closures must operate
+  // through the dynamic array-like substrate rather than the typed `$Vec`
+  // cores used by direct `array.push`/`reverse`/`unshift` calls.
+  const arrayLikeMutator = emitArrayLikeNativeMemberBody(ctx, fctx, member);
+  if (arrayLikeMutator !== undefined) return arrayLikeMutator;
 
   // (#4394) The higher-order members already have a native standalone loop —
   // `__hof_<name>`, emitted by `ensureNativeArrayHof` for the DYNAMIC receiver
@@ -1770,7 +1780,10 @@ function makeGlue(
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
-    memberIsVariadic: (member) => (name === "Array" || name === "String") && member === "concat",
+    memberIsVariadic: (member) =>
+      name === "Array" && (member === "push" || member === "unshift" || member === "concat")
+        ? true
+        : name === "String" && member === "concat",
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same

@@ -267,6 +267,7 @@ import {
   hoistedVarRetypesToConcreteRef,
   inferArrayVecType,
   inferTaViewType,
+  transferredArrayLikeResultNeedsExternref,
   usageInferredLocalType,
 } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
 import {
@@ -11881,11 +11882,17 @@ function hoistVarDecl(
     if (mixedAssignmentCarrier) {
       (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
     }
+    // A transferred generic Array reverse returns its original open-object
+    // receiver. Keep the authoritative hoisted slot on the externref carrier
+    // so `var result = obj.reverse()` preserves identity when the checker has
+    // inferred the borrowed method's `T[]` return type.
+    const transferredArrayLikeResult = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
     // (#4121) `initForcesExternref` / `forInTargetForcesExternref` describe a
     // value the slot must physically hold, so they stay absolute. A
     // mixed-assignment demotion does not — a positive unboxing proof outranks
     // it (see `numericProofOverridesMixedCarrier`).
-    const hardForcesExternref = initForcesExternref || realmStructuralCarrier || forInTargetForcesExternref;
+    const hardForcesExternref =
+      initForcesExternref || realmStructuralCarrier || forInTargetForcesExternref || transferredArrayLikeResult;
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
