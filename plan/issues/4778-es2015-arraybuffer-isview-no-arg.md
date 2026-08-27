@@ -103,13 +103,14 @@ The implementation adds only the standalone zero-argument arm in
 `src/codegen/expressions/call-namespace-static.ts`; the existing host route and
 argument-bearing arm are unchanged.
 
-The exact post-change harness run used the same pinned artifact, two-worker
-limit, and mandatory positive controls as the baseline:
+The exact post-change harness run on refreshed upstream
+`7edc857f10b47bcdee8990fbe0dec79b8b6c3d41` used the same pinned artifact,
+two-worker limit, and mandatory positive controls as the baseline:
 
 | lane | target cohort + controls | result | evidence |
 | --- | ---: | --- | --- |
-| JS-host | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/after/host.jsonl` |
-| standalone | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/after/standalone.jsonl` |
+| JS-host | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/current-main-7edc857f/host.jsonl` |
+| standalone | 4/4 | **4 pass**, 0 fail/compile error/skip | `.tmp/issue-4778/current-main-7edc857f/standalone.jsonl` |
 
 The target's local A/B partition is exactly one standalone `compile_error →
 pass` gain, zero losses, and zero other changes:
@@ -137,6 +138,10 @@ standalone target therefore no longer emits `env::__get_builtin` for the
 omitted-argument call.  The adjacent `tests/issue-2594.test.ts` suite was
 rerun with the new test and remained **16/16** green.  Repeated target probes
 reported `nondeterministic: 0` in both host and standalone lanes.
+
+The branch was refreshed with a non-rewriting upstream merge commit
+`21f66a77d` before this rerun.  The final pushed head is `21f66a77d` and its
+base is current upstream `7edc857f`.
 
 ## Intended files
 
