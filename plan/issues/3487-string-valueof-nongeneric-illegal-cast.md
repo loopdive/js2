@@ -10,7 +10,10 @@ task_type: bug
 area: test262-conformance
 goal: test262-conformance
 created: 2026-07-20
-blocked_on: closure-value substrate (builtin proto-method stored as an object field, invoked via the generic ToPrimitive `+`/eqref-closure dispatch); needs architect spec — see "Verified root cause (2026-07-21)"
+updated: 2026-08-27
+assignee: ttraenkler/codex-es6-string-valueof
+related: [1917, 3189, 3335, 3524]
+blocked_on: "host-only builtin-prototype closure carrier/receiver ABI; standalone row is already passing"
 ---
 
 ## Problem
@@ -114,6 +117,64 @@ direct `.call` machinery takes. This is the **closure-value / builtin-proto-
 method-as-first-class-value** substrate (host-fail triage cluster #5 family),
 not a localized codegen guard.
 
+## Current-main checkpoint — 2026-08-27 (standalone complete; host residual)
+
+The maintained original-harness runner was rerun from `c821dab8e`
+(`codex/3487-string-valueof`) with the pinned QuickJS/LLVM18 toolchain and a
+fresh isolated process for the row. The exact one-row results are:
+
+| Row | Host | `--target standalone` |
+|---|---|---|
+| `test/built-ins/String/prototype/valueOf/non-generic.js` | `fail`, `RuntimeError: illegal cast in __cb_15()` via `__closure_46 ← __call_fn_method_3`, assertion source L21 | `pass` |
+
+The raw one-row records are retained at
+`/private/tmp/js2-3487-before-host.jsonl` and
+`/private/tmp/js2-3487-before-standalone.jsonl`.
+
+The host row used the maintained isolated-row command (with
+`TASK_NODE=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node`
+and
+`TASK_BIN=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback`)
+`PATH="$TASK_NODE/..:$TASK_BIN:$PATH" "$TASK_NODE" --import tsx
+scripts/run-test262-paths.mts --isolate .tmp/3487-row.txt`; the standalone row
+and all controls used the same `tests/test262-runner.ts` entry point via
+`runTest262File(absolutePath, category, 30000, "standalone")` (or an omitted
+fourth argument for host). The temporary row/control inputs were deleted after
+the measurement; the raw row records and signatures above are the retained
+evidence.
+
+The four controls were run separately through `runTest262File` in both lanes
+(absolute fixture paths, timeout 30s). Their exact current outcomes are:
+
+| Control | Host | `--target standalone` |
+|---|---|---|
+| `{ valueOf: () => "hello" }` → string | `pass` (`8c530cf17a05`) | `pass` (`e0ee3d48d08b`) |
+| `{ valueOf: () => 42 }` → number | `pass` (`9445c6723144`) | `pass` (`9be69ae5af16`) |
+| `{ valueOf: String.prototype.valueOf }` | `fail`, same `illegal_cast` family (`__cb_1 ← __closure_45 ← __call_fn_method_3`) (`df123c52f42f`) | `pass` (`177d55187fee`) |
+| `String.prototype.valueOf.call(true)` | `pass` (`62893a3ed7a7`) | `pass` (`aadeddfc5ac6`) |
+
+This reclassifies the open work precisely: standalone has no remaining #3487
+row or control failure at current main; the residual is host-only. The ABI
+trace is unchanged from the July proof: reflective `String.prototype.valueOf`
+is carried through `__get_builtin`/`__extern_get`, stored as an eqref closure,
+and then invoked by generic ToPrimitive through `__call_fn_method_3`. A user
+closure takes the ordinary closure ABI, and direct `.call` reaches the existing
+catchable builtin receiver-check path. The field-stored builtin instead reaches
+`__cb_15` with the raw object receiver and its String-wrapper `ref.cast`, which
+is the uncatchable `illegal_cast`. Standalone's native ToPrimitive path already
+handles this shape and passes; no host-only receiver/closure ABI change is safe
+to claim from this standalone task.
+
+**No-gain proof / handoff:** no compiler or runtime source change was made in
+this checkpoint. The standalone baseline is already `1/1`, while the only
+remaining failure is the host field-stored-builtin case. The earlier narrow
+static-ToPrimitive reduction experiment is retained above as a measured no-gain
+proof: removing that reduction leaves the same trap on the dynamic
+`__call_fn_method_3` path. The temporary control probes were removed after the
+measurement. Reopen this issue only with an architect-approved host
+builtin-prototype carrier/receiver ABI fix; keep #5052 draft until that
+host-lane acceptance is independently satisfied.
+
 ## Fix approach (for the architect)
 
 Make the generic ToPrimitive/eqref-closure dispatch handle a field-stored
@@ -154,6 +215,41 @@ currently traps).
 - Baseline `illegal_cast` category returns to **79** (or lower) on the next
   promote, and the repo Actions variable `BASELINE_TRAP_GROWTH_ALLOW` stays at
   the default `0`.
+
+## Resume implementation plan — 2026-08-27
+
+The July root-cause proof remains the starting hypothesis, but the compiler's
+closure-value, dynamic-call, ToPrimitive, and standalone exception machinery
+has changed substantially since that measurement. Reopen the one-row cluster
+for a bounded verify-first implementation rather than carrying the old
+substrate block forward untested.
+
+1. Run `built-ins/String/prototype/valueOf/non-generic.js` alone in standalone
+   and host modes through the maintained original-harness runner. Separately
+   run the four recorded controls and capture exact status, error category,
+   signature, trap/catch behavior, and emitted call path on current main.
+2. Trace the field-stored `String.prototype.valueOf` carrier from reflective
+   property read through object-field storage and dynamic ToPrimitive dispatch.
+   Compare its receiver/argument ABI with the already-correct direct `.call`
+   path and a user-defined `valueOf` closure; identify the first representation
+   or dispatch divergence before editing shared coercion machinery.
+3. Implement the narrow shared fix at that divergence: preserve a callable
+   builtin method value and route a non-matching receiver to the existing
+   catchable `TypeError` path. Do not mask a raw `ref.cast` trap in the runner,
+   special-case this fixture, or weaken receiver-brand semantics.
+4. Add focused host/standalone controls for the direct `.call`, field-stored
+   builtin, user closure string/number results, valid String receiver, null and
+   ordinary-object receivers, and one neighboring `toString`/ToPrimitive case
+   that proves the fix does not steal #3524's distinct semantics.
+5. Rerun the exact row and controls in both lanes, the relevant ToPrimitive and
+   String prototype regression suites, trap-category comparison, mandatory
+   gates, and same-base pass/non-pass diff. Record artifacts, counts, residuals,
+   commit SHA, and handoff in this issue.
+
+The PR must use the repository Description/CLA template and remain draft until
+the scoped row and controls are 100% passing in both lanes, no trap or pass
+regression is introduced, current-main reconciliation is complete, and CI is
+green and mergeable.
 
 ## Context / incident
 
