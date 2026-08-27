@@ -1,7 +1,7 @@
 ---
 id: 3487
 title: "String.prototype.valueOf non-generic receiver traps illegal_cast (uncatchable) instead of throwing catchable TypeError"
-status: in_progress
+status: blocked
 sprint: Backlog
 priority: high
 horizon: l
@@ -13,6 +13,7 @@ created: 2026-07-20
 updated: 2026-08-27
 assignee: ttraenkler/codex-es6-string-valueof
 related: [1917, 3189, 3335, 3524]
+blocked_on: "host-only builtin-prototype closure carrier/receiver ABI; standalone row is already passing"
 ---
 
 ## Problem
@@ -115,6 +116,64 @@ the receiver reaches the builtin body as a non-externref ref that gets
 direct `.call` machinery takes. This is the **closure-value / builtin-proto-
 method-as-first-class-value** substrate (host-fail triage cluster #5 family),
 not a localized codegen guard.
+
+## Current-main checkpoint — 2026-08-27 (standalone complete; host residual)
+
+The maintained original-harness runner was rerun from `c821dab8e`
+(`codex/3487-string-valueof`) with the pinned QuickJS/LLVM18 toolchain and a
+fresh isolated process for the row. The exact one-row results are:
+
+| Row | Host | `--target standalone` |
+|---|---|---|
+| `test/built-ins/String/prototype/valueOf/non-generic.js` | `fail`, `RuntimeError: illegal cast in __cb_15()` via `__closure_46 ← __call_fn_method_3`, assertion source L21 | `pass` |
+
+The raw one-row records are retained at
+`/private/tmp/js2-3487-before-host.jsonl` and
+`/private/tmp/js2-3487-before-standalone.jsonl`.
+
+The host row used the maintained isolated-row command (with
+`TASK_NODE=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node`
+and
+`TASK_BIN=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback`)
+`PATH="$TASK_NODE/..:$TASK_BIN:$PATH" "$TASK_NODE" --import tsx
+scripts/run-test262-paths.mts --isolate .tmp/3487-row.txt`; the standalone row
+and all controls used the same `tests/test262-runner.ts` entry point via
+`runTest262File(absolutePath, category, 30000, "standalone")` (or an omitted
+fourth argument for host). The temporary row/control inputs were deleted after
+the measurement; the raw row records and signatures above are the retained
+evidence.
+
+The four controls were run separately through `runTest262File` in both lanes
+(absolute fixture paths, timeout 30s). Their exact current outcomes are:
+
+| Control | Host | `--target standalone` |
+|---|---|---|
+| `{ valueOf: () => "hello" }` → string | `pass` (`8c530cf17a05`) | `pass` (`e0ee3d48d08b`) |
+| `{ valueOf: () => 42 }` → number | `pass` (`9445c6723144`) | `pass` (`9be69ae5af16`) |
+| `{ valueOf: String.prototype.valueOf }` | `fail`, same `illegal_cast` family (`__cb_1 ← __closure_45 ← __call_fn_method_3`) (`df123c52f42f`) | `pass` (`177d55187fee`) |
+| `String.prototype.valueOf.call(true)` | `pass` (`62893a3ed7a7`) | `pass` (`aadeddfc5ac6`) |
+
+This reclassifies the open work precisely: standalone has no remaining #3487
+row or control failure at current main; the residual is host-only. The ABI
+trace is unchanged from the July proof: reflective `String.prototype.valueOf`
+is carried through `__get_builtin`/`__extern_get`, stored as an eqref closure,
+and then invoked by generic ToPrimitive through `__call_fn_method_3`. A user
+closure takes the ordinary closure ABI, and direct `.call` reaches the existing
+catchable builtin receiver-check path. The field-stored builtin instead reaches
+`__cb_15` with the raw object receiver and its String-wrapper `ref.cast`, which
+is the uncatchable `illegal_cast`. Standalone's native ToPrimitive path already
+handles this shape and passes; no host-only receiver/closure ABI change is safe
+to claim from this standalone task.
+
+**No-gain proof / handoff:** no compiler or runtime source change was made in
+this checkpoint. The standalone baseline is already `1/1`, while the only
+remaining failure is the host field-stored-builtin case. The earlier narrow
+static-ToPrimitive reduction experiment is retained above as a measured no-gain
+proof: removing that reduction leaves the same trap on the dynamic
+`__call_fn_method_3` path. The temporary control probes were removed after the
+measurement. Reopen this issue only with an architect-approved host
+builtin-prototype carrier/receiver ABI fix; keep #5052 draft until that
+host-lane acceptance is independently satisfied.
 
 ## Fix approach (for the architect)
 
