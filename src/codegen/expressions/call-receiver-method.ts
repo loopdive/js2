@@ -130,6 +130,7 @@ import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
 import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
+import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
@@ -2553,6 +2554,13 @@ export function compileReceiverMethodCall(
   // throw RangeError otherwise, then call bigint_toString_radix (or the
   // 1-arg bigint_toString for the default radix-10 case).
   if (!usesHostBigIntCarrier(ctx) && isBigIntType(receiverType) && propAccess.name.text === "toString") {
+    // §7.1.4: ToNumber(Symbol) is an abrupt completion. Symbols use i32 ids in
+    // standalone mode, so compiling this argument with an f64 hint would
+    // otherwise reinterpret the id as a numeric radix. Emit the shared
+    // in-module TypeError before the radix formatter sees the value (#4779).
+    const symbolRadixThrow = emitSymbolArgToNumberThrow(ctx, fctx, expr.arguments, { kind: "externref" });
+    if (symbolRadixThrow !== undefined) return symbolRadixThrow;
+
     let radixLocalIdx: number | undefined;
     if (expr.arguments.length > 0) {
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });

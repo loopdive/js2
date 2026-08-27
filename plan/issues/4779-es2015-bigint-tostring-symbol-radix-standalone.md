@@ -100,3 +100,50 @@ formatter. The existing `emitSymbolArgToNumberThrow`/`emitThrowTypeError`
 helpers provide the intended catchable standalone error representation. The
 standalone native formatter itself remains a pure `(i64, i32) -> externref`
 operation and should not be changed for this one argument-conversion defect.
+
+## Implementation
+
+`compileReceiverMethodCall` now invokes the shared
+`emitSymbolArgToNumberThrow` guard before the standalone BigInt radix path.
+This evaluates a statically-created Symbol argument and emits the in-module
+TypeError constructor, so the native `(i64, i32) -> externref` formatter never
+sees a Symbol's i32 carrier. The host BigInt path and ordinary numeric radix
+lowering remain unchanged. The focused regression covers the exact Symbol row
+and the maintained radix-2-through-36 formatting control in both lanes.
+
+## Post-fix evidence (2026-08-27)
+
+The exact one-row cohort was rerun through `scripts/harness-flip-probe.ts`
+with its structural must-pass/must-fail controls and a 120-second per-row
+timeout. Both lanes report **1/1 pass, 0 fail, 0 compile errors, 0 compile
+timeouts, 0 skips**. The standalone A/B changed the row from **fail → pass**;
+the host A/B remained **pass → pass**, with no losses. The standalone
+assemblies compile successfully with **zero imports** in both primary and
+strict variants.
+
+Artifacts and SHA-256 digests:
+
+- after host: `.tmp/issue-4779-after-host.jsonl`
+  (`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`)
+- after standalone: `.tmp/issue-4779-after-standalone.jsonl`
+  (`2fc26a3e448742646bff5228ab589e4e32cf005bb42977bdf87811bdc2a77412`)
+- before host: `/private/tmp/issue-4779-before-host.jsonl`
+  (`eb6ca9a1821717281dc3ee7fe905c68754e459b26929d1461fcbd97e9f96ed57`)
+- before standalone: `/private/tmp/issue-4779-before-standalone.jsonl`
+  (`3ab320cdae432fd8c533f347466f9d0df342f9ccb08e188d673d3edbd5b1109d`)
+
+`tests/issue-4779-bigint-tostring-symbol-radix.test.ts` reports **4/4 passed**
+with `TEST262_WORKERS=2`. TypeScript 7 and TypeScript 5.9 typechecks,
+focused Biome lint, focused Prettier check, `git diff --check`, issue-ID,
+LOC-budget, and function-budget gates pass. The full repository Biome suite
+was not needed for this bounded change; no unrelated files are modified.
+
+## Handoff
+
+The implementation is ready for a dedicated upstream PR from
+`ttraenkler:codex/es2015-next-bounded-fix-4` to `loopdive/js2:main`. Keep the
+PR draft with `hold` until it is rebased or non-rewriting-merged onto the
+current upstream tip, the exact A/B and focused checks are rerun there, CI is
+green, and GitHub reports CLEAN/MERGEABLE with `mergeQueueEntry: null`. The
+branch currently has the issue-plan checkpoint `e985e13`; the implementation
+checkpoint follows after this evidence update.
