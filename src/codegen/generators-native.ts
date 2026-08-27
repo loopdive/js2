@@ -3298,8 +3298,7 @@ function compileState(
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
-    const genericDelegation = state.terminator.kind === "yield-star" && state.terminator.delegationKind === "iterable";
-    if (genericDelegation) {
+    if (state.terminator.kind === "yield-star" && state.terminator.delegationKind === "iterable") {
       // §14.4.14 / §27.5.3.7: a throw/return resumed at a live generic
       // delegation first acts on the iterator record.  The host lane uses the
       // actual JS iterator object; standalone/WASI uses the native $__IterRec.
