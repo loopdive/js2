@@ -38,6 +38,7 @@ import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./bu
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 // (#4491 T9) `constructor` is an own data property of every builtin prototype and
 // is deliberately NOT in `memberCsv`; the companion gets it from the #4200 carrier.
 import { pushCompanionConstructorSeed } from "./builtin-proto-constructor-seed.js";
@@ -148,6 +149,13 @@ export interface NativeProtoBuiltinGlue {
   /** Own member-name CSV for the proto object (string-named members; `@@<id>`
    *  sentinels for well-known-symbol members — see spec §"Symbol cell"). */
   memberCsv: string;
+  /**
+   * Optional own `Symbol.toStringTag` data property. The tag is not part of
+   * `memberCsv` because it is symbol-keyed, but a flowing prototype companion
+   * still needs the identity-stable symbol entry for dynamic reads and
+   * descriptors.
+   */
+  symbolTag?: string;
   /** Which members are accessor getters (`kind:"getter"`) vs data methods
    *  (`kind:"method"`). `@@<id>` symbol members are always `"method"`. */
   memberKind: (member: string) => "getter" | "method";
@@ -449,6 +457,22 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
 }
 
 /**
+ * Return the symbol-keyed own tags seeded on native-prototype companions.
+ * `__nproto_hasown` uses the map to recognize `Symbol.toStringTag` before its
+ * historical string-only CSV ladder. The seeder registry is the demand gate:
+ * no materialized/seeded prototype means no extra own-property arm.
+ */
+export function seededNativeProtoSymbolTagsByBrand(ctx: CodegenContext): ReadonlyMap<number, string> {
+  const out = new Map<number, string>();
+  for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
+    if (ctx.funcMap.get(seederName) === undefined) continue;
+    const tag = getNativeProtoBuiltinGlue(ctx, brand)?.symbolTag;
+    if (tag !== undefined) out.set(brand, tag);
+  }
+  return out;
+}
+
+/**
  * §17 attributes for a builtin prototype METHOD, in the
  * `__defineProperty_value` host flag encoding: `{writable: true, enumerable:
  * false, configurable: true}` — value bits `0b101` + all three "specified"
@@ -458,6 +482,9 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
  * §17 rule.
  */
 const PROTO_METHOD_DEFINE_FLAGS = 0xbd;
+
+/** §17 attributes for an intrinsic `Symbol.toStringTag` data property. */
+const PROTO_SYMBOL_TAG_DEFINE_FLAGS = 0xbc;
 
 /** §17 accessor attributes in `__defineProperty_accessor`'s flag encoding. */
 const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
@@ -609,6 +636,29 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     }
     body.push({ op: "drop" }); // the helper returns the target
     installed++;
+  }
+
+  // Well-known symbol tags are ordinary data properties with
+  // { writable:false, enumerable:false, configurable:true }. They are seeded
+  // into the same companion as string members so flowing reads, own checks,
+  // descriptors, writes, and deletes all observe one mutable entry.
+  if (glue.symbolTag !== undefined) {
+    // The symbol carrier is normally requested by the computed-key read before
+    // this seeder runs. Ensure it here as well so an early prototype materializer
+    // cannot silently omit its own tag.
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    if (boxSymbolIdx !== undefined && defineIdx !== undefined) {
+      const body = seedFctx.body;
+      body.push({ op: "local.get", index: 0 });
+      body.push({ op: "i32.const", value: 4 }, { op: "call", funcIdx: boxSymbolIdx });
+      addStringConstantGlobal(ctx, glue.symbolTag);
+      body.push(...stringConstantExternrefInstrs(ctx, glue.symbolTag));
+      body.push({ op: "f64.const", value: PROTO_SYMBOL_TAG_DEFINE_FLAGS });
+      body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
+      installed++;
+    }
   }
 
   if (installed === 0) {
