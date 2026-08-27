@@ -355,11 +355,38 @@ receiver) while `_wasmStructHasOwn` consults the JS-side
 `_wasmStructDeletedKeys` WeakMap. That divergence is the thing to verify next,
 and it is a runtime question, not a codegen one.
 
-**Genuinely separate from all of the above** — `reverse` ×2 need host
-observation of a throwing accessor on the wrapped struct; `slice` and
-`splice/create-species` trap with "requested new array is too large" (the real
-2^53 arithmetic); `unshift/clamps-to-integer-limit.js` needs the `ToLength`
-write-back. `unshift/clamps-to-integer-limit.js`
+### The "requested new array is too large" trap — diagnosed
+
+`slice/length-exceeding-integer-limit-proxied-array.js` and
+`splice/create-species-length-exceeding-integer-limit.js` do NOT trap inside the
+array algorithm. They trap in the test's **setup**, before the method under test
+is ever called:
+
+```js
+var array = [];
+array["9007199254740988"] = "9007199254740988";   // <-- RuntimeError here (L30)
+```
+
+Assigning a huge index to a real Array must, per §10.4.2.1, set
+`length = index + 1` and store the property — **sparse, no allocation**. The
+compiler instead grows the vec's physical backing toward the logical length and
+the allocation is refused.
+
+So the fix is in the vec element-assignment write path, not in `slice`/`splice`:
+an index beyond a threshold must land in the sparse overlay (the #3251 overlay /
+#3537 bag already used for named keys on vecs) and only move the logical
+`length`. `#3201` already established that logical length can exceed the physical
+backing on the READ side (`compileArrayIncludes` clamps its scan to
+`array.len`), so the representation supports this — the write path is what does
+not.
+
+This is a hot path (every `a[i] = v`), so it wants a real design pass, but it is
+a bounded one and it is the largest remaining ES2016 bucket.
+
+**Genuinely separate** — `reverse` ×2 need host observation of a throwing
+accessor on the wrapped struct; `unshift/clamps-to-integer-limit.js` needs the
+`ToLength` write-back; `unshift/length-near-integer-limit.js` needs the same
+sparse-write fix as above (its keys are at the 2^53 scale). `unshift/clamps-to-integer-limit.js`
 remains the one genuinely arithmetic row.
 
 The read-side fix is where **per-instance property presence for statically-shaped structs**
