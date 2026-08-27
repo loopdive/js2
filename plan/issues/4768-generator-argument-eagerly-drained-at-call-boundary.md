@@ -13,9 +13,108 @@ language_feature: generators
 goal: spec-completeness
 sprint: current
 horizon: l
+loc-budget-allow:
+  - src/codegen/destructuring-params.ts
+  - src/codegen/generators-native.ts
+func-budget-allow:
+  - src/codegen/destructuring-params.ts::destructureParamArray
+  - src/codegen/generators-native.ts::hostLaneGeneratorUsesAreSafe
 ---
 
 # #4768 — compiled generators run to completion on first host-side next()
+
+## Post-merge audit: the #5044 standalone regression
+
+**Status: reproduced as a real source regression; bounded repair implemented on
+the follow-up checkpoint branch.** This remains owned by #4768; no separate
+issue is needed.
+
+The merge-group run for PR #5044 was
+[`33066137515`](https://github.com/loopdive/js2/actions/runs/33066137515), with
+candidate merge `c5dc152fc5d7d16512983eab09cf75740070fbd0` and pre-PR parent
+`0d25094e953381672e1b161cc5c4337234b6cad6`. The standalone guard job was
+`merge shard reports` (`98501096552`). Its exact baseline/current comparison
+was 48,735 rows:
+
+```
+                 baseline   candidate   delta
+pass                33,107      32,962    -145
+fail                10,210      10,355    +145
+compile_error         5,291       5,291       0
+compile_timeout          13          13       0
+skip                    114         114       0
+```
+
+The baseline was the `js2wasm-baselines` `main` snapshot checked out by the
+run (commit `2e011fe83a0f244ca82af4c456f8f82a3e05485b2`); the standalone JSONL
+SHA-256 is
+`278931e96d230cdbb92afc8ac54a2e1d73bf7dba6b6d348239cbb23089f22e57`.
+`diff-test262.ts` reports **145 pass→fail**, **0 improvements**, **0
+wasm-identical noise**, **0 timeout transitions**, and all 145 rows have a
+changed wasm hash. The exact regression bucket signature is
+`c12d78255ab4839c` with categories `assertion_fail: 96`, `other: 42`, and
+`type_error: 7`; the four filename families are `rest-ary-elision: 86`,
+`rest-id-elision-next-err: 26`, `rest-ary-empty: 26`, and
+`elem-ary-rest-iter: 7`.
+
+All 145 rows are `scope=standard` and `scope_official=true`. The maintained
+edition classifier places 77 in ES2015, 40 in ES2018 (async iteration), and 28
+in ES2022 (private class methods). The host artifact shares 36 of the 145
+failures (35 `other`, one `runtime_error`); the other 109 are standalone-only.
+That is a source/target interaction, not baseline drift or report arithmetic:
+the failed job ran both lanes, the row set is unchanged, and every regression
+is a real pass→fail with a changed binary.
+
+### Smallest reproduction and cause
+
+Using the maintained `harness-flip-probe.ts`, the pinned QuickJS-ng artifact
+(`954dc53628e36891f93c359aa60895c2ae3dac6b`), wasi-libc
+(`8d8348ec24253d0638a693b8af82445c13d92d32`), clang 18.1.3, and at most two
+workers:
+
+```
+language/expressions/generators/dstr/ary-ptrn-rest-ary-elision.js
+merge parent 0d25094e: pass (deterministic)
+merged #5044 c5dc152f: fail (deterministic)
+```
+
+The failure is `Expected SameValue(«0», «1»)`: #5044's new standalone recovery
+branch calls `patternIteratorStepCount`, whose `-1` sentinel means “unbounded
+rest”, and passes that value to `emitNativeGeneratorToVec` as a step limit.
+The materializer checks `len >= stepLimit` before its first resume, so `0 >= -1`
+stops the generator without resuming it. Nested patterns such as `[[...x]]`
+reach the same condition through the recursive destructurer. The host-only
+known-call safety gate's rest rejection does not protect standalone, where the
+recovery loop was unconditional.
+
+### Bounded repair and evidence
+
+The follow-up checkpoint skips the native state-recovery arm when the current
+binding pattern has an unbounded/rest step count, preserving the pre-#5044
+tuple/host fallback until a rest-aware state carrier exists. Finite patterns
+(`[]`, `[,]`, `[a,b]`, and nested finite patterns) remain on the #5044 bounded
+path. A standalone unit control for `function consume([...[,]]) {}` was added
+to `tests/issue-4768-generator-call-boundary.test.ts`.
+
+Measured after the repair on branch `codex/audit-5044-regressions`:
+
+- the exact three-family sample (elision, iterator-throw, nested-rest) is 3/3
+  pass, matching the pre-#5044 parent;
+- the official ES2015 regression slice is **77/77 pass**;
+- all 145 inherited regression paths are **145/145 pass**, run as 50/50 +
+  50/50 + 45/45 with the assembled-harness controls green;
+- the adjacent native-generator/destructuring suites are **92/92 pass**;
+- TypeScript 7 typecheck, Prettier, and Biome changed-file checks pass.
+
+### Handoff / investigation plan
+
+1. Review and merge the bounded rest guard in the follow-up PR from
+   `codex/audit-5044-regressions`.
+2. Re-run the merge-group standalone guard after that PR lands and verify the
+   145-row cohort has no pass→fail transitions.
+3. Keep the original full 375-row ES2015 `dstr` sweep acceptance item below
+   open; the 77-row official-edition regression cohort is complete, but that
+   broader historical sweep was not claimed by this audit.
 
 
 > **Root cause CONFIRMED** (see the section below), and the fix is **bounded**:
@@ -508,14 +607,61 @@ confirmed gate.
 
 ## Acceptance criteria
 
-- [ ] `plain(g())` on an infinite generator consumes **0** steps
-- [ ] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
-- [ ] The 20 `*ary-ptrn-elision.js` rows pass
+- [x] `plain(g())` on an infinite generator consumes **0** steps
+- [x] `[]` → 0 steps · `[,]` → 1 · `[, ,]` → 2 · `[a]` → 1 · `[a, b]` → 2
+- [x] The 20 `*ary-ptrn-elision.js` rows pass
 - [ ] No regression across the ES2015 `dstr` families, measured with `--isolate`
-- [ ] No regression in the `GeneratorPrototype/*` families — widening
+- [x] No regression in the `GeneratorPrototype/*` families — widening
       `useIsSafe` is precisely what #3468 and the `result-prototype.js`
       regression note in that walk were caused by
 
+## Measured implementation evidence
+
+The bounded native state carrier is implemented on
+`codex/4768-generator-call-boundary` (PR #5044). Measurements below use the
+pinned `test262` fixture at `b363f29d3c43c626dc852744ad64a0b48a003693` and
+were run on 2026-08-27. The exact selected-row host A/B uses the plan
+checkpoint `2390d0175` as its baseline:
+
+- Host baseline: **0/20 pass** (`{ fail: 20 }`); after: **20/20 pass**
+  (`{ pass: 20 }`).
+- Standalone after: **20/20 pass** (`{ pass: 20 }`).
+- Permanent focused coverage in
+  `tests/issue-4768-generator-call-boundary.test.ts`: **10/10 tests**. It
+  covers an infinite unused plain argument (0 steps), `[]` (0), `[,]` (1),
+  `[, ,]` (2), `[a]` (1), `[a,b]` (2), nested `[[]]` (1), plus unknown and
+  reassignable callees remaining on the conservative eager path (2 steps).
+- Matching same-base controls: the 11 `ary-ptrn-empty.js` rows are **11/11
+  pass** before and after; the 11 `ary-ptrn-elem-id-iter-complete.js` rows are
+  **8 pass / 3 fail** before and after, with identical row verdicts. The three
+  existing statement-form failures are unchanged and are not introduced by
+  this call-boundary lane.
+- GeneratorPrototype host controls: **5 pass / 1 fail** before and after,
+  with byte-identical JSONL verdicts. The lone existing failure is
+  `built-ins/GeneratorPrototype/next/from-state-executing.js` (expected
+  `TypeError` not thrown); `next/result-prototype.js` passes in both runs.
+  The standalone result-prototype probe still has the pre-existing
+  `null`-versus-object failure and is outside this host-lane change.
+- Existing native-generator regression suites (11 focused files, including
+  #2169, #2172, #2571, #2581, #2864, #3032, and #4922): **92/92 tests pass**.
+  Changed-file Biome lint and Prettier checks pass; the changed-file filtered
+  TypeScript check reports no errors (the repository-wide check retains
+  unrelated baseline diagnostics).
+
+Commands and JSONL artifacts:
+
+```text
+node --import tsx scripts/harness-flip-probe.ts --files .tmp/4768-selected-all.txt --target host --timeout 120000 --out .tmp/4768-host-after-final.jsonl
+node --import tsx scripts/harness-flip-probe.ts --files .tmp/4768-selected-all.txt --target standalone --timeout 120000 --out .tmp/4768-standalone-after-final.jsonl
+node_modules/.bin/vitest run tests/issue-4768-generator-call-boundary.test.ts
+node_modules/.bin/vitest run tests/issue-2169-destructure-native-generator.test.ts tests/issue-2169-arrayfrom-native-generator.test.ts tests/issue-2169-spread-native-generator.test.ts tests/issue-2172-nested-native-generator.test.ts tests/issue-1665-standalone-generator-forof.test.ts tests/issue-3032-lazy-generator-expressions.test.ts tests/issue-3032-w4-method-generators.test.ts tests/issue-2571-native-method-generators.test.ts tests/issue-2581-objlit-method-generators.test.ts tests/issue-2864-s2-generator-arguments.test.ts tests/issue-4922-generator-arguments.test.ts
+```
+
+The full 375-row ES2015 `dstr` sweep described in the original reduction was
+not rerun; that criterion intentionally remains unchecked. The exact 20-row
+scope, focused ordinary-call semantics, and same-base GeneratorPrototype
+regression proof are complete. Keep PR #5044 draft until current-main
+integration, required CI, and mergeability are verified by the handoff owner.
 ## Notes
 
 Infinite generators are currently unusable as arguments in compiled code — the
