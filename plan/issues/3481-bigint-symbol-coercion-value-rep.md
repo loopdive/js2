@@ -281,6 +281,66 @@ Pre-existing, NOT from this slice: `tests/issue-1716.test.ts > Object.getOwnProp
 Descriptor with an object key` fails identically (NaN vs 42) on the base runtime and on
 this branch.
 
+### CI follow-up — the host-import migration ratchet (2026-08-27)
+
+`quality` went red on `check:host-import-policy` with
+`runtimeTsLines 18396 > maximum 18275`. That is a **second, independent** ceiling
+on `src/runtime.ts`: the `loc-budget-allow` grant in this issue's frontmatter
+governs `scripts/check-loc-budget.mjs`, while `plan/audit/host-import-policy-baseline.json`
+governs the #4401 native-first migration gate. A grant to one says nothing to the
+other.
+
+**Precedent.** `git log -p` on that file shows the ceiling is raised **in the PR
+that needs it**, to the **exact measured value** with no rounding, rationale in
+the commit message — `17949 → 18188 → 18275` across `433d7766ff`, `70d0e288b3`,
+`569d78f78a`, and two commits titled outright "fix(ci): ratchet host-import
+source budget …" (`cfcf8c8c12`, `63f87a27f8`). It is **not** the
+`scripts/*-baseline.json` class that CLAUDE.md reserves to main. So: `18275 → 18396`.
+
+**The gate's real target is host imports, and this change adds none.** Measured
+by running the gate on both sides — only one of its nine tracked numbers moves:
+
+| metric | base | new | delta |
+| --- | --- | --- | --- |
+| `runtimeTsLines` | 18275 | 18396 | **+121** |
+| `resolveImportLines` | 7592 | 7592 | 0 |
+| `resolveImportCases` | 15 | 15 | 0 |
+| `ownedAdapterLines` | 792 | 792 | 0 |
+| `explicitCapabilityLines` | 1194 | 1194 | 0 |
+| native-first `imports` | 394 | 394 | 0 |
+| native-first `legacySemanticImports` | 0 | 0 | 0 |
+| native-first `unknownImports` | 0 | 0 | 0 |
+| `compatibilityLegacySemanticImports` | 23 | 23 | 0 |
+
+The growth is the §7.1.1 step-2 field probe plus its two guards — ToPrimitive
+semantics for the **host lane**, which by the dual-mode architecture is where
+host-lane semantics belong. It adds no import, no `resolveImport` case and no
+adapter. The separate `#1524` host-import allowlist + strict-mode gate also
+passes (13/13).
+
+**Remaining `quality` steps run locally** so a second failure would not surface
+one push later — everything after the failing step, plus the earlier ones:
+`check:ir-dialect` · `check:ir-kind-neutrality` · `check:jstag-seam` ·
+`check:ir-layering` · `check:ir-fallbacks` · `check:ir-only --policy=hybrid`
+(READY) · `check:standalone-ir-cutover-corpus` · `check:dead-exports` ·
+`check:oracle-ratchet` · `check:pushraw` · `check:loc-budget` ·
+`check:func-budget` · `check:harness-compile-budget` · `check:ir-adoption` ·
+`check:stack-balance` · `check:codegen-fallbacks` · `check:any-box-sites` ·
+`check:speculative-rollback` · `check:coercion-sites` · `check:issues` ·
+`check:issue-spec-coverage` · `check:done-status-integrity` ·
+`check:verdict-oracle` · `sync:conformance:check` ·
+`generate:feature-badges:check` · `test:ir:alloc` · the `#1524` allowlist tests ·
+`tests/issue-{3004,3303,1580}.test.ts` — all green.
+
+**One `quality` step is red and it is NOT this branch's:
+`scripts/run-guard-suite.mjs` — 26 failures in 4 files** (`issue-3164`,
+`issue-3386`, `issue-3565`, `issue-680`), all `RuntimeError: unreachable` in
+`__gen_resume___closure_*`, i.e. the standalone native-generator lane.
+A/B-confirmed against `origin/main`'s own `src/runtime.ts` on the merged head:
+**byte-identical failure sets**, 26/26, same test names. It is a live red on
+`main`, not collateral from #3481, and it will block any PR that runs `quality`
+until someone owns it. Escalated to the coordinator.
+
 ### What is still open (steps 2–3, deliberately not attempted here)
 
 - **Step 2 — family-B ToString/ToInteger/ToIndex re-validation** of a ToPrimitive result
