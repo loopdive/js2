@@ -1765,6 +1765,110 @@ function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
 }
 
 /**
+ * (#4768) A parameter that CONSUMES its argument through an array binding
+ * pattern — `function f([,]) {}` / `([a, b] = g()) => …`.
+ *
+ * Such a parameter is a native-safe destination for a generator state struct:
+ * `destructureParamArray`'s externref arm recovers the GC ref with
+ * `any.convert_extern` + `ref.test` and drains it through the compile-time
+ * resume loop with the §8.5.3 step budget. The pattern also CONSUMES the
+ * value — it binds only the destructured element names, never the struct
+ * itself — so the struct cannot escape onward from that position.
+ *
+ * Requirements, all load-bearing:
+ *   - array binding pattern (an object pattern reads named properties off the
+ *     struct, which the drain does not model);
+ *   - no type ANNOTATION: the parameter must lower to externref, which is the
+ *     slot the arm reads. An annotated param can lower to a typed vec/struct,
+ *     where the state struct would be `ref.cast`-incompatible;
+ *   - not a rest param (`...[a]` binds an array of arguments, not the arg);
+ *   - no REST ELEMENT inside the pattern (`[a, ...rest]`). The param arm and
+ *     the legacy externref fallthrough destructure from vecs of different
+ *     element types, and a rest binding local is re-allocated at the source's
+ *     vec type — so the two arms write different local slots and the body
+ *     reads the unset one. `destructureParamArray` skips the arm for the same
+ *     reason; keeping the walk in step keeps such a generator eager instead
+ *     of routing it into an arm that is not there.
+ */
+function paramConsumesPatternNatively(param: ts.ParameterDeclaration): boolean {
+  return (
+    ts.isArrayBindingPattern(param.name) &&
+    !param.type &&
+    !param.dotDotDotToken &&
+    !param.name.elements.some((el) => ts.isBindingElement(el) && !!el.dotDotDotToken)
+  );
+}
+
+/** The function-like definitions a callee identifier can resolve to, or undefined when unknown. */
+function calleeDefinitions(
+  ctx: CodegenContext,
+  sf: ts.SourceFile,
+  callee: ts.Identifier,
+): readonly ts.SignatureDeclaration[] | undefined {
+  const { checker } = ctx;
+  const decls = ctx.oracle.declarationsOf(callee);
+  if (decls.length !== 1) return undefined;
+  const decl = decls[0]!;
+  if (ts.isFunctionDeclaration(decl)) return decl.body ? [decl] : undefined;
+  if (!ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) return undefined;
+  const declName: ts.Identifier = decl.name;
+  // `var f = <fn>` / `var f; f = <fn>` — collect EVERY function-like written
+  // to the binding. Any non-function-like write (or none at all) is unknown.
+  const calleeSym = checker.getSymbolAtLocation(declName);
+  if (!calleeSym) return undefined;
+  const found: ts.SignatureDeclaration[] = [];
+  let unknownWrite = false;
+  const isFnLike = (e: ts.Expression): e is ts.ArrowFunction | ts.FunctionExpression =>
+    ts.isArrowFunction(e) || ts.isFunctionExpression(e);
+  const scanWrites = (node: ts.Node): void => {
+    if (unknownWrite) return;
+    if (ts.isVariableDeclaration(node) && node.name === declName) {
+      if (node.initializer) {
+        if (isFnLike(node.initializer)) found.push(node.initializer);
+        else unknownWrite = true;
+      }
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === declName.text &&
+      checker.getSymbolAtLocation(node.left) === calleeSym
+    ) {
+      if (isFnLike(node.right)) found.push(node.right);
+      else unknownWrite = true;
+    }
+    ts.forEachChild(node, scanWrites);
+  };
+  ts.forEachChild(sf, scanWrites);
+  return unknownWrite || found.length === 0 ? undefined : found;
+}
+
+/**
+ * (#4768) `f(g())` — a generator call in ARGUMENT position. Safe only when
+ * the callee pins to known function-like definitions and EVERY one of them
+ * consumes that argument slot through an array binding pattern (see
+ * `paramConsumesPatternNatively`). An unknown callee, a spread anywhere at or
+ * before the slot, or any definition that binds the slot to a plain
+ * identifier keeps the generator on the eager host path — a raw state struct
+ * reaching a host-iterating context is the #3468 silent-value-drop failure.
+ */
+function callArgumentIsNativelyConsumed(ctx: CodegenContext, sf: ts.SourceFile, node: ts.Node): boolean {
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return false;
+  const argIndex = call.arguments.indexOf(node as ts.Expression);
+  if (argIndex < 0) return false;
+  for (let i = 0; i <= argIndex; i++) {
+    if (ts.isSpreadElement(call.arguments[i]!)) return false;
+  }
+  const defs = calleeDefinitions(ctx, sf, call.expression);
+  if (!defs) return false;
+  return defs.every((def) => {
+    const param = def.parameters[argIndex];
+    return !!param && paramConsumesPatternNatively(param);
+  });
+}
+
+/**
  * (#3050) Conservative HOST-lane use-site safety walk. The native generator
  * state struct is a WasmGC ref the JS host cannot iterate, so it must never
  * escape to a host-iterating context. Walks every `<name>(…)` call in the
@@ -2038,6 +2142,14 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
         ts.isArrayLiteralExpression(p.left)
       ) {
         // `[a, b] = g()` destructuring-assignment source — native path.
+      } else if (ts.isParameter(p) && p.initializer === node && paramConsumesPatternNatively(p)) {
+        // (#4768) `([,] = g()) => …` — the generator call IS the pattern
+        // parameter's default. It is evaluated inside the callee prologue and
+        // consumed by that same pattern, so the state struct never crosses a
+        // boundary the walk cannot see.
+      } else if (callArgumentIsNativelyConsumed(ctx, sf, node)) {
+        // (#4768) `f(g())` where every definition of `f` binds that slot with
+        // an array binding pattern — see callArgumentIsNativelyConsumed.
       } else {
         allSafe = false;
       }

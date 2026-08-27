@@ -1263,6 +1263,18 @@ export function tryCompileNativeGeneratorForOf(
  * instead of being OOB, silently skipping binding defaults (`const [a,b=9]=g()`
  * with one yield). Trimming restores the literal-array invariant the destructure
  * machinery relies on (backing-array length == logical length).
+ *
+ * `stepLimit` (#4768) — the §8.5.3 IteratorStep BUDGET, for consumers whose
+ * arity is statically known. `-1` (default) keeps the historical drain-to-
+ * completion behaviour and is the ONLY correct answer for the unbounded
+ * consumers (`[...g()]`, `Array.from(g())`, a rest element). A value `>= 0`
+ * makes the loop stop after exactly that many values AND, when the generator
+ * did not finish on its own, perform the §7.4.9 IteratorClose the spec requires
+ * at step 3 of `BindingInitialization : ArrayBindingPattern` — resume the state
+ * machine once in RETURN mode so `finally` blocks still run. Without the budget
+ * a two-yield generator destructured by `var [,] = g()` observed BOTH yields
+ * (`ary-ptrn-elision`: `second` incremented where the spec requires 0), because
+ * "drain to completion" is not the same operation as "take N steps".
  */
 export function emitNativeGeneratorToVec(
   ctx: CodegenContext,
@@ -1272,6 +1284,7 @@ export function emitNativeGeneratorToVec(
   vecTypeIdx: number,
   arrTypeIdx: number,
   trimToLength = false,
+  stepLimit = -1,
 ): void {
   const resumeIdx = ensureNativeGeneratorResumeFunction(ctx, info);
   const resultRef: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
@@ -1325,16 +1338,47 @@ export function emitNativeGeneratorToVec(
     { op: "local.set", index: dataLocal },
   ];
 
+  // (#4768) Bounded consumers track whether the generator finished by itself,
+  // so the post-loop IteratorClose only fires when it is still suspended.
+  const bounded = stepLimit >= 0;
+  const exhaustedLocal = bounded ? allocLocal(fctx, `__gen2vec_exhausted_${fctx.locals.length}`, { kind: "i32" }) : -1;
+  if (bounded) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: exhaustedLocal });
+  }
+
   // block { loop {
+  //   [bounded: if (len == stepLimit) br block;]
   //   res = resume(iter); if (res.done) br block;
   //   if (len == cap) grow; data[len] = res.value; len++; br loop;
   // } }
   const loopBody: Instr[] = [
+    // (#4768) Budget check BEFORE the resume — `[]` (stepLimit 0) must not
+    // call the iterator at all (§8.5.3 `ArrayBindingPattern : [ ]`).
+    ...(bounded
+      ? ([
+          { op: "local.get", index: lenLocal },
+          { op: "i32.const", value: stepLimit },
+          { op: "i32.eq" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 2 }], else: [] },
+        ] as Instr[])
+      : []),
     { op: "local.get", index: iterLocal },
     { op: "call", funcIdx: resumeIdx },
     { op: "local.set", index: resultLocal },
     ...readResultField(resultLocal, info.resultTypeIdx, RESULT_DONE_FIELD),
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 2 }], else: [] },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: bounded
+        ? [
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: exhaustedLocal },
+            { op: "br", depth: 2 },
+          ]
+        : [{ op: "br", depth: 2 }],
+      else: [],
+    },
     // grow if full
     { op: "local.get", index: lenLocal },
     { op: "local.get", index: capLocal },
@@ -1357,6 +1401,29 @@ export function emitNativeGeneratorToVec(
     blockType: { kind: "empty" },
     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
   });
+
+  // (#4768) §13.3.3.5 step 3 / §7.4.9 IteratorClose: a bounded pattern that
+  // stopped while the iterator was still suspended must close it, which for a
+  // generator means resuming once in RETURN mode so `finally` blocks run. The
+  // unbounded drain never needs this — it already ran the body to completion.
+  // Mirrors the for-of driver's `closeGenerator()` sequence above.
+  if (bounded) {
+    const closeValueLocal = emitCarrierValue(ctx, fctx, undefined, info);
+    fctx.body.push({ op: "local.get", index: exhaustedLocal });
+    fctx.body.push({ op: "i32.eqz" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...setStateFieldFromLocal(info, iterLocal, info.abruptFieldIdx, closeValueLocal),
+        ...setStateI32FromConst(info, iterLocal, info.modeFieldIdx, 1),
+        { op: "local.get", index: iterLocal },
+        { op: "call", funcIdx: resumeIdx },
+        { op: "drop" },
+      ],
+      else: [],
+    });
+  }
 
   // (#2169) Trim the backing array to exactly `len` when the consumer
   // bounds-checks against `array.len(data)` rather than the `$length` field

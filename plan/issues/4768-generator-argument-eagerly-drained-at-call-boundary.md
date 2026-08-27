@@ -13,6 +13,24 @@ language_feature: generators
 goal: spec-completeness
 sprint: current
 horizon: l
+# 2026-08-27 (#4768) — the §8.5.3 IteratorStep budget needs a new code path in
+# two subsystems, and both live in already-over-budget god-files:
+#   * generators-native.ts — the use-site safety walk gains the two pattern-
+#     parameter positions plus the statically-known-callee resolution they
+#     require. Extracted to module scope (`paramConsumesPatternNatively`,
+#     `calleeDefinitions`, `callArgumentIsNativelyConsumed`) so
+#     `hostLaneGeneratorUsesAreSafe` stays under the 300-LOC function ceiling;
+#     the file total still grows because the code has to live somewhere and the
+#     safety walk's rationale is load-bearing comment (this is a walk whose
+#     mistakes DROP VALUES silently — #3468).
+#   * destructuring-params.ts — the native-generator `ref.test` arm. Extracted
+#     to `emitNativeGeneratorPatternArms`, leaving `destructureParamArray` +1
+#     line (the single dispatch call to it).
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+  - src/codegen/destructuring-params.ts
+func-budget-allow:
+  - src/codegen/destructuring-params.ts::destructureParamArray
 ---
 
 # #4768 — compiled generators run to completion on first host-side next()
@@ -24,6 +42,102 @@ horizon: l
 > argument) routes it to the eager buffer instead. Everything below the
 > root-cause sections is the reduction trail — eight superseded hypotheses, kept
 > only so they are not retried.
+
+## Implementation notes (2026-08-27) — what actually shipped, and why
+
+**The plan was right about the gate and WRONG about the drain.** Step 2 of the
+plan reproduced exactly as predicted: compiling
+`language/expressions/arrow-function/dstr/ary-ptrn-elision.js` shows `g` on the
+eager path (`__gen_create_buffer`/`__gen_push_ref`, no `__gen_resume_g`), and
+`hostLaneGeneratorUsesAreSafe` rejects it at precisely the `f(g())` argument
+position. But the **`var [,] = g()` rows already routed NATIVE and still
+failed**, which the plan did not predict — so widening the walk alone would have
+bought nothing.
+
+Two independent defects, both fixed here:
+
+**1. The native drain had no step budget.** `emitNativeGeneratorToVec`
+(`src/codegen/generators-native-consumer.ts`) — the shared resume loop behind
+spread, `Array.from` and destructuring — always ran the generator to
+COMPLETION. "Drain to completion" is not the same operation as "take N steps",
+so `var [,] = g()` observed BOTH yields of a two-yield generator. It now takes
+a `stepLimit` (`-1` = unbounded, the only correct answer for spread /
+`Array.from` / a rest element) and, when it stops with the generator still
+suspended, performs the §13.3.3.5-step-3 IteratorClose — one resume in RETURN
+mode, so `finally` blocks still run. The decl-form call site
+(`statements/destructuring.ts`) passes `patternIteratorStepCount(pattern.elements)`.
+This alone flipped the three `const/let/var-ary-ptrn-elision` rows.
+
+**2. A generator flowing into a pattern PARAMETER kept the eager buffer.**
+`useIsSafe` now admits two positions, both of which end with the value consumed
+by an array binding pattern:
+
+- `([,] = g()) => …` — the generator call is the pattern parameter's own
+  default, evaluated inside the callee. No boundary at all.
+- `f(g())` — admitted only when the callee identifier pins to known
+  function-like definitions (a `FunctionDeclaration` with a body, or every
+  function-like written to a `var f` binding) and EVERY one of them binds that
+  argument slot with an array binding pattern.
+
+The threading works without any new type plumbing: `coerceType` lowers a struct
+ref to externref with `extern.convert_any`, which is lossless, and
+`destructureParamArray` already does `any.convert_extern` into an `anyref`
+local. A `ref.test` against each registered state struct recovers it, and the
+bounded drain consumes it. Registration order is safe — `collectDeclarations`
+registers every native generator before any function body is compiled.
+
+**Deliberate exclusions (each one measured, not guessed):**
+
+- **Rest patterns (`f([a, ...rest])`) stay on the eager path.** The arm
+  destructures from a `__vec_f64`; the legacy fallthrough destructures from a
+  `__vec_externref`. A REST binding local is re-allocated at the source's vec
+  type (#971), so the two arms write DIFFERENT local slots and the body reads
+  the one the taken branch never set — measured as `rest.length` → "dereferencing
+  a null pointer". `paramConsumesPatternNatively` and the arm exclude rest in
+  step, so the walk never routes a generator into an arm that is not there.
+- **An ANNOTATED pattern parameter is excluded.** The arm reads the externref
+  parameter slot; an annotated param can lower to a typed vec/struct where the
+  state struct is `ref.cast`-incompatible.
+- **A plain identifier parameter (`f(x)`) stays eager**, as before — the callee
+  could hand the value to any host-iterating context, which is the #3468
+  silent-value-drop failure.
+
+**RESIDUAL, unfixed and now pinned by a test:** `f(g())` with a plain parameter
+still consumes both iterator steps (`first*10+second === 11` where the spec says
+`0`) — nothing in the source iterates `x`, yet the eager buffer is resumed to
+completion. Measured IDENTICAL before and after this change, so it is not a
+regression, but the first acceptance bullet below ("`plain(g())` consumes 0
+steps") is **NOT met**. It belongs to the eager-buffer lowering, not to the
+pattern machinery. `tests/issue-4768-pattern-param-iterator-steps.test.ts` pins
+it at 11 so the gap stays visible; flip that assertion to 0 when the eager
+buffer is retired.
+
+**Also unfixed:** the 18 `for-await-of` async-generator elision rows. They are
+async-lane (`Test262:AsyncTestFailure`) and the sync pattern machinery does not
+reach them. Likewise the class / object-literal METHOD receivers
+(`obj.m(g())`, `C.prototype.m`, 27 rows) — `callArgumentIsNativelyConsumed`
+requires a bare-identifier callee, so a member-access callee is still unknown to
+the walk; and the three `for-of/dstr` rows plus one `try/dstr` row, whose
+pattern source is not a parameter. All are natural follow-up slices of the same
+mechanism.
+
+### Measured, `scripts/run-test262-paths.mts --isolate`, 2026-08-27
+
+| slice | before | after |
+| --- | ---: | ---: |
+| every `*ary-ptrn-elision.js` (92 rows) | **0 pass / 92 fail** | **49 pass / 43 fail** |
+| `built-ins/GeneratorPrototype/**` (109 rows) | 79 pass / 30 fail | 79 pass / 30 fail (fail set byte-identical) |
+| `*ary-ptrn*` rows containing `function*`, sampled 1–3 per distinct pattern shape (57 shapes, 171 rows) | 156 pass / 15 fail | **158 pass / 13 fail** |
+
+The third slice is the regression probe: the only two rows that moved are the
+two elision rows inside it, both `fail → pass`. No row regressed in any slice.
+`npm run -s typecheck` clean; all five source-ratchet gates green (with the two
+`loc-budget-allow` entries and one `func-budget-allow` entry in this file's
+frontmatter). New coverage:
+`tests/issue-4768-pattern-param-iterator-steps.test.ts` (15 cases — the exact
+`[]`/`[,]`/`[, ,]`/`[a]`/`[a, b]` step counts on all three positions, both
+lanes, the IteratorClose-runs-`finally` case, the rest-element exclusion, and
+the pinned residual).
 
 ## What is confirmed
 
