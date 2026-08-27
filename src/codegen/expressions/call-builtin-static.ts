@@ -2110,6 +2110,29 @@ export function compileBuiltinStaticCall(
       return { kind: "externref" };
     }
 
+    // (#4777) `Object.getPrototypeOf(<Map|Set> iterator)` → the matching
+    // identity-stable native iterator prototype singleton (standalone/WASI).
+    // Map/Set iterator records do not carry a prototype link, so the generic
+    // fallback cannot expose their own ES2015 @@toStringTag descriptor. The
+    // checker symbols are distinct from ArrayIterator/StringIterator and keep
+    // this arm narrow to genuine native collection iterators. Compile and drop
+    // the argument first so evaluation side effects remain observable.
+    const iteratorPrototypeKind =
+      argTsType.getSymbol()?.name === "MapIterator"
+        ? "Map"
+        : argTsType.getSymbol()?.name === "SetIterator"
+          ? "Set"
+          : undefined;
+    if ((ctx.standalone || ctx.wasi) && iteratorPrototypeKind !== undefined) {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      const protoType = emitIteratorPrototypeSingleton(ctx, fctx, iteratorPrototypeKind);
+      if (protoType) return protoType;
+      // Runtime unavailable: preserve the historical null return.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+
     // (#3236 S2) `Object.getPrototypeOf(<sync generator instance>)` → the same
     // native `%GeneratorPrototype%` singleton that `genFn.prototype` /
     // `getPrototypeOf(genFn).prototype` resolve to (§27.5.1). A generator
