@@ -119,7 +119,12 @@ import { compileMathCall } from "./builtins.js";
 import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
-import { classIdentityFromExpression, classStaticOwnPropertyNames } from "../class-static-metadata.js";
+import {
+  classIdentityFromExpression,
+  classStaticOwnPropertyNames,
+  hasClassStaticMethod,
+} from "../class-static-metadata.js";
+import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
@@ -136,6 +141,12 @@ import {
   staticToBoolean,
   tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
+
+function classConstructorLength(ctx: CodegenContext, className: string): number {
+  const decl = ctx.classDeclarationMap.get(className);
+  const ctor = decl?.members.find(ts.isConstructorDeclaration);
+  return ctor === undefined ? 0 : expectedArgumentCountOfParams(ctor.parameters);
+}
 
 /**
  * Reified builtin method closures are ordinary function objects whose
@@ -2760,12 +2771,19 @@ export function compileBuiltinStaticCall(
         // `verifyProperty(C, "m", {...})` lookups need the runtime arm to
         // fire instead of returning `ref.null.extern` here.
         if (!sidecarDefinedKey) {
+          const classIdentity = classIdentityFromExpression(ctx, arg0);
+          const isClassIntrinsicLookup =
+            classIdentity !== undefined &&
+            classStaticOwnPropertyNames(ctx, classIdentity).includes(propLiteral) &&
+            !hasClassStaticMethod(ctx, classIdentity, propLiteral) &&
+            !ctx.staticAccessorSet.has(`${classIdentity}_${propLiteral}`) &&
+            !ctx.staticProps.has(`${classIdentity}_${propLiteral}`);
           const methodNames = ctx.classMethodNames.get(structName);
           const staticMethodNames = ctx.classStaticMethodNames.get(structName);
           const isMethodLookup =
             (methodNames && methodNames.includes(propLiteral)) ||
             (staticMethodNames && staticMethodNames.includes(propLiteral));
-          if (isMethodLookup) {
+          if (isMethodLookup || isClassIntrinsicLookup) {
             // Skip the fast-path null-return; let the dynamic fallback below
             // handle the method case via the host import.
           } else {
@@ -2784,6 +2802,65 @@ export function compileBuiltinStaticCall(
             emitUndefined(ctx, fctx);
             return { kind: "externref" };
           }
+        }
+        // (#4770) A class constructor's standard own properties are not part
+        // of the `$ClassName` instance carrier. Synthesize their descriptors
+        // at the literal-key fold so the class control surface remains
+        // aligned with the dynamic native-MOP view below. A declared static
+        // member with one of these names replaces the intrinsic.
+        const classIdentity = classIdentityFromExpression(ctx, arg0);
+        const classOwnKey =
+          classIdentity !== undefined &&
+          propLiteral !== undefined &&
+          classStaticOwnPropertyNames(ctx, classIdentity).includes(propLiteral);
+        const classIntrinsicOverridden =
+          classIdentity !== undefined &&
+          propLiteral !== undefined &&
+          (hasClassStaticMethod(ctx, classIdentity, propLiteral) ||
+            ctx.staticAccessorSet.has(`${classIdentity}_${propLiteral}`) ||
+            ctx.staticProps.has(`${classIdentity}_${propLiteral}`));
+        if (classOwnKey && !classIntrinsicOverridden) {
+          const argResult = compileExpression(ctx, fctx, arg0);
+          if (argResult) fctx.body.push({ op: "drop" });
+
+          const createIdx = ensureLateImport(
+            ctx,
+            "__create_descriptor",
+            [{ kind: "externref" }, { kind: "i32" }],
+            [{ kind: "externref" }],
+          );
+          flushLateImportShifts(ctx, fctx);
+          if (createIdx === undefined || classIdentity === undefined || propLiteral === undefined) {
+            emitUndefined(ctx, fctx);
+            return { kind: "externref" };
+          }
+
+          if (propLiteral === "name") {
+            addStringConstantGlobal(ctx, classIdentity);
+            fctx.body.push(...stringConstantExternrefInstrs(ctx, classIdentity));
+            fctx.body.push({ op: "i32.const", value: 0x04 });
+          } else if (propLiteral === "length") {
+            fctx.body.push({ op: "f64.const", value: classConstructorLength(ctx, classIdentity) });
+            const boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+            flushLateImportShifts(ctx, fctx);
+            if (boxIdx === undefined) {
+              emitUndefined(ctx, fctx);
+              return { kind: "externref" };
+            }
+            fctx.body.push({ op: "call", funcIdx: boxIdx });
+            fctx.body.push({ op: "i32.const", value: 0x04 });
+          } else {
+            if (!emitLazyProtoGet(ctx, fctx, classIdentity)) {
+              emitUndefined(ctx, fctx);
+              return { kind: "externref" };
+            }
+            fctx.body.push({ op: "extern.convert_any" });
+            // `prototype` is the one non-configurable intrinsic class data
+            // property; it remains non-writable/non-enumerable as well.
+            fctx.body.push({ op: "i32.const", value: 0x00 });
+          }
+          fctx.body.push({ op: "call", funcIdx: createIdx });
+          return { kind: "externref" };
         }
       }
     }
