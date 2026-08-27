@@ -710,9 +710,10 @@ Gate the new route with
 `JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER`. M1A initially enabled it
 by default for ordinary standalone multi-source compilation with
 `experimentalIR: true`, native strings, no WASI, and non-fast ABI. M1A.1 rolls
-that default back to explicit `1` until generic/dedicated-owner composition is
-certified; the disabled lane retains the same graph/census and zero M1A
-reservations.
+aggregate commitment back to explicit `1` until generic/dedicated-owner
+composition is certified. The frozen callable graph and selection preplanning
+remain active for the established #3214 imported-HOF lane, while the disabled
+lane creates zero M1A reservations.
 
 For units admitted through M1A, delete/bypass these authorities:
 
@@ -857,16 +858,19 @@ split the already-certified aggregate into per-terminal prepared scopes.
 one deterministic dependency/seal component even when the final IR edge has
 disappeared. The body-reservation census and direct-body poison make the
 cross-source prepared route, rather than merely any IR emission, mandatory in
-the focused runtime proof. If no aggregate commits, the rollout routing gate is
-disabled before the late overlay; the frozen callable graph remains available
-for census, but it cannot accidentally authorize IR-after-direct emission.
+the focused runtime proof. If no aggregate commits, attempted units remain
+withdrawn while untouched graph units may continue through the established
+late overlay; this preserves the #3214 imported-HOF invariant without allowing
+IR-after-direct emission.
 
-The aggregate callable route is explicit opt-in at this checkpoint. The merged
-default-on M1A gate allowed generic planning to enter established scalar and
-Fibonacci kill-switch controls before generic/dedicated-owner composition was
-certified. M1A.1 therefore requires an exact `1` for the aggregate route and
-keeps existing routes byte-stable; default-on promotion resumes only with a
-composition proof.
+Aggregate commitment is explicit opt-in at this checkpoint. Candidate
+preplanning remains default-on because it supplies the frozen callable graph
+used by the #3214 imported-HOF lane, but only an exact `1` may reserve and
+publish a cross-source callable component. Generic commitment also refuses a
+graph once an established scalar, array, string, function-value, or Fibonacci
+Prepared owner has reserved any unit. A graph with runtime module-init
+population disables callable preplanning before dedicated-route selection and
+stays on its established ownership path.
 
 Focused acceptance requires every admitted component unit to have zero
 `compileFunctionBody` / `compileStatement` audit rows, one `terminal-ir`

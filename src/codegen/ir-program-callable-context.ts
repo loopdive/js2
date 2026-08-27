@@ -9,10 +9,8 @@ declare module "./context/types.js" {
     irProgramCallableBindingGraph?: IrProgramCallableBindingGraph;
     /** M1A rollout gate; the graph remains available for disabled-lane census. */
     irProgramCallableCutoverEnabled?: boolean;
-    /** Whether unresolved callable-graph units may reach the ordinary late overlay. */
-    irProgramCallableLateOverlayEnabled?: boolean;
-    /** Exact units already owned by a dedicated Prepared route. */
-    irProgramCallableDedicatedRouteUnitIds?: ReadonlySet<IrUnitId>;
+    /** Whether aggregate candidates may commit as one Prepared component. */
+    irProgramCallableComponentCutoverEnabled?: boolean;
     /** Exact terminal units attempted by the aggregate callable lane. */
     irProgramCallableAttemptedUnitIds?: ReadonlySet<IrUnitId>;
     /** Exact terminal units accepted by the aggregate callable owner. */

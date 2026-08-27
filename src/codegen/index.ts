@@ -9008,7 +9008,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
-  const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options);
+  const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {

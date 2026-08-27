@@ -43,6 +43,7 @@ export function initializeMultiPreparedProgram(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
   options: CodegenOptions | undefined,
+  explicitlyDisabled: (value: string | undefined) => boolean,
 ): MultiPreparedProgramOwner<IrOverlayPlan> | undefined {
   ctx.irProgramCallableCutoverEnabled =
     !!options?.experimentalIR &&
@@ -51,8 +52,9 @@ export function initializeMultiPreparedProgram(
     !ctx.wasi &&
     !ctx.fast &&
     ctx.nativeStrings &&
-    process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER === "1";
-  ctx.irProgramCallableLateOverlayEnabled = ctx.irProgramCallableCutoverEnabled;
+    !explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
+  ctx.irProgramCallableComponentCutoverEnabled =
+    ctx.irProgramCallableCutoverEnabled && process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER === "1";
   return createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
 }
 
@@ -227,9 +229,7 @@ function ownerIsEligible(
     return false;
   }
   if (
-    collectModuleInitPopulation(sourceFile).length > 0 ||
     input.identityContext.moduleInitUnitIdBySourceId.has(sourceId) ||
-    (plan.identityPlan.identitySelection.moduleInit?.stmtCount ?? 0) > 0 ||
     input.identityContext.inventory.classes.some((record) => record.sourceId === sourceId)
   ) {
     return false;
@@ -375,6 +375,15 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
       );
     })
     .sort((left, right) => compare(left[0]!, right[0]!));
+  const componentCutoverEnabled =
+    input.ctx.irProgramCallableComponentCutoverEnabled === true &&
+    input.multiAst.sourceFiles.every((sourceFile) => collectModuleInitPopulation(sourceFile).length === 0);
+  if (!componentCutoverEnabled) {
+    const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
+    for (const group of groups) for (const candidate of group) attempted.add(candidate.unitId);
+    if (attempted.size > 0) input.ctx.irProgramCallableAttemptedUnitIds = attempted;
+    return;
+  }
   const components: MultiPreparedProgramCallableComponent[] = [];
   const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
   for (const [groupIndex, group] of groups.entries()) {
@@ -403,19 +412,12 @@ export function removeMultiIrAttemptedCallableUnits(
   plan: IrOverlayPlan,
   selection: IrSelection,
 ): IrSelection {
-  const withdrawn = new Set(ctx.irProgramCallableAttemptedUnitIds ?? []);
-  if (ctx.irProgramCallableLateOverlayEnabled !== true) {
-    const dedicated = ctx.irProgramCallableDedicatedRouteUnitIds ?? new Set<IrUnitId>();
-    for (const use of ctx.irProgramCallableBindingGraph?.uses ?? []) {
-      if (!dedicated.has(use.ownerUnitId)) withdrawn.add(use.ownerUnitId);
-      if (!dedicated.has(use.targetUnitId)) withdrawn.add(use.targetUnitId);
-    }
-  }
-  if (withdrawn.size === 0) return selection;
+  const attempted = ctx.irProgramCallableAttemptedUnitIds;
+  if (!attempted?.size) return selection;
   const funcs = new Set(
     [...selection.funcs].filter((name) => {
       const unitId = plan.identityPlan.functionUnitIdByLegacyName.get(name);
-      return !unitId || !withdrawn.has(unitId);
+      return !unitId || !attempted.has(unitId);
     }),
   );
   return funcs.size === selection.funcs.size
@@ -484,8 +486,10 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     !input.ctx.wasi &&
     !input.ctx.fast &&
     input.multiAst.sourceFiles.length > 1;
-  const callableCutoverEnabled = input.ctx.irProgramCallableCutoverEnabled === true;
-  if (callableCutoverEnabled) input.ctx.irProgramCallableCutoverEnabled = false;
+  if (input.multiAst.sourceFiles.some((sourceFile) => collectModuleInitPopulation(sourceFile).length > 0)) {
+    input.ctx.irProgramCallableCutoverEnabled = false;
+    input.ctx.irProgramCallableComponentCutoverEnabled = false;
+  }
   input.owner.planExistingRoutes({
     active,
     scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
@@ -506,20 +510,7 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     projectLoweringPlans: input.projectLoweringPlans,
     stringShapes,
   });
-  input.ctx.irProgramCallableDedicatedRouteUnitIds = new Set(input.owner.existingRouteUnitIds);
-  if (input.owner.existingRouteUnitIds.size === 0) {
-    input.ctx.irProgramCallableCutoverEnabled = callableCutoverEnabled;
-    if (callableCutoverEnabled) plans.clear();
-  } else {
-    input.ctx.irProgramCallableLateOverlayEnabled = false;
-  }
-  const genericBlockedByModuleInit = input.multiAst.sourceFiles.some(
-    (sourceFile) => collectModuleInitPopulation(sourceFile).length > 0,
-  );
-  if (input.ctx.irProgramCallableCutoverEnabled && genericBlockedByModuleInit) {
-    input.ctx.irProgramCallableLateOverlayEnabled = false;
-  }
-  if (input.ctx.irProgramCallableCutoverEnabled && !genericBlockedByModuleInit) {
+  if (input.ctx.irProgramCallableCutoverEnabled) {
     planMultiPreparedCallableComponents({
       owner: input.owner,
       multiAst: input.multiAst,
@@ -529,9 +520,6 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
       safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
       ...input.callable,
     });
-    if (input.owner.callableComponentUnitIds.size === 0) {
-      input.ctx.irProgramCallableLateOverlayEnabled = false;
-    }
   }
   input.owner.sealBodyBoundary();
 }
