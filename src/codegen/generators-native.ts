@@ -4415,7 +4415,28 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         getCaughtExnIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, resumeFctx);
       }
-      resumeFctx.body.push(...emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal, getCaughtExnIdx));
+      const trampoline = emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal, getCaughtExnIdx);
+      if (ctx.standalone || ctx.wasi) {
+        // A native generator is completed when its body raises while a resume
+        // is in progress (§27.5.3.4). Most abrupt paths already set
+        // `STATE_FIELD` before their explicit rethrow, but an unhandled body
+        // exception (including an abrupt IteratorStep) escapes directly from
+        // the trampoline. Close that state before preserving the original
+        // payload so a later `.next()` observes the completed generator
+        // instead of re-entering the throwing state. Keep this wrapper out of
+        // the JS-host lane: its foreign-exception recovery and legacy lowering
+        // have their own established path.
+        resumeFctx.body.push(
+          buildTargetTaggedTry(ctx, { kind: "val", type: resultType }, trampoline, [
+            {
+              tagIdx: ensureExnTag(ctx),
+              body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
+            },
+          ]),
+        );
+      } else {
+        resumeFctx.body.push(...trampoline);
+      }
     } finally {
       ctx.currentFunc = savedFunc;
     }
