@@ -1,7 +1,7 @@
 ---
 id: 5099
 title: "fix(standalone): expose StringIteratorPrototype.next metadata"
-status: done
+status: ready
 sprint: current
 created: 2026-08-27
 updated: 2026-08-28
@@ -99,6 +99,21 @@ baseline-summary sync at `5321bfbbfa9193c6b55a7558126b88b003a03719`:
 - post-#5085-tree (`upstream/main` `698ecb8f16`) focused suite: `6/6` tests
   passed, and exact host/standalone repeats remained `2/2` with both controls
   and `nondeterministic: 0`.
+
+### Optional-corpus CI hardening
+
+The first current-main CI pass exposed a packaging-only regression in the
+changed-root issue job: that job intentionally does not check out the optional
+Test262 corpus, so the four exact-row assertions failed with `ENOENT` before
+the compiler control could run (Actions run `33126029589`). The focused test
+now probes `test262/harness/assert.js` and skips only the four corpus-backed
+rows when the checkout is absent; the two self-contained compiler controls
+remain mandatory.
+
+Focused validation after the guard is **6/6 passed** with the corpus present.
+A hermetic temporary root with no `test262` checkout reports **2/2 passed and
+4/4 intentionally skipped**, proving the changed-root CI shape while retaining
+non-vacuous host and standalone coverage.
 
 Post-sync CI for PR #5103 head `e0159876d6` (Actions run `33123862203`) was
 fully green (all required jobs successful or intentionally skipped), and the

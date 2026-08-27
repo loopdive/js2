@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -12,6 +13,9 @@ const EXACT_FILES = [
   "built-ins/StringIteratorPrototype/next/length.js",
   "built-ins/StringIteratorPrototype/next/name.js",
 ] as const;
+
+const TEST262_AVAILABLE = existsSync(join("test262", "harness", "assert.js"));
+const test262It = TEST262_AVAILABLE ? it : it.skip;
 
 const CONTROL_SOURCE = `
   export function test(): number {
@@ -44,12 +48,12 @@ async function runControl(lane: Lane): Promise<number> {
 }
 
 describe("#5099 StringIteratorPrototype.next metadata", () => {
-  it.each(EXACT_FILES)("passes the exact host Test262 row %s", async (file) => {
+  test262It.each(EXACT_FILES)("passes the exact host Test262 row %s", async (file) => {
     const result = await runTest262File(join("test262/test", file), "issue-5099", 120_000);
     expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
   });
 
-  it.each(EXACT_FILES)("passes the exact standalone Test262 row %s", async (file) => {
+  test262It.each(EXACT_FILES)("passes the exact standalone Test262 row %s", async (file) => {
     const result = await runTest262File(join("test262/test", file), "issue-5099", 120_000, "standalone");
     expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
   });
