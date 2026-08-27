@@ -1,7 +1,7 @@
 ---
 id: 3487
 title: "String.prototype.valueOf non-generic receiver traps illegal_cast (uncatchable) instead of throwing catchable TypeError"
-status: blocked
+status: in_progress
 sprint: Backlog
 priority: high
 horizon: l
@@ -10,7 +10,9 @@ task_type: bug
 area: test262-conformance
 goal: test262-conformance
 created: 2026-07-20
-blocked_on: closure-value substrate (builtin proto-method stored as an object field, invoked via the generic ToPrimitive `+`/eqref-closure dispatch); needs architect spec — see "Verified root cause (2026-07-21)"
+updated: 2026-08-27
+assignee: ttraenkler/codex-es6-string-valueof
+related: [1917, 3189, 3335, 3524]
 ---
 
 ## Problem
@@ -154,6 +156,41 @@ currently traps).
 - Baseline `illegal_cast` category returns to **79** (or lower) on the next
   promote, and the repo Actions variable `BASELINE_TRAP_GROWTH_ALLOW` stays at
   the default `0`.
+
+## Resume implementation plan — 2026-08-27
+
+The July root-cause proof remains the starting hypothesis, but the compiler's
+closure-value, dynamic-call, ToPrimitive, and standalone exception machinery
+has changed substantially since that measurement. Reopen the one-row cluster
+for a bounded verify-first implementation rather than carrying the old
+substrate block forward untested.
+
+1. Run `built-ins/String/prototype/valueOf/non-generic.js` alone in standalone
+   and host modes through the maintained original-harness runner. Separately
+   run the four recorded controls and capture exact status, error category,
+   signature, trap/catch behavior, and emitted call path on current main.
+2. Trace the field-stored `String.prototype.valueOf` carrier from reflective
+   property read through object-field storage and dynamic ToPrimitive dispatch.
+   Compare its receiver/argument ABI with the already-correct direct `.call`
+   path and a user-defined `valueOf` closure; identify the first representation
+   or dispatch divergence before editing shared coercion machinery.
+3. Implement the narrow shared fix at that divergence: preserve a callable
+   builtin method value and route a non-matching receiver to the existing
+   catchable `TypeError` path. Do not mask a raw `ref.cast` trap in the runner,
+   special-case this fixture, or weaken receiver-brand semantics.
+4. Add focused host/standalone controls for the direct `.call`, field-stored
+   builtin, user closure string/number results, valid String receiver, null and
+   ordinary-object receivers, and one neighboring `toString`/ToPrimitive case
+   that proves the fix does not steal #3524's distinct semantics.
+5. Rerun the exact row and controls in both lanes, the relevant ToPrimitive and
+   String prototype regression suites, trap-category comparison, mandatory
+   gates, and same-base pass/non-pass diff. Record artifacts, counts, residuals,
+   commit SHA, and handoff in this issue.
+
+The PR must use the repository Description/CLA template and remain draft until
+the scoped row and controls are 100% passing in both lanes, no trap or pass
+regression is introduced, current-main reconciliation is complete, and CI is
+green and mergeable.
 
 ## Context / incident
 
