@@ -1,11 +1,10 @@
 {
   "id": "3521",
-  "assignee": "ttraenkler/codex-ir-lead",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
-  "branch": "codex/3521-linked-owner-closure-current",
-  "claimed_at": "2026-08-22T04:30:10Z",
-  "updated_at": "2026-08-27T19:32:28Z",
-  "write_id": "85305-q360io88",
-  "released_at": "2026-08-27T19:32:28Z"
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/3521-r2-v2-validation-plan",
+  "claimed_at": "2026-08-27T19:32:33Z",
+  "updated_at": "2026-08-27T19:32:33Z",
+  "write_id": "85295-ns2t8luv"
 }
