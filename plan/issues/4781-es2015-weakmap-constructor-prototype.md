@@ -130,5 +130,15 @@ the initial CI run establishes green mergeability; mark it ready once those
 checks are green. Keep the final authoritative 11,704-row standalone run as
 the umbrella handoff.
 
+The first upstream quality run exposed a test-harness-only tier mismatch:
+`JS2WASM_EVAL_ENGINE=interpreter` selects the intentional refusal provider,
+while every assembled Test262 row contains the `$262.evalScript` shim and
+therefore needs the runtime-eval import at link time. The compiler fix itself
+and all other 13 focused cases passed. Commit `e49619dac` adds the
+interpreter-tier direct, host-free predicate fallback; the exact assembled
+target remains exercised under the authoritative QuickJS provider. The exact
+changed-root command now passes 14/14 under the interpreter refusal tier, and
+the QuickJS focused suite passes 14/14.
+
 Do not claim the ES2015 edition complete from this one-row result; the
 umbrella's final 11,704/11,704 authoritative run remains required.
