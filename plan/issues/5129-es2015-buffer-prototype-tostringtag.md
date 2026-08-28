@@ -1,0 +1,144 @@
+---
+id: 5129
+title: "ES2015 ArrayBuffer and DataView prototype toStringTag metadata"
+status: in-progress
+sprint: current
+created: 2026-08-28
+updated: 2026-08-28
+priority: high
+horizon: s
+feasibility: easy
+reasoning_effort: max
+task_type: conformance
+area: codegen
+es_edition: ES2015
+language_feature: builtin-prototype-symbol-metadata
+goal: standalone-mode
+assignee: "ttraenkler/codex-5129-es2015-buffer-prototype-tostringtag"
+branch: codex/5129-es2015-buffer-prototype-tostringtag
+files:
+  - src/codegen/array-object-proto.ts
+  - tests/issue-5129-es2015-buffer-prototype-tostringtag.test.ts
+  - plan/issues/5129-es2015-buffer-prototype-tostringtag.md
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+---
+
+# #5129 — ES2015 buffer-family prototype `Symbol.toStringTag` metadata
+
+## Scope and ownership
+
+This markdown issue owns exactly these two official ES2015 host-pass,
+standalone-fail Test262 rows:
+
+- `test/built-ins/ArrayBuffer/prototype/Symbol.toStringTag.js`
+- `test/built-ins/DataView/prototype/Symbol.toStringTag.js`
+
+Issue ID 5129 was atomically reserved with
+`node scripts/claim-issue.mjs --allocate`, then claimed on
+`upstream/issue-assignments` for this branch. This file is the canonical
+tracker; do not create a GitHub issue. Any GitHub issue or pull request with
+the same number is unrelated GitHub namespace state, not this tracker.
+
+The ES2017
+`test/built-ins/SharedArrayBuffer/prototype/Symbol.toStringTag.js` row is a
+closely related sibling control, not part of this issue's ES2015 count. The
+already-landed Map/Set prototype tag rows are current-main controls for the
+shared seeder. TypedArray's accessor-style `@@toStringTag` semantics are
+different and remain outside this static-tag slice.
+
+## Baseline and duplicate audit
+
+The dedicated branch starts from current `upstream/main` at
+`0ec42299f87f935d24c3904fe1cde195335605db`. The authoritative snapshots are:
+
+- standalone: `/private/tmp/js2-baseline-standalone-current-20260828.jsonl`
+  (SHA256 `260a57b7fb4d53516fa81e1c949d81337968e30ce790d457bcc2d3945c2e9e1e`);
+- host: `/private/tmp/js2-baseline-host-current-20260828.jsonl`
+  (SHA256 `a395f2a88d289a8e0fd78ccd76e090215ef3a85f1960aa8fe96f7d3a0445bd49`).
+
+Both owned host rows pass. Both standalone rows reach the test and fail with
+`assertion_fail`: the prototype's `Symbol.toStringTag` value is `undefined`
+instead of `"ArrayBuffer"` or `"DataView"`. Neither row is a compile error,
+timeout, host-import leak, or skip. The maintained file-edition map classifies
+both owned rows as ES2015 and the SharedArrayBuffer sibling as ES2017.
+
+Done issue `plan/issues/2597-standalone-typedarray-tostringtag.md` established
+the broader Object.prototype.toString classifier and named these families, but
+the exact own-property metadata rows remain red. This issue is the bounded
+residual at the already-existing native-prototype metadata seam; it does not
+reopen the broad classifier work or claim TypedArray's dynamic tag getter.
+
+## Root cause
+
+`src/codegen/native-proto.ts` already gives every
+`NativeProtoBuiltinGlue.symbolTag` a canonical own well-known-symbol property
+with value and descriptor `{ writable: false, enumerable: false,
+configurable: true }`. The recently landed Map/Set fix proves that seeder and
+the symbol-key lookup path.
+
+`ensureArrayBufferNativeProtoGlue` and `ensureDataViewNativeProtoGlue` build
+their prototype records through `makeGlueWithGetters`, but neither registration
+supplies its intrinsic name as `symbolTag`. Their method/getter metadata is
+therefore materialized while the shared symbol companion seeder has nothing to
+install, so direct reads and `Object.getOwnPropertyDescriptor` answer
+`undefined`.
+
+## Implementation plan
+
+1. At the existing ArrayBuffer/DataView native-prototype glue registrations,
+   supply the static intrinsic tag through the established `symbolTag` field.
+   Reuse the canonical companion seeder; do not add a property-read fold,
+   Test262 harness exception, duplicate symbol cell, or Object.prototype
+   classifier special case. If the getter-glue factory is extended, keep the
+   new parameter optional and wire only prototypes whose specification defines
+   the same static data-property shape.
+2. Preserve the standard own descriptor exactly: non-writable,
+   non-enumerable, configurable. Verify direct, dynamic/aliased, `in`,
+   `hasOwnProperty`, and `Object.getOwnPropertyDescriptor` reads agree; deletion
+   and configurable redefinition remain observable. Preserve prototype object
+   identity, existing buffer/DataView method and accessor metadata, and the
+   already-green Map/Set seeder behavior.
+3. Add `tests/issue-5129-es2015-buffer-prototype-tostringtag.test.ts` with
+   mandatory host and standalone compiler controls independent of corpus
+   availability plus existence-guarded exact rows. Cover both values and
+   descriptors, dynamic Symbol-key reads, deletion/redefinition, related
+   `Object.prototype.toString` branding, Map/Set current-main controls, the
+   SharedArrayBuffer sibling without broadening ownership, and zero standalone
+   imports. Every wrapper around the 120-second Test262 runner must have an
+   explicit outer timeout of at least 180 seconds and use repository-anchored
+   paths.
+4. Reproduce the exact host/standalone A/B before source edits, then run the
+   focused suite with at most two workers and the pinned QuickJS artifact.
+   Run TypeScript 5/7, lint, Prettier, LOC/function budgets, oracle/coercion
+   ratchets, issue integrity, numeric-local parity, dead-export/stack-balance
+   checks where applicable, and the complete pre-push hook.
+5. Integrate current upstream non-destructively before handoff. All commits
+   must be authored by Thomas Tränkler, use a specific Claude-style subject
+   ending in `✓`, and carry a real newline-separated Codex co-author trailer.
+   Do not force-push, create a GitHub issue, or open a PR from the worker;
+   return the clean exact head and evidence to root for one non-draft upstream
+   PR when mergeable.
+
+## Acceptance
+
+- Both owned ES2015 exact rows pass in host and standalone lanes.
+- ArrayBuffer and DataView prototypes expose their exact intrinsic tag strings
+  as configurable, non-writable, non-enumerable own Symbol properties.
+- Direct, dynamic, aliased, descriptor, deletion, and redefinition controls
+  agree without changing prototype identity or ordinary member metadata.
+- Map/Set tag metadata remains green; the SharedArrayBuffer sibling is measured
+  and must not regress.
+- Focused standalone modules emit zero host imports.
+- Focused/exact tests, TypeScript 5/7, lint, format, budgets, ratchets, issue
+  integrity, numeric-local parity, and the full pre-push hook pass.
+- This markdown issue records final evidence, synchronized head, and the single
+  upstream PR URL; no GitHub issue is created.
+
+## Handoff
+
+Work only in
+`/private/tmp/js2-es2015-buffer-prototype-tostringtag-20260828` on branch
+`codex/5129-es2015-buffer-prototype-tostringtag`. Push checkpoints to the fork
+without force only when root requests publication. Root owns the final review,
+issue done/PR metadata, upstream PR creation, CI shepherding, and enqueue.
