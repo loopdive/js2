@@ -47,7 +47,7 @@ import {
   isGlobalFunctionIdentifier,
   tryStaticNewFunction,
 } from "./eval-inline.js";
-import { emitThrowTypeError, noJsHost } from "./helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
@@ -328,6 +328,27 @@ function emitExpandedProxyArguments(
     iterator: iteratorLocal,
     done: doneLocal,
   };
+}
+
+/**
+ * Whether an Error message can carry a native Symbol at runtime. Keep the
+ * strict dynamic carrier arm out of statically ordinary string/number/object
+ * messages so those existing constructor bodies remain byte-identical; an
+ * oracle `symbol`, `any`, `unknown`, `unresolvable`, or union containing one
+ * is the bounded set whose value may be a Symbol.
+ */
+function errorMessageMayCarrySymbol(ctx: CodegenContext, arg: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(arg);
+  if (fact.kind === "symbol" || fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable") {
+    return true;
+  }
+  return (
+    fact.kind === "union" &&
+    fact.parts.some(
+      (part) =>
+        part.kind === "symbol" || part.kind === "any" || part.kind === "unknown" || part.kind === "unresolvable",
+    )
+  );
 }
 
 /**
@@ -723,8 +744,39 @@ export function tryCompileBuiltinGlobalNew(
       (ctorName === "Test262Error" && !test262StandaloneUserFn)
     ) {
       const args = expr.arguments ?? [];
+      // §7.1.17 step 3 — Error construction performs a strict ToString on a
+      // supplied message. Native Symbols are represented as branded i32 ids,
+      // so compiling one directly as externref would otherwise box it and let
+      // the permissive general-purpose __any_to_string fallback continue.
+      // Evaluate the argument (including side effects) before the catchable
+      // TypeError, then stop this constructor path. Host mode keeps its real JS
+      // constructor and therefore its existing coercion semantics.
+      if (
+        ctx.targetProfile.semanticProviders === "native-first" &&
+        args.length >= 1 &&
+        !isStaticUndefinedExpr(args[0]!, fctx) &&
+        ctx.oracle.staticJsTypeOf(args[0]!) === "symbol"
+      ) {
+        // ArgumentListEvaluation completes before the constructor's message
+        // ToString step. In particular, `new Error(Symbol(), later())` must
+        // run `later()` (and let an abrupt completion from it win) before the
+        // TypeError for the first argument. The shared single-operand helper
+        // intentionally throws immediately, so this whole-argument form is
+        // kept local to Error constructors.
+        for (const arg of args) {
+          const argType = compileExpression(ctx, fctx, arg);
+          if (argType !== null) fctx.body.push({ op: "drop" });
+        }
+        emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a string");
+        return { kind: "externref" };
+      }
+      // ArgumentListEvaluation completes before the constructor's message
+      // ToString step. Keep the first value in a local while evaluating every
+      // later argument in source order; otherwise a dynamic first message
+      // (for example `const m: any = Symbol(); new Error(m, later())`) would
+      // coerce/throw before `later()` ran, or skip `later()` entirely.
+      const msgTmp = allocTempLocal(fctx, { kind: "externref" });
       if (args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
-        // Compile the message argument to externref
         const resultType = compileExpression(ctx, fctx, args[0]!, {
           kind: "externref",
         });
@@ -734,6 +786,11 @@ export function tryCompileBuiltinGlobalNew(
       } else {
         // No message — push null externref (undefined message)
         fctx.body.push({ op: "ref.null.extern" });
+      }
+      fctx.body.push({ op: "local.set", index: msgTmp });
+      for (let i = 1; i < args.length; i++) {
+        const argType = compileExpression(ctx, fctx, args[i]!);
+        if (argType !== null) fctx.body.push({ op: "drop" });
       }
       // (#2969) §20.5.1.1 step 3 — `msg = ToString(message)` at CONSTRUCTION
       // time. In standalone/WASI the native `__new_<Name>` ctor stores its arg
@@ -760,26 +817,57 @@ export function tryCompileBuiltinGlobalNew(
         if (ctx.funcMap.get("number_toString") === undefined) {
           emitNativeNumberFormat(ctx, new Set(["number_toString"]));
         }
+        // The Error constructor body can be minted before the caller that
+        // supplies an `any`-typed Symbol. Register the native carrier before
+        // baking the dynamic ref.test, so that callee-before-caller compilation
+        // cannot leave the strict ToString arm absent.
+        const symbolTypeIdx =
+          ctx.targetProfile.semanticProviders === "native-first" && errorMessageMayCarrySymbol(ctx, args[0]!)
+            ? ensureSymbolCarrier(ctx)
+            : -1;
         const anyToStrIdx = ensureAnyToStringHelper(ctx);
         if (anyToStrIdx >= 0) {
-          const msgTmp = allocTempLocal(fctx, { kind: "externref" });
-          fctx.body.push({ op: "local.set", index: msgTmp }, ...emitNullOrUndefinedMessageTest(ctx, msgTmp), {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            // undefined / null argument → keep null (renders name alone).
-            then: [{ op: "ref.null.extern" }],
-            // ToString(message): externref → anyref → __any_to_string
-            // (ref $AnyString) → externref for the ctor's $message field.
-            else: [
-              { op: "local.get", index: msgTmp },
-              { op: "any.convert_extern" },
-              { op: "call", funcIdx: anyToStrIdx },
-              { op: "extern.convert_any" },
-            ],
-          });
-          releaseTempLocal(fctx, msgTmp);
+          fctx.body.push(
+            ...emitNullOrUndefinedMessageTest(ctx, msgTmp),
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              // undefined / null argument → keep null (renders name alone).
+              then: [{ op: "ref.null.extern" }],
+              // ToString(message): externref → anyref → __any_to_string
+              // (ref $AnyString) → externref for the ctor's $message field.
+              else: [
+                // Dynamic `any` expressions can still carry a native Symbol
+                // after the static guard above has declined. Check the branded
+                // carrier immediately before the strict ToString call; the
+                // throwing branch is stack-polymorphic and preserves all prior
+                // argument evaluation.
+                ...(symbolTypeIdx >= 0
+                  ? [
+                      { op: "local.get", index: msgTmp } as const,
+                      { op: "any.convert_extern" } as const,
+                      { op: "ref.test", typeIdx: symbolTypeIdx } as const,
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+                          forceInModuleCtor: true,
+                        }),
+                      } as const,
+                    ]
+                  : []),
+                { op: "local.get", index: msgTmp },
+                { op: "any.convert_extern" },
+                { op: "call", funcIdx: anyToStrIdx },
+                { op: "extern.convert_any" },
+              ],
+            },
+            { op: "local.set", index: msgTmp },
+          );
         }
       }
+      fctx.body.push({ op: "local.get", index: msgTmp });
+      releaseTempLocal(fctx, msgTmp);
       // (#1104 Phase 1) In WASI/standalone mode, the JS host is unavailable —
       // use a Wasm-native `__new_<Name>` function that builds a `$Error_struct`
       // instead of a `env.__new_<Name>` host import that would leave the

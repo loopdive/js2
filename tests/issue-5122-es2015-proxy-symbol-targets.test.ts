@@ -136,6 +136,13 @@ export function test(): number {
   // dynamic helper also exercises the callee-before-caller index-shift seam.
   if (expectSpreadValid([{}, {}]) !== 1) return 5;
   if (expectSpreadValid([{}, {}, {}, {}]) !== 1) return 6;
+  if (expectSpreadTypeError([]) !== 1) return 34;
+  try {
+    const nestedSpread = new Proxy(...[...[{}, {}]]);
+    if (nestedSpread === null) return 35;
+  } catch (_error) {
+    return 36;
+  }
   if (proxyCalleeBeforeSpreadCaller([{}, {}]) !== 1) return 7;
   if (expectSpreadTypeError([Symbol(), {}]) !== 1) return 8;
   if (expectSpreadTypeError([{}, Symbol()]) !== 1) return 9;

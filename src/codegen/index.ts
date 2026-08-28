@@ -312,6 +312,7 @@ import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
+import { fillObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   collectGlobalObjectPropertyNames,
@@ -5796,6 +5797,12 @@ export function generateModule(
     // method-dispatch site reserved the bridge (`ctx.applyClosureReserved`).
     fillApplyClosure(ctx);
 
+    // (#3481 step 3) Fill the reserved `@@toPrimitive`-FIELD dispatch drivers
+    // now that the closure base-wrapper set and `__call_fn_method_N` /
+    // `__closure_arity` are final. No-op when no `ref → f64` coercion reserved
+    // them (`ctx.objLitToPrimitiveReserved`).
+    fillObjLitToPrimitive(ctx);
+
     // (#2660 M3) FIRST — `fillClosurePropHelpers` reads the same edge table.
     fillClosurePrototypeEdge(ctx);
 
@@ -9880,6 +9887,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Fill apply only after every multi-source arity dispatcher exists.
     fillApplyClosure(ctx);
+
+    // (#3481 step 3) Same fill on the multi-source path — see the primary path.
+    fillObjLitToPrimitive(ctx);
 
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);
