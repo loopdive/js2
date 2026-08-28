@@ -390,13 +390,16 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  * (#4008) Standalone BUILTIN-INSTANCE carriers for the same identity-keyed
  * side table.
  *
- * `new RegExp()` / `new Date()` are lowered to dedicated WasmGC structs
- * (`__StandaloneRegExp`, `__Date`), not `$Object`s — so, exactly like a
- * closure before #3468, `d.foo = 1` fell off the end of `__extern_set`'s
- * `ref.test $Object` gate and `d.foo` read back `undefined`. Measured
+ * `new RegExp()` / `new Date()` and standalone native Promises are lowered to
+ * dedicated WasmGC structs (`__StandaloneRegExp`, `__Date`, `$Promise`), not
+ * `$Object`s — so, exactly like a closure before #3468, `d.foo = 1` fell off
+ * the end of `__extern_set`'s `ref.test $Object` gate and `d.foo` read back
+ * `undefined`. Measured
  * 2026-08-06 under `--target standalone`: expando write-then-read works on a
  * plain object, array, function, Arguments object and every primitive
- * wrapper, and is silently dropped on exactly RegExp and Date.
+ * wrapper, and was silently dropped on RegExp and Date. The native `$Promise`
+ * carrier had the same representation gap: Deno's private promise-id Symbol
+ * and ordinary string expandos were both discarded.
  *
  * That is a general expando gap, but the reason it is being closed HERE is
  * ES §6.2.5.6: test262 spells "an arbitrary object used as a property
@@ -419,7 +422,8 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  *     that the externref-backed-subclass own-field path writes directly, so
  *     bagging it would give one receiver two disagreeing stores.
  * Types absent from the module are skipped, so a program that never
- * constructs a Date emits the identical `ref.test` chain as before.
+ * constructs one of these builtins emits the identical `ref.test` chain as
+ * before.
  */
 function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const out: number[] = [];

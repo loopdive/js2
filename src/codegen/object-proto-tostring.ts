@@ -84,9 +84,12 @@ import { flushLateImportShifts } from "./shared.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { resolveArrayInfo } from "./array-methods.js";
 import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
-import { TYPED_ARRAY_NAMES, resolveWasmType } from "./index.js";
+import { TYPED_ARRAY_NAMES, getOrRegisterVecType, resolveWasmType } from "./index.js";
 import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
 import { ensureDateStruct } from "./expressions/builtins.js";
+import { getOrRegisterDvWindowType } from "./dataview-native.js";
+import { addFuncType, getOrRegisterTaDynViewType, getOrRegisterTaViewType, TA_CTOR_KINDS } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
 /** §20.1.3.6 result string for a builtin tag. */
 const tagString = (tag: string): string => `[object ${tag}]`;
@@ -247,6 +250,15 @@ export function emitObjectProtoToStringClassifier(
   // below is post-shift-correct (the established `emitArrayProtoMemberBody`
   // discipline — see array-object-proto.ts).
   ensureObjectRuntime(ctx);
+  // Reserve one canonical witness for every native buffer/view carrier the
+  // runtime classifier must recognize. Static per-kind `$__ta_view` structs
+  // canonicalize to the same RTT shape; their appended `kind` field carries the
+  // exact constructor name. Registering these before the classifier body is
+  // baked also covers views constructed by functions compiled later.
+  const arrayBufferTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
+  const dataViewTypeIdx = getOrRegisterDvWindowType(ctx);
+  const taViewTypeIdx = getOrRegisterTaViewType(ctx, "Uint8Array");
+  const taDynViewTypeIdx = ctx.moduleUsesDynTaView ? getOrRegisterTaDynViewType(ctx) : -1;
   flushLateImportShifts(ctx, fctx);
 
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
@@ -298,17 +310,72 @@ export function emitObjectProtoToStringClassifier(
     );
   }
 
-  // ── step 4: Array exotic. ONE `ref.test` over the #2186 shared supertype
-  // matches every `__vec_<elemKind>`, so element type is irrelevant. Must
-  // precede the `$Object` arm; a vec is not a `$Object`, but keeping Array
-  // first also documents the spec's own ordering.
-  if (vecBaseTypeIdx >= 0) {
-    const anyLocal = allocLocal(fctx, `__opts_any_${fctx.locals.length}`, { kind: "anyref" });
+  // Recover one anyref once for all WasmGC-native exotic classifiers below.
+  const nativeAnyLocal = allocLocal(fctx, `__opts_native_${fctx.locals.length}`, { kind: "anyref" });
+  fctx.body.push(
+    { op: "local.get", index: receiverIndex },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: nativeAnyLocal },
+  );
+
+  // ── Native ArrayBuffer/DataView/TypedArray brands ─────────────────────────
+  // These MUST precede the generic `$__vec_base` Array arm: ArrayBuffer and
+  // TypedArray carriers are vec-base subtypes too, but §20.1.3.6 names their
+  // exact exotic brand rather than "Array".
+  fctx.body.push(
+    { op: "local.get", index: nativeAnyLocal },
+    { op: "ref.test", typeIdx: dataViewTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: returnTag("DataView") },
+  );
+
+  const typedArrayKindArms = (typeIdx: number, kindFieldIdx: number): Instr[] => {
+    const arms: Instr[] = [];
+    for (let kind = 0; kind < TA_CTOR_KINDS.length; kind++) {
+      arms.push(
+        { op: "local.get", index: nativeAnyLocal },
+        { op: "ref.cast", typeIdx },
+        { op: "struct.get", typeIdx, fieldIdx: kindFieldIdx },
+        { op: "i32.const", value: kind },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: returnTag(TA_CTOR_KINDS[kind]!) },
+      );
+    }
+    return arms;
+  };
+
+  fctx.body.push(
+    { op: "local.get", index: nativeAnyLocal },
+    { op: "ref.test", typeIdx: taViewTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: typedArrayKindArms(taViewTypeIdx, 3),
+    },
+  );
+  if (taDynViewTypeIdx >= 0) {
     fctx.body.push(
-      { op: "local.get", index: receiverIndex },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: anyLocal },
-      { op: "local.get", index: anyLocal },
+      { op: "local.get", index: nativeAnyLocal },
+      { op: "ref.test", typeIdx: taDynViewTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typedArrayKindArms(taDynViewTypeIdx, 3),
+      },
+    );
+  }
+
+  fctx.body.push(
+    { op: "local.get", index: nativeAnyLocal },
+    { op: "ref.test", typeIdx: arrayBufferTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: returnTag("ArrayBuffer") },
+  );
+
+  // ── step 4: Array exotic. ONE `ref.test` over the #2186 shared supertype
+  // matches every ordinary `__vec_<elemKind>` after the more-specific native
+  // view arms above.
+  if (vecBaseTypeIdx >= 0) {
+    fctx.body.push(
+      { op: "local.get", index: nativeAnyLocal },
       { op: "ref.test", typeIdx: vecBaseTypeIdx },
       {
         op: "if",
@@ -523,6 +590,52 @@ export function emitObjectProtoToStringClassifier(
   }
 
   return emittedAnyArm;
+}
+
+/**
+ * Mint the direct `(externref) -> externref` runtime classifier used when
+ * `Object.prototype.toString.call(value)` receives an `any`-typed value whose
+ * brand cannot be proven statically. The reflective closure ABI carries an
+ * extra `self` parameter, so the shared classifier reads local 1; this helper
+ * mirrors that layout with an unused local-0 parameter and lets direct calls
+ * avoid a generic Function#call round-trip that erases native GC carrier RTT.
+ */
+export function ensureObjectProtoToStringRuntimeHelper(ctx: CodegenContext): number | undefined {
+  const name = "__object_proto_to_string_runtime";
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+
+  const externref: ValType = { kind: "externref" };
+  const helper: FunctionContext = {
+    name,
+    params: [
+      { name: "unusedSelf", type: externref },
+      { name: "value", type: externref },
+    ],
+    locals: [],
+    localMap: new Map(),
+    returnType: externref,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  if (!emitObjectProtoToStringClassifier(ctx, helper)) return undefined;
+  emitThrowTypeError(ctx, helper, "Object.prototype.toString is not yet implemented in --target standalone");
+  const typeIdx = addFuncType(ctx, [externref, externref], [externref]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(name, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx,
+    locals: helper.locals,
+    body: helper.body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 /**
@@ -830,6 +943,13 @@ export function resolveObjectToStringTag(
   // null / undefined via the type system (e.g. a `null`-typed binding).
   if ((t.flags & ts.TypeFlags.Null) !== 0) return "Null";
   if ((t.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0) return "Undefined";
+
+  // `any` and `unknown` carry no reliable internal-slot information. Folding
+  // them to the standalone fallback `[object Object]` makes a generic helper
+  // permanently ignore its runtime argument (and mis-tags native
+  // ArrayBuffer/DataView/TypedArray carriers). Let the caller select the
+  // WasmGC runtime classifier instead.
+  if ((nn.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return undefined;
 
   const symName = nn.getSymbol()?.name;
 

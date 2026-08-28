@@ -14,10 +14,10 @@
 // imports — un-flagging `.finally`-using modules for the #2903 then-bridge
 // de-leak (the `.finally` syntactic producer flag is retired).
 //
-// Producer modules (host-promise sources: subclass-of-Promise, dynamic
-// import(), fromAsync, …) keep the EXACT legacy host route including the
-// async-call fulfilled-wrap (`standaloneNativeFinallyNodes` marker keeps the
-// wrap decision in lockstep with the lowering). gc/host lane is untouched.
+// Genuine host-promise producers (dynamic import(), fromAsync, …) keep the
+// legacy host route. A statically-known Promise subclass on the standalone
+// lane now carries a native `$Promise`, so its receiver is handled here too.
+// gc/host lane is untouched.
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -148,22 +148,23 @@ export function test(): number {
   });
 });
 
-describe("#2903 — producer modules keep the legacy host .finally route", () => {
-  it("class X extends Promise flags the module: .finally stays host-routed", async () => {
+describe("#2903 — native Promise-subclass receivers", () => {
+  it("class X extends Promise keeps .finally/.then host-free and settles", async () => {
     const result = await compileStandalone(
       DRAIN +
         `
 class FooPromise extends Promise<any> {}
 let code = 0;
 export function test(): number {
-  FooPromise.resolve().finally(() => { code += 1; });
+  FooPromise.resolve(40)
+    .finally(() => { code += 1; })
+    .then((value: number) => { code += value; });
   __drain_microtasks();
-  return 1;
+  return code;
 }`,
     );
-    // The subclass statics mint HOST promises — the module keeps the host
-    // finally route (and its imports), exactly the pre-native behaviour.
-    expect(importNames(result)).toContain("Promise_finally");
+    expect(importNames(result)).not.toContain("Promise_finally");
+    expect(await runHostFree(result)).toBe(41);
   });
 });
 

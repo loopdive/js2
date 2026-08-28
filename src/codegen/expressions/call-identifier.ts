@@ -2678,13 +2678,19 @@ export function compileIdentifierCall(
       const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
       const isRuntimeEvalGlobal =
         (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+      const isLinkedRealmGlobal = ctx.standaloneGlobalThisImport !== undefined && declaration === undefined;
       // (#3966) A callee whose only binding is a realm-global property the
       // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
       // see implicit-global-binding.ts for why the two arms below got it wrong.
       const implicitCallee = isSloppyImplicitGlobalBinding(ctx, fctx, funcName);
       const dyn = calleeComesFromElementRead
         ? null
-        : tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
+        : tryEmitInlineDynamicCall(
+            ctx,
+            fctx,
+            expr,
+            isKnownVariable || isRuntimeEvalGlobal || isLinkedRealmGlobal || implicitCallee,
+          );
       if (dyn !== null) return dyn;
 
       // (#4527) Reference-preserving dynamic-call bridge. A call on a KNOWN

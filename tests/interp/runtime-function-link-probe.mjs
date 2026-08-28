@@ -5,7 +5,7 @@
 // isolates the interpreter/compiler ABI and proves that the user module can
 // construct and invoke the returned callable through a core-Wasm import.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { compile } from "../../src/index.ts";
@@ -20,6 +20,8 @@ const INTERP_FILES = [
   "loop.ts",
   "dynamic-function.ts",
 ];
+
+const EMITTER_ONLY_FILES = ["types.ts", "opcodes.ts", "encoder.ts", "eval-environment.ts", "emitter.ts"];
 
 function stripModuleSyntax(source) {
   return source
@@ -48,6 +50,34 @@ function providerSource() {
         const statement: any = {};
         statement.type = "ExpressionStatement";
         statement.expression = binary;
+        const ast: any = {};
+        ast.type = "Program";
+        ast.sourceType = "script";
+        ast.body = [statement];
+        return ast;
+      }
+
+      function makeSharedPrimitiveObjectAst(bindingName: string): any {
+        const key: any = {};
+        key.type = "Identifier";
+        key.name = "g";
+        const value: any = {};
+        value.type = "Identifier";
+        value.name = bindingName;
+        const property: any = {};
+        property.type = "Property";
+        property.key = key;
+        property.value = value;
+        property.kind = "init";
+        property.method = false;
+        property.shorthand = false;
+        property.computed = false;
+        const object: any = {};
+        object.type = "ObjectExpression";
+        object.properties = [property];
+        const statement: any = {};
+        statement.type = "ExpressionStatement";
+        statement.expression = object;
         const ast: any = {};
         ast.type = "Program";
         ast.sourceType = "script";
@@ -102,6 +132,66 @@ function providerSource() {
         ast.type = "Program";
         ast.sourceType = "script";
         ast.body = [statement];
+        return ast;
+      }
+
+      function makeReverseThrowEvalAst(): any {
+        const callee: any = {};
+        callee.type = "Identifier";
+        callee.name = "aotThrow";
+        const argument: any = {};
+        argument.type = "Identifier";
+        argument.name = "thrownValue";
+        const call: any = {};
+        call.type = "CallExpression";
+        call.callee = callee;
+        call.arguments = [argument];
+        call.optional = false;
+        const callStatement: any = {};
+        callStatement.type = "ExpressionStatement";
+        callStatement.expression = call;
+        const falseLiteral: any = {};
+        falseLiteral.type = "Literal";
+        falseLiteral.value = false;
+        const falseStatement: any = {};
+        falseStatement.type = "ExpressionStatement";
+        falseStatement.expression = falseLiteral;
+        const tryBlock: any = {};
+        tryBlock.type = "BlockStatement";
+        tryBlock.body = [callStatement, falseStatement];
+        const catchParam: any = {};
+        catchParam.type = "Identifier";
+        catchParam.name = "error";
+        const caught: any = {};
+        caught.type = "Identifier";
+        caught.name = "error";
+        const expected: any = {};
+        expected.type = "Identifier";
+        expected.name = "thrownValue";
+        const same: any = {};
+        same.type = "BinaryExpression";
+        same.operator = "===";
+        same.left = caught;
+        same.right = expected;
+        const catchStatement: any = {};
+        catchStatement.type = "ExpressionStatement";
+        catchStatement.expression = same;
+        const catchBody: any = {};
+        catchBody.type = "BlockStatement";
+        catchBody.body = [catchStatement];
+        const handler: any = {};
+        handler.type = "CatchClause";
+        handler.param = catchParam;
+        handler.body = catchBody;
+        const tryStatement: any = {};
+        tryStatement.type = "TryStatement";
+        tryStatement.block = tryBlock;
+        tryStatement.handler = handler;
+        tryStatement.finalizer = null;
+        const ast: any = {};
+        ast.type = "Program";
+        ast.sourceType = "script";
+        ast.body = [tryStatement];
         return ast;
       }
 
@@ -321,6 +411,18 @@ function providerSource() {
         if (source === "aotIdentity(globalValue)") {
           return makeReverseIdentityEvalAst();
         }
+        if (
+          source ===
+            "try { aotThrow(thrownValue); false; } catch (error) { error === thrownValue; }"
+        ) {
+          return makeReverseThrowEvalAst();
+        }
+        if (source === "({g:sharedUndefined})") {
+          return makeSharedPrimitiveObjectAst("sharedUndefined");
+        }
+        if (source === "({g:sharedNull})") {
+          return makeSharedPrimitiveObjectAst("sharedNull");
+        }
         throw new SyntaxError("unexpected runtime source");
       }
 
@@ -514,6 +616,111 @@ function providerSource() {
         );
         return (result as number) * 100 + (outerCell.value as number);
       }
+
+      function classifySharedPrimitive(source: string, globalObject: any): number {
+        const object: any = executeIndirectEval(parse, source, globalObject);
+        exposeRuntimeEvalObject(globalObject);
+        const value: any = object.g;
+        if (value === null) return 2;
+        if (typeof value === "undefined") return 1;
+        return 3;
+      }
+
+      export function providerSharedPrimitiveCanary(globalObject: any): number {
+        return classifySharedPrimitive("({g:sharedUndefined})", globalObject) * 10 +
+          classifySharedPrimitive("({g:sharedNull})", globalObject);
+      }
+    `,
+  ].join("\n");
+}
+
+function emitterOnlyProviderSource() {
+  const interpreter = EMITTER_ONLY_FILES.map((name) =>
+    stripModuleSyntax(readFileSync(resolve("src/interp", name), "utf8")),
+  );
+  return [
+    ...interpreter,
+    `
+      function makeAstNode(type: string): any {
+        const node: any = {};
+        node.type = type;
+        return node;
+      }
+
+      function makeAstIdentifier(name: string): any {
+        const node: any = makeAstNode("Identifier");
+        node.name = name;
+        return node;
+      }
+
+      function makeAstLiteral(value: any): any {
+        const node: any = makeAstNode("Literal");
+        node.value = value;
+        return node;
+      }
+
+      function makeAstVariable(kind: string, name: string, init: any): any {
+        const declarator: any = makeAstNode("VariableDeclarator");
+        declarator.id = makeAstIdentifier(name);
+        declarator.init = init;
+        const declaration: any = makeAstNode("VariableDeclaration");
+        declaration.kind = kind;
+        declaration.declarations = [declarator];
+        return declaration;
+      }
+
+      function makeAstBinary(left: any, right: any): any {
+        const node: any = makeAstNode("BinaryExpression");
+        node.operator = "+";
+        node.left = left;
+        node.right = right;
+        return node;
+      }
+
+      function makeAstBlock(body: any): any {
+        const node: any = makeAstNode("BlockStatement");
+        node.body = body;
+        return node;
+      }
+
+      function makeForOfLexicalFunctionAst(): any {
+        const assignment: any = makeAstNode("AssignmentExpression");
+        assignment.operator = "=";
+        assignment.left = makeAstIdentifier("total");
+        assignment.right = makeAstBinary(makeAstIdentifier("total"), makeAstIdentifier("key"));
+        const assignmentStatement: any = makeAstNode("ExpressionStatement");
+        assignmentStatement.expression = assignment;
+
+        const loop: any = makeAstNode("ForOfStatement");
+        loop.await = false;
+        loop.left = makeAstVariable("const", "key", null);
+        loop.right = makeAstIdentifier("keysA");
+        loop.body = makeAstBlock([assignmentStatement]);
+
+        const lengthRead: any = makeAstNode("MemberExpression");
+        lengthRead.object = makeAstIdentifier("keysB");
+        lengthRead.property = makeAstIdentifier("length");
+        lengthRead.computed = false;
+        lengthRead.optional = false;
+        const result: any = makeAstNode("ReturnStatement");
+        result.argument = makeAstBinary(makeAstIdentifier("total"), lengthRead);
+
+        const declaration: any = makeAstNode("FunctionDeclaration");
+        declaration.id = makeAstIdentifier("anonymous");
+        declaration.params = [makeAstIdentifier("keysA")];
+        declaration.body = makeAstBlock([
+          makeAstVariable("const", "keysB", makeAstIdentifier("keysA")),
+          makeAstVariable("let", "total", makeAstLiteral(0)),
+          loop,
+          result,
+        ]);
+        return declaration;
+      }
+
+      export function providerForOfLexicalCanary(): number {
+        const meta: any = emitFunction(makeForOfLexicalFunctionAst());
+        return meta.code.length > 0 ? 9 : 0;
+      }
     `,
   ].join("\n");
 }
@@ -613,6 +820,26 @@ const USER_SOURCE = `
     return result === value ? 1 : 2;
   }
 
+  function aotThrow(value: any): never {
+    throw value;
+  }
+
+  export function aotThrowRoundTrip(): number {
+    const value: any = {};
+    globalThis.thrownValue = value;
+    globalThis.aotThrow = aotThrow;
+    const result: any = (0, eval)(dynamic(
+      "try { aotThrow(thrownValue); false; } catch (error) { error === thrownValue; }"
+    ));
+    return result === true ? 1 : 2;
+  }
+
+  export function sharedRealmForProvider(): any {
+    globalThis.sharedUndefined = undefined;
+    globalThis.sharedNull = null;
+    return globalThis;
+  }
+
   export function indirectEval(): number {
     globalThis.answer = 40;
     return (0, eval)(dynamic("answer + 2")) as number;
@@ -698,15 +925,44 @@ function describeDiagnostic(diagnostic) {
 }
 
 async function main() {
-  const runtime = await compile(providerSource(), {
+  const runtimeSource =
+    process.env.JS2WASM_RUNTIME_LINK_EMITTER_ONLY === "1" ? emitterOnlyProviderSource() : providerSource();
+  const runtime = await compile(runtimeSource, {
     // Runtime libraries are an internal subcompile and retain the explicit
     // legacy fallback policy used by the existing eval subcompile.
     experimentalIR: false,
+    emitWat: false,
     fileName: "runtime-eval-provider.ts",
     skipSemanticDiagnostics: true,
     target: "standalone",
   });
+  const runtimeArtifact = process.env.JS2WASM_RUNTIME_LINK_PROVIDER_OUT;
+  if (runtimeArtifact) writeFileSync(runtimeArtifact, runtime.binary);
+
+  if (process.env.JS2WASM_RUNTIME_LINK_PROVIDER_ONLY === "1") {
+    const runtimeModule = new WebAssembly.Module(runtime.binary);
+    const report = {
+      runtimeSuccess: runtime.success,
+      runtimeErrors: runtime.errors.map(describeDiagnostic),
+      runtimeBytes: runtime.binary.length,
+      runtimeImports: WebAssembly.Module.imports(runtimeModule),
+      values: {},
+      executionErrors: {},
+    };
+    if (runtime.success && report.runtimeImports.length === 0) {
+      try {
+        const runtimeInstance = new WebAssembly.Instance(runtimeModule, {});
+        report.values.providerForOfLexical = runtimeInstance.exports.providerForOfLexicalCanary();
+      } catch (error) {
+        report.executionErrors.providerForOfLexical = error?.stack ?? error?.message ?? String(error);
+      }
+    }
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    return;
+  }
+
   const user = await compile(USER_SOURCE, {
+    emitWat: false,
     fileName: "runtime-eval-user.ts",
     inferModuleStrictArguments: false,
     skipSemanticDiagnostics: true,
@@ -742,6 +998,10 @@ async function main() {
         ["provider", runtimeInstance.exports.providerCanary],
         ["providerDirect", runtimeInstance.exports.providerDirectCanary],
         ["providerVar", runtimeInstance.exports.providerVarCanary],
+        [
+          "providerSharedPrimitive",
+          () => runtimeInstance.exports.providerSharedPrimitiveCanary(userInstance.exports.sharedRealmForProvider()),
+        ],
         ["create", userInstance.exports.create],
         ["invokeNew", userInstance.exports.invokeNew],
         ["invokeNewImmediate", userInstance.exports.invokeNewImmediate],
@@ -753,6 +1013,7 @@ async function main() {
         ["sloppyThis", userInstance.exports.sloppyThis],
         ["strictThis", userInstance.exports.strictThis],
         ["aotIdentityRoundTrip", userInstance.exports.aotIdentityRoundTrip],
+        ["aotThrowRoundTrip", userInstance.exports.aotThrowRoundTrip],
         ["indirectEval", userInstance.exports.indirectEval],
         ["indirectEvalLiteralScope", userInstance.exports.indirectEvalLiteralScope],
         ["indirectEvalAlias", userInstance.exports.indirectEvalAlias],

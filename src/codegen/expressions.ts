@@ -79,6 +79,7 @@ import { compileConditionalExpression, compileYieldExpression } from "./expressi
 
 // Closures (used inside compileExpressionInner)
 import { compileArrowFunction } from "./closures.js";
+import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 
 // Property access + binary ops (used inside compileExpressionInner)
 import { brandBooleanBinaryResult, compileBinaryExpression } from "./binary-ops.js";
@@ -491,7 +492,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
   // avoids the missing-import error at module instantiation.
   //
   // Wasm `struct.new` pops fields in declaration order (state | value |
-  // callbacks); the value is already on the stack but state must come
+  // callbacks | $bag); the value is already on the stack but state must come
   // BEFORE it. Stash via a temp local, then emit in the correct order.
   if (isStandalonePromiseActive(ctx)) {
     const valueLocal = allocTempLocal(fctx, { kind: "externref" });
@@ -524,7 +525,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
         { op: "i32.const", value: PROMISE_STATE_FULFILLED },
         { op: "local.get", index: valueLocal },
         { op: "ref.null.extern" },
-        { op: "ref.null.extern" },
+        closureBagInitInstr(),
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "extern.convert_any" },
       ],
@@ -613,7 +614,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "local.get", index: reasonLocal },
       { op: "ref.null.extern" },
-      { op: "ref.null.extern" },
+      closureBagInitInstr(),
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -621,7 +622,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
-      { op: "ref.null.extern" },
+      closureBagInitInstr(),
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];

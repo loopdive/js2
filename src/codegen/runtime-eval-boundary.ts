@@ -4,7 +4,9 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureAnyHelpers } from "./any-helpers.js";
-import { nextModuleGlobalIdx } from "./registry/imports.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { addFuncType } from "./registry/types.js";
 
 export const RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A = 0x2928;
 export const RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B = 0x4556414c;
@@ -13,6 +15,8 @@ export const RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_EVAL = 1;
 export const RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION = 2;
 export const RUNTIME_EVAL_AOT_CALLABLE_BRAND_A = 0x2928;
 export const RUNTIME_EVAL_AOT_CALLABLE_BRAND_B = 0x414f5443;
+export const RUNTIME_EVAL_CALL_RESULT_BRAND_A = 0x2928;
+export const RUNTIME_EVAL_CALL_RESULT_BRAND_B = 0x52534c54;
 
 export const RUNTIME_EVAL_VALUE_KIND_REFERENCE = 0;
 export const RUNTIME_EVAL_VALUE_KIND_UNDEFINED = 1;
@@ -96,6 +100,136 @@ export function ensureRuntimeEvalValueType(ctx: CodegenContext): number {
   });
   ctx.runtimeEvalValueTypeIdx = typeIdx;
   return typeIdx;
+}
+
+/**
+ * Canonical result envelope for the caller-owned AOT trampoline.
+ *
+ * WebAssembly exception tags are nominal instance objects: an exception
+ * thrown with the app module's private tag cannot be caught by JavaScript
+ * compiled into the separately instantiated runtime-eval provider. The app
+ * trampoline therefore catches its own tag and returns this structurally
+ * canonical `(value, ok)` record. The receiving module unwraps it and, on the
+ * error arm, throws the same JavaScript value through its own local tag.
+ *
+ * `value` is itself the existing canonical `$RuntimeEvalValue`: primitive
+ * boxes are module-local implementation details, so both success values and
+ * thrown payloads must cross as scalar data. Two brands prevent an unrelated
+ * user struct with the same leading fields from being mistaken for an
+ * exception envelope. A non-envelope value remains an old-carrier fallback.
+ */
+export function ensureRuntimeEvalCallResultType(ctx: CodegenContext): number {
+  const cached = ctx.runtimeEvalCallResultTypeIdx;
+  if (cached !== undefined) return cached;
+  const typeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$RuntimeEvalCallResult",
+    fields: [
+      { name: "value", type: { kind: "externref" }, mutable: false },
+      { name: "ok", type: { kind: "i32" }, mutable: false },
+      { name: "brandA", type: { kind: "i32" }, mutable: false },
+      { name: "brandB", type: { kind: "i32" }, mutable: false },
+    ],
+    superTypeIdx: -1,
+  });
+  ctx.runtimeEvalCallResultTypeIdx = typeIdx;
+  return typeIdx;
+}
+
+/** Consume an externref value and return its canonical AOT-call envelope. */
+export function buildRuntimeEvalCallResultWrap(
+  ctx: CodegenContext,
+  locals: { name: string; type: ValType }[],
+  paramCount: number,
+  ok: boolean,
+): Instr[] {
+  const typeIdx = ensureRuntimeEvalCallResultType(ctx);
+  return [
+    ...buildRuntimeEvalValueWrap(ctx, locals, paramCount),
+    { op: "i32.const", value: ok ? 1 : 0 },
+    { op: "i32.const", value: RUNTIME_EVAL_CALL_RESULT_BRAND_A },
+    { op: "i32.const", value: RUNTIME_EVAL_CALL_RESULT_BRAND_B },
+    { op: "struct.new", typeIdx },
+    { op: "extern.convert_any" },
+  ];
+}
+
+/**
+ * Return a module-local decoder for the canonical AOT-call envelope. It
+ * reconstructs primitive boxes locally and rethrows failures through this
+ * module's own exception tag. Keeping the scratch locals inside one helper
+ * lets every dynamic call lane share the same boundary contract.
+ */
+export function ensureRuntimeEvalCallResultUnwrapHelper(ctx: CodegenContext): number {
+  const cached = ctx.runtimeEvalCallResultUnwrapFuncIdx;
+  if (cached !== undefined) return cached;
+  const typeIdx = ensureRuntimeEvalCallResultType(ctx);
+  const locals: { name: string; type: ValType }[] = [];
+  const decodeValue = buildRuntimeEvalValueUnwrap(ctx, locals, 1);
+  const decodedValueLocal = 1 + locals.length;
+  locals.push({ name: "decodedValue", type: { kind: "externref" } });
+  const loadField = (fieldIdx: 0 | 1 | 2 | 3): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx },
+    { op: "struct.get", typeIdx, fieldIdx },
+  ];
+  const brandsMatch: Instr[] = [
+    ...loadField(2),
+    { op: "i32.const", value: RUNTIME_EVAL_CALL_RESULT_BRAND_A },
+    { op: "i32.eq" },
+    ...loadField(3),
+    { op: "i32.const", value: RUNTIME_EVAL_CALL_RESULT_BRAND_B },
+    { op: "i32.eq" },
+    { op: "i32.and" },
+  ];
+  const decodeEnvelope: Instr[] = [
+    ...loadField(0),
+    ...decodeValue,
+    { op: "local.set", index: decodedValueLocal },
+    ...loadField(1),
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: decodedValueLocal }],
+      else: [
+        { op: "local.get", index: decodedValueLocal },
+        { op: "throw", tagIdx: ensureExnTag(ctx) },
+      ],
+    },
+  ];
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        ...brandsMatch,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: decodeEnvelope,
+          else: [{ op: "local.get", index: 0 }],
+        },
+      ],
+      else: [{ op: "local.get", index: 0 }],
+    },
+  ];
+  const funcTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__runtime_eval_unwrap_call_result",
+    typeIdx: funcTypeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set("__runtime_eval_unwrap_call_result", funcIdx);
+  ctx.runtimeEvalCallResultUnwrapFuncIdx = funcIdx;
+  return funcIdx;
 }
 
 /** Encode one caller-local value as the canonical cross-module value carrier.

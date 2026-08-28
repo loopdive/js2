@@ -33,7 +33,10 @@ import {
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
-import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+import {
+  observeProgramAbiFunctionValue,
+  sourceFunctionDeclarationForHandle,
+} from "../program-abi-source-callable-planning.js";
 // (#4630) the DECLARATION half of the parked-async `$Promise` value substrate
 import {
   emitEagerAsyncPromiseWrap,
@@ -506,7 +509,11 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // with `this` at param 0 and need it dropped. The legacy method path
     // requires `sig.params.length >= 1` because it slices off `this`.
     if (!t.noThisParam && sig.params.length === 0) continue;
-    const methodUserParams = t.noThisParam ? sig.params : sig.params.slice(1);
+    const methodUserParams = t.explicitThisParam
+      ? sig.params.slice(1)
+      : t.noThisParam
+        ? sig.params
+        : sig.params.slice(1);
     // Only rebuild when the user-param arity is unchanged. The trampoline's
     // OWN func type (its wrapper type) was fixed at registration with
     // `userParamCount` params and is shared/cached, so it cannot change here;
@@ -567,6 +574,14 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     let newBody: Instr[];
     if (t.noThisParam) {
       newBody = [];
+      if (t.explicitThisParam) {
+        newBody.push({ op: "global.get", index: ensureCurrentThisGlobal(ctx) });
+        const thisParam = sig.params[0]!;
+        if (thisParam.kind !== "externref") {
+          tFctx.body = newBody;
+          newBody.push(...coercionInstrs(ctx, { kind: "externref" }, thisParam, tFctx));
+        }
+      }
     } else {
       const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
       // (#2025) Reuse the registration-time `methodUsesThis` (captured before
@@ -965,6 +980,12 @@ export interface FuncClosureSingleton {
   readonly metaInit?: Instr[];
 }
 
+function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration is ts.FunctionDeclaration {
+  if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
+  const first = declaration.parameters[0];
+  return first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
+}
+
 /**
  * Ensure the declarations behind a cached top-level function value exist,
  * without emitting an access into a legacy FunctionContext.
@@ -984,17 +1005,21 @@ export function ensureFuncClosureSingleton(
   const sig = getFuncSignature(ctx, funcIdx);
   if (!sig) return null;
 
-  const userParams = sig.params;
+  const ownerDeclaration =
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+    ctx.funcMapOwnerDecl.get(funcName) ??
+    ctx.topLevelFunctionDeclarations.get(funcName);
+  const explicitThisParam = hasExplicitThisParameter(ownerDeclaration);
+  // The direct FunctionDeclaration ABI deliberately retains TS's pseudo-this
+  // slot (#2069), while a JavaScript function value exposes only real formals.
+  // Adapt between those ABIs in the wrapper instead of changing direct calls.
+  const userParams = explicitThisParam ? sig.params.slice(1) : sig.params;
   // (#4630) A parked async function DECLARATION used as a VALUE must hand the
   // dynamic dispatcher a `$Promise`, not the `undefined` a void wasm result
   // substitutes. Promote the WRAPPER's result only — the declaration's own
   // signature (and therefore every direct call site's `wasmFuncReturnsVoid`
   // answer) is left untouched. See `parkedAsyncDeclarationWrapsPromise`.
-  const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(
-    ctx,
-    ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
-    sig.results,
-  );
+  const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(ctx, ownerDeclaration, sig.results);
   const results: ValType[] = eagerAsyncPromiseWrap ? [{ kind: "externref" }] : sig.results;
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
@@ -1082,6 +1107,12 @@ export function ensureFuncClosureSingleton(
     }
   } else {
     const trampolineBody: Instr[] = [];
+    if (explicitThisParam) {
+      // `__call_fn_method_N` installed the dynamic receiver in this module's
+      // receiver frame before entering the lifted funcref.
+      trampolineBody.push({ op: "global.get", index: ensureCurrentThisGlobal(ctx) });
+      trampolineBody.push(...coercionInstrs(ctx, { kind: "externref" }, sig.params[0]!));
+    }
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
@@ -1116,6 +1147,7 @@ export function ensureFuncClosureSingleton(
       wrapperUserParams: userParams,
       wrapperResult: results[0],
       noThisParam: true,
+      ...(explicitThisParam ? { explicitThisParam: true } : {}),
       methodTargetsImport: funcIdx < ctx.numImportFuncs,
       ...(eagerAsyncPromiseWrap ? { eagerAsyncPromiseWrap: true } : {}),
     });
@@ -1140,10 +1172,7 @@ export function ensureFuncClosureSingleton(
   // DECLARATION — the receiver every `verifyProperty(f, "name", …)` sees. It is
   // built exactly once into the cache global, so the metadata operand costs one
   // push per module, not per reference.
-  const metaSlot = fnMetaSlot(
-    ctx,
-    ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
-  );
+  const metaSlot = fnMetaSlot(ctx, ownerDeclaration);
   // (#4616) A rest-param function's shared signature wrapper carries NO
   // rest-ness: `function spy(...args)` and `function g(xs: any[])` lift to the
   // same `(self, vec) → res` funcref, so the dynamic dispatchers positionally

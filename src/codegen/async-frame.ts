@@ -77,6 +77,7 @@ import {
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 import {
   ERROR_FIELD,
   MODE_FIELD,
@@ -369,6 +370,17 @@ export interface AsyncFrameInfo {
    * asynchronous turn without widening the transitional direct-native path.
    */
   alwaysAsyncAwait?: boolean;
+  /**
+   * Compiler-only instructions that run at the first entry to state 0.
+   *
+   * Module evaluation uses this hook for declaration-instantiation work that
+   * must be covered by the async frame's throw-to-rejection boundary. It is
+   * deliberately an emitter callback rather than stored Wasm instructions so
+   * any locals/helpers it needs are allocated in the resume function itself.
+   */
+  entryPrelude?: (fctx: FunctionContext) => void;
+  /** Compile resumed statements with module-initializer binding semantics. */
+  moduleInit?: boolean;
   /** Host backend import indices (present iff `host`). */
   hostImports?: HostAsyncImports;
   /** Host backend: `__cb_<id>` callback id of the fulfill step adapter. */
@@ -463,6 +475,7 @@ export function buildAsyncFrameInfo(
   hostImports?: HostAsyncImports,
   derivedParams?: DerivedParamCapture[],
   activatingFctx?: FunctionContext,
+  moduleInit = false,
 ): AsyncFrameInfo {
   const functionName = asyncFnName(decl);
 
@@ -507,6 +520,17 @@ export function buildAsyncFrameInfo(
     // computation must see the SAME plan the gate/producer admitted.
     hostImports === undefined,
   );
+  if (moduleInit) {
+    // Top-level bindings already live in mutable module globals. Giving them a
+    // second frame-local spill shadows the canonical binding during resumed
+    // evaluation and leaves exported readers in TDZ. Keep only true block
+    // locals in the frame; module globals survive suspension by construction.
+    for (let index = spillNames.length - 1; index >= 0; index--) {
+      if (!ctx.moduleGlobals.has(spillNames[index]!)) continue;
+      spillNames.splice(index, 1);
+      spillTypes.splice(index, 1);
+    }
+  }
   const derivedSpillInit = new Map<number, number>();
   for (const d of derived) {
     derivedSpillInit.set(spillNames.length, d.entryLocalIdx);
@@ -1740,7 +1764,7 @@ export function ensureAsyncResumeFunction(
 
   // ── Build the resume function body. ──
   const resumeFctx: FunctionContext = {
-    name: resumeName,
+    name: info.moduleInit ? "__module_init" : resumeName,
     params: [{ name: "__frame", type: frameRef }],
     locals: [],
     localMap: new Map([["__frame", 0]]),
@@ -2039,6 +2063,7 @@ export function ensureAsyncResumeFunction(
       let curHandler = 0;
       if (hasHandlers) out.push(...setHandler(0));
       out.push(...restoreSpills(info, resumeFctx, frameLocal, st.restoreSpillNames ?? []));
+      if (st.id === 0) info.entryPrelude?.(resumeFctx);
       if (st.resumeFrom) emitDeliver(out, st.resumeFrom);
       if (awaitTarget !== undefined && delivered !== undefined) {
         (resumeFctx.asyncAwaitValueLocals ??= new Map()).set(awaitTarget, delivered.local);
@@ -2721,6 +2746,14 @@ export function emitAsyncFrameStateMachine(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   host = false,
+  options?: {
+    /** Force every await, including an already-settled Promise, through one microtask turn. */
+    alwaysAsyncAwait?: boolean;
+    /** Compiler-only state-0 prelude; see {@link AsyncFrameInfo.entryPrelude}. */
+    entryPrelude?: (fctx: FunctionContext) => void;
+    /** Preserve module-global/TDZ routing while compiling resumed statements. */
+    moduleInit?: boolean;
+  },
 ): void {
   // Host settle backend (#1042): no native scheduler, no `$Promise` struct —
   // the result promise is a host pending Promise (`Promise_new_pending`) and
@@ -2758,6 +2791,7 @@ export function emitAsyncFrameStateMachine(
     hostImports,
     derivedParams,
     fctx,
+    options?.moduleInit === true,
   );
   // (#2865) A CLOSURE consumer (arrow / fn-expr, #2957 phase 2) may capture
   // outer locals as ref cells (leading params of the lifted fn). The cells ride
@@ -2766,6 +2800,9 @@ export function emitAsyncFrameStateMachine(
   info.boxedCaptures = fctx.boxedCaptures;
   info.readsCurrentThis = fctx.readsCurrentThis;
   info.selfCaptureLayout = fctx.selfCaptureLayout;
+  info.alwaysAsyncAwait = options?.alwaysAsyncAwait;
+  info.entryPrelude = options?.entryPrelude;
+  info.moduleInit = options?.moduleInit;
   emitAsyncFrameEntry(ctx, fctx, info, plan);
 }
 
@@ -2799,7 +2836,7 @@ function emitAsyncFrameEntry(
     fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "ref.null.extern" });
-    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(closureBagInitInstr());
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
   fctx.body.push({ op: "local.set", index: resultPromiseLocal });
@@ -3299,7 +3336,7 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 
@@ -3341,7 +3378,7 @@ function emitAsyncGenNextHelper(ctx: CodegenContext, info: AsyncFrameInfo, promi
     { op: "i32.const", value: PROMISE_STATE_PENDING },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
-    { op: "ref.null.extern" },
+    closureBagInitInstr(),
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: pLocal },
     // frame.result_promise = p
@@ -3410,7 +3447,7 @@ function emitAsyncGenReturnThrowHelpers(ctx: CodegenContext, info: AsyncFrameInf
     { op: "i32.const", value: PROMISE_STATE_PENDING },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
-    { op: "ref.null.extern" },
+    closureBagInitInstr(),
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: pLocal },
     { op: "local.get", index: fLocal },

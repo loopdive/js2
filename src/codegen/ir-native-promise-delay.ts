@@ -176,7 +176,7 @@ export function ensureIrNativePromiseDelayProvider(ctx: CodegenContext): number 
     { op: "i32.const", value: PROMISE_STATE_PENDING },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
-    { op: "ref.null.extern" },
+    closureBagInitInstr(),
     { op: "struct.new", typeIdx: runtime.promiseTypeIdx },
     { op: "local.set", index: promiseLocal },
     {

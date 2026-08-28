@@ -200,6 +200,51 @@ describe("#4376 — Deno primordials standalone runtime substrate", () => {
     expect(result.calls).toEqual([]);
   });
 
+  it("discovers Deno's complete intrinsic-constructor set through globalThis", async () => {
+    const result = await runStandaloneJs(`
+      const names = [
+        "AggregateError", "Array", "ArrayBuffer", "BigInt", "BigInt64Array",
+        "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
+        "FinalizationRegistry", "Float32Array", "Float64Array", "Function",
+        "Int16Array", "Int32Array", "Int8Array", "Map", "Number", "Object",
+        "RangeError", "ReferenceError", "RegExp", "Set", "String", "Symbol",
+        "SyntaxError", "TypeError", "URIError", "Uint16Array", "Uint32Array",
+        "Uint8Array", "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+        "Promise",
+      ];
+      function witness() {}
+      const expected = [
+        AggregateError, Array, ArrayBuffer, BigInt, BigInt64Array,
+        BigUint64Array, Boolean, DataView, Date, Error, EvalError,
+        FinalizationRegistry, Float32Array, Float64Array, witness.constructor,
+        Int16Array, Int32Array, Int8Array, Map, Number, Object,
+        RangeError, ReferenceError, RegExp, Set, String, Symbol,
+        SyntaxError, TypeError, URIError, Uint16Array, Uint32Array,
+        Uint8Array, Uint8ClampedArray, WeakMap, WeakRef, WeakSet,
+        Promise,
+      ];
+      /** @type {any} */
+      const realm = globalThis;
+
+      export function test() {
+        for (let index = 0; index < names.length; index++) {
+          const original = realm[names[index]];
+          if (original == null || typeof original !== "function") return 100 + index;
+          if (original !== expected[index]) return 200 + index;
+          if (index > 0 && original === expected[index - 1]) return 300 + index;
+          const prototype = original.prototype;
+          if (prototype == null) return 400 + index;
+          const descriptor = Reflect.getOwnPropertyDescriptor(original, "prototype");
+          if (descriptor === undefined || descriptor.value !== prototype) return 500 + index;
+        }
+        return 42;
+      }
+    `);
+
+    expect(result.value).toBe(42);
+    expect(result.calls).toEqual([]);
+  });
+
   it("resolves shorthand values through the lexical binding instead of the property symbol", async () => {
     const result = await runStandaloneJs(`
       let observed = 0;

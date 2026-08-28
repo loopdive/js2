@@ -37,11 +37,13 @@
 import {
   Builtin,
   BUILTIN_ASSIGN_OUTER_NAME,
+  BUILTIN_DYNAMIC_IMPORT,
   BUILTIN_DIRECT_EVAL,
   BUILTIN_DEFINE_CLASS_METHOD,
   BUILTIN_FINALIZE_CLASS,
   BUILTIN_FOR_IN_KEYS,
   BUILTIN_FOR_OF_VALUES,
+  BUILTIN_PUSH_FUNCTION_ENV,
   BUILTIN_OBJECT_DEFINE_PROPERTY,
   BUILTIN_PUSH_OBJECT_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
@@ -86,6 +88,7 @@ import {
 } from "./runtime-ops.js";
 import {
   createLexicalEnvironment,
+  createFunctionEnvironment,
   createObjectEnvironment,
   createRuntimeEvalGlobalEnvironment,
   deleteOwnEnvironmentBinding,
@@ -152,10 +155,34 @@ export type RuntimeDirectEvalHook = (
  * parser callback outside loop.ts avoids a dynamic-function↔loop import cycle. */
 export type RuntimeFunctionHook = (args: JSValue[]) => JSValue;
 
+/** Loader-neutral metadata supplied to a realm's dynamic-import hook. ESTree
+ * locations use one-based lines and zero-based columns. `options` is the raw
+ * second ImportCall argument after ordinary expression evaluation. */
+export interface RuntimeDynamicImportMetadata {
+  referrer: JSValue;
+  line: JSValue;
+  column: JSValue;
+  options: JSValue;
+}
+
+/** Realm-local dynamic-import policy. The interpreter owns evaluation,
+ * ToString, and Promise conversion; the hook owns resolution and loading. */
+export type RuntimeDynamicImportHook = (specifier: string, metadata: RuntimeDynamicImportMetadata) => JSValue;
+
 const RUNTIME_EVAL_INTRINSICS: WeakMap<object, JSValue> = new WeakMap();
 const RUNTIME_DIRECT_EVAL_HOOKS: WeakMap<object, RuntimeDirectEvalHook> = new WeakMap();
 const RUNTIME_FUNCTION_INTRINSICS: WeakMap<object, JSValue> = new WeakMap();
 const RUNTIME_FUNCTION_HOOKS: WeakMap<object, RuntimeFunctionHook> = new WeakMap();
+const RUNTIME_DYNAMIC_IMPORT_HOOKS: WeakMap<object, RuntimeDynamicImportHook> = new WeakMap();
+const RUNTIME_ARRAY_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
+const RUNTIME_PROMISE_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
+
+/** Install or replace the loader for one runtime-eval realm. Replacing is
+ * intentional: repeated script entries share a realm, while an embedder may
+ * update loader state without rebuilding already-emitted bytecode. */
+export function installRuntimeDynamicImportHook(globalObject: JSValue, hook: RuntimeDynamicImportHook): void {
+  RUNTIME_DYNAMIC_IMPORT_HOOKS.set(globalObject as object, hook);
+}
 
 /** Install one stable `%eval%` identity for a realm. Re-entering the provider
  * must not overwrite a later source-level assignment to `globalThis.eval`, so
@@ -170,6 +197,16 @@ export function installRuntimeEvalRealm(
   const key = globalObject as object;
   const existing = RUNTIME_EVAL_INTRINSICS.get(key);
   if (existing !== undefined) return existing;
+  // Interpreted arrays reach their methods through the generic vec property
+  // reader. Retaining the realm's intrinsic prototype makes standalone builds
+  // materialize and seed that reader's Array-prototype companion before a call
+  // such as `[1].every(callback)` crosses the boundary.
+  RUNTIME_ARRAY_PROTOTYPES.set(key, Array.prototype);
+  // Dynamic import is specified to return a Promise, and interpreted property
+  // reads resolve `.then`/`.catch`/`.finally` through the generic carrier path.
+  // Retain the intrinsic prototype so standalone provider compilation emits
+  // and seeds its native-prototype companion just as it does for arrays.
+  RUNTIME_PROMISE_PROTOTYPES.set(key, Promise.prototype);
   const realmFunction = __runtime_eval_wrap_intrinsic_function_callback(intrinsicFunction, "Function", 1);
   const realmEval = __runtime_eval_wrap_intrinsic_callback(intrinsicEval, "eval", 1, realmFunction);
   RUNTIME_EVAL_INTRINSICS.set(key, realmEval);
@@ -481,9 +518,21 @@ export function exposeRuntimeEvalValue(value: JSValue): JSValue {
  * normalize an existing carrier first and wrap primitive payloads exactly
  * once. Interpreted closures retain their callable callback marker. */
 export function exposeRuntimeEvalSharedValue(value: JSValue): JSValue {
-  const normalized = __runtime_eval_unwrap_result(value);
+  const normalized = normalizeRuntimeEvalSharedValue(value);
   if (isInterpClosure(normalized)) return exposeRuntimeEvalValue(normalized);
   return __runtime_eval_wrap_result(normalized);
+}
+
+/** Import one value read from caller-owned shared storage into the provider's
+ * primitive domain. A caller module's private undefined singleton can cross as
+ * a genuine reference when it was written before the boundary carrier was
+ * installed. It remains observably undefined to `typeof`, but letting that
+ * foreign singleton flow into provider-owned objects makes later provider-
+ * local null fast paths conflate it with null. Re-materialize only that
+ * primitive; null and all genuine references retain their exact identity. */
+function normalizeRuntimeEvalSharedValue(value: JSValue): JSValue {
+  const normalized = __runtime_eval_unwrap_result(value);
+  return typeof normalized === "undefined" ? undefined : normalized;
 }
 
 /** Replace provider-owned closures stored on the shared realm object with
@@ -596,13 +645,13 @@ function envLookup(env: EnvRec | null, name: JSValue): JSValue {
     }
     const cell = ownEnvCell(e, name);
     if (cell !== null) {
-      const value = __runtime_eval_unwrap_result(cell.value);
+      const value = normalizeRuntimeEvalSharedValue(cell.value);
       if (value === EVAL_TDZ) throw new ReferenceError(`${String(name)} is not initialized`);
       if (runtimeEvalEnvironment(env, value) !== null) return value;
       return __runtime_eval_unwrap_interpreted_callback(value);
     }
     if (e.kind !== ENV_DECLARATIVE && name in e.backing) {
-      const value = __runtime_eval_unwrap_result(e.backing[name]);
+      const value = normalizeRuntimeEvalSharedValue(e.backing[name]);
       if (runtimeEvalEnvironment(env, value) !== null) return value;
       return __runtime_eval_unwrap_interpreted_callback(value);
     }
@@ -658,7 +707,7 @@ function interpretedPropertyGet(env: EnvRec | null, value: JSValue, key: JSValue
     }
     return anyGet(normalized, key);
   }
-  return anyGet(value, key);
+  return anyGet(normalized, key);
 }
 
 /** Return one binding cell owned by a declarative record. */
@@ -1136,7 +1185,12 @@ function run(bottom: Frame): JSValue {
               const recv = regs[base];
               const args: JSValue[] = new Array(argc);
               for (let i = 0; i < argc; i += 1) {
-                const arg = regs[base + 1 + i];
+                // A closure written through the erased register vector can be
+                // carried as `$AnyValue` in a standalone build. Normalize that
+                // carrier before testing the provider-local closure identity;
+                // otherwise an inline HOF callback crosses as a non-callable
+                // raw value instead of its interpreted-callback marker.
+                const arg = __runtime_eval_unwrap_interpreted_callback(regs[base + 1 + i]);
                 args[i] = isInterpClosure(arg) ? exposeRuntimeEvalValue(arg) : arg;
               }
               acc = __runtime_eval_apply_callable(callee as (...a: JSValue[]) => JSValue, recv, args);
@@ -1362,6 +1416,9 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       frame.envRec = createLexicalEnvironment(parent, regs[base]);
       return parent;
     }
+    case BUILTIN_PUSH_FUNCTION_ENV:
+      frame.envRec = createFunctionEnvironment(frame.envRec, regs[base], regs[base + 1], frame.regs);
+      return undefined;
     case BUILTIN_PUSH_OBJECT_ENV: {
       const parent = frame.envRec;
       frame.envRec = createObjectEnvironment(parent, regs[base]);
@@ -1398,6 +1455,15 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       return definePropertyWithMappedArguments(frame.envRec, regs[base], regs[base + 1], regs[base + 2]);
     case BUILTIN_REGEXP_CREATE:
       return buildRegExpLiteral(regs[base], regs[base + 1]);
+    case BUILTIN_DYNAMIC_IMPORT:
+      return callRuntimeDynamicImport(
+        frame.envRec,
+        regs[base],
+        regs[base + 1],
+        regs[base + 2],
+        regs[base + 3],
+        regs[base + 4],
+      );
     case BUILTIN_FOR_IN_KEYS:
       return buildForInKeys(regs[base]);
     case BUILTIN_FOR_OF_VALUES:
@@ -1436,6 +1502,34 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
     }
     default:
       throw new InterpInternalError(`unknown builtin id ${builtinId}`);
+  }
+}
+
+/** Perform ImportCall's host boundary. Argument-expression errors have already
+ * propagated synchronously before this builtin runs. From this point onward,
+ * ToString and loader failures reject the returned promise, while a returned
+ * value/thenable is assimilated through Promise.resolve. */
+function callRuntimeDynamicImport(
+  env: EnvRec | null,
+  specifier: JSValue,
+  referrer: JSValue,
+  line: JSValue,
+  column: JSValue,
+  options: JSValue,
+): JSValue {
+  try {
+    // String(symbol) is a deliberately forgiving constructor call, whereas
+    // ImportCall uses the abstract ToString operation, which rejects Symbols.
+    if (typeof specifier === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    const request = String(specifier);
+    const globalEnv = globalEnvironment(env);
+    if (globalEnv === null) throw new TypeError("Dynamic import requires a runtime-eval realm");
+    const hook = RUNTIME_DYNAMIC_IMPORT_HOOKS.get(globalEnv.backing as object);
+    if (hook === undefined) throw new TypeError("Dynamic import requires a realm loader hook");
+    const metadata: RuntimeDynamicImportMetadata = { referrer, line, column, options };
+    return Promise.resolve(hook(request, metadata));
+  } catch (error) {
+    return Promise.reject(error);
   }
 }
 

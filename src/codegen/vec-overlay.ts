@@ -685,15 +685,22 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
   const missExtern = (): Instr[] => undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
 
-  /** `if !(any-local is an allowed JS-array carrier) → <bail>` */
-  const carrierWhitelistGuard = (anyLocal: number, bail: Instr[]): Instr[] => {
+  /** Push whether `anyLocal` is one of the exact JS-array carriers served by the overlay. */
+  const carrierWhitelistTest = (anyLocal: number): Instr[] => {
     const orChain: Instr[] = [];
     carriers.forEach((c, i) => {
       orChain.push({ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx: c.vecTypeIdx });
       if (i > 0) orChain.push({ op: "i32.or" });
     });
-    return [...orChain, { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: bail }];
+    return orChain;
   };
+
+  /** `if !(any-local is an allowed JS-array carrier) → <bail>` */
+  const carrierWhitelistGuard = (anyLocal: number, bail: Instr[]): Instr[] => [
+    ...carrierWhitelistTest(anyLocal),
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: bail },
+  ];
 
   /** `if key (externref local) is not an $AnyString → <bail>` */
   const stringKeyGuard = (keyLocal: number, bail: Instr[]): Instr[] => [
@@ -2261,7 +2268,12 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
         { op: "local.tee", index: anyLocal },
-        { op: "ref.test", typeIdx: vecBaseIdx },
+        // The overlay intentionally excludes integer TypedArray carriers. A
+        // broad `$__vec_base` test admitted those carriers here anyway, then
+        // the descriptor helper refused them and the numeric-key arm returned
+        // before the packed `fillExternSetVecArms` store could run. Gate on the
+        // exact overlay whitelist so excluded vec subtypes fall through.
+        ...carrierWhitelistTest(anyLocal),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -2796,7 +2808,25 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           ],
         },
       ];
-      fn.body.splice(0, 0, ...prologue);
+      // `__vec_prop_get` canonicalizes its key once before consulting either
+      // the own-property bag or the inherited Array companion. Keep that
+      // normalization ahead of this late-spliced overlay probe as well: an
+      // object key whose ToPropertyKey result names an overlay entry must be
+      // visible, and its user hook must still run exactly once. `__extern_get`
+      // has no equivalent prefix here and retains the historical front splice.
+      const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
+      const afterCanonicalKey =
+        overlayGetLane === "__vec_prop_get" &&
+        toPropertyKeyIdx !== undefined &&
+        fn.body[0]?.op === "local.get" &&
+        fn.body[0].index === 1 &&
+        fn.body[1]?.op === "call" &&
+        fn.body[1].funcIdx === toPropertyKeyIdx &&
+        fn.body[2]?.op === "local.set" &&
+        fn.body[2].index === 1
+          ? 3
+          : 0;
+      fn.body.splice(afterCanonicalKey, 0, ...prologue);
     }
   }
 

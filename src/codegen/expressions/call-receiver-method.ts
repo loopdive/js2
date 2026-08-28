@@ -237,6 +237,7 @@ function sourceDeletesBuiltinPrototypeMember(
   const callStart = receiver.getStart(sourceFile);
   return (positions.get(key) ?? []).some((deleteStart) => deleteStart < callStart);
 }
+import { resolvePromiseSubclassName } from "./promise-subclass.js";
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -1040,7 +1041,7 @@ export function compileReceiverMethodCall(
     // wrap). Zero-arg `.finally()` is admitted ONLY when the native lowering
     // will consume it; every other lane keeps the historical ≥1-argument
     // gate so its generic paths (and bytes) are untouched.
-    const nativeFinallyActive =
+    let nativeFinallyActive =
       method === "finally" &&
       isStandaloneThenChainNativeActive(ctx) &&
       (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
@@ -1077,7 +1078,23 @@ export function compileReceiverMethodCall(
       const receiverTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
       const recvSym = receiverTsType.getSymbol()?.name;
       const apparentSym = ctx.checker.getApparentType(receiverTsType).getSymbol()?.name;
-      const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise";
+      // A statically-known `class P extends Promise` value carries the same
+      // native `$Promise` representation as Promise itself when its forwarding
+      // constructor takes the standalone super(executor) path. TypeScript
+      // preserves the subclass symbol on `new P(...)`, so checking only for the
+      // literal `Promise` symbol sends `new P(...).then/finally` through the
+      // generic member-call path even though the runtime value is a real native
+      // promise. Recognize transitive Promise ancestry only on the native lane,
+      // keeping host/gc dispatch unchanged.
+      const isNativePromiseSubclassReceiver =
+        isStandaloneThenChainNativeActive(ctx) &&
+        [recvSym, apparentSym].some(
+          (name): name is string => name !== undefined && resolvePromiseSubclassName(ctx, name) !== undefined,
+        );
+      const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise" || isNativePromiseSubclassReceiver;
+      if (method === "finally" && isNativePromiseSubclassReceiver) {
+        nativeFinallyActive = true;
+      }
 
       // (#2865) ANY-typed receiver under ACTIVE native chaining: the value
       // may be a native `$Promise` minted by the driven async-gen machinery
@@ -1141,7 +1158,17 @@ export function compileReceiverMethodCall(
         // fail to instantiate for their own unrelated missing import), so
         // this preserves WASI's behaviour byte-for-byte.
         if (isStandaloneThenChainNativeActive(ctx) && method === "then") {
-          if (ctx.wasi === true || nativeFirstPromise) {
+          if (isNativePromiseSubclassReceiver) {
+            emitStandaloneThenWithNativeFallback(
+              ctx,
+              fctx,
+              propAccess.expression,
+              "then",
+              expr.arguments[0],
+              expr.arguments[1],
+              { nullMiss: true },
+            );
+          } else if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1178,7 +1205,19 @@ export function compileReceiverMethodCall(
         // user's onRejected continuation. (#2980 class 1: same wasi/standalone
         // split as `.then` above.)
         if (isStandaloneThenChainNativeActive(ctx) && method === "catch") {
-          if (ctx.wasi === true || nativeFirstPromise) {
+          if (isNativePromiseSubclassReceiver) {
+            emitStandaloneThenWithNativeFallback(
+              ctx,
+              fctx,
+              propAccess.expression,
+              "catch",
+              undefined,
+              expr.arguments[0],
+              {
+                nullMiss: true,
+              },
+            );
+          } else if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1214,11 +1253,17 @@ export function compileReceiverMethodCall(
         // exact legacy host route below.
         if (nativeFinallyActive) {
           (ctx.standaloneNativeFinallyNodes ??= new Set()).add(expr);
-          if (ctx.wasi === true || nativeFirstPromise) {
+          if (isNativePromiseSubclassReceiver) {
+            emitStandaloneFinallyWithNativeFallback(ctx, fctx, propAccess.expression, expr.arguments[0], {
+              nullMiss: true,
+            });
+          } else if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
-              const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers);
+              const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers, {
+                allowDynamic: true,
+              });
               emitStandalonePromiseFinally(ctx, fctx, promiseInstrs, onFinally);
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);

@@ -23,6 +23,20 @@ async function runStandalone(src: string): Promise<unknown> {
 }
 
 describe("#3265 object-runtime Proxy subsystem extraction (smoke)", () => {
+  it("exposes the opt-in private Proxy RTT probe without running traps", async () => {
+    expect(
+      await runStandalone(`function __runtime_is_proxy(_value: any): boolean { return false; }
+        export function test(): number {
+          let traps = 0;
+          const proxy: any = new Proxy({}, {
+            get() { traps++; return undefined; },
+          });
+          const plain: any = {};
+          return __runtime_is_proxy(proxy) && !__runtime_is_proxy(plain) && traps === 0 ? 1 : 0;
+        }`),
+    ).toBe(1);
+  });
+
   it("get trap fires (exercises __proxy_get_dispatch + PROXY_CALL_GET driver fill)", async () => {
     expect(
       await runStandalone(`export function test(): number {

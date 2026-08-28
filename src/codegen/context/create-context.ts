@@ -240,6 +240,8 @@ export function createCodegenContext(
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
     funcMapOwnerDecl: new Map(),
+    sourceFunctionDeclarationByHandle: new Map(),
+    sourceFunctionHandleByDeclaration: new WeakMap(),
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
@@ -314,6 +316,7 @@ export function createCodegenContext(
     taDynViewTypeIdx: -1, // (#3054 D) $__ta_dyn_view {length,buf,byteOffset,kind} runtime-kinded view, lazy
     boundFnTypeIdx: -1, // (#3140) $__bound_fn {target,thisArg,boundArgs} native bound-function carrier, lazy
     moduleUsesDynTaView: false, // (#3057) set by pre-scan when a dynamic `new ctorVar(buf)` exists
+    moduleUsesStaticTaView: false, // buffer-backed `new Uint8Array(buf)` etc.; enables any-write dispatch
     errorStructTypeIdx: -1,
     widenedTypeProperties: new Map(),
     widenedVarStructMap: new Map(),
@@ -383,6 +386,7 @@ export function createCodegenContext(
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.target === "standalone",
+    ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     directEvalMode: options?.directEval ?? "legacy",
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.

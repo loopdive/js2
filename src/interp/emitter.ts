@@ -22,8 +22,8 @@
 //   a != b  → !(a == b)    a !== b → !(a === b)
 //   +x      → -( -x )      (double-negate = ToNumber)
 //   `a${x}` → "a" + x      (template → concat)
-// Bitwise/unsigned-shift/`**`/`in`/`instanceof`, generators/async, destructuring,
-// spread, and regex literals are Phase-1 out-of-scope: the emitter
+// Bitwise/unsigned-shift/`**`/`in`/`instanceof`, generators/async, destructuring
+// rest, spread, and regex literals are Phase-1 out-of-scope: the emitter
 // throws {@link UnsupportedNodeError} so the differential harness skips the body
 // and reports coverage (they are named follow-ups in the issue).
 
@@ -32,6 +32,7 @@ import { appendPatternBoundNames } from "./eval-environment.js";
 import { FLAG_CLASS_CONSTRUCTOR, FLAG_SCRIPT, FLAG_STRICT, type FuncMeta, type JSValue } from "./types.js";
 import {
   BUILTIN_ASSIGN_OUTER_NAME,
+  BUILTIN_DYNAMIC_IMPORT,
   BUILTIN_DIRECT_EVAL,
   BUILTIN_DEFINE_CLASS_METHOD,
   BUILTIN_FINALIZE_CLASS,
@@ -39,6 +40,7 @@ import {
   BUILTIN_FOR_OF_VALUES,
   BUILTIN_OBJECT_DEFINE_PROPERTY,
   BUILTIN_PUSH_OBJECT_ENV,
+  BUILTIN_PUSH_FUNCTION_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
   BUILTIN_REGEXP_CREATE,
   BUILTIN_RESTORE_ENV,
@@ -177,6 +179,24 @@ class FunctionEmitter {
     return r;
   }
 
+  /** Bind one formal parameter to its positional entry register. Sloppy
+   * duplicate formals share one environment binding whose initial value comes
+   * from the last occurrence, but every argument position must still reserve
+   * its own register so call-frame seeding cannot overwrite a later local. */
+  private bindParameter(name: string): number {
+    const r = this.allocReg();
+    let known = false;
+    for (const boundName of this.boundNames) {
+      if (boundName === name) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) this.boundNames.push(name);
+    this.names.set(name, r);
+    return r;
+  }
+
   /**
    * Completion-value UpdateEmpty base for control statements (§completion
    * semantics). `if`/`for`/`while`/`do`/`try`/labeled statements have a
@@ -193,6 +213,32 @@ class FunctionEmitter {
     }
   }
 
+  /** Install one fresh mutable activation record for this interpreted call.
+   *
+   * Parameters and hoisted root bindings are initially seeded in consecutive
+   * registers.  Source-level accesses use the resulting cells, so closures
+   * created by this invocation retain live bindings without sharing state with
+   * another call.  Scripts already execute in their prepared eval/global
+   * environment and must not gain an extra function record. */
+  private emitFunctionActivationPrologue(): void {
+    if (this.isScript) return;
+    const activationNames: string[] = [];
+    const activationRegisters: number[] = [];
+    for (const name of this.boundNames) {
+      activationNames.push(name);
+      activationRegisters.push(this.names.get(name)!);
+    }
+    const m = this.mark();
+    const base = this.allocReg();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(activationNames));
+    this.enc.emitReg(Op.Star, base);
+    const registersReg = this.allocReg();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(activationRegisters));
+    this.enc.emitReg(Op.Star, registersReg);
+    this.enc.emitCallBuiltin(BUILTIN_PUSH_FUNCTION_ENV, base, 2);
+    this.release(m);
+  }
+
   // ── entry ──────────────────────────────────────────────────────────────────
   emit(): FuncMeta {
     // 1. Bind params to regs[1..1+paramCount).
@@ -201,7 +247,7 @@ class FunctionEmitter {
       if (p.type !== "Identifier") {
         throw new UnsupportedNodeError(`non-identifier parameter (${p.type})`, p.type);
       }
-      this.bind(p.name);
+      this.bindParameter(p.name);
       paramCount += 1;
     }
 
@@ -215,6 +261,7 @@ class FunctionEmitter {
     // 3. Hoist var/function/let/const names, then initialise function decls.
     if (this.isExpressionBody) {
       // Arrow `=> expr`: the body IS an expression; its value is the return.
+      this.emitFunctionActivationPrologue();
       this.emitExpr(this.body);
       this.enc.emit0(Op.Return);
     } else {
@@ -242,6 +289,7 @@ class FunctionEmitter {
         for (const name of this.hoistedVars) this.bind(name);
         for (const name of this.hoistedLexicals) this.bind(name);
         for (const fn of this.hoistedFuncs) this.bind(fn.id.name);
+        this.emitFunctionActivationPrologue();
         for (const fn of this.hoistedFuncs) {
           this.emitClosure(fn);
           this.storeName(fn.id.name);
@@ -388,11 +436,14 @@ class FunctionEmitter {
     }
   }
   private collectHoistPattern(id: Node, lexical: boolean): void {
-    if (id.type === "Identifier") {
-      if (lexical) this.hoistedLexicals.push(id.name);
-      else this.hoistedVars.push(id.name);
-    } else {
+    const names: string[] = [];
+    appendPatternBoundNames(id, names);
+    if (names.length === 0 && id.type !== "ArrayPattern" && id.type !== "ObjectPattern") {
       throw new UnsupportedNodeError(`destructuring binding (${id.type})`, id.type);
+    }
+    for (const name of names) {
+      if (lexical) this.hoistedLexicals.push(name);
+      else this.hoistedVars.push(name);
     }
   }
 
@@ -497,10 +548,7 @@ class FunctionEmitter {
     for (const inner of s.body) {
       if (inner.type === "VariableDeclaration" && inner.kind !== "var") {
         for (const declaration of inner.declarations) {
-          if (declaration.id.type !== "Identifier") {
-            throw new UnsupportedNodeError(`destructuring (${declaration.id.type})`, declaration.id.type);
-          }
-          lexicalNames.push(declaration.id.name);
+          appendPatternBoundNames(declaration.id, lexicalNames);
         }
       } else if (inner.type === "FunctionDeclaration") {
         if (inner.id) {
@@ -609,20 +657,12 @@ class FunctionEmitter {
 
     const assignmentMark = this.mark();
     this.emitLoadName(fn.id.name);
-    if (this.isScript) {
-      const closureReg = this.allocReg();
-      this.enc.emitReg(Op.Star, closureReg);
-      const nameReg = this.allocReg();
-      this.enc.emitConst(Op.LdaConst, this.enc.internConst(fn.id.name));
-      this.enc.emitReg(Op.Star, nameReg);
-      this.enc.emitCallBuiltin(BUILTIN_ASSIGN_OUTER_NAME, closureReg, 2);
-    } else {
-      // Function bodies keep their var environment in fixed registers. The
-      // active lexical binding has the same name, so bypass storeName and write
-      // the pre-hoisted outer register explicitly.
-      const outerReg = this.names.get(fn.id.name);
-      if (outerReg !== undefined) this.enc.emitReg(Op.Star, outerReg);
-    }
+    const closureReg = this.allocReg();
+    this.enc.emitReg(Op.Star, closureReg);
+    const nameReg = this.allocReg();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(fn.id.name));
+    this.enc.emitReg(Op.Star, nameReg);
+    this.enc.emitCallBuiltin(BUILTIN_ASSIGN_OUTER_NAME, closureReg, 2);
     // Annex B models this as a synthetic assignment statement. Unlike the
     // lexical FunctionDeclaration's empty completion, that assignment carries
     // the closure value through UpdateEmpty (for example, eval of a selected
@@ -679,25 +719,110 @@ class FunctionEmitter {
     }
   }
 
+  /** Bind the value currently in the accumulator to one declaration pattern.
+   *
+   * This intentionally implements the useful, state-preserving core before
+   * object/array rest: identifiers, nested object/array patterns, computed
+   * object keys, aliases, elisions, and defaults. The initializer is evaluated
+   * once by the caller and every property read stays in source order.
+   */
+  private emitBindingPattern(pattern: Node, initialize: boolean): void {
+    if (pattern.type === "Identifier") {
+      if (initialize) this.initializeName(pattern.name);
+      else this.storeName(pattern.name);
+      return;
+    }
+
+    if (pattern.type === "AssignmentPattern") {
+      const assignmentMark = this.mark();
+      const valueReg = this.allocReg();
+      this.enc.emitReg(Op.Star, valueReg);
+      this.enc.emit0(Op.LdaUndef);
+      this.enc.emitReg(Op.StrictEq, valueReg);
+      const useOriginal = this.enc.emitJump(Op.JumpIfFalse);
+      this.emitExpr(pattern.right);
+      const ready = this.enc.emitJump(Op.Jump);
+      this.enc.patch(useOriginal, this.enc.here());
+      this.enc.emitReg(Op.Ldar, valueReg);
+      this.enc.patch(ready, this.enc.here());
+      this.emitBindingPattern(pattern.left, initialize);
+      this.release(assignmentMark);
+      return;
+    }
+
+    if (pattern.type === "ObjectPattern") {
+      const objectMark = this.mark();
+      const objectReg = this.allocReg();
+      this.enc.emitReg(Op.Star, objectReg);
+      for (const property of pattern.properties) {
+        if (property.type === "RestElement") {
+          throw new UnsupportedNodeError("object binding rest", property.type);
+        }
+        if (property.type !== "Property" || property.kind !== "init" || property.method) {
+          throw new UnsupportedNodeError(`object binding property (${property.type})`, property.type);
+        }
+        const propertyMark = this.mark();
+        if (property.computed) {
+          this.emitExpr(property.key);
+          const keyReg = this.allocReg();
+          this.enc.emitReg(Op.Star, keyReg);
+          this.enc.emitReg(Op.Ldar, objectReg);
+          this.enc.emitReg(Op.GetElem, keyReg);
+        } else if (property.key.type === "Identifier") {
+          this.enc.emitReg(Op.Ldar, objectReg);
+          this.enc.emitConst(Op.GetProp, this.enc.internConst(property.key.name));
+        } else if (property.key.type === "Literal") {
+          this.enc.emitReg(Op.Ldar, objectReg);
+          this.enc.emitConst(Op.GetProp, this.enc.internConst(property.key.value));
+        } else {
+          throw new UnsupportedNodeError(`object binding key (${property.key.type})`, property.key.type);
+        }
+        this.emitBindingPattern(property.value, initialize);
+        this.release(propertyMark);
+      }
+      this.release(objectMark);
+      return;
+    }
+
+    if (pattern.type === "ArrayPattern") {
+      const arrayMark = this.mark();
+      const arrayReg = this.allocReg();
+      this.enc.emitReg(Op.Star, arrayReg);
+      for (let index = 0; index < pattern.elements.length; index += 1) {
+        const element = pattern.elements[index];
+        if (element === null) continue;
+        if (element.type === "RestElement") {
+          throw new UnsupportedNodeError("array binding rest", element.type);
+        }
+        const elementMark = this.mark();
+        this.enc.emitReg(Op.Ldar, arrayReg);
+        this.enc.emitConst(Op.GetProp, this.enc.internConst(index));
+        this.emitBindingPattern(element, initialize);
+        this.release(elementMark);
+      }
+      this.release(arrayMark);
+      return;
+    }
+
+    throw new UnsupportedNodeError(`destructuring binding (${pattern.type})`, pattern.type);
+  }
+
   private emitVarDecl(s: Node): void {
     for (const d of s.declarations) {
-      if (d.id.type !== "Identifier") throw new UnsupportedNodeError(`destructuring (${d.id.type})`, d.id.type);
+      const boundNames: string[] = [];
+      appendPatternBoundNames(d.id, boundNames);
+      const initialize =
+        s.kind !== "var" &&
+        ((boundNames.length > 0 && this.isActiveBlockLexical(boundNames[0]!)) ||
+          (this.isScript && this.scriptBindingsPredeclared));
       if (d.init) {
         this.emitExpr(d.init);
-        if (
-          s.kind !== "var" &&
-          (this.isActiveBlockLexical(d.id.name) || (this.isScript && this.scriptBindingsPredeclared))
-        ) {
-          this.initializeName(d.id.name);
-        } else this.storeName(d.id.name);
-      } else if (
-        s.kind !== "var" &&
-        (this.isActiveBlockLexical(d.id.name) || (this.isScript && this.scriptBindingsPredeclared))
-      ) {
+        this.emitBindingPattern(d.id, initialize);
+      } else if (s.kind !== "var") {
         this.enc.emit0(Op.LdaUndef);
-        this.initializeName(d.id.name);
+        this.emitBindingPattern(d.id, initialize);
       }
-      // no init: the register already holds undefined (Phase 1: no TDZ)
+      // no init: var registers already hold undefined (Phase 1: no TDZ)
     }
   }
 
@@ -1296,6 +1421,7 @@ class FunctionEmitter {
     else if (node.type === "ObjectExpression") this.emitObject(node);
     else if (node.type === "MemberExpression") this.emitMemberGet(node);
     else if (node.type === "CallExpression") this.emitCall(node);
+    else if (node.type === "ImportExpression") this.emitDynamicImport(node);
     else if (node.type === "NewExpression") this.emitNew(node);
     else if (node.type === "AssignmentExpression") this.emitAssign(node);
     else if (node.type === "UpdateExpression") this.emitUpdate(node);
@@ -1304,6 +1430,7 @@ class FunctionEmitter {
     else if (node.type === "UnaryExpression") this.emitUnary(node);
     else if (node.type === "ConditionalExpression") this.emitConditional(node);
     else if (node.type === "SequenceExpression") this.emitSequence(node);
+    else if (node.type === "AwaitExpression") this.emitAwait(node);
     else if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") this.emitClosure(node);
     else if (node.type === "ClassExpression") this.emitClass(node);
     else if (node.type === "TemplateLiteral") this.emitTemplate(node);
@@ -1347,33 +1474,15 @@ class FunctionEmitter {
   }
 
   private emitLoadName(name: string): void {
-    if (this.isActiveBlockLexical(name)) {
-      this.enc.emitConst(Op.LdName, this.enc.internConst(name));
-      return;
-    }
-    const r = this.names.get(name);
-    if (r !== undefined) this.enc.emitReg(Op.Ldar, r);
-    else this.enc.emitConst(Op.LdName, this.enc.internConst(name));
+    this.enc.emitConst(Op.LdName, this.enc.internConst(name));
   }
   private storeName(name: string): void {
     // acc holds the value; leaves acc unchanged (assignment-expression value).
-    if (this.isActiveBlockLexical(name)) {
-      this.enc.emitConst(Op.StName, this.enc.internConst(name));
-      return;
-    }
-    const r = this.names.get(name);
-    if (r !== undefined) this.enc.emitReg(Op.Star, r);
-    else this.enc.emitConst(Op.StName, this.enc.internConst(name));
+    this.enc.emitConst(Op.StName, this.enc.internConst(name));
   }
 
   private initializeName(name: string): void {
-    if (this.isActiveBlockLexical(name)) {
-      this.enc.emitConst(Op.InitName, this.enc.internConst(name));
-      return;
-    }
-    const r = this.names.get(name);
-    if (r !== undefined) this.enc.emitReg(Op.Star, r);
-    else this.enc.emitConst(Op.InitName, this.enc.internConst(name));
+    this.enc.emitConst(Op.InitName, this.enc.internConst(name));
   }
 
   /** Whether a syntactic global name is shadowed anywhere in this function.
@@ -1422,31 +1531,92 @@ class FunctionEmitter {
 
   private emitObject(node: Node): void {
     const m = this.mark();
-    const base = this.regTop;
-    let count = 0;
+    // Materialize the receiver first, then define each property in source
+    // order. Data-only literals used to batch [key, value] pairs through
+    // ObjectLiteral, but accessors need a real property descriptor and mixed
+    // data/accessor duplicates must observe the preceding definition.
+    this.enc.emitCallBuiltin(Builtin.ObjectLiteral, this.regTop, 0);
+    const objectReg = this.allocReg();
+    this.enc.emitReg(Op.Star, objectReg);
+
     for (const prop of node.properties) {
       if (prop.type === "SpreadElement") throw new UnsupportedNodeError("object spread", "SpreadElement");
-      if (prop.kind !== "init") throw new UnsupportedNodeError(`object ${prop.kind}`, "Property");
-      if (prop.method) throw new UnsupportedNodeError("object method shorthand", "Property");
+      if (prop.kind !== "init" && prop.kind !== "get" && prop.kind !== "set") {
+        throw new UnsupportedNodeError(`object ${prop.kind}`, "Property");
+      }
+      if ((prop.method || prop.kind === "get" || prop.kind === "set") && (prop.value.async || prop.value.generator)) {
+        throw new UnsupportedNodeError("async/generator object method", "Property");
+      }
+
+      const propertyMark = this.mark();
+      let staticName = "";
       // key
       if (prop.computed) {
         this.emitExpr(prop.key);
       } else if (prop.key.type === "Identifier") {
-        this.enc.emitConst(Op.LdaConst, this.enc.internConst(prop.key.name));
+        staticName = prop.key.name;
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst(staticName));
       } else if (prop.key.type === "Literal") {
-        this.enc.emitConst(Op.LdaConst, this.enc.internConst(String(prop.key.value)));
+        staticName = String(prop.key.value);
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst(staticName));
       } else {
         throw new UnsupportedNodeError(`object key ${prop.key.type}`, prop.key.type);
       }
-      const kSlot = this.allocReg();
-      this.enc.emitReg(Op.Star, kSlot);
+      const keyReg = this.allocReg();
+      this.enc.emitReg(Op.Star, keyReg);
+
       // value
-      this.emitExpr(prop.value);
-      const vSlot = this.allocReg();
-      this.enc.emitReg(Op.Star, vSlot);
-      count += 2;
+      if (prop.method || prop.kind === "get" || prop.kind === "set") {
+        let functionName = staticName;
+        if (prop.kind === "get" && staticName.length > 0) functionName = "get " + staticName;
+        else if (prop.kind === "set" && staticName.length > 0) functionName = "set " + staticName;
+        this.emitObjectMethodClosure(prop.value, functionName);
+      } else {
+        this.emitExpr(prop.value);
+      }
+      const valueReg = this.allocReg();
+      this.enc.emitReg(Op.Star, valueReg);
+
+      if (prop.kind === "init") {
+        // Assignment on the freshly-created ordinary object preserves the
+        // existing literal path, including the special non-computed
+        // `__proto__: value` setter behaviour.
+        this.enc.emitReg(Op.Ldar, valueReg);
+        this.enc.emitRegReg(Op.SetElem, keyReg, objectReg);
+      } else {
+        // Accessor definitions are enumerable + configurable. Omitting the
+        // opposite accessor is intentional: Object.defineProperty then keeps
+        // an earlier paired getter/setter on a duplicate key.
+        const descriptorBase = this.regTop;
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst(prop.kind));
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitReg(Op.Ldar, valueReg);
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst("enumerable"));
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emit0(Op.LdaTrue);
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst("configurable"));
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emit0(Op.LdaTrue);
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitCallBuiltin(Builtin.ObjectLiteral, descriptorBase, 6);
+        const descriptorReg = this.allocReg();
+        this.enc.emitReg(Op.Star, descriptorReg);
+
+        const defineBase = this.regTop;
+        this.enc.emitReg(Op.Ldar, objectReg);
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitReg(Op.Ldar, keyReg);
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitReg(Op.Ldar, descriptorReg);
+        this.enc.emitReg(Op.Star, this.allocReg());
+        this.enc.emitCallBuiltin(BUILTIN_OBJECT_DEFINE_PROPERTY, defineBase, 3);
+      }
+      this.release(propertyMark);
     }
-    this.enc.emitCallBuiltin(Builtin.ObjectLiteral, base, count);
+
+    this.enc.emitReg(Op.Ldar, objectReg);
     this.release(m);
   }
 
@@ -1467,6 +1637,57 @@ class FunctionEmitter {
       this.emitExpr(node.object); // acc = obj
       this.enc.emitConst(Op.GetProp, this.enc.internConst(node.property.name)); // acc = obj.p
     }
+  }
+
+  /** Lower ImportCall to the realm-owned loader seam. The request expression
+   * and optional second argument are evaluated exactly once and in source
+   * order. Acorn's ESTree location carries the referrer when its caller parsed
+   * with `sourceFile`; absent metadata remains explicit `undefined` rather than
+   * inventing a loader-specific base URL. */
+  private emitDynamicImport(node: Node): void {
+    const m = this.mark();
+    const base = this.regTop;
+
+    this.emitExpr(node.source);
+    this.enc.emitReg(Op.Star, this.allocReg());
+
+    const loc = node.loc;
+    if (loc && loc.source !== undefined) this.enc.emitConst(Op.LdaConst, this.enc.internConst(loc.source));
+    else this.enc.emit0(Op.LdaUndef);
+    this.enc.emitReg(Op.Star, this.allocReg());
+
+    if (loc && loc.start && typeof loc.start.line === "number") {
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(loc.start.line));
+    } else {
+      this.enc.emit0(Op.LdaUndef);
+    }
+    this.enc.emitReg(Op.Star, this.allocReg());
+
+    if (loc && loc.start && typeof loc.start.column === "number") {
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(loc.start.column));
+    } else {
+      this.enc.emit0(Op.LdaUndef);
+    }
+    this.enc.emitReg(Op.Star, this.allocReg());
+
+    if (node.options) this.emitExpr(node.options);
+    else this.enc.emit0(Op.LdaUndef);
+    this.enc.emitReg(Op.Star, this.allocReg());
+
+    this.enc.emitCallBuiltin(BUILTIN_DYNAMIC_IMPORT, base, 5);
+    this.release(m);
+  }
+
+  /** The runtime-eval interpreter's first async slice only needs tail-await of
+   * ImportCall: the import builtin already returns a promise whose adoption and
+   * rejection semantics are owned by the realm. Keeping the operand intact
+   * lets an async expression-body forward that promise without introducing a
+   * second, incomplete frame-suspension mechanism here. */
+  private emitAwait(node: Node): void {
+    if (node.argument.type !== "ImportExpression") {
+      throw new UnsupportedNodeError("await outside dynamic import", node.type);
+    }
+    this.emitDynamicImport(node.argument);
   }
 
   private emitCall(node: Node): void {
@@ -1740,7 +1961,40 @@ class FunctionEmitter {
       if (prefix) this.enc.emitReg(Op.Ldar, rNew);
       else this.enc.emitReg(Op.Ldar, rOld);
     } else if (target.type === "MemberExpression") {
-      throw new UnsupportedNodeError("update on member expression", "UpdateExpression");
+      // Evaluate the Reference once: base, then computed key, then GetValue.
+      // Retain both pieces until PutValue so getters/keys with side effects are
+      // not re-run for the write half of the update.
+      this.emitExpr(target.object);
+      const rObject = this.allocReg();
+      this.enc.emitReg(Op.Star, rObject);
+      let rKey = -1;
+      if (target.computed) {
+        this.emitExpr(target.property);
+        rKey = this.allocReg();
+        this.enc.emitReg(Op.Star, rKey);
+        this.enc.emitReg(Op.Ldar, rObject);
+        this.enc.emitReg(Op.GetElem, rKey);
+      } else {
+        this.enc.emitReg(Op.Ldar, rObject);
+        this.enc.emitConst(Op.GetProp, this.enc.internConst(target.property.name));
+      }
+
+      this.enc.emit0(Op.Neg);
+      this.enc.emit0(Op.Neg);
+      const rOld = this.allocReg();
+      this.enc.emitReg(Op.Star, rOld);
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(1));
+      if (isInc) this.enc.emitReg(Op.Add, rOld);
+      else this.enc.emitReg(Op.Sub, rOld);
+      const rNew = this.allocReg();
+      this.enc.emitReg(Op.Star, rNew);
+      if (target.computed) {
+        this.enc.emitRegReg(Op.SetElem, rKey, rObject);
+      } else {
+        this.enc.emitConstReg(Op.SetProp, this.enc.internConst(target.property.name), rObject);
+      }
+      if (prefix) this.enc.emitReg(Op.Ldar, rNew);
+      else this.enc.emitReg(Op.Ldar, rOld);
     } else {
       throw new UnsupportedNodeError(`update target ${target.type}`, target.type);
     }
@@ -1872,26 +2126,16 @@ class FunctionEmitter {
       return;
     }
     if (op === "typeof" && arg.type === "Identifier") {
-      // A missing numeric Map value is not a stable `undefined` discriminator
-      // in the standalone compiler. Use the explicit fixed-register mirror;
-      // active block bindings are EnvRec-backed even when they shadow a root
-      // register. TypeofName also preserves lexical-TDZ throws.
-      let fixedRegister = false;
-      for (const name of this.boundNames) {
-        if (name === arg.name) {
-          fixedRegister = true;
-          break;
-        }
-      }
-      if (this.isActiveBlockLexical(arg.name) || !fixedRegister) {
-        const m = this.mark();
-        this.enc.emitConst(Op.LdaConst, this.enc.internConst(arg.name));
-        const r = this.allocReg();
-        this.enc.emitReg(Op.Star, r);
-        this.enc.emitCallBuiltin(Builtin.TypeofName, r, 1);
-        this.release(m);
-        return;
-      }
+      // Every source binding is environment-backed. TypeofName handles both
+      // ordinary lookup and the undeclared-name special case while preserving
+      // lexical-TDZ throws.
+      const m = this.mark();
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(arg.name));
+      const r = this.allocReg();
+      this.enc.emitReg(Op.Star, r);
+      this.enc.emitCallBuiltin(Builtin.TypeofName, r, 1);
+      this.release(m);
+      return;
     }
     if (op === "typeof") {
       this.emitExpr(arg);
@@ -2010,6 +2254,21 @@ class FunctionEmitter {
     const child = new FunctionEmitter(params, body, name, false, false, true, false, []);
     const meta = child.emit();
     if (classConstructor) meta.flags = meta.flags | FLAG_CLASS_CONSTRUCTOR;
+    const m = this.mark();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(meta));
+    const r = this.allocReg();
+    this.enc.emitReg(Op.Star, r);
+    this.enc.emitCallBuiltin(Builtin.MakeClosure, r, 1);
+    this.release(m);
+  }
+
+  /** Emit an ordinary object method/accessor closure with its inferred static
+   * property name. Computed names stay empty because their ToPropertyKey value
+   * is only known at runtime; invocation semantics are otherwise identical to
+   * a function expression and capture the current environment record. */
+  private emitObjectMethodClosure(node: Node, name: string): void {
+    const child = new FunctionEmitter(node.params, node.body, name, false, false, this.strictMode, false, []);
+    const meta = child.emit();
     const m = this.mark();
     this.enc.emitConst(Op.LdaConst, this.enc.internConst(meta));
     const r = this.allocReg();

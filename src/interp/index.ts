@@ -17,7 +17,16 @@ export { Op, Builtin, OP_INFO, OP_COUNT } from "./opcodes.js";
 export { Encoder } from "./encoder.js";
 export { emitFunction, emitProgram, UnsupportedNodeError } from "./emitter.js";
 export { disassemble, decodeInstr } from "./disasm.js";
-export { interpEnter, makeInterpClosure, isInterpClosure, InterpInternalError, type InterpCallable } from "./loop.js";
+export {
+  interpEnter,
+  makeInterpClosure,
+  isInterpClosure,
+  InterpInternalError,
+  installRuntimeDynamicImportHook,
+  type InterpCallable,
+  type RuntimeDynamicImportHook,
+  type RuntimeDynamicImportMetadata,
+} from "./loop.js";
 export {
   compileDynamicFunctionMeta,
   createDynamicFunction,
