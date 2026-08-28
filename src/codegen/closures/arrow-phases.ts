@@ -25,6 +25,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
+import { isFunctionScopeBoundary } from "../../ir/analysis/ast-scope.js";
 import {
   closureArityField,
   closureBagField,
@@ -47,6 +48,7 @@ import {
   buildCaptureFieldDef,
   closureProvablyAfterLetDecl,
   closureNameResolvesToImportBinding,
+  collectBindingPatternNames,
   collectOverBody,
   collectParamDefaultReferences,
   collectReferencedIdentifiers,
@@ -240,6 +242,28 @@ function isDirectParameterInitializerClosure(node: ts.ArrowFunction | ts.Functio
 function isEnclosingParameterBinding(fctx: FunctionContext, name: string): boolean {
   const localIdx = fctx.localMap.get(name);
   return localIdx !== undefined && localIdx < fctx.params.length;
+}
+
+/**
+ * Whether an inner closure is nested below a function parameter binding with
+ * this spelling.  The checker can temporarily resolve a nested reference to
+ * a same-named module function while the linked multi-source pass is filling
+ * funcMap; the enclosing parameter is still the lexical runtime binding.
+ */
+function hasEnclosingParameterBinding(arrow: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
+  for (let node = arrow.parent; node && !ts.isSourceFile(node); node = node.parent) {
+    if (!isFunctionScopeBoundary(node)) continue;
+    const parameters = (node as ts.SignatureDeclaration).parameters;
+    for (const parameter of parameters ?? []) {
+      if (ts.isIdentifier(parameter.name) && parameter.name.text === name) return true;
+      if (ts.isObjectBindingPattern(parameter.name) || ts.isArrayBindingPattern(parameter.name)) {
+        const names = new Set<string>();
+        collectBindingPatternNames(parameter.name, names);
+        if (names.has(name)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function isCaptureValueReference(id: ts.Identifier): boolean {
@@ -626,6 +650,14 @@ export function planClosureCaptures(
     }
     if (localIdx === undefined) continue;
     const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
+    // A lexical capture can share its spelling with a function declaration
+    // already registered in funcMap (for example `{ dispatch }` beside a
+    // module-local `dispatch`).  The old spelling-only guard dropped every
+    // non-variable declaration here, including binding elements that resolve
+    // to an enclosing parameter.  Keep the fast path only when checker
+    // identity proves that this reference is the mapped function itself.
+    const mappedFunctionDeclaration = ctx.funcMapOwnerDecl.get(name) ?? ctx.topLevelFunctionDeclarations.get(name);
+    const hasEnclosingParam = hasEnclosingParameterBinding(arrow, name);
     // #2669: skip names bound to a *user* function (a function reference, not a
     // captured variable) — but NOT a wasm:js-string builtin import
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
@@ -636,7 +668,8 @@ export function planClosureCaptures(
       localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
-      (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
+      !hasEnclosingParam &&
+      (bindingDeclaration === undefined || bindingDeclaration === mappedFunctionDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) || !closureObservesBindingValue(arrow, name))
     ) {
