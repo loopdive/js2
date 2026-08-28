@@ -6,6 +6,7 @@ sprint: current
 created: 2026-08-27
 updated: 2026-08-28
 completed: 2026-08-27
+pr: 5114
 assignee: "ttraenkler/codex-es2015-next-bounded-fix-8"
 priority: high
 horizon: s
@@ -211,13 +212,8 @@ The focused test remains fully enforced when the corpus is present while
 CI-style no-corpus checkouts still exercise the two mandatory controls.
 
 Final follow-up branch: `/private/tmp/js2-4786-optional-corpus-guard`,
-`codex/4786-optional-corpus-guard`, at fork head
-verified with `git ls-remote fork refs/heads/codex/4786-optional-corpus-guard`.
-PR creation was blocked by the external approval policy; the exact authorized
-command is:
-
-```text
-gh pr create --repo loopdive/js2 --head ttraenkler:codex/4786-optional-corpus-guard --base main --title 'test(test262): guard optional WeakCollection corpus rows ✓' --body-file /private/tmp/issue-4786-pr-body.md
-```
+`codex/4786-optional-corpus-guard`. The completed non-draft upstream review is
+[PR #5114](https://github.com/loopdive/js2/pull/5114), targeting
+`loopdive/js2:main` from the `ttraenkler/js2` fork.
 
 No Test262 submodule content or pointer is included.
