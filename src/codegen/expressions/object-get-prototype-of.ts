@@ -46,12 +46,15 @@ const ES5_OBJECT_PROTOTYPES = new Map([
   ["Date", "Date"],
   ["RegExp", "RegExp"],
   ["Error", "Error"],
-  ["EvalError", "Error"],
-  ["RangeError", "Error"],
-  ["ReferenceError", "Error"],
-  ["SyntaxError", "Error"],
-  ["TypeError", "Error"],
-  ["URIError", "Error"],
+  // (§20.5.6.4) Each NativeError has its OWN prototype object; collapsing them
+  // onto `Error` made `Object.getPrototypeOf(new EvalError) === Error.prototype`
+  // (test262 `NativeErrors/*/instance-proto.js`, `prototype.js`).
+  ["EvalError", "EvalError"],
+  ["RangeError", "RangeError"],
+  ["ReferenceError", "ReferenceError"],
+  ["SyntaxError", "SyntaxError"],
+  ["TypeError", "TypeError"],
+  ["URIError", "URIError"],
   ["IArguments", "Object"],
 ]);
 
@@ -238,6 +241,21 @@ export function tryCompileEs5GetPrototypeOfValue(
     if (parsedType) fctx.body.push({ op: "drop" });
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
+  // (§20.5.6.4) `<NativeError>.prototype`'s own [[Prototype]] IS `Error.prototype`.
+  // The declared-name map below sees the type name `EvalError` for BOTH an
+  // EvalError instance and `EvalError.prototype`, so without this arm the
+  // per-NativeError rows would answer the receiver itself
+  // (`NativeErrors/*/prototype/proto.js`).
+  if (
+    ts.isPropertyAccessExpression(arg0) &&
+    arg0.name.text === "prototype" &&
+    ts.isIdentifier(arg0.expression) &&
+    ES5_NATIVE_ERROR_CTORS.has(arg0.expression.text) &&
+    isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+  ) {
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Error");
+  }
+
   const staticType = ctx.oracle.staticJsTypeOf(arg0);
   if (staticType === "boolean") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Boolean");
   if (staticType === "string") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "String");

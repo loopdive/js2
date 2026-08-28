@@ -156,6 +156,17 @@ export interface NativeProtoBuiltinGlue {
    * descriptors.
    */
   symbolTag?: string;
+  /**
+   * (#5156) String-keyed own DATA properties whose value is a plain string
+   * constant — `Error.prototype.name` / `.message` and the NativeError
+   * equivalents (§20.5.3.2/.3). They cannot join `memberCsv`: every consumer of
+   * that CSV mints a METHOD closure for the key, so `Error.prototype.message`
+   * would read as a function. Listed here as `[key, value]` pairs, they are
+   * seeded into the brand companion with the §17 data attributes
+   * `{writable:true, enumerable:false, configurable:true}` and answered as a
+   * string constant by the static value read.
+   */
+  dataProps?: ReadonlyArray<readonly [string, string]>;
   /** Which members are accessor getters (`kind:"getter"`) vs data methods
    *  (`kind:"method"`). `@@<id>` symbol members are always `"method"`. */
   memberKind: (member: string) => "getter" | "method";
@@ -451,6 +462,9 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
         return kind === "method" || (kind === "getter" && accessorSeederAvailable);
       });
     if (seededCtors.has(brand)) members.push("constructor");
+    // (#5156) Seeded string DATA properties are companion entries too, so
+    // `delete Error.prototype.message` / a redefinition must be observable.
+    for (const [key] of glue.dataProps ?? []) members.push(key);
     if (members.length > 0) out.set(brand, members);
   }
   return out;
@@ -654,16 +668,32 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       body.push({ op: "call", funcIdx: defineIdx });
     } else {
       // [obj, key, value, flags] → §17 data entry.
-      // Symbol.prototype[Symbol.toPrimitive] is the one native-proto method
-      // whose initial descriptor is read-only. Keep its configurable bit so
-      // the companion still observes replacement/deletion exactly like the
-      // spec, while every ordinary method retains the historical flags.
-      const defineFlags =
-        glue.name === "Symbol" && member === "@@3" ? PROTO_SYMBOL_TAG_DEFINE_FLAGS : PROTO_METHOD_DEFINE_FLAGS;
+      // `<X>.prototype[Symbol.toPrimitive]` is the one native-proto method
+      // whose initial descriptor is read-only — for Symbol (§20.4.3.5) and
+      // (#5156) for Date (§21.4.4.45) alike. Keep its configurable bit so the
+      // companion still observes replacement/deletion exactly like the spec,
+      // while every ordinary method retains the historical flags.
+      const defineFlags = member === "@@3" ? PROTO_SYMBOL_TAG_DEFINE_FLAGS : PROTO_METHOD_DEFINE_FLAGS;
       body.push({ op: "f64.const", value: defineFlags });
       body.push({ op: "call", funcIdx: defineIdx });
     }
     body.push({ op: "drop" }); // the helper returns the target
+    installed++;
+  }
+
+  // (#5156) String-keyed own DATA properties (Error.prototype.name/.message).
+  // Same §17 attributes as a proto method, so one shared flag constant.
+  for (const [key, value] of glue.dataProps ?? []) {
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    if (defineIdx === undefined) continue;
+    const body = seedFctx.body;
+    body.push({ op: "local.get", index: 0 });
+    addStringConstantGlobal(ctx, key);
+    for (const instr of stringConstantExternrefInstrs(ctx, key)) body.push(instr);
+    addStringConstantGlobal(ctx, value);
+    for (const instr of stringConstantExternrefInstrs(ctx, value)) body.push(instr);
+    body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+    body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
     installed++;
   }
 

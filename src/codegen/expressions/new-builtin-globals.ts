@@ -58,6 +58,7 @@ import {
   isStringTypedArg,
   resolvesToAmbientGlobal,
 } from "./new-super.js";
+import { tryEmitStandaloneDateCtorValueArg } from "../date-ctor-value-arg.js"; // (#5156) §21.4.2.2 step 4
 import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
@@ -1515,6 +1516,8 @@ export function tryCompileBuiltinGlobalNew(
           });
           releaseTempLocal(fctx, extLocal);
         }
+      } else if (tryEmitStandaloneDateCtorValueArg(ctx, fctx, args[0]!, dateTypeIdx)) {
+        // (#5156) §21.4.2.2 step 4 — [[DateValue]] fast path + ToPrimitive.
       } else {
         compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
       }
