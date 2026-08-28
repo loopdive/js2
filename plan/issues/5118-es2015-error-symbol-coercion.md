@@ -119,6 +119,23 @@ coercion outside this body is not widened.
   can carry Symbol (`symbol`, `any`, `unknown`, `unresolvable`, or a union
   containing one), so ordinary string messages do not gain the carrier cost.
 
+### Related unclassified rows
+
+The three same-seam `ToPrimitive` siblings are not classified as ES2015 in
+`test262-file-editions.json`, so they remain regression evidence rather than
+part of the authoritative cohort or exact-row test list. A fresh candidate
+run with the pinned QuickJS artifact and one worker reports host `pass` for
+all three but standalone `fail` for all three:
+
+- `built-ins/Error/error-message-tostring-toprimitive.js`
+- `built-ins/Error/prototype/toString/tostring-message-throws-toprimitive.js`
+- `built-ins/NativeErrors/nativeerror-tostring-message-throws-toprimitive.js`
+
+Their residual is the separate object `ToPrimitive`/method-coercion path; this
+bounded Symbol-only change intentionally does not widen into that helper. The
+follow-up should own those rows if that path is made strict, with a separate
+baseline and regression cohort.
+
 ## Bounded implementation plan
 
 1. Add a standalone-only Symbol message guard to the shared Error-family
