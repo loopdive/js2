@@ -16,6 +16,7 @@ language_feature: builtin-prototype-symbol-metadata
 goal: standalone-mode
 assignee: "ttraenkler/codex-5129-es2015-buffer-prototype-tostringtag"
 branch: codex/5129-es2015-buffer-prototype-tostringtag
+pr: 5142
 files:
   - src/codegen/array-object-proto.ts
   - tests/issue-5129-es2015-buffer-prototype-tostringtag.test.ts
@@ -141,4 +142,6 @@ Work only in
 `/private/tmp/js2-es2015-buffer-prototype-tostringtag-20260828` on branch
 `codex/5129-es2015-buffer-prototype-tostringtag`. Push checkpoints to the fork
 without force only when root requests publication. Root owns the final review,
-issue done/PR metadata, upstream PR creation, CI shepherding, and enqueue.
+issue done/PR metadata, CI shepherding, and enqueue. The single upstream PR is
+https://github.com/loopdive/js2/pull/5142; it remains draft while this issue is
+in progress and must become ready only after the complete fix is mergeable.
