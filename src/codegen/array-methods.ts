@@ -67,7 +67,7 @@ import {
   registerEmitBoundsCheckedArrayGet,
   VOID_RESULT,
 } from "./shared.js";
-import { emitIncludesSearchValue } from "./array-includes-search-value.js";
+import { emitIncludesSearchValue, emitIndexOfAbsentSearchValue } from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import {
@@ -1401,10 +1401,17 @@ function shouldWrapDynViewTwoArm(
     // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
     (!FIND_METHODS.has(methodName) || ctx.standalone) &&
     // (#2872) The static per-method impls the arms route to hard-require their
-    // search/index argument (`indexOf requires 1 argument` reportError). A
-    // 0-arg call (`ta.indexOf()` — legal JS, searches `undefined`) must NOT be
-    // promoted from the tolerant generic ladder into that hard CE — skip the
-    // wrap and keep the pre-#2872 lowering for it.
+    // search/index argument. A 0-arg call must NOT be promoted from the
+    // tolerant generic ladder into that hard CE — skip the wrap and keep the
+    // pre-#2872 lowering for it.
+    // (#5121 S1) The three search/index rejects this clause was written for are
+    // GONE — `includes` (#2872), `at` (#5095) and now `indexOf`/`lastIndexOf`
+    // all model an absent argument. The clause STAYS because the set above also
+    // holds the callback methods (`reduce`, `reduceRight`, `find`, …), whose
+    // typed impls still hard-require their callback; narrowing it to just those
+    // would move `ta.indexOf()` onto a different lowering, which is a lowering
+    // change with its own blast radius and no defect behind it. Deliberately
+    // left for whoever needs it — same call #5095 made.
     (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
     ts.isIdentifier(propAccess.expression) &&
     dynViewReceiverIsExternref(fctx, propAccess.expression.text)
@@ -3267,11 +3274,6 @@ function compileArrayIndexOf(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  if (callExpr.arguments.length < 1) {
-    reportError(ctx, callExpr, "indexOf requires 1 argument");
-    return null;
-  }
-
   const vecTmp = allocLocal(fctx, `__arr_iof_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_iof_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_iof_i_${fctx.locals.length}`, { kind: "i32" });
@@ -3316,8 +3318,25 @@ function compileArrayIndexOf(
   });
   fctx.body.push({ op: "local.set", index: effLenTmp });
 
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, elemType);
-  fctx.body.push({ op: "local.set", index: valTmp });
+  // (#5121 S1) `searchElement` is an ORDINARY parameter, so `a.indexOf()` is
+  // legal JS and searches for `undefined` (§23.1.3.13 step 1). Rejecting it (an
+  // `indexOf requires 1 argument` reportError here) returned null, whose
+  // diagnostic the caller SWALLOWS — `compile()` reports `success: true` with an
+  // EMPTY errors array — so the call collapsed into the caller's degraded
+  // fallback and `[10,20,30].indexOf()` answered `0` instead of `-1`. Identical
+  // mechanism to #5095 (`at()`), one method over; the difference is that the
+  // default is a search VALUE compared with STRICT equality, not an index.
+  const searchArg = callExpr.arguments[0];
+  if (searchArg !== undefined) {
+    compileExpression(ctx, fctx, searchArg, elemType);
+    fctx.body.push({ op: "local.set", index: valTmp });
+  } else if (emitIndexOfAbsentSearchValue(ctx, fctx, valType, valTmp)) {
+    // No value of this element type can strictly-equal `undefined` ⇒ -1 with no
+    // scan. A zero-argument call has no `fromIndex`, so nothing is left to
+    // evaluate for side effects (the receiver is already in `vecTmp`).
+    fctx.body.push(ctx.fast ? { op: "i32.const", value: -1 } : { op: "f64.const", value: -1 });
+    return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  }
 
   // fromIndex (optional 2nd arg, default 0)
   if (callExpr.arguments.length >= 2) {
@@ -9440,11 +9459,6 @@ function compileArrayLastIndexOf(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  if (callExpr.arguments.length < 1) {
-    reportError(ctx, callExpr, "lastIndexOf requires 1 argument");
-    return null;
-  }
-
   const vecTmp = allocLocal(fctx, `__arr_liof_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_liof_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_liof_i_${fctx.locals.length}`, { kind: "i32" });
@@ -9560,9 +9574,17 @@ function compileArrayLastIndexOf(
     ],
   });
 
-  // Compile search value
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, valType);
-  fctx.body.push({ op: "local.set", index: valTmp });
+  // Compile search value. (#5121 S1) Absent ⇒ search for `undefined`
+  // (§23.1.3.20 step 1) — see the twin comment in `compileArrayIndexOf` for the
+  // swallowed-diagnostic collapse this replaces.
+  const liofSearchArg = callExpr.arguments[0];
+  if (liofSearchArg !== undefined) {
+    compileExpression(ctx, fctx, liofSearchArg, valType);
+    fctx.body.push({ op: "local.set", index: valTmp });
+  } else if (emitIndexOfAbsentSearchValue(ctx, fctx, valType, valTmp)) {
+    fctx.body.push(ctx.fast ? { op: "i32.const", value: -1 } : { op: "f64.const", value: -1 });
+    return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  }
 
   // (#2648) View-name-driven signedness for the packed i8/i16 element load.
   const getOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, propAccess.expression));

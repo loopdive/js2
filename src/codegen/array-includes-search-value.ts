@@ -80,3 +80,45 @@ export function emitIncludesSearchValue(
   fctx.body.push({ op: "local.set", index: valTmp });
   return false;
 }
+
+/**
+ * Emit the ABSENT `searchElement` for `Array.prototype.indexOf` / `lastIndexOf`
+ * into `valTmp`.
+ *
+ * §23.1.3.13 / §23.1.3.20 take `searchElement` as an ordinary parameter, so the
+ * zero-argument form is legal and searches for `undefined` — but with STRICT
+ * EQUALITY (§7.2.16), not `includes`'s SameValueZero. That one difference is why
+ * this is a sibling of {@link emitIncludesSearchValue} rather than a call to it:
+ *
+ * - **externref vec** — a real `undefined`, so an element that IS `undefined`
+ *   (or a hole mapped to one) matches: `["x",undefined,"z"].indexOf()` is `1`.
+ * - **f64 vec** — `undefined` in f64 context is NaN, exactly what the explicit
+ *   `indexOf(undefined)` spelling already emits, and `f64.eq` is false when
+ *   either side is NaN. The scan therefore runs and finds nothing, which is
+ *   right for `[10,20,30]`. `includes` resolves this the OTHER way (its
+ *   SameValueZero arm deliberately makes NaN match NaN, which is how it finds a
+ *   hole) — copying that here would wrongly match `[NaN].indexOf()`.
+ * - **any other element type** (i32 elements, native-string / object refs) — no
+ *   value of that type is `undefined`, so nothing can match. Returning `true`
+ *   says so and the caller answers -1 without scanning. That return is
+ *   load-bearing: leaving `valTmp` at its zero default would compare against
+ *   `0` and make `[false, true].indexOf()` answer `0` instead of `-1`.
+ *
+ * @returns true when no element can match, i.e. the result is -1 with no scan.
+ */
+export function emitIndexOfAbsentSearchValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  valType: ValType,
+  valTmp: number,
+): boolean {
+  if (valType.kind === "externref") {
+    emitUndefined(ctx, fctx);
+  } else if (valType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: Number.NaN });
+  } else {
+    return true;
+  }
+  fctx.body.push({ op: "local.set", index: valTmp });
+  return false;
+}
