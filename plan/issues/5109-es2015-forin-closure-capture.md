@@ -178,4 +178,4 @@ count because its current-main import-manifest setup throws before execution;
 the repository's synthetic wrapper path (with the exact pinned source and
 runner options) is the passing reproduction recorded above.
 
-PR: to be published after this handoff checkpoint.
+PR: https://github.com/loopdive/js2/pull/5120 (open, non-draft, mergeable).
