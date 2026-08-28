@@ -1,10 +1,11 @@
 {
   "id": "5159",
   "assignee": "ttraenkler/opus-5159",
-  "requested_by": "ttraenkler/opus-5159",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5159-error-cause",
   "claimed_at": "2026-08-28T15:50:17Z",
-  "updated_at": "2026-08-28T15:50:17Z",
-  "write_id": "1782-0i0qbmg7"
+  "updated_at": "2026-08-28T17:40:35Z",
+  "write_id": "13328-h1sec0mh",
+  "released_at": "2026-08-28T17:40:35Z"
 }
