@@ -37,7 +37,7 @@ import { emitThrowJsError, noJsHost } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
-import { foldedEvalEarlyError } from "./eval-early-errors.js";
+import { evalCallerCapabilities, foldedEvalEarlyError } from "./eval-early-errors.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import {
@@ -1005,7 +1005,10 @@ export function tryStaticEvalInline(
   // dynamic-eval fallback below.
   const bodyIsStrict = evalBodyHasUseStrictDirective(stmts);
   const evalIsStrict = bodyIsStrict || (directEval && isStrictContext(expr, ctx.inferModuleStrictArguments));
-  const earlyError = foldedEvalEarlyError(sf, evalIsStrict);
+  // (#5157) §15.1.1 NewTarget / SuperProperty / SuperCall admissibility is a
+  // property of the CALL SITE, not of the eval source, so it has to be
+  // computed here and handed down.
+  const earlyError = foldedEvalEarlyError(sf, evalIsStrict, evalCallerCapabilities(expr, directEval));
   if (earlyError !== undefined) {
     emitThrowJsError(ctx, fctx, "SyntaxError", earlyError);
     return { kind: "externref" };
