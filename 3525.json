@@ -1,10 +1,11 @@
 {
   "id": "3525",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "codex/3525-m0-program-container-plan",
   "claimed_at": "2026-08-26T05:34:48Z",
-  "updated_at": "2026-08-26T05:34:48Z",
-  "write_id": "72794-5kzb5r07"
+  "updated_at": "2026-08-28T22:03:00Z",
+  "write_id": "24134-s2885qfh",
+  "released_at": "2026-08-28T22:03:00Z"
 }
