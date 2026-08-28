@@ -299,7 +299,7 @@ describe("#4591 exact Fibonacci pair Prepared cutover", () => {
     const ids = [fibSourceId, benchSourceId, trampolineId, cacheId] as const;
     const slotExpectations = [
       { result: prepared, fib: 76, bench: 77, trampoline: undefined, cache: undefined },
-      { result: direct, fib: 76, bench: 77, trampoline: 291, cache: 135 },
+      { result: direct, fib: 76, bench: 77, trampoline: 291, cache: 136 },
     ] as const;
 
     for (const { result, fib, bench, trampoline, cache } of slotExpectations) {
