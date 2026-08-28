@@ -178,14 +178,13 @@ position, `"0"` → **`"10"`** in string position.
 | `new Int32Array(3).at()` (TypedArray) | **Was BROKEN too** — the issue's table above lists it as correct, which was wrong. It shares `compileArrayAt`, so it answered `0` instead of element 0. Fixed by this same change and pinned in both lanes. |
 | `"abc".at()` (String.prototype.at) | Correct, and byte-identical — a different lowering (`string-ops.ts`), untouched. |
 
-### Follow-up not yet filed
+### Follow-up
 
 `indexOf()` / `lastIndexOf()` with no argument (the row above) still answer `0`
-where the spec requires `-1`. It is **not** filed as its own issue because
-`scripts/claim-issue.mjs --allocate` refuses to reserve an id when the open-PR
-scan is unavailable (`gh` is absent in this container, exit 6) and hand-picking
-an id is forbidden (#2531). Recorded here and reported to the orchestrator so
-an id can be allocated where `gh` is reachable.
+where the spec requires `-1`. Filed as #5121 (2026-08-28, allocated by the
+orchestrator once an id could be reserved; split there into S1
+missing-argument default vs S2 f64-vec hole/undefined value-representation
+limit).
 
 ## Test Results
 
