@@ -1,7 +1,7 @@
 ---
 id: 5108
 title: "ES2015 computed-only object literals lose statically folded keys in standalone"
-status: in-progress
+status: in-review
 created: 2026-08-28
 updated: 2026-08-28
 priority: medium
@@ -150,6 +150,34 @@ The focused test imports the Test262 runner dynamically inside the
 corpus-guarded block, so mandatory controls remain runnable when the corpus is
 absent and do not depend on a hidden fixture.
 
+## Final synchronized validation
+
+The one final upstream sync fetched `upstream/main` at
+`70e8e3c1ca` (2026-08-28) and rebased this branch cleanly on that commit.
+Post-sync validation remained green:
+
+- `tests/issue-5108.test.ts` with the corpus present: 8/8 pass using
+  `--maxWorkers=2 --minWorkers=1`;
+- final authoritative probes: 4/4 host pass and 4/4 standalone pass;
+- final standalone repeat set: 4/4 pass, with the same hashes as the first
+  post-sync probe (`add bcd97e934248`, `subtract 84ce90bbb5ff`, and
+  `div/mult b32352f9c09e`);
+- final no-corpus shape after the sync: 4/4 mandatory controls pass and the
+  4 optional Test262 rows skip;
+- the worktree is clean and the branch is directly based on current
+  `upstream/main` (no merge conflicts or unresolved files).
+
+The intended publication commands are:
+
+```sh
+git push --set-upstream fork codex/5108-es2015-computed-key-carrier
+gh pr create --repo loopdive/js2 --head ttraenkler:codex/5108-es2015-computed-key-carrier --base main
+```
+
+The environment rejected the push escalation as exporting private repository
+contents to the external fork, so publication remains a handoff item despite
+the implementation being complete and mergeable locally.
+
 ## Budgets and handoff
 
 - Source budget: `src/codegen/literals.ts`, `src/codegen/statements/variables.ts`,
@@ -166,3 +194,5 @@ absent and do not depend on a hidden fixture.
 - 2026-08-28: allocated #5108 through the upstream assignment log as
   `ttraenkler/es2015-next-lane-d`; plan checkpoint is being prepared on
   `codex/5108-es2015-computed-key-carrier`.
+- 2026-08-28: final implementation and validation checkpoints are complete;
+  publication needs an approved push/PR handoff from the parent agent.
