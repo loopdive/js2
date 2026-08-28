@@ -1,7 +1,7 @@
 ---
 id: 5115
 title: "IR: own exact ambient Math.asinh/Math.acosh/Math.atanh calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -103,6 +103,34 @@ spread, and wrong-arity forms remain direct.
 - Each narrow rollback withdraws only its corresponding method, and excluded
   shapes decline before claim without invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.asinh`, `math.acosh`, and `math.atanh` are now the twenty-fourth
+  through twenty-sixth closed source-level Math intrinsics. They reuse the
+  generic exact-ambient selector, call-graph walker, from-AST intrinsic
+  emitter, and provider materializer.
+- The frozen manifest attaches the existing host-free `Math_asinh`,
+  `Math_acosh`, and `Math_atanh` callables, closes each over `math.log`,
+  materializes that dependency once, and requests no host capability. No Math
+  algorithm or direct-codegen file changed.
+- Independent `JS2WASM_IR_MATH_ASINH=0`, `JS2WASM_IR_MATH_ACOSH=0`, and
+  `JS2WASM_IR_MATH_ATANH=0` controls withdraw only their corresponding claim.
+  Shadowed, aliased, computed, optional-invocation, optional-receiver,
+  wrong-arity, spread, and non-number forms all decline before claim.
+- Four focused/affected contract suites pass 45/45. They cover host and
+  zero-import standalone execution, exact dependency-first provider closure,
+  direct-path bit parity across domains, adjacent endpoints, signed zero,
+  subnormals, infinities, and the inherited square-overflow boundary,
+  method-specific native envelopes, independent rollbacks, every
+  target/backend manifest policy, and explicit production linear deferral.
+- Existing inverse-hyperbolic/self-hosted Math regressions pass 51/51 across
+  #3141 and `math-inline`.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max final review returned GO with no P0/P1 finding.
+- PR #5123 is open non-draft, conflict-free, and green, stacked on #5121's
+  exact `Math.expm1` ownership branch.
 
 ## Non-goals
 
