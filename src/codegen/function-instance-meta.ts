@@ -288,6 +288,13 @@ export function fnInstanceNameOf(decl: ts.Node): string {
   if ((ts.isVariableDeclaration(parent) || ts.isBindingElement(parent)) && parent.initializer === node) {
     return ts.isIdentifier(parent.name) ? parent.name.text : "";
   }
+  // (#5144 cluster F) Shorthand DEFAULT in an object ASSIGNMENT pattern —
+  // `for ({ fn = function () {} } of [{}])`. §13.15.5.4 step 6.d applies
+  // NamedEvaluation with the property key, which is also the shorthand's own
+  // identifier. (The binding-pattern twin arrives as a BindingElement above.)
+  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
+    return parent.name.text;
+  }
   if (ts.isPropertyAssignment(parent) && parent.initializer === node) {
     const key = parent.name;
     if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
