@@ -78,13 +78,49 @@ export function emitVirtualMethodDispatchByTag(
   const recvLocal = allocTempLocal(fctx, recvLocalType);
   fctx.body.push({ op: "local.set", index: recvLocal });
 
-  // Evaluate args and save each to a temp local. Pad missing args with
-  // default values so call sites can omit trailing arguments.
+  // (#4644) Overrides do NOT have to share an arity. `class A { m(a,b,c=1){} }`
+  // and `class B extends A { m(a,b,c=1,d=false){} }` are both legal JS and both
+  // land in `candidates`, with 4 and 5 Wasm params respectively (self + user
+  // params). The old code sized the shared argument temps from
+  // `firstParamTypes` alone and then pushed that same fixed list into EVERY
+  // arm, so an arm whose callee declared one more parameter got `need 5, got 4`
+  // — a module that `compile()` reports as clean and `WebAssembly.compile()`
+  // rejects. Measured on @js-temporal/polyfill: `adjustCalendarDate` is
+  // declared with 3 params on `GregorianBaseHelper` and 4 on
+  // `ChineseBaseHelper`.
+  //
+  // Fix in two halves:
+  //   * evaluate each SOURCE argument once, into a shared temp, capped by the
+  //     WIDEST candidate (not the first) so a wider arm's argument is not
+  //     dropped on the floor; and
+  //   * pad/truncate PER ARM inside `callBody`, from that arm's own signature.
+  //     Padding is `undefined`/zero, so materializing it per arm is observably
+  //     identical to hoisting it — and it is the only way one temp list can
+  //     serve arms of different arity.
+  const candParamTypes = new Map<number, ValType[]>();
+  let widestParamTypes = firstParamTypes;
+  for (const cand of candidates) {
+    const finalIdx = ctx.funcMap.get(`${cand.className}_${propAccess.name.text}`) ?? cand.funcIdx;
+    // Read the signature off the index we will ACTUALLY call. `funcMap` can
+    // resolve to a different (e.g. per-subclass synthesized) body than
+    // `cand.funcIdx`, and a signature read from the wrong one is exactly the
+    // arity mismatch this fix exists to prevent.
+    const params = getFuncParamTypes(ctx, finalIdx);
+    if (!params || params.length === 0) {
+      rollbackSpeculative(ctx, fctx, snap);
+      return undefined;
+    }
+    candParamTypes.set(cand.funcIdx, params);
+    if (params.length > widestParamTypes.length) widestParamTypes = params;
+  }
+
+  // Evaluate args and save each to a temp local. Padding to each callee's
+  // declared arity happens per-arm in `callBody`.
   const argLocals: { idx: number; type: ValType }[] = [];
-  const userParamCount = firstParamTypes.length - 1; // exclude self
+  const userParamCount = widestParamTypes.length - 1; // exclude self
   const argCount = Math.min(expr.arguments.length, userParamCount);
   for (let i = 0; i < argCount; i++) {
-    const expectedArgType = firstParamTypes[i + 1];
+    const expectedArgType = widestParamTypes[i + 1];
     const aType = compileExpression(ctx, fctx, expr.arguments[i]!, expectedArgType);
     if (!aType) {
       rollbackSpeculative(ctx, fctx, snap);
@@ -94,12 +130,30 @@ export function emitVirtualMethodDispatchByTag(
     fctx.body.push({ op: "local.set", index: local });
     argLocals.push({ idx: local, type: aType });
   }
-  for (let i = expr.arguments.length + 1; i < firstParamTypes.length; i++) {
-    const paramType = firstParamTypes[i]!;
-    pushDefaultValue(fctx, paramType, ctx);
-    const local = allocTempLocal(fctx, paramType);
+
+  // (#4644) Padding values, one temp per DISTINCT padded param type, all
+  // materialized here in `fctx.body` — never inside an arm. `pushDefaultValue`
+  // can emit a `call` (the `undefined` externref helper), and a late import
+  // added while building the arm arrays would shift function indices that the
+  // fixup pass cannot reach, because those arrays are not in `fctx.body` yet.
+  const padKey = (t: ValType): string => JSON.stringify(t);
+  const padLocals = new Map<string, number>();
+  const padTypes: ValType[] = [];
+  for (const cand of candidates) {
+    const params = candParamTypes.get(cand.funcIdx)!;
+    for (let i = argLocals.length; i < params.length - 1; i++) {
+      const t = params[i + 1]!;
+      if (!padLocals.has(padKey(t))) {
+        padLocals.set(padKey(t), -1);
+        padTypes.push(t);
+      }
+    }
+  }
+  for (const t of padTypes) {
+    pushDefaultValue(fctx, t, ctx);
+    const local = allocTempLocal(fctx, t);
     fctx.body.push({ op: "local.set", index: local });
-    argLocals.push({ idx: local, type: paramType });
+    padLocals.set(padKey(t), local);
   }
 
   // Determine return type from the first candidate's signature.
@@ -141,7 +195,7 @@ export function emitVirtualMethodDispatchByTag(
   // receiver to the candidate's struct type before calling, so the
   // function-type signature matches.
   function callBody(cand: { className: string; funcIdx: number; classTag: number }): Instr[] {
-    const candParams = getFuncParamTypes(ctx, cand.funcIdx);
+    const candParams = candParamTypes.get(cand.funcIdx);
     if (!candParams || candParams.length === 0) return [];
     const selfType = candParams[0]!;
     if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return [];
@@ -152,8 +206,21 @@ export function emitVirtualMethodDispatchByTag(
     // ref.cast (non-null) traps on null. Use ref.cast_null since the
     // receiver could be null at the static type level.
     body.push({ op: "ref.cast_null", typeIdx: selfTypeIdx });
-    for (const a of argLocals) {
-      body.push({ op: "local.get", index: a.idx });
+    // (#4644) Exactly `candParams.length - 1` operands, no more and no fewer:
+    // reuse the shared temps for the arguments this arm declares, pad the rest
+    // with this arm's own default values, and drop temps the arm cannot
+    // receive (a narrower override — the extra operand would be a stack leak
+    // just as surely as a missing one is a shortfall).
+    const candArgCount = candParams.length - 1;
+    for (let i = 0; i < candArgCount; i++) {
+      const shared = argLocals[i];
+      if (shared !== undefined) {
+        body.push({ op: "local.get", index: shared.idx });
+        continue;
+      }
+      const padIdx = padLocals.get(padKey(candParams[i + 1]!));
+      if (padIdx === undefined) return [];
+      body.push({ op: "local.get", index: padIdx });
     }
     const finalIdx = ctx.funcMap.get(`${cand.className}_${propAccess.name.text}`) ?? cand.funcIdx;
     body.push({ op: "call", funcIdx: finalIdx });
@@ -193,6 +260,35 @@ export function emitVirtualMethodDispatchByTag(
     tagStructIdx = recvTypeIdx;
   }
 
+  // (#4644) VERIFY the assumption the paragraph above states — do not just
+  // assert it. "Field 0 is `__tag` in every class struct this path can see" is
+  // false for an OBJECT-LITERAL struct: `__anon_0`'s field 0 is its first
+  // property (an `externref`), so the cascade emitted `struct.get` → `i32.eq`
+  // and the module was rejected with `i32.eq[0] expected type i32, found
+  // struct.get of type externref`. Reached whenever an object literal's method
+  // calls `this.m(…)` and `m` is defined only on unrelated classes. There is no
+  // tag to compare in such a struct, so bail to the static path — the snapshot
+  // rewinds everything emitted so far.
+  // The test is deliberately "field 0 is present AND is not i32", not "field 0
+  // is i32". Class struct field lists are filled progressively, so an ABSENT
+  // field 0 means "not known yet", not "no tag" — an abstract base whose
+  // members have not been emitted has an empty field list at this point, and
+  // refusing on that alone silently demoted #1299's dict dispatch back to the
+  // first candidate (`dict["a"].id() * 1000 + dict["b"].id()` answered 1001
+  // instead of 1002). Only a field 0 that EXISTS and is the wrong type proves
+  // there is no tag to read.
+  const tagStructDef = ctx.mod.types[tagStructIdx];
+  const emittedField0 = tagStructDef?.kind === "struct" ? tagStructDef.fields[0] : undefined;
+  const tagStructName = ctx.typeIdxToStructName.get(tagStructIdx);
+  const trackedField0 = tagStructName === undefined ? undefined : ctx.structFields.get(tagStructName)?.[0];
+  if (
+    (emittedField0 !== undefined && emittedField0.type.kind !== "i32") ||
+    (trackedField0 !== undefined && trackedField0.type.kind !== "i32")
+  ) {
+    rollbackSpeculative(ctx, fctx, snap);
+    return undefined;
+  }
+
   // Build the cascade: load __tag, compare to each candidate's classTag.
   // Outermost: candidates[0]; deepest else: unreachable.
   let elseInstrs: Instr[] = [{ op: "unreachable" }];
@@ -215,6 +311,7 @@ export function emitVirtualMethodDispatchByTag(
   for (const instr of elseInstrs) fctx.body.push(instr);
 
   for (const a of argLocals) releaseTempLocal(fctx, a.idx);
+  for (const idx of padLocals.values()) if (idx >= 0) releaseTempLocal(fctx, idx);
   releaseTempLocal(fctx, recvLocal);
 
   return resultType;
