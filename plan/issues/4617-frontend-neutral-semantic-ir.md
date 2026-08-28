@@ -1,9 +1,11 @@
 ---
 id: 4617
 title: "Frontend-neutral semantic IR snapshot for TypeScript 7 and Acorn"
-status: ready
+status: in-progress
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-08-28
+assignee: ttraenkler/codex
+branch: codex/4617-frontend-neutral-semantic-ir
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -18,13 +20,16 @@ related: [4218, 4410, 4411, 4589, 4590]
 files:
   - src/checker/index.ts
   - src/checker/oracle.ts
+  - src/checker/oracle-declaration-snapshot.ts
   - src/compiler.ts
   - src/ts-api.ts
   - src/ir/identity.ts
   - src/ir/planning-identity.ts
+  - src/ir/semantic-declaration-snapshot.ts
   - src/ir/program.ts
   - src/ir/prepared-component-sealing.ts
   - src/codegen/multi-prepared-scalar-leaf.ts
+  - src/codegen/multi-prepared-function-value-declaration-replay.ts
   - src/codegen/multi-prepared-function-value-import-target.ts
   - src/codegen/program-abi-session.ts
   - tests/issue-4590-bench-loop-prepared-cutover.test.ts
@@ -663,3 +668,193 @@ checkpoint, not a schema-wide rewrite:
   the Acorn binder, a whole-repository schema migration, or broad TypeOracle
   rewrites. The slice should prove the boundary and its failure behavior before
   expanding the record vocabulary.
+
+## 2026-08-28 C1 implementation plan — declaration-fact record/replay
+
+This is Phase C's first executable checkpoint. It owns the exact
+`valueDeclarationOf` / `declarationsOf` query population required by the
+existing standalone `bench_loop` Prepared function-value route. It does not
+make the whole compiler frontend-free, does not delete a direct handler, and
+does not claim that an AST-free consumer exists yet. The TypeScript adapter may
+inspect compiler-owned nodes while producing and reattaching the snapshot; the
+published snapshot and every fact used to authorize the route must be
+frontend-neutral, canonical, serializable, and replayed without a live oracle
+query.
+
+### Boundary and ownership
+
+Add two deliberately separated boundary modules and one route-local consumer
+helper:
+
+- `src/ir/semantic-declaration-snapshot.ts` owns only the versioned record
+  schema, structural validation, deep freeze, canonical ordering, and canonical
+  JSON bytes. It must import no TypeScript, Acorn, checker, codegen, Wasm, or
+  Node-only hashing API.
+- `src/checker/oracle-declaration-snapshot.ts` is the temporary TypeScript
+  adapter. It may translate exact compiler nodes to/from neutral records using
+  one `IrPlanningIdentityContext`, but it must never place a `ts.Node`,
+  `ts.Symbol`, `ts.Type`, `ts.Signature`, `TypeChecker`, `WeakMap`, absolute
+  filename, display name, or syntax-kind number into the record.
+- `src/codegen/multi-prepared-function-value-declaration-replay.ts` owns the
+  exact reduction-body declaration-query proof/collector and the bounded
+  capture/finalize/no-delegate-replay lifecycle. It may import the adapter,
+  neutral schema, and `ts` syntax predicates, but it must not import
+  `multi-prepared-scalar-leaf.ts` or allocate support, publish a claim, request
+  a skip, or lower Wasm. Its API returns either a typed withdrawn detail or one
+  replay-certified evidence value plus the retained replay receipt; the live
+  capture callback may discover facts but cannot become returned authority.
+
+The v1 record vocabulary is closed and minimal:
+
+- one source-qualified query-site reference for an identifier;
+- zero or one value-declaration reference;
+- the complete ordered declaration-reference population returned for that
+  binding; and
+- declaration roles limited to the exact first-slice shapes required by the
+  fixture: named import specifier, top-level function declaration, and local
+  variable declaration inside the exact reduction body.
+
+Every reference carries the exact `IrSourceId`, source-relative `start` and
+`end`, and the closed semantic role. Source identity, not a path or spelling,
+is authority. An explicit `null` value declaration and an explicit empty
+declaration population are valid recorded answers; an absent query record is a
+missing fact and may not be treated as either answer. Ranges must be finite safe
+integers, non-negative, ordered, within the exact source, and resolve to one
+node of the stated role. Unknown versions, roles, fields, sources, duplicate
+query keys, duplicate declaration references, non-canonical ordering, a value
+declaration absent from its declaration population, or a declaration whose
+source/range/role no longer resolves fail closed.
+
+Canonical query and declaration keys are derived only from the neutral fields.
+The serializer sorts object keys and record populations deterministically and
+rejects unsupported values rather than relying on insertion-order
+`JSON.stringify`. Parsing and reserializing a valid snapshot must reproduce the
+same bytes. Tests may SHA-256 those bytes, but the IR schema module stays
+runtime-neutral.
+
+### Capture is not authority; replay is
+
+The adapter exposes a recording `Pick<TypeOracle,
+"valueDeclarationOf" | "declarationsOf">` and a replaying implementation of
+the same narrow surface:
+
+1. The recorder delegates each first request to the live TS6 oracle and records
+   the exact neutral answer. A first request through either narrow method
+   proactively captures both the `valueDeclarationOf` answer and the complete
+   `declarationsOf` population for that query site. Repeated identical requests
+   must agree; an answer that changes during capture is an invariant, not
+   last-write-wins.
+2. Finalization validates, canonicalizes, serializes, parses, validates again,
+   and freezes the snapshot. The parsed record, not the recorder's retained
+   node map, is the replay input.
+3. The replayer joins each neutral reference back to exactly one node in the
+   current source inventory. It has no delegate. A missing query, stale source,
+   copied AST, rebuilt or reordered inventory, range/role drift, or ambiguous
+   join raises the snapshot's typed missing/invalid-fact error; it never asks a
+   live oracle, searches by spelling, or returns a guessed declaration.
+4. A frontend poison supplied after finalization must therefore be unreachable
+   for the recorded query family. The poison is an anti-vacuity control, not a
+   production fallback switch.
+
+Keep `TypeOracle`'s broad existing interface unchanged in C1. The new adapter is
+an explicit bridge for this query family; do not turn all oracle methods into a
+partial proxy or let unrelated codegen silently consult the snapshot.
+
+### Production consumption in the exact `bench_loop` route
+
+Change only the declaration-resolution authority inside
+`multi-prepared-function-value-import-target.ts` and the exact function-value
+leaf in `multi-prepared-scalar-leaf.ts`:
+
+1. Run the existing candidate proof once with the recorder solely to discover
+   and capture every binding query used by the reduction body, the one
+   function-value use, the named import, and the exported imported target. This
+   pass may not allocate support, request a body skip, publish a claim, or
+   authorize preparation.
+2. Finalize and canonical-round-trip the snapshot, create a no-delegate
+   replayer, then rerun the complete existing candidate proof. Only this replay
+   result may allocate the trampoline/cache support, prepare the function, or
+   request the direct-body skip. The replay result must identify the same exact
+   declarations and source-qualified UnitIds already required by #4590.
+3. Retain the frozen snapshot bytes and replay authority on the function-value
+   route receipt. Every post-direct/currentness recheck, including
+   `multiPreparedFunctionValueUseIsCurrent`, consumes that exact snapshot.
+   `ctx.oracle` is not accepted as a late authority for these facts.
+4. Missing or invalid replay evidence withdraws before the first support/body
+   mutation, or fails invariantly if a previously certified receipt drifts.
+   It must never reopen the live TS oracle or fall back after a skip has been
+   requested.
+
+The full candidate replay retains every existing local-binding oracle identity
+check; C1 does not replace those checks with source structure or spelling. The
+whole-source function-value scan must first filter identifiers by the exact
+legacy identifier text so unrelated declaration roles are never queried or
+recorded. That text is only a conservative candidate filter: the replayed
+source-qualified declaration identity remains the sole authority for accepting
+the use, import, target, reduction bindings, and route.
+
+Do not change the scalar, array, Fibonacci, string, host, direct, fast, WASI,
+or IR-disabled routes. Do not edit `src/ir/select.ts`, `src/ir/from-ast.ts`,
+backend lowering, the Program ABI schema, or public compile-result options in
+this checkpoint. Avoid `src/codegen/index.ts` unless the implementation proves
+that the exact route cannot own capture/replay locally; a convenience wiring
+change is not sufficient reason to overlap the broad standalone/Deno branch.
+Keep `multi-prepared-scalar-leaf.ts` at non-positive net LOC by moving the exact
+reduction declaration proof and generic snapshot lifecycle into the focused
+route helper above. Do not add a LOC allowance for C1; the helper exists to
+honor the regrowth ratchet without coupling the neutral schema to route policy.
+
+### Non-vacuous tests
+
+Extend `tests/issue-4590-bench-loop-prepared-cutover.test.ts` and add a focused
+schema/adapter test file if keeping pure mutations separate improves clarity.
+The positive matrix must:
+
+- capture with TS6, serialize, parse, and replay after poisoning both live
+  declaration-query methods;
+- retain the existing exact zero-legacy Prepared outcome, terminal ownership,
+  UnitIds, three Program ABI bindings, raw and optimized Wasm surface/body
+  comparisons, and runtime result `1_783_293_664`;
+- prove capture traversal/query reorder produces identical canonical bytes and
+  digest; and
+- prove the ordinary live-oracle lane and replay lane have the same route,
+  terminal outcomes, ABI surface, imports/exports/DTS/string pool, binary/WAT
+  observation, and runtime behavior.
+
+Mutate one fact at a time and require rejection before support allocation or a
+body skip for: missing query, explicit answer changed to missing, duplicate or
+unknown query, wrong version or extra field, wrong source ID, range or role,
+copied SourceFile/AST, value declaration not in declarations, empty or
+duplicated singleton declaration population, same-spelled foreign import or
+target, target UnitId mismatch, and stale inventory. A separate schema fixture
+with two same-binding, allowed-role declarations must prove that reversing its
+declaration population is rejected as non-canonical; merely calling a singleton
+"reordered" is not evidence. After a valid route is certified, mutate the
+retained snapshot/receipt and require the existing post-certification invariant
+with zero target legacy rows. A spy that never throws is not evidence: at least
+one control must deliberately run the old live-query path and observe the
+poison.
+
+The existing renamed-route and source-shape negative matrix remains unchanged.
+The direct kill-switch control still restores the exact two `bench_loop`
+legacy rows. C1 introduces no new shipping environment switch; test-only fault
+injection must be parsed, exact, and fail if armed but unmatched.
+
+### Landing gates and honest claims
+
+Run the snapshot/schema tests, the complete #4590 suite, the scalar/array/
+Fibonacci/string Prepared-route controls, TypeScript 7 and TypeScript 5,
+Prettier/Biome, IR layering/dialect/fallback/oracle/optimization/dead-export
+checks, and the LOC/function regrowth ratchets. Run both ratchets immediately
+before the signed commit. Run every normal precommit and prepush hook without a
+skip. Before each heavy command, commit, and push, require a fresh finite,
+non-negative one-minute load strictly below `logical cores - 2` (10 cores means
+`< 8`). Obtain an independent read-only review of the exact signed head before
+push and open a ready PR.
+
+Acceptance proves only Phase C for one declaration-query family and one bounded
+standalone route. The snapshot still reattaches compiler-owned AST declarations
+inside the temporary TypeScript adapter, so Phase D's neutral consumer and
+Phase E's TypeScript/Acorn-unloaded end-to-end replay remain open. Do not claim
+TS7 or Acorn support, a general semantic snapshot, direct-codegen deletion, or
+repository-wide frontend neutrality from this checkpoint.
