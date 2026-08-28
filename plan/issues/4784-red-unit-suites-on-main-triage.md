@@ -1,7 +1,8 @@
 ---
 id: 4784
 title: "triage: 12 failing rows in four issue-* unit suites that are red on main and gate nothing"
-status: in-progress
+status: done
+completed: 2026-08-28
 sprint: current
 created: 2026-08-27
 priority: high
@@ -204,6 +205,18 @@ had healed since filing.
 Net: **6 of 12 rows fixed** in this branch (B1, C1–C5), **6 dispositioned**
 with a root cause and an owner (A1–A4, D1–D2).
 
+**This issue is closed as `done` because its own scope is triage, not repair** —
+every row now has a verdict backed by a measurement, which is what the
+acceptance criteria ask for. **A1–A4 and D1–D2 are deliberately still RED**, and
+that is the correct end state rather than an unfinished one: each is a *genuine
+compiler defect*, so a passing or skipped row there would hide a real bug. A
+failing test reporting a real regression is the test doing its job. They are
+left red, attributed, and owned — A1–A4 to #745 (claimed), D1–D2 to the
+runtime-eval lane with the culprit commit named. The rows that were fixed or
+retired are the ones that were red for a reason that was *not* a live defect: a
+broken ABI, a stale detection technique, a stale pin, and an environment
+prerequisite.
+
 ## The finding that mattered most: one ABI gap explained 6 of the 12 rows
 
 C1–C4 were filed as a suspected local-environment papercut ("the QuickJS
@@ -390,6 +403,29 @@ scripts/build-runtime-eval-provider.mjs --refusal-only`, ~2.4 s), so
 test262-backed `issue-*` suites stop silently skipping in the one lane that runs
 them all. Without that, the C group would have gone back to skipping-not-failing
 and this class of ABI drift would stay invisible.
+
+## Validation
+
+- **Ratchet gates, all green** with `LOC_GATE_BASE=origin/main`: loc-budget
+  (net +2 LOC), func-budget, coercion-sites, oracle-ratchet (`+0/+0`),
+  dead-exports, ir-fallbacks, ir-dialect, ir-layering, ir-kind-neutrality.
+- **Equivalence suite, 8 shards** (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`),
+  NAME-set diffed against `scripts/equivalence-baseline.json` — the set the
+  required `equivalence-gate` check actually compares against:
+  **24 observed failing rows, 24 baseline known-failures, 0 regressions, 0
+  newly-fixed — an exact match.** Every red row is pre-existing backlog (the
+  `tdz-reference-error` / `yield-as-expression` cluster is the documented
+  Node-22 phantom family; this box is Node v22.22.2).
+- **Executed base run, not just inference**: shard 6 (the largest failure
+  cluster) was re-run with both changed source files copied back to
+  `origin/main`'s content — `7 failed / 209 passed`, the **same 7 test names**
+  as the branch run. Files restored and verified afterwards.
+- Compiler output is unchanged by construction: the whole `src/` diff sits
+  inside one `/** … */` doc comment, and `scripts/runtime-eval-provider.mjs`
+  is a build-time artifact builder that nothing under `src/` imports (the
+  `runtime-eval-provider` imports in `src/codegen/expressions/` resolve to a
+  different, same-named sibling module). `tests/equivalence/` does not import
+  it either.
 
 ## Findings for the orchestrator (no new issue ids allocated, per instruction)
 
