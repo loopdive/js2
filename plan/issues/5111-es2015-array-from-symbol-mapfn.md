@@ -19,6 +19,8 @@ files:
   - plan/issues/5111-es2015-array-from-symbol-mapfn.md
 loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
+func-budget-allow:
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 ---
 
 # #5111 — ES2015 standalone `Array.from` rejects a Symbol mapper

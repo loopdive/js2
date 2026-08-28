@@ -1119,6 +1119,18 @@ export function compileBuiltinStaticCall(
     // `_wrapWasmClosure`. The fast path's `array.copy` would silently
     // drop the mapFn.
     const hasMapFn = expr.arguments.length >= 2;
+    // A Symbol is never callable. The standalone native mapper arm below
+    // invokes a Wasm closure directly, so reject this statically-known value
+    // before it reaches `__hof_map` instead of silently treating it as a
+    // callback. Keep dynamic values on the existing runtime path.
+    if (ctx.standalone && hasMapFn && ctx.oracle.staticJsTypeOf(expr.arguments[1]!) === "symbol") {
+      const sourceType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+      if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
+      const mapType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+      if (mapType && mapType.kind !== "externref") coerceType(ctx, fctx, mapType, { kind: "externref" });
+      emitThrowTypeError(ctx, fctx, "Array.from mapper is not a function");
+      return VOID_RESULT;
+    }
     // (#1470) Array.from(string) without a mapFn — the string iterable
     // yields code points (§23.1.2.1 via §22.1.5.1). In native-strings mode
     // materialize the char vec in pure Wasm. Without this the string fell
