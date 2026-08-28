@@ -335,8 +335,10 @@ const ITERATOR_PROTO_METHODS = [
 const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
 
 /** `Symbol.prototype`'s own method names (ES2024 §20.4.3). `description` is an
- * accessor getter, resolved by the computed-access path. */
-const SYMBOL_PROTO_METHODS = ["toString", "valueOf"] as const;
+ * accessor getter, resolved by the computed-access path. `@@toPrimitive` is
+ * represented by its native-symbol sentinel so flowing prototype values seed
+ * the same identity-stable well-known-symbol entry as string methods. */
+const SYMBOL_PROTO_METHODS = ["@@3", "toString", "valueOf"] as const;
 
 /** `BigInt.prototype`'s own method names (ES2024 §21.2.3). */
 const BIGINT_PROTO_METHODS = ["toLocaleString", "toString", "valueOf"] as const;
@@ -1971,7 +1973,7 @@ export function ensureBooleanNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "Boolean");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS, "Boolean"));
   }
   return brand;
 }
