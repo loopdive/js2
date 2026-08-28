@@ -58,6 +58,7 @@ import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
+import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -395,6 +396,12 @@ export function compileDeleteExpression(
   ) {
     emitDeleteThrow(ctx, fctx, "ReferenceError", "'super' property cannot be deleted");
     return { kind: "i32" };
+  }
+  // (#5154 cluster A) `delete Array.prototype[Symbol.iterator]` must make later
+  // array iteration throw §7.4.2's TypeError. Record the tombstone; the delete
+  // itself keeps its normal lowering below.
+  if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
+    maybeRecordArrayProtoIteratorTombstone(ctx, inner);
   }
   if (ts.isIdentifier(inner)) {
     // (#2663 Slice 3) `delete name` inside a dynamic `with`: if the with-object

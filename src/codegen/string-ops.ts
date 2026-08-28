@@ -1261,15 +1261,37 @@ export function compileTaggedTemplateExpression(
         return null;
       }
 
+      // (#5154 cluster E) The variable's SLOT may be `externref` (a module-level
+      // `var tag = function(…){…}` widens to externref), while `call_ref`
+      // expects the lifted function's self carrier. Pushing the raw local then
+      // failed module validation with `call_ref[0] expected (ref null N), found
+      // externref`. Normalize once into a correctly-typed local.
+      const selfTypeIdx1 = getClosureFuncSelfTypeIdx(ctx, closureInfo.funcTypeIdx) ?? closureInfo.structTypeIdx;
+      const localType1 = getLocalType(fctx, localIdx);
+      let selfLocal = localIdx;
+      let selfStructTypeIdx = closureInfo.structTypeIdx;
+      if (localType1?.kind === "externref") {
+        selfStructTypeIdx = selfTypeIdx1;
+        selfLocal = allocLocal(fctx, `__tt_self_${fctx.locals.length}`, { kind: "ref_null", typeIdx: selfTypeIdx1 });
+        fctx.body.push({ op: "local.get", index: localIdx });
+        fctx.body.push({ op: "any.convert_extern" });
+        emitGuardedRefCast(fctx, selfTypeIdx1);
+        fctx.body.push({ op: "local.set", index: selfLocal });
+      }
+
       // Push closure ref as self param
-      fctx.body.push({ op: "local.get", index: localIdx });
+      fctx.body.push({ op: "local.get", index: selfLocal });
 
       // Push strings array as first argument (coerce to expected param type)
+      // (#5154 cluster E) A zero-parameter tag declares no slot for it; pushing
+      // it anyway leaves a stray operand that `call_ref` consumes as SELF.
       const paramType0 = closureInfo.paramTypes[0];
-      fctx.body.push({ op: "local.get", index: stringsLocal });
-      if (paramType0 && paramType0.kind === "externref") {
-        // Need to convert GC ref to externref
-        fctx.body.push({ op: "extern.convert_any" });
+      if (paramType0 !== undefined) {
+        fctx.body.push({ op: "local.get", index: stringsLocal });
+        if (paramType0.kind === "externref") {
+          // Need to convert GC ref to externref
+          fctx.body.push({ op: "extern.convert_any" });
+        }
       }
 
       // Push substitution expressions as remaining arguments
@@ -1281,10 +1303,10 @@ export function compileTaggedTemplateExpression(
       }
 
       // Push funcref from closure struct field 0 and call_ref
-      fctx.body.push({ op: "local.get", index: localIdx });
+      fctx.body.push({ op: "local.get", index: selfLocal });
       fctx.body.push({
         op: "struct.get",
-        typeIdx: closureInfo.structTypeIdx,
+        typeIdx: selfStructTypeIdx,
         fieldIdx: 0,
       });
       emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
@@ -1491,11 +1513,18 @@ export function compileTaggedTemplateExpression(
       fctx.body.push({ op: "local.get", index: closureLocal });
       fctx.body.push({ op: "ref.as_non_null" });
 
-      // Push strings array as first argument
-      fctx.body.push({ op: "local.get", index: stringsLocal });
-      // Coerce if the closure expects externref for the first param
-      if (matchedClosureInfo.paramTypes[0] && matchedClosureInfo.paramTypes[0].kind === "externref") {
-        fctx.body.push({ op: "extern.convert_any" });
+      // Push strings array as first argument — but ONLY if the lifted function
+      // actually declares a parameter for it (#5154 cluster E). A tag declaring
+      // zero parameters (`{ fn: function(){…} }` used as `` obj.fn`x` ``) has an
+      // empty `paramTypes`, so pushing the template vec left an extra operand
+      // that `call_ref` then consumed as the SELF argument — the module failed
+      // validation with `call_ref[0] expected (ref null N), found (ref null M)`.
+      if (matchedClosureInfo.paramTypes.length > 0) {
+        fctx.body.push({ op: "local.get", index: stringsLocal });
+        // Coerce if the closure expects externref for the first param
+        if (matchedClosureInfo.paramTypes[0]!.kind === "externref") {
+          fctx.body.push({ op: "extern.convert_any" });
+        }
       }
 
       // Push substitution expressions as remaining arguments
@@ -1541,9 +1570,11 @@ export function compileTaggedTemplateExpression(
 
           fctx.body.push({ op: "local.get", index: closureLocal });
 
-          fctx.body.push({ op: "local.get", index: stringsLocal });
-          if (closureInfo.paramTypes[0] && closureInfo.paramTypes[0].kind === "externref") {
-            fctx.body.push({ op: "extern.convert_any" });
+          if (closureInfo.paramTypes.length > 0) {
+            fctx.body.push({ op: "local.get", index: stringsLocal });
+            if (closureInfo.paramTypes[0]!.kind === "externref") {
+              fctx.body.push({ op: "extern.convert_any" });
+            }
           }
 
           const closureMaxSubs = Math.min(substitutions.length, closureInfo.paramTypes.length - 1);
