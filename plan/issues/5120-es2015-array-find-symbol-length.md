@@ -17,8 +17,16 @@ language_feature: array-like-methods
 files:
   - src/codegen/array-prototype-borrow.ts
   - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/object-runtime.ts
   - tests/issue-5120-es2015-array-find-symbol-length.test.ts
   - plan/issues/5120-es2015-array-find-symbol-length.md
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-enumeration.ts
+func-budget-allow:
+  - src/codegen/array-prototype-borrow.ts::compileArrayLikePrototypeCall
+  - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 # #5120 -- ES2015 Array `find`/`findIndex` must throw for Symbol `length`
 
@@ -53,18 +61,21 @@ Symbol to Number is abrupt, before callback callability checks or iteration.
 
 The bounded ownership seam is `src/codegen/array-prototype-borrow.ts`, which
 lowers borrowed Array-like methods through the native `__extern_length` helper.
-That helper is built in `src/codegen/object-runtime-enumeration.ts`. Its open
-`$Object` array-like arm gets the `length` property, applies `ToPrimitive`, then
-uses `__unbox_number`; a native `$Symbol` carrier currently reaches the latter's
+That helper is built in `src/codegen/object-runtime-enumeration.ts` for the open
+`$Object` arm and in `src/codegen/object-runtime.ts` for closed struct carriers.
+Both paths get the `length` property, apply `ToPrimitive`, then use
+`__unbox_number`; a native `$Symbol` carrier currently reaches the latter's
 opaque-value fallback (`NaN`), and `ToLength(NaN)` becomes zero. The positive
 array and numeric array-like paths must remain unchanged.
 
 Implement one narrow native conversion guard for the `$Symbol` carrier in the
-object-array-like `length` arm. Reuse the existing exact TypeError construction
-and native Symbol type plumbing; do not make `__unbox_number` globally reject
-all opaque values, because valid native object/array carriers and unrelated
-numeric coercion behavior depend on that fallback. Preserve the existing
-`__extern_length` call site and sequencing in `array-prototype-borrow.ts`:
+open and closed object-array-like `length` arms. Reuse the existing exact
+TypeError construction and native Symbol type plumbing; do not make
+`__unbox_number` globally reject all opaque values, because valid native
+object/array carriers and unrelated numeric coercion behavior depend on that
+fallback. In `array-prototype-borrow.ts`, defer the existing `__extern_length`
+call only for `find`/`findIndex` until their complete outer argument list has
+been evaluated; leave other HOF arms' method-owned argument lowering intact:
 
 1. Complete ArgumentListEvaluation first (predicate, `thisArg`, and any extra
    expressions are evaluated exactly once, in order; a later abrupt expression
@@ -74,6 +85,11 @@ numeric coercion behavior depend on that fallback. Preserve the existing
    `TypeError` before predicate callability or any callback invocation.
 4. Leave the existing find/findIndex loop and all valid array and numeric
    array-like behavior intact.
+
+The existing syntactic non-callable callback arm is extended only to unwrap
+TypeScript casts around literal `null`/`undefined`, so its length-before-
+callability ordering remains testable without weakening the runtime callable
+fallback for arbitrary identifiers or object carriers.
 
 Add `tests/issue-5120-es2015-array-find-symbol-length.test.ts` with:
 

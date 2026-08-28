@@ -5878,6 +5878,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   buildObjectEnumerationHelpers(ctx, {
     registerNative,
     objArrayLikeArms,
+    symbolTypeIdx,
     anyStrTypeIdx,
     propEntryTypeIdx,
     propMapTypeIdx,
@@ -11179,6 +11180,29 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   const protoHasSeed = (): Instr[] | undefined => protoIndexHasIdxInstrs(ctx, 1, 0);
   const MAX_SAFE = 9007199254740991; // 2^53 - 1
 
+  // Native Symbols crossing an externref field are represented by the
+  // `$Symbol` carrier. Keep the carrier index captured only after
+  // `ensureObjectRuntime` has registered it (before this finalize-time fill),
+  // so this discriminator cannot depend on compile order. The guard is used
+  // only by object-valued `length` conversions; numeric/string array-like
+  // carriers retain their existing paths.
+  const symbolTypeIdx = ctx.symbolTypeIdx;
+  const symbolToNumberGuard = (primLocal: number): Instr[] =>
+    symbolTypeIdx >= 0
+      ? [
+          { op: "local.get", index: primLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", {
+              forceInModuleCtor: true,
+            }),
+          },
+        ]
+      : [];
+
   /** Shared preamble test (identical for all three helpers). */
   const hasPreamble = (fn: { body: Instr[] }): boolean =>
     fn.body.length >= 3 &&
@@ -11217,6 +11241,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               { op: "ref.null.extern" }, // hint: number/default
               { op: "call", funcIdx: toPrimIdx },
               { op: "local.tee", index: L_PRIM },
+              ...symbolToNumberGuard(L_PRIM),
               { op: "call", funcIdx: typeofStringIdx },
               {
                 op: "if",
@@ -11250,6 +11275,18 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               : isObjectRefLength
                 ? objectRefRead
                 : [];
+      // A closed shape can retain a statically-known Symbol as an i32 handle
+      // (the brand is carried on the IR field type, not in Wasm's numeric
+      // storage). ToLength must perform ToNumber on that value before any
+      // callback/iteration; ToNumber(Symbol) is an abrupt TypeError. Keep this
+      // guard limited to branded `length` fields so ordinary numeric i32
+      // array-like carriers remain unchanged.
+      const symbolLengthThrow =
+        cand.lengthFieldType.kind === "i32" && cand.lengthFieldType.symbol === true
+          ? buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", {
+              forceInModuleCtor: true,
+            })
+          : [];
       if ((isObjectRefLength || cand.lengthFieldType.kind === "externref") && !lenPrimLocalAdded && primExtPos < 0) {
         // Scratch externref local for the ToPrimitive result — appended once,
         // and only when the registration did not already provide it (#4556).
@@ -11266,6 +11303,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
             { op: "local.get", index: 1 },
             { op: "ref.cast", typeIdx: cand.typeIdx },
             { op: "struct.get", typeIdx: cand.typeIdx, fieldIdx: cand.lengthFieldIdx },
+            ...symbolLengthThrow,
             ...readAsF64,
             // ToLength clamp — mirrors the `$Object` arm's NaN/trunc/[0,2^53−1]
             // sequence, reusing the same scratch locals 2/3.
