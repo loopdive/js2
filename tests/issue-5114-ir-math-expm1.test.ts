@@ -13,6 +13,35 @@ import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js"
 
 const identities = createTestIrFunctionIdentityFactory("issue-5114-ir-math-expm1");
 
+function adjacent(value: number, direction: 1n | -1n): number {
+  if (Number.isNaN(value) || value === Number.POSITIVE_INFINITY || value === Number.NEGATIVE_INFINITY) return value;
+  if (value === 0) return direction === 1n ? Number.MIN_VALUE : -Number.MIN_VALUE;
+  const buffer = new ArrayBuffer(8);
+  const view = new DataView(buffer);
+  view.setFloat64(0, value);
+  const step = value > 0 ? direction : -direction;
+  view.setBigUint64(0, view.getBigUint64(0) + step);
+  return view.getFloat64(0);
+}
+
+function nextUp(value: number): number {
+  return adjacent(value, 1n);
+}
+
+function nextDown(value: number): number {
+  return adjacent(value, -1n);
+}
+
+function ulpDistance(left: number, right: number): bigint {
+  const buffer = new ArrayBuffer(8);
+  const view = new DataView(buffer);
+  view.setFloat64(0, left);
+  const leftBits = view.getBigUint64(0);
+  view.setFloat64(0, right);
+  const rightBits = view.getBigUint64(0);
+  return leftBits >= rightBits ? leftBits - rightBits : rightBits - leftBits;
+}
+
 function intrinsicInstructions(fn: IrFunction): IrInstrIntrinsic[] {
   const instructions: IrInstrIntrinsic[] = [];
   for (const block of fn.blocks) {
@@ -166,26 +195,39 @@ describe("#5114 exact ambient Math.expm1 IR ownership", () => {
 
     const irExpm1 = (await instantiate(ir)).expm1 as (value: number) => number;
     const directExpm1 = (await instantiate(direct)).expm1 as (value: number) => number;
+    const threshold = 1e-5;
     for (const value of [
       Number.NaN,
       Number.NEGATIVE_INFINITY,
+      -Number.MAX_VALUE,
+      -709.7,
       -20,
       -2.5,
       -1,
-      -1e-5,
-      -9.999999999e-6,
+      -0.1,
+      -nextUp(threshold),
+      -threshold,
+      -nextDown(threshold),
       -1e-7,
       -Number.MIN_VALUE,
       -0,
       0,
       Number.MIN_VALUE,
       1e-7,
-      9.999999999e-6,
-      1e-5,
+      nextDown(threshold),
+      threshold,
+      nextUp(threshold),
       0.1,
       1,
       2.5,
       20,
+      709,
+      709.43613930310391,
+      709.43613930310403,
+      709.7,
+      709.78271289338397,
+      709.8,
+      Number.MAX_VALUE,
       Number.POSITIVE_INFINITY,
     ]) {
       expect(Object.is(irExpm1(value), directExpm1(value)), `expm1 parity for ${String(value)}`).toBe(true);
@@ -207,16 +249,35 @@ describe("#5114 exact ambient Math.expm1 IR ownership", () => {
     });
     const expm1 = (await instantiate(result)).expm1 as (value: number) => number;
 
-    for (const value of [-9.999999999e-6, -1e-7, -Number.MIN_VALUE, Number.MIN_VALUE, 1e-7, 9.999999999e-6]) {
-      expect(Math.abs(expm1(value) - Math.expm1(value)), `Taylor absolute error for ${value}`).toBeLessThanOrEqual(
-        1e-20,
-      );
-    }
-    for (const value of [-20, -2.5, -1, -1e-5, 1e-5, 0.1, 1, 2.5, 20]) {
+    const threshold = 1e-5;
+    for (const value of [-nextDown(threshold), -1e-7, -Number.MIN_VALUE, Number.MIN_VALUE, 1e-7, nextDown(threshold)]) {
       const actual = expm1(value);
       const expected = Math.expm1(value);
-      const relativeError = Math.abs(actual - expected) / Math.max(Math.abs(expected), Number.MIN_VALUE);
-      expect(relativeError, `general relative error for ${value}`).toBeLessThanOrEqual(2e-8);
+      const absoluteError = Math.abs(actual - expected);
+      const relativeError = absoluteError / Math.max(Math.abs(expected), Number.MIN_VALUE);
+      expect(absoluteError, `Taylor absolute error for ${value}`).toBeLessThanOrEqual(3e-21);
+      expect(relativeError, `Taylor relative error for ${value}`).toBeLessThanOrEqual(3e-16);
+      expect(ulpDistance(actual, expected), `Taylor ULP distance for ${value}`).toBeLessThanOrEqual(2n);
+    }
+
+    for (const value of [-nextUp(threshold), -threshold, threshold, nextUp(threshold)]) {
+      const actual = expm1(value);
+      const expected = Math.expm1(value);
+      const absoluteError = Math.abs(actual - expected);
+      const relativeError = absoluteError / Math.max(Math.abs(expected), Number.MIN_VALUE);
+      expect(absoluteError, `threshold absolute error for ${value}`).toBeLessThanOrEqual(2e-16);
+      expect(relativeError, `threshold relative error for ${value}`).toBeLessThanOrEqual(2e-11);
+      expect(ulpDistance(actual, expected), `threshold ULP distance for ${value}`).toBeLessThanOrEqual(100_000n);
+    }
+
+    for (const value of [-709, -20, -2.5, -1, -0.1, 0.1, 0.346574, 1, 2.5, 20, 709]) {
+      const actual = expm1(value);
+      const expected = Math.expm1(value);
+      const absoluteError = Math.abs(actual - expected);
+      const scale = Math.max(Math.abs(expected), Number.MIN_VALUE);
+      expect(absoluteError / scale, `general relative error for ${value}`).toBeLessThanOrEqual(3e-8);
+      expect(absoluteError, `general scaled absolute error for ${value}`).toBeLessThanOrEqual(3e-8 * scale);
+      expect(ulpDistance(actual, expected), `general ULP distance for ${value}`).toBeLessThanOrEqual(200_000_000n);
     }
   });
 

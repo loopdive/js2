@@ -103,6 +103,29 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 - A new expm1 approximation, host import, or direct-codegen behavior change.
 - Inverse hyperbolics, async, class, or module-init ownership expansion.
 
+## Measured numerical disposition
+
+The existing direct and self-hosted paths share the same order-four Taylor
+arm and degree-seven `Math_exp` dependency. The ownership change deliberately
+preserves that implementation. A Luna audit measured and the focused suite
+now pins three separate envelopes instead of presenting one misleading global
+accuracy claim:
+
+- strict Taylor inputs immediately below `|x| = 1e-5`: at most `3e-21`
+  absolute error, `3e-16` relative error, and two ULPs;
+- the fallback inputs at and immediately above the strict boundary: at most
+  `2e-16` absolute error, `2e-11` relative error, and 100,000 ULPs;
+- representative finite inputs in the safe `[-709, 709]` range: at most
+  `3e-8` relative/scaled-absolute error and 200 million ULPs.
+
+The large ULP ceilings expose inherited approximation behavior rather than
+endorsing correct rounding. In particular, cancellation in `Math_exp(x) - 1`
+produces roughly 57,000 ULPs at the positive threshold, and the existing
+repeated-squaring `Math_exp` overflows near `709.43613930310403` while native
+`Math.expm1` remains finite until roughly `709.782712893384`. Exact IR/direct
+parity covers both sides of the Taylor branch and that overflow band. Improving
+the shared numerical algorithm remains separate from this ownership-only PR.
+
 ## Risk and rollback
 
 The principal risks are cancellation near zero and behavior at the strict
