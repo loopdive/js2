@@ -120,6 +120,36 @@ carrier and are not part of this issue.
   focused test stays within 1 test file and 140 LOC.
 - This record contains the final commands/results, branch/head, and PR handoff.
 
+## Implementation and validation checkpoint
+
+Implemented in `src/codegen/literals.ts` by adding a standalone-only predicate
+for data-only computed literals whose keys all fold and whose checker type has
+no named properties. The existing `objectLiteralForcesHostPath` consumers then
+keep the literal and its local/module binding on the same open-object
+`externref` carrier. Mixed named/computed literals and unresolved runtime keys
+continue using their existing paths. Net source growth is 30 LOC, within the
+45-LOC budget; no trap-growth allowance was used.
+
+Against the current upstream baseline commit recorded above:
+
+- authoritative host probes: 4/4 pass;
+- authoritative standalone probes: 4/4 pass;
+- a second standalone repeat: 4/4 pass with identical per-row Wasm hashes;
+- focused `tests/issue-5108.test.ts` with corpus present: 8/8 pass;
+- real no-corpus shape (this worktree's `test262` symlinks hidden) with
+  `--maxWorkers=2 --minWorkers=1`: 4/4 mandatory controls pass and 4 optional
+  corpus tests skip;
+- related `tests/issue-computed-props.test.ts` and
+  `tests/issue-4683.test.ts`: 12/12 pass;
+- out-of-cohort standalone controls (numeric/string basics, duplicate numeric
+  keys, identifier key, runtime function key, and literal key): 7/7 pass;
+- TypeScript 5 and TypeScript 7 typechecks, Prettier, Biome, and `git diff
+  --check`: pass.
+
+The focused test imports the Test262 runner dynamically inside the
+corpus-guarded block, so mandatory controls remain runnable when the corpus is
+absent and do not depend on a hidden fixture.
+
 ## Budgets and handoff
 
 - Source budget: `src/codegen/literals.ts`, `src/codegen/statements/variables.ts`,

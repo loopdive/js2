@@ -6,7 +6,6 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
-import { runTest262File } from "./test262-runner.js";
 
 async function runStandalone(source: string): Promise<number> {
   const result = await compile(source, {
@@ -77,6 +76,7 @@ const ROWS = [
 describe.skipIf(!HAS_TEST262)("#5108 selected Test262 cohort", () => {
   for (const row of ROWS) {
     it(row, { timeout: 120_000 }, async () => {
+      const { runTest262File } = await import("./test262-runner.js");
       const result = await runTest262File(join(TEST262_ROOT, "test", row), "issue-5108", 120_000, "standalone");
       expect(`${result.status}: ${result.error ?? result.reason ?? ""}`).toBe("pass: ");
     });
