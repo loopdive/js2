@@ -61,6 +61,53 @@ import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-ta
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
 
 /**
+ * (#5096) The one name this file claims ON PURPOSE even when the module
+ * declares it.
+ *
+ * `Test262Error` has no ambient declaration at all — sta.js / the #2902
+ * wrapped-harness injection declares it in the module under compilation — and
+ * the arms below exist precisely to reconcile that (the standalone
+ * `$Error_struct` interception is what makes ~2,779 wrapped tests host-free).
+ * So it must survive the shadow guard, whose whole point is that a user
+ * declaration outranks an intrinsic. Its own narrower guards (#4394,
+ * `errorCtorNameIsUserFunctionShadowed`) already decide which of the two
+ * lowerings that declaration should get.
+ */
+const SHADOW_GUARD_EXEMPT_CTORS = new Set(["Test262Error"]);
+
+/**
+ * (#5096) Should the built-in claim below DECLINE because the callee name
+ * resolves to a user binding at this site?
+ *
+ * The arms in this file key on the callee's SPELLING (`expr.expression.text ===
+ * "Date"`, `builtinName === "Object"`, the TypedArray name set, …). Per §9.1
+ * any lexical/var binding in scope shadows the global, so a spelling match is
+ * not by itself a claim on the intrinsic — `class Date { … }; new Date()` was
+ * building the native `$Date` struct while the identifier named the user class.
+ * Consulting the binding HERE, at the claim point, keeps every unshadowed
+ * program byte-identical (the ambient answer is unchanged) while handing a
+ * shadowed one back to the caller's ordinary user-class / user-function
+ * dispatch.
+ *
+ * `builtinNameOverride` callers are exempt: they arrive from
+ * `tryCompileBuiltinPrototypeConstructorNew`, which has ALREADY proved
+ * intrinsic identity through `X.prototype.constructor` (the callee there is not
+ * a bare identifier, so a binding lookup on it would answer the wrong
+ * question).
+ */
+function builtinNewClaimIsShadowed(
+  ctx: CodegenContext,
+  expr: ts.NewExpression,
+  builtinNameOverride: string | undefined,
+): boolean {
+  if (builtinNameOverride !== undefined) return false;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee)) return false;
+  if (SHADOW_GUARD_EXEMPT_CTORS.has(callee.text)) return false;
+  return !resolvesToAmbientGlobal(ctx, callee);
+}
+
+/**
  * (#4616) Is the single `new Date(arg)` argument DYNAMIC — statically able to
  * hold a String at runtime without being string-typed (any/unknown/
  * unresolvable, or a union with a string part)? Such an arg needs the runtime
@@ -272,6 +319,9 @@ export function tryCompileBuiltinGlobalNew(
   expr: ts.NewExpression,
   builtinNameOverride?: string,
 ): ValType | null | typeof NEW_GLOBAL_FALLTHROUGH {
+  // (#5096) Binding resolution precedes every name claim in this file.
+  if (builtinNewClaimIsShadowed(ctx, expr, builtinNameOverride)) return NEW_GLOBAL_FALLTHROUGH;
+
   // Handle `new Promise(executor)`.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Promise") {
     // (#2959) Native standalone/WASI path — construct the `$Promise` and run the
