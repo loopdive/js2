@@ -199,5 +199,12 @@ The focused test remains fully enforced when the corpus is present while
 CI-style no-corpus checkouts still exercise the two mandatory controls.
 
 Final follow-up branch: `/private/tmp/js2-4786-optional-corpus-guard`,
-`codex/4786-optional-corpus-guard`, with checkpoint head recorded in the PR
-and fork branch. No Test262 submodule content or pointer is included.
+`codex/4786-optional-corpus-guard`, at fork head
+`6285d9f30fbd3d0cfc9475f362bff3f1ea9bffde`. PR creation was blocked by the
+external approval policy; the exact authorized command is:
+
+```text
+gh pr create --repo loopdive/js2 --head ttraenkler:codex/4786-optional-corpus-guard --base main --title 'test(test262): guard optional WeakCollection corpus rows ✓' --body-file /private/tmp/issue-4786-pr-body.md
+```
+
+No Test262 submodule content or pointer is included.
