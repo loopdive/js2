@@ -1,10 +1,11 @@
 {
   "id": "4784",
   "assignee": "ttraenkler/opus-4784",
-  "requested_by": "ttraenkler/opus-4784",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4784-red-rows-triage",
   "claimed_at": "2026-08-28T10:21:31Z",
-  "updated_at": "2026-08-28T10:21:31Z",
-  "write_id": "6669-wz1w2fip"
+  "updated_at": "2026-08-28T14:28:11Z",
+  "write_id": "1730-tl8691vv",
+  "released_at": "2026-08-28T14:28:11Z"
 }
