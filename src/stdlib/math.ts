@@ -26,12 +26,12 @@
  *
  * NUMERIC EQUIVALENCE: each source mirrors the deleted hand-written
  * `Instr[]` body op-for-op (same operand order, same special-case
- * ladder), so results are bit-identical — IEEE f64 add/sub/mul/div/sqrt
- * are deterministic and identical between the hand-scheduled and
- * IR-scheduled instruction streams. Redundant ±Infinity special cases
- * were dropped ONLY where the shared core (`Math_exp` / `Math_log`)
- * already produces the identical value for the infinite input (noted
- * per function).
+ * ladder). Non-NaN IEEE f64 add/sub/mul/div/sqrt results are deterministic
+ * and identical between the hand-scheduled and IR-scheduled instruction
+ * streams. NaN payloads and signs need an explicit canonicalization whenever
+ * a helper promises raw-bit identity. Redundant ±Infinity special cases were
+ * dropped ONLY where the shared core (`Math_exp` / `Math_log`) already
+ * produces the identical value for the infinite input (noted per function).
  */
 
 export interface StdlibMathBuiltin {
@@ -95,12 +95,14 @@ export function Math_round(x: number): number {
 
 /**
  * Math.sign — preserve signed zero, canonicalize NaN like the direct emitter,
- * and otherwise return the exact sign unit. The argument is evaluated once by
- * the ordinary call boundary.
+ * and otherwise return the exact sign unit. Folding or evaluating `0 / 0` may
+ * choose either NaN sign, so `Math.abs` forces the positive canonical sign
+ * inside the provider. The argument is evaluated once by the ordinary call
+ * boundary.
  */
 const SIGN_SOURCE = `
 export function Math_sign(x: number): number {
-  if (x !== x) return 0 / 0;
+  if (x !== x) return Math.abs(0 / 0);
   if (x === 0) return x;
   return x < 0 ? -1 : 1;
 }

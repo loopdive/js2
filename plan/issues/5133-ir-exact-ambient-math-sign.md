@@ -47,10 +47,10 @@ functions. Represent the source call as a versioned semantic intrinsic and
 materialize it through one dependency-free, host-free self-hosted provider.
 Excluded forms retain the established hand-emitted direct fallback.
 
-This checkpoint is intentionally stacked on PR #5123 / issue #5132. It
-preserves the existing exact semantics for NaN, signed zero, infinities,
-subnormals, and finite values while leaving coercive and dynamic forms on
-direct codegen.
+This checkpoint depends on issue #5132 and is co-located with it in the
+consolidated PR #5145. It preserves the existing exact semantics for NaN,
+signed zero, infinities, subnormals, and finite values while leaving coercive
+and dynamic forms on direct codegen.
 
 ## Measured residual
 
@@ -78,8 +78,10 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
 ## Implementation plan
 
 1. Add a dependency-free `Math_sign` self-hosted source that evaluates NaN,
-   signed zero, and sign exactly like the current direct body; register it in
-   `SELF_HOSTED_MATH` and the direct helper-demand set.
+   signed zero, and sign exactly like the current direct body. Force the
+   generated NaN through `Math.abs` so host constant-folding cannot retain a
+   platform-dependent sign bit; register it in `SELF_HOSTED_MATH` and the
+   direct helper-demand set.
 2. Add `math.sign` to the closed intrinsic/runtime-feature vocabularies with a
    unary-f64 signature and a dependency-free `selfhost.math.sign` provider.
 3. Add `sign` to `IR_MATH_METHOD_TABLE` and reuse the generic selector,
@@ -93,7 +95,7 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
    and infinities. Retain the existing Symbol TypeError regression.
 7. Re-run existing Math.sign equivalence/coercion regressions, affected #3526
    suites, TypeScript 7, formatting/lint/ratchets, and full pre-push checks;
-   then open a non-draft PR stacked on #5123.
+   publish the checkpoint in the consolidated non-draft PR #5145.
 
 ## Acceptance criteria
 
@@ -116,15 +118,17 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
   dependency-free `selfhost.math.sign` provider and `Math_sign` symbol.
 - The self-hosted source canonicalizes NaN to the same raw f64 bits as direct
   codegen, preserves both signed zeros, and returns exact sign units for
-  subnormals, finite values, and infinities. The IR instruction carries one SSA
-  argument, preserving one evaluation before the call boundary.
+  subnormals, finite values, and infinities. The NaN arm applies `f64.abs` to
+  the result of `0 / 0`, clearing the implementation-chosen NaN sign whether
+  the division is folded or evaluated by Wasm. The IR instruction carries one
+  SSA argument, preserving one evaluation before the call boundary.
 - Host execution requests no Math import; standalone execution has zero Wasm
   imports. The manifest closure contains only `math.sign`, with no dependency
   or host capability.
 - Shadowed, aliased, computed, optional-invocation, optional-receiver,
   wrong-arity, spread, and non-number forms decline before claim. The existing
   Symbol path remains direct and throws `TypeError`.
-- Focused ownership tests pass 14/14, the affected #3526 manifest,
+- Focused ownership tests pass 15/15, the affected #3526 manifest,
   integration, and linear-legality suites pass 13/13, and existing scoped
   `Math.sign` equivalence, stdlib, #324, and Symbol regressions pass 6/6.
   TypeScript 7, kind-neutrality, Prettier, Biome, LOC/function budgets,
@@ -133,9 +137,11 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
 - Luna Max final review returned GO with no P0/P1 finding and independently
   confirmed canonical NaN bits, signed zero, one evaluation, fallback
   boundaries, host-free materialization, and linear legality.
-- PR #5129 is open non-draft, clean, and green, stacked directly on #5123's
-  inverse-hyperbolic ownership branch with merge automation armed; CLA and
-  native-messaging smoke checks pass.
+- The original stacked checkpoint was consolidated into PR #5145 with the
+  other small exact Math/ToUint32 ownership slices. A Linux/x86 changed-root
+  run exposed the host-dependent `0 / 0` NaN sign; the follow-up fixes the
+  provider and freezes both positive-canonical raw bits and the emitted
+  `f64.abs` instruction so arm64 cannot mask the regression.
 
 ## Non-goals
 

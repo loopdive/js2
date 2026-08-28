@@ -108,7 +108,12 @@ describe("#5133 exact ambient Math.sign IR ownership", () => {
     });
     expect(result.irCompiledFuncs ?? []).toContain("sign");
     expect(result.irPostClaimErrors ?? []).toEqual([]);
-    expect(result.wat).toContain("$Math_sign");
+    const wat = result.wat ?? "";
+    const providerStart = wat.indexOf("  (func $Math_sign");
+    const providerEnd = wat.indexOf("\n  (func $", providerStart + 1);
+    const providerWat = wat.slice(providerStart, providerEnd < 0 ? wat.length : providerEnd);
+    expect(providerStart).toBeGreaterThanOrEqual(0);
+    expect(providerWat).toMatch(/f64\.const NaN\s+f64\.abs/);
 
     const sign = (await instantiate(result)).sign as (value: number) => number;
     expect(sign(-1)).toBe(-1);
@@ -161,11 +166,23 @@ describe("#5133 exact ambient Math.sign IR ownership", () => {
     });
   });
 
-  it("is bit-identical to direct codegen across NaNs, signed zero, subnormals, finite values, and infinities", async () => {
+  it.each([
+    ["host", undefined],
+    ["standalone", "standalone" as const],
+  ])("is bit-identical to direct codegen across NaNs and numeric classes on %s", async (label, target) => {
     const source = `export function sign(value: number): number { return Math.sign(value); }`;
     const [ir, direct] = await Promise.all([
-      compile(source, { fileName: "issue-5133-ir.ts", experimentalIR: true, trackIrOutcomes: true }),
-      compile(source, { fileName: "issue-5133-direct.ts", experimentalIR: false }),
+      compile(source, {
+        fileName: `issue-5133-ir-${label}.ts`,
+        ...(target === undefined ? {} : { target }),
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      }),
+      compile(source, {
+        fileName: `issue-5133-direct-${label}.ts`,
+        ...(target === undefined ? {} : { target }),
+        experimentalIR: false,
+      }),
     ]);
     expectSuccess(ir);
     expectSuccess(direct);
@@ -187,7 +204,14 @@ describe("#5133 exact ambient Math.sign IR ownership", () => {
       Number.MAX_VALUE,
       Number.POSITIVE_INFINITY,
     ]) {
-      expect(numberBits(irSign(value)), `sign parity for ${String(value)}`).toBe(numberBits(directSign(value)));
+      const inputBits = numberBits(value);
+      const irBits = numberBits(irSign(value));
+      const directBits = numberBits(directSign(value));
+      if (Number.isNaN(value)) {
+        expect(irBits, `IR canonical NaN for input 0x${inputBits.toString(16)}`).toBe(0x7ff8_0000_0000_0000n);
+        expect(directBits, `direct canonical NaN for input 0x${inputBits.toString(16)}`).toBe(0x7ff8_0000_0000_0000n);
+      }
+      expect(irBits, `sign parity for input 0x${inputBits.toString(16)}`).toBe(directBits);
     }
   });
 
