@@ -1,4 +1,5 @@
 {
+  "codegen/annexb-escape-call.ts": 2,
   "codegen/any-eq-helpers.ts": 4,
   "codegen/array-concat-spec.ts": 2,
   "codegen/array-filter-spec-access.ts": 1,
@@ -93,7 +94,7 @@
   "codegen/ta-dyn-mop.ts": 4,
   "codegen/ta-hof-map-filter.ts": 3,
   "codegen/tonumber-fast-paths.ts": 7,
-  "codegen/type-coercion.ts": 34,
+  "codegen/type-coercion.ts": 35,
   "codegen/typed-lane-overlay-route.ts": 1,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,

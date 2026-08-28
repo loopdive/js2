@@ -16,6 +16,7 @@
 import { isSyntacticallyBooleanExpr } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { inferBooleanParamSlots, paramUnboxAbiEnabled } from "./param-unbox-abi.js";
 
 type FunctionLike = ts.FunctionLikeDeclaration & { body: ts.ConciseBody };
 
@@ -171,10 +172,27 @@ function inferBooleanFunctionNames(ctx: CodegenContext, byName: ReadonlyMap<stri
   return candidates;
 }
 
+/**
+ * (#4406 Phase 3) The callee name of ANY call/new, whatever the receiver —
+ * `m(…)`, `o.m(…)`, `new m(…)`. Deliberately broader than {@link callName}:
+ * the return verdict must not conflate a user `find()` with `array.find()`
+ * (that would brand a numeric field boolean), but the PARAMETER verdict is
+ * conjunctive over call sites, so folding unrelated `find` sites in can only
+ * withdraw slots, never grant one wrongly.
+ */
+function anyCalleeName(expr: ts.CallExpression | ts.NewExpression): string | undefined {
+  const callee = unwrap(expr.expression);
+  if (ts.isIdentifier(callee)) return callee.text;
+  if (ts.isPropertyAccessExpression(callee) && !ts.isPrivateIdentifier(callee.name)) return callee.name.text;
+  return undefined;
+}
+
 interface BooleanFlowFacts {
   functionsByName: Map<string, FunctionLike[]>;
   definitions: Map<string, (ts.Expression | undefined)[]>;
   calls: Map<string, ts.Expression[][]>;
+  /** (#4406 Phase 3) {@link calls}, widened to every receiver — see {@link anyCalleeName}. */
+  anyCalls: Map<string, ts.Expression[][]>;
   parameters: { name: string; owner: string; index: number; initializer?: ts.Expression }[];
   propertyWrites: { name?: string; value?: ts.Expression; typedBoolean?: boolean }[];
 }
@@ -189,6 +207,7 @@ function collectBooleanFlowFacts(ctx: CodegenContext, sourceFiles: readonly ts.S
     functionsByName: new Map(),
     definitions: new Map(),
     calls: new Map(),
+    anyCalls: new Map(),
     parameters: [],
     propertyWrites: [],
   };
@@ -206,6 +225,16 @@ function collectBooleanFlowFacts(ctx: CodegenContext, sourceFiles: readonly ts.S
           const list = facts.functionsByName.get(name);
           if (list) list.push(node);
           else facts.functionsByName.set(name, [node]);
+        }
+      }
+
+      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+        const anyName = anyCalleeName(node);
+        if (anyName) {
+          const anyArgs = [...(node.arguments ?? [])];
+          const anyList = facts.anyCalls.get(anyName);
+          if (anyList) anyList.push(anyArgs);
+          else facts.anyCalls.set(anyName, [anyArgs]);
         }
       }
 
@@ -293,27 +322,35 @@ function inferBooleanValueNames(
   ctx: CodegenContext,
   facts: BooleanFlowFacts,
   booleanFunctions: ReadonlySet<string>,
+  // (#4406 Phase 3) Which call map feeds the parameter-flow half. `facts.calls`
+  // is the shipped, `this.m()`-only one; the parameter ABI passes the widened
+  // `facts.anyCalls` so a `recv.m(nonBoolean)` site cannot be invisible to a
+  // verdict that narrows a CALLER. Working on a COPY of `facts.definitions`
+  // rather than mutating it is what makes the two calls independent.
+  callArgs: ReadonlyMap<string, ts.Expression[][]> = facts.calls,
 ): Set<string> {
+  const definitions = new Map<string, (ts.Expression | undefined)[]>();
+  for (const [name, values] of facts.definitions) definitions.set(name, [...values]);
   const record = (name: string, value: ts.Expression | undefined): void => {
-    const list = facts.definitions.get(name);
+    const list = definitions.get(name);
     if (list) list.push(value);
-    else facts.definitions.set(name, [value]);
+    else definitions.set(name, [value]);
   };
   for (const parameter of facts.parameters) {
     const values: (ts.Expression | undefined)[] = [];
     if (parameter.initializer) values.push(parameter.initializer);
-    for (const args of facts.calls.get(parameter.owner) ?? []) values.push(args[parameter.index]);
+    for (const args of callArgs.get(parameter.owner) ?? []) values.push(args[parameter.index]);
     if (values.length === 0) values.push(undefined);
     for (const value of values) record(parameter.name, value);
   }
 
-  const candidates = new Set(facts.definitions.keys());
+  const candidates = new Set(definitions.keys());
   let changed = true;
   let safety = candidates.size + 1;
   while (changed && safety-- > 0) {
     changed = false;
     for (const name of [...candidates]) {
-      const values = facts.definitions.get(name) ?? [];
+      const values = definitions.get(name) ?? [];
       if (
         values.length === 0 ||
         !values.every((value) => value !== undefined && expressionIsBoolean(ctx, value, booleanFunctions, candidates))
@@ -338,6 +375,13 @@ export interface BooleanNameVerdicts {
    * instead of an `externref` the caller has to unbox.
    */
   functions: Set<string>;
+  /**
+   * (#4406 Phase 3) Function NAME → the parameter SLOTS that only ever receive
+   * booleans, across every call site in the program. The mirror of
+   * {@link functions}: that one lets a callee return an unboxed boolean, this
+   * one lets a caller PASS one. `refinedTwinParamTypes` consumes it.
+   */
+  paramSlots: Map<string, Set<number>>;
 }
 
 /**
@@ -369,9 +413,31 @@ export function analyzeBooleanNames(ctx: CodegenContext, sourceFiles: readonly t
 
   for (const write of facts.propertyWrites) record(write.name, write.value, write.typedBoolean);
 
+  // (#4406 Phase 3) The parameter verdict runs the value-name fixpoint a SECOND
+  // time over the widened call map. It cannot reuse `booleanValues` above:
+  // that one is fed by `facts.calls` (`this.m()` only), which is complete
+  // enough to classify a RETURN but leaves `recv.m(nonBoolean)` invisible —
+  // and this verdict narrows CALLERS, where an invisible site is a miscompile
+  // rather than a missed optimisation.
+  // It is also the one part of this module that is NOT free: a second fixpoint
+  // plus a body walk per declaration. The return verdict was published
+  // unconditionally because it was already computed; this one is skipped
+  // outright when the flag is off, which is what keeps a flag-off compile both
+  // byte-identical and no slower than before.
+  const paramValues = paramUnboxAbiEnabled()
+    ? inferBooleanValueNames(ctx, facts, booleanFunctions, facts.anyCalls)
+    : undefined;
   return {
     properties: new Set([...state].filter(([, info]) => info.saw && info.allBoolean).map(([name]) => name)),
     functions: booleanFunctions,
+    paramSlots:
+      paramValues === undefined
+        ? new Map<string, Set<number>>()
+        : inferBooleanParamSlots({
+            functionsByName: facts.functionsByName,
+            callArgsByName: facts.anyCalls,
+            isBoolean: (expr) => expressionIsBoolean(ctx, expr, booleanFunctions, paramValues),
+          }),
   };
 }
 

@@ -2600,6 +2600,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * claimed as `f64` and the boolean twin is dead code.
    */
   booleanFunctionNames?: ReadonlySet<string>;
+  /**
+   * (#4406 Phase 3) Function name → the parameter SLOTS every call site in the
+   * program passes a boolean to. The caller-side mirror of
+   * {@link booleanFunctionNames}: `refinedTwinParamTypes` turns a proven slot
+   * into a boolean-branded `i32` parameter on the twin AND its trampoline, so
+   * `this.parseExprOp(…, false, …)` pushes an `i32.const` instead of an
+   * `i32.const` plus `call $__box_boolean`. Empty unless `JS2WASM_RET_UNBOX_ABI`
+   * is on — the analysis is skipped outright when the flag is off.
+   */
+  booleanParamSlots?: ReadonlyMap<string, ReadonlySet<number>>;
   /** (#4122) Grounded "every definition of this slot is numeric" verdict from
    *  `analyzeNumericPropertyNames`; absent in the host lane / when disabled. */
   numericLocalVerdict?: (node: ts.Node, name: string) => boolean;
