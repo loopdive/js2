@@ -1,7 +1,7 @@
 ---
 id: 5122
 title: "ES2015 standalone Proxy rejects Symbol target and handler"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -130,6 +130,37 @@ over the target/handler `TypeError`.
   ratchets, issue integrity, numeric-local parity, and full pre-push gate pass.
 - The markdown issue contains final evidence, handoff, final SHA, and upstream
   PR URL; no GitHub issue is created.
+
+## Final validation and handoff
+
+Implementation and validation completed on the synchronized branch. The final
+validated tree is rooted at `upstream/main` `abf224159c32447eff7e36d51849278bb07ddf83`
+through merge commit `b88aef9ae77872680316a79dddfa2fdd6fde63f4`; the final
+implementation/test head before this status update is
+`896030a58aa2d2ded1ce3d6147d958eb73f159db`. All three commits are authored by
+Thomas Tränkler and carry real newline-separated Codex trailers.
+
+- Focused Vitest with the pinned artifact and two workers: **6/6 passed**;
+  both exact host rows and both exact standalone rows passed, and host-free
+  controls passed for static/dynamic Symbols, callee-before-caller ordering,
+  all-argument evaluation and later abrupt completion, target-before-handler
+  validation, trap-read suppression, and ordinary object/array/function/
+  nested-Proxy carriers. The standalone compiler result asserted `imports ===
+  []`.
+- TypeScript 5 and TypeScript 7 typechecks passed. Full Biome lint and
+  Prettier checks passed. Oracle and coercion-site ratchets passed with zero
+  net growth. LOC/function budgets passed using only this issue's two narrow
+  source/function allowances. Issue-spec coverage, done-status, full issue
+  integrity, and conformance-sync checks passed. Numeric-local parity passed
+  **18/18**.
+- The complete `.husky/pre-push` hook passed locally with the fixed toolchain
+  PATH, including parallel typecheck/lint, format, oracle/coercion ratchets,
+  numeric-local parity, conformance sync, and committed issue integrity.
+- The fork push is pending explicit external-write authorization from the
+  environment; no remote state was changed and no PR was opened. Once
+  authorized, push this exact branch without force and verify the remote SHA
+  equals `896030a58aa2d2ded1ce3d6147d958eb73f159db` before root opens the one
+  non-draft upstream PR.
 
 ## Handoff
 
