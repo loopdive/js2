@@ -1,10 +1,11 @@
 {
   "id": "5114",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5114-ir-math-expm1",
   "claimed_at": "2026-08-28T02:16:38Z",
-  "updated_at": "2026-08-28T02:16:38Z",
-  "write_id": "10507-36cutffn"
+  "updated_at": "2026-08-28T11:59:51Z",
+  "write_id": "61181-fr3n90xv",
+  "released_at": "2026-08-28T11:59:51Z"
 }
