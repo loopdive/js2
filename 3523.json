@@ -1,10 +1,11 @@
 {
   "id": "3523",
   "assignee": "ttraenkler/opus-3523-scalar",
-  "requested_by": "ttraenkler/opus-3523-scalar",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "claude/issue-3523-r4-scalar-assignment",
   "claimed_at": "2026-08-28T22:01:33Z",
-  "updated_at": "2026-08-28T22:01:33Z",
-  "write_id": "19935-7x1x9odr"
+  "updated_at": "2026-08-28T22:28:11Z",
+  "write_id": "8055-atpxpi62",
+  "released_at": "2026-08-28T22:28:11Z"
 }
