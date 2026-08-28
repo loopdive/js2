@@ -1,9 +1,10 @@
 ---
 id: 5107
 title: "Standalone Symbol prototype toPrimitive descriptor"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: medium
 horizon: s
 feasibility: medium
@@ -171,3 +172,10 @@ Worktree: `/private/tmp/js2-es2015-next-lane-a-20260828`
 Branch: `codex/es2015-next-lane-a`
 
 Tracking is intentionally md-only; no GitHub issue is created for this lane.
+
+Implementation and validation are complete. The validated implementation
+checkpoint is `a0b66b42ecba9575c87a39e85a2050bf36b5c729`, the current-main sync
+merge is `3853284e9c59dc00caf0e662431100f1218dfb2e`, and the refreshed evidence
+checkpoint is `bebfbbb97c601d29951035ece2f5da0e19d5e2d8`. The branch is ready for
+its single non-draft upstream PR; no additional product work remains in this
+lane.
