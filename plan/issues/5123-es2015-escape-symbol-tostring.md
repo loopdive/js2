@@ -1,7 +1,7 @@
 ---
 id: 5123
 title: "ES2015 escape and unescape reject Symbol arguments in standalone"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -140,10 +140,61 @@ completion must win before the Symbol `TypeError`.
 - This markdown issue records final evidence, final SHA, handoff, and the
   single non-draft upstream PR URL; no GitHub issue is created.
 
+## Final validation
+
+The validated implementation is on the conflict-free upstream sync commit
+`d5d48d363296ab54dde78c98fe8e2d096f610241`, a two-parent merge of the pushed
+implementation checkpoint `9dcb9d4e3f` and `upstream/main` `59ab7c0e66`. All
+compiler/test commands used
+`JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`,
+the pinned PATH from the handoff instructions, and no more than two workers.
+
+- The merged-tree focused run
+  `pnpm exec vitest run tests/issue-5123-es2015-escape-symbol-tostring.test.ts
+  --pool=forks --poolOptions.forks.maxForks=2
+  --poolOptions.forks.minForks=1 --no-file-parallelism --reporter=verbose`
+  passed 9/9. Both exact rows passed in host and standalone; the standalone
+  wrappers asserted zero module imports and each `runTest262File(...,
+  120_000)` wrapper has an explicit `180_000` outer timeout. The five
+  no-corpus controls passed: direct/aliased/globalThis and callee-before-caller
+  Symbol TypeErrors, ordered all-argument evaluation with later abrupt priority,
+  omitted/string/number positives, explicit `String(Symbol())`, host direct
+  TypeError identity/positives, and zero standalone imports.
+- The current-main A/B snapshots remain the recorded host
+  `a395f2a88d289a8e0fd78ccd76e090215ef3a85f1960aa8fe96f7d3a0445bd49` and
+  standalone `260a57b7fb4d53516fa81e1c949d81337968e30ce790d457bcc2d3945c2e9e1e`.
+  Before the fix both exact standalone rows failed with a missing TypeError;
+  after the fix both exact host and standalone rows pass.
+- TypeScript 5 and 7 passed on the complete implementation checkpoint
+  `9dcb9d4e3f`; the post-sync pre-push run passed TypeScript 7, and an additional
+  merged-tree TypeScript 5 run was bounded and stopped after approximately 20
+  minutes without diagnostics. No TypeScript 5 source changes occurred in the
+  upstream merge.
+- The full pre-push chain passed on the implementation checkpoint: typecheck/
+  lint, Prettier, oracle and coercion ratchets, numeric-local IR parity (18/18),
+  and issue integrity. The post-sync pre-push reached the same typecheck/lint,
+  Prettier, oracle/coercion, and numeric-local (18/18) stages before it was
+  stopped to correct the unpublished merge metadata; the corresponding
+  post-sync issue, LOC/function, host-import, dead-export, and stack-balance
+  gates pass independently. LOC/function budgets, host-import policy,
+  dead-export (0 new entries), and stack-balance (all fixup deltas 0) also pass.
+- The directly relevant Symbol/ToString equivalence fixture passed 3/3. The
+  full 1,865-test equivalence gate was bounded after approximately 18 minutes
+  without producing a report and stopped; no new equivalence failure was
+  observed before stopping.
+- A standalone WAT closure probe shows the Symbol `ref.test` and catchable
+  TypeError sequence before `__extern_toString`, followed by the native
+  transform call, with zero imports. This verifies carrier setup before closure
+  minting, throw-helper registration before the ToString-provider lookup, and
+  late-index re-resolution.
+
 ## Handoff
 
 Work only in `/private/tmp/js2-es2015-escape-symbol-tostring-20260828` on branch
 `codex/5123-es2015-escape-symbol-tostring`. Push checkpoints to the fork without
 force. Do not open the PR from the worker; root will review the final clean
 branch and open exactly one non-draft PR against `loopdive/js2:main` when it is
-mergeable.
+mergeable. The pushed checkpoint `9dcb9d4e3f` is verified on
+`ttraenkler/js2`; the corrected integration/validation SHA above is currently
+local and ready for root review before its non-force publication. No GitHub
+issue was created or commented on.
