@@ -1,10 +1,10 @@
 {
   "id": "3523",
-  "assignee": "ttraenkler/codex-ir-lead",
-  "requested_by": "ttraenkler/codex-ir-lead",
+  "assignee": "ttraenkler/opus-3523-scalar",
+  "requested_by": "ttraenkler/opus-3523-scalar",
   "status": "in-progress",
-  "branch": "codex/3523-r4-statement-module-init",
-  "claimed_at": "2026-08-22T02:33:55Z",
-  "updated_at": "2026-08-22T02:33:55Z",
-  "write_id": "56216-nal35zz0"
+  "branch": "claude/issue-3523-r4-scalar-assignment",
+  "claimed_at": "2026-08-28T22:01:33Z",
+  "updated_at": "2026-08-28T22:01:33Z",
+  "write_id": "19935-7x1x9odr"
 }
