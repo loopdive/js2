@@ -1628,6 +1628,33 @@ function _hasRealmGlobalObjectValue(ctx: CodegenContext, expr: ts.ObjectLiteralE
   return sawGlobal;
 }
 
+// (#5108) TypeScript gives the selected computed-only arithmetic literals a
+// numeric/string index signature with no named properties. The literal emitter
+// can still build a closed struct field, but the binding mapper then chooses
+// externref and the dynamic reader cannot see that struct. Keep this syntactic:
+// the predicate itself makes every consumer choose the open-object carrier, so
+// no additional raw checker query is needed. Mixed/named and non-arithmetic
+// computed shapes retain their existing representation.
+function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || expr.properties.length === 0) return false;
+  if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
+  for (const prop of expr.properties) {
+    if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
+    if (!ts.isBinaryExpression(prop.name.expression)) return false;
+    const operator = prop.name.expression.operatorToken.kind;
+    if (
+      operator !== ts.SyntaxKind.PlusToken &&
+      operator !== ts.SyntaxKind.MinusToken &&
+      operator !== ts.SyntaxKind.AsteriskToken &&
+      operator !== ts.SyntaxKind.SlashToken
+    ) {
+      return false;
+    }
+    if (resolveComputedKeyExpression(ctx, prop.name.expression) === undefined) return false;
+  }
+  return true;
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
@@ -1658,7 +1685,8 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       ) ||
       // (#4638) a data-only literal holding the realm global object — see
       // `_hasRealmGlobalObjectValue`.
-      _hasRealmGlobalObjectValue(ctx, expr))
+      _hasRealmGlobalObjectValue(ctx, expr) ||
+      computedOnlyArithmeticLiteralNeedsHostCarrier(ctx, expr))
   );
 }
 
