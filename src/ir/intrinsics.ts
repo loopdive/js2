@@ -13,6 +13,7 @@ import { irTypeEquals, type IrInstr, type IrType } from "./nodes.js";
 
 export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.abs",
+  "math.atan",
   "math.atan2",
   "math.ceil",
   "math.cos",
@@ -29,9 +30,8 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
 export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the twelve intrinsic entry points.
- * `math.atan` and `math.reduce-trig` are provider-only dependencies and are
- * intentionally not source-level intrinsic IDs in this slice.
+ * Provider requirements reachable from the thirteen intrinsic entry points.
+ * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.abs",
@@ -126,6 +126,7 @@ function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: Run
 /** Exhaustive entry contract. Record typing makes an added ID fail closed. */
 export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.atan": definition("math.atan", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.atan2": definition("math.atan2", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),
