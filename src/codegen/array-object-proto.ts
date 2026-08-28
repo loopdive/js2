@@ -335,8 +335,10 @@ const ITERATOR_PROTO_METHODS = [
 const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
 
 /** `Symbol.prototype`'s own method names (ES2024 §20.4.3). `description` is an
- * accessor getter, resolved by the computed-access path. */
-const SYMBOL_PROTO_METHODS = ["toString", "valueOf"] as const;
+ * accessor getter, resolved by the computed-access path. `@@toPrimitive` is
+ * represented by its native-symbol sentinel so flowing prototype values seed
+ * the same identity-stable well-known-symbol entry as string methods. */
+const SYMBOL_PROTO_METHODS = ["@@3", "toString", "valueOf"] as const;
 
 /** `BigInt.prototype`'s own method names (ES2024 §21.2.3). */
 const BIGINT_PROTO_METHODS = ["toLocaleString", "toString", "valueOf"] as const;
@@ -1746,6 +1748,11 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     brand,
     name,
     memberCsv: [...members, "size"].join(","),
+    // ES2015 §23.1.3.14 / §23.2.4.15: each collection prototype owns a
+    // non-writable, non-enumerable, configurable Symbol.toStringTag whose
+    // value is the collection's intrinsic name. The companion seeder already
+    // emits this descriptor when the glue supplies its symbol tag.
+    symbolTag: name,
     memberKind: (member) => (member === "size" ? "getter" : "method"),
     memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
     // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
@@ -1971,7 +1978,7 @@ export function ensureBooleanNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "Boolean");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS, "Boolean"));
   }
   return brand;
 }

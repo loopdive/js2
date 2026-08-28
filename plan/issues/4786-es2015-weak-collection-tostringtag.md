@@ -4,7 +4,7 @@ title: "ES2015 standalone WeakMap and WeakSet prototype Symbol.toStringTag"
 status: done
 sprint: current
 created: 2026-08-27
-updated: 2026-08-27
+updated: 2026-08-28
 completed: 2026-08-27
 assignee: "ttraenkler/codex-es2015-next-bounded-fix-8"
 priority: high
@@ -152,3 +152,72 @@ Source commits: `fae00a578a` (plan/claim) and `019109f311` (implementation);
 current-main merges: `3f01cf7191`, then `af522aff3c`.
 The branch is ready for the separate upstream PR for #4786. No WeakMap/WeakSet
 instance insertion or constructor code was changed.
+
+## Post-merge follow-up: optional Test262 corpus guard
+
+PR #5085 (`698ecb8f1661454037eaed810cb2a6770f6acf7f`) merged the compiler
+implementation and its focused regression file on 2026-08-27. The later
+optional-corpus checkpoint (`2be342f92ebb108910fa451f15de86e4e37013fc`) was
+not included in that merge: it is not an ancestor of the merge commit or the
+current `upstream/main`. Consequently, a checkout that intentionally omits
+the Test262 submodule tried to execute the four exact-row assertions against
+missing files, so it could not reach the two self-contained compiler controls.
+
+### Implementation plan
+
+1. Detect only the optional corpus fixture
+   `test262/harness/assert.js`, using a worktree-independent path derived from
+   the test module.
+2. Apply `it.skipIf(!TEST262_AVAILABLE)` to each of the two exact-row tables
+   (host and standalone), yielding four conditional corpus assertions.
+3. Keep both descriptor/identity compiler controls as ordinary mandatory
+   `it` tests. Do not skip the enclosing suite or alter `runTest262File`.
+4. Give the exact-row tables the same explicit 120-second Vitest budget as
+   `runTest262File`; otherwise a valid standalone result can be preempted by
+   the suite's 35-second default timeout under normal concurrent load.
+
+### Follow-up evidence
+
+- Validation source: `upstream/main` `eafd6700ac` when the focused checks ran,
+  with the pinned Test262 gitlink
+  `b363f29d3c43c626dc852744ad64a0b48a003693`; compiler worker count was capped
+  at two. The branch was then synchronized with upstream merges
+  `18785a67c6`, `0ccc264fa1`, and current `upstream/main` `63e80e3928` before
+  handoff (the latter was recorded by merge checkpoint `10695cabd5`).
+- Corpus present: the focused Vitest file passed **6/6** — four exact
+  host/standalone rows and both mandatory controls.
+- A frozen-head publication rerun reproduced a latent timeout mismatch: both
+  standalone rows exceeded Vitest's 35-second default (44.2s and 36.9s) even
+  though `runTest262File` already allowed 120 seconds. The follow-up now applies
+  the same 120-second budget at the Vitest case boundary; final evidence below
+  supersedes that diagnostic run.
+- Final frozen-head publication rerun after aligning the case timeout: **6/6**
+  passed in 129.53s (four exact corpus rows plus both mandatory controls); the
+  standalone rows completed normally in 20.5s and 22.9s.
+- Hermetic no-corpus shape (only `harness/assert.js` was temporarily moved in
+  this worktree and restored): **2 passed, 4 skipped**. The four skips were
+  exactly the host and standalone WeakMap/WeakSet rows; both controls ran and
+  passed.
+- `git diff --check` passed. The submodule remained at the pinned revision and
+  is not part of the follow-up diff.
+
+### Handoff
+
+This follow-up changes only
+`tests/issue-4786-weak-collection-tostringtag.test.ts` and this canonical
+issue file. It does not change the already-merged WeakMap/WeakSet compiler
+implementation, instance insertion, constructors, or the Test262 gitlink.
+The focused test remains fully enforced when the corpus is present while
+CI-style no-corpus checkouts still exercise the two mandatory controls.
+
+Final follow-up branch: `/private/tmp/js2-4786-optional-corpus-guard`,
+`codex/4786-optional-corpus-guard`, at fork head
+verified with `git ls-remote fork refs/heads/codex/4786-optional-corpus-guard`.
+PR creation was blocked by the external approval policy; the exact authorized
+command is:
+
+```text
+gh pr create --repo loopdive/js2 --head ttraenkler:codex/4786-optional-corpus-guard --base main --title 'test(test262): guard optional WeakCollection corpus rows ✓' --body-file /private/tmp/issue-4786-pr-body.md
+```
+
+No Test262 submodule content or pointer is included.

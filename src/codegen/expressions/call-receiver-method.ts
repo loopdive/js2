@@ -1289,7 +1289,15 @@ export function compileReceiverMethodCall(
   );
   if (deletedStringToString !== undefined) return deletedStringToString;
 
-  const booleanToString = tryCompileStandaloneBooleanToString(ctx, fctx, propAccess, expr, receiverType);
+  const booleanToString = tryCompileStandaloneBooleanToString(
+    ctx,
+    fctx,
+    propAccess,
+    expr,
+    receiverType,
+    expectedType,
+    compileCallExpression,
+  );
   if (booleanToString !== undefined) return booleanToString;
 
   // Handle wrapper type method calls: new Number(x).valueOf(), etc.
