@@ -37,6 +37,7 @@ import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { getOrRegisterDvWindowType } from "../dataview-native.js";
 import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
+import { GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES, resolvesToAmbientGlobal } from "./non-constructable.js"; // (#5158)
 import { emitNativeDateParse } from "../date-parse-native.js";
 import {
   addUnionImports,
@@ -323,6 +324,12 @@ function isStaticallyConstructible(ctx: CodegenContext, value: ts.Expression): b
   const expr = unwrapReflectConstructExpr(value);
   if (isOrdinaryFunctionLike(expr) || ts.isClassExpression(expr)) return true;
   if (!ts.isIdentifier(expr)) return false;
+  // (#5158) An ambient global function the spec gives no [[Construct]]
+  // (`escape`, `parseInt`, …) is declared in the lib `.d.ts` as an ordinary
+  // `declare function`, so the declaration walk below would call it
+  // constructible and Reflect.construct would silently succeed — which is what
+  // test262's `isConstructor` helper probes. A user shadow keeps the old path.
+  if (GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES.has(expr.text) && resolvesToAmbientGlobal(ctx, expr)) return false;
   if (TYPED_ARRAY_NAMES.has(expr.text)) return true;
   if (
     new Set([
