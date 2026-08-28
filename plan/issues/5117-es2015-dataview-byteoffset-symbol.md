@@ -1,10 +1,11 @@
 ---
 id: 5117
 title: "ES2015 standalone DataView byteOffset Symbol conversion"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: high
 horizon: s
 feasibility: easy
@@ -14,6 +15,7 @@ area: codegen
 es_edition: ES2015
 language_feature: dataview-byteoffset-toindex-symbol
 goal: standalone-mode
+pr: 5124
 assignee: "ttraenkler/codex/es2015-next-lane-h"
 loc-budget-allow:
   - src/codegen/dataview-native.ts
@@ -185,6 +187,20 @@ Implementation is limited to the two owned code/test files plus this plan:
 `tests/issue-5117-dataview-byteoffset-symbol.test.ts`, and this document.
 The delivery branch is `codex/5117-es2015-dataview-byteoffset-symbol`, based
 directly on freshly fetched `upstream/main` at
-`796d8c2cd28648d21de2ada5a0b662e758f7dda3`. After validation, the clean head
-and full evidence will be handed to the root agent
-for one upstream PR; no external issue will be created.
+`796d8c2cd28648d21de2ada5a0b662e758f7dda3`. The implementation and evidence
+checkpoints culminated at `d92e5a0d19e5598c9c9fde981014c10ba98aaca0`
+and were pushed without force after the normal pre-push suite passed. The
+single non-draft upstream delivery PR is
+https://github.com/loopdive/js2/pull/5124 against `loopdive/js2:main`.
+
+Root review independently reran the focused suite at the rebased head (13/13,
+including all 16 exact rows in both lanes), confirmed the exact PR template and
+fork/base routing, and retained CI, review-thread, exact-head, and merge-queue
+shepherding as the remaining handoff. No GitHub issue was created or updated.
+
+PR 5124's merge queue consumed an earlier snapshot, so the final `status: done`
+and this handoff were not present in its merge commit even though GitHub later
+displayed the advanced fork head. The stranded markdown-only closure is
+published separately as non-draft upstream PR 5150. That closure PR changes
+only this file; it does not duplicate the source fix or regression test already
+landed by PR 5124.
