@@ -15,6 +15,19 @@ goal: standalone-mode
 sprint: current
 assignee: "ttraenkler/codex-es2015-next-lane-a"
 related: [4743, 4776]
+files:
+  - src/codegen/array-object-proto.ts
+  - src/codegen/native-proto.ts
+  - src/codegen/native-proto-own-props.ts
+  - tests/issue-5107-symbol-toprimitive-descriptor.test.ts
+  - tests/test262-restore-builtins.ts
+  - plan/issues/5107-es2015-symbol-toprimitive-descriptor.md
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+  - src/codegen/native-proto.ts
+  - src/codegen/native-proto-own-props.ts
+func-budget-allow:
+  - src/codegen/native-proto-own-props.ts::registerNativeProtoHasOwn
 ---
 
 # 5107 — standalone Symbol prototype toPrimitive descriptor
@@ -84,9 +97,50 @@ coercion or alter unrelated Symbol prototype methods.
 - The branch contains one focused regression test, this md-only plan, and one
   compliant upstream PR when all local gates are complete.
 
+## Implementation
+
+The Symbol native-prototype glue now advertises the well-known-symbol
+sentinel `@@3` (`Symbol.toPrimitive`) alongside its existing string methods.
+The standalone companion seeder boxes that sentinel into the identity-stable
+native `$Symbol` carrier, so dynamic reads, own checks, descriptors, writes,
+and deletes all consult one mutable proto-index entry. Its seed uses the
+existing `{ writable:false, enumerable:false, configurable:true }` flag word,
+while ordinary native-prototype methods retain their writable defaults. The
+closure metadata maps the compiler sentinel to the ECMAScript function name
+`[Symbol.toPrimitive]` and keeps the spec length `1`.
+
+The own-property lowering has a symbol-key arm keyed by the carrier ID and
+delegates presence/enumerability to the existing companion object view. It is
+standalone-gated and does not alter host mode or generic ToPrimitive dispatch.
+
+The focused regression contains two mandatory self-contained standalone
+compiler controls (descriptor/identity/name/length and replacement/deletion)
+and two corpus-backed exact-row cases. Corpus-backed cases are guarded only
+by `existsSync(test262/harness/assert.js)`, so a checkout without Test262 still
+executes the product controls. The host Test262 runner snapshot also now
+includes `Symbol.prototype`: Test262's configurable `verifyProperty` probe
+deletes the entry during its sloppy pass, and the snapshot restores the host
+intrinsic before the strict rerun. This is test-realm hygiene, not a product
+runtime fallback; the direct controls instantiate host-free standalone Wasm
+with an empty import object.
+
 ## Test results
 
-Pending implementation.
+On the corpus-present worktree, the focused Vitest file passed **4/4**:
+
+- exact host row: 1/1 pass (including strict rerun)
+- exact standalone row: 1/1 pass
+- self-contained descriptor/identity control: 1/1 pass
+- self-contained mutation/deletion control: 1/1 pass
+
+The corpus-absent temporary-root validation passed **2/2 mandatory controls**
+and skipped only the two corpus-backed cases. TypeScript 7 typecheck passed;
+Biome lint passed with no error diagnostics; Prettier check and
+`git diff --check` passed; oracle-ratchet reported no checker-usage growth
+(`getTypeAtLocation +0`, `ctx.checker +0`). A repeated corpus-present focused
+run also passed **4/4** with the same per-case counts, for **8/8 total
+focused assertions across two runs**. There were no compile errors, timeouts,
+or unexpected skips.
 
 ## Handoff
 
