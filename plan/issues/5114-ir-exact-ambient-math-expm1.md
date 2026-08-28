@@ -1,7 +1,7 @@
 ---
 id: 5114
 title: "IR: own exact ambient Math.expm1 calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -95,6 +95,31 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 - The narrow rollback and all excluded shapes decline before claim without
   invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.expm1` is now the twenty-third closed source-level Math intrinsic. It
+  reuses the generic exact-ambient selector, call-graph walker, from-AST
+  intrinsic emitter, and provider materializer.
+- The frozen manifest attaches the existing host-free `Math_expm1` callable,
+  closes it over exactly one shared `math.exp` dependency, and requests no
+  host capability. No Math algorithm or direct-codegen file changed.
+- `JS2WASM_IR_MATH_EXPM1=0` withdraws only this claim. Shadowed, aliased,
+  computed, optional-invocation, optional-receiver, wrong-arity, spread, and
+  non-number forms all decline before claim without invariants or post-claim
+  errors.
+- Six focused/affected and legacy suites pass 78/78. They cover host and
+  zero-import standalone execution, exact provider closure, direct-path bit
+  parity across adjacent Taylor-boundary values, IEEE specials, extreme
+  magnitudes, and the inherited overflow band, plus explicit native-Math
+  envelopes, rollback, exhaustive manifest/integration contracts, and linear
+  legality.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max final review independently reran the focused and
+  affected evidence and returned GO with no P0/P1 finding.
+- PR #5121 is open non-draft and conflict-free, stacked on #5118's exact
+  `Math.cbrt` ownership branch.
 
 ## Non-goals
 
