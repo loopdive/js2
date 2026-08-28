@@ -200,7 +200,7 @@ CI-style no-corpus checkouts still exercise the two mandatory controls.
 
 Final follow-up branch: `/private/tmp/js2-4786-optional-corpus-guard`,
 `codex/4786-optional-corpus-guard`, at fork head
-`99e683e2b8443478d7337fa84cb2e2359055d034`. PR creation was blocked by the
+`fa3b69487116a4a34c2a5f5e4380f99409aeb49e`. PR creation was blocked by the
 external approval policy; the exact authorized command is:
 
 ```text
