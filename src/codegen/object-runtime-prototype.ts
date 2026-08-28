@@ -534,6 +534,128 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     );
   }
 
+  // (#5148 cluster 2b) __object_setPrototypeOf_status(externref obj,
+  //   externref proto) -> i32 — the BOOLEAN §10.1.2.1 OrdinarySetPrototypeOf
+  //   would return for this (obj, proto) pair, WITHOUT performing the write.
+  //
+  //   `__object_setPrototypeOf` above is deliberately lenient: a step-3
+  //   (non-extensible) or step-4 (cycle) refusal is a SILENT no-op there,
+  //   because internal callers rely on that posture. But §20.1.2.21 step 4
+  //   requires `Object.setPrototypeOf` to THROW a TypeError when the boolean is
+  //   false, and the same is true of B.2.2.1's `__proto__` setter. Rather than
+  //   forking the writer (which would duplicate the chain walk, the callable
+  //   proto-view canonicalization and the boundary-object arm), the throwing
+  //   call sites ask this pure predicate FIRST and then delegate the write.
+  //
+  //   Answers 1 (permissive) for every receiver the writer does not own — a
+  //   non-`$Object` obj, and a `$Proxy` receiver, whose §10.5.2 trap arm is
+  //   prepended to the writer only. Those keep their existing behaviour.
+  //
+  // params: 0=obj(externref) 1=proto(externref)
+  // locals: 2=o(ref null $Object) 3=v(ref null $Object) 4=p(ref null $Object)
+  //         5=any(anyref)
+  {
+    const body: Instr[] = [
+      // Not an ordinary `$Object` receiver → not this native's business → 1.
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: 5 },
+      { op: "ref.test", typeIdx: objectTypeIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+      { op: "local.get", index: 5 },
+      { op: "ref.cast", typeIdx: objectTypeIdx },
+      { op: "local.set", index: 2 },
+      // v = the `$Object` view of proto (callable → its proto-view; else null).
+      ...canonicalizeProtoArg(1),
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: 5 },
+      { op: "ref.test", typeIdx: objectTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: objRefNull },
+        then: [
+          { op: "local.get", index: 5 },
+          { op: "ref.cast", typeIdx: objectTypeIdx },
+        ],
+        else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
+      },
+      { op: "local.set", index: 3 },
+      // step 2: SameValue(v, o.$proto) → true, regardless of extensibility.
+      { op: "local.get", index: 3 },
+      { op: "local.get", index: 2 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+      { op: "ref.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+      // step 3: non-extensible → false.
+      { op: "local.get", index: 2 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: OBJ_FLAG_NONEXTENSIBLE },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
+      // step 4: cycle walk — p = v ; while p != null { if p === o → false }
+      { op: "local.get", index: 3 },
+      { op: "local.set", index: 4 },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: 4 },
+              { op: "ref.is_null" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: 4 },
+              { op: "ref.as_non_null" },
+              { op: "local.get", index: 2 },
+              { op: "ref.as_non_null" },
+              { op: "ref.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+              },
+              { op: "local.get", index: 4 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+              { op: "local.set", index: 4 },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      { op: "i32.const", value: 1 },
+    ];
+    registerNative(
+      "__object_setPrototypeOf_status",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+      [
+        { name: "o", type: objRefNull },
+        { name: "v", type: objRefNull },
+        { name: "p", type: objRefNull },
+        { name: "any", type: { kind: "anyref" } },
+      ],
+      body,
+    );
+  }
+
   // __isPrototypeOf(externref obj, externref candidate) -> i32 (ES §20.1.3.3):
   //   1 iff obj appears in candidate's prototype chain. Walk candidate.$proto
   //   and ref.eq each level against obj. Non-$Object obj/candidate → 0.
