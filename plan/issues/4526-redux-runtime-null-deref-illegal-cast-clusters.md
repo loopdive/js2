@@ -165,6 +165,37 @@ infrastructure, caching answers, or introducing Redux-specific rewrites:
 - [ ] Focused closure/call tests, typecheck, compiler ratchets, and the full
       pinned Redux suite remain green.
 
+## 2026-08-28 host-import policy ratchet (native-first 394 → 395)
+
+`check:host-import-policy` failed the `quality` gate on this branch with
+`native-first imports 395 > maximum 394`. Measured on both sides of the only
+relevant hunk (`src/codegen/closure-exports.ts` reverted to `origin/main` and
+back, per-probe totals from the gate's own probe set):
+
+| metric | base (`origin/main`) | this branch |
+| --- | --- | --- |
+| native-first `imports` | 394 | 395 |
+| native-first `legacySemanticImports` | 0 | 0 |
+| native-first `unknownImports` | 0 | 0 |
+| compatibility legacy imports | 23 | 23 |
+| `runtimeTsLines` / `resolveImportLines` / `resolveImportCases` | unchanged | unchanged |
+| `ownedAdapterLines` / `explicitCapabilityLines` | unchanged | unchanged |
+
+The single added import is `__unwrap_for_wasm` in the `proxyRevocable` probe
+(every other probe is byte-identical). It comes from this issue's host-facade
+unwrap in `emitClosureCallExportN`: recovering the original Wasm value before
+the concrete `ref.cast` is what preserves callable identity across a dynamic
+callback result, which is the fix itself — so the import is not avoidable
+without withdrawing the behavior. It is already gated off for host-free
+targets (`!ctx.standalone && !ctx.wasi`), and it is a `value-adapter` in
+`src/host-import-policy.ts`, not a `legacy-semantic` or `unknown` provider, so
+every zero-debt metric the gate exists to police stays at **0**.
+
+`plan/audit/host-import-policy-baseline.json` is therefore ratcheted to the
+exact measured value (394 → 395, no rounding), following the precedent of
+#3481 and #4771 — the maximum is raised in the PR that needs it, with the
+before/after measurement recorded here.
+
 ## 2026-08-27 bounded heterogeneous-callable ABI checkpoint
 
 The preserved `98c7955` checkpoint was rebased onto current `origin/main`
