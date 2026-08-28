@@ -38,11 +38,33 @@ export function retUnboxAbiEnabled(): boolean {
 }
 
 /**
+ * (Phase 2) Is the MERGE half of the ABI on?
+ *
+ * Phase 1 typed the CALLEE's result. Phase 2 types the logical-value MERGE that
+ * consumes it: `expressions/logical-ops.ts` unifies `i32 || externref` to
+ * `externref`, so a proven-boolean arm re-boxes at the merge even though the
+ * merged value is about to be ToBoolean'd again. The plan (§3.4) prefers
+ * reusing lever 4 (`box-boolean-fuse.ts`, #4157) over building a second
+ * merge-typing pass, so this predicate gates a new LEAF KIND inside that pass
+ * rather than a pass of its own — and it therefore also requires
+ * `JS2WASM_UNBOXED_BOOL_FUSE`, which is lever 4's own default-OFF gate.
+ *
+ * It rides the SAME `JS2WASM_RET_UNBOX_ABI` variable on purpose: the two halves
+ * compose (every callee Phase 1 retypes turns a merge arm from a sink leaf into
+ * a free box leaf), so a lane that measures one without the other measures a
+ * shape that will never ship.
+ */
+export function retUnboxMergeSinkEnabled(): boolean {
+  return retUnboxAbiEnabled();
+}
+
+/**
  * Companion POISON switch (#4157 entry 22's lesson): with BOTH this and the
  * main flag on, every refined boolean result is INVERTED at the trampoline
- * edge. A workload whose answer is unchanged under poison did not execute a
- * single refined boolean call — which is the only way to tell a real null from
- * a path that never ran. Poison alone (main flag off) is inert.
+ * edge, and (Phase 2) so is every merge whose fusion used a sunk consumer. A
+ * workload whose answer is unchanged under poison did not execute a single
+ * refined boolean call — which is the only way to tell a real null from a path
+ * that never ran. Poison alone (main flag off) is inert.
  */
 export function retUnboxAbiPoisoned(): boolean {
   return retUnboxAbiEnabled() && process.env.JS2WASM_RET_UNBOX_ABI_POISON === "1";
