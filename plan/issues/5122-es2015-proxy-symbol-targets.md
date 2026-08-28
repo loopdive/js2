@@ -1,7 +1,7 @@
 ---
 id: 5122
 title: "ES2015 standalone Proxy rejects Symbol target and handler"
-status: done
+status: in-progress
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -81,6 +81,28 @@ the first two arguments. JavaScript `ArgumentListEvaluation` must evaluate all
 supplied expressions in source order before Proxy constructor validation, so
 ignored extra arguments must still run and a later abrupt completion must win
 over the target/handler `TypeError`.
+
+## Reopen blocker: spread ArgumentListEvaluation
+
+The published PR head has a remaining correctness defect: `new Proxy(...[{},
+{}])` must construct a valid Proxy, but both host and standalone compiled
+modules catch a `TypeError`. The Proxy-specific argument staging sees the
+`SpreadElement` as one positional target instead of expanding its iterable
+values, leaving the handler missing. This is a real evaluation/lowering bug,
+not an acceptance-test narrowing: spread expansion must occur before the
+constructor's target/handler validation and must preserve ordinary arguments.
+
+The reopened implementation will first re-probe this shape on current
+`upstream/main`, then trace and reuse the canonical spread/call/new lowering
+and iterator evaluation path. It will cover static and dynamic spread sources,
+mixed ordinary-plus-spread ordering, expanded extras, later abrupt evaluation
+or iterator completion, valid object target/handler pairs, and Symbol
+target/handler values after expansion in both host and standalone modes. The
+regression suite will also assert function-index stability across late helper
+registration, explicit outer timeouts and worktree-anchored corpus paths, and
+zero standalone imports. Existing ordinary two-argument behavior, exact
+TypeError identity, target-before-handler validation, trap-read suppression,
+and nested-Proxy/object/array/function carriers remain required controls.
 
 ## Implementation plan
 
