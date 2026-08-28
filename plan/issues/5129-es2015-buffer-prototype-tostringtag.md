@@ -1,7 +1,7 @@
 ---
 id: 5129
 title: "ES2015 ArrayBuffer and DataView prototype toStringTag metadata"
-status: ready
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -175,17 +175,17 @@ and stopped after a silent local run exceeding 240 seconds with no diagnostics;
 the passing TS7/full pre-push typecheck is the repository's current required
 typecheck lane.
 
-This issue is **ready**, not done. The branch is clean at the synchronized head
-plus this evidence update, retains `pr: 5142`, creates no GitHub issue, and is
-handed back to root for publication/review and final PR state management. The
-global ES2015 goal and unrelated TypedArray work remain open.
+Root reviewed and published the synchronized implementation plus this evidence
+at `b953cc68e6b5adbf4d447a2167a8d6f5fc3a99fb`. Local, fork, and PR heads were
+verified equal; GitHub reports the PR mergeable and dispatched the full CI,
+Test262, smoke, and parity workflow families. The issue is complete at its
+bounded ES2015 ownership; the global ES2015 goal and unrelated TypedArray work
+remain open.
 
 ## Handoff
 
-Work only in
-`/private/tmp/js2-es2015-buffer-prototype-tostringtag-20260828` on branch
-`codex/5129-es2015-buffer-prototype-tostringtag`. Push checkpoints to the fork
-without force only when root requests publication. Root owns the final review,
-issue done/PR metadata, CI shepherding, and enqueue. The single upstream PR is
-https://github.com/loopdive/js2/pull/5142; it remains draft while this issue is
-in progress and must become ready only after the complete fix is mergeable.
+The single upstream PR is <https://github.com/loopdive/js2/pull/5142>. Root
+published every checkpoint without force, verified the required Description/CLA
+body and fork ownership, and will mark the PR ready after this final markdown
+handoff is published. Freeze the exact all-green head once queued. No GitHub
+issue was created; this file is the complete implementation and handoff record.
