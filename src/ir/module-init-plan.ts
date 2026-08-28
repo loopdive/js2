@@ -434,6 +434,11 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
       continue;
     }
 
+    // A re-export declaration has no source-local evaluation. Its target
+    // binding belongs to the referenced module, so it must not manufacture an
+    // executable module-init plan for this source.
+    if (ts.isExportDeclaration(statement)) continue;
+
     if (
       ts.isInterfaceDeclaration(statement) ||
       ts.isTypeAliasDeclaration(statement) ||
