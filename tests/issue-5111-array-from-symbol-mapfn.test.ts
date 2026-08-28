@@ -14,12 +14,13 @@ const corpusIt = hasTest262Corpus ? it : it.skip;
 
 const CONTROL_SOURCE = `
   export function test(): number {
+    let thisArgEvaluations = 0;
     try {
-      Array.from([], Symbol("mapper"));
+      Array.from([], Symbol("mapper"), thisArgEvaluations++);
       return 0;
     } catch (error) {
       const mapped: any = Array.from([1, 2], (value: number, index: number) => value + index);
-      return mapped.length === 2 && mapped[0] === 1 && mapped[1] === 3 ? 1 : 2;
+      return thisArgEvaluations === 1 && mapped.length === 2 && mapped[0] === 1 && mapped[1] === 3 ? 1 : 2;
     }
   }
 `;
@@ -71,7 +72,7 @@ describe("#5111 standalone Array.from Symbol mapper guard", () => {
     expect(result.status, result.error ?? result.reason).toBe("pass");
   });
 
-  it("throws for a Symbol mapper and preserves callable mapping without host imports", async () => {
+  it("throws after evaluating thisArg and preserves callable mapping without host imports", async () => {
     const outcome = await runControl("standalone");
     expect(outcome.result).toBe(1);
     expect(outcome.imports).toEqual([]);

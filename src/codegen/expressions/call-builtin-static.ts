@@ -1122,12 +1122,14 @@ export function compileBuiltinStaticCall(
     // A Symbol is never callable. The standalone native mapper arm below
     // invokes a Wasm closure directly, so reject this statically-known value
     // before it reaches `__hof_map` instead of silently treating it as a
-    // callback. Keep dynamic values on the existing runtime path.
+    // callback. Evaluate and discard the complete argument list first, as a
+    // normal call does, so `thisArg` and extra-argument side effects are not
+    // skipped. Keep dynamic values on the existing runtime path.
     if (ctx.standalone && hasMapFn && ctx.oracle.staticJsTypeOf(expr.arguments[1]!) === "symbol") {
-      const sourceType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
-      const mapType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
-      if (mapType && mapType.kind !== "externref") coerceType(ctx, fctx, mapType, { kind: "externref" });
+      for (const arg of expr.arguments) {
+        const argType = compileExpression(ctx, fctx, arg);
+        if (argType) fctx.body.push({ op: "drop" });
+      }
       emitThrowTypeError(ctx, fctx, "Array.from mapper is not a function");
       return VOID_RESULT;
     }

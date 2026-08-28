@@ -140,6 +140,20 @@ and no more than two compiler workers.
   stack-balance, host-import policy, and codegen-fallback telemetry all pass.
   Full repository lint and format checks also pass.
 
+### Root review correction
+
+Pre-publication root review found that the first guard evaluated only the
+source and mapper before throwing, which would have skipped side effects in a
+supplied `thisArg`. The final guard evaluates and drops every call argument in
+source order before emitting the TypeError. The focused standalone control now
+asserts that the `thisArg` side effect occurs exactly once; final evidence below
+supersedes the earlier focused result.
+
+- Post-correction focused run: 4/4 passed in 45.83 seconds. Both exact corpus
+  rows remained passing, the standalone side-effect/import control passed, and
+  the host behavior control passed.
+- `git diff --check` passed after the correction.
+
 ## Handoff
 
 Worktree: `/private/tmp/js2-es2015-next-lane-f-20260828`
