@@ -362,7 +362,6 @@ function slotsForRoute(route: MultiPreparedEarlyLeafRoute): readonly RouteSlot[]
 
 function routeSupport(route: MultiPreparedEarlyLeafRoute): object | undefined {
   if (route.routeKind === "scalar") return undefined;
-  if (route.routeKind === "array") return route.support;
   return route.support;
 }
 
@@ -375,9 +374,8 @@ function routeComponentId(route: MultiPreparedEarlyLeafRoute, slots: readonly Ro
   return receipt.preparedComponentId;
 }
 
-function inventorySource(inventory: IrUnitInventory, sourceId: IrSourceId) {
-  return inventory.sources.find((source) => source.id === sourceId);
-}
+const inventorySource = (inventory: IrUnitInventory, sourceId: IrSourceId) =>
+  inventory.sources.find((source) => source.id === sourceId);
 
 export function createMultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan = MultiPreparedScalarLeafPlan>(
   multiAst: MultiTypedAST,
@@ -387,13 +385,15 @@ export function createMultiPreparedProgramOwner<Plan extends MultiPreparedScalar
   ctx.irBodyRouteAuditSession?.registerGenerator("multi", "generateMultiModule");
   const { irPlanningIdentityContext: identityContext, programAbiSession } = ctx;
   if (!identityContext || !programAbiSession) return undefined;
-  return new MultiPreparedProgramOwner<Plan>({
+  const owner = new MultiPreparedProgramOwner<Plan>({
     multiAst,
     identityContext,
     programAbiSession,
     ctx,
     overlayEnabled: !!options?.experimentalIR && !ctx.fast,
   });
+  if (options?.trackIrOutcomes === true && options.experimentalIR !== true) owner.sealBodyBoundary();
+  return owner;
 }
 
 export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan = MultiPreparedScalarLeafPlan> {

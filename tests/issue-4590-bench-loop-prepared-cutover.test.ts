@@ -193,7 +193,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     expect(preparedTrampoline).toContain("i32.const 125000");
 
     // Early support allocation is the one intentional raw artifact delta.
-    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 35);
+    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 28);
     expect(prepared.dts).toBe(direct.dts);
     expect(prepared.importsHelper).toBe(direct.importsHelper);
     expect(prepared.imports).toEqual(direct.imports);
@@ -258,7 +258,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     const ids = [sourceId, trampolineId, cacheId] as const;
     const slotExpectations = [
       { result: prepared, source: 76, trampoline: 78, cache: 10 },
-      { result: direct, source: 76, trampoline: 252, cache: 129 },
+      { result: direct, source: 76, trampoline: 290, cache: 136 },
     ] as const;
 
     for (const { result, source, trampoline, cache } of slotExpectations) {

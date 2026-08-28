@@ -3,7 +3,7 @@ id: 4590
 title: "Cut the exact bench_loop function-value leaf over to Prepared IR"
 status: done
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-28
 completed: 2026-08-21
 priority: critical
 feasibility: medium
@@ -130,6 +130,50 @@ preallocated trampoline/cache resolve to function/global slots 78/10; the true
 old control resolves the same binding roles to 252/129. Each final slot points
 to the single expected allocator object, the trampoline signature agrees with
 its published callable intent, and the cache is one mutable `externref` global.
+
+## 2026-08-28 current-main pin maintenance and telemetry-only control
+
+Unrelated allocator growth since the original landing changed the physical
+whole-module positions while leaving every semantic #4590 invariant intact.
+On current `main` at `48abcb949c9d1b539cb58472256e4545cacd9dc8`, under the
+strict 10-core load gate (`finite, non-negative load < 8`), the exact raw
+artifacts are now:
+
+- Prepared: 131,207 bytes, SHA-256
+  `8cd1ba375acef40b417be2aa534065c865eda06072a14c6911ba453ec22227e8`;
+- direct kill-switch control: 131,235 bytes, SHA-256
+  `935b394bced571155c15a889a488ed449ce395dea3e10d6f50f3bfc1e5eddb88`;
+- exact Prepared reduction: 28 bytes, replacing the obsolete 35-byte pin;
+- Prepared source/trampoline/cache slots: `76 / 78 / 10` (unchanged); and
+- direct source/trampoline/cache slots: `76 / 290 / 136`, replacing the
+  obsolete `76 / 252 / 129` physical positions.
+
+Both lanes contain exactly 321 defined functions and 165 globals. The existing
+raw/optimized target and trampoline body equality, Program ABI binding IDs and
+intents, exact singleton allocator objects, signatures, import/export surface,
+string pool, DTS/helper, binary validity, and runtime result remain the
+authority. Update only the obsolete physical pins after remeasuring them on the
+rebased implementation head. Do not replace them with inequalities, derive the
+expected slots from the actual objects under test, or relabel allocator drift
+as a size regression.
+
+The M0 telemetry lifecycle defect tracked by #3525 is independently
+non-vacuous in `tests/issue-3525-multi-prepared-program-census.test.ts`: with
+`experimentalIR: false`, `trackIrOutcomes: true`, and a poisoned direct body,
+compilation must reach and report the exact direct-body poison rather than stop
+earlier with `multi-prepared-program:completion-order`. The production repair
+belongs only to #3525's telemetry-only owner lifecycle; #4590 must not bypass
+the owner, disable tracking, or accept the lifecycle error as expected output.
+
+Carry this pin-only maintenance in the same #3525 repair checkpoint because
+the mandatory changed-root hook selects the full #4590 suite and current
+`main` already fails its two obsolete physical assertions. This is not an
+allowance: require #4590 to return to 21/21 before the commit, then run its
+adjacent #4589, #4591, #3525, #3518, and #2138 controls, TypeScript 7 and 5, IR
+fallback/layering/dialect/optimization gates, and the LOC and function ratchets
+immediately before the signed commit. After #3525 merges, refresh and rebase the
+separate declaration-snapshot checkpoint onto these maintained pins. No
+baseline, LOC, function, precommit, or prepush exception is authorized.
 
 ## Completion evidence
 
