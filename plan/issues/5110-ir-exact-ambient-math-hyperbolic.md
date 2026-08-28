@@ -1,7 +1,7 @@
 ---
 id: 5110
 title: "IR: own exact ambient Math.sinh/Math.cosh/Math.tanh calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -101,6 +101,34 @@ remain direct.
 - Each rollback withdraws only its corresponding method, and excluded shapes
   decline before claim without invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.sinh`, `math.cosh`, and `math.tanh` are now the nineteenth through
+  twenty-first closed source-level Math intrinsics. They reuse the shared Math
+  table, generic selector and call-graph walker, and from-AST intrinsic emitter.
+- The frozen manifest attaches the existing `Math_sinh`, `Math_cosh`, and
+  `Math_tanh` callables, declares `math.exp` as each provider's sole
+  dependency, and materializes that dependency once. No Math algorithm or
+  direct-codegen file changed.
+- Independent `JS2WASM_IR_MATH_SINH=0`, `JS2WASM_IR_MATH_COSH=0`, and
+  `JS2WASM_IR_MATH_TANH=0` controls withdraw only their corresponding claim.
+  Shadowed, aliased, computed, optional-invocation, optional-receiver,
+  wrong-arity, spread, and non-number forms all decline before claim.
+- Four focused/affected contract suites pass 45/45. They cover host and
+  zero-import standalone ownership, semantic/provider evidence, exact shared
+  dependency closure, bit-identical direct parity across cancellation,
+  saturation, overflow, NaN, infinities, and signed zero, method-specific
+  native-Math relative-error bounds, independent rollbacks, every
+  target/backend manifest policy, and linear-backend legality.
+- The existing self-hosted Math regressions pass 70/70 across #3141, #1437,
+  and `math-inline`. The local Test262 submodule was absent, so repository PR
+  automation owns the focused standards rows.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max re-review after binding the numerical oracle to
+  explicit IR-only outcomes returned GO with no P0/P1 finding.
+- PR #5115 is open non-draft, clean, and green, stacked on #5111's exact head.
 
 ## Non-goals
 
