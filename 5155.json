@@ -1,10 +1,11 @@
 {
   "id": "5155",
   "assignee": "ttraenkler/opus-5155",
-  "requested_by": "ttraenkler/opus-5155",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5155-string-indexof-noarg",
   "claimed_at": "2026-08-28T15:50:08Z",
-  "updated_at": "2026-08-28T15:50:08Z",
-  "write_id": "1730-4z4vrjf0"
+  "updated_at": "2026-08-28T17:18:54Z",
+  "write_id": "27610-s4lzsxrk",
+  "released_at": "2026-08-28T17:18:54Z"
 }
