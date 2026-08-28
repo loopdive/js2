@@ -3158,11 +3158,6 @@ function compileArrayAt(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  if (callExpr.arguments.length < 1) {
-    reportError(ctx, callExpr, "at() requires 1 argument");
-    return null;
-  }
-
   const vecTmp = allocLocal(fctx, `__arr_at_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const idxTmp = allocLocal(fctx, `__arr_at_idx_${fctx.locals.length}`, { kind: "i32" });
   const lenTmp = allocLocal(fctx, `__arr_at_len_${fctx.locals.length}`, { kind: "i32" });
@@ -3190,7 +3185,16 @@ function compileArrayAt(
   // following <0 wrap + bounds check clamp it). No new #2108 coercion site —
   // `coerceType` reuse only. The legacy direct-i32 path is kept for the JS-host
   // mode (which coerces strings via a host import).
-  if (noJsHost(ctx)) {
+  // (#5095) `index` is an ORDINARY parameter, so `arr.at()` is legal JS and is
+  // exactly `arr.at(0)` — ToIntegerOrInfinity(undefined) is +0. Rejecting it (an
+  // `at() requires 1 argument` reportError here) collapsed the whole call into the
+  // caller's degraded fallback, so `[10,20,30].at()` answered the INDEX `0`, not
+  // `10` (`undefined` in value position — one collapse, two coercion paths). Same
+  // shape as `includes`'s absent searchElement (`emitIncludesSearchValue`, #2872);
+  // covers the TypedArray receiver too, which shares this lowering.
+  if (callExpr.arguments.length < 1) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else if (noJsHost(ctx)) {
     const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!);
     if (!argType) {
       // void → undefined → ToNumber NaN → ToIntegerOrInfinity 0.
