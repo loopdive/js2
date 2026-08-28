@@ -22,6 +22,8 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js"; // (#4556) Annex B §B.2.1/§B.2.2
 import { emitNativeUriDecode, emitNativeUriEncode, URI_DECODE_MASK, URI_ENCODE_MASK } from "./uri-encoding-native.js";
 import { emitStandaloneIntrinsicEvalValue } from "./expressions/eval-inline.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 
 export const STANDALONE_ES5_GLOBAL_FUNCTION_NAMES = [
   "parseInt",
@@ -149,9 +151,11 @@ export function ensureStandaloneGlobalFunctionClosure(
   } else if (name === "escape") {
     emitNativeEscape(ctx);
     nativeIdx = ctx.funcMap.get("__escape");
+    ensureSymbolCarrier(ctx);
   } else if (name === "unescape") {
     emitNativeUnescape(ctx);
     nativeIdx = ctx.funcMap.get("__unescape");
+    ensureSymbolCarrier(ctx);
   } else {
     emitNativeUriEncode(ctx);
     nativeIdx = ctx.funcMap.get("__uri_encode");
@@ -197,12 +201,23 @@ export function ensureStandaloneGlobalFunctionClosure(
       // then take the same native-string carrier as the direct-call lowering in
       // annexb-escape-call.ts. No mask argument — unlike the URI family these
       // are 1-arg helpers.
+      // Ensure the carrier before minting this closure: a value read before its
+      // eventual caller must still carry the runtime Symbol brand.
+      const symbolTypeIdx = ctx.symbolTypeIdx;
+      const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+        flush: closureFctx,
+      });
       const toStringIdx = getExternrefToStringProvider(ctx);
-      if (toStringIdx === undefined) return null;
+      const finalNativeIdx = ctx.funcMap.get(name === "escape" ? "__escape" : "__unescape");
+      if (toStringIdx === undefined || finalNativeIdx === undefined) return null;
       closureFctx.body.push(
         { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: symbolTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+        { op: "local.get", index: 1 },
         { op: "call", funcIdx: toStringIdx },
-        { op: "call", funcIdx: nativeIdx },
+        { op: "call", funcIdx: finalNativeIdx },
       );
     } else if (nativeIdx !== undefined) {
       // __extern_toString is the shared standalone ToString boundary. The URI

@@ -1,10 +1,11 @@
 ---
 id: 5099
 title: "fix(standalone): expose StringIteratorPrototype.next metadata"
-status: ready
+status: done
 sprint: current
 created: 2026-08-27
 updated: 2026-08-28
+completed: 2026-08-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -23,7 +24,10 @@ files:
   - tests/issue-5099.test.ts
 ---
 
-# #5099 — expose StringIteratorPrototype.next metadata
+# Repository-local markdown issue 5099 — expose StringIteratorPrototype.next metadata
+
+This is the repository-local issue record at
+`plan/issues/5099-string-iterator-next-metadata.md`; it is not a GitHub issue.
 
 ## Problem / evidence
 
@@ -44,9 +48,9 @@ A previous broad experiment in `/private/tmp/js2-es2015-next-bounded-fix-9` chan
 five call/dispatch modules and added a temporary debug script; it remained
 standalone `0/4` for a larger iterator cohort and is intentionally preserved as
 failed-experiment evidence. This fix remains metadata-only and does not change
-iterator stepping or generic assert/call dispatch. The transient GitHub issue
-#5099 was closed by the user after the draft checkpoint; this markdown file is
-the sole canonical issue record for this work.
+iterator stepping or generic assert/call dispatch. The repository-local issue
+record at `plan/issues/5099-string-iterator-next-metadata.md` is the sole
+canonical record for this work; no GitHub issue was created.
 
 ## Implementation plan
 
@@ -115,10 +119,12 @@ A hermetic temporary root with no `test262` checkout reports **2/2 passed and
 4/4 intentionally skipped**, proving the changed-root CI shape while retaining
 non-vacuous host and standalone coverage.
 
-Post-sync CI for PR #5103 head `e0159876d6` (Actions run `33123862203`) was
-fully green (all required jobs successful or intentionally skipped), and the
-branch was mergeable against `upstream/main` `5321bfbbfa`. The subsequent
-tracker-only handoff head `a7fdb491e0` and post-#5085 sync merge `41e71fba9a`
-were each validated locally; fresh CI on the final pushed head is required
-before readiness changes. The PR remains draft and held outside the merge
-queue pending the parent’s readiness/queue operation.
+Post-sync CI for upstream PR #5103 head `e0159876d6` (Actions run
+`33123862203`) was fully green (all required jobs successful or intentionally
+skipped), and the branch was mergeable against `upstream/main`
+`5321bfbbfa`. The subsequent tracker-only handoff head `a7fdb491e0` and
+post-#5085 sync merge `41e71fba9a` were each validated locally. Upstream PR
+#5103 is merged into `loopdive/js2:main` at merge commit
+`b1cc63d1b1fd9d4cd301fa2c3ece9c23e81d6e2d` (2026-08-28); this repository-local
+issue record at `plan/issues/5099-string-iterator-next-metadata.md` therefore
+records `status: done` and `completed: 2026-08-28`. No GitHub issue was created.
