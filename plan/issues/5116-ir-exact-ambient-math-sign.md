@@ -1,7 +1,7 @@
 ---
 id: 5116
 title: "IR: own exact ambient Math.sign calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -53,13 +53,13 @@ finite values while leaving coercive and dynamic forms on direct codegen.
 
 ## Measured residual
 
-`sign` is absent from `IR_MATH_METHOD_TABLE`, so exact numeric calls currently
-produce selector-stage `body-shape-rejected` telemetry and emit a legacy body.
-The direct implementation in `compileMathCall` evaluates the argument once,
-passes through NaN and signed zero, and otherwise applies the operand sign to
-one. Unlike the previous 26 methods, no self-hosted `Math_sign` helper exists,
-so this checkpoint first expresses that established behavior in the verified
-stdlib dialect.
+Before this checkpoint, `sign` was absent from `IR_MATH_METHOD_TABLE`, so exact
+numeric calls produced selector-stage `body-shape-rejected` telemetry and
+emitted a legacy body. The direct implementation in `compileMathCall`
+evaluates the argument once, canonicalizes NaN, passes through signed zero, and
+otherwise applies the operand sign to one. Unlike the previous 26 methods, no
+self-hosted `Math_sign` helper existed, so this checkpoint first expressed that
+established behavior in the verified stdlib dialect.
 
 Two Luna Max audits ranked `Math.sign` as the lowest-risk remaining pure Math
 residual. `Math.random` is explicitly unsuitable for this slice because the
@@ -108,6 +108,34 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
 - The narrow rollback, affected regressions, TypeScript 7, and all pre-push
   gates pass.
 
+## Implementation outcome and validation
+
+- `math.sign` is the twenty-seventh certified pure Math intrinsic. Exact
+  ambient one-number calls now emit IR-only bodies and resolve through the
+  dependency-free `selfhost.math.sign` provider and `Math_sign` symbol.
+- The self-hosted source canonicalizes NaN to the same raw f64 bits as direct
+  codegen, preserves both signed zeros, and returns exact sign units for
+  subnormals, finite values, and infinities. The IR instruction carries one SSA
+  argument, preserving one evaluation before the call boundary.
+- Host execution requests no Math import; standalone execution has zero Wasm
+  imports. The manifest closure contains only `math.sign`, with no dependency
+  or host capability.
+- Shadowed, aliased, computed, optional-invocation, optional-receiver,
+  wrong-arity, spread, and non-number forms decline before claim. The existing
+  Symbol path remains direct and throws `TypeError`.
+- Focused ownership tests pass 14/14, the affected #3526 manifest,
+  integration, and linear-legality suites pass 13/13, and existing scoped
+  `Math.sign` equivalence, stdlib, #324, and Symbol regressions pass 6/6.
+  TypeScript 7, kind-neutrality, Prettier, Biome, LOC/function budgets,
+  oracle/coercion ratchets, numeric-local parity (18/18), and issue integrity
+  pass.
+- Luna Max final review returned GO with no P0/P1 finding and independently
+  confirmed canonical NaN bits, signed zero, one evaluation, fallback
+  boundaries, host-free materialization, and linear legality.
+- PR #5129 is open non-draft, clean, and green, stacked directly on #5123's
+  inverse-hyperbolic ownership branch with merge automation armed; CLA and
+  native-messaging smoke checks pass.
+
 ## Non-goals
 
 - General ToNumber coercion, aliases, computed/extracted calls, optional
@@ -120,7 +148,7 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
 ## Risk and rollback
 
 The primary semantic risk is changing evaluation or bit identity for NaN and
-negative zero while replacing the direct body with a self-hosted helper. Exact
-direct/IR parity and existing Symbol-coercion tests are the hard boundaries.
+negative zero while adding the IR-owned self-hosted path. Exact direct/IR
+parity and existing Symbol-coercion tests are the hard boundaries.
 `JS2WASM_IR_MATH_SIGN=0` provides narrow rollback;
 `JS2WASM_IR_FIRST=0` remains the global control.
