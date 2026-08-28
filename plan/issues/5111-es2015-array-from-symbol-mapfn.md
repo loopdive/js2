@@ -1,7 +1,7 @@
 ---
 id: 5111
 title: "ES2015 standalone Array.from rejects a Symbol mapper"
-status: in-progress
+status: ready
 created: 2026-08-28
 updated: 2026-08-28
 priority: medium
@@ -109,11 +109,48 @@ parallel for-in closure lane).
 - This record contains final validation, the branch/head, and the single PR
   handoff. No GitHub issue is created or referenced.
 
+## Final validation
+
+The final evidence was collected after fetching and merging the current
+`upstream/main` tip `5a6a42664a7967a27a2bda8b34439f789b656f9e`; the resulting
+branch head is merge commit `04c7dd84325ae16c601c2543f8d8f75c6dc724c5`.
+All harness runs used
+`JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`
+and no more than two compiler workers.
+
+- The original local A/B baseline reproduced host `pass: 1` and standalone
+  `fail: 1`. Baseline JSONL SHA-256: host
+  `8afe821c08628ef322c318cf78abdc37da626e571eaf38e4805766696962d78b`;
+  standalone
+  `652be82b348da25979647a5814b0dd4a15cbc04dc39ce2390ea8115d907078c7`.
+- Final exact host A/B on `04c7dd8` is `pass: 1`, with the host diff showing
+  one unchanged pass and zero losses. Final host JSONL SHA-256 is
+  `8afe821c08628ef322c318cf78abdc37da626e571eaf38e4805766696962d78b`.
+- Final exact standalone A/B on `04c7dd8` is `pass: 1`; the standalone diff
+  is exactly one `fail -> pass` for the owned row, with zero losses or other
+  status changes. The determinism repeat reports `nondeterministic: 0`.
+  Final standalone JSONL SHA-256 is
+  `c1ced43123d06d0189e268a3139df713872f9bfde60230c89a39833911388fcf`.
+- `tests/issue-5111-array-from-symbol-mapfn.test.ts` passes 4/4: exact row
+  in host and standalone, standalone Symbol/callable/import controls, and
+  host behavior control.
+- Focused Biome lint and Prettier checks, TypeScript 7 `--noEmit`,
+  `git diff --check`, LOC/function budgets, oracle ratchet, verdict oracle,
+  stack-balance, host-import policy, and codegen-fallback telemetry all pass.
+  Full repository lint and format checks also pass.
+
 ## Handoff
 
 Worktree: `/private/tmp/js2-es2015-next-lane-f-20260828`
 
 Branch: `codex/es2015-next-lane-f`
 
-Plan checkpoint: created before implementation; source and regression edits
-are pending.
+Source commits: `9f4fae2ecf` (plan checkpoint) and `bab08e8997`
+(implementation); final upstream sync: `04c7dd8432`.
+
+The branch is ready for exactly one upstream PR from
+`ttraenkler:codex/es2015-next-lane-f` to `loopdive/js2:main`, using the exact
+`## Description` / `## CLA` body and checked CLA box required by the repository.
+No GitHub issue was created or referenced. The environment safety reviewer
+blocked the non-force fork push because the branch contains private snapshot
+paths in this plan; no push workaround was attempted.
