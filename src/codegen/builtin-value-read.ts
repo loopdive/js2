@@ -858,13 +858,17 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
 }
 
 /**
- * (#4731) `<Map|Set>.prototype[Symbol.iterator]` is an alias for the
- * prototype's `entries`/`values` method.  The ordinary computed-property path
- * materializes the `$NativeProto` object and asks `__extern_get` for a dynamic
- * symbol key; standalone has no symbol-key arm there, so it returned null.
- * Resolve this exact static shape through the same identity-stable method
- * closure used by the dot form.  Keeping this in the value-read subsystem also
- * makes the Set and nearby Map controls share one spec-derived path.
+ * (#4731 / #5142) `<Builtin>.prototype[Symbol.<wellKnown>]` value read.  The
+ * ordinary computed-property path materializes the `$NativeProto` object and
+ * asks `__extern_get` for a dynamic symbol key; standalone has no symbol-key arm
+ * there, so it returned null (`undefined` at run time).  Resolve this static
+ * shape through the same identity-stable method closure the dot form uses.
+ *
+ * #4731 covered `<Map|Set>.prototype[Symbol.iterator]`, which is an ALIAS for
+ * that prototype's `entries`/`values` method; #5142 generalizes the arm to every
+ * well-known symbol advertised by a brand's glue under its physical `@@<id>` key
+ * (RegExp's `@@7`/`@@8`/`@@9`/`@@10` = `[Symbol.match]`/`[Symbol.replace]`/
+ * `[Symbol.search]`/`[Symbol.split]`).
  */
 function tryCompileStandaloneBuiltinProtoIteratorRead(
   ctx: CodegenContext,
@@ -898,18 +902,15 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  // (#5156) The general case: a well-known-symbol member advertised in the
-  // brand's glue CSV under its `@@<id>` sentinel (e.g. `Date.prototype[
-  // Symbol.toPrimitive]` → `@@3`). Map/Set's `@@iterator` stays an IDENTITY
-  // ALIAS of `entries`/`values`, so it keeps its own resolution.
-  const member = isIteratorAlias
-    ? builtinName === "Set"
-      ? "values"
-      : "entries"
-    : getNativeProtoBuiltinGlue(ctx, brand)?.memberCsv.split(",").includes(`@@${symbolId}`)
-      ? `@@${symbolId}`
-      : undefined;
-  if (member === undefined) return undefined;
+  // Map/Set keep their §24.1.3.12/§24.2.3.11 ALIAS resolution: `@@iterator` on
+  // those prototypes is the very same function object as `entries`/`values`, so
+  // it must resolve to that member's singleton rather than a distinct closure.
+  // Every other builtin resolves its symbol-keyed member under the physical
+  // `@@<id>` key (e.g. RegExp's `@@7` = `[Symbol.match]`, Date's `@@3` =
+  // `[Symbol.toPrimitive]`); `resolveStandaloneProtoMemberValueClosure` below
+  // answers undefined for a member the brand never registered, which keeps the
+  // pre-#5142/#5156 fallthrough for those.
+  const member = isIteratorAlias ? (builtinName === "Set" ? "values" : "entries") : `@@${symbolId}`;
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved || resolved.kind !== "method") return undefined;
 
