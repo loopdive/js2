@@ -1,15 +1,14 @@
 ---
 id: 5117
 title: "ES2015 standalone DataView byteOffset Symbol conversion"
-status: done
+status: in-progress
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
-completed: 2026-08-28
 priority: high
 horizon: s
 feasibility: easy
-reasoning_effort: medium
+reasoning_effort: max
 task_type: bug
 area: codegen
 es_edition: ES2015
