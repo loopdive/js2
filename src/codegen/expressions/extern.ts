@@ -36,6 +36,7 @@ import {
 } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
+import { tupleStructFields } from "./spread-arguments-call.js";
 
 export function findExternInfoForMember(
   ctx: CodegenContext,
@@ -937,7 +938,10 @@ function compileSpreadCallArgs(
         ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         const getIdx = ctx.funcMap.get("__extern_get_idx");
-        if (getIdx === undefined) continue;
+        if (getIdx === undefined) {
+          fctx.body.push({ op: "drop" });
+          continue;
+        }
         const vecLocal = allocLocal(fctx, `__spread_extern_${fctx.locals.length}`, { kind: "externref" });
         fctx.body.push({ op: "local.set", index: vecLocal });
         const reservedForTrailing = trailingPositionalAfter[argPos] ?? 0;
@@ -955,10 +959,45 @@ function compileSpreadCallArgs(
         continue;
       }
 
-      if (vecType.kind !== "ref" && vecType.kind !== "ref_null") continue;
+      // A bail-out from here on must not strand the compiled source on the
+      // stack: an unconsumed operand under the call is invalid Wasm (#5093).
+      if (vecType.kind !== "ref" && vecType.kind !== "ref_null") {
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
 
       const vecTypeDef = ctx.mod.types[vecType.typeIdx];
-      if (!vecTypeDef || vecTypeDef.kind !== "struct") continue;
+      if (!vecTypeDef || vecTypeDef.kind !== "struct") {
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+
+      // (#5093) An inline array literal with statically-known elements lowers
+      // to a TUPLE struct (`_0`, `_1`, …), not a `__vec_`: `getArrTypeIdxFromVec`
+      // fails on it, so `...[7, 8]` used to contribute NO argument at all —
+      // silently mis-binding the formals (`method(a, b)` took its `b` from the
+      // NEXT spread) and, when nothing else filled the slot, emitting a call
+      // with too few operands. Its arity is static, so expand it by field.
+      // `emitSetExtrasArgv` recognises the same carrier for the extras list.
+      const tupleFields = tupleStructFields(ctx, vecType.typeIdx);
+      if (tupleFields) {
+        const tupleLocal = allocLocal(fctx, `__spread_tuple_${fctx.locals.length}`, vecType);
+        fctx.body.push({ op: "local.set", index: tupleLocal });
+        const reservedAfterTuple = trailingPositionalAfter[argPos] ?? 0;
+        const tupleSlots = Math.min(tupleFields.length, Math.max(0, paramTypes.length - paramIdx - reservedAfterTuple));
+        for (let fi = 0; fi < tupleSlots; fi++) {
+          fctx.body.push({ op: "local.get", index: tupleLocal });
+          if (vecType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+          fctx.body.push({ op: "struct.get", typeIdx: vecType.typeIdx, fieldIdx: fi });
+          const fieldType = tupleFields[fi]!.type;
+          const expectedParamType = paramTypes[paramIdx];
+          if (expectedParamType && !valTypesMatch(fieldType, expectedParamType)) {
+            coerceType(ctx, fctx, fieldType, expectedParamType);
+          }
+          paramIdx++;
+        }
+        continue;
+      }
 
       // Extract data array from vec struct
       const vecLocal = allocLocal(fctx, `__spread_vec_${fctx.locals.length}`, vecType);
@@ -1001,6 +1040,17 @@ function compileSpreadCallArgs(
       compileExpression(ctx, fctx, arg, paramTypes[paramIdx]);
       paramIdx++;
     }
+  }
+
+  // (#5093) The loop fills parameter slots opportunistically — a spread source
+  // the vec/tuple readers cannot expand, or one whose static arity is shorter
+  // than the formal list, leaves the tail unfilled. A call with fewer operands
+  // than the callee's arity does not VALIDATE, so the module is rejected at
+  // instantiation rather than merely returning a wrong value. Pad the rest the
+  // way every non-spread call site does. Callers of this function never pad
+  // afterwards, so this cannot double-fill.
+  for (; paramIdx < paramTypes.length; paramIdx++) {
+    pushDefaultValue(fctx, paramTypes[paramIdx]!, ctx);
   }
 }
 

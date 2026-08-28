@@ -84,6 +84,7 @@ import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
 import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import {
   emitThrowTypeError,
   getFuncParamTypes,
@@ -3320,8 +3321,17 @@ export function compileIdentifierCall(
       // entirely from the runtime extras-vec length built above.
       maybeSetArgcForKnownCall(ctx, fctx, funcName, 0, 0);
     } else if (hasSpreadArg) {
+      // (#5093) Same shape as the zero-param branch above, but the callee HAS
+      // formals: bind them from the FLATTENED list and hand the rest to
+      // `__extras_argv`. It publishes the runtime `__argc` itself — the
+      // positional lowering below sets none, so nothing can clobber it.
+      const viaArguments =
+        calleeReadsArgsEarly &&
+        !restInfo &&
+        !hasLinearParamsForCall &&
+        compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, captureCountEarly, funcName);
       // Spread in function call: fn(...arr) — unpack array elements as positional args
-      compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfo);
+      if (!viaArguments) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfo);
     } else {
       // Normal call — compile provided arguments with type hints from function signature
       const paramTypes = getFuncParamTypes(ctx, funcIdx);

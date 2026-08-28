@@ -50,6 +50,7 @@ import {
   mapTsTypeToWasm,
   resolveBindingElementType,
 } from "../checker/type-mapper.js";
+import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
@@ -2430,8 +2431,13 @@ function recordObservedIrOutcomes(
     target,
   });
   const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  const preparedModuleInitUnitId = ctx.irProgramPreparedModuleInitUnitId;
   ctx.irOutcomes.push(
-    ...reconciled.outcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)),
+    ...reconciled.outcomes.filter(
+      (outcome) =>
+        (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
+        outcome.unitId !== preparedModuleInitUnitId,
+    ),
   );
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
@@ -3685,6 +3691,7 @@ function planMultiIrOverlaySource(
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
   countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan },
+  resolveModuleBindings = false,
 ): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
@@ -3694,7 +3701,7 @@ function planMultiIrOverlaySource(
     syntacticDiagnostics: multiAst.syntacticDiagnostics,
   };
   return planIrOverlay(ctx, sourceAst, identityContext, {
-    resolveModuleBindings: false,
+    resolveModuleBindings,
     resolver: identityResolver,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
     ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
@@ -3739,6 +3746,15 @@ function compileMultiIrOverlaySource(
     });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
+  // M2 owns the exact contributor's module-init body at the program level.
+  // The ordinary per-source overlay must not rediscover or patch that unit.
+  if (
+    ctx.irProgramPreparedModuleInitUnitId !== undefined &&
+    plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) ===
+      ctx.irProgramPreparedModuleInitUnitId
+  ) {
+    safeSelection = { ...safeSelection, moduleInit: undefined };
+  }
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
   safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = applyIrFinalContextFunctionUnitIds(
@@ -6481,7 +6497,7 @@ function drainStackBalanceTelemetry(ctx: CodegenContext, fileLabel: string): voi
  * simple prologue/epilogue wrap is sufficient; WASI/standalone never reach here
  * (the read site only records the flag when `!ctx.wasi`).
  */
-function finalizeInModuleInitFlag(ctx: CodegenContext): void {
+function finalizeInModuleInitFlag(ctx: CodegenContext, preferredUnitId?: IrUnitId): void {
   const reads = ctx.inModuleInitFlagReads;
   if (!reads || reads.length === 0) return;
 
@@ -6506,7 +6522,16 @@ function finalizeInModuleInitFlag(ctx: CodegenContext): void {
   // Wrap the exact compiler-created initializer (when present): flag = 1 for
   // the body, 0 on completion. Preserve the legacy multi-source first-pass
   // choice until R5 replaces cumulative initializer emission.
-  const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
+  const initFn = preferredUnitId
+    ? ctx.programAbiModuleInitCallables?.functionForUnit(preferredUnitId)
+    : ctx.programAbiModuleInitCallables?.firstFunction();
+  if (preferredUnitId !== undefined && !initFn) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "patch",
+      `prepared module-init ${preferredUnitId} has no exact function for __in_module_init finalization`,
+    );
+  }
   if (!initFn) return;
   initFn.body = [
     { op: "i32.const", value: 1 },
@@ -6515,6 +6540,15 @@ function finalizeInModuleInitFlag(ctx: CodegenContext): void {
     { op: "i32.const", value: 0 },
     { op: "global.set", index: flagIdx },
   ];
+}
+
+function finalizeMultiPreparedModuleInitStartup(
+  ctx: CodegenContext,
+  owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
+): void {
+  owner?.assertPreparedModuleInitCurrent();
+  finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
+  owner?.finalizePreparedModuleInitStartup();
 }
 
 function applyModuleInitGuard(ctx: CodegenContext): void {
@@ -8967,6 +9001,18 @@ function planMultiPreparedProgramRoutes(
         undefined,
         stringShape ? { loop: stringShape.loop, plan: stringShape.plan } : undefined,
       ),
+    planResolvedModuleInitSource: (sourceFile) =>
+      planMultiIrOverlaySource(
+        ctx,
+        multiAst,
+        sourceFile,
+        identityContext,
+        resolver,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      ),
     buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
@@ -8982,6 +9028,10 @@ function planMultiPreparedProgramRoutes(
     prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
       prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+    moduleInit: {
+      selectExactLexicalModuleInit: (sourceFile, selection, planning) =>
+        preparedExactLexicalModuleInit(ctx, sourceFile, selection, planning, identityContext),
+    },
     callable: {
       directCallerActivationTargets: (plan, sourceFile) =>
         collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan),
@@ -9962,7 +10012,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // delete-aware read `global.get` placeholders and wrapping `__module_init`.
     // Runs before dead-elim (which never prunes/remaps live globals) and the
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
-    finalizeInModuleInitFlag(ctx);
+    finalizeMultiPreparedModuleInitStartup(ctx, multiPreparedProgram);
 
     // (#4150/#4157) Same module-value caches as the single-module pipeline.
     finalizeModuleValueCaches(ctx);
@@ -10700,12 +10750,25 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       return { kind: "ref_null", typeIdx: templateVecTypeIdx };
     }
 
+    // (#5096) The intrinsic-name arms below (`Array`, the wrapper objects,
+    // `Promise`, the TypedArrays, `Date`, `Map`/`Set`/`WeakMap`/`WeakSet`)
+    // decide a value's Wasm REPRESENTATION from the symbol's spelling. A user
+    // binding of the same name is a different type with a different layout, so
+    // the spelling must not outrank it: `class Date { v: number }` was giving
+    // its instances `ref $__Date` (one i64 timestamp), and the ctor's real user
+    // struct then failed the `ref.test` on the way into that slot — the value
+    // became null and the next read trapped. Nulled here, the arms fall through
+    // to the ordinary user-class struct resolution below. `symbolShadowsBuiltin
+    // Global` answers `false` for every ambient symbol, so an unshadowed
+    // program resolves byte-identically.
+    const builtinSymName = symbolShadowsBuiltinGlobal(sym) ? undefined : sym?.name;
+
     // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
     // is a TS-only modifier with no runtime representation. Without this, a
     // ReadonlyArray-typed struct field falls through to the anonymous-struct /
     // externref path and mismatches the vec the array literal builds, trapping
     // on indexed read (#1748).
-    if (sym?.name === "Array" || sym?.name === "ReadonlyArray") {
+    if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       const elemTsType = typeArgs[0];
       let elemWasm: ValType = elemTsType
@@ -10744,18 +10807,18 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
 
     // Wrapper types (Number, String, Boolean) — map to externref.
     // new Number(x), new String(x), new Boolean(x) are wrapper objects (typeof "object").
-    if (sym?.name === "Number" && tsType.flags & ts.TypeFlags.Object) {
+    if (builtinSymName === "Number" && tsType.flags & ts.TypeFlags.Object) {
       return { kind: "externref" };
     }
-    if (sym?.name === "String" && tsType.flags & ts.TypeFlags.Object) {
+    if (builtinSymName === "String" && tsType.flags & ts.TypeFlags.Object) {
       return { kind: "externref" };
     }
-    if (sym?.name === "Boolean" && tsType.flags & ts.TypeFlags.Object) {
+    if (builtinSymName === "Boolean" && tsType.flags & ts.TypeFlags.Object) {
       return { kind: "externref" };
     }
 
     // Promise<T> → unwrap to T (host/GC) OR externref (native carrier).
-    if (sym?.name === "Promise") {
+    if (builtinSymName === "Promise") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       if (typeArgs.length > 0) {
         const inner = typeArgs[0]!;
@@ -10789,15 +10852,18 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // works — the native i64-vec has no js-host Atomics bridge yet (see the
     // construction-path notes in new-builtin-globals.ts / new-super.ts). Numeric
     // views map to a native vec in js-host too, but their Atomics bridge exists.
-    const isBigIntView838 = sym?.name !== undefined && BIGINT_TYPED_ARRAY_NAMES.has(sym.name);
-    if (sym?.name && (TYPED_ARRAY_NAMES.has(sym.name) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))) {
-      const storage = typedArrayVecStorage(ctx, sym.name);
+    const isBigIntView838 = builtinSymName !== undefined && BIGINT_TYPED_ARRAY_NAMES.has(builtinSymName);
+    if (
+      builtinSymName &&
+      (TYPED_ARRAY_NAMES.has(builtinSymName) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))
+    ) {
+      const storage = typedArrayVecStorage(ctx, builtinSymName);
       const vecIdx = getOrRegisterVecType(ctx, storage.key, storage.type);
       return { kind: "ref_null", typeIdx: vecIdx };
     }
 
     // Date → WasmGC struct with i64 timestamp field
-    if (sym?.name === "Date") {
+    if (builtinSymName === "Date") {
       const dateTypeIdx = ensureDateStructForCtx(ctx);
       return { kind: "ref", typeIdx: dateTypeIdx };
     }
@@ -10807,7 +10873,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // becomes `ref $Map` so `new Map()` stores directly and method/.size
     // dispatch reads a typed receiver (no externref round-trip / illegal cast).
     // JS-host mode keeps Map as an externref-backed externClass (falls through).
-    if (sym?.name === "Map" && ctx.nativeStrings) {
+    if (builtinSymName === "Map" && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -10816,7 +10882,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // mode (a Set is a Map with key === value). A `Set`-typed binding becomes
     // `ref $Map` so `new Set()` stores directly and method/.size dispatch reads
     // a typed receiver. JS-host mode keeps Set as an externref externClass.
-    if (sym?.name === "Set" && ctx.nativeStrings) {
+    if (builtinSymName === "Set" && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -10824,7 +10890,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // (#2162) WeakMap / WeakSet → the SAME native `$Map` struct in standalone /
     // nativeStrings mode (they reuse the Map backing store with object-identity
     // keys and no iteration). JS-host mode keeps them as externref externClasses.
-    if ((sym?.name === "WeakMap" || sym?.name === "WeakSet") && ctx.nativeStrings) {
+    if ((builtinSymName === "WeakMap" || builtinSymName === "WeakSet") && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
