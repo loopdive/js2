@@ -4010,6 +4010,39 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // constructor path. The paren-only form previously fell through to a null
   // placeholder without evaluating the constructor body at all.
   const unwrappedLiteralCtor = unwrapNewTarget(expr.expression);
+
+  // (#5141) §27.3.4 — a generator function object has NO [[Construct]] slot, so
+  // `new g()` is a TypeError even though `g` is callable. Both spellings are
+  // statically decidable: a literal `new (function*(){})()`, and an identifier
+  // bound to a generator declaration / lifted generator expression (the
+  // `ctx.generatorFunctions` name set the `.prototype` reads already key on).
+  // Without this the callee fell through to the ordinary-function construct
+  // path and silently produced an object.
+  {
+    const gen = unwrappedLiteralCtor;
+    const literalGenerator =
+      (ts.isFunctionExpression(gen) || ts.isFunctionDeclaration(gen)) && gen.asteriskToken !== undefined;
+    // A `var g = function*(){}` binding is NOT in `ctx.generatorFunctions` (the
+    // lifted closure registers under its synthetic `__closure_N` name), so also
+    // resolve the initializer through the oracle (#1930 — never the raw TS
+    // checker).
+    const initIsGenerator = (id: ts.Identifier): boolean => {
+      const init = ctx.oracle.variableInitializerOf(id);
+      return !!init && ts.isFunctionExpression(init) && init.asteriskToken !== undefined;
+    };
+    const namedGenerator =
+      ts.isIdentifier(gen) &&
+      (ctx.generatorFunctions.has(gen.text) || initIsGenerator(gen)) &&
+      !ctx.classSet.has(gen.text) &&
+      !ctx.externClasses.has(gen.text);
+    if (literalGenerator || namedGenerator) {
+      const label = ts.isIdentifier(gen) ? gen.text : "generator function";
+      emitThrowTypeError(ctx, fctx, `${label} is not a constructor`);
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+  }
+
   // #682 — standalone mode supports a reduced native RegExp subset for static
   // literal patterns. Keep this before the non-constructable guards so the
   // ambient `Function` type of `RegExp.prototype.constructor` cannot reject

@@ -7,7 +7,7 @@
 // threading an EarlyErrorContext and importing the shared predicate helpers.
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
-import { findInnermostNodeAtPosition, isStrictMode } from "./predicates.js";
+import { findInnermostNodeAtPosition, isInYieldParamContext, isStrictMode } from "./predicates.js";
 
 /**
  * `export default const/var/let` — always a SyntaxError.
@@ -204,20 +204,13 @@ export function checkReservedIdentifiers(ctx: EarlyErrorContext): void {
       const name = node.text;
       if (name === "yield") {
         // Reserved in strict mode or inside any enclosing generator.
-        let reserved = isStrictMode(node) || sourceFileIsModule;
-        if (!reserved) {
-          let c: ts.Node | undefined = node.parent;
-          while (c) {
-            if (
-              (ts.isFunctionDeclaration(c) || ts.isFunctionExpression(c) || ts.isMethodDeclaration(c)) &&
-              c.asteriskToken
-            ) {
-              reserved = true;
-              break;
-            }
-            c = c.parent;
-          }
-        }
+        // (#5141) The enclosing-generator walk must stop at the first
+        // non-arrow function boundary — a nested ordinary function resets
+        // [Yield], so `function*g(){ function h(){ yield = 1; } }` is legal —
+        // and a function's own BindingIdentifier is not judged by its own
+        // context. `isInYieldParamContext` implements both (mirrors the
+        // `await` rule below, which already walks to the function boundary).
+        const reserved = isStrictMode(node) || sourceFileIsModule || isInYieldParamContext(node);
         if (reserved) {
           ctx.addError(node, "'yield' is a reserved word and may not be used as an identifier in strict mode");
         }

@@ -26,6 +26,7 @@ import {
   isInsideClassWithPrivateName,
   isInsideFunction,
   isInsideGeneratorFunction,
+  isInYieldParamContext,
   isInsideGeneratorParams,
   isInsideIteration,
   isInsideMethod,
@@ -882,7 +883,7 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
         if (node.text === "await" && isInsideAsyncFunction(node)) {
           ctx.addError(node, "'await' is not allowed as an identifier in an async function");
         }
-        if (node.text === "yield" && isInsideGeneratorFunction(node)) {
+        if (node.text === "yield" && isInYieldParamContext(node)) {
           ctx.addError(node, "'yield' is not allowed as an identifier in a generator function");
         }
       }
