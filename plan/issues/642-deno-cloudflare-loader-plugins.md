@@ -30,8 +30,10 @@ Create loader plugins for transparent js2wasm compilation in Deno Deploy and Clo
   Deno has no pluggable module-loader hook, so the integration point is an
   explicit loader function rather than a `deno.json` plugin. The loader
   pipeline is CI-validated under Node in
-  `tests/issue-642-deno-loader.test.ts` (CI has no Deno install; a real
-  `deno task start` run remains unverified in CI).
+  `tests/issue-642-deno-loader.test.ts` (CI has no Deno install). A real
+  `deno run --allow-read --allow-env main.ts` under Deno 2.9.6 with the
+  published `npm:@loopdive/js2@0.70.0` was verified by hand 2026-08-28:
+  exact expected output.
 - **Cloudflare: open** — wrangler build plugin that compiles before deploy.
 
 ### Approach
