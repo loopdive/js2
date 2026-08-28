@@ -159,10 +159,11 @@ were rewritten or reverted.
 
 The completed fix is published as the single non-draft upstream PR
 [loopdive/js2#5136](https://github.com/loopdive/js2/pull/5136). Before
-publication, current `upstream/main` at
-`8e1df452ec0dae05687b01eff638f278f9253651` was merged non-destructively in
-`c7ada2926a21358bd553c7e25365322c3fcdb56e`; the focused suite then repeated
-44/44 green. The branch is
+publication, current `upstream/main` through
+`1d110ec6bda80a1303f73df96944ef892e91d71f` was merged non-destructively; the
+latest synchronization commit is
+`57e47ae3717f9ead5657ff47bedc1e58b57ba8a0`, and the focused suite then
+repeated 44/44 green. The branch is
 `codex/5120-es2015-array-find-symbol-length`, is pushed only to
 `ttraenkler/js2`, and has no known blockers. This markdown file is the sole
 issue tracker; no GitHub issue was created.
