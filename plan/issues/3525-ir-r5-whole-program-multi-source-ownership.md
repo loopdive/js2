@@ -4,7 +4,7 @@ title: "IR-only R5: whole-program single- and multi-source Prepared ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-27
+updated: 2026-08-28
 assignee: ttraenkler/codex
 branch: codex/3525-unit-keyed-body-skips
 priority: critical
@@ -1066,6 +1066,99 @@ executable source plans; Prepared reservations; direct roots; IR and legacy
 module-init outcomes; and callable-component reservations. Adjacent #3523,
 #2138, #3505, #3525 census, multi-file, equivalence, typecheck,
 `check:ir-fallbacks`, issue integrity, and LOC-budget gates remain required.
+
+## M0.1 repair lock — telemetry-only owner lifecycle (2026-08-28)
+
+Current `main` creates the shared identity context, `ProgramAbiSession`, and
+`MultiPreparedProgramOwner` when either `experimentalIR` or
+`trackIrOutcomes` is enabled. `makeIrPlanningAuthority`, however, is absent in
+the telemetry-only lane (`experimentalIR: false, trackIrOutcomes: true`), so
+`planMultiPreparedProgramRoutes` returns without sealing the owner. The first
+body visit then fails with
+`multi-prepared-program:completion-order: owner is collecting, expected
+body-boundary-sealed`. This is a production lifecycle defect in the M0 owner,
+not a reason to weaken the #4590 benchmark-loop test or to make telemetry an IR
+selection authority.
+
+The repair must remain outside `src/codegen/index.ts`, which is concurrently
+owned by the in-flight Deno integration PR. Exact production implementation
+ownership is limited to:
+
+- `src/codegen/multi-prepared-program.ts`;
+- `tests/issue-3525-multi-prepared-program-census.test.ts`; and
+- this issue record.
+
+The mandatory changed-root lane also exposed obsolete current-`main` physical
+pins in the otherwise-green #4590 and #4591 suites. This checkpoint may carry
+only their separately documented pin maintenance in the two owning issue files
+and tests; those validation-only edits must not weaken or dynamically derive
+any semantic, body, artifact, Program ABI, or runtime expectation.
+
+`createMultiPreparedProgramOwner` must immediately seal the ordinary no-route
+body boundary only for the exact telemetry-only mode:
+`trackIrOutcomes === true && experimentalIR !== true`. The resulting frozen
+body plan must contain the complete source/terminal denominator, semantic body
+visit sequence, zero reservations, every terminal in
+`unreservedTerminalUnitIds`, and an empty overlay visit sequence. It must then
+accept each direct body visit exactly once, seal `routes-complete`, bind the
+exact `ProgramAbiSession.publish()` result, and publish the ordinary M0 audit.
+It must not run a route planner, create a Prepared component, skip a direct
+body, visit an overlay, or synthesize an IR outcome.
+
+All other modes retain their existing lifecycle:
+
+- `experimentalIR: true` remains collecting until the existing route
+  orchestration plans candidates and seals the boundary, including fast,
+  disabled, Unsupported, and zero-reservation cases;
+- neither option enabled still creates no identity/session/owner; and
+- repeated or late planning/registration against the telemetry-only sealed
+  owner fails closed through the existing state machine rather than reopening
+  collection.
+
+The focused production regression must compile a real multi-source fixture
+with `experimentalIR: false, trackIrOutcomes: true` and prove: no fatal
+completion-order error; exact body-source census; zero overlay visits and
+reservations; all units unreserved; direct-only outcomes/legacy body evidence;
+and artifact, imports, public surface, and runtime parity with the same direct
+compile without telemetry. A direct-body poison is the non-vacuity control: it
+must reach the named direct body and report that poison, never stop first in
+owner lifecycle validation. A companion `experimentalIR: true` control must
+still require normal route planning and must not be pre-sealed by the factory.
+Direct owner mutations must reject a body visit before sealing, a second or
+out-of-order visit, a late route/component/module-init registration, and
+publication before `routes-complete` with the existing stable invariant codes.
+
+No baseline, binary-size, LOC, function-size, or hook exception is authorized.
+Before the signed commit and push, sample the finite, non-negative one-minute
+load and require it to be strictly below `logical cores - 2`; run the focused
+#3525 census and #4590 benchmark-loop suites, TypeScript 7 and 5 checks, IR
+fallback/layering/dialect/optimization gates, then the LOC and function
+ratchets immediately before committing. Let the complete precommit and
+prepush hooks run without bypass. Open the PR ready only after the branch is
+mergeable; otherwise keep it draft until the exact blocker is removed.
+
+### M0.1 implementation checkpoint
+
+`createMultiPreparedProgramOwner` now constructs the ordinary owner and seals
+its no-route body boundary immediately only for
+`trackIrOutcomes: true, experimentalIR: false`. The production regression
+proves the frozen two-source/two-terminal denominator, zero reservations and
+overlays, all terminals unreserved, exact direct `inc`/`run` body-route rows,
+empty requested IR outcomes, byte/WAT/import/export/runtime parity with the
+untracked direct compile, and the exact direct-body poison failure. Separate
+factory and state-machine mutations prove that the ordinary IR route remains
+collecting and that pre-seal visits, repeated visits, late route/callable/
+module-init registration, and early publication still fail closed.
+
+On refreshed `main` at `48abcb949c9d1b539cb58472256e4545cacd9dc8`, the
+focused census is 17/17 passing with exact empty error lists on both clean
+production controls. The complete #4590 benchmark-loop suite is restored to
+21/21 after preserving its exact semantics and maintaining only the measured
+raw binary delta (28 rather than 35 bytes) and direct trampoline/cache slots
+(290/136 rather than 252/129). The adjacent #4591 Fibonacci-pair suite is
+restored to 27/27 after maintaining only its direct cache slot from 135 to 136;
+its direct trampoline remains 291. The exact pin rationale and unchanged
+authority assertions live in the respective #4590 and #4591 issue records.
 
 ## Ownership and resolution invariants
 

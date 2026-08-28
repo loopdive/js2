@@ -296,7 +296,7 @@ import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
-import { noteRetUnboxStats } from "./ret-unbox-abi.js"; // (#4406 Phase 0) return-ABI funnel census
+import { noteRetUnboxStats, retUnboxNumericFilterEnabled } from "./ret-unbox-abi.js"; // (#4406) return-ABI funnel census + the Phase-4 admission filter
 import { noteParamUnboxStats } from "./param-unbox-abi.js"; // (#4406 Phase 3) parameter-ABI funnel census
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
 import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
@@ -588,11 +588,7 @@ import {
   emitStructFieldSetters,
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
-import {
-  analyzeBooleanNames,
-  analyzeBooleanPropertyNames,
-  recoverBooleanStructFieldBrands,
-} from "./struct-field-boolean-brand.js";
+import { analyzeBooleanNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
 import {
   analyzeNumericPropertyNames,
   applyNumericPropertyAnalysis,
@@ -4811,10 +4807,17 @@ export function generateModule(
   let numericAnalysisHost: NumericPropertyAnalysisHost | undefined;
   let priorNumericFunctions: ReadonlySet<string> | undefined;
   if (ctx.standalone) {
+    // (#4406 Phase 4) ONE traversal, both exclusions. This site already ran
+    // `analyzeBooleanNames` (behind a property-only view), so asking for the
+    // pair costs nothing extra and the two verdicts cannot disagree —
+    // the same "pass the REAL #2847 verdict rather than re-derive it" argument
+    // the `excludeNames` field already documents.
+    const booleanExclusions = analyzeBooleanNames(ctx, [ast.sourceFile]);
     numericAnalysisHost = {
       oracle: ctx.oracle,
       fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
-      excludeNames: analyzeBooleanPropertyNames(ctx, [ast.sourceFile]),
+      excludeNames: booleanExclusions.properties,
+      excludeFunctionNames: retUnboxNumericFilterEnabled() ? booleanExclusions.functions : undefined,
     };
     applyNumericPropertyAnalysis(ctx, numericAnalysisHost, [ast.sourceFile]);
     priorNumericFunctions = ctx.numericFunctionNames;
@@ -9331,7 +9334,13 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     let linkedNumericHost: NumericPropertyAnalysisHost | undefined;
     let linkedPriorNumericFunctions: ReadonlySet<string> | undefined;
     if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
-      linkedNumericHost = { oracle: ctx.oracle, excludeNames: ctx.booleanPropertyNames };
+      // (#4406 Phase 4) Both exclusions here too — assigning in only one of the
+      // two lanes makes them disagree about which names are numeric.
+      linkedNumericHost = {
+        oracle: ctx.oracle,
+        excludeNames: ctx.booleanPropertyNames,
+        excludeFunctionNames: retUnboxNumericFilterEnabled() ? ctx.booleanFunctionNames : undefined,
+      };
       const localVerdicts = profilePhase("numeric-local-analysis", () =>
         analyzeNumericPropertyNames(linkedNumericHost!, multiAst.sourceFiles),
       );
