@@ -68,7 +68,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
     const analysis = analyzeSource(`
       export function allMath(x: number, y: number): number {
         return Math.abs(x) + Math.sqrt(x) + Math.floor(x) + Math.ceil(x) + Math.trunc(x)
-          + Math.sin(x) + Math.cos(x) + Math.exp(x) + Math.log(x) + Math.log2(x)
+          + Math.atan(x) + Math.sin(x) + Math.cos(x) + Math.exp(x) + Math.log(x) + Math.log2(x)
           + Math.pow(x, y) + Math.atan2(x, y);
       }
     `);
@@ -119,6 +119,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function floor(): number { return Math.floor(3.9); }
       export function ceil(): number { return Math.ceil(3.1); }
       export function trunc(): number { return Math.trunc(-3.9); }
+      export function atan(): number { return Math.atan(1); }
       export function sin(): number { return Math.sin(0.75); }
       export function cos(): number { return Math.cos(0.75); }
       export function exp(): number { return Math.exp(1.25); }
@@ -156,7 +157,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
     for (const opcode of ["f64.abs", "f64.sqrt", "f64.floor", "f64.ceil", "f64.trunc"]) {
       expect(ir.wat).toContain(opcode);
     }
-    for (const helper of ["sin", "cos", "exp", "log", "log2", "pow", "atan2"]) {
+    for (const helper of ["atan", "sin", "cos", "exp", "log", "log2", "pow", "atan2"]) {
       expect(ir.wat).toContain(`$Math_${helper}`);
     }
     expect(ir.wat).not.toContain("$__box_number");

@@ -4790,6 +4790,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const L_RESULT = 4;
     // #1910/#1472 S2 — the boxed-primitive internal-slot $PropEntry (or null).
     const L_SLOT = 5;
+    // #5102 — the own Symbol.toPrimitive entry (or null). Keep this probe on
+    // the raw data-property path so the bounded standalone fix does not widen
+    // the known accessor/getter control into a new behavior change.
+    const L_ENTRY = 6;
+    const L_ARGS = 7;
 
     // (#4564) `undefined` is a non-null `$AnyValue` singleton; rejecting it
     // would incorrectly advance from `valueOf` to `toString`. BigInt and the
@@ -4803,7 +4808,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       typeofUndefinedIdx,
       typeofBigintIdx,
     ];
-    const returnIfPrimitive = (localIdx: number): Instr[] => [
+    const returnIfPrimitive = (localIdx: number, includeSymbol = true): Instr[] => [
       { op: "local.get", index: localIdx },
       { op: "ref.is_null" },
       {
@@ -4820,7 +4825,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           then: [{ op: "local.get", index: localIdx }, { op: "return" }],
         },
       ]),
-      ...(symbolKeysEnabled
+      ...(includeSymbol && symbolKeysEnabled
         ? ([
             { op: "local.get", index: localIdx },
             { op: "any.convert_extern" },
@@ -4917,6 +4922,106 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         ],
       },
     ];
+
+    // (#5102) Standalone ToNumber reaches this helper through isNaN. Probe the
+    // native Symbol.toPrimitive key before OrdinaryToPrimitive, and invoke an
+    // own DATA method with the actual receiver plus the one required hint
+    // argument. The raw __obj_find path is intentional: accessor invocation is
+    // outside this four-row cohort and remains the excluded getter-abrupt
+    // control. Missing/accessor entries continue through the existing ordinary
+    // method path unchanged.
+    const ownSymbolToPrimitive = (): Instr[] => {
+      if (!symbolKeysEnabled) return [];
+      const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+      if (boxSymbolIdx === undefined) return [];
+      const applyClosureIdx = reserveApplyClosure(ctx);
+      const ownDataMethod: Instr[] = [
+        { op: "local.get", index: L_ENTRY },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+        { op: "i32.const", value: FLAG_ACCESSOR },
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: L_ENTRY },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+            { op: "extern.convert_any" },
+            ...s1ToPrimNorm.map((i) => ({ ...i })),
+            { op: "local.set", index: L_METHOD },
+            { op: "local.get", index: L_METHOD },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [],
+              else: [
+                { op: "local.get", index: L_METHOD },
+                { op: "call", funcIdx: typeofFunctionIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "call", funcIdx: objVecNewIdx },
+                    { op: "local.set", index: L_ARGS },
+                    { op: "local.get", index: L_ARGS },
+                    { op: "local.get", index: 1 },
+                    { op: "call", funcIdx: objVecPushIdx },
+                    { op: "local.get", index: L_METHOD },
+                    { op: "local.get", index: 0 },
+                    { op: "local.get", index: L_ARGS },
+                    { op: "call", funcIdx: applyClosureIdx },
+                    { op: "local.set", index: L_RESULT },
+                    ...returnIfPrimitive(L_RESULT, false),
+                    // ToNumber(Symbol) is abrupt. Keep the Symbol result for
+                    // string-hint users such as ToPropertyKey; number/default
+                    // consumers must throw before __unbox_number can degrade
+                    // the carrier to NaN.
+                    { op: "local.get", index: L_RESULT },
+                    { op: "any.convert_extern" },
+                    { op: "ref.test", typeIdx: symbolTypeIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        ...isStringHint,
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [{ op: "local.get", index: L_RESULT }, { op: "return" }],
+                          else: [...throwTypeError()],
+                        },
+                      ],
+                      else: [...throwTypeError()],
+                    },
+                    ...throwTypeError(),
+                  ],
+                  else: [...throwTypeError()],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      return [
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "i32.const", value: 3 }, // well-known Symbol.toPrimitive
+        { op: "call", funcIdx: boxSymbolIdx },
+        { op: "call", funcIdx: objFindIdx },
+        { op: "local.tee", index: L_ENTRY },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: ownDataMethod,
+        },
+      ];
+    };
 
     // (#4492 wave-5) FACTORIES — each call returns fresh `Instr` objects, so the
     // two emission sites below never alias one array into two tree positions.
@@ -5076,6 +5181,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // #1910/#1472 S2 — boxed primitive wrapper short-circuit, now GATED on "no
       // own valueOf/toString" (#4492 wave-5). Full rationale + the measured
       // failure on `buildWrapperSlotShortCircuit` / `buildOwnToPrimitiveOverridePresent`.
+      ...ownSymbolToPrimitive(),
       ...ownToPrimitiveOverridePresent(),
       { op: "i32.eqz" },
       { op: "if", blockType: { kind: "empty" }, then: wrapperSlotShortCircuit() },
@@ -5099,6 +5205,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "method", type: { kind: "externref" } },
         { name: "result", type: { kind: "externref" } },
         { name: "slot", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        { name: "entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        { name: "args", type: { kind: "externref" } },
       ],
       body,
     );
@@ -5878,6 +5986,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   buildObjectEnumerationHelpers(ctx, {
     registerNative,
     objArrayLikeArms,
+    symbolTypeIdx,
     anyStrTypeIdx,
     propEntryTypeIdx,
     propMapTypeIdx,
@@ -11179,6 +11288,29 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   const protoHasSeed = (): Instr[] | undefined => protoIndexHasIdxInstrs(ctx, 1, 0);
   const MAX_SAFE = 9007199254740991; // 2^53 - 1
 
+  // Native Symbols crossing an externref field are represented by the
+  // `$Symbol` carrier. Keep the carrier index captured only after
+  // `ensureObjectRuntime` has registered it (before this finalize-time fill),
+  // so this discriminator cannot depend on compile order. The guard is used
+  // only by object-valued `length` conversions; numeric/string array-like
+  // carriers retain their existing paths.
+  const symbolTypeIdx = ctx.symbolTypeIdx;
+  const symbolToNumberGuard = (primLocal: number): Instr[] =>
+    symbolTypeIdx >= 0
+      ? [
+          { op: "local.get", index: primLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", {
+              forceInModuleCtor: true,
+            }),
+          },
+        ]
+      : [];
+
   /** Shared preamble test (identical for all three helpers). */
   const hasPreamble = (fn: { body: Instr[] }): boolean =>
     fn.body.length >= 3 &&
@@ -11217,6 +11349,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               { op: "ref.null.extern" }, // hint: number/default
               { op: "call", funcIdx: toPrimIdx },
               { op: "local.tee", index: L_PRIM },
+              ...symbolToNumberGuard(L_PRIM),
               { op: "call", funcIdx: typeofStringIdx },
               {
                 op: "if",
@@ -11250,6 +11383,18 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               : isObjectRefLength
                 ? objectRefRead
                 : [];
+      // A closed shape can retain a statically-known Symbol as an i32 handle
+      // (the brand is carried on the IR field type, not in Wasm's numeric
+      // storage). ToLength must perform ToNumber on that value before any
+      // callback/iteration; ToNumber(Symbol) is an abrupt TypeError. Keep this
+      // guard limited to branded `length` fields so ordinary numeric i32
+      // array-like carriers remain unchanged.
+      const symbolLengthThrow =
+        cand.lengthFieldType.kind === "i32" && cand.lengthFieldType.symbol === true
+          ? buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", {
+              forceInModuleCtor: true,
+            })
+          : [];
       if ((isObjectRefLength || cand.lengthFieldType.kind === "externref") && !lenPrimLocalAdded && primExtPos < 0) {
         // Scratch externref local for the ToPrimitive result — appended once,
         // and only when the registration did not already provide it (#4556).
@@ -11266,6 +11411,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
             { op: "local.get", index: 1 },
             { op: "ref.cast", typeIdx: cand.typeIdx },
             { op: "struct.get", typeIdx: cand.typeIdx, fieldIdx: cand.lengthFieldIdx },
+            ...symbolLengthThrow,
             ...readAsF64,
             // ToLength clamp — mirrors the `$Object` arm's NaN/trunc/[0,2^53−1]
             // sequence, reusing the same scratch locals 2/3.

@@ -13,5 +13,7 @@ declare module "./context/types.js" {
     irProgramCallableAttemptedUnitIds?: ReadonlySet<IrUnitId>;
     /** Exact terminal units accepted by the aggregate callable owner. */
     irProgramCallablePreparedUnitIds?: ReadonlySet<IrUnitId>;
+    /** Exact M2 module-init unit suppressed from generic overlay reconciliation. */
+    irProgramPreparedModuleInitUnitId?: IrUnitId;
   }
 }

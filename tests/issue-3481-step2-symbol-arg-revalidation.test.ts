@@ -189,11 +189,12 @@ describe("#3481 step 2 — regression guards: non-Symbol arguments are untouched
 
   it("[].at() with no argument does not reach the guard", async () => {
     // The guard keys off `arguments[0]`, so an ABSENT argument must leave the
-    // call untouched. Asserting "no throw" rather than a value on purpose:
-    // `at()` with no argument is a separate, PRE-EXISTING gap (measured on
-    // base and on this branch, both answer 0 where §23.1.3.1 says 10), and
-    // pinning that wrong value here would turn a bug into a fixture.
+    // call untouched. This deliberately asserted only "no throw" while the
+    // separate, PRE-EXISTING no-argument gap was open (it answered 0 where
+    // §23.1.3.1 says 10) rather than pinning a wrong value as a fixture. #5095
+    // closed that gap, so the value is now pinned too.
     expect(await throwKind("[10, 20].at();")).toBe("no-throw");
+    expect(await value("return [10, 20].at();")).toBe(10);
   });
 
   it("[].includes(x, fromIndex) still searches", async () => {
@@ -214,26 +215,18 @@ describe("#3481 step 2 — regression guards: non-Symbol arguments are untouched
 
   it("the SharedArrayBuffer guard does not hijack a same-named user class", async () => {
     // The SAB guard lives in the generic `new` path, so it must not claim a
-    // constructor that merely shares the name. A user `class SharedArrayBuffer`
-    // does not work in this compiler at all today (measured identically on base
-    // and on this branch: "SharedArrayBuffer is not a constructor"), so the
-    // assertion is that the failure is still THAT one — not the guard's
-    // "Cannot convert a Symbol value to a number", which is what a hijack
-    // would produce.
+    // constructor that merely shares the name. This case used to assert only
+    // that the failure was the pre-existing "SharedArrayBuffer is not a
+    // constructor" rather than the guard's "Cannot convert a Symbol value to a
+    // number"; #5096 made the user class constructable, so it now asserts the
+    // user constructor's own value — the strongest form of "not hijacked".
     const exports = await run(`
       class SharedArrayBuffer { v: number; constructor(_v: any) { this.v = 7; } }
       const s = Symbol();
       try { return new SharedArrayBuffer(s).v; }
       catch (e: any) { return String((e as any).message); }
     `);
-    let message: string;
-    try {
-      message = String(exports.test());
-    } catch (e: any) {
-      message = String(e?.message ?? e);
-    }
-    expect(message).not.toContain("Cannot convert a Symbol value");
-    expect(message).toContain("SharedArrayBuffer");
+    expect(exports.test()).toBe(7);
   });
 });
 
