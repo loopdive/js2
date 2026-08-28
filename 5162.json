@@ -1,10 +1,11 @@
 {
   "id": "5162",
   "assignee": "ttraenkler/opus-5162",
-  "requested_by": "ttraenkler/opus-5162",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "claude/issue-5162-ctor-proto-trap",
   "claimed_at": "2026-08-28T21:07:32Z",
-  "updated_at": "2026-08-28T21:07:32Z",
-  "write_id": "5697-ka7sidxe"
+  "updated_at": "2026-08-28T22:17:58Z",
+  "write_id": "10327-9d3n1sji",
+  "released_at": "2026-08-28T22:17:58Z"
 }
