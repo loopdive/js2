@@ -1,9 +1,11 @@
 ---
 id: 5108
 title: "ES2015 computed-only object literals lose statically folded keys in standalone"
-status: in-review
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
+pr: 5116
 priority: medium
 goal: standalone-mode
 sprint: current
@@ -177,16 +179,10 @@ Post-sync validation remained green:
 - the worktree is clean and the branch is directly based on current
   `upstream/main` (no merge conflicts or unresolved files).
 
-The intended publication commands are:
-
-```sh
-git push --set-upstream fork codex/5108-es2015-computed-key-carrier
-gh pr create --repo loopdive/js2 --head ttraenkler:codex/5108-es2015-computed-key-carrier --base main
-```
-
-The environment rejected the push escalation as exporting private repository
-contents to the external fork, so publication remains a handoff item despite
-the implementation being complete and mergeable locally.
+The completed non-draft upstream review is
+[PR #5116](https://github.com/loopdive/js2/pull/5116), targeting
+`loopdive/js2:main` from `ttraenkler/js2` branch
+`codex/5108-es2015-computed-key-carrier`.
 
 ## Budgets and handoff
 
@@ -205,4 +201,4 @@ the implementation being complete and mergeable locally.
   `ttraenkler/es2015-next-lane-d`; plan checkpoint is being prepared on
   `codex/5108-es2015-computed-key-carrier`.
 - 2026-08-28: final implementation and validation checkpoints are complete;
-  publication needs an approved push/PR handoff from the parent agent.
+  the oracle-safe head was pushed and opened upstream as PR #5116.
