@@ -105,9 +105,9 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
   changed.
 - Independent `JS2WASM_IR_MATH_LOG10=0` and
   `JS2WASM_IR_MATH_LOG1P=0` controls withdraw only their corresponding claim.
-  Shadowed, aliased, computed, wrong-arity, spread, and non-number forms all
-  decline before claim.
-- Four focused/affected suites pass 32/32. They cover host and zero-import
+  Shadowed, aliased, computed, optional-invocation, optional-receiver,
+  wrong-arity, spread, and non-number forms all decline before claim.
+- Four focused/affected suites pass 36/36. They cover host and zero-import
   standalone ownership, semantic/provider evidence, exact dependency closure,
   bit-identical direct-path parity across domain boundaries and the established
   `log10` snap window, explicit native-Math accuracy envelopes, independent
@@ -115,8 +115,10 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
   and linear-backend legality.
 - TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
   budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
-  integrity pass. Luna Max dependency and numerical-risk audits confirmed the
-  ownership-only scope and the method-specific oracle bounds.
+  integrity pass. Luna Max re-review after tightening the optional-call claim
+  boundary returned GO with no P0/P1 finding; it also confirmed the `log10`
+  snap is inherited #3226 behavior preserved bit-for-bit by this ownership
+  migration.
 - PR #5111 is open non-draft, clean, and green, stacked on #5110's exact head.
 
 ## Non-goals
