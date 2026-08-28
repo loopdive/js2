@@ -175,6 +175,66 @@ immediately before the signed commit. After #3525 merges, refresh and rebase the
 separate declaration-snapshot checkpoint onto these maintained pins. No
 baseline, LOC, function, precommit, or prepush exception is authorized.
 
+## 2026-08-28 CI optimizer-refusal oracle
+
+PR #5165's Linux `quality` job exposed a second environment-sensitive test
+assumption after every production and telemetry assertion passed. The
+changed-root lane compiled both `optimize: true` controls successfully but
+returned their original binaries: Prepared was 131,207 bytes and direct was
+131,235 bytes. The existing optimized-only equality then compared those two
+raw artifacts and failed 20/21. The same head passes 21/21 locally with and
+without `JS2WASM_EVAL_ENGINE=interpreter`, so the engine label is not the
+oracle. The compiler's explicit `wasm-opt` fallback warning and byte retention
+are.
+
+Repair only the optimized-parity test and this plan. Compile one raw control
+for each lane alongside the two optimize-request controls, then classify the
+result from exact compiler evidence. Both raw lanes already carry ten canonical
+#2961 host-import warnings. Require each optimize-request diagnostic population
+to begin with the byte-for-byte exact diagnostics of its own raw control, and
+classify only the remaining optimizer-added suffix; a changed, missing, or
+reordered pre-existing diagnostic is a failure, not optimizer evidence. Pin the
+raw authority as exactly ten ordered warnings with their exact severity/message
+sequence and every stable source-position field (`line`, `column`, `code`, and
+the expected `ENTRY`/`HELPERS` file identity where present). Merely proving two
+equally empty or equally drifted raw populations is not sufficient.
+
+- When neither optimize-request result carries a `wasm-opt` fallback warning,
+  retain the existing optimized authority unchanged: Prepared/direct binary
+  sizes, `bench_loop`, and trampoline bodies are exact, both bodies retain the
+  125,000 literal, and all surfaces/runtime remain exact.
+- When optimization is explicitly refused, require both lanes to carry the
+  same single recognized `wasm-opt` fallback warning as their diagnostic
+  suffix. Reject an asymmetric, duplicate, unrelated, or unrecognized
+  optimizer delta. Compare the complete suffix diagnostic rows across lanes,
+  including source anchoring and optional code/file fields; use the message
+  only to recognize the authorized fallback class. Because this test requests
+  the default O3 pass, a process-failure warning is recognized only as
+  `wasm-opt -O3 failed: ...`, never another optimization level. Prove each
+  optimize-request binary is byte-for-byte identical to its own separately
+  compiled raw control; pin the raw sizes at
+  131,207 and 131,235 and the exact Prepared reduction at 28 bytes. In this
+  arm, require the raw `bench_loop` bodies to remain text-exact and compare
+  trampolines only through the existing `normalizedRawTrampoline`
+  allocator-label normalization. Keep the 125,000 literal, public surface,
+  DTS/helper, string pool, validity, and runtime checks on both lanes.
+- Do not branch on `CI`, operating system, `JS2WASM_EVAL_ENGINE`, size
+  coincidence, or a loose inequality. Do not derive an expected byte count
+  from the result under test. A warning without exact raw-byte retention, raw
+  bytes without an authorized warning, or mixed optimized/refused lanes must
+  fail closed.
+
+Keep the classifier mutations in the test itself. They must reject an equally
+empty/drifted raw warning population, missing/asymmetric/duplicated suffixes,
+wrong severity, wrong source anchoring, unrelated/unrecognized messages, mixed
+recognized fallback messages, and fabricated O0/O9 process-failure warnings.
+
+Run #4590 in both the ordinary local lane and the explicit interpreter-labelled
+lane after the edit. Then repeat the #3525/#4590/#4591 changed-root set, the
+adjacent controls, LOC and function ratchets immediately before the signed
+commit, and the complete precommit and prepush hooks. Keep PR #5165 ready for
+review (not draft) and re-enqueue it only through the protected merge queue.
+
 ## Completion evidence
 
 - `tests/issue-4590-bench-loop-prepared-cutover.test.ts`: 21/21 passed.

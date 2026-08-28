@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import binaryen from "binaryen";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -28,6 +29,87 @@ const TAMPER = "JS2WASM_TEST_TAMPER_MULTI_PREPARED_FUNCTION_VALUE_LEAF";
 const TRAMPOLINE = "__fn_tramp_bench_loop_cached";
 const CACHE = "__fn_closure_bench_loop";
 const EXPECTED_RUNTIME = 1_783_293_664;
+const WASM_OPT_INVALID_BINARY_WARNING =
+  "wasm-opt produced an invalid binary (it failed WebAssembly.validate); shipping unoptimized output instead. " +
+  "This is a known binaryen-JS-module encoder bug for WasmGC ref types (#1941) — installing a native wasm-opt on PATH avoids it.";
+const WASM_OPT_NOT_AVAILABLE_WARNING =
+  "wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.";
+const RAW_HOST_IMPORTS = [
+  "env.Document_createElement",
+  "env.Element_set_textContent",
+  "env.HTMLElement_addEventListener",
+  "env.Performance_now",
+  "env.Element_get_children",
+  "env.Document_get_body",
+  "env.Element_set_innerHTML",
+  "env.CSSStyleDeclaration_set_cssText",
+  "env.HTMLElement_get_style",
+  "env.Node_appendChild",
+] as const;
+
+type OptimizerDiagnostic = CompileResult["errors"][number];
+
+const EXPECTED_RAW_DIAGNOSTICS: readonly OptimizerDiagnostic[] = RAW_HOST_IMPORTS.map((hostImport) => ({
+  message:
+    `Host import leak (warning, #2961): host import "${hostImport}" survives into the finished --target standalone ` +
+    `binary and would fail instantiation in a runtime with no JS host (#2073/#2075). This is currently a warning; ` +
+    `#2961 ratchets --target standalone to the same hard no-leak guarantee --target wasi already enforces. The ` +
+    `name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Add a Wasm-native fallback for ` +
+    `this feature, or — for a transitional host import — add an allowlist entry citing the tracking issue and include ` +
+    `"[allowlist-grow]" in your PR description.`,
+  line: 15,
+  column: 20,
+  severity: "warning",
+  file: "loop.ts",
+}));
+
+function isRecognizedWasmOptFallback(message: string): boolean {
+  return (
+    message === WASM_OPT_INVALID_BINARY_WARNING ||
+    message === WASM_OPT_NOT_AVAILABLE_WARNING ||
+    /^wasm-opt -O3 failed: .+/s.test(message) ||
+    /^wasm-opt output was rejected because it changed the canonical runtime rec-group — .+; using the unoptimized module$/s.test(
+      message,
+    )
+  );
+}
+
+function assertRawOptimizerDiagnostics(
+  prepared: readonly OptimizerDiagnostic[],
+  direct: readonly OptimizerDiagnostic[],
+): void {
+  if (!isDeepStrictEqual(prepared, EXPECTED_RAW_DIAGNOSTICS) || !isDeepStrictEqual(direct, EXPECTED_RAW_DIAGNOSTICS)) {
+    throw new Error(
+      `raw diagnostics must equal the exact ordered #2961 authority: ` +
+        `Prepared=${JSON.stringify(prepared)}, direct=${JSON.stringify(direct)}`,
+    );
+  }
+}
+
+function classifyOptimizerDiagnostics(
+  prepared: readonly OptimizerDiagnostic[],
+  direct: readonly OptimizerDiagnostic[],
+): "optimized" | "fallback" {
+  if (prepared.length === 0 && direct.length === 0) return "optimized";
+  if (
+    prepared.length !== 1 ||
+    direct.length !== 1 ||
+    !isDeepStrictEqual(prepared[0], direct[0]) ||
+    !isDeepStrictEqual(prepared[0], {
+      message: prepared[0]?.message,
+      line: 1,
+      column: 1,
+      severity: "warning",
+    }) ||
+    !isRecognizedWasmOptFallback(prepared[0].message)
+  ) {
+    throw new Error(
+      `optimizer diagnostics must be empty or one identical recognized fallback per lane: ` +
+        `Prepared=${JSON.stringify(prepared)}, direct=${JSON.stringify(direct)}`,
+    );
+  }
+  return "fallback";
+}
 
 function expectSuccess(result: CompileResult, label: string): void {
   expect(
@@ -204,25 +286,83 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
   });
 
   it("keeps optimized bench_loop and trampoline bodies exact without size or runtime growth", async () => {
+    const rawPrepared = await compileBench(true, { optimize: false, preserveDebugNames: true });
+    const rawDirect = await compileBench(false, { optimize: false, preserveDebugNames: true });
     const prepared = await compileBench(true, { optimize: true, preserveDebugNames: true });
     const direct = await compileBench(false, { optimize: true, preserveDebugNames: true });
+    expectSuccess(rawPrepared, "Prepared raw optimizer control");
+    expectSuccess(rawDirect, "direct raw optimizer control");
     expectSuccess(prepared, "Prepared optimized compile");
     expectSuccess(direct, "direct optimized control");
-    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
-    // Lane PARITY is the invariant; an absolute byte pin (formerly 50_363)
-    // broke on every unrelated main advance that shifted the optimized
-    // artifact. Both lanes compile the same graph, so their optimized sizes
-    // must be equal — that is the no-size-growth claim, portably.
-    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength);
 
+    const fallbackControl = {
+      message: WASM_OPT_NOT_AVAILABLE_WARNING,
+      line: 1,
+      column: 1,
+      severity: "warning",
+    } as const;
+    const invalidControl = { ...fallbackControl, message: WASM_OPT_INVALID_BINARY_WARNING } as const;
+    const unrelatedControl = { ...fallbackControl, message: "unrelated compile warning" } as const;
+    const unrecognizedControl = { ...fallbackControl, message: "wasm-opt unexpectedly declined" } as const;
+    const wrongLevelZero = { ...fallbackControl, message: "wasm-opt -O0 failed: synthetic refusal" } as const;
+    const wrongLevelNine = { ...fallbackControl, message: "wasm-opt -O9 failed: synthetic refusal" } as const;
+    const wrongSeverityControl = { ...fallbackControl, severity: "error" } as const;
+    const wrongAnchorControl = { ...fallbackControl, line: 2 } as const;
+    expect(classifyOptimizerDiagnostics([], [])).toBe("optimized");
+    expect(classifyOptimizerDiagnostics([fallbackControl], [fallbackControl])).toBe("fallback");
+    for (const [left, right] of [
+      [[fallbackControl], []],
+      [
+        [fallbackControl, fallbackControl],
+        [fallbackControl, fallbackControl],
+      ],
+      [[unrelatedControl], [unrelatedControl]],
+      [[unrecognizedControl], [unrecognizedControl]],
+      [[wrongLevelZero], [wrongLevelZero]],
+      [[wrongLevelNine], [wrongLevelNine]],
+      [[wrongSeverityControl], [wrongSeverityControl]],
+      [[wrongAnchorControl], [wrongAnchorControl]],
+      [[fallbackControl], [invalidControl]],
+    ] as const) {
+      expect(() => classifyOptimizerDiagnostics(left, right)).toThrow(
+        "optimizer diagnostics must be empty or one identical recognized fallback per lane",
+      );
+    }
+
+    expect(() => assertRawOptimizerDiagnostics([], [])).toThrow(
+      "raw diagnostics must equal the exact ordered #2961 authority",
+    );
+    const identicallyDriftedRaw = EXPECTED_RAW_DIAGNOSTICS.slice(1);
+    expect(() => assertRawOptimizerDiagnostics(identicallyDriftedRaw, identicallyDriftedRaw)).toThrow(
+      "raw diagnostics must equal the exact ordered #2961 authority",
+    );
+    assertRawOptimizerDiagnostics(rawPrepared.errors, rawDirect.errors);
+    expect(prepared.errors.slice(0, rawPrepared.errors.length)).toEqual(rawPrepared.errors);
+    expect(direct.errors.slice(0, rawDirect.errors.length)).toEqual(rawDirect.errors);
+    const disposition = classifyOptimizerDiagnostics(
+      prepared.errors.slice(rawPrepared.errors.length),
+      direct.errors.slice(rawDirect.errors.length),
+    );
     const preparedWat = binaryenWat(prepared.binary);
     const directWat = binaryenWat(direct.binary);
     const preparedBody = watFunction(preparedWat, "bench_loop");
     const directBody = watFunction(directWat, "bench_loop");
     const preparedTrampoline = watFunction(preparedWat, TRAMPOLINE);
     const directTrampoline = watFunction(directWat, TRAMPOLINE);
+
     expect(preparedBody).toBe(directBody);
-    expect(preparedTrampoline).toBe(directTrampoline);
+    if (disposition === "optimized") {
+      // Lane parity is the portable no-growth authority after wasm-opt runs.
+      expect(prepared.binary.byteLength).toBe(direct.binary.byteLength);
+      expect(preparedTrampoline).toBe(directTrampoline);
+    } else {
+      expect(prepared.binary).toEqual(rawPrepared.binary);
+      expect(direct.binary).toEqual(rawDirect.binary);
+      expect(prepared.binary.byteLength).toBe(131_207);
+      expect(direct.binary.byteLength).toBe(131_235);
+      expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 28);
+      expect(normalizedRawTrampoline(preparedTrampoline)).toBe(normalizedRawTrampoline(directTrampoline));
+    }
     expect(preparedBody).toContain("(i32.const 125000)");
     expect(preparedTrampoline).toContain("(i32.const 125000)");
 
