@@ -1,10 +1,11 @@
 ---
 id: 5117
 title: "ES2015 standalone DataView byteOffset Symbol conversion"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: high
 horizon: s
 feasibility: easy
@@ -69,9 +70,13 @@ The authoritative raw rows are read from:
 ```
 
 Before code, the same paths were run through the assembled local harness from
-current `upstream/main` at
+the initial `upstream/main` at
 `7dd9f3b5b996a94f254a50ed0cafedd821d8bfa7`. Host was `16/16 pass`; standalone
-was `16/16 fail` with the diagnostic above. The local artifacts are:
+was `16/16 fail` with the diagnostic above. After the required refresh, the
+delivery branch is rebased onto final `upstream/main`
+`796d8c2cd28648d21de2ada5a0b662e758f7dda3`; the refreshed A/B and focused
+results below are from that final base. The local pre-refresh baseline
+artifacts are:
 
 ```text
 .tmp/issue-5117/baseline-host.jsonl
@@ -82,8 +87,8 @@ was `16/16 fail` with the diagnostic above. The local artifacts are:
 
 Both local runs observed the required structural controls in both directions:
 `control-must-pass -> pass` and `control-must-fail -> fail`. The local A/B
-diff will compare these local artifacts with post-fix local artifacts only;
-the supplied authoritative snapshots are evidence, not a diff arm.
+diff below compares clean final-base artifacts with final post-fix artifacts;
+the supplied authoritative snapshots are independent evidence, not a diff arm.
 
 ## Post-fix local A/B and determinism evidence
 
@@ -93,17 +98,21 @@ modes. The structural controls remained `control-must-pass -> pass` and
 `control-must-fail -> fail` in each run.
 
 ```text
-.tmp/issue-5117/post-host.jsonl
+.tmp/issue-5117/final-baseline-host.jsonl
   sha256 2e15df276233e0d7ccf00111a420b1d3c0eac7a8d4c2da091f93726683d6f595
-.tmp/issue-5117/post-standalone.jsonl
+.tmp/issue-5117/final-baseline-standalone.jsonl
+  sha256 acbab9499e4b1cb3a0fe20b60df9a8cf88fbd33322195ecad4dfca03910efe05
+.tmp/issue-5117/final-post-host.jsonl
+  sha256 2e15df276233e0d7ccf00111a420b1d3c0eac7a8d4c2da091f93726683d6f595
+.tmp/issue-5117/final-post-standalone.jsonl
   sha256 62b12dc40f9aa8f3440bf8bfb98672a6344dc7888fca17b9ac4e3d178bfe397a
-.tmp/issue-5117/post-standalone-repeat.jsonl
+.tmp/issue-5117/final-post-standalone-repeat.jsonl
   sha256 62b12dc40f9aa8f3440bf8bfb98672a6344dc7888fca17b9ac4e3d178bfe397a
 ```
 
-The row-level comparison is `16` standalone fail-to-pass flips, `0` losses,
-`0` status churn, and `0` host losses. The repeated standalone output is
-byte-identical (`16/16` rows; nondeterminism `0`). The focused lane test
+The final-base row-level comparison is `16` standalone fail-to-pass flips,
+`0` losses, `0` status churn, and `0` host losses. The repeated standalone
+output is byte-identical (`16/16` rows; nondeterminism `0`). The focused lane test
 passed all `13` tests (five mandatory no-corpus controls and eight chunked
 host/standalone corpus checks) without an unhandled Vitest worker timeout.
 The related `#2199b` and `#2199` suites passed `19` tests. The optional `#1654`
@@ -176,6 +185,7 @@ Implementation is limited to the two owned code/test files plus this plan:
 `src/codegen/dataview-native.ts`,
 `tests/issue-5117-dataview-byteoffset-symbol.test.ts`, and this document.
 The delivery branch is `codex/5117-es2015-dataview-byteoffset-symbol`, based
-directly on the freshly fetched `upstream/main` at the recorded SHA. After
-validation, the clean head and full evidence will be handed to the root agent
+directly on freshly fetched `upstream/main` at
+`796d8c2cd28648d21de2ada5a0b662e758f7dda3`. After validation, the clean head
+and full evidence will be handed to the root agent
 for one upstream PR; no external issue will be created.
