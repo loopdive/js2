@@ -238,3 +238,35 @@ for `indexOf`: the zero-argument spelling is vanishingly rare in the
 value is correctness of a shape test262 happens not to probe, and closing the
 `padsUndefined` list — with these three, every String method whose omitted
 externref slot is spec-visible is now on it.
+
+### Equivalence suite — both trees run, name sets compared
+
+Not inferred from the committed baseline: **both trees were run**, 8 shards each
+(`SHARD=i/8 VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 node scripts/equivalence-gate.mjs`,
+per-shard partials merged and diffed by name), 2026-08-28. Artifacts
+`.tmp/eqv-base/` and `.tmp/eqv-fixed/`.
+
+| run | shards | failing | passing | total |
+| --- | --- | --- | --- | --- |
+| base (source reverted) | 8 | 33 | 1709 | 1742 |
+| fixed | 8 | 24 | 1718 | 1742 |
+
+- **Name-set membership diff: 0 in each direction** — the same 1742 tests ran.
+- **base PASS → fixed FAIL: 0.** No regressions, in any shard; each of the 8
+  fixed shards independently reported "No new equivalence regressions".
+- **base FAIL → fixed PASS: 9**, and all 9 are rows of the new
+  `tests/equivalence/string-search-family-no-arg.test.ts`. The base run names
+  them individually as NEW regressions against the committed baseline, which is
+  the equivalence-lane half of the non-vacuity proof.
+- The fixed tree's 24 failures are exactly the 24 known-failures already in
+  `scripts/equivalence-baseline.json` — unchanged, so no baseline edit was
+  needed for #5160.
+
+The 4 rows of the new file that pass on **both** trees are the deliberate
+regression guards: `includes()` false on a receiver without `"undefined"`,
+`startsWith()` false when `"undefined"` is present but not at the start, the
+explicit-argument row, and the omitted-position-slot row.
+
+(Subsection recorded post-merge: PR #5181 entered the merge queue while the
+authoring agent's base-tree run was still in flight, which locked the branch;
+the measurement completed clean and is banked here.)
