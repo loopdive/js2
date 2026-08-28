@@ -1,7 +1,7 @@
 ---
 id: 5111
 title: "IR: own exact ambient Math.cbrt calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -92,6 +92,31 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 - The narrow rollback and all excluded shapes decline before claim without
   invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.cbrt` is now the twenty-second closed source-level Math intrinsic. It
+  reuses the shared Math table, generic selector and call-graph walker, and
+  from-AST intrinsic emitter.
+- The frozen manifest attaches the existing, dependency-free `Math_cbrt`
+  callable and requests no host capability. No Math algorithm or
+  direct-codegen file changed.
+- `JS2WASM_IR_MATH_CBRT=0` withdraws only this claim. Shadowed, aliased,
+  computed, optional-invocation, optional-receiver, wrong-arity, spread, and
+  non-number forms all decline before claim.
+- Four focused/affected contract suites pass 27/27. They cover host and
+  zero-import standalone ownership and execution, dependency-free provider
+  evidence, bit-identical direct parity across signs, subnormals, exact cubes,
+  maximum magnitudes, NaN, and infinities, an IR-only moderate-value native
+  oracle, rollback, exhaustive integration, every target/backend manifest
+  policy, and linear-backend legality.
+- Existing cbrt/self-hosted Math regressions pass 51/51 across #3141 and
+  `math-inline`.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max re-review after the range-limit disposition returned
+  GO with no P0/P1 finding.
+- PR #5118 is open non-draft, stacked on #5115's exact head.
 
 ## Non-goals
 
