@@ -1,7 +1,7 @@
 ---
 id: 5109
 title: "ES2015 standalone for-in let closures retain each iteration's key"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -150,6 +150,32 @@ expanded design to the lead rather than widening this one-row lane.
 
 Initial worktree: `/private/tmp/js2-es6-next-lane-e`.
 Branch: `codex/es6-next-lane-e`.
-Plan checkpoint: pending commit/push before source edits.
-Implementation checkpoint, current-main sync, exact-run artifacts, and PR URL:
-to be recorded after validation.
+
+Implementation complete in the narrow dynamic-object path. The existing
+receiver-TDZ capture remains separate; a body-only loop-shape pass now gates
+simple captured `let`/`const` identifier heads, which receive a fresh
+externref-backed cell initialized from the materialized key before each body
+invocation. Non-capturing heads, static unroll, array paths, binding patterns,
+member/call targets, and for-of/counting loops retain their prior lowering.
+
+Checkpoint commits (all pushed to `fork/codex/es6-next-lane-e`):
+
+- `8699f36fca` — plan allocation and exact-row evidence.
+- `ab66758a65` — codegen/analysis fix and host/standalone regression tests.
+- `76fb4fa2bd` — standalone host-import assertion.
+- `75b491b55ee7` — final sync merge of `upstream/main` at `7dd9f3b5b9`.
+
+Post-sync validation:
+
+- `pnpm exec vitest run tests/issue-5109-forin-closure-capture.test.ts tests/issue-2705.test.ts tests/issue-4561-forin-break-continue.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot` — 25/25 passed.
+- The exact pinned Test262 source was run through `runSyntheticTest262File` three times per lane: host 3/3 pass; standalone 3/3 pass.
+- The exact wrapped source compiled with zero errors and returned `[1, 1, 1]` in both lanes; its import manifest had 24 `env` imports in host mode and 0 in standalone mode.
+- The no-corpus dynamic-receiver/mutation test passed in both lanes; the focused file asserts standalone `env` imports are empty.
+- Typecheck, lint, format, function-budget, oracle/coercion ratchets, numeric-local parity, issue-integrity, and pre-push gates passed at the implementation checkpoint; the post-sync focused controls above remained green.
+
+The raw authoritative `runTest262File` path was not used for the acceptance
+count because its current-main import-manifest setup throws before execution;
+the repository's synthetic wrapper path (with the exact pinned source and
+runner options) is the passing reproduction recorded above.
+
+PR: to be published after this handoff checkpoint.
