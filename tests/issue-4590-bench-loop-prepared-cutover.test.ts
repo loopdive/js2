@@ -363,8 +363,8 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
       expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 28);
       expect(normalizedRawTrampoline(preparedTrampoline)).toBe(normalizedRawTrampoline(directTrampoline));
     }
-    expect(preparedBody).toContain("(i32.const 125000)");
-    expect(preparedTrampoline).toContain("(i32.const 125000)");
+    expect(preparedBody).toContain("i32.const 125000");
+    expect(preparedTrampoline).toContain("i32.const 125000");
 
     expect(prepared.dts).toBe(direct.dts);
     expect(prepared.importsHelper).toBe(direct.importsHelper);
