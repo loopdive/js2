@@ -141,5 +141,8 @@ The atomic assignment reservation for this plan is held on the upstream
 assignment registry as `5104`; no external issue is used for tracking. The
 implementation checkpoint is `2141c7852b`, and the current-main sync merge is
 `7a95daac74` (upstream `4c2bc1de6a`). The final handoff is ready for one
-upstream PR from this branch; keep it held outside the merge queue until CI
-confirms the exact rows, focused controls, and current-main mergeability.
+upstream PR from this branch. PR `#5113`
+(`https://github.com/loopdive/js2/pull/5113`) is published non-draft from
+`ffc3a6e5cc2a3fc73fd58b130d871dff2f648f53`; the initial snapshot reported
+`MERGEABLE` with GitHub's `BEHIND` status while its fresh checks were queued or
+running (CLA already green). No hold or merge-queue mutation was made.
