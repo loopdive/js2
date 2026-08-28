@@ -1,7 +1,7 @@
 ---
 id: 5122
 title: "ES2015 standalone Proxy rejects Symbol target and handler"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -104,6 +104,60 @@ zero standalone imports. Existing ordinary two-argument behavior, exact
 TypeError identity, target-before-handler validation, trap-read suppression,
 and nested-Proxy/object/array/function carriers remain required controls.
 
+## Independent review blockers: strict spread iteration
+
+An independent Luna-max review of published checkpoint
+`9f41bf3456585e12837945fba579451a5b2a0d85` passed the focused 6/6 suite but
+found additional standalone regressions outside that matrix. These findings
+supersede the ready handoff below and keep PR 5138 draft and dequeued:
+
+- A dynamic array hole is captured as the native `$Hole` carrier instead of
+  JavaScript `undefined`. `new Proxy(...([,,{}] as any))` and a hole in handler
+  position can therefore construct a Proxy in standalone while host throws
+  `TypeError`; a handler getter is observably read after the invalid value.
+- The native iterator bridge accepts a bare `{ next() {} }` object that has no
+  `@@iterator`, accepts an iterator object with no callable `next`, and treats
+  those invalid spread sources as empty. ECMAScript spread must use strict
+  `GetIterator`, not the bridge's internal `GetIteratorFlattenable` fallback.
+- Primitive iterator results are not rejected as objects. A `next()` returning
+  `1` is consumed or repeatedly polled instead of producing the catchable
+  `TypeError` after exactly one call.
+- Standalone Map default iteration projects values instead of entry arrays for
+  this path, so `new Proxy(...new Map([[1, 2], [3, 4]]))` diverges from host.
+  Empty typed arrays and String objects are also valid iterable sources in host
+  but rejected in standalone; `.values()` can add a forbidden host import.
+- Static array-literal flattening still bypasses an overridden
+  `Array.prototype[Symbol.iterator]`. That is an inherited canonical lowering
+  residual, not unique to this patch, but the repair must not broaden it.
+
+### Revised repair plan
+
+1. Trace the canonical call/new spread protocol and the native iterator
+   families before changing source. Reuse or add an explicit strict
+   ECMAScript-spread mode; do not globally remove the bare-`next` fallback used
+   by internal flattenable carriers.
+2. At the strict spread boundary, normalize array `$Hole` values to the engine's
+   undefined carrier before positional capture. Preserve source/iterator/next
+   evaluation order, target-before-handler validation, and later-abrupt
+   priority.
+3. Require a callable `@@iterator`, an Object iterator, a callable `next`, and
+   an Object IteratorResult. Missing/non-callable methods and primitive results
+   must throw the engine's catchable exact `TypeError`; `next()` must not be
+   polled again after an invalid result.
+4. Preserve the actual default iterator projection for Map entries and support
+   the already-valid empty typed-array and String-object sources without host
+   imports. If a provider cannot meet those contracts, decline the
+   Proxy-specific dynamic fast path before emitting partial Wasm rather than
+   silently accepting different values.
+5. Extend the mandatory host/standalone controls with every reproduction above,
+   including handler trap suppression, empty/multiple/nested spreads, missing
+   iterator/next, primitive results and call counts, Map entry pairs,
+   typed-array/String sources, and module-import assertions. Keep the exact two
+   ES2015 rows and ordinary no-spread controls green.
+6. Run focused and structural gates, TypeScript 5/7, the full pre-push hook, and
+   a second independent review on the final current-main head. Do not mark the
+   issue ready, mark PR 5138 ready, or enqueue it until all review blockers pass.
+
 ## Implementation plan
 
 1. Before minting the native Proxy runtime, use the repository type oracle to
@@ -147,6 +201,10 @@ and nested-Proxy/object/array/function carriers remain required controls.
   `TypeError`; valid object-like sibling carriers remain accepted.
 - Every constructor argument expression is evaluated once in source order,
   and a later abrupt extra argument wins before Proxy validation.
+- Dynamic holes become undefined before validation; invalid iterator sources,
+  methods, and results throw exact catchable `TypeError` without extra polling.
+- Map entry, typed-array, and String-object spread controls agree across host
+  and standalone without adding imports.
 - Invalid values do not trigger handler trap reads or allocate a usable Proxy.
 - Focused standalone output has zero host imports.
 - The focused suite, exact cohort, TypeScript 5/7, lint, format, budgets,
@@ -154,18 +212,23 @@ and nested-Proxy/object/array/function carriers remain required controls.
 - The markdown issue contains final evidence and handoff details; no GitHub
   issue is created.
 
-## Final validation and handoff
+## Superseded validation checkpoint
+
+The evidence in this section predates the independent strict-iterator review
+above. It remains useful as the A/B record for the first spread repair, but it
+is not a ready or mergeable handoff.
 
 The reopened spread fix is implemented and validated on the fetched current
-`upstream/main` `a7f9cb784b60b0035f8f2aa19f6421d217c823bd`, integrated
-non-destructively by merge commit `ffbe9a8ba4def364079abe2a722a3e64ecc2b3a4`
-with parents the published checkpoint `9f41bf3456585e12837945fba579451a5b2a0d85`
-and that upstream head. The original implementation/test checkpoint is
-`f37dfdec147595ea530097c9f3c16ca2bf13a2e0`; the plan-only reopen checkpoint is
-`865f2f3863ff3c621135697b54944489f018031b`. All new commits are authored by
-Thomas Tränkler and carry real newline-separated Codex trailers. The branch
-remains unpublished after this merge for root's review and external
-remote-head verification.
+`upstream/main` `3ea0547d42d372d9c44cc9498fb7a019f48aafbc`, integrated
+non-destructively by merge commit `7b01f19e9d6d4f26a3344d1792b1b30db3140fff`
+with the earlier Proxy merge `ffbe9a8ba4def364079abe2a722a3e64ecc2b3a4`
+and that upstream head in its ancestry. The published pre-merge checkpoint is
+`9f41bf3456585e12837945fba579451a5b2a0d85`; the original implementation/test
+checkpoint is `f37dfdec147595ea530097c9f3c16ca2bf13a2e0`; the plan-only reopen
+checkpoint is `865f2f3863ff3c621135697b54944489f018031b`. All new commits are
+authored by Thomas Tränkler and carry real newline-separated Codex trailers.
+The branch remains unpublished after this merge for root's review and
+external remote-head verification.
 
 - Before the fix, the direct `new Proxy(...[{}, {}])` probe returned the
   caught-TypeError code in both host and standalone; after the fix it returns
@@ -194,7 +257,10 @@ remote-head verification.
 ## Handoff
 
 Work only in `/private/tmp/js2-es2015-proxy-symbol-targets-20260828` on branch
-`codex/5122-es2015-proxy-symbol-targets`. Root should verify the eventual
-branch/remote SHA externally, review the unpublished implementation, and
-publish the single upstream PR when mergeable; this lane does not edit PR
-state, enqueue work, or open a PR.
+`codex/5122-es2015-proxy-symbol-targets`. PR 5138 is draft, its published head
+is `9f41bf3456585e12837945fba579451a5b2a0d85`, and it is explicitly outside the
+merge queue. Resume from the unpublished current-main integration head
+`7b01f19e9d6d4f26a3344d1792b1b30db3140fff` after committing this revised
+review plan. Fix and independently revalidate every strict-iterator blocker
+above before root publishes another checkpoint or changes PR state. Do not
+create a GitHub issue; this markdown file remains the canonical tracker.
