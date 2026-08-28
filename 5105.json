@@ -1,10 +1,11 @@
 {
   "id": "5105",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5105-ir-math-inverse-trig",
   "claimed_at": "2026-08-27T23:28:33Z",
-  "updated_at": "2026-08-27T23:28:33Z",
-  "write_id": "96362-2nz92txa"
+  "updated_at": "2026-08-28T11:59:30Z",
+  "write_id": "60417-x7l9el8l",
+  "released_at": "2026-08-28T11:59:30Z"
 }
