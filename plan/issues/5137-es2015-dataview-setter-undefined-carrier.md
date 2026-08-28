@@ -19,15 +19,25 @@ branch: codex/5137-es2015-dataview-setter-undefined
 pr: 5152
 files:
   - src/codegen/dataview-native.ts
+  - src/codegen/expressions/call-receiver-method.ts
   - tests/issue-5137-es2015-dataview-setter-undefined-carrier.test.ts
   - plan/issues/5137-es2015-dataview-setter-undefined-carrier.md
+# Both legacy producers live in established DataView dispatch functions. The
+# intended growth is limited to the lane-correct import and invariant comments;
+# no new dispatch path or coercion vocabulary is introduced.
+loc-budget-allow:
+  - src/codegen/dataview-native.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/dataview-native.ts::ensureDvAccessorHelper
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 
 # #5137 — ES2015 DataView setter `undefined` result carrier
 
 ## Scope and ownership
 
-This repository-local markdown issue owns exactly these seven official ES2015
+This repository-local markdown issue owns exactly these fourteen official ES2015
 Test262 rows:
 
 - `test/built-ins/DataView/prototype/setFloat32/set-values-return-undefined.js`
@@ -37,6 +47,13 @@ Test262 rows:
 - `test/built-ins/DataView/prototype/setInt8/set-values-return-undefined.js`
 - `test/built-ins/DataView/prototype/setUint16/set-values-return-undefined.js`
 - `test/built-ins/DataView/prototype/setUint32/set-values-return-undefined.js`
+- `test/built-ins/DataView/prototype/setFloat32/no-value-arg.js`
+- `test/built-ins/DataView/prototype/setFloat64/no-value-arg.js`
+- `test/built-ins/DataView/prototype/setInt16/no-value-arg.js`
+- `test/built-ins/DataView/prototype/setInt32/no-value-arg.js`
+- `test/built-ins/DataView/prototype/setInt8/no-value-arg.js`
+- `test/built-ins/DataView/prototype/setUint16/no-value-arg.js`
+- `test/built-ins/DataView/prototype/setUint32/no-value-arg.js`
 
 Issue ID 5137 was atomically reserved with
 `node scripts/claim-issue.mjs --allocate` and verified on
@@ -44,11 +61,11 @@ Issue ID 5137 was atomically reserved with
 a GitHub issue; a GitHub issue or pull request with the same number is unrelated
 namespace state.
 
-The ES2015 `setUint8` sibling is excluded because it currently fails earlier
-with a distinct null-property access signature. The BigInt and Float16 siblings
-are ES2020 and ES2025 respectively and are outside the ES2015 goal. This issue
-must not broaden into their separate blockers merely because the eventual
-producer correction may benefit them.
+The ES2015 `setUint8` siblings in both row families are excluded because they
+currently fail earlier with a distinct null-property access signature. The
+BigInt and Float16 siblings are ES2020 and ES2025 respectively and are outside
+the ES2015 goal. This issue must not broaden into their separate blockers merely
+because the eventual producer correction may benefit them.
 
 ## Current-main baseline
 
@@ -62,7 +79,7 @@ snapshots are:
 - host: `/private/tmp/js2-baseline-host-current-20260828.jsonl` (SHA-256
   `a395f2a88d289a8e0fd78ccd76e090215ef3a85f1960aa8fe96f7d3a0445bd49`).
 
-The maintained file-edition map classifies all seven owned rows as ES2015.
+The maintained file-edition map classifies all fourteen owned rows as ES2015.
 Every host snapshot record is `pass`; every standalone record reaches the test
 and fails with the same semantic mismatch:
 
@@ -71,24 +88,30 @@ return is undefined, value: 127
 Expected SameValue(«null», «undefined») to be true
 ```
 
-The exact A/B was repeated on the clean current-main worktree through
-`runTest262File` with a 120-second per-row timeout. Host passed **7/7**.
-Standalone failed **7/7** with the same `null` versus `undefined` assertion and
-no compile error, timeout, skip, or host-import leak. The standalone Wasm hashes
-were `ba99c9fd17d6`, `035ded08a20d`, `ef23bb849e4e`, `afbe09ab49f4`,
-`40282e800118`, `807d53b9ed38`, and `f82699fd8160` in the path order above.
+The exact A/B was repeated through `runTest262File` with a 120-second per-row
+timeout on the clean current-main worktree and a current-main-integrated
+regression-control worktree whose DataView source is byte-identical to
+`upstream/main`. Host passed **14/14**. Standalone failed **14/14** with the
+same `null` versus `undefined` assertion and no compile error, timeout, skip, or
+host-import leak. The standalone Wasm hashes for the `set-values` family were
+`ba99c9fd17d6`, `035ded08a20d`, `ef23bb849e4e`, `afbe09ab49f4`,
+`40282e800118`, `807d53b9ed38`, and `f82699fd8160`; the corresponding
+`no-value-arg` hashes were `2a139566958f`, `3e3ea93d2b9e`, `5198098584ac`,
+`cd7998cead3f`, `74fa39f8ec70`, `ea6581f9a203`, and `08f65084ee36`.
 
 ## Duplicate and dependency audit
 
 - #1515 introduced the native DataView setter value path and records the
-  direct-form requirement that setters return `undefined`; that direct path now
-  passes and does not cover the runtime-receiver helper carrier.
+  direct-form requirement that setters return `undefined`. The write and
+  statement-position path pass, but its expression-position result producer
+  still uses the legacy null carrier.
 - #3173 completed the shared DataView spec-order core but explicitly left the
-  seven owned rows as residual failures. Its note attributed them to dynamic
-  array reads; the fresh current-main A/B now reaches the final return-value
-  assertion and identifies the remaining producer mismatch directly.
-- #3183 completed the dynamic vec read/for-in helpers. It does not change the
-  return value emitted by `__dv_m_<member>` and did not flip these rows.
+  `set-values` half of the owned cohort as residual failures. Its note
+  attributed them to dynamic array reads; the fresh current-main A/B now
+  reaches the final return-value assertion in both row families and identifies
+  the remaining producer mismatch directly.
+- #3183 completed the dynamic vec read/for-in helpers. It changes neither
+  DataView setter result producer and did not flip these rows.
 - #2872 corrected the analogous legacy `ref.null.extern` producers in native
   Array higher-order helpers. It is precedent, not overlapping ownership.
 - #2864 introduced `canonicalUndefinedExternInstrs(ctx)` specifically for
@@ -102,18 +125,20 @@ runtime-receiver DataView setter result producer.
 
 ## Root cause
 
-The direct native lowering `emitDataViewAccessor` treats a setter as `void`, so
-its ordinary call site materializes the compiler's current canonical
-`undefined` value. The callback-shaped Test262 rows widen the receiver and
-route through `ensureDvAccessorHelper`, which mints
-`__dv_m_<member>(...) -> externref` for closed-method and reflective dispatch.
+The native lowering `emitDataViewAccessor` treats a setter as `void`. Its call
+site in `call-receiver-method.ts` correctly detects expression position, but
+then materializes the result with legacy `ref.null.extern`. The runtime-receiver
+path has the same defect: `ensureDvAccessorHelper` mints
+`__dv_m_<member>(...) -> externref` for closed-method and reflective dispatch
+and also ends every setter body with `ref.null.extern`.
 
-That helper still ends every setter body with legacy `ref.null.extern` and a
-comment claiming the null extern represents `undefined`. The repository's
-current standalone value model distinguishes the canonical tag-1 `$undefined`
-singleton from a null externref. Consequently the helper returns observable JS
-`null`, while the write itself and stored bytes are correct. The exact failure
-message is the expected signature of this producer mismatch.
+Both sites have adjacent comments claiming a null extern represents
+`undefined`. The repository's current standalone value model instead
+distinguishes the canonical tag-1 `$undefined` singleton from a null externref.
+Consequently direct expression-position and helper-routed setters return
+observable JS `null`, while the write itself and stored bytes are correct. The
+exact failure message is the expected signature of these two producer
+mismatches.
 
 `canonicalUndefinedExternInstrs(ctx)` is the existing lane-correct producer. It
 reserves and emits the canonical singleton for standalone/native strings and
@@ -123,11 +148,12 @@ result that is unconditionally `undefined`.
 
 ## Implementation plan
 
-1. Replace the setter result in `ensureDvAccessorHelper` with
+1. Replace both semantic setter-result producers—the expression-position arm
+   in `call-receiver-method.ts` and the result in `ensureDvAccessorHelper`—with
    `canonicalUndefinedExternInstrs(ctx)`, updating the adjacent invariant
-   comment. Do not alter the direct DataView accessor lowering, byte codecs,
+   comments. Keep statement-position setters void. Do not alter byte codecs,
    coercion order, error order, bounds checks, or getter boxing.
-2. Add a focused regression suite that runs the seven exact rows in host and
+2. Add a focused regression suite that runs all fourteen exact rows in host and
    standalone modes through the maintained runner. Add direct controls that
    force the runtime-receiver/helper path and prove the returned value is
    `undefined`, is not `null`, has `typeof "undefined"`, and preserves the
@@ -147,11 +173,12 @@ result that is unconditionally `undefined`.
 
 ## Acceptance criteria
 
-- The exact owned cohort is host **7/7 pass** and standalone **7/7 pass**, with
-  zero failures, compile errors, timeouts, skips, or standalone host imports.
-- Every helper-routed ES2015 DataView setter returns the canonical
-  `undefined`; `result === undefined` is true, `result === null` is false, and
-  `typeof result` is `"undefined"`.
+- The exact owned cohort is host **14/14 pass** and standalone **14/14 pass**,
+  with zero failures, compile errors, timeouts, skips, or standalone host
+  imports.
+- Every direct expression-position and helper-routed ES2015 DataView setter
+  returns the canonical `undefined`; `result === undefined` is true,
+  `result === null` is false, and `typeof result` is `"undefined"`.
 - The setter still stores the expected value, and DataView getters, direct
   typed calls, coercion/error ordering, and sibling runtime helpers regress
   neither host nor standalone behavior.
