@@ -4,7 +4,7 @@ title: "Redux: 55/82 — remaining observable, lexical-shadowing, and dynamic-ca
 status: ready
 sprint: current
 created: 2026-08-16
-updated: 2026-08-26
+updated: 2026-08-27
 priority: high
 horizon: l
 feasibility: hard
@@ -16,6 +16,18 @@ goal: npm-library-support
 related: [3996, 3995, 4370, 4456]
 oracle-ratchet-allow:
   - src/codegen/module-namespace-value.ts
+loc-budget-allow:
+  - src/codegen/closure-exports.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 files:
   - tests/dogfood/redux-upstream-suite.mjs
   - tests/dogfood/upstream-suite-runner.mjs
@@ -152,6 +164,74 @@ infrastructure, caching answers, or introducing Redux-specific rewrites:
       suppressing failures.
 - [ ] Focused closure/call tests, typecheck, compiler ratchets, and the full
       pinned Redux suite remain green.
+
+## 2026-08-28 host-import policy ratchet (native-first 394 → 395)
+
+`check:host-import-policy` failed the `quality` gate on this branch with
+`native-first imports 395 > maximum 394`. Measured on both sides of the only
+relevant hunk (`src/codegen/closure-exports.ts` reverted to `origin/main` and
+back, per-probe totals from the gate's own probe set):
+
+| metric | base (`origin/main`) | this branch |
+| --- | --- | --- |
+| native-first `imports` | 394 | 395 |
+| native-first `legacySemanticImports` | 0 | 0 |
+| native-first `unknownImports` | 0 | 0 |
+| compatibility legacy imports | 23 | 23 |
+| `runtimeTsLines` / `resolveImportLines` / `resolveImportCases` | unchanged | unchanged |
+| `ownedAdapterLines` / `explicitCapabilityLines` | unchanged | unchanged |
+
+The single added import is `__unwrap_for_wasm` in the `proxyRevocable` probe
+(every other probe is byte-identical). It comes from this issue's host-facade
+unwrap in `emitClosureCallExportN`: recovering the original Wasm value before
+the concrete `ref.cast` is what preserves callable identity across a dynamic
+callback result, which is the fix itself — so the import is not avoidable
+without withdrawing the behavior. It is already gated off for host-free
+targets (`!ctx.standalone && !ctx.wasi`), and it is a `value-adapter` in
+`src/host-import-policy.ts`, not a `legacy-semantic` or `unknown` provider, so
+every zero-debt metric the gate exists to police stays at **0**.
+
+`plan/audit/host-import-policy-baseline.json` is therefore ratcheted to the
+exact measured value (394 → 395, no rounding), following the precedent of
+#3481 and #4771 — the maximum is raised in the PR that needs it, with the
+before/after measurement recorded here.
+
+## 2026-08-27 bounded heterogeneous-callable ABI checkpoint
+
+The preserved `98c7955` checkpoint was rebased onto current `origin/main`
+(`220ce6c4913ddb`); Git identified that commit's patch as already represented
+upstream, so the branch retains the checkpoint's behavior without a broad
+merge commit. This follow-up is limited to the generic dynamic callable
+carrier/capture paths and a linked middleware regression; it does not alter
+Redux fixtures or expectations.
+
+The exact unchanged Redux v5.0.1 upstream suite remains **82/82 native** and
+**59/82 Wasm** (**23 failed**, **0 runtimeFailed**). All **9/9 selected modules
+compiled and validated**, with **82/82 registrations**, **0 deferred**, and
+**0 unavailable infrastructure**. Per-file Wasm results are:
+`applyMiddleware` **2/5**, `bindActionCreators` **4/7**,
+`combineReducers` **13/16**, `compose` **6/6**, `createStore` **30/42**,
+`formatProdErrorMessage` **1/1**, `isAction` **0/1**, `isPlainObject` **0/1**,
+and `warning` **3/3**. This is **+4 rows with zero withdrawals** from the
+merged-main 55/82 checkpoint.
+
+The generic implementation keeps heterogeneous callable captures on the
+runtime candidate ladder, pre-registers callable values from assignments and
+all linked source files, preserves enclosing destructured parameter bindings
+when their spelling collides with a mapped function declaration, and unwraps
+host facades before concrete reference casts. A focused Redux runtime file
+passes **19/19**, including the linked `applyMiddleware`/`thunk` regression;
+`pnpm run typecheck` is clean.
+
+The 23 remaining failures are unchanged mechanisms outside this slice:
+`applyMiddleware` has two nested lexical-owner errors and thunk's missing
+`setImmediate`; `bindActionCreators` has three equality/result-shape
+mismatches; `combineReducers` has three expected-throw matching gaps;
+`createStore` has one public-API key mismatch, two retained-listener null
+calls, two action/error-description mismatches, and seven observable
+carrier/member failures; `isAction` and `isPlainObject` share two generic
+plain-object/prototype predicate failures. The branch checkpoint is ready for
+review but remains unmerged.
 
 ## 2026-08-26 combined integration report audit
 
