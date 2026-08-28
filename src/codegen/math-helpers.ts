@@ -297,7 +297,7 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
   }
 
   // ─── Self-hosted subset (#3141) ───────────────────────────────────
-  // sinh/cosh/tanh, asinh/acosh/atanh, cbrt, expm1 and log1p are no
+  // sinh/cosh/tanh, asinh/acosh/atanh, cbrt, round, sign, expm1 and log1p are no
   // longer hand-emitted `Instr[]`. Their bodies are ordinary TS source
   // in `src/stdlib/math.ts`, compiled through the compiler's own IR
   // pipeline (`stdlib-selfhost.ts`) and registered here, at the same

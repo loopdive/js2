@@ -26,12 +26,12 @@
  *
  * NUMERIC EQUIVALENCE: each source mirrors the deleted hand-written
  * `Instr[]` body op-for-op (same operand order, same special-case
- * ladder), so results are bit-identical — IEEE f64 add/sub/mul/div/sqrt
- * are deterministic and identical between the hand-scheduled and
- * IR-scheduled instruction streams. Redundant ±Infinity special cases
- * were dropped ONLY where the shared core (`Math_exp` / `Math_log`)
- * already produces the identical value for the infinite input (noted
- * per function).
+ * ladder). Non-NaN IEEE f64 add/sub/mul/div/sqrt results are deterministic
+ * and identical between the hand-scheduled and IR-scheduled instruction
+ * streams. NaN payloads and signs need an explicit canonicalization whenever
+ * a helper promises raw-bit identity. Redundant ±Infinity special cases were
+ * dropped ONLY where the shared core (`Math_exp` / `Math_log`) already
+ * produces the identical value for the infinite input (noted per function).
  */
 
 export interface StdlibMathBuiltin {
@@ -71,6 +71,40 @@ export function Math_cbrt(x: number): number {
     i = i - 1;
   }
   return guess;
+}
+`;
+
+/**
+ * Math.round — floor/fraction/ceil implements ties toward +Infinity without
+ * perturbing large integral f64 values. The explicit zero arm preserves -0
+ * for x === -0 and every x in [-0.5, 0). NaN follows the same floor path as
+ * the direct emitter so its payload behavior remains identical.
+ */
+const ROUND_SOURCE = `
+export function Math_round(x: number): number {
+  let floorValue: number = Math.floor(x);
+  let fraction: number = x - floorValue;
+  let result: number = fraction >= 0.5 ? Math.ceil(x) : floorValue;
+  if (result === 0) {
+    if (x === 0) return x;
+    return x < 0 ? -0 : 0;
+  }
+  return result;
+}
+`;
+
+/**
+ * Math.sign — preserve signed zero, canonicalize NaN like the direct emitter,
+ * and otherwise return the exact sign unit. Folding or evaluating `0 / 0` may
+ * choose either NaN sign, so `Math.abs` forces the positive canonical sign
+ * inside the provider. The argument is evaluated once by the ordinary call
+ * boundary.
+ */
+const SIGN_SOURCE = `
+export function Math_sign(x: number): number {
+  if (x !== x) return Math.abs(0 / 0);
+  if (x === 0) return x;
+  return x < 0 ? -1 : 1;
 }
 `;
 
@@ -625,6 +659,8 @@ export const POW_BUILTIN: StdlibMathBuiltin = {
  */
 export const SELF_HOSTED_MATH: ReadonlyMap<string, StdlibMathBuiltin> = new Map([
   ["cbrt", { name: "Math_cbrt", callees: [], source: CBRT_SOURCE }],
+  ["round", { name: "Math_round", callees: [], source: ROUND_SOURCE }],
+  ["sign", { name: "Math_sign", callees: [], source: SIGN_SOURCE }],
   ["sinh", { name: "Math_sinh", callees: ["Math_exp"], source: SINH_SOURCE }],
   ["cosh", { name: "Math_cosh", callees: ["Math_exp"], source: COSH_SOURCE }],
   ["tanh", { name: "Math_tanh", callees: ["Math_exp"], source: TANH_SOURCE }],

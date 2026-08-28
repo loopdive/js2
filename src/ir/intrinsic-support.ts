@@ -12,6 +12,7 @@ import {
   type IrFunction,
   type IrInstr,
   type IrInstrIntrinsic,
+  type IrIntrinsicBackendComposite,
   type IrIntrinsicProvider,
   type IrType,
   type IrValueId,
@@ -29,6 +30,15 @@ export interface PreparedIrRuntimeManifest {
   /** Lookup-only handle retained after freeze for verifier/lowering adapters. */
   readonly providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>;
 }
+
+const BACKEND_COMPOSITE_BY_INTRINSIC: Readonly<Partial<Record<IrInstrIntrinsic["id"], IrIntrinsicBackendComposite>>> =
+  Object.freeze({
+    "js.to_uint32": "to-uint32",
+    "math.clz32": "math.clz32",
+    "math.imul": "math.imul",
+    "math.max": "math.max",
+    "math.min": "math.min",
+  });
 
 /** Project the semantic standalone clock intent without adding a helper call. */
 function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
@@ -86,6 +96,16 @@ export function verifyIrIntrinsicInstruction(
   ) {
     errors.push(`${instr.id} callable provider must retain the semantic intrinsic binding`);
   }
+  if (instr.provider?.kind === "backend-composite") {
+    const expected = BACKEND_COMPOSITE_BY_INTRINSIC[instr.id];
+    if (instr.provider.operation !== expected) {
+      errors.push(
+        expected === undefined
+          ? `${instr.id} does not admit a backend composite provider`
+          : `${instr.id} backend composite provider must use ${expected}, got ${instr.provider.operation}`,
+      );
+    }
+  }
   return errors;
 }
 
@@ -121,6 +141,12 @@ function providerAttachment(id: IrInstrIntrinsic["id"], provider: RuntimeProvide
   if (provider.implementation.kind === "backend-op") {
     return Object.freeze({ kind: "backend-op", opcode: provider.implementation.opcode });
   }
+  if (provider.implementation.kind === "backend-sequence") {
+    return Object.freeze({ kind: "backend-sequence", sequence: provider.implementation.sequence });
+  }
+  if (provider.implementation.kind === "backend-composite") {
+    return Object.freeze({ kind: "backend-composite", operation: provider.implementation.operation });
+  }
   return Object.freeze({
     kind: "callable",
     // Structural identity remains the semantic ID. The compatibility name is
@@ -132,6 +158,12 @@ function providerAttachment(id: IrInstrIntrinsic["id"], provider: RuntimeProvide
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
+  if (left.kind === "backend-sequence" && right.kind === "backend-sequence") {
+    return left.sequence === right.sequence;
+  }
+  if (left.kind === "backend-composite" && right.kind === "backend-composite") {
+    return left.operation === right.operation;
+  }
   return (
     left.kind === "callable" &&
     right.kind === "callable" &&

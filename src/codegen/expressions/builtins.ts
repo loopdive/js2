@@ -3429,15 +3429,14 @@ function compileMathCall(
 
   // Math.clz32(n) → ToUint32(n) then i32.clz
   // ToUint32: NaN/±Infinity → 0; otherwise truncate then modulo 2^32.
-  // We use the host-imported __toUint32 for correct edge-case handling.
+  // Use the collected in-module helper for exact edge-case handling.
   if (method === "clz32" && expr.arguments.length >= 1) {
     const toU32Idx = ctx.funcMap.get("__toUint32");
-    compileExpression(ctx, fctx, expr.arguments[0]!, f64Hint);
-    if (toU32Idx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: toU32Idx });
-    } else {
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    if (toU32Idx === undefined) {
+      throw new Error("Math.clz32 requires the collected __toUint32 helper");
     }
+    compileExpression(ctx, fctx, expr.arguments[0]!, f64Hint);
+    fctx.body.push({ op: "call", funcIdx: toU32Idx });
     fctx.body.push({ op: "i32.clz" });
     fctx.body.push({ op: "f64.convert_i32_s" });
     return { kind: "f64" };
@@ -3446,18 +3445,13 @@ function compileMathCall(
   // Math.imul(a, b) → ToUint32(a) * ToUint32(b), result as signed i32
   if (method === "imul" && expr.arguments.length >= 2) {
     const toU32Idx = ctx.funcMap.get("__toUint32");
+    if (toU32Idx === undefined) {
+      throw new Error("Math.imul requires the collected __toUint32 helper");
+    }
     compileExpression(ctx, fctx, expr.arguments[0]!, f64Hint);
-    if (toU32Idx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: toU32Idx });
-    } else {
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    fctx.body.push({ op: "call", funcIdx: toU32Idx });
     compileExpression(ctx, fctx, expr.arguments[1]!, f64Hint);
-    if (toU32Idx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: toU32Idx });
-    } else {
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    fctx.body.push({ op: "call", funcIdx: toU32Idx });
     fctx.body.push({ op: "i32.mul" });
     fctx.body.push({ op: "f64.convert_i32_s" });
     return { kind: "f64" };
