@@ -814,7 +814,7 @@ function compileCapturedGlobalRead(
 ): ValType {
   const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
   if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name);
+    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
   } else if (tdzResult === "throw") {
     emitStaticTdzThrow(ctx, fctx, id.text);
   }
@@ -889,7 +889,7 @@ function compileExactAmbientShadowedModuleBinding(
     if (tdzLocalIdx < 0) return undefined;
     const tdzResult = analyzeTdzAccess(ctx, id);
     if (tdzResult === "check") {
-      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text);
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -1343,7 +1343,7 @@ function compileIdentifierCore(
   if (capturedBox !== undefined) {
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -1373,7 +1373,7 @@ function compileIdentifierCore(
     // Apply static analysis for module-level globals
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
