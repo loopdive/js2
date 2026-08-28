@@ -16,7 +16,7 @@ area: ir, backend, codegen
 language_feature: math-builtins, numeric-coercion
 goal: ir-full-coverage
 depends_on: [5118]
-required_by: [5120, 5121]
+required_by: [5125, 5126]
 related: [83, 111, 936, 1094, 1126, 1371, 3526, 3739, 5118]
 files:
   - src/ir/backend/wasm-int32-coercion.ts
