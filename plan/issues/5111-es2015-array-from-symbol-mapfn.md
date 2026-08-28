@@ -1,7 +1,7 @@
 ---
 id: 5111
 title: "ES2015 standalone Array.from rejects a Symbol mapper"
-status: ready
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 priority: medium
@@ -13,6 +13,7 @@ area: codegen
 language_feature: array-from-mapfn-callability
 es_edition: ES2015
 goal: standalone-mode
+pr: 5117
 files:
   - src/codegen/expressions/call-builtin-static.ts
   - tests/issue-5111-array-from-symbol-mapfn.test.ts
@@ -160,12 +161,14 @@ Worktree: `/private/tmp/js2-es2015-next-lane-f-20260828`
 
 Branch: `codex/es2015-next-lane-f`
 
-Source commits: `9f4fae2ecf` (plan checkpoint) and `bab08e8997`
-(implementation); final upstream sync: `04c7dd8432`.
+Source commits: `9f4fae2ecf` (plan checkpoint), `bab08e8997`
+(implementation), and `7ce653f416` (root-review argument-evaluation
+correction); final upstream sync: `04c7dd8432`.
 
-The branch is ready for exactly one upstream PR from
-`ttraenkler:codex/es2015-next-lane-f` to `loopdive/js2:main`, using the exact
-`## Description` / `## CLA` body and checked CLA box required by the repository.
-No GitHub issue was created or referenced. The environment safety reviewer
-blocked the non-force fork push because the branch contains private snapshot
-paths in this plan; no push workaround was attempted.
+Upstream PR: https://github.com/loopdive/js2/pull/5117
+
+The completed branch was pushed without force from
+`ttraenkler:codex/es2015-next-lane-f` to the single non-draft upstream PR
+against `loopdive/js2:main`. Its body uses the exact `## Description` / `## CLA`
+template, checks the CLA box, and links this markdown record. No GitHub issue
+was created or referenced.
