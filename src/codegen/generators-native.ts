@@ -4426,14 +4426,30 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         // instead of re-entering the throwing state. Keep this wrapper out of
         // the JS-host lane: its foreign-exception recovery and legacy lowering
         // have their own established path.
+        // (#5139) The wrapper spills the trampoline's result into `resultLocal`
+        // and wraps an EMPTY-typed try region, instead of a `{kind:"val"}` one
+        // that hands its result across the try_table boundary. A valued
+        // `try_table` whose normal exit crosses the synthesized handler/join
+        // blocks (`buildStandardTryTable`) traps at runtime on the fallthrough
+        // path; every other tagged-try call site in the compiler is
+        // `{kind:"empty"}`, and #5060's wrapper was the sole valued one — which
+        // is why it broke every standalone generator resume (`unreachable` in
+        // `__gen_resume_*`) while the JS-host lane, which keeps the legacy
+        // `try`, stayed green.
         resumeFctx.body.push(
-          buildTargetTaggedTry(ctx, { kind: "val", type: resultType }, trampoline, [
-            {
-              tagIdx: ensureExnTag(ctx),
-              body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
-            },
-          ]),
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [...trampoline, { op: "local.set", index: resultLocal }],
+            [
+              {
+                tagIdx: ensureExnTag(ctx),
+                body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
+              },
+            ],
+          ),
         );
+        resumeFctx.body.push({ op: "local.get", index: resultLocal });
       } else {
         resumeFctx.body.push(...trampoline);
       }

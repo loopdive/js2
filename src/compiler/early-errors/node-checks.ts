@@ -1926,6 +1926,25 @@ on([ts.SyntaxKind.YieldExpression], (ctx, node) => {
 // \u006Cet is not valid as a keyword
 on([ts.SyntaxKind.Identifier], (ctx, node) => {
   if (ts.isIdentifier(node) && node.text === "let") {
+    // (#5139) A PROPERTY NAME is an IdentifierName, not an Identifier, and
+    // IdentifierName explicitly permits UnicodeEscapeSequence — `class C {
+    // let() {} }` is legal and defines the key "let". Only a keyword-position
+    // `let` may not be escaped.
+    const parent = node.parent;
+    const isPropertyName =
+      parent !== undefined &&
+      ((ts.isMethodDeclaration(parent) && parent.name === node) ||
+        (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+        (ts.isGetAccessorDeclaration(parent) && parent.name === node) ||
+        (ts.isSetAccessorDeclaration(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isShorthandPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isMethodSignature(parent) && parent.name === node) ||
+        (ts.isPropertySignature(parent) && parent.name === node) ||
+        (ts.isEnumMember(parent) && parent.name === node) ||
+        (ts.isBindingElement(parent) && parent.propertyName === node));
+    if (isPropertyName) return;
     const start = node.getStart(ctx.sourceFile);
     const rawText = ctx.sourceFile.text.substring(start, start + 10);
     if (rawText.includes("\\u")) {

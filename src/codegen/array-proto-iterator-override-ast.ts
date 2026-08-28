@@ -39,6 +39,16 @@ export function arrayProtoIteratorOverrideKeyFromTarget(
   return undefined;
 }
 
+/**
+ * (#5139) `delete Array.prototype[Symbol.iterator]` / `delete
+ * Array.prototype.values` — the removal counterpart of an override assignment.
+ * Reuses the same exact-target recognition, so the two stay in lockstep.
+ */
+export function arrayProtoIteratorDeleteKey(node: ts.Node): ArrayProtoIteratorOverrideKey | undefined {
+  if (!ts.isDeleteExpression(node)) return undefined;
+  return arrayProtoIteratorOverrideKeyFromTarget(node.expression);
+}
+
 export function isArrayProtoIteratorAssignTarget(target: ts.Expression): boolean {
   return arrayProtoIteratorOverrideKeyFromTarget(target) !== undefined;
 }

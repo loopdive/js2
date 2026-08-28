@@ -32,7 +32,10 @@ import {
   resolveComputedKeyExpression,
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
-import { arrayProtoIteratorOverrideKeyFromTarget } from "../array-proto-iterator-override-ast.js";
+import {
+  arrayProtoIteratorDeleteKey,
+  arrayProtoIteratorOverrideKeyFromTarget,
+} from "../array-proto-iterator-override-ast.js";
 
 export { isArrayProtoIteratorAssignTarget } from "../array-proto-iterator-override-ast.js";
 
@@ -107,18 +110,7 @@ export function maybeCaptureArrayProtoOverride(
   // guard a second override global would be pushed (orphaned, null-initialised).
   // We still emit the `global.set`/`global.get` into THIS body so the live
   // `__module_init` actually stores the freshly-lifted closure into the slot.
-  const existing = ctx.protoOverrides.get(ARRAY_PROTO_TOKEN)?.get(memberKey);
-  const globalIdx = existing?.globalIdx ?? nextModuleGlobalIdx(ctx);
-  if (existing === undefined) {
-    // Root the closure in a fresh `mut externref` module global so it survives DCE
-    // and the read-drive can `global.get` it. Convert the closure ref → externref.
-    ctx.mod.globals.push({
-      name: `__array_proto_${memberKey === "@@iterator" ? "iterator" : memberKey}_override`,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-  }
+  const globalIdx = rootArrayProtoOverrideGlobal(ctx, memberKey);
   // Stack: [closure-ref]. Convert to externref (if not already) and tee into the
   // global, leaving the externref on the stack as the assignment value.
   if (closureType.kind !== "externref") {
@@ -127,14 +119,115 @@ export function maybeCaptureArrayProtoOverride(
   fctx.body.push({ op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });
 
-  // Record into protoOverrides (funcIdx/funcTypeIdx unused by the global-driven
-  // path; kept 0/-1 placeholders for the table shape).
+  return true;
+}
+
+/**
+ * Root (once) the `mut externref` module global that holds the captured
+ * `Array.prototype[<memberKey>]` override closure, and record it in
+ * `ctx.protoOverrides`. Idempotent: the second call for the same key returns the
+ * existing index without pushing another global.
+ */
+function rootArrayProtoOverrideGlobal(ctx: CodegenContext, memberKey: string): number {
   let inner = ctx.protoOverrides.get(ARRAY_PROTO_TOKEN);
   if (!inner) {
     inner = new Map();
     ctx.protoOverrides.set(ARRAY_PROTO_TOKEN, inner);
   }
+  const existing = inner.get(memberKey);
+  if (existing !== undefined) return existing.globalIdx;
+  const globalIdx = nextModuleGlobalIdx(ctx);
+  const deleted = memberKey === ITERATOR_DELETED_KEY;
+  ctx.mod.globals.push(
+    deleted
+      ? {
+          name: "__array_proto_iterator_deleted",
+          type: { kind: "i32" },
+          mutable: true,
+          init: [{ op: "i32.const", value: 0 }],
+        }
+      : {
+          name: `__array_proto_${memberKey === "@@iterator" ? "iterator" : memberKey}_override`,
+          type: { kind: "externref" },
+          mutable: true,
+          init: [{ op: "ref.null.extern" }],
+        },
+  );
   inner.set(memberKey, { funcIdx: 0, funcTypeIdx: -1, globalIdx });
+  return globalIdx;
+}
+
+/**
+ * (#5139) Pre-root the override globals for every `Array.prototype[@@iterator] =
+ * <function|arrow>` / `Array.prototype.values = <function|arrow>` assignment the
+ * source contains, BEFORE any user function body is compiled.
+ *
+ * The capture (`maybeCaptureArrayProtoOverride`) only runs when the module-init
+ * statement itself is compiled, but a function body that destructures a
+ * parameter array can be compiled FIRST — and its read-drive gate
+ * (`arrayIteratorOverrideGlobalIdx(ctx) !== undefined`) then reads `undefined`
+ * and silently takes the backing-store fast lane, ignoring the override. That is
+ * exactly the class-method parameter case (`*-iter-val-array-prototype.js`):
+ * the override is honored in a top-level `for`-of but not in a method's
+ * parameter pattern. Rooting the slot up front makes the gate order-independent;
+ * the slot is still WRITTEN by the capture at module-init time.
+ *
+ * Only function/arrow right-hand sides are pre-rooted, matching the capture's
+ * own gate — otherwise the slot would stay null forever and the drive would
+ * degrade a working fast path.
+ */
+export function reserveArrayProtoIteratorOverrideGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  const visit = (node: ts.Node): void => {
+    if (
+      ctx.arrayIteratorMaybeOverridden &&
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      (ts.isFunctionExpression(node.right) || ts.isArrowFunction(node.right))
+    ) {
+      const key = arrayProtoOverrideKey(ctx, node.left);
+      if (key !== undefined) rootArrayProtoOverrideGlobal(ctx, key);
+    }
+    // (#5139) `delete Array.prototype[Symbol.iterator]` needs its own flag slot,
+    // independent of the override brand (a source that only deletes never trips
+    // `sourceOverridesArrayIterator`).
+    if (arrayProtoIteratorDeleteKey(node) !== undefined) rootArrayProtoOverrideGlobal(ctx, ITERATOR_DELETED_KEY);
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+}
+
+/**
+ * (#5139) Pseudo member key under which the `Array.prototype[@@iterator]`
+ * DELETED flag (a `mut i32` module global, 0/1) is registered. It shares
+ * `ctx.protoOverrides` with the closure slots purely to inherit their
+ * late-import global-index shifting (`registry/imports.ts`); the readers of the
+ * real keys (`@@iterator` / `values`) never see it.
+ */
+const ITERATOR_DELETED_KEY = "@@iterator:deleted";
+
+/**
+ * The `mut i32` flag global recording that the program executed `delete
+ * Array.prototype[Symbol.iterator]`, or `undefined` when the source contains no
+ * such delete. When set at runtime, GetIterator on an array must throw a
+ * TypeError (§7.4.2 step 3: the `@@iterator` method is `undefined`).
+ */
+export function arrayIteratorDeletedGlobalIdx(ctx: CodegenContext): number | undefined {
+  return ctx.protoOverrides.get(ARRAY_PROTO_TOKEN)?.get(ITERATOR_DELETED_KEY)?.globalIdx;
+}
+
+/**
+ * Compile `delete Array.prototype[Symbol.iterator]` / `delete
+ * Array.prototype.values`: raise the flag global and answer `true` (the property
+ * is configurable, so the delete succeeds). Returns `false` when `node` is not
+ * such a delete, or when the pre-scan rooted no slot for it.
+ */
+export function tryEmitArrayProtoIteratorDelete(ctx: CodegenContext, fctx: FunctionContext, node: ts.Node): boolean {
+  if (arrayProtoIteratorDeleteKey(node) === undefined) return false;
+  const globalIdx = arrayIteratorDeletedGlobalIdx(ctx);
+  if (globalIdx === undefined) return false;
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "global.set", index: globalIdx });
+  fctx.body.push({ op: "i32.const", value: 1 });
   return true;
 }
 

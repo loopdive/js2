@@ -59,7 +59,8 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 // (#4768) Recover a native generator state after it crosses a known closure
 // parameter's externref ABI, then drain only the binding pattern's steps.
 import { emitNativeGeneratorToVec } from "./generators-native.js";
-import { arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
+import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 // (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
 // `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
 // already imports `destructureParamArray` from here — a module cycle. ESM
@@ -1134,6 +1135,13 @@ export function structHintForBindingPattern(
   pattern: ts.ObjectBindingPattern,
 ): ValType | undefined {
   if (pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken)) return undefined;
+  // (#5139) An EMPTY pattern (`{} = obj`) binds nothing, so the hint buys no
+  // field read — and it actively harms: the default value is materialized under
+  // a `ref.test (ref $Anon{})` whose FALSE arm yields `ref.null`, so
+  // `method({} = obj)` stored null in the param and the destructure guard threw
+  // "Cannot destructure 'null' or 'undefined'" for any `obj` whose runtime
+  // carrier is not that anonymous struct. Fall back to the plain externref hint.
+  if (pattern.elements.length === 0) return undefined;
   const tsType = ctx.checker.getTypeAtLocation(pattern);
   if (!tsType) return undefined;
   ensureStructForType(ctx, tsType);
@@ -1519,6 +1527,20 @@ export function destructureParamObject(
 }
 
 /**
+ * (#5139) Emit the §7.4.2 GetIterator TypeError guard for an array binding
+ * pattern when the program contains `delete Array.prototype[Symbol.iterator]`.
+ * No-op (and no emitted bytes) for every source without such a delete, because
+ * the flag global is only rooted by the pre-scan that sees one.
+ */
+function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const flagIdx = arrayIteratorDeletedGlobalIdx(ctx);
+  if (flagIdx === undefined) return;
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "array is not iterable", { flush: fctx });
+  fctx.body.push({ op: "global.get", index: flagIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+}
+
+/**
  * Destructure a function parameter that is an ArrayBindingPattern.
  * The parameter value (a vec struct ref) is at param index `paramIdx`.
  * We extract each element into a new local.
@@ -1559,6 +1581,13 @@ export function destructureParamArray(
       return;
     }
   }
+
+  // (#5139) §7.4.2 GetIterator step 3: after `delete
+  // Array.prototype[Symbol.iterator]` an array has no `@@iterator` method, so
+  // binding it to an array pattern throws a TypeError BEFORE any element read.
+  // The flag global exists only for a source that contains such a delete, so
+  // this is byte-identical everywhere else.
+  emitArrayIteratorDeletedGuard(ctx, fctx);
 
   if (paramType.kind !== "ref" && paramType.kind !== "ref_null") {
     // externref parameters: convert to vec struct before destructuring (#647)

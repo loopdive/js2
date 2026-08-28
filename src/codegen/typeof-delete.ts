@@ -27,6 +27,7 @@ import {
   shiftLateImportIndices,
 } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
+import { tryEmitArrayProtoIteratorDelete } from "./expressions/proto-override.js";
 import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js";
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
 import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
@@ -381,6 +382,13 @@ export function compileDeleteExpression(
   // on the super base is enforced here, when the delete is evaluated — not
   // before — so a null / uninitialized super base still reaches this throw
   // (super-property-null-base.js, super-property-uninitialized-this.js).
+  // (#5139) `delete Array.prototype[Symbol.iterator]` has no compiled landing
+  // spot (the LHS is a builtin with no struct), so it used to be a silent no-op
+  // and every later array destructuring kept iterating the backing store. Record
+  // the removal in a flag global instead; the GetIterator sites read it and
+  // throw the §7.4.2 TypeError.
+  if (tryEmitArrayProtoIteratorDelete(ctx, fctx, expr)) return { kind: "i32" };
+
   if (
     (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) &&
     inner.expression.kind === ts.SyntaxKind.SuperKeyword
