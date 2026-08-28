@@ -218,6 +218,15 @@ equally empty or equally drifted raw populations is not sufficient.
   trampolines only through the existing `normalizedRawTrampoline`
   allocator-label normalization. Keep the 125,000 literal, public surface,
   DTS/helper, string pool, validity, and runtime checks on both lanes.
+- Select the WAT authority only after the certified optimizer disposition is
+  known. The optimized arm continues to parse the optimized binaries with
+  Binaryen. The fallback arm must use `rawPrepared.wat` and `rawDirect.wat`
+  from the separately compiled raw controls, after byte-for-byte equality has
+  proved that each optimize-request result retained that exact raw binary.
+  Do not feed the raw GC bytes back through `binaryen.readBinary`: Linux
+  Binaryen rejects their distinct recursive groups without an explicit GC
+  parser feature before the body oracle can run. Do not enable a global parser
+  feature or waive the body checks merely to make this harness path parse.
 - Do not branch on `CI`, operating system, `JS2WASM_EVAL_ENGINE`, size
   coincidence, or a loose inequality. Do not derive an expected byte count
   from the result under test. A warning without exact raw-byte retention, raw

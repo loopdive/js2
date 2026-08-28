@@ -343,8 +343,8 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
       prepared.errors.slice(rawPrepared.errors.length),
       direct.errors.slice(rawDirect.errors.length),
     );
-    const preparedWat = binaryenWat(prepared.binary);
-    const directWat = binaryenWat(direct.binary);
+    const preparedWat = disposition === "optimized" ? binaryenWat(prepared.binary) : rawPrepared.wat;
+    const directWat = disposition === "optimized" ? binaryenWat(direct.binary) : rawDirect.wat;
     const preparedBody = watFunction(preparedWat, "bench_loop");
     const directBody = watFunction(directWat, "bench_loop");
     const preparedTrampoline = watFunction(preparedWat, TRAMPOLINE);
