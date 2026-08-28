@@ -28,6 +28,7 @@ import {
   isCompoundAssignment,
 } from "./expressions/operator-assignment.js";
 import {
+  buildThrowJsErrorInstrs,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
   resolveDeclaringClassForPrivateName,
@@ -777,6 +778,11 @@ export function compileBinaryExpression(
       const nonNullIsUndefinedType =
         (nonNullTsType.flags & ts.TypeFlags.Undefined) !== 0 || (nonNullTsType.flags & ts.TypeFlags.Void) !== 0;
       const nonNullIsNullType = (nonNullTsType.flags & ts.TypeFlags.Null) !== 0;
+      const nonNullUnionHasUndefined =
+        nonNullTsType.isUnion() &&
+        nonNullTsType.types.some((part) => (part.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0);
+      const nonNullUnionHasNull =
+        nonNullTsType.isUnion() && nonNullTsType.types.some((part) => (part.flags & ts.TypeFlags.Null) !== 0);
 
       const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
       if (valType === null) {
@@ -867,11 +873,22 @@ export function compileBinaryExpression(
           (valType.kind === "ref_null" || valType.kind === "ref") &&
           ctx.nativeStrings &&
           valType.typeIdx === ctx.anyStrTypeIdx;
-        if ((isStrictEqOp || isStrictNeqOp) && nullSideIsUndefinedId && !isNullableNativeString) {
-          // struct === undefined → always false; struct !== undefined → always true
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: isStrictNeqOp ? 1 : 0 });
-          return { kind: "i32" };
+        // A concrete GC reference unioned with `undefined` uses ref.null as
+        // that undefined value. TypeScript's generic `append<T>(to: T[] |
+        // undefined, ...)` is the parser witness: treating a null vec as
+        // "never undefined" falls through to `to.push` and dereferences null.
+        // Preserve strict null-vs-undefined when the static union identifies
+        // which nullish value the carrier represents; loose equality accepts
+        // either, as required by JavaScript.
+        if (isStrictEqOp || isStrictNeqOp) {
+          const nullRepresentsUndefined = nonNullUnionHasUndefined || isNullableNativeString;
+          const nullRepresentsNull = nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString);
+          const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
+          if (!comparesRepresentedNullish) {
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "i32.const", value: isStrictNeqOp ? 1 : 0 });
+            return { kind: "i32" };
+          }
         }
         fctx.body.push({ op: "ref.is_null" });
         if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
@@ -3293,6 +3310,19 @@ export function compileI64BinaryOp(
       // Save exponent (top of stack), then base
       fctx.body.push({ op: "local.set", index: expLocal });
       fctx.body.push({ op: "local.set", index: baseLocal });
+      // BigInt exponentiation rejects a negative exponent. The previous loop
+      // terminated on exp <= 0 and therefore returned 1n for both zero and
+      // negative values. Keep zero as the multiplicative identity, but throw
+      // the required RangeError before entering the loop for negatives.
+      const negativeExponentThrow = buildThrowJsErrorInstrs(ctx, "RangeError", "Exponent must be positive", {
+        flush: fctx,
+      });
+      fctx.body.push(
+        { op: "local.get", index: expLocal },
+        { op: "i64.const", value: 0n },
+        { op: "i64.lt_s" },
+        { op: "if", blockType: { kind: "empty" }, then: negativeExponentThrow, else: [] },
+      );
       // result = 1
       fctx.body.push({ op: "i64.const", value: 1n });
       fctx.body.push({ op: "local.set", index: resultLocal });
@@ -3490,6 +3520,67 @@ export function emitToInt32(fctx: FunctionContext): void {
   releaseTempLocal(fctx, e);
   releaseTempLocal(fctx, significand);
   releaseTempLocal(fctx, magnitude);
+}
+
+/**
+ * Emit the element conversion for an integer TypedArray whose host/gc backing
+ * array is f64. Packed standalone/WASI arrays get the same conversion from
+ * their i8/i16/i32 `array.set`; the f64 representation must make the width and
+ * signedness explicit before storing. The input is f64 and the result remains
+ * f64 so callers can use it with the ordinary host/gc vec store path.
+ */
+export function emitHostTypedArrayElementCoercion(fctx: FunctionContext, viewName: string): boolean {
+  let width: 8 | 16 | 32 | undefined;
+  let signed = false;
+
+  switch (viewName) {
+    case "Int8Array":
+      width = 8;
+      signed = true;
+      break;
+    case "Uint8Array":
+      width = 8;
+      break;
+    case "Uint8ClampedArray":
+      emitToUint8Clamp(fctx);
+      fctx.body.push({ op: "f64.convert_i32_u" });
+      return true;
+    case "Int16Array":
+      width = 16;
+      signed = true;
+      break;
+    case "Uint16Array":
+      width = 16;
+      break;
+    case "Int32Array":
+      width = 32;
+      signed = true;
+      break;
+    case "Uint32Array":
+      width = 32;
+      break;
+    default:
+      return false;
+  }
+
+  // ToInt32 supplies the ECMAScript NaN/infinity/truncation/modulo-2^32
+  // semantics shared by every non-clamped integer view.
+  emitToInt32(fctx);
+  if (width !== 32) {
+    fctx.body.push({ op: "i32.const", value: width === 8 ? 0xff : 0xffff });
+    fctx.body.push({ op: "i32.and" });
+    if (signed) {
+      // Sign-extend the masked low byte/word without requiring a dedicated
+      // extend8/extend16 instruction in the IR.
+      const shift = width === 8 ? 24 : 16;
+      fctx.body.push({ op: "i32.const", value: shift });
+      fctx.body.push({ op: "i32.shl" });
+      fctx.body.push({ op: "i32.const", value: shift });
+      fctx.body.push({ op: "i32.shr_s" });
+    }
+  }
+  fctx.body.push({ op: signed ? "f64.convert_i32_s" : "f64.convert_i32_u" });
+  return true;
 }
 
 /**

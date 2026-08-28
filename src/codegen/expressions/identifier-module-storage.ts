@@ -14,9 +14,22 @@ import { localGlobalIdx } from "../registry/imports.js";
 
 const LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
 
+/** Resolve the value-side declarations of an identifier, including `{ value }`. */
+function identifierValueDeclarations(ctx: CodegenContext, id: ts.Identifier): readonly ts.Declaration[] {
+  if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
+    const symbol = (
+      ctx.checker as typeof ctx.checker & {
+        getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
+      }
+    ).getShorthandAssignmentValueSymbol?.(id.parent);
+    if (symbol !== undefined) return symbol.declarations ?? [];
+  }
+  return ctx.oracle.declarationsOf(id);
+}
+
 /** Whether every declaration visible to this identifier is type-only ambient. */
 export function identifierHasOnlyAmbientDeclarations(ctx: CodegenContext, id: ts.Identifier): boolean {
-  const declarations = ctx.oracle.declarationsOf(id);
+  const declarations = identifierValueDeclarations(ctx, id);
   return (
     declarations.length > 0 &&
     declarations.every((declaration) => {
@@ -24,6 +37,55 @@ export function identifierHasOnlyAmbientDeclarations(ctx: CodegenContext, id: ts
       return ts.isVariableDeclaration(declaration) && hasDeclareModifier(declaration.parent.parent);
     })
   );
+}
+
+/**
+ * Whether `id` denotes an explicit, typed ambient variable written in a user
+ * source file (`declare const/let/var name: T`).
+ *
+ * Import preprocessing also emits ambient variable stubs, but its value stubs
+ * are deliberately `any` (and Node class stubs use `typeof ...`).  Excluding
+ * those two synthetic shapes keeps an imported binding from being reinterpreted
+ * as a same-named property of globalThis. Declaration-file globals continue to
+ * use the established `collectDeclaredGlobals` path.
+ */
+export function identifierHasExplicitHostAmbientValueDeclaration(ctx: CodegenContext, id: ts.Identifier): boolean {
+  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return false;
+  const declarations = identifierValueDeclarations(ctx, id);
+  if (declarations.length === 0 || !identifierHasOnlyAmbientDeclarations(ctx, id)) return false;
+  return declarations.some((declaration) => {
+    if (!ts.isVariableDeclaration(declaration) || declaration.getSourceFile().isDeclarationFile) return false;
+    const list = declaration.parent;
+    if (!ts.isVariableDeclarationList(list) || !ts.isVariableStatement(list.parent)) return false;
+    if (!hasDeclareModifier(list.parent)) return false;
+    const type = declaration.type;
+    return type !== undefined && type.kind !== ts.SyntaxKind.AnyKeyword && !ts.isTypeQueryNode(type);
+  });
+}
+
+/**
+ * Read a source-level ambient variable from the host global environment.
+ * Existing registered declared globals retain their capability thunk (and its
+ * dependency injection/cache semantics); otherwise use the live globalThis
+ * lookup, which also preserves `undefined` for an absent optional ambient.
+ */
+export function tryEmitExplicitHostAmbientValueRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | undefined {
+  if (!identifierHasExplicitHostAmbientValueDeclaration(ctx, id)) return undefined;
+  const registered = ctx.declaredGlobals.get(id.text);
+  if (registered !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: registered.funcIdx });
+    return registered.type;
+  }
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) throw new TypeError(`ambient global '${id.text}' has no environment`);
+  const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
+  if (getIdx === undefined) throw new TypeError(`ambient global '${id.text}' has no environment reader`);
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+  return { kind: "externref" };
 }
 
 /** Read an ambient binding through its runtime environment before flat registries. */
@@ -118,11 +180,28 @@ export function currentSourceModuleGlobalIndex(
   if (!declaration || declaration.getSourceFile() !== sourceFile) return undefined;
   if (
     ts.isVariableDeclaration(declaration) &&
-    isCurrentSourceRuntimeVariable(declaration, sourceFile) &&
     ts.isIdentifier(declaration.name) &&
     declaration.name.text === id.text
   ) {
-    return ctx.moduleGlobals.get(id.text);
+    const projectedIdx = ctx.moduleGlobals.get(id.text);
+    if (projectedIdx === undefined) return undefined;
+
+    // Runtime namespace variables are intentionally registered under a
+    // collision-safe qualified name, then projected under their bare source
+    // name only while the owning namespace body is compiled. The top-level
+    // source predicate below rejects ModuleBlock declarations, so simple
+    // writes used to fall through to assignment.ts's auto-local even though
+    // reads correctly used the projected global. Match the projected allocator
+    // object against this exact declaration's Program ABI observation before
+    // accepting it. This preserves the cross-module/sibling-namespace collision
+    // guard while allowing the active namespace binding to be written.
+    const exactBinding = ctx.programAbiGlobals?.moduleBinding(declaration);
+    if (exactBinding !== undefined) {
+      const projectedGlobal = ctx.mod.globals[localGlobalIdx(ctx, projectedIdx)];
+      if (projectedGlobal === exactBinding.value) return projectedIdx;
+    }
+
+    if (isCurrentSourceRuntimeVariable(declaration, sourceFile)) return projectedIdx;
   }
   if (
     ts.isFunctionDeclaration(declaration) &&

@@ -10,6 +10,7 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { profilePhase } from "../../compile-profile.js";
 import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -467,16 +468,33 @@ export function compileTailDispatch(
               // body evaluation. Besides read-before-declaration semantics, this
               // pre-allocation makes an IIFE-local var shadow a same-named module
               // global while the body is compiled.
-              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist let/const with TDZ flags so accesses before init throw (#790)
-              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist function declarations so they're available before textual position
-              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              const isLargeIife = bodyStmts.length >= 1_000;
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-hoist-vars", () =>
+                  hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-let-const", () =>
+                  hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-functions", () =>
+                  hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+              } else {
+                hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist let/const with TDZ flags so accesses before init throw (#790)
+                hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist function declarations so they're available before textual position
+                hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              }
 
               // Increase block depth so return→br targets the right level
               fctx.blockDepth++;
-              for (const stmt of bodyStmts) {
-                compileStatement(ctx, fctx, stmt);
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-compile-statements", () => {
+                  for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
+                });
+              } else {
+                for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
               }
               fctx.blockDepth--;
 
@@ -552,16 +570,33 @@ export function compileTailDispatch(
 
               // See the returning arm above: function-scoped vars must exist
               // before the first statement and must shadow outer/global names.
-              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist let/const with TDZ flags so accesses before init throw (#790)
-              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist function declarations so they're available before textual position
-              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              const isLargeIife = bodyStmts.length >= 1_000;
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-hoist-vars", () =>
+                  hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-let-const", () =>
+                  hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-functions", () =>
+                  hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+              } else {
+                hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist let/const with TDZ flags so accesses before init throw (#790)
+                hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist function declarations so they're available before textual position
+                hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              }
 
               // Increase block depth so return→br targets the right level
               fctx.blockDepth++;
-              for (const stmt of bodyStmts) {
-                compileStatement(ctx, fctx, stmt);
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-compile-statements", () => {
+                  for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
+                });
+              } else {
+                for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
               }
               fctx.blockDepth--;
 
@@ -1071,7 +1106,7 @@ export function compileTailDispatch(
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "empty" },
-                then: eaReceiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+                then: eaReceiverWasCast ? [] : typeErrorThrowInstrs(ctx, elemAccess.expression),
                 else: elseInstrs,
               });
               return VOID_RESULT;
@@ -1087,7 +1122,9 @@ export function compileTailDispatch(
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "val" as const, type: resultType },
-                then: eaReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+                then: eaReceiverWasCast
+                  ? defaultValueInstrs(resultType)
+                  : typeErrorThrowInstrs(ctx, elemAccess.expression),
                 else: elseInstrs,
               });
               return resultType;

@@ -739,6 +739,20 @@ interface FoldedDirectEvalOuterShadow {
   activationCell: number | undefined;
 }
 
+/**
+ * Whether this literal direct-eval call is an unconditional statement in its
+ * owning function body. Binding metadata is compile-time state, so publishing
+ * a newly created eval `var` from inside a conditional/loop would make an
+ * untaken runtime path shadow an outer binding. Keep the static publication to
+ * the dominance shape we can prove without a control-flow dataflow pass.
+ */
+function foldedDirectEvalStatementDominatesFollowingReads(expr: ts.CallExpression): boolean {
+  const statement = expr.parent;
+  if (!ts.isExpressionStatement(statement) || statement.expression !== expr) return false;
+  const body = statement.parent;
+  return ts.isBlock(body) && ts.isFunctionLike(body.parent) && "body" in body.parent && body.parent.body === body;
+}
+
 /** A sloppy direct eval may create a `var` binding in the current function's
  * VariableEnvironment even when the same identifier currently resolves to an
  * outer capture. The literal splice must establish that inner binding before
@@ -1254,10 +1268,27 @@ export function tryStaticEvalInline(
       // Late bail to the provider: undo BOTH scope mutations before the caller
       // recompiles the call, or the provider path sees phantom caller bindings.
       restoreFoldedDirectEvalVarScope(fctx, outerShadows);
-    } else if (result !== null && outerShadows.length > 0) {
-      // Keep the eval-created activation binding visible to later AOT reads and
-      // to a subsequent standalone runtime-eval call in the same activation.
-      reifyCurrentDirectEvalBindings(ctx, fctx);
+    } else {
+      // A successful sloppy literal splice can create a function-activation
+      // `var` whose name was absent from the source AST. Record that ownership
+      // only after lowering commits: later source reads may still resolve by
+      // checker identity to an outer/ambient declaration, but ordinary JS name
+      // resolution must select the eval-created activation binding first. The
+      // same metadata lets a later provider-backed eval seed/read the binding.
+      // Module-initializer eval vars belong to the global environment instead,
+      // and strict eval declarations stay private to the eval.
+      if (!evalIsStrict && fctx.name !== "__module_init" && foldedDirectEvalStatementDominatesFollowingReads(expr)) {
+        for (const name of declarationNames.varNames) {
+          if (!fctx.localMap.has(name)) continue;
+          (fctx.directEvalBindingNames ??= new Set()).add(name);
+          (fctx.directEvalActivationBindingNames ??= new Set()).add(name);
+        }
+      }
+      if (result !== null && outerShadows.length > 0) {
+        // Keep the eval-created activation binding visible to later AOT reads
+        // and to a subsequent standalone runtime-eval call in this activation.
+        reifyCurrentDirectEvalBindings(ctx, fctx);
+      }
     }
     return result;
   } finally {

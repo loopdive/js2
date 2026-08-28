@@ -1,9 +1,9 @@
 ---
 id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
-status: ready
+status: in_progress
 created: 2026-04-11
-updated: 2026-08-09
+updated: 2026-08-28
 priority: high
 feasibility: hard
 model: fable
@@ -334,6 +334,67 @@ peak memory, but the remaining returned-method table and finalization work
 still prevent a binary. Raising the timeout or heap alone does not close the
 gap; both the 4 GiB / 30-minute full-source run and the 31-file dynamic run
 prove that.
+
+## Codex implementation handoff (2026-08-28)
+
+Branch: `codex/1058-typescript5-selfhost`.
+
+The pinned TypeScript 5.9.3 parser graph now compiles to a valid WasmGC module.
+The latest authoritative run produced an 81,241,283-byte binary in 298,177 ms
+(3,638.8 MiB peak RSS); compilation succeeded and `WebAssembly.validate`
+returned true. This closes the former no-binary/finalization frontier, but Tier
+3 is not complete because runtime AST fingerprints do not yet return.
+
+```bash
+JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC=1 \
+JS2WASM_TYPESCRIPT_PROBE_SOURCE_MAP=1 \
+pnpm run dogfood:typescript-parser-source
+```
+
+Diagnostic artifacts are written to
+`/private/tmp/ts2wasm-typescript-parser-latest.wasm` and the adjacent `.map`.
+
+### Completed in this branch
+
+- Pins/prepares the exact upstream source and adds a three-file AST fingerprint
+  harness; consumer-driven barrel pruning and post-body DAG finalizers now
+  complete within the five-minute worker budget.
+- Repairs recursive layouts, mapped readonly erasure, constructor/factory
+  identity, late fixups, nested captures, module initialization, enum aliases,
+  and the large instruction graphs reached by the parser build.
+- Preserves omitted optional numeric arguments as `undefined` at callable
+  property boundaries (`scanner.setText(sourceText)` previously received zero
+  and produced an empty AST).
+- Widens mixed-`undefined` nested returns so `getDirectiveFromComment` no longer
+  boxes the undefined f64 sentinel as a Number.
+- Pre-registers safe zero-argument boolean/GC-reference callbacks and bridges
+  erased generic results, clearing `scanner.speculationHelper<T>` and
+  `parser.parseListElement<T>` without admitting unsafe argument-bearing ABIs.
+
+The latest focused checkpoint passed 14/14 optional-padding, generic-callback,
+and scalar-callable safety tests. `pnpm run typecheck` also passed.
+
+### Remaining Tier-3 blocker
+
+All three required inputs now converge on one runtime frontier:
+
+```text
+RuntimeError: dereferencing a null pointer
+  at createIdentifier
+  at parseIdentifier
+  at parsePrimaryExpression
+source: src/compiler/parser.ts:2649:9
+wasm offset: 2106116 (source-map anchor 2098406)
+```
+
+`builderStatePublic.ts`, `corePublic.ts`, and `performanceCore.ts` therefore do
+not yet return their expected fingerprints. Resume by extracting
+`createIdentifier` (function index 927 in the latest diagnostic module) and
+tracing the null receiver/argument at parser line 2649. Do not revisit the
+resolved empty-AST, comment-directive, or generic callback paths unless their
+focused regressions fail. After this frontier, rerun the three fingerprints,
+then the strict 11-callback upstream suite and final TS5/TS7 typechecks/oracle
+ratchet.
 
 ## Acceptance criteria
 

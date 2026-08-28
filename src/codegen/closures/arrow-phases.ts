@@ -325,6 +325,26 @@ function referencedBindingDeclaration(
   return ambiguous ? undefined : declaration;
 }
 
+/**
+ * True when a declaration is owned directly by an emitted TypeScript
+ * namespace/module block rather than by a nested function inside it.
+ * Runtime-namespace bindings have dedicated module globals and must remain
+ * live when an arrow created during namespace initialization observes a later
+ * assignment (the TypeScript parser's lazily initialized constructors are the
+ * production witness).
+ */
+function isDirectRuntimeModuleVariableBinding(declaration: ts.Declaration | undefined): boolean {
+  if (declaration === undefined) return false;
+  let sawVariableDeclaration = false;
+  for (let current: ts.Node | undefined = declaration; current?.parent; current = current.parent) {
+    if (ts.isVariableDeclaration(current)) sawVariableDeclaration = true;
+    if (ts.isModuleBlock(current.parent)) return sawVariableDeclaration;
+    if (current !== declaration && (ts.isFunctionLike(current) || ts.isClassLike(current))) return false;
+    if (ts.isSourceFile(current.parent)) return false;
+  }
+  return false;
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -345,6 +365,36 @@ function collectClosureParameterReferences(
 ): void {
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
   for (const parameter of arrow.parameters) collectReferencedIdentifiers(parameter, referencedNames, ownLocals);
+}
+
+/**
+ * True when evaluating `closure` is part of evaluating the initializer that
+ * will later store the captured binding's first value.
+ *
+ * `var scanner = { self: () => scanner }` is observably a live binding, even
+ * when no later assignment exists: the closure is constructed while
+ * `scanner` still contains its hoisted `undefined`/null value, and the
+ * declarator store happens only after the whole object literal completes.
+ * Such a capture therefore needs the same ref-cell treatment as an explicit
+ * outer assignment. Declaration identity comes from the checker; ancestry is
+ * used only to establish the evaluation ordering within that declaration.
+ */
+function closurePrecedesBindingInitializerStore(
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  declaration: ts.Declaration | undefined,
+): boolean {
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) {
+    return false;
+  }
+  for (let current: ts.Node | undefined = closure; current && current !== declaration; current = current.parent) {
+    if (current === declaration.initializer) return true;
+    // A nested closure in another function's body is constructed only when
+    // that outer function runs, not while the declarator evaluates. The outer
+    // function value itself will independently capture this binding at the
+    // actual initializer site.
+    if (current !== closure && ts.isFunctionLike(current)) return false;
+  }
+  return false;
 }
 
 /**
@@ -626,6 +676,13 @@ export function planClosureCaptures(
     }
     if (localIdx === undefined) continue;
     const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
+    // A runtime namespace initializer is compiled in the shared module-init
+    // frame, whose staging locals can have the same spelling as both the
+    // namespace slot and an unrelated top-level binding. Capturing that local
+    // snapshots the hoisted null value. The exact namespace projection in
+    // `ctx.moduleGlobals` is active for this whole closure compilation, so
+    // leave the name uncaptured and let the lifted body read that live global.
+    if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
     // #2669: skip names bound to a *user* function (a function reference, not a
     // captured variable) — but NOT a wasm:js-string builtin import
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
@@ -678,7 +735,9 @@ export function planClosureCaptures(
     // so all closures see the final value of the loop variable.
     const tdzFlagPresent = !!fctx.tdzFlagLocals?.has(name) || tdzFlagIdxFromScan !== undefined;
     const hasTdzFlag = tdzFlagPresent && !closureProvablyAfterLetDecl(ctx, arrow, name);
-    const isMutable = writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag;
+    const initializerStoreFollowsCapture = closurePrecedesBindingInitializerStore(arrow, bindingDeclaration);
+    const isMutable =
+      writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag || initializerStoreFollowsCapture;
     // Check if the variable is already boxed from a previous closure capture.
     // If so, the local already holds a ref cell — don't wrap it again.
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);

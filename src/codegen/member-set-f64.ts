@@ -256,21 +256,29 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
       // Structurally canonicalized shapes share one heap type, so `ref.test`
       // alone can select the wrong logical shape — verify the `$shape` stamp
       // and keep dispatching on a mismatch, exactly as the generic arm does.
-      const guarded: Instr[] =
-        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
-          ? [
+      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
+        return [
+          { op: "local.get", index: 2 }, // __any
+          { op: "ref.test", typeIdx: cand.structTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
               { op: "local.get", index: 2 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },
               { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
               { op: "i32.const", value: cand.shapeId },
               { op: "i32.eq" },
-              { op: "if", blockType: { kind: "empty" }, then: direct, else: next },
-            ]
-          : direct;
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          { op: "if", blockType: { kind: "empty" }, then: direct, else: next },
+        ];
+      }
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
-        { op: "if", blockType: { kind: "empty" }, then: guarded, else: next },
+        { op: "if", blockType: { kind: "empty" }, then: direct, else: next },
       ];
     };
 

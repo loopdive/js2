@@ -10,7 +10,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, ExternClassInfo, FunctionContext, RestParamInfo } from "../context/types.js";
 import { compileCollectionGetOrInsert } from "../collections-es2025.js";
-import { addUnionImports, getArrTypeIdxFromVec } from "../index.js";
+import { addUnionImports, getArrTypeIdxFromVec, hostMapCarrierClassName } from "../index.js";
 import { tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { tryCompileNativeDisposableStackMethodCall } from "../disposable-runtime.js";
 import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
@@ -64,7 +64,7 @@ function compileExternMethodCall(
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
   const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  const className = receiverType.getSymbol()?.name;
+  const className = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
   const methodName = propAccess.name.text;
 
   // (#1103a) Native Map method dispatch in standalone / nativeStrings mode.
@@ -865,7 +865,7 @@ function compileSpreadCallArgs(
     let argIdx = 0;
     for (let i = 0; i < restInfo.restIndex; i++) {
       if (argIdx < expr.arguments.length) {
-        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[i]);
+        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[paramOffset + i]);
         argIdx++;
       }
     }

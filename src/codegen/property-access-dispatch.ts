@@ -62,6 +62,7 @@ import {
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
+import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -111,6 +112,7 @@ import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-st
 import {
   isTupleType,
   addUnionImports,
+  hostMapCarrierClassName,
   resolveWasmType,
   TYPED_ARRAY_NAMES,
   typedArrayVecStorage,
@@ -154,6 +156,7 @@ import {
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
 import { tryEmitInstanceBuiltinProtoMethodValue } from "./instance-proto-method-identity.js"; // (#4481)
+import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 import { tryObjectCoercionFnctorPrototypeIdentity } from "./object-coercion-fnctor-prototype.js";
@@ -1820,7 +1823,10 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
   // Skip if the name is shadowed by a local variable.
   if (ts.isIdentifier(expr.expression)) {
     const builtinName = expr.expression.text;
-    const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+    const isShadowed =
+      fctx.localMap.has(builtinName) ||
+      (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+      !resolvesToAmbientGlobal(ctx, expr.expression);
     // (#1888 S6-c) Under --target standalone, `__get_builtin` refuses-loud (the
     // open-object runtime does not expose it). For builtin constant reads that
     // already have a pure-Wasm fall-through emitter below (Math.PI →
@@ -1927,6 +1933,29 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
 
   // Check for enum member access: EnumName.Member
   if (ts.isIdentifier(expr.expression)) {
+    // Resolve function-local const enums by declaration identity before the
+    // legacy flat name map. This keeps a nested `const enum E` from reading an
+    // unrelated top-level `E.Member`, and does not fold ordinary nested enums
+    // whose runtime object may be mutated.
+    const exactEnumMember = ctx.oracle.valueDeclarationOf(expr.name);
+    const exactEnumDeclaration = exactEnumMember?.parent;
+    const isExactConstEnumMember =
+      exactEnumMember !== undefined &&
+      ts.isEnumMember(exactEnumMember) &&
+      exactEnumDeclaration !== undefined &&
+      ts.isEnumDeclaration(exactEnumDeclaration) &&
+      exactEnumDeclaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ConstKeyword) === true;
+    if (isExactConstEnumMember) {
+      const scopedEnumValue = ctx.checker.getConstantValue(expr);
+      if (typeof scopedEnumValue === "number") {
+        fctx.body.push({ op: "f64.const", value: scopedEnumValue });
+        return { kind: "f64" };
+      }
+      if (typeof scopedEnumValue === "string") {
+        return compileStringLiteral(ctx, fctx, scopedEnumValue);
+      }
+    }
+
     const objName = expr.expression.text;
     const enumKey = `${objName}.${propName}`;
     const enumVal = ctx.enumValues.get(enumKey);
@@ -3681,7 +3710,7 @@ export function tryStringLengthIteratorAndExternClassReads(
   }
 
   // Handle externref property access
-  if (isExternalDeclaredClass(objType, ctx.checker)) {
+  if (isExternalDeclaredClass(objType, ctx.checker) || hostMapCarrierClassName(ctx, objType) !== undefined) {
     const externResult = compileExternPropertyGet(ctx, fctx, expr, objType, propName);
     if (externResult !== null) return externResult;
     // Fall through to dynamic fallback if import is missing
@@ -3743,7 +3772,46 @@ export function finalizeStructAndDynamicMemberGet(
   objType: ts.Type,
 ): ValType | null {
   // Handle getter accessor on user-defined classes
-  const typeName = resolveStructNameForExpr(ctx, fctx, expr.expression, expr.name);
+  const receiverWasm = resolveWasmType(ctx, objType);
+  const typeName = resolveStructNameForExpr(ctx, fctx, expr.expression, expr.name, receiverWasm);
+
+  // Augmented-array interfaces (notably TypeScript's `NodeArray<T>`) are
+  // physically vecs with extra ordinary properties. The checker also gives
+  // them a named interface struct, but the live value can never pass a cast to
+  // that unrelated struct. Read their non-length properties through the same
+  // sidecar MOP used by the write path, preserving scalar result types.
+  if (typeName && propName !== "length" && ctx.structMap.has(typeName)) {
+    const receiverTypeIdx =
+      receiverWasm.kind === "ref" || receiverWasm.kind === "ref_null" ? receiverWasm.typeIdx : undefined;
+    if (
+      receiverTypeIdx !== undefined &&
+      getArrTypeIdxFromVec(ctx, receiverTypeIdx) >= 0 &&
+      ctx.structMap.get(typeName) !== receiverTypeIdx
+    ) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (getIdx !== undefined) {
+        const receiver = compileExpression(ctx, fctx, expr.expression);
+        if (!receiver) return null;
+        if (receiver.kind !== "externref") coerceType(ctx, fctx, receiver, { kind: "externref" });
+        addStringConstantGlobal(ctx, propName);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+        fctx.body.push({ op: "call", funcIdx: getIdx });
+        const expected = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(expr));
+        if (expected.kind === "f64" || expected.kind === "i32") {
+          coerceType(ctx, fctx, { kind: "externref" }, expected);
+          return expected;
+        }
+        return { kind: "externref" };
+      }
+    }
+  }
+
   if (typeName) {
     const accessorKey = `${typeName}_${propName}`;
     // (#1888 S5c / C3) Migrated struct accessor → route through the host-free
@@ -4173,48 +4241,87 @@ export function finalizeStructAndDynamicMemberGet(
         if (structTypeIdx !== undefined && fields) {
           const typeDef = ctx.mod.types[structTypeIdx];
           if (typeDef?.kind === "struct") {
-            // Add the missing field (widen ref to ref_null for default initialization)
-            const fieldType =
-              propWasmType.kind === "ref"
-                ? { kind: "ref_null" as const, typeIdx: (propWasmType as { typeIdx: number }).typeIdx }
-                : propWasmType;
-            const newField: FieldDef = { name: propName, type: fieldType, mutable: true };
-            fields.push(newField);
-            // fields === typeDef.fields (same array ref from structFields map)
-            patchStructNewForAddedField(ctx, fctx, structTypeIdx, propWasmType);
-            const fieldIdx = fields.length - 1;
-            if (fieldIdx !== -1) {
-              const fieldType = fields[fieldIdx]!.type;
-              const objResult = compileExpression(ctx, fctx, expr.expression);
-              const exprNonNull2 = isProvablyNonNull(expr.expression, ctx.checker);
-              if (objResult && objResult.kind === "ref_null") {
-                // Always use multi-struct dispatch to avoid illegal cast traps (#778)
-                emitNullGuardedStructGet(ctx, fctx, objResult, fieldType, structTypeIdx, fieldIdx, propName);
-                if (fieldType.kind === "ref") {
-                  return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
+            // A nominal parent's fields are the physical prefix of every
+            // existing child. Growing that prefix now would put the new field
+            // after each child's own fields and make the explicit WasmGC
+            // subtype invalid (TypeScript's Node/JSDocContainer is the large
+            // self-hosting instance). Preserve the established hierarchy and
+            // route this derived-only read through the finalize-filled member
+            // dispatcher, whose candidate set includes the actual child slot.
+            if (isSealedNominalStructParent(ctx, structTypeIdx)) {
+              const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
+              if (getMemberIdx !== undefined) {
+                const objResult = compileExpression(ctx, fctx, expr.expression);
+                if (!objResult) return null;
+                if (objResult.kind !== "externref") {
+                  coerceType(ctx, fctx, objResult, { kind: "externref" });
+                }
+                fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+                if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+                  emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+                }
+                // Match the complete dynamic-read route below: only scalar
+                // results are unboxed here. A concrete ref/ref_null checker
+                // type (notably Node.jsDoc's JSDocArray) must remain externref
+                // until its consumer narrows it. Coercing an absent host
+                // `undefined` directly to a vec would materialize an empty,
+                // truthy array and change optional-property semantics.
+                if (accessWasm.kind === "f64" || accessWasm.kind === "i32") {
+                  coerceType(ctx, fctx, { kind: "externref" }, accessWasm);
+                  return accessWasm;
+                }
+                return { kind: "externref" };
+              }
+              // A sealed hierarchy must never be mutated merely because the
+              // dynamic dispatcher is unavailable. Fall through to the
+              // existing conservative terminal instead.
+            } else {
+              // Add the missing field (widen ref to ref_null for default initialization)
+              const fieldType =
+                propWasmType.kind === "ref"
+                  ? { kind: "ref_null" as const, typeIdx: (propWasmType as { typeIdx: number }).typeIdx }
+                  : propWasmType;
+              const newField: FieldDef = { name: propName, type: fieldType, mutable: true };
+              fields.push(newField);
+              // fields === typeDef.fields (same array ref from structFields map)
+              patchStructNewForAddedField(ctx, fctx, structTypeIdx, propWasmType);
+              const fieldIdx = fields.length - 1;
+              if (fieldIdx !== -1) {
+                const fieldType = fields[fieldIdx]!.type;
+                const objResult = compileExpression(ctx, fctx, expr.expression);
+                const exprNonNull2 = isProvablyNonNull(expr.expression, ctx.checker);
+                if (objResult && objResult.kind === "ref_null") {
+                  // Always use multi-struct dispatch to avoid illegal cast traps (#778)
+                  emitNullGuardedStructGet(ctx, fctx, objResult, fieldType, structTypeIdx, fieldIdx, propName);
+                  if (fieldType.kind === "ref") {
+                    return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
+                  }
+                  return fieldType;
+                } else if (objResult && objResult.kind === "externref") {
+                  emitExternrefToStructGet(
+                    ctx,
+                    fctx,
+                    fieldType,
+                    structTypeIdx,
+                    fieldIdx,
+                    propName,
+                    true /* throwOnNull */,
+                  );
+                } else if (objResult && objResult.kind === "ref") {
+                  // Always use multi-struct dispatch to avoid illegal cast traps (#778)
+                  const nullableObj: ValType = {
+                    kind: "ref_null",
+                    typeIdx: (objResult as any).typeIdx ?? structTypeIdx,
+                  };
+                  emitNullGuardedStructGet(ctx, fctx, nullableObj, fieldType, structTypeIdx, fieldIdx, propName);
+                  if (fieldType.kind === "ref") {
+                    return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
+                  }
+                } else {
+                  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
                 }
                 return fieldType;
-              } else if (objResult && objResult.kind === "externref") {
-                emitExternrefToStructGet(
-                  ctx,
-                  fctx,
-                  fieldType,
-                  structTypeIdx,
-                  fieldIdx,
-                  propName,
-                  true /* throwOnNull */,
-                );
-              } else if (objResult && objResult.kind === "ref") {
-                // Always use multi-struct dispatch to avoid illegal cast traps (#778)
-                const nullableObj: ValType = { kind: "ref_null", typeIdx: (objResult as any).typeIdx ?? structTypeIdx };
-                emitNullGuardedStructGet(ctx, fctx, nullableObj, fieldType, structTypeIdx, fieldIdx, propName);
-                if (fieldType.kind === "ref") {
-                  return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
-                }
-              } else {
-                fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
               }
-              return fieldType;
             }
           }
         }
