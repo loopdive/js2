@@ -12,9 +12,11 @@
  * family — every ES5 file that constructs through an eval-lane function value.
  *
  * ## Why the seam CAN express construction (this was verified, not assumed)
- * The `js2wasm:runtime-eval` ABI has exactly four entries
- * (`__runtime_direct_eval`, `__runtime_indirect_eval`, `__runtime_new_function`,
- * `__runtime_apply_interpreted`) and **no construct entry**. It does not need
+ * The `js2wasm:runtime-eval` ABI has five entries (`__runtime_direct_eval`,
+ * `__runtime_indirect_eval`, `__runtime_script_eval`, `__runtime_new_function`,
+ * `__runtime_apply_interpreted`) — this said "exactly four" until #4784, having
+ * missed the global-SCRIPT entry that 7d8021e8 added on 2026-08-26 — and
+ * **no construct entry**. It does not need
  * one: the fourth takes a `thisArg`, and the provider's inward membrane makes a
  * compiled `$Object` receiver writable from inside the evaluated code. Probed on
  * the base before any of this was written:
