@@ -25,6 +25,18 @@ function moduleSource(body: string): string {
   return `export function test(): number { ${body} }`;
 }
 
+function moduleSourceWithPrecompiledHelper(method: Method, body: string): string {
+  const helperName = `${method}WithAny`;
+  return `
+    // Keep this dynamic receiver helper ahead of the exported caller in source
+    // order: the Symbol carrier is created only by the caller below.
+    function ${helperName}(receiver: any): any {
+      return [].${method}.call(receiver, (): boolean => true);
+    }
+    export function test(): number { ${body.replaceAll("HELPER", helperName)} }
+  `;
+}
+
 async function run(source: string, lane: Lane): Promise<number> {
   const result = await compile(source, {
     fileName: "issue-5120-es2015-array-find-symbol-length.ts",
@@ -124,6 +136,46 @@ describe("#5120 — Array find/findIndex Symbol length ordering", () => {
             return 0;
           } catch (error) {
             return error instanceof TypeError ? 1 : 0;
+          }
+        `);
+          expect(await run(source, lane)).toBe(1);
+        },
+        180_000,
+      );
+
+      it.each(METHODS)(
+        "%s preserves a dynamic Symbol carrier across a precompiled callee",
+        async (method) => {
+          const source = moduleSourceWithPrecompiledHelper(
+            method,
+            `
+            const o: any = {};
+            const dynamic: any = Symbol("length");
+            o.length = dynamic;
+            try {
+              HELPER(o);
+              return 0;
+            } catch (error) {
+              return error instanceof TypeError ? 1 : 0;
+            }
+          `,
+          );
+          expect(await run(source, lane)).toBe(1);
+        },
+        180_000,
+      );
+
+      it.each(METHODS)(
+        "%s throws for a direct closed-shape Symbol length",
+        async (method) => {
+          const source = moduleSource(`
+          const o = { length: Symbol("length") };
+          let calls = 0;
+          try {
+            [].${method}.call(o, function (): boolean { calls++; return true; });
+            return 0;
+          } catch (error) {
+            return error instanceof TypeError && calls === 0 ? 1 : 0;
           }
         `);
           expect(await run(source, lane)).toBe(1);
