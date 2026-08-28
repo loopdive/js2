@@ -130,9 +130,9 @@ import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
 import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
+import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
-import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4783)
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
 import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
 import {
@@ -143,6 +143,7 @@ import {
 } from "./calls-closures.js";
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall, compileSpreadCallArgs } from "./extern.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
 import { sourceOverridesBuiltinPrototypeMember, sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import {
@@ -1288,7 +1289,15 @@ export function compileReceiverMethodCall(
   );
   if (deletedStringToString !== undefined) return deletedStringToString;
 
-  const booleanToString = tryCompileStandaloneBooleanToString(ctx, fctx, propAccess, expr, receiverType);
+  const booleanToString = tryCompileStandaloneBooleanToString(
+    ctx,
+    fctx,
+    propAccess,
+    expr,
+    receiverType,
+    expectedType,
+    compileCallExpression,
+  );
   if (booleanToString !== undefined) return booleanToString;
 
   // Handle wrapper type method calls: new Number(x).valueOf(), etc.
@@ -2040,8 +2049,17 @@ export function compileReceiverMethodCall(
       const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
       const handledSpreadNn =
         !handledRestNn && methodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+      // (#5093) A formal-ful callee that reads `arguments` needs the FLATTENED
+      // argument list, not just its positional prefix — the extras split and
+      // the argument count are both runtime values once a spread is involved.
+      // Emits nothing (and returns false) when it does not apply.
+      const handledArgvSpreadNn =
+        handledSpreadNn &&
+        calleeReadsArgsNn &&
+        restInfoNn === undefined &&
+        compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 1, fullName);
       if (handledSpreadNn) {
-        compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
+        if (!handledArgvSpreadNn) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
       } else if (!handledRestNn) {
         for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
           const sourceParam =
@@ -2069,8 +2087,10 @@ export function compileReceiverMethodCall(
           pushDefaultValue(fctx, paramTypes[i]!, ctx);
         }
       }
-      // Set __argc before the call so the callee knows the actual arg count
-      maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
+      // Set __argc before the call so the callee knows the actual arg count. The
+      // flattened-spread path published a RUNTIME count already; a constant here
+      // would clobber it back to the un-flattened argument-node count (#5093).
+      if (!handledArgvSpreadNn) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
       // Re-lookup funcIdx: argument compilation may trigger addUnionImports
       const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
       fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
@@ -2580,6 +2600,13 @@ export function compileReceiverMethodCall(
   // throw RangeError otherwise, then call bigint_toString_radix (or the
   // 1-arg bigint_toString for the default radix-10 case).
   if (!usesHostBigIntCarrier(ctx) && isBigIntType(receiverType) && propAccess.name.text === "toString") {
+    // §7.1.4: ToNumber(Symbol) is an abrupt completion. Symbols use i32 ids in
+    // standalone mode, so compiling this argument with an f64 hint would
+    // otherwise reinterpret the id as a numeric radix. Emit the shared
+    // in-module TypeError before the radix formatter sees the value (#4779).
+    const symbolRadixThrow = emitSymbolArgToNumberThrow(ctx, fctx, expr.arguments, { kind: "externref" });
+    if (symbolRadixThrow !== undefined) return symbolRadixThrow;
+
     let radixLocalIdx: number | undefined;
     if (expr.arguments.length > 0) {
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });

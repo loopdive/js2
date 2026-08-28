@@ -10,6 +10,10 @@ import type { IrIntegrationError, IrIntegrationReport } from "../ir/integration.
 import type { IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import {
+  planMultiPreparedModuleInit,
+  type MultiPreparedModuleInitPlanningInput,
+} from "./multi-prepared-module-init.js";
+import {
   createMultiPreparedProgramOwner,
   type MultiPreparedProgramCallableComponent,
   type MultiPreparedProgramOwner,
@@ -24,6 +28,7 @@ import { effectiveIrParamTypeNode, irClosureSignatureFromFunctionTypeNode, type 
 import { ts } from "../ts-api.js";
 import type { CodegenContext, CodegenError, CodegenOptions } from "./context/types.js";
 import type { IrOverlayPlan } from "./index.js";
+import { collectMultiIrFunctionNameCollisions } from "./multi-prepared-scalar-leaf.js";
 import {
   prepareMultiPreparedCallableGroup,
   type MultiPreparedCallableCandidate,
@@ -53,8 +58,6 @@ export function initializeMultiPreparedProgram(
     !ctx.fast &&
     ctx.nativeStrings &&
     !explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
-  ctx.irProgramCallableComponentCutoverEnabled =
-    ctx.irProgramCallableCutoverEnabled && process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER === "1";
   return createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
 }
 
@@ -118,8 +121,16 @@ export function hasMultiIrProgramCallableBoundary(
 ): boolean {
   const graph = ctx.irProgramCallableCutoverEnabled ? ctx.irProgramCallableBindingGraph : undefined;
   if (!graph) return false;
+  const unitSourceId = identityContext.unitByUnitId.get(unitId)?.sourceId;
+  const unitSourceFile = unitSourceId ? identityContext.sourceFileBySourceId.get(unitSourceId) : undefined;
+  // Global-script declarations remain outside M1A's module-binding proof. A
+  // checker-resolved cross-file edge from or to one must not bypass the
+  // existing standalone conservative caller gate.
+  if (!unitSourceFile || !ts.isExternalModule(unitSourceFile)) return false;
   const ownerSourceId = identityContext.unitByUnitId.get(unitId)?.sourceId;
   return graph.uses.some((use) => {
+    const useSourceFile = identityContext.sourceFileBySourceId.get(use.sourceId);
+    if (!useSourceFile || !ts.isExternalModule(useSourceFile)) return false;
     if (use.ownerUnitId === unitId) return true;
     return use.targetUnitId === unitId && ownerSourceId !== undefined && use.sourceId !== ownerSourceId;
   });
@@ -211,6 +222,7 @@ function ownerIsEligible(
   declaration: ts.FunctionDeclaration,
 ): boolean {
   if (
+    !ts.isExternalModule(sourceFile) ||
     !declaration.body ||
     declaration.parent !== sourceFile ||
     !declaration.name ||
@@ -294,6 +306,7 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
   const records = new Map(graph.records.map((record) => [record.bindingId, record] as const));
   const candidates = new Map<IrUnitId, MultiPreparedCallableCandidate>();
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
+  const collidingFunctionNames = collectMultiIrFunctionNameCollisions(input.multiAst.sourceFiles);
   for (const sourceFile of input.multiAst.sourceFiles) {
     const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile);
     if (!sourceId) throw new IrInvariantError("selection-preparation-mismatch", "resolve", "missing source identity");
@@ -306,6 +319,10 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
         input.owner.existingRouteUnitIds.has(unitId) ||
         !plan.identityPlan.safeFunctionUnitIds.has(unitId) ||
         !safeSelection.funcs.has(claim.legacyName) ||
+        // The aggregate component rewrites cross-source refs, but its body
+        // seam still uses source-local legacy names. Keep the existing
+        // flat-name collision exclusion intact for this bounded route.
+        collidingFunctionNames.has(claim.legacyName) ||
         terminal?.sourceId !== sourceId ||
         terminal.kind !== "top-level-function" ||
         terminal.observedKind !== "function" ||
@@ -375,9 +392,9 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
       );
     })
     .sort((left, right) => compare(left[0]!, right[0]!));
-  const componentCutoverEnabled =
-    input.ctx.irProgramCallableComponentCutoverEnabled === true &&
-    input.multiAst.sourceFiles.every((sourceFile) => collectModuleInitPopulation(sourceFile).length === 0);
+  const componentCutoverEnabled = input.multiAst.sourceFiles.every(
+    (sourceFile) => collectModuleInitPopulation(sourceFile).length === 0,
+  );
   if (!componentCutoverEnabled) {
     const attempted = new Set(input.ctx.irProgramCallableAttemptedUnitIds ?? []);
     for (const group of groups) for (const candidate of group) attempted.add(candidate.unitId);
@@ -433,6 +450,7 @@ export interface MultiPreparedProgramRoutePlanningInput {
   readonly ctx: CodegenContext;
   readonly explicitlyDisabled: (value: string | undefined) => boolean;
   readonly planSource: (sourceFile: ts.SourceFile, stringShape?: MultiPreparedStringLeafShape) => IrOverlayPlan;
+  readonly planResolvedModuleInitSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
   readonly buildSafety: () => MultiPreparedScalarLeafGraphSafety;
   readonly safeSelection: (
     plan: IrOverlayPlan,
@@ -453,6 +471,17 @@ export interface MultiPreparedProgramRoutePlanningInput {
     legacyName: string,
   ) => MultiPreparedFunctionValueSupportReceipt | undefined;
   readonly projectLoweringPlans: (plan: IrOverlayPlan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly moduleInit?: Omit<
+    MultiPreparedModuleInitPlanningInput,
+    | "ctx"
+    | "multiAst"
+    | "identityContext"
+    | "options"
+    | "planSource"
+    | "planResolvedSource"
+    | "safeSelection"
+    | "projectLoweringPlans"
+  >;
   readonly callable: Omit<
     MultiPreparedCallableOrchestrationInput,
     "owner" | "multiAst" | "ctx" | "identityContext" | "planSource" | "safeSelection"
@@ -488,7 +517,6 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     input.multiAst.sourceFiles.length > 1;
   if (input.multiAst.sourceFiles.some((sourceFile) => collectModuleInitPopulation(sourceFile).length > 0)) {
     input.ctx.irProgramCallableCutoverEnabled = false;
-    input.ctx.irProgramCallableComponentCutoverEnabled = false;
   }
   input.owner.planExistingRoutes({
     active,
@@ -510,7 +538,21 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     projectLoweringPlans: input.projectLoweringPlans,
     stringShapes,
   });
-  if (input.ctx.irProgramCallableCutoverEnabled) {
+  const preparedModuleInit = input.moduleInit
+    ? planMultiPreparedModuleInit({
+        ...input.moduleInit,
+        ctx: input.ctx,
+        multiAst: input.multiAst,
+        identityContext: input.identityContext,
+        ...(input.options ? { options: input.options } : {}),
+        planSource,
+        planResolvedSource: input.planResolvedModuleInitSource,
+        safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
+        projectLoweringPlans: input.projectLoweringPlans,
+      })
+    : undefined;
+  if (preparedModuleInit) input.owner.registerPreparedModuleInit(preparedModuleInit);
+  if (input.ctx.irProgramCallableCutoverEnabled && !preparedModuleInit) {
     planMultiPreparedCallableComponents({
       owner: input.owner,
       multiAst: input.multiAst,

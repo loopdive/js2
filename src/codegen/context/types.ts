@@ -1976,6 +1976,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   reviverDriverReserved?: boolean;
   /**
+   * (#3481 step 3) True once a `ref → f64` coercion reserved the
+   * `__objlit_tp_callable` / `__objlit_tp_call` pair used to dispatch an
+   * `@@toPrimitive` held in a struct FIELD (`{ [Symbol.toPrimitive]: fn }`).
+   * Filled in finalize once the closure base-wrapper set and the
+   * `__call_fn_method_N` family exist — same reserve/fill funcIdx-authority
+   * pattern as the accessor drivers above.
+   */
+  objLitToPrimitiveReserved?: boolean;
+  /**
    * (#2166 PR-D2) True once the standalone `JSON.stringify` codec reserved its
    * `__call_to_json(value, method, key) -> externref` driver funcIdx — filled in
    * finalize to wrap `__call_fn_method_1` (value bound as the `toJSON`
@@ -2591,6 +2600,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * claimed as `f64` and the boolean twin is dead code.
    */
   booleanFunctionNames?: ReadonlySet<string>;
+  /**
+   * (#4406 Phase 3) Function name → the parameter SLOTS every call site in the
+   * program passes a boolean to. The caller-side mirror of
+   * {@link booleanFunctionNames}: `refinedTwinParamTypes` turns a proven slot
+   * into a boolean-branded `i32` parameter on the twin AND its trampoline, so
+   * `this.parseExprOp(…, false, …)` pushes an `i32.const` instead of an
+   * `i32.const` plus `call $__box_boolean`. Empty unless `JS2WASM_RET_UNBOX_ABI`
+   * is on — the analysis is skipped outright when the flag is off.
+   */
+  booleanParamSlots?: ReadonlyMap<string, ReadonlySet<number>>;
   /** (#4122) Grounded "every definition of this slot is numeric" verdict from
    *  `analyzeNumericPropertyNames`; absent in the host lane / when disabled. */
   numericLocalVerdict?: (node: ts.Node, name: string) => boolean;

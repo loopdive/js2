@@ -76,7 +76,12 @@ import {
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
-import { ensureNativeSymbolBoundaryBridge, ensureSymbolRegistry, usesNativeSymbolProvider } from "../symbol-native.js";
+import {
+  ensureNativeSymbolBoundaryBridge,
+  ensureSymbolCarrier,
+  ensureSymbolRegistry,
+  usesNativeSymbolProvider,
+} from "../symbol-native.js";
 import { tryCompileTemporalStaticCall } from "../temporal-native.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper } from "./builtins.js";
@@ -552,6 +557,20 @@ export function compileNamespaceStaticCall(
     }
   }
 
+  // Handle ArrayBuffer.isView() — an omitted arg is undefined and therefore
+  // false. Keep this standalone-only arm separate from the argument-bearing
+  // implementation below so the host route remains unchanged (#4778).
+  if (
+    noJsHost(ctx) &&
+    ts.isIdentifier(propAccess.expression) &&
+    propAccess.expression.text === "ArrayBuffer" &&
+    propAccess.name.text === "isView" &&
+    expr.arguments.length === 0
+  ) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
   // Handle ArrayBuffer.isView(arg) — checks if arg is a TypedArray/DataView (#965)
   if (
     ts.isIdentifier(propAccess.expression) &&
@@ -653,6 +672,32 @@ export function compileNamespaceStaticCall(
       }
     };
 
+    // JavaScript evaluates every supplied argument before entering the
+    // Reflect builtin. Native get/has still need their arguments in locals so
+    // the target can be validated after that evaluation, but before the native
+    // helper performs ToPropertyKey (or consumes the optional receiver).
+    const emitReflectArgumentLocals = (): number[] => {
+      const argLocals: number[] = [];
+      for (const arg of expr.arguments) {
+        const argTy = compileExpression(ctx, fctx, arg, externRef);
+        if (argTy && argTy.kind !== "externref") {
+          coerceType(ctx, fctx, argTy, externRef);
+        } else if (argTy === null) {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        const local = allocTempLocal(fctx, externRef);
+        fctx.body.push({ op: "local.set", index: local });
+        argLocals.push(local);
+      }
+      return argLocals;
+    };
+
+    const releaseReflectArgumentLocals = (argLocals: readonly number[]): void => {
+      for (let i = argLocals.length - 1; i >= 0; i--) {
+        releaseTempLocal(fctx, argLocals[i]!);
+      }
+    };
+
     // Helper — drop N pushed args and return a fallback constant when the import is unavailable.
     // (#2046 cleanup) `i32-false` is the safer default for boolean-returning
     // Reflect methods on a registration failure (the module is already marked
@@ -680,6 +725,16 @@ export function compileNamespaceStaticCall(
       const type = ctx.checker.getTypeAtLocation(argument);
       return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     };
+    const mayCarryNativeReflectSymbol = (argument: ts.Expression | undefined): boolean => {
+      if (!argument) return false;
+      const includesSymbol = (fact: ReturnType<typeof ctx.oracle.typeFactOf>): boolean => {
+        if (fact.kind === "symbol" || fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable") {
+          return true;
+        }
+        return fact.kind === "union" && fact.parts.some(includesSymbol);
+      };
+      return includesSymbol(ctx.oracle.typeFactOf(argument));
+    };
     const emitNativeReflectTargetGuard = (targetLocal: number, message: string): void => {
       const ort = ensureObjectRuntime(ctx);
       const admittedIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined;
@@ -704,6 +759,18 @@ export function compileNamespaceStaticCall(
       }
       fctx.body.push({ op: "i32.eqz" });
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
+    };
+    const emitNativeReflectSymbolTargetGuard = (targetLocal: number, message: string): void => {
+      const symbolTypeIdx = ensureSymbolCarrier(ctx);
+      const before = fctx.body.length;
+      emitThrowTypeError(ctx, fctx, message);
+      const throwInstrs = fctx.body.splice(before);
+      fctx.body.push(
+        { op: "local.get", index: targetLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: symbolTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+      );
     };
 
     // ── #1472 Phase C — Reflect.* under --target standalone ───────────────
@@ -730,6 +797,18 @@ export function compileNamespaceStaticCall(
     //   stay refused until their native invariants are proven end-to-end.
     if (nativeReflectProvider) {
       if (reflectMethod === "get" && expr.arguments.length >= 2) {
+        const argLocals = emitReflectArgumentLocals();
+        const targetLocal = argLocals[0]!;
+
+        // §28.1.5 step 1: reject the native Symbol carrier after
+        // ArgumentListEvaluation, but before native property-key conversion
+        // or receiver use. Other native object carriers are sibling heap types
+        // (not subtypes of `$Object`) and must remain on their existing helper
+        // paths; a complete Type(V)-is-Object classifier is out of this scope.
+        if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
+          emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.get called on non-object");
+        }
+
         // (#2046/#4397) Preserve the optional receiver in Wasm. A native
         // target uses __reflect_get_receiver; an admitted caller-owned JS
         // target alone uses the boundary adapter. Runtime admission, rather
@@ -741,22 +820,8 @@ export function compileNamespaceStaticCall(
           const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_reflect_get") : undefined;
           const admittedIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined;
           if (nativeIdx !== undefined) {
-            const argLocals: number[] = [];
-            for (let i = 0; i < 3; i++) {
-              const arg = expr.arguments[i];
-              if (arg !== undefined) {
-                const argTy = compileExpression(ctx, fctx, arg, externRef);
-                if (argTy && argTy.kind !== "externref") coerceType(ctx, fctx, argTy, externRef);
-                else if (argTy === null) fctx.body.push({ op: "ref.null.extern" });
-              } else {
-                fctx.body.push({ op: "ref.null.extern" });
-              }
-              const local = allocTempLocal(fctx, externRef);
-              fctx.body.push({ op: "local.set", index: local });
-              argLocals.push(local);
-            }
             const callWithLocals = (funcIdx: number): Instr[] => [
-              ...argLocals.map((index): Instr => ({ op: "local.get", index })),
+              ...argLocals.slice(0, 3).map((index): Instr => ({ op: "local.get", index })),
               { op: "call", funcIdx },
             ];
             if (boundaryIdx !== undefined && admittedIdx !== undefined) {
@@ -773,7 +838,7 @@ export function compileNamespaceStaticCall(
             } else {
               fctx.body.push(...callWithLocals(nativeIdx));
             }
-            for (let i = argLocals.length - 1; i >= 0; i--) releaseTempLocal(fctx, argLocals[i]!);
+            releaseReflectArgumentLocals(argLocals);
             return { kind: "externref" };
           }
           reportError(
@@ -781,17 +846,23 @@ export function compileNamespaceStaticCall(
             expr,
             "Codegen error: Reflect.get with an explicit receiver could not register its native provider (#2046).",
           );
+          releaseReflectArgumentLocals(argLocals);
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
         }
-        emitReflectArgs(2);
+
+        fctx.body.push({ op: "local.get", index: argLocals[0]! });
+        fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_get", [externRef, externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx });
+          releaseReflectArgumentLocals(argLocals);
           return { kind: "externref" };
         }
-        return fallbackReturn(2, "extern-null");
+        const fallback = fallbackReturn(2, "extern-null");
+        releaseReflectArgumentLocals(argLocals);
+        return fallback;
       }
 
       if (reflectMethod === "set" && expr.arguments.length >= 2) {
@@ -842,16 +913,30 @@ export function compileNamespaceStaticCall(
       }
 
       if (reflectMethod === "has" && expr.arguments.length >= 2) {
-        emitReflectArgs(2);
+        const argLocals = emitReflectArgumentLocals();
+        const targetLocal = argLocals[0]!;
+
+        // §28.1.8 step 1: reject the native Symbol carrier before the native
+        // helper performs ToPropertyKey. Extra arguments were already
+        // evaluated above as part of ArgumentListEvaluation. Other native
+        // object carriers remain on their existing helper paths.
+        if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
+          emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.has called on non-object");
+        }
+        fctx.body.push({ op: "local.get", index: argLocals[0]! });
+        fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx });
+          releaseReflectArgumentLocals(argLocals);
           return { kind: "i32" };
         }
         // (#2046 cleanup) i32-false: a registration failure should not report
         // a phantom `true` for `Reflect.has`.
-        return fallbackReturn(2, "i32-false");
+        const fallback = fallbackReturn(2, "i32-false");
+        releaseReflectArgumentLocals(argLocals);
+        return fallback;
       }
 
       if (reflectMethod === "deleteProperty" && expr.arguments.length >= 2) {
@@ -1458,14 +1543,32 @@ export function compileNamespaceStaticCall(
 
     // Reflect.get(target, key, [receiver]) — returns externref.
     if (reflectMethod === "get" && expr.arguments.length >= 2) {
-      emitReflectArgs(3);
+      const argLocals = emitReflectArgumentLocals();
+      // The compatibility host helper performs ToPropertyKey before calling
+      // host Reflect.get. A statically-known Symbol target must therefore be
+      // rejected here, after all arguments have run but before that helper.
+      if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
+        emitThrowTypeError(ctx, fctx, "Reflect.get called on non-object");
+        releaseReflectArgumentLocals(argLocals);
+        return { kind: "externref" };
+      }
+      fctx.body.push(
+        { op: "local.get", index: argLocals[0]! },
+        { op: "local.get", index: argLocals[1]! },
+        ...(argLocals[2] === undefined
+          ? ([{ op: "ref.null.extern" }] as Instr[])
+          : ([{ op: "local.get", index: argLocals[2] }] as Instr[])),
+      );
       const funcIdx = ensureLateImport(ctx, "__reflect_get", [externRef, externRef, externRef], [externRef]);
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
+        releaseReflectArgumentLocals(argLocals);
         return { kind: "externref" };
       }
-      return fallbackReturn(3, "extern-null");
+      const fallback = fallbackReturn(3, "extern-null");
+      releaseReflectArgumentLocals(argLocals);
+      return fallback;
     }
 
     // Reflect.set(target, key, value, [receiver]) — returns i32 (boolean).
@@ -1482,14 +1585,25 @@ export function compileNamespaceStaticCall(
 
     // Reflect.has(target, key) — returns i32 (boolean).
     if (reflectMethod === "has" && expr.arguments.length >= 2) {
-      emitReflectArgs(2);
+      const argLocals = emitReflectArgumentLocals();
+      // Keep target validation ahead of the host helper's ToPropertyKey path
+      // for statically-known Symbols while preserving full argument ordering.
+      if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
+        emitThrowTypeError(ctx, fctx, "Reflect.has called on non-object");
+        releaseReflectArgumentLocals(argLocals);
+        return { kind: "i32" };
+      }
+      fctx.body.push({ op: "local.get", index: argLocals[0]! }, { op: "local.get", index: argLocals[1]! });
       const funcIdx = ensureLateImport(ctx, "__reflect_has", [externRef, externRef], [i32Ty]);
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
+        releaseReflectArgumentLocals(argLocals);
         return { kind: "i32" };
       }
-      return fallbackReturn(2, "i32-true");
+      const fallback = fallbackReturn(2, "i32-true");
+      releaseReflectArgumentLocals(argLocals);
+      return fallback;
     }
 
     // Reflect.deleteProperty(target, key) — returns i32 (boolean).

@@ -119,6 +119,16 @@
       "path": "tests/npm-compat-page-freshness.test.ts",
       "guards": "the dashboard header describes the measurement SPREAD and every card carries its own measuredAt \u2014 never one timestamp over an out-of-sync corpus",
       "broken_by": "#4796 (the per-package split made a single header timestamp wrong; react-dom showed 3-day-old numbers under a current one)"
+    },
+    {
+      "path": "tests/issue-4780-devirtualization-routes.test.ts",
+      "guards": "all THREE devirtualization admission routes into tryEmitDirectTwinCall, pinned separately: (a) this.m() in a typed twin reaches the UNGUARDED __dc_*, (b) this.m() in a generic lifted body reaches the guarded one, (c) recv.m() on a proven non-this receiver devirtualizes instead of falling to compileCallablePropertyCall's __fsd_/__extern_method_call ladder \u2014 plus every trampoline reaching a typed twin (not a silent legacy degradation), an unprovable two-class receiver still DECLINING, and both lanes at shipped-default and IR_INLINE=0 flags. 8 cases, ~5s of test time",
+      "broken_by": "ad543a660e (2026-08-24, an npm-compat package-suite commit) gave struct-receiver resolution a wasm-carrier fallback that claimed every standalone fnctor local, so route (c) stopped devirtualizing entirely \u2014 28.5x on the cross-engine `method` axis, red on main for 3 days behind six green required checks, fixed in #4775/PR #5076. Criterion 1 applies through the FILE-OTHER-THAN-ITSELF gap twice over: the breaking edit was ~1400 lines away in src/codegen/expressions/call-receiver-method.ts and touched no test, so test:changed-root never selected the one suite that did go red (tests/issue-3754-numeric-return-twin.test.ts, in no gating lane); and the acorn dogfood corpus is structurally BLIND to route (c) \u2014 its sites are all this.m(), so its census is byte-identical with and without the regression (#4780)"
+    },
+    {
+      "path": "tests/issue-3754-numeric-return-twin.test.ts",
+      "guards": "the numeric-return twin ABI: a definitely-numeric prototype method's twin is declared results:[f64] with no exit box, the __dc_* trampoline's result FOLLOWS the twin's (else every devirtualized site silently degrades to the legacy dispatcher), the call site consumes the f64 without __to_primitive/__unbox_number, and five negative cases (mixed returns, bare `return;`, fall-off-the-end, string return, a same-named non-numeric method elsewhere) keep the boxed ABI",
+      "broken_by": "ad543a660e \u2014 9 of its 10 tests were red on main 2026-08-24 to 2026-08-27 and nobody saw it, because this file is in no gating lane (it lives under tests/, not tests/equivalence/, so equivalence-gate does not run it). Not one assertion was wrong: with the offending lowering disabled it was 10/10 unmodified. Listing it here is the half of #4780 that #4775 asked for \u2014 promoting the shape suite that DID catch the regression into a lane where a red run is visible"
     }
   ]
 }

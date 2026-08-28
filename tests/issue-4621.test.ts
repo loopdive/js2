@@ -40,10 +40,49 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { selectCachedRuntimeEvalProvider } from "../scripts/runtime-eval-provider.mjs";
 import { runTest262File } from "./test262-runner.js";
 
 const HARNESS = join(__dirname, "..", "test262", "harness", "assert.js");
 const TEST262 = existsSync(HARNESS);
+
+/**
+ * (#4784) Is a LINKABLE `js2wasm:runtime-eval` provider available for the
+ * engine this process selected?
+ *
+ * Several rows below drive test262 files whose module carries the module-level
+ * `js2wasm:runtime-eval` import. With no provider they do not merely answer
+ * wrong — they cannot INSTANTIATE, so the row reports a confusing
+ * assertion failure about `Date !== null` whose real cause is a missing build
+ * artifact. That is a prerequisite of the environment, not a claim about the
+ * compiler, so it must SKIP with an actionable message rather than fail.
+ *
+ * This is deliberately a question about the SELECTED engine, not about any one
+ * artifact: `JS2WASM_EVAL_ENGINE` defaults to `quickjs`, whose artifact a plain
+ * dev container never builds, while CI's root-test lanes (`ci.yml`'s changed-
+ * root-test gate and `issue-tests.yml`) both set `JS2WASM_EVAL_ENGINE:
+ * interpreter` and prebuild the refusal provider. So this gate is FALSE only on
+ * an unprovisioned local box and stays TRUE in CI — it cannot silently disarm
+ * the rows where they are meant to gate.
+ */
+const EVAL_PROVIDER: { ok: boolean; detail: string } = (() => {
+  try {
+    const selection = selectCachedRuntimeEvalProvider() as { module: unknown; message: string };
+    return { ok: selection.module !== null, detail: selection.message };
+  } catch (error) {
+    return { ok: false, detail: (error as Error).message };
+  }
+})();
+
+if (TEST262 && !EVAL_PROVIDER.ok) {
+  console.warn(
+    `[issue-4621] SKIPPING the eval-provider-dependent rows: no linkable js2wasm:runtime-eval ` +
+      `provider for the selected engine.\n  reason: ${EVAL_PROVIDER.detail}\n` +
+      `  to run them here: JS2WASM_EVAL_ENGINE=interpreter node --import tsx ` +
+      `scripts/build-runtime-eval-provider.mjs --refusal-only, then re-run with ` +
+      `JS2WASM_EVAL_ENGINE=interpreter (this is what CI's root-test lanes do).`,
+  );
+}
 
 /**
  * (#4003 CI-LOAD MITIGATION, copied from `es5-standalone-harness-selftests.test.ts`
@@ -63,8 +102,9 @@ afterEach(async () => {
   await new Promise((r) => setImmediate(r));
 });
 
-function pinRow(rel: string, note?: string): void {
-  it(`${rel}${note ? ` — ${note}` : ""}`, { timeout: 60_000 }, async () => {
+function pinRow(rel: string, note?: string, opts: { needsEvalProvider?: boolean } = {}): void {
+  const row = it.skipIf(opts.needsEvalProvider === true && !EVAL_PROVIDER.ok);
+  row(`${rel}${note ? ` — ${note}` : ""}`, { timeout: 60_000 }, async () => {
     const abs = join(__dirname, "..", "test262", "test", rel);
     const r = await runTest262File(abs, "issue-4621", 30_000, "standalone");
     expect(`${r.status}: ${r.error ?? ""}`).toBe("pass: ");
@@ -97,15 +137,15 @@ describe.skipIf(!TEST262)("#4621 C — Date is a real value, not null", () => {
   // Both rows walk the same 15 constructor globals and only `Date` was `null`;
   // every other name in the list already had a carrier. Adding `Date` to
   // `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` changes ONLY the bare-value read.
-  pinRow("built-ins/global/S10.2.3_A1.1_T3.js", "global code — Date !== null");
-  pinRow("built-ins/global/S10.2.3_A1.2_T3.js", "function code — Date !== null");
+  pinRow("built-ins/global/S10.2.3_A1.1_T3.js", "global code — Date !== null", { needsEvalProvider: true });
+  pinRow("built-ins/global/S10.2.3_A1.2_T3.js", "function code — Date !== null", { needsEvalProvider: true });
   // The sibling that already passed: a regression guard on the same walk.
   // A1.3 is the EVAL-CODE variant, so it needs a linked runtime-eval provider —
   // present locally (quickjs artifact) but NOT in CI's `quality` tier, where the
   // row fails with the #2928 standalone refusal. Accept pass OR that specific
   // refusal: the pin still trips if the Date-carrier walk regresses (a
   // `Test262Error: Date === null` is neither), without being tier-dependent.
-  it(
+  it.skipIf(!EVAL_PROVIDER.ok)(
     "built-ins/global/S10.2.3_A1.3_T3.js — control (eval-code variant, tier-tolerant)",
     { timeout: 60_000 },
     async () => {
@@ -206,13 +246,22 @@ describe.skipIf(!TEST262)("#4621 G — Math.random is host-free standalone", () 
 });
 
 describe.skipIf(!TEST262)("#4621 — measured residuals (must still fail)", () => {
-  // H's second row. `throw obj` PRESERVES identity for a plain object, an array,
-  // a constructor instance and an Error — but NOT for an object literal carrying
-  // a `valueOf` or `toString` override, which loses identity at the externref
-  // boundary of a CALL or a THROW (array slots and object slots keep it). So
-  // CHECK#5's `catch (e) { e.i = 10 }` writes to a copy. Owner: the
-  // value-representation / to-primitive-carrier lane.
-  pinResidualRow("language/statements/try/S12.14_A18_T6.js", "valueOf-object loses identity across throw");
+  // H's second row, HEALED — flipped positive 2026-08-28 (#4784).
+  //
+  // The residual read: `throw obj` PRESERVES identity for a plain object, an
+  // array, a constructor instance and an Error — but NOT for an object literal
+  // carrying a `valueOf`/`toString` override, which lost identity at the
+  // externref boundary of a CALL or a THROW, so CHECK#5's
+  // `catch (e) { e.i = 10 }` wrote to a copy. The value-representation /
+  // to-primitive-carrier lane has since closed that gap.
+  //
+  // Verified tier-INDEPENDENT before flipping, which is what makes the flip
+  // safe: the row is `pass` with NO runtime-eval provider at all (tier NONE)
+  // and with the REFUSAL provider linked. It reaches `e.eval()` as an ordinary
+  // OWN property of the thrown object literal, never the dynamic evaluator, so
+  // its verdict does not track the provider tier the way its C-group
+  // neighbours do.
+  pinRow("language/statements/try/S12.14_A18_T6.js", "valueOf-object keeps identity across throw");
 
   // Family E — was pinned residual ("static with-scope delete is a no-op"),
   // HEALED by #4519 in the same merge cycle (its member-get guard corpus sweep
@@ -228,5 +277,5 @@ describe.skipIf(!TEST262)("#4621 — measured residuals (must still fail)", () =
   // The aggregate runtime-eval work has removed the old throughput wall for
   // this exact 65k-loop row; keep it positive so the stale residual cannot
   // return unnoticed.
-  pinRow("language/literals/regexp/S7.8.5_A1.1_T2.js", "65k eval loop now completes");
+  pinRow("language/literals/regexp/S7.8.5_A1.1_T2.js", "65k eval loop now completes", { needsEvalProvider: true });
 });

@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import {
+  irDirectCallLoweringPlanEquals,
+  type IrDirectCallLoweringPlan,
+  type IrHostVoidCallbackLoweringPlan,
+  type IrIntegrationLoweringPlans,
+} from "../ir/ast-lowering-plans.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
 import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
@@ -1816,10 +1821,10 @@ export function completePreparedIrIntegration(input: {
         // A deferred caller can still target a dependency whose sealed body
         // was settled by the early report. Retain those exact AST-site plans
         // without re-adding the prepared owner to the emission population.
-        directCalls: new Map([
-          ...input.projectLoweringPlans(input.selection).directCalls,
-          ...remainingLoweringPlans.directCalls,
-        ]),
+        directCalls: mergePreparedIrDirectCallLoweringPlans(
+          input.projectLoweringPlans(input.selection).directCalls,
+          remainingLoweringPlans.directCalls,
+        ),
       }
     : remainingLoweringPlans;
   const remainingReport = compileIrPathFunctions(
@@ -1831,4 +1836,24 @@ export function completePreparedIrIntegration(input: {
     loweringPlans,
   );
   return input.preparedReport ? mergeIrIntegrationReports(input.preparedReport, remainingReport) : remainingReport;
+}
+
+/** Merge two authenticated projections without allowing later authority to replace an exact AST-site row. */
+export function mergePreparedIrDirectCallLoweringPlans(
+  full: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+  remaining: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+): Map<ts.CallExpression, IrDirectCallLoweringPlan> {
+  const merged = new Map(full);
+  for (const [call, plan] of remaining) {
+    const prior = merged.get(call);
+    if (prior && !irDirectCallLoweringPlanEquals(prior, plan)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared IR direct-call projections disagree for ${call.expression.getText(call.getSourceFile())}`,
+      );
+    }
+    if (!prior) merged.set(call, plan);
+  }
+  return merged;
 }

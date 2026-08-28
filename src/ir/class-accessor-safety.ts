@@ -106,6 +106,47 @@ function boundedPreparedInstanceFieldInitializer(initializer: ts.Expression): bo
   return bounded;
 }
 
+/**
+ * Exact syntax-only field-call candidate retained by #3522 F3.
+ *
+ * This is deliberately narrower than general call syntax: the initializer is
+ * the call itself, its target is one bare identifier, and its fixed argument
+ * population contains no nested executable/call/construct edge. Checker-backed
+ * target identity is proved separately; syntax alone never admits the class.
+ */
+export function isBoundedPreparedNestedFieldCallInitializer(
+  initializer: ts.Expression,
+): initializer is ts.CallExpression {
+  if (
+    !ts.isCallExpression(initializer) ||
+    !ts.isIdentifier(initializer.expression) ||
+    initializer.questionDotToken !== undefined ||
+    (initializer.typeArguments?.length ?? 0) !== 0 ||
+    initializer.arguments.some(ts.isSpreadElement)
+  ) {
+    return false;
+  }
+  let bounded = true;
+  const visit = (node: ts.Node): void => {
+    if (!bounded) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      node.kind === ts.SyntaxKind.SuperKeyword
+    ) {
+      bounded = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const argument of initializer.arguments) visit(argument);
+  return bounded;
+}
+
 function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration[]): boolean {
   return parameters.every(
     (parameter) =>
@@ -174,12 +215,16 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  * see `prepareImplicitConstructorSupports`, which now pulls such a class into
  * the pre-seal support population.
  */
-export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
+function isPreparedNestedOrdinaryClassShape(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  fieldCallInventoryCandidate: boolean,
+): boolean {
   if (declaration.heritageClauses?.length || hasDecorators(declaration) || declaration.members.length === 0) {
     return false;
   }
   let constructorCount = 0;
   let callableMemberCount = 0;
+  let fieldCallCount = 0;
   for (const member of declaration.members) {
     if (hasDecorators(member)) return false;
     const isStatic = hasModifier(member, ts.SyntaxKind.StaticKeyword);
@@ -189,7 +234,10 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
         return false;
       }
       if (member.initializer !== undefined && !boundedPreparedInstanceFieldInitializer(member.initializer)) {
-        return false;
+        if (!fieldCallInventoryCandidate || !isBoundedPreparedNestedFieldCallInitializer(member.initializer)) {
+          return false;
+        }
+        fieldCallCount++;
       }
       continue;
     }
@@ -236,7 +284,38 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
     }
     return false;
   }
-  return constructorCount <= 1 && callableMemberCount > 0;
+  return (
+    constructorCount <= 1 &&
+    callableMemberCount > 0 &&
+    (fieldCallInventoryCandidate ? fieldCallCount > 0 : fieldCallCount === 0)
+  );
+}
+
+export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
+  return isPreparedNestedOrdinaryClassShape(declaration, false);
+}
+
+/**
+ * Syntax-only inventory population for one still-unclaimed bare field-call
+ * family. Only the identity scanner may use this predicate in F3; selection
+ * continues to use {@link isBoundedPreparedNestedOrdinaryClass} exclusively.
+ */
+export function isNestedOrdinaryClassFieldCallInventoryCandidate(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
+  if (!isPreparedNestedOrdinaryClassShape(declaration, true)) return false;
+  if (ts.isClassDeclaration(declaration)) return declaration.name !== undefined;
+  const variable = declaration.parent;
+  if (
+    !ts.isVariableDeclaration(variable) ||
+    variable.initializer !== declaration ||
+    !ts.isIdentifier(variable.name) ||
+    !ts.isVariableDeclarationList(variable.parent) ||
+    (variable.parent.flags & ts.NodeFlags.Const) === 0
+  ) {
+    return false;
+  }
+  return declaration.name === undefined || declaration.name.text === variable.name.text;
 }
 
 /**

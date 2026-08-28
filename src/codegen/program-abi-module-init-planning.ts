@@ -77,6 +77,9 @@ function functionSignature(ctx: CodegenContext, func: WasmFunction): FuncTypeDef
 export class ProgramAbiModuleInitCallableRegistry {
   private readonly observations: ModuleInitCallableObservation[] = [];
   private planned = false;
+  private preparedExactUnitId?: IrUnitId;
+  private preparedExactFunction?: WasmFunction;
+  private preparedExactHandle?: FuncHandle;
 
   constructor(
     readonly ctx: CodegenContext,
@@ -141,13 +144,89 @@ export class ProgramAbiModuleInitCallableRegistry {
 
   /** Exact preallocated function object for one selected source module-init unit. */
   functionForUnit(unitId: IrUnitId): WasmFunction | undefined {
-    const observation = this.observations.filter((candidate) => candidate.unitId === unitId).at(-1);
+    const observation = this.uniqueObservationForUnit(unitId);
     return observation ? definedFuncAt(this.ctx, observation.funcIdx) : undefined;
   }
 
   handleForUnit(unitId: IrUnitId): FuncHandle | undefined {
-    const observation = this.observations.filter((candidate) => candidate.unitId === unitId).at(-1);
+    const observation = this.uniqueObservationForUnit(unitId);
     return observation && definedFuncAt(this.ctx, observation.funcIdx) ? observation.funcIdx : undefined;
+  }
+
+  /**
+   * Select one exact source-owned module-init slot for Prepared lowering.
+   *
+   * This is intentionally separate from `planRetained()`: a multi-source
+   * inventory has several module-init units, so the generic retained sweep
+   * cannot infer the Prepared owner from source count or observation order.
+   */
+  reservePreparedExactUnit(unitId: IrUnitId): void {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot reserve Prepared module-init unit ${unitId} after retained planning`,
+      );
+    }
+    if (!this.session || !this.identityContext) {
+      throw new ProgramAbiInvariantError(
+        "context-session-mismatch",
+        `Prepared module-init unit ${unitId} requires an identity-bound Program ABI session`,
+      );
+    }
+    if (this.preparedExactUnitId !== undefined) {
+      if (this.preparedExactUnitId !== unitId) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `Prepared module-init selected both ${this.preparedExactUnitId} and ${unitId}`,
+        );
+      }
+      return;
+    }
+    const terminal = this.identityContext.terminalByUnitId.get(unitId);
+    const sourceFile = terminal ? this.identityContext.sourceFileBySourceId.get(terminal.sourceId) : undefined;
+    if (
+      !terminal ||
+      terminal.kind !== "module-init" ||
+      terminal.observedKind !== "module-init" ||
+      terminal.terminalOwnerId !== unitId ||
+      sourceFile === undefined ||
+      this.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) !== unitId
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `Prepared module-init unit ${unitId} is not an exact source-owned terminal`,
+      );
+    }
+    const observation = this.uniqueObservationForUnit(unitId);
+    const func = observation ? definedFuncAt(this.ctx, observation.funcIdx) : undefined;
+    if (!observation || !func) {
+      throw new ProgramAbiInvariantError(
+        "missing-required-locator",
+        `Prepared module-init unit ${unitId} has no unique preallocated callable`,
+      );
+    }
+    const signature = functionSignature(this.ctx, func);
+    if (signature.params.length !== 0 || signature.results.length !== 0) {
+      throw new ProgramAbiInvariantError(
+        "alias-signature-mismatch",
+        `Prepared module-init unit ${unitId} must use the exact [] -> [] ABI`,
+      );
+    }
+    this.preparedExactUnitId = unitId;
+    this.preparedExactFunction = func;
+    this.preparedExactHandle = observation.funcIdx;
+  }
+
+  get preparedExactUnit(): IrUnitId | undefined {
+    return this.preparedExactUnitId;
+  }
+
+  get preparedExactFunctionObject(): WasmFunction | undefined {
+    return this.preparedExactFunction;
+  }
+
+  get preparedExactHandleValue(): FuncHandle | undefined {
+    return this.preparedExactHandle;
   }
 
   /** Exact preallocated function object for one source before unit planning seals. */
@@ -173,8 +252,29 @@ export class ProgramAbiModuleInitCallableRegistry {
       return func ? [{ observation, func }] : [];
     });
     const moduleInitUnitIds = [...identityContext.moduleInitUnitIdBySourceId.values()];
-    const exactUnitId = moduleInitUnitIds.length === 1 ? moduleInitUnitIds[0] : undefined;
-    const exactObservation = exactUnitId ? liveObservations.at(-1)?.observation : undefined;
+    // M2 explicitly reserves its chosen unit before this generic sweep. The
+    // single-unit compatibility path remains exact, but never guesses from
+    // the last physical observation in a multi-source graph.
+    const exactUnitId = this.preparedExactUnitId ?? (moduleInitUnitIds.length === 1 ? moduleInitUnitIds[0] : undefined);
+    const exactObservation = exactUnitId
+      ? liveObservations.find(({ observation }) => observation.unitId === exactUnitId)?.observation
+      : undefined;
+    if (this.preparedExactUnitId !== undefined) {
+      const exactMatches = liveObservations.filter(
+        ({ observation }) => observation.unitId === this.preparedExactUnitId,
+      );
+      if (
+        exactMatches.length !== 1 ||
+        exactObservation === undefined ||
+        exactMatches[0]!.func !== this.preparedExactFunction ||
+        exactMatches[0]!.observation.funcIdx !== this.preparedExactHandle
+      ) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `Prepared module-init unit ${this.preparedExactUnitId} lost its exact retained callable`,
+        );
+      }
+    }
     const entrySourceId = canonicalEntrySource(session);
 
     for (const { observation, func } of liveObservations) {
@@ -227,5 +327,10 @@ export class ProgramAbiModuleInitCallableRegistry {
         `retained module initializer was not accepted for exact unit ${unitId}`,
       );
     }
+  }
+
+  private uniqueObservationForUnit(unitId: IrUnitId): ModuleInitCallableObservation | undefined {
+    const matches = this.observations.filter((candidate) => candidate.unitId === unitId);
+    return matches.length === 1 ? matches[0] : undefined;
   }
 }

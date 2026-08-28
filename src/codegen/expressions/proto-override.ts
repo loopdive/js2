@@ -25,8 +25,16 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { nextModuleGlobalIdx } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
-import { compileArrowAsClosure, resolveComputedKeyExpression } from "../shared.js";
+import {
+  compileArrowAsClosure,
+  ensureLateImport,
+  flushLateImportShifts,
+  resolveComputedKeyExpression,
+} from "../shared.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { arrayProtoIteratorOverrideKeyFromTarget } from "../array-proto-iterator-override-ast.js";
+
+export { isArrayProtoIteratorAssignTarget } from "../array-proto-iterator-override-ast.js";
 
 /** Canonical proto-owner token for `Array.prototype`. */
 const ARRAY_PROTO_TOKEN = "Array";
@@ -37,6 +45,8 @@ const ARRAY_PROTO_TOKEN = "Array";
  * for `.values`), or `undefined` when it is not a recognised iterator override.
  */
 function arrayProtoOverrideKey(ctx: CodegenContext, target: ts.Expression): string | undefined {
+  const exactKey = arrayProtoIteratorOverrideKeyFromTarget(target);
+  if (exactKey !== undefined) return exactKey;
   // Element access: Array.prototype[Symbol.iterator]
   if (ts.isElementAccessExpression(target)) {
     if (!isArrayPrototype(target.expression)) return undefined;
@@ -52,36 +62,6 @@ function arrayProtoOverrideKey(ctx: CodegenContext, target: ts.Expression): stri
     return undefined;
   }
   return undefined;
-}
-
-/**
- * (#1719 CPR) AST-only predicate (no `ctx`) for the module-init statement filter:
- * true when `target` is `Array.prototype[Symbol.iterator]` / `Array.prototype.values`,
- * so the override assignment is kept in `__module_init` instead of being dropped.
- * Matches the LHS shape recognised by `sourceOverridesArrayIterator`.
- */
-export function isArrayProtoIteratorAssignTarget(target: ts.Expression): boolean {
-  if (ts.isElementAccessExpression(target)) {
-    if (!isArrayPrototype(target.expression)) return false;
-    const arg = target.argumentExpression;
-    // `Array.prototype[Symbol.iterator]` — Symbol.iterator is a property access
-    // `Symbol.iterator`; accept it structurally (the precise key resolves later).
-    if (
-      ts.isPropertyAccessExpression(arg) &&
-      ts.isIdentifier(arg.expression) &&
-      arg.expression.text === "Symbol" &&
-      arg.name.text === "iterator"
-    ) {
-      return true;
-    }
-    // `Array.prototype["values"]`
-    if (ts.isStringLiteral(arg) && arg.text === "values") return true;
-    return false;
-  }
-  if (ts.isPropertyAccessExpression(target)) {
-    return isArrayPrototype(target.expression) && target.name.text === "values";
-  }
-  return false;
 }
 
 /** True when `e` is exactly `Array.prototype`. */
@@ -229,12 +209,21 @@ function reserveProtoIteratorDriver(ctx: CodegenContext): number {
 export function fillProtoIteratorDriver(ctx: CodegenContext): void {
   if (!ctx.protoIteratorDriverReserved) return;
   const driverIdx = ctx.funcMap.get(DRIVE_PROTO_ITERATOR);
-  if (driverIdx === undefined) return;
+  if (driverIdx === undefined) {
+    if (ctx.standalone) throw new Error("#1719 standalone CPR driver identity could not be resolved at fill");
+    return;
+  }
   const driverFn = definedFuncAt(ctx, driverIdx);
-  if (!driverFn) return;
+  if (!driverFn) {
+    if (ctx.standalone) throw new Error("#1719 standalone CPR driver body could not be resolved at fill");
+    return;
+  }
 
   const callMethod0 = ctx.funcMap.get("__call_fn_method_0");
   if (callMethod0 === undefined) {
+    if (ctx.standalone) {
+      throw new Error("#1719 standalone CPR driver dispatcher could not be resolved at fill");
+    }
     // No arity-0 closure dispatcher emitted (no qualifying closure) — the driver
     // is unreachable from any live read-drive in that case, but keep a valid
     // body so the module verifies: return undefined (null externref).
@@ -256,31 +245,72 @@ export function fillProtoIteratorDriver(ctx: CodegenContext): void {
  * `arrayIteratorMaybeOverridden && arrayIteratorOverrideGlobalIdx(ctx)!==undefined`.
  *
  * Lowers (§7.4.2 GetIterator + §8.5.2 IteratorBindingInitialization):
- *   1. `extern.convert_any` the vec → the array-as-`this` externref;
- *   2. `global.get` the captured override closure;
- *   3. `call __drive_proto_iterator(array, closure)` → the override-produced
- *      iterator externref, stashed in `iterLocal`.
+ *   1. in standalone, reserve/settle the canonical `__iterator` normalizer;
+ *   2. re-resolve the override global + driver after that settlement;
+ *   3. `extern.convert_any` the vec → the array-as-`this` externref;
+ *   4. `global.get` the captured override closure;
+ *   5. `call __drive_proto_iterator(array, closure)` → the override-produced
+ *      raw iterator externref;
+ *   6. in standalone, call `__iterator(raw)` exactly once and stash the
+ *      resulting `$IterRec` externref in `iterLocal`.
  *
- * Returns the local holding the iterator externref. The caller drains it via
- * `__iterator_next` into the binding elements. Standalone-clean: the drive runs
- * in-Wasm (no host import, no host-Array reflection); only the per-element drain
- * uses the existing `__iterator_next` host import (dual-mode boundary, same as
- * for-of). The brand only fires here at the observation boundary, so internal
- * array iterations inside the override body stay on the typed-vec fast path —
- * no re-entrancy.
+ * Returns the local holding the consumer-ready iterator externref. The caller
+ * drains it via `__iterator_next` into the binding elements. In GC/host this is
+ * the legacy raw iterator contract. In standalone it is the native `$IterRec`
+ * contract established by `__iterator`; both calls remain in-Wasm and add no
+ * host import. WASI deliberately retains its previous bytes in this checkpoint.
+ * The brand only fires here at the observation boundary, so internal array
+ * iterations inside the override body stay on the typed-vec fast path — no
+ * re-entrancy.
  */
 export function emitArrayProtoIteratorDrive(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  overrideGlobalIdx: number,
+  overrideGlobalIdxBeforeSettlement: number,
 ): number {
-  const driverIdx = reserveProtoIteratorDriver(ctx);
+  let iteratorIdx: number | undefined;
+  let overrideGlobalIdx = overrideGlobalIdxBeforeSettlement;
+  let driverIdx: number;
+  if (ctx.standalone) {
+    // #1719 standalone contract: `__iterator_next` accepts only a canonical
+    // `$IterRec`, while the captured generator override returns a raw
+    // `$GenState_*`. Reserve the shared normalizer BEFORE retaining any
+    // shiftable global/function index, then settle the late-import batch and
+    // resolve every identity again from its authoritative registry.
+    ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    iteratorIdx = ctx.funcMap.get("__iterator");
+    if (iteratorIdx === undefined) {
+      throw new Error("#1719 standalone CPR normalizer '__iterator' could not be resolved");
+    }
+    const settledOverrideGlobalIdx = arrayIteratorOverrideGlobalIdx(ctx);
+    if (settledOverrideGlobalIdx === undefined) {
+      throw new Error("#1719 CPR override global could not be resolved after iterator settlement");
+    }
+    overrideGlobalIdx = settledOverrideGlobalIdx;
+    reserveProtoIteratorDriver(ctx);
+    const settledDriverIdx = ctx.funcMap.get(DRIVE_PROTO_ITERATOR);
+    if (settledDriverIdx === undefined) {
+      throw new Error("#1719 CPR driver could not be resolved after iterator settlement");
+    }
+    driverIdx = settledDriverIdx;
+  } else {
+    // Preserve the established GC/WASI path literally: its caller-resolved
+    // global and the direct reserve result remain authoritative.
+    driverIdx = reserveProtoIteratorDriver(ctx);
+  }
   // Stack: [vec-ref]. Convert to the array-as-`this` externref.
   fctx.body.push({ op: "extern.convert_any" });
   // Push the override closure.
   fctx.body.push({ op: "global.get", index: overrideGlobalIdx });
-  // Drive: __drive_proto_iterator(array, closure) -> iterator externref.
+  // Drive: __drive_proto_iterator(array, closure) -> raw iterator externref.
   fctx.body.push({ op: "call", funcIdx: driverIdx });
+  if (iteratorIdx !== undefined) {
+    // Standalone only: normalize the raw `$GenState_*` exactly once. Every
+    // existing declaration/parameter/for-of-head/assignment/spread consumer
+    // can keep its proven `__iterator_next($IterRec)` ABI unchanged.
+    fctx.body.push({ op: "call", funcIdx: iteratorIdx });
+  }
   const iterLocal = allocLocal(fctx, `__cpr_iter_${fctx.locals.length}`, { kind: "externref" } as ValType);
   fctx.body.push({ op: "local.set", index: iterLocal });
   return iterLocal;

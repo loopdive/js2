@@ -1213,23 +1213,50 @@ export function ensureProxyRuntime(
         ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
         : []),
     ];
-    const primitiveTypeofIndices = [
-      "__typeof_number",
-      "__typeof_boolean",
-      "__typeof_string",
-      "__typeof_bigint",
-      "__typeof_symbol",
-      "__extern_is_undefined",
-    ]
+    const primitiveTypeofIndices = ["__typeof_number", "__typeof_boolean", "__typeof_string", "__typeof_bigint"]
       .map((name) => ctx.funcMap.get(name))
       .filter((idx): idx is number => idx !== undefined);
+    const typeofSymbolIdx = ctx.funcMap.get("__typeof_symbol");
+    const symbolTypeIdx = ctx.symbolTypeIdx;
+    const typeofUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
     const requireObject = (local: number): Instr[] => {
       const primitiveTest: Instr[] = [];
+      let primitiveCount = 0;
+      const appendPrimitiveTest = (test: Instr[]): void => {
+        primitiveTest.push(...test);
+        if (primitiveCount > 0) primitiveTest.push({ op: "i32.or" });
+        primitiveCount++;
+      };
       for (const funcIdx of primitiveTypeofIndices) {
-        primitiveTest.push({ op: "local.get", index: local }, { op: "call", funcIdx });
-        if (primitiveTest.length > 2) primitiveTest.push({ op: "i32.or" });
+        appendPrimitiveTest([
+          { op: "local.get", index: local },
+          { op: "call", funcIdx },
+        ]);
       }
-      if (primitiveTest.length === 0) primitiveTest.push({ op: "i32.const", value: 0 });
+      // There is no standalone `__typeof_symbol` import in the native helper
+      // set today.  When one is already available, keep using it; otherwise
+      // classify the existing native `$Symbol` carrier directly.  The carrier
+      // is pre-registered by the Proxy call site for Symbol-capable target or
+      // handler facts, so this discriminator is stable at mint time.
+      if (typeofSymbolIdx !== undefined) {
+        appendPrimitiveTest([
+          { op: "local.get", index: local },
+          { op: "call", funcIdx: typeofSymbolIdx },
+        ]);
+      } else if (symbolTypeIdx >= 0) {
+        appendPrimitiveTest([
+          { op: "local.get", index: local },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+        ]);
+      }
+      if (typeofUndefinedIdx !== undefined) {
+        appendPrimitiveTest([
+          { op: "local.get", index: local },
+          { op: "call", funcIdx: typeofUndefinedIdx },
+        ]);
+      }
+      if (primitiveCount === 0) primitiveTest.push({ op: "i32.const", value: 0 });
       return [...primitiveTest, { op: "if", blockType: { kind: "empty" }, then: throwNotObject() }];
     };
     const proxyCreateBody: Instr[] = [

@@ -26,6 +26,7 @@
  * `{ kind: "unresolvable" }` / `undefined` — never a guess.
  */
 import { ts } from "../ts-api.js";
+import { symbolShadowsBuiltinGlobal } from "./builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 
 /** JS runtime tag classification (aligned with the #2104 JsTag module). */
 export type JsTag = "number" | "string" | "boolean" | "bigint" | "symbol" | "undefined" | "object" | "function";
@@ -505,7 +506,18 @@ export class TsCheckerOracle implements TypeOracle {
         return { kind: "array", element: element ? this.factOfType(element, depth + 1) : { kind: "any" } };
       }
       const name = t.symbol?.name;
-      if (name && BUILTIN_NAMES.has(name)) {
+      // (#5096) The `BUILTIN_NAMES` match is a NAME claim, so it must not
+      // outrank the binding the name actually resolves to. `class Map { … }`
+      // gives its own symbol the name `"Map"`, so this arm answered
+      // `{kind:"builtin", name:"Map"}` for the user class's own constructor —
+      // and `isFreshlyConstructedNonCallable` reads a `builtin` fact as
+      // "carries no [[Construct]]", so `new Map()` compiled to a hard
+      // `TypeError: Map is not a constructor`. Consult the declaration first:
+      // only the AMBIENT intrinsic keeps the builtin fact; a user binding of
+      // the same spelling falls through to the ordinary
+      // construct-signature / class classification two lines below, which is
+      // exactly what an unshadowed name of any other spelling already gets.
+      if (name && BUILTIN_NAMES.has(name) && !symbolShadowsBuiltinGlobal(t.symbol)) {
         if (name === "Array") {
           const elem = typeArguments[0];
           return { kind: "array", element: elem ? this.factOfType(elem, depth + 1) : { kind: "any" } };

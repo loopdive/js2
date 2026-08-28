@@ -3435,13 +3435,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  * - `"skip"` — bodies only. Every source in between, for which both passes were
  *   pure waste.
  */
-export type ModuleInitMode = "full" | "discover" | "skip";
+export type ModuleInitMode = "full" | "discover" | "skip" | "prepared";
 
 /** Prepare-before-direct ownership for the exact source module initializer. */
 export interface ModuleInitBodyCompileRouting {
   readonly skipBody: boolean;
   readonly preserveSkippedBody: boolean;
   readonly skippedNames: string[];
+  /** Exact M2 handoff; a prepared source may not be selected by display name. */
+  readonly exactSourceFile?: ts.SourceFile;
+  readonly exactUnitId?: IrUnitId;
+  readonly skippedUnitIds?: IrUnitId[];
 }
 
 /**
@@ -4060,17 +4064,41 @@ export function compileDeclarations(
   const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   let compiledInitFctx: FunctionContext | null = null;
-  const skipModuleInitBody = moduleInitMode === "full" && moduleInitBodyRouting?.skipBody === true;
+  const skipModuleInitBody =
+    (moduleInitMode === "full" || moduleInitMode === "prepared") && moduleInitBodyRouting?.skipBody === true;
   if (skipModuleInitBody) {
-    const preallocated = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+    const preparedRoute = moduleInitMode === "prepared";
+    if (
+      preparedRoute &&
+      (!moduleInitBodyRouting ||
+        !moduleInitBodyRouting.preserveSkippedBody ||
+        moduleInitBodyRouting.exactSourceFile !== sourceFile ||
+        moduleInitBodyRouting.exactUnitId === undefined ||
+        ctx.irPlanningIdentityContext?.moduleInitUnitIdBySourceFile.get(sourceFile) !==
+          moduleInitBodyRouting.exactUnitId)
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `prepared module initializer for ${sourceFile.fileName} has no exact contributor handoff`,
+      );
+    }
+    const preallocated = preparedRoute
+      ? ctx.programAbiModuleInitCallables?.functionForUnit(moduleInitBodyRouting.exactUnitId!)
+      : ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
     if (!preallocated) {
-      throw new Error("prepared module initializer has no exact preallocated Program ABI slot");
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `prepared module initializer for ${sourceFile.fileName} has no exact preallocated Program ABI slot`,
+      );
     }
     if (!moduleInitBodyRouting.preserveSkippedBody) {
       preallocated.locals = [];
       preallocated.body = [{ op: "unreachable" }];
     }
     moduleInitBodyRouting.skippedNames.push(MODULE_INIT_UNIT_NAME);
+    if (preparedRoute) moduleInitBodyRouting.skippedUnitIds?.push(moduleInitBodyRouting.exactUnitId!);
   }
 
   // (#2965) The module-init body is compiled TWICE (the second pass, below,
@@ -4261,7 +4289,12 @@ export function compileDeclarations(
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
   // skipped only in `"skip"` mode, where an earlier source already ran it over
   // the same complete statement list.
-  if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip" && !skipModuleInitBody) {
+  if (
+    (hasModuleInits || hasStaticInits) &&
+    moduleInitMode !== "skip" &&
+    moduleInitMode !== "prepared" &&
+    !skipModuleInitBody
+  ) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
@@ -4427,9 +4460,10 @@ export function compileDeclarations(
   // `"discover"`/`"skip"` never inject: each injection mints a fresh function
   // holding a full copy of the graph initializer, and only the last one is
   // ever reachable (via `startFuncIdx` / the `__module_init` export).
-  const routedInitFunc = skipModuleInitBody
-    ? ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)
-    : undefined;
+  const routedInitFunc =
+    moduleInitMode === "full" && skipModuleInitBody
+      ? ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)
+      : undefined;
   const emittedInitBody = compiledInitFctx?.body ?? routedInitFunc?.body;
   if (moduleInitMode === "full" && emittedInitBody && emittedInitBody.length > 0) {
     ctx.mod.hasTopLevelStatements = true;

@@ -19,8 +19,10 @@ import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnct
 import {
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
+  resolvesToNamedAmbientGlobal,
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
+import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import * as newConstructors from "./new-non-constructable-value.js"; // (#4246)
 import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
@@ -3721,6 +3723,15 @@ function prepareNativeSetAdderDispatch(
   fctx: FunctionContext,
   collTmp: number,
 ): NativeSetAdderDispatch | undefined {
+  // Reading a builtin prototype as a value (for example the Test262
+  // `Object.getPrototypeOf(s)` assertion) arms the companion store and seeds
+  // its intrinsic members, but it does not install a user override.  Treating
+  // that seeded `Set.prototype.add` as custom makes the constructor invoke the
+  // deliberately-refusing first-class member closure instead of the native
+  // `__set_add` fast path.  The pre-scan's named-write bit is the narrow gate
+  // for an observable override; descriptor and assignment writes both set it.
+  if (!ctx.protoNamedDirty) return undefined;
+
   const hasIdx = ctx.funcMap.get("__protoidx_has_r");
   const getIdx = ctx.funcMap.get("__protoidx_get_r");
   if (hasIdx === undefined || getIdx === undefined) return undefined;
@@ -3953,6 +3964,23 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // a labelled allocation nested in them consumes and resets the hint, so the
   // outer allocation degrades to the union layout (fat, never narrow).
   maybeEmitLayoutHint(ctx, fctx, expr);
+
+  // (#3481) §25.2.3.1 `SharedArrayBuffer(length)` step 2 is `? ToIndex(length)`,
+  // whose ToNumber throws on a Symbol. Unlike `ArrayBuffer` (handled natively in
+  // new-indexed.ts) SAB has no in-Wasm lowering: it falls all the way through to
+  // the generic `__new_SharedArrayBuffer` host import, where a native symbol
+  // arrives as an opaque carrier struct and `ToIndex` reads it as 0 instead of
+  // throwing (built-ins/SharedArrayBuffer/return-abrupt-from-length-symbol.js).
+  // Guarded on the ambient global so a user `class SharedArrayBuffer` keeps its
+  // own constructor.
+  if (
+    (expr.arguments?.length ?? 0) >= 1 &&
+    resolvesToNamedAmbientGlobal(ctx, expr.expression, "SharedArrayBuffer") &&
+    !ctx.classSet.has("SharedArrayBuffer") &&
+    emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments![0]!, "number")
+  ) {
+    return { kind: "externref" };
+  }
 
   // (#1528b) Unwrap parens AND `as`/`!`/type-assertion wrappers so the static
   // non-constructor guards below still fire on `new ((() => {}) as any)()` etc.

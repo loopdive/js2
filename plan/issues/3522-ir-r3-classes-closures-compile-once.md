@@ -4,9 +4,9 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-26
-assignee: ttraenkler/fable-lead
-branch: claude/ir-3522-static-nested-family
+updated: 2026-08-28
+assignee: ttraenkler/codex
+branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
 horizon: xl
 complexity: XL
@@ -28,6 +28,8 @@ files:
   - .github/workflows/test262-sharded.yml
   - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
+  - src/ir/class-accessor-safety.ts
+  - src/ir/class-field-call-planning.ts
   - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
   - src/ir/extern-support.ts
@@ -51,6 +53,7 @@ files:
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-overlay-safety.ts
+  - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-imported-call-planning.ts
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -67,6 +70,11 @@ files:
   - tests/issue-3214-callable-abi.test.ts
   - tests/issue-2859.test.ts
   - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
+  - tests/issue-3522-ir-nested-class-ownership.test.ts
+  - tests/issue-3522-nested-class-field-call-planning.test.ts
+  - tests/issue-3520-ir-first-identity.test.ts
+  - tests/issue-3520-ir-unit-identity.test.ts
+  - tests/issue-3520-planning-owner.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
@@ -3138,6 +3146,9 @@ Limit production changes to:
 - **src/ir/integration.ts**;
 - **src/codegen/index.ts**, to thread the already-built identity resolver to
   every identity-aware projection/reconciliation call; and
+- **src/codegen/ir-prepared-free-functions.ts**, to merge the full-selection
+  and remaining-selection authenticated plan maps only through exact equality;
+  and
 - **src/ir/imported-functions.ts** only if the existing resolver interface
   needs a narrowly shared certification method rather than a new resolver.
 
@@ -3190,6 +3201,14 @@ explicit-constructor, stale AST, copied SourceFile, wrong owner, same-spelled
 foreign target, binding, name, and signature mutations. **from-ast.ts** needs
 no change: it already consumes an exact AST-site plan and verifies its owner
 before emitting the symbolic target.
+
+The implicit-constructor control in F2 is deliberately negative: with the
+field-call gate closed, any natural call owned by an implicit constructor would
+have to occur in an instance-field initializer, and that exact shape remains
+unbounded until F3/F4. Its support/nonterminal owner must therefore reject the
+identity-aware collector. Do not fabricate a terminal implicit constructor or
+admit a call-bearing field to manufacture a positive F2 row. F4 owns the first
+natural positive implicit-constructor field-call control.
 
 #### F3. Retain dormant source-qualified field-call evidence
 
@@ -3289,6 +3308,73 @@ inventory and typed fallback/outcome rows, never by an admitted body.
 F3 shares the identity-selection and direct-call sidecar seam with #3521.
 Rebase it onto the exact landed #3521 L1/L3 API and use that API's ownership and
 copy-on-write rules. Do not land a competing resolver or mutable sidecar.
+
+##### F3a disjoint dormant-evidence checkpoint (2026-08-28, non-authoritative)
+
+The disjoint F3 core is intentionally separable from the active
+`src/codegen/index.ts` merge surface. It establishes the following contracts
+without activating F4:
+
+- `isNestedOrdinaryClassFieldCallInventoryCandidate` is a syntax-only
+  inventory predicate. The existing
+  `isBoundedPreparedNestedOrdinaryClass` selector/preparation gate remains
+  unchanged.
+- The inventory promotes only that exact direct-nested candidate's constructor
+  and body members to terminal identities, keeps every field initializer as a
+  constructor-owned support row, and retains an immutable marker tied to the
+  exact inventory, source, class, constructor, containing terminal, fields,
+  calls, and terminal-member rows.
+- `class-field-call-planning.ts` reuses the exact identity imported-function
+  resolver's same-source top-level value path. It retains a frozen
+  source-qualified `IrFuncRef`, explicit stable callable signature, and exact
+  argument population only after every forward/reverse AST and inventory join
+  revalidates.
+- Selection consumes the proof-independent marker only to force every newly
+  inventoried constructor/member terminal to
+  `class-member-unsupported@select`; it does not consume the optional proof for
+  admission. Identity and overlay plans retain the marker and optional proof
+  sidecar as dormant evidence.
+
+This checkpoint is **not F3 acceptance** while the final production seam is
+unwired. The overlap audit originally found #5154 at `be5ec432…`, #5148 at
+`fd7b280c…`, and #5097 at `f10283be…` touching `src/codegen/index.ts`. #5154 is
+now present in the refreshed `a2191bb09520…` base; the disjoint branch still
+deliberately leaves that file untouched while #5148/#5097 remain adjacent.
+After those heads settle, the remaining narrow follow-up is:
+
+1. construct the already-shared exact resolver once before identity selection;
+2. call `planIrNestedClassFieldCalls` over the exact planning context and pass
+   its sidecar through `IrIdentitySelectionOptions`;
+3. retain that same sidecar on the outer overlay plan without rebuilding it;
+4. run the proof-enabled/proof-disabled full compiler A/B matrix and pin exact
+   inventory/outcome deltas, unchanged claims/preparation/runtime/bytes, and
+   proof-only sidecar variance.
+
+Direct planner/identity tests are necessary evidence for this checkpoint but
+cannot substitute for that final compile A/B. Until the follow-up lands, the
+production path intentionally behaves as proof-disabled: the typed candidate
+inventory and exact unsupported terminal outcomes exist, but no field-call
+body is admitted or prepared.
+
+Checkpoint evidence on the refreshed `a2191bb09520…` base. The only
+intervening changes since the measured `9f5c421b9849…` baseline were the
+unrelated #5157/#5158 issue plans; they did not touch this source or test
+surface:
+
+- TS 7 and TS 5 no-emit checks pass.
+- The focused dormant-planner matrix passes **16/16** and the four directly
+  affected identity/ownership files pass **55/55**.
+- The complete 20-file #3522 matrix on code-identical `9f5c421b9849…` reports
+  **300 pass / 17 fail**. A clean detached worktree at that same base reproduces
+  those exact 17 failures in the same four files (two cross-owner expectations,
+  eleven stale GC import-surface expectations, and four nested-static poison
+  expectations), so they are current-main baseline debt rather than an F3a
+  delta.
+- Prettier, IR layering, IR fallback, IR-only readiness, IR adoption,
+  codegen-fallback, oracle, coercion-site, optimization-retirement,
+  dead-export, LOC, and function-budget gates pass. The LOC gate measures
+  **+669 src LOC** with no unallowed growth; the existing issue-local function
+  grant accounts for `planIrCompilationByIdentity` growing **481 → 542**.
 
 #### F4. Activate only the exact prepared field-call family
 
@@ -3441,3 +3527,72 @@ Every heavy command and every commit/push boundary requires a fresh finite,
 non-negative one-minute load strictly below **logical cores - 2**. Each signed
 checkpoint receives independent read-only review before push and is shepherded
 through actual merge before its successor is published.
+
+### 2026-08-27 F2 implementation checkpoint — exact-owner direct-call plans
+
+F2 is implemented as the behavior-neutral authority split specified above.
+`collectIrDirectCallLoweringPlansByIdentity` is a distinct collector; the
+context-free collector used by resolver-less linear and stdlib-selfhost routes
+retains its prior contract. The identity-aware path requires the exact source
+and planning owner for each AST call, active self-owned owner and target
+terminals, and the one source resolver's
+`resolveTopLevelFunctionValueTarget` certification. Declaration object,
+source-qualified unit, callable binding, compatibility name, and canonical
+closure signature are revalidated before one retained plan can be projected or
+reconciled. Copied roots/sites, lexical ancestry drift, same-spelled foreign
+targets, stale owners, bindings, names, signatures, or source identities fail
+closed.
+
+The one resolver is threaded through single- and multi-source overlay planning
+and integration reconciliation. Source-unit targets remain disjoint from the
+non-unit runtime/intrinsic compatibility projection. A duplicate producer may
+only reuse an identical authenticated row; `Map.set` never resolves an owner
+collision, including when full-selection and remaining-selection plan maps are
+combined. The existing field-call selector gate stays closed, so this slice
+does not admit a class field, change a claim/outcome, or alter emitted behavior.
+
+Focused evidence covers outer-root, nested-function, implicit/explicit
+constructor, admitted nested-method, copied AST/source, ancestry, wrong-owner,
+foreign-target, binding/name/signature, and collision controls. The #3522
+GC/standalone matrix is 7/7 and the new #3520 collector/collision/mutation
+controls are 4/4. TypeScript 7 and 5, formatting, IR layering, fallback
+controls, and the function ratchet pass. The full adjacent #3520 suite is
+13/13. Its host-void-callback fixture now supplies the exact admitted
+`HTMLElement_addEventListener` operation certificate, so missing/stale owner
+mutations reach the intended callback-plan invariant instead of stopping at the
+earlier generic capability guard. With only that test-fixture correction, exact
+parent `5bdc209f0de611808a701d9b08a0b971d689f12f` passes the original denominator
+9/9; F2 passes all 13. Against that same parent, F2 is
+byte-identical within every measured target/option: GC direct is 974 bytes,
+SHA-256 `b9358ef967232d9248c5e14b660fba012397e344f45d108bc926329516300d77`;
+GC experimental is 981 bytes,
+`b18876938bb429a377c5abdb3a476cf3a6c554fd8ca3d9dec64c68861d70259e`;
+standalone direct is 49,113 bytes,
+`e1a48a77e3c902f5097cc4329c7787f70dc99af68621d2ac418da3c9e34229ee`;
+and standalone experimental is 49,120 bytes,
+`33b6777e092efee30c6f20e2266aba9125ed0efcd75de15831a7153dd0d02041`.
+The pre-existing 7-byte direct-versus-experimental difference is unchanged and
+is not attributed to F2.
+
+Production growth is confined to the five files authorized by F2: +152 in
+`src/ir/ast-lowering-plans.ts`, +29 in
+`src/codegen/ir-overlay-identity.ts`, +25 in
+`src/codegen/ir-prepared-free-functions.ts`, +30 in
+`src/codegen/index.ts`, and +37 in `src/ir/integration.ts`. The existing
+issue-scoped LOC allowances for `index.ts` and `integration.ts` cover those
+measured changes when this plan is included in the checkpoint; no budget
+baseline changes. F2 remains `in-progress` work under #3522. F3 dormant
+field-call evidence and F4 bounded admission remain separate post-merge
+checkpoints and inherit the same independent-review, strict-load,
+signed-commit, and unskipped-hook gates.
+
+The post-push kind-neutrality gate found one evidence location made stale by
+the added `integration.ts` lines. The `forof.string` row keeps its existing
+`js` verdict, `dialect` placement, rationale, declaration, and two-entry
+evidence set; only the integration evidence location moves from line 5109 to
+line 5146. The relocked
+baseline SHA-256 is
+`42686323c13fcb8539e82b179efd89a4d2feba10edefc7d4772ca65130a91a42`.
+`check:ir-kind-neutrality` again reports 85 kinds: 55 neutral, 27 JS-dialect,
+and 3 unresolved, with 58 core placements and 27 dialect placements. No row,
+verdict, placement, or phase-two move was added, removed, or widened.

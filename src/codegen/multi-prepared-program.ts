@@ -45,6 +45,7 @@ import type {
   MultiPreparedScalarLeafReceipt,
 } from "./multi-prepared-scalar-leaf.js";
 import type { PreparedIrFreeFunctionBodies } from "./ir-prepared-free-functions.js";
+import type { MultiPreparedModuleInitPreparation } from "./multi-prepared-module-init.js";
 import type { ModuleInitMode } from "./declarations.js";
 import type { ProgramAbiSession, PublishedProgramAbi } from "./program-abi-session.js";
 import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
@@ -62,7 +63,8 @@ export type MultiPreparedProgramRouteKind =
   | "string"
   | "function-value"
   | "fibonacci-pair"
-  | "cross-source-callable";
+  | "cross-source-callable"
+  | "module-init";
 
 export interface MultiPreparedProgramSourceCensus {
   readonly sourceId: IrSourceId;
@@ -103,6 +105,25 @@ export interface MultiPreparedProgramAudit {
   readonly bodySourceIds: readonly IrSourceId[];
   readonly overlaySourceIds: readonly IrSourceId[];
   readonly abiSessionBound: true;
+  readonly moduleInit?: MultiPreparedProgramModuleInitAudit;
+}
+
+export interface MultiPreparedProgramModuleInitAudit {
+  readonly schema: "multi-prepared-program-module-init-audit-v1";
+  readonly sourcePlans: readonly {
+    readonly sourceId: IrSourceId;
+    readonly unitId: IrUnitId | null;
+    readonly executable: boolean;
+    readonly evaluationCount: number;
+  }[];
+  readonly executablePlanCount: 1;
+  readonly emptyPlanCount: number;
+  readonly contributorSourceId: IrSourceId;
+  readonly contributorUnitId: IrUnitId;
+  readonly preparedComponentId: string;
+  readonly invocationKind: "wasm-start" | "deferred-export";
+  readonly directCompileModuleInitBodyRoots: number;
+  readonly irBodyEmissions: 1;
 }
 
 /** The overlay consumer is run only after the owner authenticates its report. */
@@ -199,6 +220,10 @@ export type MultiPreparedProgramInvariantCode =
   | "routes-incomplete"
   | "completion-order"
   | "publication-inventory-mismatch"
+  | "module-init-plan-mismatch"
+  | "module-init-reservation-mismatch"
+  | "module-init-body-skip-mismatch"
+  | "module-init-startup-mismatch"
   | "owner-failed";
 
 /** The owner keeps its stable sub-code alongside the normal IR invariant kind. */
@@ -393,6 +418,10 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   readonly #callableComponentsBySourceFile = new Map<SourceFile, MultiPreparedProgramCallableComponent[]>();
   readonly #callableSkippedUnitIds = new Set<IrUnitId>();
   readonly #callableSkippedUnitIdsBySourceFile = new Map<SourceFile, Set<IrUnitId>>();
+  #moduleInitPreparation: MultiPreparedModuleInitPreparation | undefined;
+  readonly #moduleInitSkippedSourceFiles = new Set<SourceFile>();
+  #moduleInitFinalized = false;
+  #moduleInitTelemetryRecorded = false;
   readonly #routeSnapshots: RouteSnapshot<Plan>[] = [];
   #claimedRouteClaims: MultiPreparedRouteClaimSnapshot = EMPTY_MULTI_PREPARED_ROUTE_CLAIMS;
   readonly #bodySourceIds: IrSourceId[] = [];
@@ -546,6 +575,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     this.#requireState("collecting");
     if (!this.#routesPlanned)
       this.#fail("completion-order", "callable components were registered before route planning");
+    if (this.#moduleInitPreparation !== undefined && components.length > 0) {
+      this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
+    }
     if (this.#callableComponents.length > 0) {
       this.#fail("duplicate-reservation-component", "callable components were registered more than once");
     }
@@ -647,6 +679,105 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     );
   }
 
+  get preparedModuleInitUnitId(): IrUnitId | undefined {
+    return this.#moduleInitPreparation?.unitId;
+  }
+
+  /** Exact M2 Prepared module-init receipt, registered before body emission. */
+  registerPreparedModuleInit(preparation: MultiPreparedModuleInitPreparation): void {
+    this.#requireState("collecting");
+    if (!this.#routesPlanned)
+      this.#fail("completion-order", "Prepared module-init was registered before route planning");
+    if (this.#moduleInitPreparation !== undefined) {
+      this.#fail("module-init-reservation-mismatch", "Prepared module-init was registered more than once");
+    }
+    if (this.#callableComponents.length > 0) {
+      this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
+    }
+    const sourcePlans = preparation.sourcePlans;
+    const executable = sourcePlans.filter((plan) => plan.executable);
+    const contributor = sourcePlans.find((plan) => plan.sourceFile === preparation.sourceFile);
+    if (
+      sourcePlans.length !== this.#sourceFiles.length ||
+      sourcePlans.some(
+        (plan, index) =>
+          plan.sourceFile !== this.#sourceFiles[index] || plan.sourceId !== this.#sourceId(plan.sourceFile),
+      ) ||
+      executable.length !== 1 ||
+      !contributor ||
+      !contributor.executable ||
+      contributor.unitId !== preparation.unitId ||
+      preparation.sourceId !== this.#sourceId(preparation.sourceFile)
+    ) {
+      this.#fail("module-init-plan-mismatch", "Prepared module-init source census is not semantic-order exact");
+    }
+    const terminal = this.#terminalMap.get(preparation.unitId);
+    const mappedSourceFile = terminal ? this.#reverseSourceMap.get(terminal.sourceId) : undefined;
+    const registry = this.#ctx.programAbiModuleInitCallables;
+    if (
+      !terminal ||
+      terminal.sourceId !== preparation.sourceId ||
+      mappedSourceFile !== preparation.sourceFile ||
+      terminal.kind !== "module-init" ||
+      terminal.observedKind !== "module-init" ||
+      terminal.terminalOwnerId !== preparation.unitId ||
+      registry?.preparedExactUnit !== preparation.unitId ||
+      registry.preparedExactFunctionObject !== preparation.preparedFunction ||
+      registry.preparedExactHandleValue !== preparation.preparedHandle ||
+      registry.functionForUnit(preparation.unitId) !== preparation.preparedFunction ||
+      registry.handleForUnit(preparation.unitId) !== preparation.preparedHandle
+    ) {
+      this.#fail(
+        "module-init-reservation-mismatch",
+        `Prepared module-init ${preparation.unitId} lost its exact ABI slot`,
+      );
+    }
+    const selected = preparation.selection;
+    const preparedBody = preparation.preparedBody;
+    const report = preparation.report;
+    const evidence = report.terminalEvidence ?? [];
+    const artifacts = report.compiledArtifactEvidence ?? [];
+    const projection = preparedBody.requestedSkipProjection.entries;
+    if (
+      selected.funcs.size !== 0 ||
+      (selected.classMembers?.size ?? 0) !== 0 ||
+      (selected.classMemberUnitIds?.size ?? 0) !== 0 ||
+      selected.moduleInit?.stmtCount === 0 ||
+      preparation.preparedFunction.body !== preparation.preparedFunctionBody ||
+      !Object.isFrozen(preparation.preparedInstructions) ||
+      !sameIdentityArray(preparation.preparedFunction.body, preparation.preparedInstructions) ||
+      preparedBody.unitId !== preparation.unitId ||
+      projection.length !== 1 ||
+      projection[0]?.unitId !== preparation.unitId ||
+      projection[0]?.legacyName !== "<module-init>" ||
+      !preparedBody.skipBodies.has("<module-init>") ||
+      !preparedBody.preserveBodies.has("<module-init>") ||
+      report.errors.length !== 0 ||
+      report.compiled.length !== 1 ||
+      report.compiled[0] !== "<module-init>" ||
+      (report.terminalCompiledOwners?.length ?? 0) !== 1 ||
+      report.terminalCompiledOwners?.[0] !== "<module-init>" ||
+      evidence.length !== 1 ||
+      evidence[0]?.kind !== "patched" ||
+      evidence[0].unitId !== preparation.unitId ||
+      evidence[0].legacyName !== "<module-init>" ||
+      evidence[0].preparedComponentId !== preparation.preparedComponentId ||
+      artifacts.length !== 1 ||
+      artifacts[0]?.artifactUnitId !== preparation.unitId ||
+      artifacts[0].terminalOwnerUnitId !== preparation.unitId ||
+      artifacts[0].name !== "<module-init>" ||
+      artifacts[0].preparedComponentId !== preparation.preparedComponentId ||
+      (report.syntheticCompiledArtifacts?.length ?? 0) !== 0
+    ) {
+      this.#fail("module-init-plan-mismatch", `Prepared module-init ${preparation.unitId} has non-exact IR evidence`);
+    }
+    this.#moduleInitPreparation = Object.freeze({
+      ...preparation,
+      sourcePlans: Object.freeze([...sourcePlans]),
+    });
+    this.#ctx.irProgramPreparedModuleInitUnitId = preparation.unitId;
+  }
+
   /** Freeze the exact denominator and the reservations made before bodies. */
   sealBodyBoundary(): MultiPreparedProgramBodyPlan {
     if (this.#state === "body-boundary-sealed" || this.#state === "routes-complete" || this.#state === "complete") {
@@ -702,6 +833,20 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           });
         }
       }
+      if (this.#moduleInitPreparation) {
+        const preparation = this.#moduleInitPreparation;
+        if (reservedUnits.has(preparation.unitId)) {
+          this.#fail("duplicate-reservation-unit", `terminal ${preparation.unitId} was reserved twice`);
+        }
+        reservedUnits.add(preparation.unitId);
+        reservations.push({
+          unitId: preparation.unitId,
+          sourceId: preparation.sourceId,
+          routeKind: "module-init",
+          preparedComponentId: preparation.preparedComponentId,
+          preparedBeforeDirectBodies: true,
+        });
+      }
       reservations.sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
       const terminalUnitIds = this.#terminalUnits.map((unit) => unit.id);
       const bodyPlan: MultiPreparedProgramBodyPlan = Object.freeze({
@@ -747,13 +892,49 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   compileBodySource(sourceFile: SourceFile, moduleInitMode: ModuleInitMode): void {
     const state = this.#stateForBodySource(sourceFile);
     try {
-      compileMultiPreparedScalarLeafDeclarations(this.#ctx, sourceFile, state, moduleInitMode, {
+      // Module-init mode is graph-owned. Once M2 admits one contributor, every
+      // source pass uses prepared mode; the final semantic source must never
+      // fall back to the old `full` pass and mint/replace a second slot.
+      const effectiveModuleInitMode: ModuleInitMode = this.#moduleInitPreparation ? "prepared" : moduleInitMode;
+      const moduleInitRouting =
+        this.#moduleInitPreparation?.sourceFile === sourceFile
+          ? {
+              skipBody: true,
+              preserveSkippedBody: true,
+              skippedNames: [],
+              exactSourceFile: sourceFile,
+              exactUnitId: this.#moduleInitPreparation.unitId,
+              skippedUnitIds: [],
+            }
+          : undefined;
+      compileMultiPreparedScalarLeafDeclarations(this.#ctx, sourceFile, state, effectiveModuleInitMode, {
         skipBodies: this.#callableSkipNames(sourceFile),
         preserveBodies: this.#callableSkipNames(sourceFile),
         skipBodyUnitIds: this.#callableSkipUnitIds(sourceFile),
         preserveBodyUnitIds: this.#callableSkipUnitIds(sourceFile),
         onSkippedUnitIds: (unitIds) => this.#recordCallableSkippedUnitIds(sourceFile, unitIds),
+        ...(this.#moduleInitPreparation
+          ? {
+              moduleInitBodyRouting: moduleInitRouting,
+            }
+          : {}),
       });
+      if (this.#moduleInitPreparation) {
+        if (moduleInitRouting?.skippedUnitIds?.length === 1) {
+          if (moduleInitRouting.skippedUnitIds[0] !== this.#moduleInitPreparation.unitId) {
+            this.#fail(
+              "module-init-body-skip-mismatch",
+              `source ${sourceFile.fileName} skipped a foreign module-init unit`,
+            );
+          }
+          this.#moduleInitSkippedSourceFiles.add(sourceFile);
+        } else if (moduleInitRouting?.skippedUnitIds?.length) {
+          this.#fail(
+            "module-init-body-skip-mismatch",
+            `source ${sourceFile.fileName} skipped module-init more than once`,
+          );
+        }
+      }
       const route = state?.route;
       if (state && route?.routeKind === "string") route.tamperSkipReport(state.skippedFunctionUnitIds);
       this.#assertBodySkip(sourceFile, state);
@@ -841,6 +1022,12 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   /** Seal final optimized instruction identity immediately before ABI publication. */
   sealBeforePublication(): void {
     this.#requireState("routes-complete");
+    if (this.#moduleInitPreparation && !this.#moduleInitFinalized) {
+      this.#fail(
+        "module-init-startup-mismatch",
+        "Prepared module-init startup was not finalized before ABI publication",
+      );
+    }
     for (const state of this.#states.values()) {
       if (state.route?.routeKind === "string") state.route.sealBeforePublicationCurrentness();
     }
@@ -867,11 +1054,88 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       for (const component of this.#callableComponents) component.assertCurrent?.();
       for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
       this.#recordCallableIrTelemetry();
+      this.#assertAllModuleInitBodySkips();
+      this.#recordModuleInitIrTelemetry();
       this.#state = "routes-complete";
     } catch (error) {
       this.#state = "failed";
       throw error;
     }
+  }
+
+  /** Assert the Prepared body and exact ABI slot before intentional startup wrapping. */
+  assertPreparedModuleInitCurrent(): void {
+    this.#requireState("routes-complete");
+    const preparation = this.#moduleInitPreparation;
+    if (!preparation) return;
+    if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY === "1") {
+      preparation.preparedFunction.body = [{ op: "unreachable" }];
+    }
+    const registry = this.#ctx.programAbiModuleInitCallables;
+    if (
+      registry?.functionForUnit(preparation.unitId) !== preparation.preparedFunction ||
+      registry.handleForUnit(preparation.unitId) !== preparation.preparedHandle ||
+      preparation.preparedFunction.body !== preparation.preparedFunctionBody ||
+      !sameIdentityArray(preparation.preparedFunction.body, preparation.preparedInstructions)
+    ) {
+      this.#fail(
+        "module-init-startup-mismatch",
+        "Prepared module-init body or exact ABI slot changed before startup finalization",
+      );
+    }
+  }
+
+  /** Finalize the exact retained module-init slot after all source passes. */
+  finalizePreparedModuleInitStartup(): void {
+    this.#requireState("routes-complete");
+    const preparation = this.#moduleInitPreparation;
+    if (!preparation) return;
+    if (this.#moduleInitFinalized) {
+      this.#fail("module-init-startup-mismatch", "Prepared module-init startup was finalized twice");
+    }
+    const registry = this.#ctx.programAbiModuleInitCallables;
+    const initFunc = registry?.functionForUnit(preparation.unitId);
+    const initHandle = registry?.handleForUnit(preparation.unitId);
+    if (
+      initFunc !== preparation.preparedFunction ||
+      initHandle !== preparation.preparedHandle ||
+      initFunc.body.length === 0
+    ) {
+      this.#fail(
+        "module-init-startup-mismatch",
+        "Prepared module-init lost its exact retained function before startup wiring",
+      );
+    }
+    const exportModuleInit = this.#ctx.deferTopLevelInit && !this.#ctx.wasi;
+    if (exportModuleInit) {
+      if (this.#ctx.mod.startFuncIdx !== undefined) {
+        this.#fail("module-init-startup-mismatch", "Prepared deferred module-init already has a start adapter");
+      }
+    } else {
+      if (this.#ctx.mod.startFuncIdx !== undefined && this.#ctx.mod.startFuncIdx !== initHandle) {
+        this.#fail("module-init-startup-mismatch", "Prepared module-init start adapter points at a foreign function");
+      }
+      this.#ctx.mod.startFuncIdx = initHandle;
+    }
+    if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+      if (exportModuleInit) this.#ctx.mod.startFuncIdx = initHandle;
+      else this.#ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initHandle! } });
+    }
+    const exportedAliases = this.#ctx.mod.exports.filter(
+      (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initHandle,
+    ).length;
+    const startsOnInstantiation = this.#ctx.mod.startFuncIdx === initHandle;
+    if (
+      (exportModuleInit && (exportedAliases !== 1 || startsOnInstantiation)) ||
+      (!exportModuleInit && (exportedAliases !== 0 || !startsOnInstantiation))
+    ) {
+      this.#fail(
+        "module-init-startup-mismatch",
+        `Prepared module-init must have exactly one ${exportModuleInit ? "deferred export" : "wasm start"} adapter`,
+      );
+    }
+    this.#ctx.mod.hasTopLevelStatements = true;
+    this.#moduleInitFinalized = true;
   }
 
   /** Complete the ownership audit after the exact ABI publication. */
@@ -890,12 +1154,14 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       this.#assertStable();
       this.#assertBodyPlan();
       for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
+      const moduleInitAudit = this.#moduleInitAudit();
       const audit: MultiPreparedProgramAudit = Object.freeze({
         schema: "multi-prepared-program-audit-v1",
         bodyPlan: this.#bodyPlan!,
         bodySourceIds: Object.freeze([...this.#bodySourceIds]),
         overlaySourceIds: Object.freeze([...this.#overlaySourceIds]),
         abiSessionBound: true,
+        ...(moduleInitAudit ? { moduleInit: moduleInitAudit } : {}),
       });
       this.#publication = publication;
       this.#audit = audit;
@@ -1314,6 +1580,95 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     }
   }
 
+  #assertAllModuleInitBodySkips(): void {
+    const preparation = this.#moduleInitPreparation;
+    if (!preparation) return;
+    if (
+      this.#moduleInitSkippedSourceFiles.size !== 1 ||
+      !this.#moduleInitSkippedSourceFiles.has(preparation.sourceFile)
+    ) {
+      this.#fail(
+        "module-init-body-skip-mismatch",
+        "Prepared module-init was not skipped exactly once by its contributor source",
+      );
+    }
+    for (const sourcePlan of preparation.sourcePlans) {
+      if (!sourcePlan.executable && sourcePlan.unitId !== null) {
+        this.#fail("module-init-plan-mismatch", `empty source ${sourcePlan.sourceId} retained a module-init unit`);
+      }
+    }
+  }
+
+  #recordModuleInitIrTelemetry(): void {
+    const preparation = this.#moduleInitPreparation;
+    if (!preparation || this.#moduleInitTelemetryRecorded) return;
+    const terminal = this.#terminalMap.get(preparation.unitId);
+    if (!terminal) this.#fail("module-init-reservation-mismatch", `missing module-init terminal ${preparation.unitId}`);
+    if (!this.#ctx.irCompiledFuncs?.includes("<module-init>")) {
+      this.#ctx.irCompiledFuncs = [...(this.#ctx.irCompiledFuncs ?? []), "<module-init>"];
+    }
+    const outcomes = this.#ctx.irOutcomes;
+    if (outcomes) {
+      if (outcomes.some((outcome) => outcome.unitId === preparation.unitId || outcome.key === terminal.legacyKey)) {
+        this.#fail("module-init-reservation-mismatch", `module-init ${preparation.unitId} already has an outcome`);
+      }
+      const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+      outcomes.push({
+        key: terminal.legacyKey,
+        sourceId: terminal.sourceId,
+        unitId: terminal.id,
+        file: preparation.sourceFile.fileName,
+        unitKind: terminal.observedKind,
+        displayName: terminal.displayName,
+        ordinal: terminal.legacyOrdinal,
+        line: terminal.line,
+        column: terminal.column,
+        backend: "wasmgc",
+        target,
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: preparation.preparedComponentId,
+        kind: "emitted",
+        stage: "patch",
+      });
+    }
+    this.#moduleInitTelemetryRecorded = true;
+  }
+
+  #moduleInitAudit(): MultiPreparedProgramModuleInitAudit | undefined {
+    const preparation = this.#moduleInitPreparation;
+    if (!preparation) return undefined;
+    const directCompileModuleInitBodyRoots =
+      this.#ctx.irBodyRouteAuditSession?.countRoots("compileModuleInitBody") ?? 0;
+    if (directCompileModuleInitBodyRoots !== 0) {
+      this.#fail(
+        "module-init-body-skip-mismatch",
+        `Prepared module-init recorded ${directCompileModuleInitBodyRoots} direct body roots`,
+      );
+    }
+    return Object.freeze({
+      schema: "multi-prepared-program-module-init-audit-v1" as const,
+      sourcePlans: Object.freeze(
+        preparation.sourcePlans.map((plan) =>
+          Object.freeze({
+            sourceId: plan.sourceId,
+            unitId: plan.unitId,
+            executable: plan.executable,
+            evaluationCount: plan.evaluationCount,
+          }),
+        ),
+      ),
+      executablePlanCount: 1 as const,
+      emptyPlanCount: preparation.sourcePlans.filter((plan) => !plan.executable).length,
+      contributorSourceId: preparation.sourceId,
+      contributorUnitId: preparation.unitId,
+      preparedComponentId: preparation.preparedComponentId,
+      invocationKind: preparation.invocationKind,
+      directCompileModuleInitBodyRoots,
+      irBodyEmissions: 1 as const,
+    });
+  }
+
   #assertAllBodySkips(): void {
     for (const [sourceFile, state] of this.#states) this.#assertBodySkip(sourceFile, state);
   }
@@ -1368,6 +1723,17 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           }),
         ),
       ),
+      ...(this.#moduleInitPreparation
+        ? [
+            {
+              unitId: this.#moduleInitPreparation.unitId,
+              sourceId: this.#moduleInitPreparation.sourceId,
+              routeKind: "module-init" as const,
+              preparedComponentId: this.#moduleInitPreparation.preparedComponentId,
+              preparedBeforeDirectBodies: true as const,
+            },
+          ]
+        : []),
     ].sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
     const reserved = new Set(expectedReservations.map((reservation) => reservation.unitId));
     if (
@@ -1504,6 +1870,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #assertStable(): void {
     this.#validateConstruction();
+    if (this.#ctx.irProgramPreparedModuleInitUnitId !== this.#moduleInitPreparation?.unitId) {
+      this.#fail("module-init-reservation-mismatch", "module-init owner marker changed after exact registration");
+    }
     if (
       !sameSet(this.#ctx.irProgramCallablePreparedUnitIds ?? new Set<IrUnitId>(), [
         ...this.#callableComponentByUnitId.keys(),

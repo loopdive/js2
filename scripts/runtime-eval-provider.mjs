@@ -140,6 +140,21 @@ const REFUSAL_PROVIDER_SOURCE = `
         return refuse();
       }
 
+      // (#4784) The global-SCRIPT route. The refusal provider must offer the
+      // FULL five-entry \`js2wasm:runtime-eval\` ABI, not a subset: the import is
+      // module-level and every named function is a separate import, so an
+      // absent export is a hard \`LinkError\`
+      // ("function import requires a callable"), not the designed catchable
+      // TypeError. That defeats the whole point of this provider — the file
+      // fails to instantiate and every assertion in it is lost, which is the
+      // exact failure mode the doc comment above says linking it prevents.
+      export function __runtime_script_eval(
+        source: any,
+        globalObject: any
+      ): any {
+        return refuse();
+      }
+
       export function __runtime_direct_eval(
         source: any,
         globalObject: any,
@@ -824,6 +839,14 @@ export function instantiateRuntimeEvalNamespace(providerModule) {
   return {
     __runtime_new_function: instance.exports.__runtime_new_function,
     __runtime_indirect_eval: instance.exports.__runtime_indirect_eval,
+    // (#4784) The global-SCRIPT entry, added to the provider ABI by the
+    // annex-B global-lexical work (7d8021e8, 2026-08-26). That commit taught
+    // the real provider and the quickjs adapter to EXPORT it, but this
+    // namespace — the one every import object is actually built from — kept
+    // its four-entry literal. A module importing `__runtime_script_eval` then
+    // failed to LINK ("function import requires a callable") against any
+    // NATIVE provider, refusal or interpreter alike.
+    __runtime_script_eval: instance.exports.__runtime_script_eval,
     __runtime_direct_eval: instance.exports.__runtime_direct_eval,
     __runtime_apply_interpreted: instance.exports.__runtime_apply_interpreted,
   };

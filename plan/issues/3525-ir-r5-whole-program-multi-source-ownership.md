@@ -33,11 +33,20 @@ files:
   - src/ir/module-bindings.ts
   - src/ir/imported-functions.ts
   - src/ir/module-init.ts
+  - src/ir/module-init-plan.ts
   - src/ir/integration.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-program-callable-context.ts
+  - src/codegen/legacy-body-audit.ts
+  - src/codegen/multi-prepared-body-skips.ts
+  - src/codegen/multi-prepared-callable-orchestration.ts
+  - src/codegen/multi-prepared-module-init.ts
+  - src/codegen/multi-prepared-program.ts
+  - src/codegen/program-abi-module-init-planning.ts
   - src/compiler.ts
+  - tests/issue-3525-multi-prepared-module-init.test.ts
   - tests/issue-3525-ir-whole-program-multi-source.test.ts
 loc-budget-allow:
   - src/codegen/declarations.ts
@@ -65,6 +74,42 @@ default/namespace imports, global-script declarations, same-name declarations,
 classes, closures, and module initialization must resolve by R1 structural
 identity. Fast and ordinary multi-source modes may differ in representation,
 but not in front-end ownership or source-unit accounting.
+
+## M2 landing checkpoint — one source-qualified module initializer (2026-08-27)
+
+The next bounded landing moves one executable multi-source module initializer
+behind exact Prepared ownership. It is intentionally narrower than the full R5
+module graph contract so it can land independently and preserve a fail-closed
+boundary while the remaining syntax and graph cases stay on the direct route.
+
+- The production gate is exactly
+  `JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER=1`; every other value preserves
+  the existing path.
+- Eligibility requires exactly one source with source-local executable module
+  initialization and no unresolved or cross-source value aliases in that
+  body. A resolver-backed second plan must also prove every module storage and
+  value-flow representation before reservation. All other sources must
+  contribute an empty init plan.
+- The owner preallocates and reserves the exact source-qualified module-init
+  unit in `ProgramAbiModuleInitCallableRegistry` before body emission. The
+  contributor source records the Prepared unit outcome; empty sources record
+  no synthetic ownership.
+- Every direct module-init pass is suppressed while this route owns the unit.
+  One frozen Prepared body is registered, checked again before startup
+  finalization, and wrapped once as either the start function or deferred host
+  export adapter.
+- The acceptance test proves dependency-first and entry-contributor ordering,
+  one and two contributor rejection, the all-empty case, cross-source imported
+  read rejection, deferred-host TDZ behavior, exact ABI reservation, zero
+  direct roots, body-identity and duplicate-adapter fail-closed seams, and a
+  disabled-gate direct-path poison control. A boolean-to-number module-value
+  mismatch proves unsupported representations reject before reservation and
+  retain the direct fallback.
+
+This checkpoint does not yet admit multiple executable source initializers,
+cross-source value reads, re-export evaluation, cycles/SCCs, or arbitrary
+module-init syntax. Those remain adjacent gates for the later whole-program
+module graph owner; they must not be inferred from this exact-unit cutover.
 
 ## Current evidence
 
@@ -885,6 +930,142 @@ collision filter and remains a later R5 deletion step. This checkpoint removes
 flat-name authority only at the body-skip boundary; it does not enable
 fast/WASI/host components, compose the generic lane with an already-reserved
 dedicated Prepared route, delete the late overlay, or complete M1B/M2/R5.
+
+## M1A.2 implementation lock — default-on bounded callable components (2026-08-27)
+
+M1A.1 proves that an exact, source-qualified cross-source callable component
+can reserve all of its terminal units before direct bodies, publish one sealed
+Prepared component, and correlate every skipped body back by `IrUnitId`.
+Production still requires the exact environment value
+`JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER=1` to commit that component.
+With the variable unset, the compiler builds the same whole-program graph but
+withdraws the candidate units from the late overlay and leaves their direct
+bodies authoritative. That exact-`1` promotion gate is now the next direct
+AST-to-Wasm reachability edge in the bounded M1A lane.
+
+M1A.2 makes commitment default-on whenever the existing M1A eligibility proof
+holds. It consolidates graph use and component commitment under the one
+default-on gate already interpreted by `explicitlyDisabledEnv`: only `0` or
+`false` restores the pre-cutover direct route. The redundant
+`irProgramCallableComponentCutoverEnabled` context bit is deleted so graph
+selection and component ownership cannot silently disagree. A source with any
+module-init population still disables the route before planning, and the
+existing standalone/native-string/non-WASI/non-fast/multi-source conditions,
+dedicated-owner exclusion, callable-boundary exclusion, class exclusion, and
+exact dependency/seal checks remain unchanged.
+
+The default-on proof uses the same two-terminal fixture as M1A.1 with no
+cutover environment variable. Poisoning both `add` and `run` direct bodies must
+still compile and run through one Prepared component, with exactly two unique
+unit IDs, two `terminal-ir` dispositions, and zero matching legacy audit rows.
+The `=0` mutation is the positive direct-route control: with the same poison it
+must fail at both direct bodies and report the exact legacy entries; without
+poison it must preserve runtime behavior. Existing imported-HOF (#3214),
+scalar, array, string, function-value, Fibonacci, module-init, fast, host, and
+WASI controls must remain unchanged. This promotion widens production
+ownership only to components already accepted by M1A.1; it does not relax
+same-spelling collision filters, compose with dedicated owners, admit classes
+or module init, or delete the per-source late overlay.
+
+Landing evidence is the focused #3525 suite, adjacent #3214 and dedicated-route
+suites, `check:ir-fallbacks`, typecheck, formatting/lint/ratchets, and full CI.
+The kill-switch A/B is load-bearing: a green default compile without the direct
+poison and exact disabled-route failure is not evidence that the component
+owned either terminal. Because `check:ir-only` currently exercises five
+single-source entries, it is supporting evidence rather than the authority for
+this multi-source promotion. The executed checkpoint denominator must also
+include `issue-3525-multi-prepared-program-census`,
+`issue-2138-multi-module-ir-overlay`, `equivalence/multi-file-compilation`, and
+`multi-file`, with compile throws, `success:false`, fatal `result.errors`, and
+missing body-route audits treated as failures. Assertions must join actual
+legacy body rows and Prepared component membership by `IrUnitId`; the owner's
+post-route `irOutcomes` projection is not sufficient by itself.
+
+## M2 implementation lock — single-contributor multi-source module init (2026-08-27)
+
+The first bounded multi-source module-init owner is a single-contributor lane.
+The program has more than one source, exactly one source has an executable
+module-init plan, and every other source has an empty plan. The contributor
+keeps its existing source-qualified module-init `IrUnitId`; this checkpoint
+does not mint an aggregate program unit. `MultiPreparedProgramOwner` owns its
+reservation, preparation receipt, exact body skip, telemetry, and final
+startup wiring. An accepted build must execute with zero direct
+`compileModuleInitBody` roots.
+
+The initial rollout is opt-in only when
+`JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER=1`. Unset, `0`, `false`, and every
+other value preserve the current route. Eligibility reuses the existing R4
+exact lexical module-init selector without widening it and additionally
+requires all of the following:
+
+- experimental IR, IR-first, multi-source, non-fast, and non-WASI execution on
+  an already-supported host or native-first standalone invocation lane;
+- one immutable module-init plan for every source, with exactly one executable
+  plan and no gaps, static effects, live-function seeds, top-level throws, or
+  fabricated empty-source terminal outcomes;
+- an exact contributor unit from
+  `identityContext.moduleInitUnitIdBySourceFile`, with matching terminal kind,
+  source, canonical/semantic order, declaration order, TDZ cells, binding IDs,
+  and export targets;
+- no cross-source read, write, call, capture, callable-component dependency,
+  closure, class, static initializer, reassigned live function, or late
+  import/helper/type-registry mutation; and
+- one exact preallocated `[] -> []` ABI callable resolved with
+  `functionForUnit()` and `handleForUnit()`, never `firstFunction()` or
+  `firstHandle()`.
+
+The source-plan vector and body-visit vector remain in `multiAst.sourceFiles`
+semantic order. Canonical order is recorded independently and may not be used
+to reorder execution. Empty sources participate in the plan census but have no
+reservation, body skip, direct module-init root, or synthetic IR outcome. Two
+executable source plans, all-empty plans, and every unsupported effect reject
+the capability before reservation and retain current direct behavior.
+
+Implementation adds `src/codegen/multi-prepared-module-init.ts` as an adapter
+over the existing module-init planner, verifier, and IR lowering. It freezes
+the source-local plans, selects the contributor, rejects cross-source effects,
+preallocates the exact ABI slot, and prepares the body atomically before the
+owner seals its body boundary. It must not introduce a second semantic planner.
+
+`src/codegen/multi-prepared-program.ts` gains a distinct `module-init` route,
+reservation, registration receipt, exact skip assertion, and startup
+finalization contract. Module init is not represented as a callable component.
+`src/codegen/multi-prepared-body-skips.ts` and
+`src/codegen/declarations.ts` carry a source-local exact-unit handoff and a
+prepared module-init mode that runs neither direct pass, allocates no second
+callable, preserves the prepared body, and records the contributor skip.
+Missing, duplicate, late, source-mismatched, or unit-mismatched handoffs are
+fatal invariants after reservation; direct fallback is forbidden once a body
+has been skipped.
+
+Preparation reuses `lowerFunctionAstToIr` with `moduleInitUnit: true`, the exact
+owner unit, contributor-local module bindings, exact global IDs,
+`atomicComponent: true`, `sealPreparedComponents: true`, and only the
+contributor as an integration source. The integration report must contain one
+exact prepared terminal and no errors before any skip is installed. Typed
+`Unsupported` before reservation is recoverable; partial state, changed ABI or
+body evidence, a post-seal direct root, or a duplicate startup adapter is an
+`IrInvariantError`.
+
+`planMultiPreparedProgramEarlyRoutes()` performs this transaction after the
+complete declaration/import/global/ABI census and before the first source body
+visit. Finalization attaches exactly one deferred `__module_init` export or one
+start function from the exact retained handle and may repair shifted indices,
+but may not rebuild the body. The existing rule that disables M1A callable
+components whenever module-init population exists remains load-bearing; the
+two Prepared ownership systems do not compose in this checkpoint.
+
+Acceptance lives in a new
+`tests/issue-3525-multi-prepared-module-init.test.ts` and proves both contributor
+directions, all-empty and two-executable rejection, TDZ/export behavior,
+runtime A/B parity, exact source/unit/order/ABI mutation failures, and callable
+component disjointness. `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` must
+succeed only for an accepted Prepared route; the disabled route with the same
+poison must expose direct reachability. Evidence reports total, empty, and
+executable source plans; Prepared reservations; direct roots; IR and legacy
+module-init outcomes; and callable-component reservations. Adjacent #3523,
+#2138, #3505, #3525 census, multi-file, equivalence, typecheck,
+`check:ir-fallbacks`, issue integrity, and LOC-budget gates remain required.
 
 ## Ownership and resolution invariants
 

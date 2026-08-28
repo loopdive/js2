@@ -66,7 +66,12 @@ type VecLayout = IrVecLowering | LinearVecLowering;
  * sink, while each backend still chooses its native typed representation.
  */
 export type BackendScalarConstType = "i32" | "f64";
-export type BackendNumericConversionOp = "i32.trunc_sat_f64_u" | "f64.convert_i32_s" | "f64.convert_i32_u";
+export type BackendNumericConversionOp =
+  | "i32.trunc_sat_f64_u"
+  | "f32.demote_f64"
+  | "f64.convert_i32_s"
+  | "f64.convert_i32_u"
+  | "f64.promote_f32";
 export type BackendI32BitwiseOp = "i32.and" | "i32.or" | "i32.xor" | "i32.shl" | "i32.shr_s" | "i32.shr_u";
 
 /**
