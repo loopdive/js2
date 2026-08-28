@@ -14,6 +14,7 @@ import type { Instr, ValType } from "../../ir/types.js";
  * The lifted arms are byte-identical to the inline originals.
  */
 import { ts } from "../../ts-api.js";
+import type { TypeFact } from "../../checker/oracle.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
@@ -25,6 +26,7 @@ import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureNativeProxyRuntime } from "../object-runtime.js";
+import { ensureSymbolCarrier } from "../symbol-native.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
@@ -71,6 +73,33 @@ function isDynamicMaybeStringArg(ctx: CodegenContext, arg: ts.Expression): boole
   const fact = ctx.oracle.typeFactOf(arg);
   if (fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable") return true;
   return fact.kind === "union" && fact.parts.some((p) => p.kind === "string");
+}
+
+/**
+ * Whether a Proxy target/handler fact can carry a native Symbol at runtime.
+ *
+ * ProxyCreate is emitted before its arguments are compiled.  In the native
+ * provider that means the one-time primitive validation body can otherwise be
+ * baked before the Symbol carrier exists.  Keep this query on the TypeOracle
+ * boundary: `any`/`unknown`/`unresolvable` are deliberately conservative, and
+ * a union is Symbol-capable when any constituent is.
+ */
+function typeFactMayCarrySymbol(fact: TypeFact): boolean {
+  switch (fact.kind) {
+    case "symbol":
+    case "any":
+    case "unknown":
+    case "unresolvable":
+      return true;
+    case "union":
+      return fact.parts.some(typeFactMayCarrySymbol);
+    default:
+      return false;
+  }
+}
+
+function nativeProxyArgsMayCarrySymbol(ctx: CodegenContext, args: readonly ts.Expression[]): boolean {
+  return args.slice(0, 2).some((arg) => typeFactMayCarrySymbol(ctx.oracle.typeFactOf(arg)));
 }
 
 /**
@@ -702,6 +731,12 @@ export function tryCompileBuiltinGlobalNew(
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy") {
     if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
       const args = expr.arguments ?? [];
+      // `ensureNativeProxyRuntime` mints `__proxy_create` before the argument
+      // expressions are visited.  Pre-register the already-supported native
+      // Symbol carrier whenever the target or handler can carry one, so the
+      // construction-time object classifier has a stable carrier to test even
+      // when this callee is compiled before its Symbol-producing caller.
+      if (nativeProxyArgsMayCarrySymbol(ctx, args)) ensureSymbolCarrier(ctx);
       // Force the object runtime (which registers the native __proxy_create +
       // the trap dispatch helpers + the front-guards) before we look up the idx.
       ensureNativeProxyRuntime(ctx);
@@ -746,57 +781,98 @@ export function tryCompileBuiltinGlobalNew(
           fctx.body.push({ op: "ref.null.extern" });
         }
       };
+
+      // §28.2.1.1 starts with ArgumentListEvaluation.  Keep the first two
+      // values alive while every remaining argument is evaluated and dropped;
+      // validation in __proxy_create must not run until that whole list has
+      // completed (a later abrupt extra argument wins).
+      const targetLocal = allocTempLocal(fctx, { kind: "externref" });
+      const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
       compileToExternref(args[0]);
+      fctx.body.push({ op: "local.set", index: targetLocal });
       compileToExternref(args[1]);
+      fctx.body.push({ op: "local.set", index: handlerLocal });
+      for (let i = 2; i < args.length; i++) {
+        compileToExternref(args[i]);
+        fctx.body.push({ op: "drop" });
+      }
+
+      // Argument compilation may add late imports.  Flush their shifts before
+      // resolving the already-minted defined function index.
+      flushLateImportShifts(ctx, fctx);
       const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
       if (proxyCreateIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "local.get", index: handlerLocal });
         fctx.body.push({ op: "call", funcIdx: proxyCreateIdx });
       } else {
         // Runtime not available (should not happen) — drop args, push undefined.
+        fctx.body.push({ op: "local.get", index: targetLocal });
         fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "local.get", index: handlerLocal });
         fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "ref.null.extern" });
       }
+      releaseTempLocal(fctx, handlerLocal);
+      releaseTempLocal(fctx, targetLocal);
       return { kind: "externref" };
     }
     const args = expr.arguments ?? [];
     if (args.length >= 1) {
-      // Compile target argument and coerce to externref
-      const bodyBefore = fctx.body.length;
-      const targetResult = compileExpression(ctx, fctx, args[0]!);
-      if (targetResult && targetResult.kind !== "externref") {
-        if (targetResult.kind === "ref" || targetResult.kind === "ref_null") {
-          fctx.body.push({ op: "extern.convert_any" });
-        } else {
-          coerceTypeImpl(ctx, fctx, targetResult, { kind: "externref" });
+      const compileHostProxyArg = (arg: ts.Expression | undefined): void => {
+        if (arg === undefined) {
+          fctx.body.push({ op: "ref.null.extern" });
+          return;
         }
-      }
-
-      // Compile handler argument and coerce to externref (or push null if missing)
-      if (args.length >= 2) {
-        const handlerResult = compileExpression(ctx, fctx, args[1]!);
-        if (handlerResult && handlerResult.kind !== "externref") {
-          if (handlerResult.kind === "ref" || handlerResult.kind === "ref_null") {
+        const result = compileExpression(ctx, fctx, arg);
+        if (result && result.kind !== "externref") {
+          if (result.kind === "ref" || result.kind === "ref_null") {
             fctx.body.push({ op: "extern.convert_any" });
           } else {
-            coerceTypeImpl(ctx, fctx, handlerResult, { kind: "externref" });
+            coerceTypeImpl(ctx, fctx, result, { kind: "externref" });
           }
+        } else if (!result) {
+          fctx.body.push({ op: "ref.null.extern" });
         }
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
+      };
+
+      // Evaluate the target and handler once, retain them while all extra
+      // arguments run in source order, then invoke the host provider.  This
+      // mirrors the native-first path and preserves a later abrupt completion.
+      const targetLocal = allocTempLocal(fctx, { kind: "externref" });
+      const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
+      compileHostProxyArg(args[0]);
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      compileHostProxyArg(args[1]);
+      fctx.body.push({ op: "local.set", index: handlerLocal });
+      for (let i = 2; i < args.length; i++) {
+        compileHostProxyArg(args[i]);
+        fctx.body.push({ op: "drop" });
       }
 
-      // Emit call to __proxy_create(target, handler) -> externref
-      const proxyIdx = ensureLateImport(
+      // Emit call to __proxy_create(target, handler) -> externref.
+      let proxyIdx = ensureLateImport(
         ctx,
         "__proxy_create",
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "externref" }],
       );
       flushLateImportShifts(ctx, fctx);
+      proxyIdx = ctx.funcMap.get("__proxy_create") ?? proxyIdx;
       if (proxyIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "local.get", index: handlerLocal });
         fctx.body.push({ op: "call", funcIdx: proxyIdx });
+      } else {
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "local.get", index: handlerLocal });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "ref.null.extern" });
       }
+
+      releaseTempLocal(fctx, handlerLocal);
+      releaseTempLocal(fctx, targetLocal);
 
       return { kind: "externref" };
     }

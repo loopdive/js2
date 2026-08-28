@@ -21,6 +21,12 @@ files:
   - src/codegen/object-runtime-proxy.ts
   - tests/issue-5122-es2015-proxy-symbol-targets.test.ts
   - plan/issues/5122-es2015-proxy-symbol-targets.md
+loc-budget-allow:
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/codegen/object-runtime-proxy.ts
+func-budget-allow:
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
 ---
 
 # #5122 — ES2015 standalone Proxy Symbol target/handler validation
