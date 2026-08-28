@@ -1627,33 +1627,31 @@ function _hasRealmGlobalObjectValue(ctx: CodegenContext, expr: ts.ObjectLiteralE
   return sawGlobal;
 }
 
-// (#5108) TypeScript gives a computed-only data literal a numeric/string index
-// signature with no named properties even when every key folds at compile time.
-// The literal emitter can still build its closed struct field, but the binding
-// mapper then chooses externref and the dynamic reader cannot see that struct.
-// Keep this narrow to standalone, data-only literals whose keys all resolve;
-// mixed/named shapes retain their existing closed-struct representation.
-function computedOnlyLiteralNeedsHostCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+// (#5108) TypeScript gives the selected computed-only arithmetic literals a
+// numeric/string index signature with no named properties. The literal emitter
+// can still build a closed struct field, but the binding mapper then chooses
+// externref and the dynamic reader cannot see that struct. Keep this syntactic:
+// the predicate itself makes every consumer choose the open-object carrier, so
+// no additional raw checker query is needed. Mixed/named and non-arithmetic
+// computed shapes retain their existing representation.
+function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (!ctx.standalone || expr.properties.length === 0) return false;
   if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
   for (const prop of expr.properties) {
     if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
-    const key = prop.name;
+    if (!ts.isBinaryExpression(prop.name.expression)) return false;
+    const operator = prop.name.expression.operatorToken.kind;
     if (
-      ts.isPropertyAccessExpression(key.expression) &&
-      ts.isIdentifier(key.expression.expression) &&
-      key.expression.expression.text === "Symbol" &&
-      getWellKnownSymbolId(key.expression.name.text) !== undefined
+      operator !== ts.SyntaxKind.PlusToken &&
+      operator !== ts.SyntaxKind.MinusToken &&
+      operator !== ts.SyntaxKind.AsteriskToken &&
+      operator !== ts.SyntaxKind.SlashToken
     ) {
       return false;
     }
-    if (resolveComputedKeyExpression(ctx, key.expression) === undefined) return false;
+    if (resolveComputedKeyExpression(ctx, prop.name.expression) === undefined) return false;
   }
-  try {
-    return ctx.checker.getTypeAtLocation(expr).getProperties().length === 0;
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
@@ -1687,7 +1685,7 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       // (#4638) a data-only literal holding the realm global object — see
       // `_hasRealmGlobalObjectValue`.
       _hasRealmGlobalObjectValue(ctx, expr) ||
-      computedOnlyLiteralNeedsHostCarrier(ctx, expr))
+      computedOnlyArithmeticLiteralNeedsHostCarrier(ctx, expr))
   );
 }
 

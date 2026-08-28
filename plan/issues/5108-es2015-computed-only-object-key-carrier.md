@@ -93,8 +93,10 @@ carrier and are not part of this issue.
 
 ## Implementation plan
 
-1. Add one narrow predicate for a computed-only object literal whose computed
-   keys all resolve statically and whose checker type has no named properties.
+1. Add one narrow, syntax-driven predicate for a computed-only object literal
+   whose arithmetic keys all resolve statically. This is the exact selected
+   shape whose checker type has no named properties, without adding a raw
+   checker query in codegen.
 2. Route exactly that shape through the existing open-object construction path
    in standalone, so key expressions are evaluated once and the receiving
    local/module slot remains `externref`. Keep mixed named/computed literals,
@@ -123,13 +125,14 @@ carrier and are not part of this issue.
 
 ## Implementation and validation checkpoint
 
-Implemented in `src/codegen/literals.ts` by adding a standalone-only predicate
-for data-only computed literals whose keys all fold and whose checker type has
-no named properties. The existing `objectLiteralForcesHostPath` consumers then
-keep the literal and its local/module binding on the same open-object
-`externref` carrier. Mixed named/computed literals and unresolved runtime keys
-continue using their existing paths. Net source growth is 30 LOC, within the
-45-LOC budget; no trap-growth allowance was used.
+Implemented in `src/codegen/literals.ts` by adding a standalone-only,
+syntax-driven predicate for data-only computed literals whose arithmetic keys
+all fold. The existing `objectLiteralForcesHostPath` consumers then keep the
+literal and its local/module binding on the same open-object `externref`
+carrier. Mixed named/computed literals, non-arithmetic computed keys, and
+unresolved runtime keys continue using their existing paths. The predicate
+does not add a raw TypeScript checker query. Net source growth remains within
+the 45-LOC budget; no trap-growth or oracle-ratchet allowance is used.
 
 Against the current upstream baseline commit recorded above:
 
@@ -165,6 +168,12 @@ Post-sync validation remained green:
   `div/mult b32352f9c09e`);
 - final no-corpus shape after the sync: 4/4 mandatory controls pass and the
   4 optional Test262 rows skip;
+- the first publication pre-push correctly rejected one new raw
+  `ctx.checker.getTypeAtLocation` site. The implementation was narrowed to a
+  syntax-driven arithmetic predicate, the direct checker query was removed,
+  `check:oracle-ratchet` now reports `getTypeAtLocation +0` and
+  `ctx.checker +0`, and no allowance was added. The corrected focused suite
+  remains 8/8, including all four exact standalone rows;
 - the worktree is clean and the branch is directly based on current
   `upstream/main` (no merge conflicts or unresolved files).
 
