@@ -596,6 +596,9 @@ const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
   "isNaN",
   "isFinite",
   "eval",
+  // (#5156, §20.4.1) `Symbol` is callable but has NO [[Construct]] — `new
+  // Symbol()` is a TypeError, and `isConstructor(Symbol)` is false.
+  "Symbol",
 ]);
 
 /**

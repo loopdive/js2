@@ -98,6 +98,7 @@ import {
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
+import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 
 /**
@@ -224,6 +225,10 @@ const DATE_PROTO_METHODS = [
   "toTimeString",
   "toUTCString",
   "valueOf",
+  // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — a well-known-
+  // symbol member, so it uses the `@@<id>` CSV sentinel form. Its native body
+  // lives in date-proto-to-primitive.ts.
+  "@@3",
 ] as const;
 
 /**
@@ -2001,6 +2006,18 @@ function makeGlue(
     name,
     memberCsv: members.join(","),
     ...(symbolTag === undefined ? {} : { symbolTag }),
+    // (#5156, §20.5.3.2/.3) Each Error-family prototype has own `name` (the
+    // constructor's name) and `message` ("") data properties. `NativeError.
+    // prototype.toString` is inherited, but `name`/`message` are OWN on every
+    // one of them.
+    ...(ERROR_PROTO_OWNER_NAMES.has(name)
+      ? {
+          dataProps: [
+            ["name", name],
+            ["message", ""],
+          ] as ReadonlyArray<readonly [string, string]>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2044,6 +2061,9 @@ function makeGlue(
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
+      // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
+      // builtin whose ToPrimitive prefers `toString` under the "default" hint.
+      (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
       // ES2015 §20.5.3.4 — Error.prototype.toString is inherited by each
       // NativeError prototype, so all of those glues share the same ordered
       // property-read and Symbol-rejecting body.
