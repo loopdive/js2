@@ -19,10 +19,14 @@ branch: codex/5129-es2015-buffer-prototype-tostringtag
 pr: 5142
 files:
   - src/codegen/array-object-proto.ts
+  - src/runtime.ts
+  - src/runtime/wasm-struct-host-semantics.ts
+  - tests/test262-restore-builtins.ts
   - tests/issue-5129-es2015-buffer-prototype-tostringtag.test.ts
   - plan/issues/5129-es2015-buffer-prototype-tostringtag.md
 loc-budget-allow:
   - src/codegen/array-object-proto.ts
+  - src/runtime.ts
 ---
 
 # #5129 — ES2015 buffer-family prototype `Symbol.toStringTag` metadata
@@ -181,6 +185,28 @@ verified equal; GitHub reports the PR mergeable and dispatched the full CI,
 Test262, smoke, and parity workflow families. The issue is complete at its
 bounded ES2015 ownership; the global ES2015 goal and unrelated TypedArray work
 remain open.
+
+## CI repair (2026-08-28)
+
+The first published head `a16c5979399a5c292484a135d62d55951bb472da` reached
+the required quality job, but its changed-root test step failed after the
+ArrayBuffer exact row's sloppy descriptor probe. The in-process runner's
+`restoreHostBuiltins` snapshot omitted `ArrayBuffer.prototype`, so the strict
+rerun inherited the deleted tag. Adding that prototype to the existing
+snapshot fixes the runner isolation gap.
+
+The same run exposed a second concrete behavior defect: the probe's attempted
+write to the non-writable native tag left `"unlikelyValue"` in the host sidecar.
+After the native property was deleted, the stale sidecar shadowed the true
+`undefined` read and failed the host mutation control. `_safeSet` now keeps
+failed sloppy writes to non-writable/accessor/non-extensible native objects as
+no-ops, while preserving setter exceptions and WasmGC sidecar behavior.
+
+The repair is covered by the focused suite: **6/6** tests passed (both exact
+rows in host and standalone modes, both mutation/descriptor controls, and the
+standalone zero-import assertion). The nearby `issue-2899` suite also passed
+its exercised tests. The repaired files are listed in this tracker so the
+change-scoped quality gates see the intentional runtime and runner additions.
 
 ## Handoff
 
