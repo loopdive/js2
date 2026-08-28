@@ -1627,6 +1627,35 @@ function _hasRealmGlobalObjectValue(ctx: CodegenContext, expr: ts.ObjectLiteralE
   return sawGlobal;
 }
 
+// (#5108) TypeScript gives a computed-only data literal a numeric/string index
+// signature with no named properties even when every key folds at compile time.
+// The literal emitter can still build its closed struct field, but the binding
+// mapper then chooses externref and the dynamic reader cannot see that struct.
+// Keep this narrow to standalone, data-only literals whose keys all resolve;
+// mixed/named shapes retain their existing closed-struct representation.
+function computedOnlyLiteralNeedsHostCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || expr.properties.length === 0) return false;
+  if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
+  for (const prop of expr.properties) {
+    if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
+    const key = prop.name;
+    if (
+      ts.isPropertyAccessExpression(key.expression) &&
+      ts.isIdentifier(key.expression.expression) &&
+      key.expression.expression.text === "Symbol" &&
+      getWellKnownSymbolId(key.expression.name.text) !== undefined
+    ) {
+      return false;
+    }
+    if (resolveComputedKeyExpression(ctx, key.expression) === undefined) return false;
+  }
+  try {
+    return ctx.checker.getTypeAtLocation(expr).getProperties().length === 0;
+  } catch {
+    return false;
+  }
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
@@ -1657,7 +1686,8 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       ) ||
       // (#4638) a data-only literal holding the realm global object — see
       // `_hasRealmGlobalObjectValue`.
-      _hasRealmGlobalObjectValue(ctx, expr))
+      _hasRealmGlobalObjectValue(ctx, expr) ||
+      computedOnlyLiteralNeedsHostCarrier(ctx, expr))
   );
 }
 
