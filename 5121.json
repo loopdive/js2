@@ -1,10 +1,11 @@
 {
   "id": "5121",
   "assignee": "ttraenkler/opus-5121",
-  "requested_by": "ttraenkler/opus-5121",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5121-indexof-noarg",
   "claimed_at": "2026-08-28T10:21:26Z",
-  "updated_at": "2026-08-28T10:21:26Z",
-  "write_id": "6617-pa48juf6"
+  "updated_at": "2026-08-28T12:16:34Z",
+  "write_id": "21184-pd8e0jn6",
+  "released_at": "2026-08-28T12:16:34Z"
 }
