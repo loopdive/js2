@@ -353,8 +353,8 @@
       "verdict": "unresolved",
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:860",
-      "why": "Neutral envelope, ECMAScript-sourced vocabulary. `IntrinsicId` is 18 `math.*` ids drawn explicitly from the JS `Math` surface, but ECMA-262 §21.3 leaves the transcendentals implementation-approximated, so most of them carry no ECMAScript commitment at all — while `math.pow` does (§21.3.2.26 mandates pow(1, NaN) = NaN, where C99 pow returns 1).",
-      "evidence": ["src/ir/intrinsics.ts:8", "src/ir/intrinsics.ts:28"],
+      "why": "Neutral envelope, ECMAScript-sourced vocabulary. `IntrinsicId` is 21 `math.*` ids drawn explicitly from the JS `Math` surface, but ECMA-262 §21.3 leaves the transcendentals implementation-approximated, so most of them carry no ECMAScript commitment at all — while `math.pow` does (§21.3.2.26 mandates pow(1, NaN) = NaN, where C99 pow returns 1).",
+      "evidence": ["src/ir/intrinsics.ts:8", "src/ir/intrinsics.ts:29"],
       "settledBy": "State whether a `math.*` id denotes an ECMA-262 clause or an IEEE/libm operation. If the former, the vocabulary (not the instruction) is what moves; if the latter, `intrinsic` is neutral outright and `math.pow` needs an ECMAScript-specific sibling."
     },
     "iter.done": {

@@ -19,6 +19,7 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.atan2",
   "math.ceil",
   "math.cos",
+  "math.cosh",
   "math.exp",
   "math.floor",
   "math.log",
@@ -27,15 +28,17 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.log2",
   "math.pow",
   "math.sin",
+  "math.sinh",
   "math.sqrt",
   "math.tan",
+  "math.tanh",
   "math.trunc",
 ] as const);
 
 export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the eighteen intrinsic entry points.
+ * Provider requirements reachable from the twenty-one intrinsic entry points.
  * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
@@ -46,6 +49,7 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.atan2",
   "math.ceil",
   "math.cos",
+  "math.cosh",
   "math.exp",
   "math.floor",
   "math.log",
@@ -55,8 +59,10 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.pow",
   "math.reduce-trig",
   "math.sin",
+  "math.sinh",
   "math.sqrt",
   "math.tan",
+  "math.tanh",
   "math.trunc",
 ] as const);
 
@@ -142,6 +148,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.atan2": definition("math.atan2", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.cosh": definition("math.cosh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.exp": definition("math.exp", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.floor": definition("math.floor", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.log": definition("math.log", F64_UNARY_INTRINSIC_SIGNATURE),
@@ -150,8 +157,10 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.log2": definition("math.log2", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.pow": definition("math.pow", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.sin": definition("math.sin", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.sinh": definition("math.sinh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sqrt": definition("math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.tan": definition("math.tan", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.tanh": definition("math.tanh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.trunc": definition("math.trunc", F64_UNARY_INTRINSIC_SIGNATURE),
 });
 

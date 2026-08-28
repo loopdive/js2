@@ -56,6 +56,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.atan",
   "selfhost.math.atan2",
   "selfhost.math.cos",
+  "selfhost.math.cosh",
   "selfhost.math.exp",
   "selfhost.math.log",
   "selfhost.math.log10",
@@ -64,7 +65,9 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.pow",
   "selfhost.math.reduce-trig",
   "selfhost.math.sin",
+  "selfhost.math.sinh",
   "selfhost.math.tan",
+  "selfhost.math.tanh",
 ] as const);
 
 export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
@@ -179,6 +182,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.atan2": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.ceil": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cos": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.cosh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.exp": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.floor": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -188,8 +192,10 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.pow": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.reduce-trig": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sin": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.sinh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sqrt": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.tan": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.tanh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.trunc": F64_UNARY_INTRINSIC_SIGNATURE,
 });
 
@@ -253,6 +259,13 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_cos" },
     ["math.reduce-trig"],
   ),
+  "math.cosh": provider(
+    "selfhost.math.cosh",
+    "math.cosh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_cosh" },
+    ["math.exp"],
+  ),
   "math.exp": provider("selfhost.math.exp", "math.exp", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_exp",
@@ -301,6 +314,13 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_sin" },
     ["math.reduce-trig"],
   ),
+  "math.sinh": provider(
+    "selfhost.math.sinh",
+    "math.sinh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_sinh" },
+    ["math.exp"],
+  ),
   "math.sqrt": provider("backend.f64.sqrt", "math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.sqrt",
@@ -312,13 +332,20 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_tan" },
     ["math.cos", "math.sin"],
   ),
+  "math.tanh": provider(
+    "selfhost.math.tanh",
+    "math.tanh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_tanh" },
+    ["math.exp"],
+  ),
   "math.trunc": provider("backend.f64.trunc", "math.trunc", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.trunc",
   }),
 });
 
-/** Canonically ordered default provider catalogue for the eighteen-method slice. */
+/** Canonically ordered default provider catalogue for the twenty-one-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),
