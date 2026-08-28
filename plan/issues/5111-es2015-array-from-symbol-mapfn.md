@@ -112,8 +112,9 @@ parallel for-in closure lane).
 ## Final validation
 
 The final evidence was collected after fetching and merging the current
-`upstream/main` tip `5a6a42664a7967a27a2bda8b34439f789b656f9e`; the resulting
-branch head is merge commit `04c7dd84325ae16c601c2543f8d8f75c6dc724c5`.
+`upstream/main` tip `5a6a42664a7967a27a2bda8b34439f789b656f9e`; the upstream
+sync merge is `04c7dd84325ae16c601c2543f8d8f75c6dc724c5` and the final branch
+head (including this record) is `8d0f87949b866b19aa7b27543c3e17ba2945011c`.
 All harness runs used
 `JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`
 and no more than two compiler workers.
