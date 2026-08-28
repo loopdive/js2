@@ -1,7 +1,7 @@
 ---
 id: 5119
 title: "ES2015 standalone Reflect.get/has reject Symbol targets"
-status: in-progress
+status: ready
 created: 2026-08-28
 updated: 2026-08-28
 priority: medium
@@ -127,6 +127,29 @@ the controls include a callee-before-caller dynamic `any` target for both
 methods. Every compile-heavy control has a 150 s Vitest timeout and every
 corpus arm has a 150 s timeout with a 130 s runner timeout.
 
+## Final integrated-head evidence
+
+The implementation was integrated without rewriting its earlier commits:
+merge commit `6ad04842a76d15a13d5da89985c61578c93d5415` has parents
+`e7eae37185ffcf9b1899d3ec54475d9c64d35f0d` and freshly fetched
+`upstream/main` `f8a9017448468a216fe2a12dde768101a90785ca`. On that head:
+
+- The focused Vitest suite passed **24/24** (20 controls plus four
+  existence-guarded exact-row arms), with host and standalone lanes, dynamic
+  callee-before-caller targets, later abrupt arguments, no-key-coercion,
+  receiver, object, array, and callable controls.
+- The final assembled harness passed both exact rows in both lanes: host
+  **2/2**, standalone **2/2**. Compared with the retained local arms, host is
+  pass→pass for both rows and standalone is fail→pass for exactly both rows.
+- TypeScript 5 and 7, Prettier, changed-file Biome lint, LOC/function budgets,
+  oracle-ratchet, coercion-sites, synchronization, issue integrity, issue spec
+  coverage, and the pinned numeric-local pre-push test passed. Full lint exits
+  successfully with the repository's pre-existing capped **1,749**
+  diagnostics (the two changed files are clean).
+- The full equivalence gate passed with **1,680** passing and **24** failing;
+  all 24 failures are in the committed known-failure baseline, so there were
+  no new regressions.
+
 ## Acceptance
 
 - Both named Test262 rows flip standalone `fail -> pass`; host remains pass.
@@ -144,10 +167,10 @@ corpus arm has a 150 s timeout with a 130 s runner timeout.
 
 ## Handoff
 
-The plan checkpoint is intentionally separate from the implementation commit.
-After pushing it, continue on `codex/5119-es2015-reflect-symbol-target` in
-`/private/tmp/js2-es2015-reflect-symbol-target-20260828`; push each subsequent
-checkpoint to `ttraenkler/js2`. Do not create a GitHub issue or PR. Report the
-final source review, exact host/standalone rows and controls, full gates,
-clean status, branch, and head SHA to the coordinating agent for review and
-the single upstream PR.
+The dedicated worktree is clean on `codex/5119-es2015-reflect-symbol-target`.
+The read-only fork check currently returns no
+`codex/5119-es2015-reflect-symbol-target` ref: both the plan checkpoint and
+implementation checkpoints remain local because the execution policy rejects
+this child pushing private repository content to `ttraenkler/js2`. Root should
+push the reviewed branch from an explicitly authorized context, then open the
+single non-draft upstream PR. Do not create a GitHub issue or PR here.
