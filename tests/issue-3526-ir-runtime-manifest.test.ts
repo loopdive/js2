@@ -88,12 +88,12 @@ function semanticView(manifest: FrozenRuntimeManifest): object {
 }
 
 describe("#3526 typed IR runtime manifest foundation", () => {
-  it("is exhaustive for the exact twenty-one certified pure Math methods and excludes random", () => {
+  it("is exhaustive for the exact twenty-two certified pure Math methods and excludes random", () => {
     const certifiedMethods = Object.keys(IR_MATH_METHOD_TABLE).sort();
     const intrinsicMethods = PURE_MATH_INTRINSIC_IDS.map((id) => id.slice("math.".length)).sort();
 
     expect(intrinsicMethods).toEqual(certifiedMethods);
-    expect(intrinsicMethods).toHaveLength(21);
+    expect(intrinsicMethods).toHaveLength(22);
     expect(intrinsicMethods).not.toContain("random");
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual([...PURE_MATH_RUNTIME_FEATURES].sort());
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual(
@@ -101,6 +101,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
         "math.acos",
         "math.asin",
         "math.atan",
+        "math.cbrt",
         "math.cosh",
         "math.log10",
         "math.log1p",
@@ -132,7 +133,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     const first = forward.freeze();
     const second = reverse.freeze();
     expect(second).toEqual(first);
-    expect(first.intrinsicUses).toHaveLength(21);
+    expect(first.intrinsicUses).toHaveLength(22);
     expect(first.features).toEqual(PURE_MATH_RUNTIME_FEATURES);
     expect(new Set(first.providers.map((provider) => provider.id)).size).toBe(first.providers.length);
     expect(first.hostCapabilities).toEqual([]);
@@ -149,6 +150,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     expect(dependencies["math.cosh"]).toEqual(["math.exp"]);
     expect(dependencies["math.sinh"]).toEqual(["math.exp"]);
     expect(dependencies["math.tanh"]).toEqual(["math.exp"]);
+    expect(dependencies["math.cbrt"]).toEqual([]);
     expect(dependencies["math.sin"]).toEqual(["math.reduce-trig"]);
     expect(dependencies["math.cos"]).toEqual(["math.reduce-trig"]);
     expect(dependencies["math.tan"]).toEqual(["math.cos", "math.sin"]);
@@ -173,6 +175,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
           "math.sinh",
           "math.cosh",
           "math.tanh",
+          "math.cbrt",
           "math.pow",
           "math.atan2",
         ]);
@@ -188,6 +191,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
       "math.asin",
       "math.atan",
       "math.atan2",
+      "math.cbrt",
       "math.cos",
       "math.cosh",
       "math.exp",
