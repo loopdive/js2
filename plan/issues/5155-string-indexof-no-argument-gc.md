@@ -34,10 +34,16 @@ lanes are all correct, so this is the same missing-argument-default shape as
 the Array-side family (#5095 `at()`, #5121 `indexOf`/`lastIndexOf`), one
 lowering over — in `string-ops.ts`, not `array-methods.ts`.
 
-Adjacent to #3763 (string method coverage); distinct from #5121 because the
-default here is `ToString` (a string search value), not a strict-equality
-element search — no S2-style value-representation limit applies, so this
-should be a small self-contained fix.
+**Not a duplicate of #3763** (checked against the codex lane's claim ledger
+2026-08-28 before filing): #3763 is `done` (2026-07-28) and fixed the
+*explicit-argument* spelling — an undefined-**valued** variable collapsing to
+`ref.null.extern` so the host searched `"null"`. This issue is the
+**absent-argument** spelling (`arguments.length === 0`), still wrong on the
+2026-08-28 base after #3763's fix, and only in the gc lane. The fix likely
+lands next to #3763's `string-indexof-undefined` subsystem module. Distinct
+from #5121 because the default here is `ToString` (a string search value),
+not a strict-equality element search — no S2-style value-representation limit
+applies, so this should be a small self-contained fix.
 
 ## Acceptance criteria
 
