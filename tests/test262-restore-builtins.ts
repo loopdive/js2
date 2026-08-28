@@ -57,6 +57,10 @@ const PROTOS: ReadonlyArray<[string, object]> = [
   ["Number.prototype", Number.prototype],
   ["Boolean.prototype", Boolean.prototype],
   ["Function.prototype", Function.prototype],
+  // (#5107) Symbol.prototype[Symbol.toPrimitive] is configurable and the
+  // descriptor helper deletes it during the host lane's sloppy pass. Restore
+  // the intrinsic before the authoritative strict rerun.
+  ["Symbol.prototype", Symbol.prototype],
   ["RegExp.prototype", RegExp.prototype],
   ["Map.prototype", Map.prototype],
   ["Set.prototype", Set.prototype],

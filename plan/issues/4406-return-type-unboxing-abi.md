@@ -706,3 +706,209 @@ and `expressionIsBoolean` routes every type question through
   names still ride the unfiltered verdict into an f64 twin.
 - **§1.4's producer census** was NOT re-measured; its 1.40× reconciliation gap
   is still open, so the plan's consumer-shape ranking remains a ranking.
+
+---
+
+## Slice record — Phase 2, the merge sink (2026-08-27)
+
+Implemented against `origin/main` @ `76c47838e1` (= Phase 0+1's PR #5061 plus
+#5076/#5078). Every number below was measured in a FRESH process, on that base
+or on this branch, with `.tmp/probe-4406-census.mjs` (§0's driver, checksum
+`parse(acorn dist).body.length = 422`) and `JS2WASM_EXEC_CENSUS` installed.
+
+### The lane, restated — the plan's "lane B" no longer needs an env block
+
+Phase 0+1's **drift 1** stands: #4157's tuned eleven are default-ON, so today's
+default already *is* approximately the plan's lane B. The one flag lane B still
+needs is **lever 4 itself** (`JS2WASM_UNBOXED_BOOL_FUSE=1`, default OFF) — the
+pass whose decline tally §6 Phase 2 is scored against. So "lane B" below means
+**today's default + lever 4**, nothing else.
+
+| lane (all: standalone, `optimize: 0`, census installed) | binary B | `__box_boolean` | `__is_truthy` | checksum |
+| --- | ---: | ---: | ---: | ---: |
+| default (no lever 4, flag off) | 3,809,529 | 291,279 | 239,854 | 422 |
+| **lane B** — lever 4 on, flag off | 3,799,937 | **275,113** | 237,265 | 422 |
+| lane B + `JS2WASM_RET_UNBOX_ABI=1`, Phase 1 only (base code) | 3,797,523 | **275,148** | 237,230 | 422 |
+| **lane B + flag on, Phase 2 (this branch)** | 3,797,824 | **256,189** | 237,230 | 422 |
+
+The default-lane 291,279 reproduces Phase 0+1's figure exactly, which is what
+certifies the two slices are measuring the same tree.
+
+### Finding 1 — the plan's Phase-2 first step is a NULL, and that is why there is code here
+
+§6 Phase 2 says: *"Re-run lever 4 with the flag on and report the decline delta
+on `arm-tail-call` (102) and `prev-call` (366) from lane C. If those buckets
+close, `__box_boolean` moves; if they do not, say so and stop."* Run first,
+built second. It does not close them:
+
+| lever-4 decline | plan, 2026-08-14 | lane B, flag off | lane B, flag on (Phase 1 only) |
+| --- | ---: | ---: | ---: |
+| `prev-call` | 366 | **0** | **0** |
+| `arm-tail-call` | 102 | 88 | **88** |
+| `arm-local.get` | — | 28 | 28 |
+| `arm-extern.convert_any` | — | 14 | 12 |
+| `arm-local.tee` | — | 10 | 10 |
+| `arm-struct.get` | — | 10 | 10 |
+| `prev-extern.convert_any` | — | 1,645 | 1,645 |
+| `prev-struct.get` | — | 12 | 12 |
+| fused sites | — | 162 | 164 |
+
+Two corrections to the plan fall out:
+
+1. **`prev-call` is already zero and was not closed by this issue.** The plan
+   read it as the return half's headroom; by the time lever 4 runs today, a
+   call whose result feeds a ToBoolean no longer produces one — the twins
+   introduced by #3754/#2847 already answer i32.
+2. **The flag alone moves the tally by two sites** (`arm-extern.convert_any`
+   14 → 12) and `__box_boolean` by **+35** — the same +35 Phase 1 measured, i.e.
+   the identical null. Phase 0+1's **drift 3** explains it: 54 of the 83 boolean
+   names already carried an i32b twin through their DECLARED signature, so the
+   flag's whole reach on this lane is seven method names.
+
+So the honest reading of §6's stop rule is *"the flag does not close them —
+something has to"*. What follows is that something.
+
+### What landed — the SINK leaf
+
+`box-boolean-fuse.ts` (lever 4) fuses a logical merge only when EVERY leaf is
+one it can specialise: a `__box_boolean` tail (drop the call) or a re-read of
+the branch's own condition operand (replace with the constant the branch
+proved). One arm it cannot specialise strands every box in the tree, **including
+its sibling's** — which is exactly what the five `arm-*` buckets above are.
+
+Phase 2 adds the general leaf the two specialised ones are optimisations of:
+**keep the consumer, move a COPY of it into the arm.**
+
+```
+if (result externref)                    if (result i32)
+  <rhs…> call $__box_boolean       ⇒       <rhs…>                      ; box deleted
+else                                     else
+  <lhs…> call $someExternrefFn             <lhs…> call $someExternrefFn
+end                                        call $__is_truthy           ; consumer, moved
+call $__is_truthy                        end
+```
+
+Soundness is the pass's own argument, applied leaf by leaf: the arm tail leaves
+exactly one externref (the merge declares `(result externref)`, so a
+value-producing tail cannot leave anything else) and the consumer answers
+`truthy` of it, so `truthy(merge)` is unchanged. **Executed cost is unchanged,
+not merely bounded** — one arm runs per execution, so one copy of the consumer
+runs where one ran before. Only STATIC size grows, which is why a tree of
+nothing but sink leaves is declined (`no-free-leaf`): it would pay that size for
+zero deleted boxes.
+
+| ref | change | file |
+| --- | --- | --- |
+| §3.4 (ii) via (i) | `LeafAction` gains `"sink"`; `planFuse` takes the consumer and an ALLOWLIST of value-producing arm-tail opcodes; `no-free-leaf` guard; poison; the two duplicated site blocks collapse into `tryFuseSite` | `box-boolean-fuse.ts` |
+| §6 / flag family | `retUnboxMergeSinkEnabled()` beside the Phase-1 predicates — extended, not forked | `ret-unbox-abi.ts` |
+
+The allowlist (`call`, `call_ref`, `call_indirect`, `local.get`, `local.tee`,
+`global.get`, `struct.get`, `array.get`, `extern.convert_any`, `ref.null`,
+`select`) is deliberately an allowlist: a tail that terminates the frame
+(`return_call`, `unreachable`) or leaves the arm (`br`) type-checks against the
+merge polymorphically, and a denylist would silently admit the next such opcode
+somebody adds to the `Instr` union.
+
+### Finding 2 — measured Phase-2 result
+
+| lever-4 tally, lane B + flag on | before (Phase 1 only) | after (Phase 2) |
+| --- | ---: | ---: |
+| fused sites | 164 | **298** |
+| ├ box-call leaves | 168 | 238 |
+| ├ cond-reuse leaves | 164 | 242 |
+| └ sunk-consumer leaves | 0 | **146** (over 134 sites) |
+| `arm-tail-call` | 88 | **0** |
+| `arm-local.get` | 28 | **0** |
+| `arm-extern.convert_any` | 12 | **0** |
+| `arm-local.tee` | 10 | **0** |
+| `arm-struct.get` | 10 | **0** |
+| `no-free-leaf` (new, deliberate) | — | 14 |
+| `prev-extern.convert_any` | 1,645 | 1,645 |
+| `prev-struct.get` | 12 | 12 |
+
+**Every `arm-*` bucket closes.** 148 declined merge sites become 134 fused ones
+plus 14 that re-decline as `no-free-leaf` — the guard doing its job, not a miss.
+
+| criterion (§7 Phase 2) | result |
+| --- | --- |
+| `__box_boolean` drops on lane B | **275,148 → 256,189 (−18,959, −6.9 %)**; against the flag-off lane B, 275,113 → 256,189 (−18,924, −6.9 %) |
+| lever-4 decline tally quoted before/after | above |
+| checksum 422 | ✅ every lane, including under poison-off |
+| flag-off byte-identical | ✅ see below |
+| below 100k | **no — and §7 says not to hold Phase 2 to it.** The remaining 256k is the parameter half (Phase 3) and the non-merge truthy residual |
+
+Binary size: **+301 B (+0.008 %)** against the Phase-1-only lane, and −2,113 B
+against flag-off lane B. §9's "Phase 2 can grow the binary" risk is real in kind
+(each sink leaf is a copy of the consumer) but negligible in size here, because
+`no-free-leaf` refuses the copies that buy nothing.
+
+The two `prev-*` buckets are untouched **by construction**: they are not merges.
+`prev-extern.convert_any=1,645` is the truthy-IC's own terminal fallback (one
+per IC'd call site) and `prev-struct.get=12` is a member read tested directly.
+Neither reaches a merge, so no merge-typing change can move them.
+
+### Flag-off byte-identity
+
+The interesting lane is **lever 4 ON, flag OFF** — that is the one that executes
+every refactored line (`tryFuseSite`, `FuseOpts`, `planFuse`'s reordered
+declines) while the sink is disabled:
+
+| | binary B | sha256 |
+| --- | ---: | --- |
+| base @ `76c47838e1`, lane B | 3,799,937 | `089085568d8216b7f5e16d65bc72898ee4891fe56fac3d4930e6173c6a856077` |
+| **branch, lane B** | 3,799,937 | **identical** |
+
+Its decline tally is identical character-for-character as well
+(`arm-tail-call=88 arm-local.get=28 arm-extern.convert_any=14 …`), which is the
+stronger statement: the planner reaches the same verdict on the same sites, not
+merely the same bytes. The default lane (no lever 4) is identical too — see the
+digest pair in the PR — and is so by construction, since the pass returns before
+touching anything.
+
+Off-token coverage is unchanged: the sink reads the same
+`optInFlagEnabled(JS2WASM_RET_UNBOX_ABI)` predicate Phase 1 does.
+
+### Poison — the liveness proof, isolated
+
+`JS2WASM_RET_UNBOX_ABI_POISON=1` now also inverts the result of any merge whose
+fusion used a sunk consumer (an `i32.eqz` where the consumer stood; lever 4's
+own poison and this one XOR, since inverting twice is the identity).
+
+Isolating Phase 2 from Phase 1 matters, because on acorn the combined poison
+breaks the parse either way. The isolation is in
+`tests/issue-4406-ret-unbox-abi.test.ts`: `MERGE_AXIS` is built from **plain
+functions, not fnctor prototype methods**, so `refinedTwinReturnType` never
+fires on it and Phase 1's poison has nothing to touch. There, poison flips the
+answer `112222 → 221111` — every arm's verdict inverted. A dead path could not
+do that.
+
+The acorn lane adds the dynamic half: the −18,959 executed boxes can only come
+from newly-fused sites, and all 134 of those used at least one sink leaf.
+
+### Gates
+
+`typecheck` · `lint` · `prettier` · `check-loc-budget` (+165 net, no unallowed
+growth — no frontmatter grant needed) · `check-func-budget` ·
+`check-coercion-sites` · `check:oracle-ratchet` (+0/+0) · `check:dead-exports` ·
+`check:ir-fallbacks` / `check:ir-only` unchanged (they run the default lane,
+where the pass is off) · all 8 equivalence shards · the adjacent canaries
+(#4157's fuse and truthy-IC suites, #3754, #4774).
+
+### What remains after this slice
+
+- **§6 Phase 3 — the parameter half.** Still where the headroom is, and now the
+  ONLY route to §7's `< 100k`: the residual `__box_boolean` is dominated by
+  argument-position boxes (§1.4's 29 % + 15 % + 5 %), which no merge-typing
+  change can see. Recommend the separate issue the plan asks for.
+- **§6 Phase 4 — the default-ON `isBooleanish` filter.** Unchanged by this
+  slice; drift 3's "only 7 acorn names" still applies.
+- **The `prev-*` residual is NOT return-ABI work.** `prev-extern.convert_any`
+  is the truthy-IC's fallback shape; if it is worth attacking it belongs to
+  #4157's IC, not here.
+- **§1.4's producer census** is still unreconciled (1.40×), so the 62 % figure
+  remains a ranking. This slice did not need it: the lever-4 tally is an exact,
+  reproducible instrument for the merge subset, and it is what the phase is
+  scored against.
+- **Pre-existing defects from Phase 0+1**: #4774 is fixed on main; the
+  `tests/issue-3754-numeric-return-twin.test.ts` failures were re-checked as
+  canaries for this slice.
