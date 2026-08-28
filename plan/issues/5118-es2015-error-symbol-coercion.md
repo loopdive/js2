@@ -8,7 +8,7 @@ updated: 2026-08-28
 priority: high
 horizon: s
 feasibility: medium
-reasoning_effort: medium
+reasoning_effort: max
 task_type: conformance
 area: codegen
 language_feature: error-symbol-coercion
