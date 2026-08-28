@@ -46,7 +46,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 964,
+      "passCount": 968,
       "totalCount": 1083
     },
     {
@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 554,
+      "passCount": 560,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1080,
+      "passCount": 1084,
       "totalCount": 1177
     },
     {
@@ -126,13 +126,13 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 670,
+      "passCount": 676,
       "totalCount": 699
     },
     {
       "name": "try / catch / finally",
       "testCategories": ["language/statements/try"],
-      "passCount": 190,
+      "passCount": 192,
       "totalCount": 201
     },
     {
@@ -144,19 +144,19 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4222,
+      "passCount": 4238,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1080,
+      "passCount": 1084,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 628,
+      "passCount": 631,
       "totalCount": 667
     },
     {
@@ -173,13 +173,13 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 98,
+      "passCount": 104,
       "totalCount": 234
     },
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2101,
+      "passCount": 2116,
       "totalCount": 3161
     },
     {
@@ -215,7 +215,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 3803,
+      "passCount": 3883,
       "totalCount": 4290
     },
     {
@@ -227,13 +227,13 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1372,
+      "passCount": 1402,
       "totalCount": 1552
     },
     {
       "name": "Computed property names",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 73,
+      "passCount": 78,
       "totalCount": 133
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1934,
+      "passCount": 2016,
       "totalCount": 2486
     },
     {
@@ -276,13 +276,13 @@
         "built-ins/WeakMap",
         "built-ins/WeakSet"
       ],
-      "passCount": 115,
+      "passCount": 117,
       "totalCount": 129
     },
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 898,
+      "passCount": 991,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 541,
+      "passCount": 542,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 639,
+      "passCount": 643,
       "totalCount": 1072
     },
     {
@@ -335,7 +335,7 @@
     {
       "name": "SharedArrayBuffer / Atomics",
       "testCategories": ["built-ins/SharedArrayBuffer", "built-ins/Atomics"],
-      "passCount": 63,
+      "passCount": 64,
       "totalCount": 342
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 335,
+      "passCount": 343,
       "totalCount": 1048
     },
     {
@@ -408,7 +408,7 @@
     {
       "name": "Array.at / String.at",
       "testCategories": ["built-ins/Array/prototype/at", "built-ins/String/prototype/at"],
-      "passCount": 21,
+      "passCount": 22,
       "totalCount": 36
     },
     {
@@ -420,13 +420,13 @@
     {
       "name": "Array.prototype.includes",
       "testCategories": ["built-ins/Array/prototype/includes"],
-      "passCount": 19,
+      "passCount": 21,
       "totalCount": 29
     },
     {
       "name": "Exponentiation operator (**)",
       "testCategories": ["language/expressions/exponentiation"],
-      "passCount": 52,
+      "passCount": 53,
       "totalCount": 72
     },
     {
@@ -450,7 +450,7 @@
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 55,
+      "passCount": 57,
       "totalCount": 109
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 168,
+      "passCount": 170,
       "totalCount": 178
     },
     {
@@ -588,7 +588,7 @@
     {
       "name": "escape() / unescape()",
       "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
-      "passCount": 27,
+      "passCount": 29,
       "totalCount": 35
     },
     {
