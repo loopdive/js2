@@ -1,10 +1,11 @@
 {
   "id": "5095",
   "assignee": "ttraenkler/opus-5095",
-  "requested_by": "ttraenkler/opus-5095",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5095-array-at-noarg",
   "claimed_at": "2026-08-28T02:49:28Z",
-  "updated_at": "2026-08-28T02:49:28Z",
-  "write_id": "1796-nytl761i"
+  "updated_at": "2026-08-28T07:11:27Z",
+  "write_id": "1732-ohxq9fof",
+  "released_at": "2026-08-28T07:11:27Z"
 }
