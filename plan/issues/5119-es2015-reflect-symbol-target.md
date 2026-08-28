@@ -1,9 +1,10 @@
 ---
 id: 5119
 title: "ES2015 standalone Reflect.get/has reject Symbol targets"
-status: ready
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: medium
 horizon: s
 feasibility: medium
@@ -13,6 +14,7 @@ area: codegen
 es_edition: 2015
 language_feature: reflect-target-validation
 goal: standalone-mode
+pr: 5133
 assignee: ttraenkler/codex/5119-es2015-reflect-symbol-target
 related: [4722, 4724]
 files:
@@ -168,9 +170,8 @@ merge commit `6ad04842a76d15a13d5da89985c61578c93d5415` has parents
 ## Handoff
 
 The dedicated worktree is clean on `codex/5119-es2015-reflect-symbol-target`.
-The read-only fork check currently returns no
-`codex/5119-es2015-reflect-symbol-target` ref: both the plan checkpoint and
-implementation checkpoints remain local because the execution policy rejects
-this child pushing private repository content to `ttraenkler/js2`. Root should
-push the reviewed branch from an explicitly authorized context, then open the
-single non-draft upstream PR. Do not create a GitHub issue or PR here.
+Root pushed the exact validated head to `ttraenkler/js2` and opened the single
+non-draft upstream PR: <https://github.com/loopdive/js2/pull/5133>. It targets
+`loopdive/js2:main`, uses the repository template with the CLA checked, and was
+audited as mergeable with no comments, reviews, or unresolved review threads
+at creation. No GitHub issue was created.
