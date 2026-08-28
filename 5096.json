@@ -1,10 +1,11 @@
 {
   "id": "5096",
   "assignee": "ttraenkler/opus-5096",
-  "requested_by": "ttraenkler/opus-5096",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5096-global-shadow-class",
   "claimed_at": "2026-08-28T02:49:33Z",
-  "updated_at": "2026-08-28T02:49:33Z",
-  "write_id": "1847-p31qjloq"
+  "updated_at": "2026-08-28T08:02:11Z",
+  "write_id": "1733-jqcxqsmw",
+  "released_at": "2026-08-28T08:02:11Z"
 }
