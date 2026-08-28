@@ -142,6 +142,28 @@ run also passed **4/4** with the same per-case counts, for **8/8 total
 focused assertions across two runs**. There were no compile errors, timeouts,
 or unexpected skips.
 
+## Refreshed-upstream verification (2026-08-28)
+
+After the implementation checkpoint, the branch fetched upstream `main` at
+`18785a67c6682b9fc41d3a220a6b88f3f42dc59e` and synchronized with a normal
+merge commit `3853284e9c59dc00caf0e662431100f1218dfb2e`. The refreshed branch
+has no uncommitted changes and remains limited to the reserved plan, the
+three native-prototype codegen files, the focused regression, and the one
+Symbol-prototype test-realm snapshot entry.
+
+The refreshed focused corpus-present run passed **4/4** with
+`TEST262_WORKERS=2` and `COMPILER_POOL_SIZE=2`: exact host **1/1**, exact
+standalone **1/1**, descriptor/identity **1/1**, and mutation/deletion **1/1**;
+there were zero compile errors, timeouts, or skips. The corpus-absent
+temporary-root shape was rerun after the refresh and passed **2/2 mandatory
+controls**, skipping only the two exact-row cases. The earlier 35-second
+Vitest timeout under concurrent repository activity was an infrastructure
+timeout only; the explicit 180-second reruns completed successfully.
+
+The implementation checkpoint is `a0b66b42ecba9575c87a39e85a2050bf36b5c729`;
+the refresh merge is intentionally non-rewriting. Final PR handoff must push
+this branch without force and create exactly one PR against `loopdive/js2:main`.
+
 ## Handoff
 
 Worktree: `/private/tmp/js2-es2015-next-lane-a-20260828`
