@@ -8,6 +8,17 @@ priority: high
 feasibility: medium
 reasoning_effort: max
 goal: standalone-gap
+assignee: ttraenkler/codex-5120-es2015-array-find-symbol-length
+branch: codex/5120-es2015-array-find-symbol-length
+task_type: bugfix
+area: codegen
+es_edition: es2015
+language_feature: array-like-methods
+files:
+  - src/codegen/array-prototype-borrow.ts
+  - src/codegen/object-runtime-enumeration.ts
+  - tests/issue-5120-es2015-array-find-symbol-length.test.ts
+  - plan/issues/5120-es2015-array-find-symbol-length.md
 ---
 # #5120 -- ES2015 Array `find`/`findIndex` must throw for Symbol `length`
 
