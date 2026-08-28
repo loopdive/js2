@@ -59,12 +59,14 @@ const CONVERTED: ReadonlyArray<{
   expected: number;
   code: string;
 }> = [
-  {
-    name: "ternary with mixed branch types (lowerConditional)",
-    source: `export function main(): number { const c = true; const x = c ? 1 : "s"; return typeof x === "number" ? 1 : 0; }`,
-    expected: 1,
-    code: "unsupported/build/operand-coercion-unsupported",
-  },
+  // (2026-08-28) "ternary with mixed branch types (lowerConditional)" —
+  // `c ? 1 : "s"` — used to live here as a claimed-then-demoted capability gap.
+  // #5092 closed that gap: the shape is now lowered by the mixed-primitive
+  // conditional route (IR-owned, `emitted`, no legacy body), so it is no longer
+  // a CONVERTED case and cannot record an `unsupported` outcome. Its runtime
+  // correctness is covered by tests/issue-5092-ir-mixed-primitive-conditional
+  // and by #4178's "String()/Number()/typeof of a mixed-type ternary stay
+  // correct". The six entries below still hold the demote contract.
   {
     name: "`??` on an f64 lhs (lowerNullish)",
     source: `export function main(): number { const x = 3; return (x as any) ?? 5; }`,

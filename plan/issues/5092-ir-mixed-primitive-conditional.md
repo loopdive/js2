@@ -254,3 +254,83 @@ on the PR head and with the route disabled): `tests/issue-1472-es5-getprototypeo
 and `tests/issue-3037-cs1c-getprototypeof-carrier` (4), plus 5 in
 `ir-frontend-widening` / `ir-scaffold` / `ir-bytecode-*` — byte-identical
 pass/fail sets before and after.
+
+## 2026-08-28 — CI follow-up: fallback-reason drift + an empty-binary regression
+
+CI's `issue-tests` job was red on the repair head for
+`tests/issue-3529-selector-preclaim.test.ts` (2/67). A/B against the branch's
+own `src/ir/select.ts` and against `origin/main`'s four source files placed all
+of the following on the BRANCH, not on the repair.
+
+### 1. Reason drift — the mixed arm claimed authority with no checker
+
+`directFallbackReason` calls `planIrCompilation` with **no checker**, so
+`classifyPrimitiveExpression` / `classifyDeclaredPrimitiveExpression` are
+absent. `truePrimitive` is then always `undefined`, which makes
+`exactSamePrimitive` false for EVERY conditional, while the checker-free
+`obviousSelectorValueFamily` still reports `"number"` for arms like `1 : 0`. The
+mixed block therefore fired on `(box && true) ? 1 : 0` and
+`value instanceof Bad ? 1 : 0` and returned `expr-mixed-conditional-context`
+before the condition was ever walked — masking `logical-value-unsupported` and
+`class-projection-unsupported`.
+
+Measured before the fix (`want` / checker-free / with-classifiers / full compile):
+
+| shape | want | no checker | classifiers | compile |
+| --- | --- | --- | --- | --- |
+| `(box && true) ? 1 : 0` | `logical-value-unsupported` | **operand-coercion** | ok | ok |
+| `value instanceof Bad ? 1 : 0` | `class-projection-unsupported` | **operand-coercion** | ok | ok |
+| `(box && true) ? 1 : "s"` | `logical-value-unsupported` | **operand-coercion** | **operand-coercion** | **operand-coercion** |
+| `value instanceof Bad ? 1 : "s"` | `class-projection-unsupported` | **operand-coercion** | **operand-coercion** | **operand-coercion** |
+
+The last two rows are the sibling class no test covered yet: with a mixed arm
+pair the block swallowed the specific reason even WITH the checker.
+
+**Fix — trigger predicate + arm ordering, not test expectations.** A new
+`primitiveEvidence` guard (`classifyPrimitive !== undefined &&
+classifyDeclared !== undefined`) keeps the route out of checker-free selection
+entirely, and the ordinary Phase-1 walk now runs FIRST inside the block, so a
+condition or arm that any other gate rejects records its own reason and the
+coercion verdicts only classify shapes nothing more specific owns. This
+replaces the `probeShape` wrapper and retires the
+`expr-mixed-conditional-lowering` detail string. All 12 columns above are now
+correct.
+
+### 2. Empty-binary regression — the IR-first gate promised a lowering that does not exist
+
+`irFirstBodyIsProvenLowerable`'s new `PlusToken` row admitted concatenation
+whenever EITHER operand was a string. `from-ast` has no producer for
+`string + number` / `string + boolean`, so the legacy body was skipped and an
+ordinary `"result: " + (2 > 1)` became an `unpatched-slot` invariant with
+`success: false` and a **0-byte binary** (`tests/issue-3529-ir-producer-parity`).
+
+Measured across the widened rows — only those two hard-failed; `string+string`,
+`string`↔`dynamic`, `number+number`, `number+boolean`, unary `+`/`-` over string
+and dynamic, `typeof`, and both wrapper calls were all fine, and the unary
+answers match Node (`-"12"` → -12, `+""` → 0). The row is now narrowed to
+exactly the pairs that lower: `string+string` and `string`↔`dynamic`. The four
+excluded pairs demote to legacy with a non-empty binary again.
+
+### 3. `tests/issue-4502.test.ts` — one entry became obsolete
+
+`ternary with mixed branch types (lowerConditional)` was listed as a
+claimed-then-demoted capability gap. #5092 closes that gap by design: the shape
+is now `emitted`, IR-owned, legacy body skipped, and returns Node's answer. The
+entry is removed with a comment; the other six entries still hold the demote
+contract, and the shape's runtime correctness is covered by the #5092 and #4178
+suites. This is the only expectation change made — the two reason-drift
+findings above were fixed in the selector, not in the tests.
+
+### Denominators after the follow-up
+
+`issue-3529-selector-preclaim` 67/67 · `issue-5092` 21/21 · `#3143` + `#3203` +
+`#4178` + both `#4787` suites + `#5092` 100/100 · ir-ternary / if-else /
+numeric-bool / let-const equivalence + typeof-expression / typeof-comparison
+81/81 · `check:ir-fallbacks` OK · `check:ir-kind-neutrality` OK · loc / func /
+coercion / oracle / dead-exports all exit 0, also with
+`LOC_GATE_BASE=origin/main` · TS7 typecheck, Biome lint, Prettier clean.
+
+Six failures remain in the at-risk set (`#4502` unary `!` ×2, `#3529` dataflow
+unary `!` ×2, `#3529` externref console identity, `#3522` standalone console
+parity). All six reproduce with the branch's four source files replaced by
+`origin/main`'s, so they are pre-existing on main and outside this PR.

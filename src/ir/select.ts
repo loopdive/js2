@@ -8952,35 +8952,47 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       trueObvious,
       falseObvious,
     ].some((family) => family === "number" || family === "boolean" || family === "string");
+    // (2026-08-28) This route reasons from CHECKER-backed primitive provenance.
+    // Without both classifiers `truePrimitive` is always undefined, so
+    // `exactSamePrimitive` is false for EVERY conditional while
+    // `obviousSelectorValueFamily` still reports "number" for arms like `1 : 0`
+    // — which handed this block authority over `(box && true) ? 1 : 0` and
+    // `value instanceof Bad ? 1 : 0` in checker-free selection, masking
+    // `logical-value-unsupported` / `class-projection-unsupported` with a
+    // generic `operand-coercion-unsupported` (#3529 preclaim parity).
+    const primitiveEvidence = classifyPrimitive !== undefined && classifyDeclared !== undefined;
 
     // #5092 — mixed primitive values acquire one exact ownership route. An
     // unresolved/non-primitive opposite arm is still part of this boundary
     // (nullable, bigint, any/unknown, object/property/call, etc.) and declines
     // with a typed Unsupported outcome before AST -> IR construction. Exact
     // same-family conditionals bypass this block, preserving their old path.
-    if (!exactSamePrimitive && hasPrimitiveSignal) {
+    if (primitiveEvidence && !exactSamePrimitive && hasPrimitiveSignal) {
+      // Ordering: a more specific arm owns any operand this route cannot
+      // classify, so the ordinary Phase-1 walk runs FIRST and records its own
+      // reason. Only shapes no other arm rejects reach the coercion verdicts
+      // below — otherwise a mixed-arm conditional over, say, a local-class
+      // logical operand reported `operand-coercion-unsupported` and the
+      // precise bucket was lost.
+      if (
+        !isPhase1ConditionExpr(expr.condition, scope, localClasses) ||
+        !isPhase1Expr(expr.whenTrue, scope, localClasses) ||
+        !isPhase1Expr(expr.whenFalse, scope, localClasses)
+      ) {
+        return false;
+      }
       if (!exactMixedPrimitiveConditionalContextReady(expr)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
       }
-      const trueFamily = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive!, classifyDeclared!);
-      const falseFamily = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive!, classifyDeclared!);
+      const trueFamily = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive, classifyDeclared);
+      const falseFamily = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive, classifyDeclared);
       const conditionFamily = boundedMixedConditionalPrimitiveFamily(
         expr.condition,
-        classifyPrimitive!,
-        classifyDeclared!,
+        classifyPrimitive,
+        classifyDeclared,
       );
       if (trueFamily === undefined || falseFamily === undefined || trueFamily === falseFamily || !conditionFamily) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-proof", expr);
-      }
-      if (
-        !probeShape(
-          () =>
-            isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
-            isPhase1Expr(expr.whenTrue, scope, localClasses) &&
-            isPhase1Expr(expr.whenFalse, scope, localClasses),
-        )
-      ) {
-        return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-lowering", expr);
       }
       return true;
     }

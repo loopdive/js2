@@ -215,10 +215,17 @@ export function irFirstBodyIsProvenLowerable(
           const left = exprDomain(b.left);
           const right = exprDomain(b.right);
           if (left === "number" && right === "number") return "number";
-          // A statically-string operand forces concatenation. The dynamic
-          // domain can only originate from the exact primitive join below, so
-          // no object ToPrimitive surface is hidden by this allowlist row.
-          if (left !== null && right !== null && (left === "string" || right === "string")) return "string";
+          // (2026-08-28) Concatenation is admitted ONLY for the operand pairs
+          // from-ast actually lowers: two strings, or a string beside the
+          // #5092 dynamic carrier. The wider "either side is a string" row this
+          // replaces promised `"a" + 1` and `"a" + (2 > 1)`, which have no IR
+          // producer — so the legacy body was skipped and an ordinary
+          // concatenation became an `unpatched-slot` invariant with an EMPTY
+          // binary (caught by #3529 producer parity).
+          if (left === "string" && right === "string") return "string";
+          if ((left === "string" && right === "dynamic") || (left === "dynamic" && right === "string")) {
+            return "string";
+          }
           return null;
         }
         if (isNumericBinaryToken(op)) {
