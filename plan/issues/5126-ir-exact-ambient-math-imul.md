@@ -1,7 +1,7 @@
 ---
 id: 5126
 title: "IR: own exact ambient Math.imul calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -147,4 +147,17 @@ focused bundle. `JS2WASM_IR_MATH_IMUL=0` withdraws only this claim, while
 
 ## Outcome
 
-Pending implementation and final Luna Max review.
+Implemented exact ambient two-number `Math.imul` ownership as a typed binary
+semantic intrinsic backed by one dependency-free, host-free Wasm composite.
+The shared exact ToUint32 expansion coerces right then left, reuses the existing
+i64 scratch pool plus one lazy i32 rhs local, multiplies with `i32.mul`, and
+returns the signed Int32 result as f64. WasmGC and production linear emit the
+same closed body; bytecode and Porffor remain fail-closed, and
+`JS2WASM_IR_MATH_IMUL=0` provides the narrow rollback.
+
+Validation passed for the 14 focused #5126 cases, the #3526 linear,
+integration, and manifest suites, the #5119 exact-coercion prerequisite (30/30
+tests total), TypeScript 7, lint, formatting, IR kind-neutrality, LOC/function
+budgets, oracle/coercion ratchets, and issue integrity. Luna Max architecture
+and test audits confirmed the stack discipline, provider boundary, and focused
+coverage with no checkpoint-scoped blockers.

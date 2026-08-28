@@ -88,12 +88,12 @@ function semanticView(manifest: FrozenRuntimeManifest): object {
 }
 
 describe("#3526 typed IR runtime manifest foundation", () => {
-  it("is exhaustive for the exact thirty certified pure Math methods and excludes random", () => {
+  it("is exhaustive for the exact thirty-one certified pure Math methods and excludes random", () => {
     const certifiedMethods = Object.keys(IR_MATH_METHOD_TABLE).sort();
     const intrinsicMethods = PURE_MATH_INTRINSIC_IDS.map((id) => id.slice("math.".length)).sort();
 
     expect(intrinsicMethods).toEqual(certifiedMethods);
-    expect(intrinsicMethods).toHaveLength(30);
+    expect(intrinsicMethods).toHaveLength(31);
     expect(intrinsicMethods).not.toContain("random");
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual([...PURE_MATH_RUNTIME_FEATURES].sort());
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual(
@@ -109,6 +109,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
         "math.cosh",
         "math.expm1",
         "math.fround",
+        "math.imul",
         "math.log10",
         "math.log1p",
         "math.reduce-trig",
@@ -141,7 +142,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     const first = forward.freeze();
     const second = reverse.freeze();
     expect(second).toEqual(first);
-    expect(first.intrinsicUses).toHaveLength(30);
+    expect(first.intrinsicUses).toHaveLength(31);
     expect(first.features).toEqual(PURE_MATH_RUNTIME_FEATURES);
     expect(new Set(first.providers.map((provider) => provider.id)).size).toBe(first.providers.length);
     expect(first.hostCapabilities).toEqual([]);
@@ -162,6 +163,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     expect(dependencies["math.clz32"]).toEqual([]);
     expect(dependencies["math.expm1"]).toEqual(["math.exp"]);
     expect(dependencies["math.fround"]).toEqual([]);
+    expect(dependencies["math.imul"]).toEqual([]);
     expect(dependencies["math.round"]).toEqual([]);
     expect(dependencies["math.sign"]).toEqual([]);
     expect(dependencies["math.asinh"]).toEqual(["math.log"]);

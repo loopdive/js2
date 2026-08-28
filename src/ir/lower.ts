@@ -61,6 +61,7 @@ import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import {
   emitWasmInt32Coercion,
   emitWasmMathClz32,
+  emitWasmMathImul,
   type WasmInt32CoercionScratch,
 } from "./backend/wasm-int32-coercion.js";
 import {
@@ -1192,15 +1193,18 @@ export function lowerIrFunctionBody<S, Slot>(
     }
     return jsBitwiseI64Scratch;
   };
+  const ensureJsBitwiseRhsI32 = (): number => {
+    if (jsBitwiseRhsIdxI32 === null) {
+      jsBitwiseRhsIdxI32 = func.params.length + locals.length;
+      const type: ValType = { kind: "i32" };
+      locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
+    }
+    return jsBitwiseRhsIdxI32;
+  };
   const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
     const tmp = ensureJsBitwiseTmp();
     if (rhsIsI32) {
-      if (jsBitwiseRhsIdxI32 === null) {
-        jsBitwiseRhsIdxI32 = func.params.length + locals.length;
-        const type: ValType = { kind: "i32" };
-        locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
-      }
-      return { rhs: jsBitwiseRhsIdxI32, tmp };
+      return { rhs: ensureJsBitwiseRhsI32(), tmp };
     }
     if (jsBitwiseRhsIdxF64 === null) {
       jsBitwiseRhsIdxF64 = func.params.length + locals.length;
@@ -1630,6 +1634,9 @@ export function lowerIrFunctionBody<S, Slot>(
             switch (operation) {
               case "math.clz32":
                 emitWasmMathClz32(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
+                return;
+              case "math.imul":
+                emitWasmMathImul(compositeOut as Instr[], ensureJsBitwiseI64Scratch(), ensureJsBitwiseRhsI32());
                 return;
               case "to-uint32":
                 emitWasmInt32Coercion(compositeOut as Instr[], ensureJsBitwiseI64Scratch());

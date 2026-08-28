@@ -101,3 +101,11 @@ export function emitWasmMathClz32(out: Instr[], scratch: WasmInt32CoercionScratc
   emitWasmInt32Coercion(out, scratch);
   out.push({ op: "i32.clz" }, { op: "f64.convert_i32_s" });
 }
+
+/** Consume two f64s and leave the exact Number result of `Math.imul`. */
+export function emitWasmMathImul(out: Instr[], scratch: WasmInt32CoercionScratch, rhsLocal: number): void {
+  emitWasmInt32Coercion(out, scratch);
+  out.push({ op: "local.set", index: rhsLocal });
+  emitWasmInt32Coercion(out, scratch);
+  out.push({ op: "local.get", index: rhsLocal }, { op: "i32.mul" }, { op: "f64.convert_i32_s" });
+}

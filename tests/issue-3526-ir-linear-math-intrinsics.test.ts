@@ -16,6 +16,7 @@ const LINEAR_NATIVE_INTRINSICS = [
   "math.clz32",
   "math.floor",
   "math.fround",
+  "math.imul",
   "math.sqrt",
   "math.trunc",
 ] as const satisfies readonly IntrinsicId[];
@@ -25,13 +26,16 @@ function intrinsicFunction(id: IntrinsicId): IrFunction {
   const left = builder.addParam("left", F64);
   const right = builder.addParam("right", F64);
   builder.openBlock();
-  const result = builder.emitIntrinsic(id, id === "math.atan2" || id === "math.pow" ? [left, right] : [left]);
+  const result = builder.emitIntrinsic(
+    id,
+    id === "math.atan2" || id === "math.imul" || id === "math.pow" ? [left, right] : [left],
+  );
   builder.terminate({ kind: "return", values: [result] });
   return builder.finish();
 }
 
 describe("#3526 linear semantic Math intrinsic legality", () => {
-  it("admits exactly the seven semantic intrinsics backed by native linear operations", () => {
+  it("admits exactly the eight semantic intrinsics backed by native linear operations", () => {
     const admitted = PURE_MATH_INTRINSIC_IDS.filter(
       (id) => verifyIrBackendLegality(intrinsicFunction(id), "linear").length === 0,
     );

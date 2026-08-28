@@ -290,7 +290,7 @@ export type IrMathMethodPlan =
       readonly sequence: IrIntrinsicBackendSequence;
     }
   | {
-      readonly arity: 1;
+      readonly arity: 1 | 2;
       readonly intrinsic: IntrinsicId;
       readonly composite: IrIntrinsicBackendComposite;
     }
@@ -312,6 +312,7 @@ export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = 
   fround: { arity: 1, intrinsic: "math.fround", sequence: "f64.fround" },
   ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
   clz32: { arity: 1, intrinsic: "math.clz32", composite: "math.clz32" },
+  imul: { arity: 2, intrinsic: "math.imul", composite: "math.imul" },
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
   asin: { arity: 1, intrinsic: "math.asin" },
   acos: { arity: 1, intrinsic: "math.acos" },
@@ -6523,6 +6524,7 @@ function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpressio
   if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
   if (plan.intrinsic === "math.fround" && process.env.JS2WASM_IR_MATH_FROUND === "0") return false;
   if (plan.intrinsic === "math.clz32" && process.env.JS2WASM_IR_MATH_CLZ32 === "0") return false;
+  if (plan.intrinsic === "math.imul" && process.env.JS2WASM_IR_MATH_IMUL === "0") return false;
   if (plan.intrinsic === "math.round" && process.env.JS2WASM_IR_MATH_ROUND === "0") return false;
   if (plan.intrinsic === "math.sign" && process.env.JS2WASM_IR_MATH_SIGN === "0") return false;
   if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;

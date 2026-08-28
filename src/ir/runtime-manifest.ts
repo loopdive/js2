@@ -61,6 +61,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "backend.f64.sqrt",
   "backend.f64.trunc",
   "backend.math.clz32",
+  "backend.math.imul",
   "selfhost.math.acos",
   "selfhost.math.acosh",
   "selfhost.math.asin",
@@ -225,6 +226,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.expm1": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.floor": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.fround": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.imul": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.log": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log10": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log1p": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -363,6 +365,10 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProvi
     kind: "backend-sequence",
     sequence: "f64.fround",
   }),
+  "math.imul": provider("backend.math.imul", "math.imul", F64_BINARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "math.imul",
+  }),
   "math.log": provider("selfhost.math.log", "math.log", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_log",
@@ -442,7 +448,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProvi
   }),
 });
 
-/** Canonically ordered default provider catalogue for the thirty-method slice. */
+/** Canonically ordered default provider catalogue for the thirty-one-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),

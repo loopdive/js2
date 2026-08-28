@@ -30,6 +30,7 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.expm1",
   "math.floor",
   "math.fround",
+  "math.imul",
   "math.log",
   "math.log10",
   "math.log1p",
@@ -52,7 +53,7 @@ export const INTRINSIC_IDS = Object.freeze([...NUMERIC_COERCION_INTRINSIC_IDS, .
 export type IntrinsicId = (typeof INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the thirty intrinsic entry points.
+ * Provider requirements reachable from the thirty-one intrinsic entry points.
  * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
@@ -73,6 +74,7 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.expm1",
   "math.floor",
   "math.fround",
+  "math.imul",
   "math.log",
   "math.log10",
   "math.log1p",
@@ -203,6 +205,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.expm1": definition("math.expm1", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.floor": definition("math.floor", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.fround": definition("math.fround", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.imul": definition("math.imul", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.log": definition("math.log", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.log10": definition("math.log10", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.log1p": definition("math.log1p", F64_UNARY_INTRINSIC_SIGNATURE),

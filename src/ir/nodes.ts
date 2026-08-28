@@ -846,7 +846,7 @@ export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.c
 export type IrIntrinsicBackendSequence = "f64.fround";
 
 /** Closed backend-neutral composite scalar semantics with backend-owned scratch. */
-export type IrIntrinsicBackendComposite = "math.clz32" | "to-uint32";
+export type IrIntrinsicBackendComposite = "math.clz32" | "math.imul" | "to-uint32";
 
 /**
  * Provider attachment selected after middle-end transforms and manifest
