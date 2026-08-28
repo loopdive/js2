@@ -178,8 +178,9 @@ missing files, so it could not reach the two self-contained compiler controls.
 - Validation source: `upstream/main` `eafd6700ac` when the focused checks ran,
   with the pinned Test262 gitlink
   `b363f29d3c43c626dc852744ad64a0b48a003693`; compiler worker count was capped
-  at two. The branch was then synchronized with the current upstream merge
-  `18785a67c6` before handoff.
+  at two. The branch was then synchronized with upstream merges
+  `18785a67c6` and current `upstream/main` `0ccc264fa1` before handoff (the
+  latter was recorded by merge checkpoint `cb64e597da`).
 - Corpus present: the focused Vitest file passed **6/6** — four exact
   host/standalone rows and both mandatory controls.
 - Hermetic no-corpus shape (only `harness/assert.js` was temporarily moved in
