@@ -126,6 +126,38 @@ export function ensureProxyRuntime(
     { op: "call", funcIdx: typeErrorCtorIdx },
     { op: "throw", tagIdx: exnTagIdx },
   ];
+  // (#5140 / §7.3.9 GetMethod) A trap that IS present but not callable must
+  // throw a TypeError at OPERATION time — proxy creation still succeeds. The
+  // guard runs at the head of every dispatch builder's trap arm; the callable
+  // predicate mirrors the construct dispatch (`__typeof_function` plus the
+  // boundary-callable classifier when the module has one). FRESH Instr array per
+  // use, same FINALIZE double-remap rationale as `throwRevoked`.
+  const targetNotCallableMsg = "Proxy target is not callable";
+  addStringConstantGlobal(ctx, targetNotCallableMsg);
+  const throwTargetNotCallable = (): Instr[] => [
+    ...stringConstantExternrefInstrs(ctx, targetNotCallableMsg),
+    { op: "call", funcIdx: typeErrorCtorIdx },
+    { op: "throw", tagIdx: exnTagIdx },
+  ];
+  const boundaryCallableKindIdxTop = ctx.funcMap.get("__boundary_object_callable_kind");
+  const trapCallableGuard = (trapLocalIdx: number): Instr[] => {
+    if (typeofFunctionIdx === undefined) return [];
+    return [
+      { op: "local.get", index: trapLocalIdx },
+      { op: "call", funcIdx: typeofFunctionIdx },
+      ...(boundaryCallableKindIdxTop === undefined
+        ? []
+        : ([
+            { op: "local.get", index: trapLocalIdx },
+            { op: "call", funcIdx: boundaryCallableKindIdxTop },
+            { op: "i32.const", value: 1 },
+            { op: "i32.and" },
+            { op: "i32.or" },
+          ] satisfies Instr[])),
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: throwGetTrapNotCallable() },
+    ];
+  };
 
   // Reserve the open-`any` closure-call bridge `__apply_closure` (filled at
   // FINALIZE by `fillApplyClosure`). The proxy trap-invoke drivers
@@ -143,6 +175,7 @@ export function ensureProxyRuntime(
   const F_PHANDLER = 2;
   const F_PTRAPS = 3;
   const F_REVOKED = 4;
+  const F_CALLABLE = 5; // (#5140) [[Call]] slot, fixed by the target at ProxyCreate
   const F_CONSTRUCTIBLE = 6;
   // Field indices on $ProxyTraps: get(0) set(1) has(2) apply(3) deleteProperty(4).
   const TRAP_GET = 0;
@@ -225,6 +258,57 @@ export function ensureProxyRuntime(
   // argumentsList, newTarget), matching §10.5.13 step 9.
   const callConstructIdx = reserveDriver(PROXY_CALL_CONSTRUCT, [externref, externref, externref, externref, externref]);
   ctx.proxyDispatchReserved = true;
+
+  // ── (#5140) §10.5 post-trap invariant helpers ────────────────────────────
+  //
+  // Shared building blocks for the result-invariant checks the Phase-1 slices
+  // deferred. They only need three target-side primitives, all registered
+  // before the proxy runtime: `__object_isExtensible`, `__getPrototypeOf` and
+  // the strict-equality helper used by the ownKeys duplicate rule.
+  const invariantMsg = "Proxy trap result violates an invariant of its target";
+  addStringConstantGlobal(ctx, invariantMsg);
+  const throwInvariant = (): Instr[] => [
+    ...stringConstantExternrefInstrs(ctx, invariantMsg),
+    { op: "call", funcIdx: typeErrorCtorIdx },
+    { op: "throw", tagIdx: exnTagIdx },
+  ];
+  const proxyStrictEqIdx = ensureExternStrictEqHelper(ctx) ?? ctx.funcMap.get("__host_eq");
+  const objectIsExtensibleIdx = ctx.funcMap.get("__object_isExtensible");
+  const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");
+  const isTruthyTopIdx = ctx.funcMap.get("__is_truthy");
+  // `v` is a primitive (⇒ NOT an Object). `null` is deliberately absent: the
+  // [[GetPrototypeOf]] / [[SetPrototypeOf]] invariants accept Object OR null.
+  const primitiveClassifierIdxs = [
+    "__typeof_number",
+    "__typeof_boolean",
+    "__typeof_string",
+    "__typeof_bigint",
+    "__typeof_symbol",
+    "__extern_is_undefined",
+  ]
+    .map((name) => ctx.funcMap.get(name))
+    .filter((idx): idx is number => idx !== undefined);
+  const isPrimitiveTest = (local: number): Instr[] => {
+    const out: Instr[] = [];
+    let count = 0;
+    for (const funcIdx of primitiveClassifierIdxs) {
+      out.push({ op: "local.get", index: local }, { op: "call", funcIdx });
+      if (count > 0) out.push({ op: "i32.or" });
+      count++;
+    }
+    if (count === 0) out.push({ op: "i32.const", value: 0 });
+    return out;
+  };
+  /** Target-side extensibility as an i32 (0 when the helper is unavailable). */
+  const targetIsExtensible = (proxyLocal: number): Instr[] =>
+    objectIsExtensibleIdx === undefined
+      ? [{ op: "i32.const", value: 1 }]
+      : [
+          { op: "local.get", index: proxyLocal },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: objectIsExtensibleIdx },
+        ];
 
   // Builds a dispatch helper body. `trapFieldIdx` selects the trap closure;
   // `forwardName` is the ordinary operation to call when the trap is absent;
@@ -344,19 +428,9 @@ export function ensureProxyRuntime(
                 ...(trapFieldIdx === TRAP_GET ? ([{ op: "local.get", index: 2 }] satisfies Instr[]) : []),
                 { op: "call", funcIdx: forwardIdx },
               ],
-        // trap present → GetMethod requires a callable trap before invoking it.
-        // The other Proxy trap slices retain their existing deferred invariant
-        // posture; this check is the bounded ES2015 [[Get]] distinction (#4721).
-        else:
-          trapFieldIdx === TRAP_GET && typeofFunctionIdx !== undefined
-            ? [
-                { op: "local.get", index: 4 },
-                { op: "call", funcIdx: typeofFunctionIdx },
-                { op: "i32.eqz" },
-                { op: "if", blockType: { kind: "empty" }, then: throwGetTrapNotCallable() },
-                ...trapArm,
-              ]
-            : trapArm,
+        // trap present → GetMethod requires a callable trap before invoking it
+        // (#4721 for [[Get]]; #5140 generalised it to every key-shaped trap).
+        else: [...trapCallableGuard(4), ...trapArm],
       },
     ];
     return body;
@@ -394,6 +468,65 @@ export function ensureProxyRuntime(
       trapArm.push({ op: "local.get", index: 1 }); // proto arg
     }
     trapArm.push({ op: "call", funcIdx: driverIdx });
+    // (#5140) §10.5.1 / §10.5.2 post-trap invariants. `res` is local 4 (the
+    // proto dispatchers declare a third local for exactly this).
+    trapArm.push({ op: "local.set", index: 4 });
+    if (!isSet) {
+      // §10.5.1 step 7: the result must be an Object or null.
+      trapArm.push(...isPrimitiveTest(4), {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: throwInvariant(),
+      });
+      // §10.5.1 steps 8-11: a non-extensible target pins its prototype.
+      if (proxyStrictEqIdx !== undefined && getPrototypeOfIdx !== undefined) {
+        trapArm.push(...targetIsExtensible(2), {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: [
+            { op: "local.get", index: 4 },
+            { op: "local.get", index: 2 },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+            { op: "extern.convert_any" },
+            { op: "call", funcIdx: getPrototypeOfIdx },
+            { op: "call", funcIdx: proxyStrictEqIdx },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: throwInvariant() },
+          ],
+        });
+      }
+    } else if (proxyStrictEqIdx !== undefined && getPrototypeOfIdx !== undefined && isTruthyTopIdx !== undefined) {
+      // §10.5.2 steps 9-12: a truthy result on a non-extensible target is only
+      // honest when the requested prototype already IS the target's.
+      trapArm.push(
+        { op: "local.get", index: 4 },
+        { op: "call", funcIdx: isTruthyTopIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...targetIsExtensible(2),
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [],
+              else: [
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: getPrototypeOfIdx },
+                { op: "call", funcIdx: proxyStrictEqIdx },
+                { op: "i32.eqz" },
+                { op: "if", blockType: { kind: "empty" }, then: throwInvariant() },
+              ],
+            },
+          ],
+        },
+      );
+    }
+    trapArm.push({ op: "local.get", index: 4 });
 
     const forwardArm: Instr[] = isSet
       ? [
@@ -449,7 +582,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: forwardArm,
-        else: trapArm,
+        else: [...trapCallableGuard(3), ...trapArm],
       },
     ];
   };
@@ -479,6 +612,29 @@ export function ensureProxyRuntime(
       { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
       { op: "extern.convert_any" },
       { op: "call", funcIdx: driverIdx },
+      // (#5140) §10.5.3 step 8 / §10.5.4 step 8 post-trap invariants. `res` is
+      // local 4 (the ext1 dispatchers declare a third local for it).
+      { op: "local.set", index: 4 },
+      ...(isTruthyTopIdx === undefined || objectIsExtensibleIdx === undefined
+        ? []
+        : trapFieldIdx === TRAP_ISEXT
+          ? // ToBoolean(result) must SameValue the target's own extensibility.
+            ([
+              { op: "local.get", index: 4 },
+              { op: "call", funcIdx: isTruthyTopIdx },
+              ...targetIsExtensible(2),
+              { op: "i32.ne" },
+              { op: "if", blockType: { kind: "empty" }, then: throwInvariant() },
+            ] satisfies Instr[])
+          : // A truthy preventExtensions result must leave the target sealed.
+            ([
+              { op: "local.get", index: 4 },
+              { op: "call", funcIdx: isTruthyTopIdx },
+              ...targetIsExtensible(2),
+              { op: "i32.and" },
+              { op: "if", blockType: { kind: "empty" }, then: throwInvariant() },
+            ] satisfies Instr[])),
+      { op: "local.get", index: 4 },
     ];
     const forwardArm: Instr[] = forwardReturnsI32
       ? [
@@ -528,7 +684,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: forwardArm,
-        else: trapArm,
+        else: [...trapCallableGuard(3), ...trapArm],
       },
     ];
   };
@@ -734,7 +890,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: forwardArm,
-        else: trapArm,
+        else: [...trapCallableGuard(3), ...trapArm],
       },
     ];
   };
@@ -818,7 +974,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: forwardArm,
-        else: trapArm,
+        else: [...trapCallableGuard(4), ...trapArm],
       },
     ];
   };
@@ -833,6 +989,13 @@ export function ensureProxyRuntime(
   const dispatchLocals = (): { name: string; type: ValType }[] => [
     { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
     { name: "trap", type: { kind: "externref" } as ValType },
+  ];
+  // (#5140) proto / ext1 dispatchers need a third local to hold the trap result
+  // while the §10.5 invariants inspect it. FRESH array per use, same rationale.
+  const invariantDispatchLocals = (): { name: string; type: ValType }[] => [
+    { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
+    { name: "trap", type: { kind: "externref" } as ValType },
+    { name: "res", type: { kind: "externref" } as ValType },
   ];
   const ownKeysDispatchLocals = (): { name: string; type: ValType }[] => [
     { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
@@ -907,7 +1070,7 @@ export function ensureProxyRuntime(
     "__proxy_gpo_dispatch",
     [externref, externref],
     [externref],
-    dispatchLocals(),
+    invariantDispatchLocals(),
     buildProtoDispatch(TRAP_GPO, "__getPrototypeOf", false),
   );
   // (#1355 Slice C) __proxy_spo_dispatch(proxy, proto) -> externref (booleanish).
@@ -917,7 +1080,7 @@ export function ensureProxyRuntime(
     "__proxy_spo_dispatch",
     [externref, externref],
     [externref],
-    dispatchLocals(),
+    invariantDispatchLocals(),
     buildProtoDispatch(TRAP_SPO, "__object_setPrototypeOf", true),
   );
   // (#1355 Slice D) __proxy_isext_dispatch(proxy, _unused) -> externref
@@ -926,7 +1089,7 @@ export function ensureProxyRuntime(
     "__proxy_isext_dispatch",
     [externref, externref],
     [externref],
-    dispatchLocals(),
+    invariantDispatchLocals(),
     buildExt1Dispatch(TRAP_ISEXT, "__object_isExtensible", true),
   );
   // (#1355 Slice D) __proxy_prevext_dispatch(proxy, _unused) -> externref
@@ -936,7 +1099,7 @@ export function ensureProxyRuntime(
     "__proxy_prevext_dispatch",
     [externref, externref],
     [externref],
-    dispatchLocals(),
+    invariantDispatchLocals(),
     buildExt1Dispatch(TRAP_PREVEXT, "__object_preventExtensions", false),
   );
   // (#1355 Slice E) ownKeys — TWO dispatch helpers reading the SAME `ownKeys`
@@ -1004,6 +1167,18 @@ export function ensureProxyRuntime(
     { op: "local.get", index: 3 },
     { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
     { op: "if", blockType: { kind: "empty" }, then: throwRevoked() },
+    // (#5140) §10.5.12 — a Proxy only has a [[Call]] slot when its target was
+    // callable at ProxyCreate time. `p()` on a proxy over a plain object is a
+    // TypeError, not a silent undefined. A `$Proxy` target counts as callable
+    // here (its own dispatch re-checks one hop down).
+    { op: "local.get", index: 3 },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_CALLABLE },
+    { op: "local.get", index: 3 },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    { op: "i32.or" },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: throwTargetNotCallable() },
     // trap = p.ptraps==null ? null : p.ptraps.apply
     { op: "local.get", index: 3 },
     { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
@@ -1036,6 +1211,8 @@ export function ensureProxyRuntime(
         { op: "call", funcIdx: applyClosureIdx },
       ],
       else: [
+        // (#5140) GetMethod: a present non-callable apply trap is a TypeError.
+        ...trapCallableGuard(4),
         // driver(handler, trap, target, thisArg, argArray)
         { op: "local.get", index: 3 },
         { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PHANDLER },
@@ -1203,15 +1380,30 @@ export function ensureProxyRuntime(
       { op: "throw", tagIdx: exnTagIdx },
     ];
     // readTrap(name) → __extern_get(handler, "name") (undefined → dispatch nulls).
+    // (#5140) `new Proxy(t, revokedProxy)` must SUCCEED — §28.2.1.1 only checks
+    // Type(handler) is Object; the trap reads are §7.3.9 GetMethod calls that
+    // happen per OPERATION. Reading them eagerly through a revoked handler threw
+    // "Cannot perform operation on a proxy that has been revoked" at construction.
+    // Local 15 caches "the handler is a revoked proxy"; the reads are skipped for
+    // it and every trap stays null (each later operation forwards to the target).
+    const HANDLER_REVOKED = 15;
     const readTrap = (name: string): Instr[] => [
-      { op: "local.get", index: 1 },
-      ...stringConstantExternrefInstrs(ctx, name),
-      { op: "call", funcIdx: externGetIdx },
-      // (#2106 S1) a missing trap resolves to the undefined singleton —
-      // normalize to null so the trap-dispatch null checks keep working.
-      ...(ctx.funcMap.has("__nullish_to_null")
-        ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-        : []),
+      { op: "local.get", index: HANDLER_REVOKED },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then: [{ op: "ref.null.extern" }],
+        else: [
+          { op: "local.get", index: 1 },
+          ...stringConstantExternrefInstrs(ctx, name),
+          { op: "call", funcIdx: externGetIdx },
+          // (#2106 S1) a missing trap resolves to the undefined singleton —
+          // normalize to null so the trap-dispatch null checks keep working.
+          ...(ctx.funcMap.has("__nullish_to_null")
+            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+            : []),
+        ],
+      },
     ];
     const primitiveTypeofIndices = ["__typeof_number", "__typeof_boolean", "__typeof_string", "__typeof_bigint"]
       .map((name) => ctx.funcMap.get(name))
@@ -1257,7 +1449,20 @@ export function ensureProxyRuntime(
         ]);
       }
       if (primitiveCount === 0) primitiveTest.push({ op: "i32.const", value: 0 });
-      return [...primitiveTest, { op: "if", blockType: { kind: "empty" }, then: throwNotObject() }];
+      // (#5140) A `$Proxy` carrier is definitionally an Object, but one of the
+      // typeof classifiers above misfires on the struct (probe:
+      // `new Proxy(new Proxy({}, {}), {})` threw at create). Mask the primitive
+      // verdict off whenever the value IS a proxy so proxy-as-target and
+      // proxy-as-handler chains are admitted.
+      return [
+        ...primitiveTest,
+        { op: "local.get", index: local },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: proxyTypeIdx },
+        { op: "i32.eqz" },
+        { op: "i32.and" },
+        { op: "if", blockType: { kind: "empty" }, then: throwNotObject() },
+      ];
     };
     const proxyCreateBody: Instr[] = [
       // if target == null → throw
@@ -1276,6 +1481,22 @@ export function ensureProxyRuntime(
       // their identity or representation.
       ...requireObject(0),
       ...requireObject(1),
+      // handlerRevoked = handler is a `$Proxy` whose revoked bit is set.
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: proxyTypeIdx },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      { op: "local.set", index: 15 },
       // read the traps off the (open) handler. (#1355) deleteProperty appended.
       ...readTrap("get"),
       { op: "local.set", index: 2 },
@@ -1355,6 +1576,7 @@ export function ensureProxyRuntime(
         { name: "ownKeysT", type: externref }, // (#1355 Slice E) ownKeys
         { name: "defineT", type: externref }, // (#1355 Slice F) defineProperty
         { name: "constructT", type: externref }, // (#4397) construct
+        { name: "handlerRevoked", type: { kind: "i32" } }, // (#5140) local 15
       ],
       proxyCreateBody,
     );
@@ -1743,8 +1965,13 @@ export function ensureProxyRuntime(
   // ToBoolean(isext_dispatch(obj)). `Object.isExtensible(p)` /
   // `Reflect.isExtensible` route here for dynamic receivers. The dispatch returns
   // the trap's booleanish externref; coerce to i32 via `__is_truthy`.
-  const isextBody = findBody("__object_isExtensible");
-  if (isextBody) {
+  // (#5140) The `_obj` twin is the variant `Object.isExtensible(p)` picks
+  // whenever the oracle proves the argument is a JS object — which a Proxy
+  // binding always is — so guarding only the base name left every
+  // `Object.isExtensible(proxy)` call bypassing the isExtensible trap.
+  for (const isextName of ["__object_isExtensible", "__object_isExtensible_obj"]) {
+    const isextBody = findBody(isextName);
+    if (!isextBody) continue;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const guard: Instr[] = [
       { op: "local.get", index: 0 },
@@ -1872,6 +2099,177 @@ export function ensureProxyRuntime(
       },
     ];
     objDefineBody.unshift(...guard);
+  }
+
+  // ── (#5140) `p.call(…)` / `p.apply(…)` on a proxy over a callable ────────
+  //
+  // §10.5.12 [[Call]] is reachable three ways: `p(…)` (handled by
+  // `__apply_closure`'s proxy front-guard), `Reflect.apply(p, …)`, and the
+  // `Function.prototype.call`/`apply` members. The third route resolves
+  // `p.call` through `__extern_method_call`, whose `$Object` arm finds no
+  // `call` on the `$Proxy` carrier and hits the resolved-callee guard —
+  // "called value is not a function" — before the apply dispatch is ever
+  // reached. Recognise the two member names on a callable proxy here and
+  // re-shape the argument vector into the [[Call]] convention.
+  const methodCallFn = ctx.mod.functions.find((f) => f.name === "__extern_method_call");
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const applyDispatchIdx = ctx.funcMap.get("__proxy_apply_dispatch");
+  if (
+    methodCallFn &&
+    proxyStrictEqIdx !== undefined &&
+    objVecNewIdx !== undefined &&
+    objVecPushIdx !== undefined &&
+    externLengthIdx !== undefined &&
+    externGetIdxIdx !== undefined &&
+    applyDispatchIdx !== undefined
+  ) {
+    // Params 0..2 are (recv, name, args); append five fresh locals after the
+    // ones `__extern_method_call` already declared.
+    const base = 3 + methodCallFn.locals.length;
+    const L_LEN = base;
+    const L_I = base + 1;
+    const L_VEC = base + 2;
+    const L_THIS = base + 3;
+    const L_ARR = base + 4;
+    methodCallFn.locals.push(
+      { name: "proxyCallLen", type: { kind: "f64" } },
+      { name: "proxyCallI", type: { kind: "f64" } },
+      { name: "proxyCallVec", type: externref },
+      { name: "proxyCallThis", type: externref },
+      { name: "proxyCallArr", type: externref },
+    );
+    addStringConstantGlobal(ctx, "call");
+    addStringConstantGlobal(ctx, "apply");
+    /** `args[idx]` when `len > idx`, else the null externref. */
+    const argAt = (idx: number): Instr[] => [
+      { op: "local.get", index: L_LEN },
+      { op: "f64.const", value: idx },
+      { op: "f64.lt" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then: [{ op: "ref.null.extern" }],
+        else: [
+          { op: "local.get", index: 2 },
+          { op: "f64.const", value: idx },
+          { op: "call", funcIdx: externGetIdxIdx },
+        ],
+      },
+    ];
+    /** Copy `source[from … L_LEN)` into a fresh `$ObjVec` held in `L_VEC`. */
+    const copyInto = (sourceLocal: number, from: number): Instr[] => [
+      { op: "call", funcIdx: objVecNewIdx },
+      { op: "local.set", index: L_VEC },
+      { op: "f64.const", value: from },
+      { op: "local.set", index: L_I },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: L_I },
+              { op: "local.get", index: L_LEN },
+              { op: "f64.ge" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: L_VEC },
+              { op: "local.get", index: sourceLocal },
+              { op: "local.get", index: L_I },
+              { op: "call", funcIdx: externGetIdxIdx },
+              { op: "call", funcIdx: objVecPushIdx },
+              { op: "local.get", index: L_I },
+              { op: "f64.const", value: 1 },
+              { op: "f64.add" },
+              { op: "local.set", index: L_I },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+    ];
+    const nameIs = (literal: string): Instr[] => [
+      { op: "local.get", index: 1 },
+      ...stringConstantExternrefInstrs(ctx, literal),
+      { op: "call", funcIdx: proxyStrictEqIdx },
+    ];
+    const guard: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        // The cast must stay INSIDE the test — evaluating it eagerly traps for
+        // every ordinary receiver that reaches `__extern_method_call`.
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: proxyTypeIdx },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_CALLABLE },
+          { op: "i32.eqz" },
+          { op: "br_if", depth: 0 },
+          // len = ToLength(args.length)
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: externLengthIdx },
+          { op: "local.set", index: L_LEN },
+          ...nameIs("call"),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...argAt(0),
+              { op: "local.set", index: L_THIS },
+              // args[1…] become the [[Call]] argument list.
+              ...copyInto(2, 1),
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: L_THIS },
+              { op: "local.get", index: L_VEC },
+              { op: "call", funcIdx: applyDispatchIdx },
+              { op: "return" },
+            ],
+          },
+          ...nameIs("apply"),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...argAt(0),
+              { op: "local.set", index: L_THIS },
+              // The array-like second argument supplies the whole list.
+              ...argAt(1),
+              { op: "local.set", index: L_ARR },
+              { op: "local.get", index: L_ARR },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "call", funcIdx: objVecNewIdx },
+                  { op: "local.set", index: L_VEC },
+                ],
+                else: [
+                  { op: "local.get", index: L_ARR },
+                  { op: "call", funcIdx: externLengthIdx },
+                  { op: "local.set", index: L_LEN },
+                  ...copyInto(L_ARR, 0),
+                ],
+              },
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: L_THIS },
+              { op: "local.get", index: L_VEC },
+              { op: "call", funcIdx: applyDispatchIdx },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    ];
+    methodCallFn.body.unshift(...guard);
   }
 
   void objectTypeIdx;

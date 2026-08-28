@@ -1360,6 +1360,103 @@ export function compileNamespaceStaticCall(
         return fallbackReturn(3, "extern-null");
       }
 
+      // (#5140) §28.1.1 Reflect.apply(target, thisArgument, argumentsList).
+      // Standalone had NO arm here at all, so the call fell to the dynamic
+      // member path and reported "Reflect.apply is not a function". Build the
+      // argument list with CreateListFromArrayLike (length + indexed reads) and
+      // invoke through `__apply_closure`, whose front-guard already routes a
+      // `$Proxy` target into `__proxy_apply_dispatch` and a revoker carrier
+      // into `__proxy_revoke` — the same bridge `p(…)` takes.
+      if (reflectMethod === "apply" && expr.arguments.length >= 2) {
+        ensureObjectRuntime(ctx);
+        ensureObjVecBuilders(ctx);
+        const vecNewIdx = ctx.funcMap.get("__objvec_new");
+        const vecPushIdx = ctx.funcMap.get("__objvec_push");
+        const lengthIdx = ctx.funcMap.get("__extern_length");
+        const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
+        const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+        if (
+          vecNewIdx !== undefined &&
+          vecPushIdx !== undefined &&
+          lengthIdx !== undefined &&
+          getIdxIdx !== undefined &&
+          applyClosureIdx !== undefined
+        ) {
+          const f64Ty: ValType = { kind: "f64" };
+          const fnLocal = allocTempLocal(fctx, externRef);
+          const thisLocal = allocTempLocal(fctx, externRef);
+          const listLocal = allocTempLocal(fctx, externRef);
+          const vecLocal = allocTempLocal(fctx, externRef);
+          const iLocal = allocTempLocal(fctx, f64Ty);
+          const nLocal = allocTempLocal(fctx, f64Ty);
+          const stage = (arg: ts.Expression | undefined, local: number): void => {
+            if (arg === undefined) {
+              fctx.body.push({ op: "ref.null.extern" });
+            } else {
+              const t = compileExpression(ctx, fctx, arg, externRef);
+              if (!t) fctx.body.push({ op: "ref.null.extern" });
+              else if (t.kind !== "externref") coerceType(ctx, fctx, t, externRef);
+            }
+            fctx.body.push({ op: "local.set", index: local });
+          };
+          stage(expr.arguments[0], fnLocal);
+          stage(expr.arguments[1], thisLocal);
+          stage(expr.arguments[2], listLocal);
+          fctx.body.push(
+            { op: "call", funcIdx: vecNewIdx },
+            { op: "local.set", index: vecLocal },
+            { op: "local.get", index: listLocal },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: f64Ty },
+              then: [{ op: "f64.const", value: 0 }],
+              else: [
+                { op: "local.get", index: listLocal },
+                { op: "call", funcIdx: lengthIdx },
+              ],
+            },
+            { op: "local.set", index: nLocal },
+            { op: "f64.const", value: 0 },
+            { op: "local.set", index: iLocal },
+            {
+              op: "block",
+              blockType: { kind: "empty" },
+              body: [
+                {
+                  op: "loop",
+                  blockType: { kind: "empty" },
+                  body: [
+                    { op: "local.get", index: iLocal },
+                    { op: "local.get", index: nLocal },
+                    { op: "f64.ge" },
+                    { op: "br_if", depth: 1 },
+                    { op: "local.get", index: vecLocal },
+                    { op: "local.get", index: listLocal },
+                    { op: "local.get", index: iLocal },
+                    { op: "call", funcIdx: getIdxIdx },
+                    { op: "call", funcIdx: vecPushIdx },
+                    { op: "local.get", index: iLocal },
+                    { op: "f64.const", value: 1 },
+                    { op: "f64.add" },
+                    { op: "local.set", index: iLocal },
+                    { op: "br", depth: 0 },
+                  ],
+                },
+              ],
+            },
+            { op: "local.get", index: fnLocal },
+            { op: "local.get", index: thisLocal },
+            { op: "local.get", index: vecLocal },
+            { op: "call", funcIdx: applyClosureIdx },
+          );
+          for (const local of [nLocal, iLocal, vecLocal, listLocal, thisLocal, fnLocal]) {
+            releaseTempLocal(fctx, local);
+          }
+          return { kind: "externref" };
+        }
+      }
+
       if (
         reflectMethod === "construct" &&
         boundaryReflectInterop &&
