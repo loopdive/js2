@@ -1312,7 +1312,7 @@ function compileForOfNativeMapEntries(
   const { M_ENTRIES, M_ENTRYCOUNT, F_KEY, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
   const isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
   if (isConst) {
-    collectBindingNames(decl.name).forEach((n) => {
+    (ts.isIdentifier(decl.name) ? [decl.name.text] : collectBindingNames(decl.name)).forEach((n) => {
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(n);
     });
