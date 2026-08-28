@@ -13,6 +13,12 @@ async function run(source: string, lane: Lane): Promise<number> {
   const result = await compile(source, lane === "standalone" ? { target: "standalone" } : {});
   if (!result.success) throw new Error(result.errors?.map((error) => error.message).join("\n") ?? "compile failed");
   expect(WebAssembly.validate(result.binary), `${lane} module failed validation`).toBe(true);
+  if (lane === "standalone") {
+    expect(
+      result.imports.filter((entry) => entry.module === "env"),
+      "standalone module must be host-free",
+    ).toEqual([]);
+  }
 
   const imports = buildImports(result.imports, {}, result.stringPool);
   const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
