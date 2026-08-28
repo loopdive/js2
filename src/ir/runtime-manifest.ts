@@ -9,21 +9,32 @@
  * frozen arrays/records. Lowering receives lookup-only `resolveProvider` calls;
  * a request absent from the frozen plan is a typed invariant.
  */
-import { irTypeEquals, type IrIntrinsicBackendOp } from "./nodes.js";
 import {
+  irTypeEquals,
+  type IrIntrinsicBackendComposite,
+  type IrIntrinsicBackendOp,
+  type IrIntrinsicBackendSequence,
+} from "./nodes.js";
+import {
+  ASYNC_HOST_CAPABILITY_RECORDS,
   ASYNC_HOST_CAPABILITY_IDS,
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
   ASYNC_RUNTIME_PROVIDERS,
   ASYNC_RUNTIME_PROVIDER_IDS,
+  canonicalizeAsyncHostCapabilityCatalog,
+  resolveAsyncHostCapabilityRecord,
+  type AsyncHostAdapter,
   type AsyncHostCapabilityId,
   type AsyncRuntimeFeature,
   type AsyncRuntimeProviderId,
 } from "./async-runtime-providers.js";
 import {
   F64_BINARY_INTRINSIC_SIGNATURE,
+  F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
+  NUMERIC_COERCION_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
   PURE_MATH_RUNTIME_FEATURES,
   type IntrinsicEffectEvidence,
@@ -31,14 +42,22 @@ import {
   type IntrinsicSignature,
   type IntrinsicUse,
   type IntrinsicVerificationCode,
-  type RuntimeFeature as MathRuntimeFeature,
+  type PureMathRuntimeFeature,
+  type RuntimeFeature as IntrinsicRuntimeFeature,
   verifyIntrinsicUse,
 } from "./intrinsics.js";
 
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
-export type RuntimeFeature = MathRuntimeFeature | AsyncRuntimeFeature;
+export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature;
 export type HostCapabilityId = AsyncHostCapabilityId;
+
+export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
+  "async.native.drive",
+  "async.native.number-boundary",
+  "async.native.undefined",
+] as const);
+export type RuntimeBackendRequirement = (typeof RUNTIME_BACKEND_REQUIREMENTS)[number];
 
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
@@ -49,26 +68,56 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "backend.f64.abs",
   "backend.f64.ceil",
   "backend.f64.floor",
+  "backend.f64.fround",
   "backend.f64.sqrt",
   "backend.f64.trunc",
+  "backend.math.clz32",
+  "backend.math.imul",
+  "backend.math.max",
+  "backend.math.min",
+  "selfhost.math.acos",
+  "selfhost.math.acosh",
+  "selfhost.math.asin",
+  "selfhost.math.asinh",
   "selfhost.math.atan",
   "selfhost.math.atan2",
+  "selfhost.math.atanh",
+  "selfhost.math.cbrt",
   "selfhost.math.cos",
+  "selfhost.math.cosh",
   "selfhost.math.exp",
+  "selfhost.math.expm1",
   "selfhost.math.log",
+  "selfhost.math.log10",
+  "selfhost.math.log1p",
   "selfhost.math.log2",
   "selfhost.math.pow",
   "selfhost.math.reduce-trig",
+  "selfhost.math.round",
+  "selfhost.math.sign",
   "selfhost.math.sin",
+  "selfhost.math.sinh",
+  "selfhost.math.tan",
+  "selfhost.math.tanh",
 ] as const);
 
 export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
-export type RuntimeProviderId = MathRuntimeProviderId | AsyncRuntimeProviderId;
+export const NUMERIC_COERCION_RUNTIME_PROVIDER_IDS = Object.freeze(["backend.js.to_uint32"] as const);
+export type NumericCoercionRuntimeProviderId = (typeof NUMERIC_COERCION_RUNTIME_PROVIDER_IDS)[number];
+export type RuntimeProviderId = MathRuntimeProviderId | NumericCoercionRuntimeProviderId | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
   | {
       readonly kind: "backend-op";
       readonly opcode: IrIntrinsicBackendOp;
+    }
+  | {
+      readonly kind: "backend-sequence";
+      readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
+      readonly kind: "backend-composite";
+      readonly operation: IrIntrinsicBackendComposite;
     }
   | {
       readonly kind: "self-hosted";
@@ -92,7 +141,12 @@ export type RuntimeProviderImplementation =
 
 export type MathRuntimeProviderImplementation = Extract<
   RuntimeProviderImplementation,
-  { readonly kind: "backend-op" | "self-hosted" }
+  { readonly kind: "backend-op" | "backend-sequence" | "backend-composite" | "self-hosted" }
+>;
+
+export type IntrinsicRuntimeProviderImplementation = Extract<
+  RuntimeProviderImplementation,
+  { readonly kind: "backend-op" | "backend-sequence" | "backend-composite" | "self-hosted" }
 >;
 
 export interface RuntimeProviderDefinition {
@@ -107,9 +161,46 @@ export interface RuntimeProviderDefinition {
   readonly implementation: RuntimeProviderImplementation;
 }
 
-/** Math lowering compatibility view; async providers are consumed by later adapters. */
+/**
+ * Project concrete backend reservations from already selected providers.
+ * This is the only semantic-to-backend requirement projection: consumers
+ * receive the resulting closed vector and never rediscover it from features.
+ */
+export function projectRuntimeBackendRequirements(
+  providers: readonly RuntimeProviderDefinition[],
+): readonly RuntimeBackendRequirement[] {
+  const requirements = new Set<RuntimeBackendRequirement>();
+  let family: "host" | "native" | null = null;
+  for (const provider of providers) {
+    const kind = provider.implementation.kind;
+    if (kind === "host-capability" || kind === "host-managed") {
+      if (family === "native") {
+        throw new RuntimeManifestInvariantError(
+          "invalid-backend-requirement-projection",
+          "runtime provider projection mixes host and native async providers",
+        );
+      }
+      family = "host";
+      continue;
+    }
+    if (kind !== "native-managed") continue;
+    if (family === "host") {
+      throw new RuntimeManifestInvariantError(
+        "invalid-backend-requirement-projection",
+        "runtime provider projection mixes host and native async providers",
+      );
+    }
+    family = "native";
+    requirements.add("async.native.drive");
+    requirements.add("async.native.number-boundary");
+    if (provider.feature === "value.undefined") requirements.add("async.native.undefined");
+  }
+  return Object.freeze(RUNTIME_BACKEND_REQUIREMENTS.filter((requirement) => requirements.has(requirement)));
+}
+
+/** Semantic-intrinsic lowering view; async providers are consumed by later adapters. */
 export type RuntimeProviderPlan = RuntimeProviderDefinition & {
-  readonly implementation: MathRuntimeProviderImplementation;
+  readonly implementation: IntrinsicRuntimeProviderImplementation;
 };
 
 export interface RuntimeProviderComponent {
@@ -125,6 +216,10 @@ export interface FrozenRuntimeManifest {
   readonly providers: readonly RuntimeProviderDefinition[];
   readonly providerComponents: readonly RuntimeProviderComponent[];
   readonly hostCapabilities: readonly HostCapabilityId[];
+  /** Exact selected ABI records, in the same canonical capability-ID order. */
+  readonly hostCapabilityRecords: readonly AsyncHostAdapter[];
+  /** Canonical union of concrete backend reservations selected before lowering. */
+  readonly backendRequirements: readonly RuntimeBackendRequirement[];
 }
 
 export type RuntimeManifestInvariantCode =
@@ -135,6 +230,7 @@ export type RuntimeManifestInvariantCode =
   | "unknown-runtime-feature"
   | "unknown-runtime-provider"
   | "unknown-host-capability"
+  | "invalid-host-capability-catalog"
   | "duplicate-runtime-provider"
   | "duplicate-cycle-declaration"
   | "invalid-cycle-declaration"
@@ -142,6 +238,7 @@ export type RuntimeManifestInvariantCode =
   | "ambiguous-runtime-provider"
   | "provider-target-unavailable"
   | "missing-backend-adapter"
+  | "invalid-backend-requirement-projection"
   | "provider-signature-mismatch"
   | "undeclared-provider-cycle"
   | "declared-cycle-mismatch"
@@ -167,19 +264,40 @@ const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone
 const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
 
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
+  "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.asin": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.asinh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.atan": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.atan2": F64_BINARY_INTRINSIC_SIGNATURE,
+  "math.atanh": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.cbrt": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.ceil": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.clz32": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cos": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.cosh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.exp": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.expm1": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.floor": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.fround": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.imul": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.log": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.log10": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.log1p": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log2": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.max": F64_BINARY_INTRINSIC_SIGNATURE,
+  "math.min": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.pow": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.reduce-trig": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.round": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.sign": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sin": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.sinh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sqrt": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.tan": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.tanh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.trunc": F64_UNARY_INTRINSIC_SIGNATURE,
 });
 
@@ -202,11 +320,46 @@ function provider(
   });
 }
 
-const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
+export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  provider("backend.js.to_uint32", "js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "to-uint32",
+  }),
+]);
+
+const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
   "math.abs": provider("backend.f64.abs", "math.abs", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.abs",
   }),
+  "math.acos": provider(
+    "selfhost.math.acos",
+    "math.acos",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_acos" },
+    ["math.atan"],
+  ),
+  "math.acosh": provider(
+    "selfhost.math.acosh",
+    "math.acosh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_acosh" },
+    ["math.log"],
+  ),
+  "math.asin": provider(
+    "selfhost.math.asin",
+    "math.asin",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_asin" },
+    ["math.atan"],
+  ),
+  "math.asinh": provider(
+    "selfhost.math.asinh",
+    "math.asinh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_asinh" },
+    ["math.log"],
+  ),
   "math.atan": provider("selfhost.math.atan", "math.atan", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_atan",
@@ -218,9 +371,24 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_atan2" },
     ["math.atan"],
   ),
+  "math.atanh": provider(
+    "selfhost.math.atanh",
+    "math.atanh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_atanh" },
+    ["math.log"],
+  ),
+  "math.cbrt": provider("selfhost.math.cbrt", "math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "self-hosted",
+    symbol: "Math_cbrt",
+  }),
   "math.ceil": provider("backend.f64.ceil", "math.ceil", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.ceil",
+  }),
+  "math.clz32": provider("backend.math.clz32", "math.clz32", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "math.clz32",
   }),
   "math.cos": provider(
     "selfhost.math.cos",
@@ -229,21 +397,65 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_cos" },
     ["math.reduce-trig"],
   ),
+  "math.cosh": provider(
+    "selfhost.math.cosh",
+    "math.cosh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_cosh" },
+    ["math.exp"],
+  ),
   "math.exp": provider("selfhost.math.exp", "math.exp", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_exp",
   }),
+  "math.expm1": provider(
+    "selfhost.math.expm1",
+    "math.expm1",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_expm1" },
+    ["math.exp"],
+  ),
   "math.floor": provider("backend.f64.floor", "math.floor", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.floor",
+  }),
+  "math.fround": provider("backend.f64.fround", "math.fround", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-sequence",
+    sequence: "f64.fround",
+  }),
+  "math.imul": provider("backend.math.imul", "math.imul", F64_BINARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "math.imul",
   }),
   "math.log": provider("selfhost.math.log", "math.log", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_log",
   }),
+  "math.log10": provider(
+    "selfhost.math.log10",
+    "math.log10",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_log10" },
+    ["math.log"],
+  ),
+  "math.log1p": provider(
+    "selfhost.math.log1p",
+    "math.log1p",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_log1p" },
+    ["math.log"],
+  ),
   "math.log2": provider("selfhost.math.log2", "math.log2", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_log2",
+  }),
+  "math.max": provider("backend.math.max", "math.max", F64_BINARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "math.max",
+  }),
+  "math.min": provider("backend.math.min", "math.min", F64_BINARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "math.min",
   }),
   "math.pow": provider(
     "selfhost.math.pow",
@@ -256,6 +468,14 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     kind: "self-hosted",
     symbol: "__math_reduce_trig",
   }),
+  "math.round": provider("selfhost.math.round", "math.round", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "self-hosted",
+    symbol: "Math_round",
+  }),
+  "math.sign": provider("selfhost.math.sign", "math.sign", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "self-hosted",
+    symbol: "Math_sign",
+  }),
   "math.sin": provider(
     "selfhost.math.sin",
     "math.sin",
@@ -263,17 +483,38 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_sin" },
     ["math.reduce-trig"],
   ),
+  "math.sinh": provider(
+    "selfhost.math.sinh",
+    "math.sinh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_sinh" },
+    ["math.exp"],
+  ),
   "math.sqrt": provider("backend.f64.sqrt", "math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.sqrt",
   }),
+  "math.tan": provider(
+    "selfhost.math.tan",
+    "math.tan",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_tan" },
+    ["math.cos", "math.sin"],
+  ),
+  "math.tanh": provider(
+    "selfhost.math.tanh",
+    "math.tanh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_tanh" },
+    ["math.exp"],
+  ),
   "math.trunc": provider("backend.f64.trunc", "math.trunc", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.trunc",
   }),
 });
 
-/** Canonically ordered default provider catalogue for the twelve-method slice. */
+/** Canonically ordered default provider catalogue for the 33-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),
@@ -282,15 +523,19 @@ export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] =
 
 /** Closed, canonically ordered catalogue used by production manifest builders. */
 export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
-  [...PURE_MATH_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort((left, right) => left.id.localeCompare(right.id)),
+  [...PURE_MATH_RUNTIME_PROVIDERS, ...NUMERIC_COERCION_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort(
+    (left, right) => left.id.localeCompare(right.id),
+  ),
 );
 
 const FEATURE_SET: ReadonlySet<string> = new Set([
+  ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
 ]);
 const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
+  ...NUMERIC_COERCION_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -464,6 +709,8 @@ function buildProviderComponents(
 export interface RuntimeManifestBuilderOptions {
   /** Test/integration seam; omission uses the exhaustive production catalogue. */
   readonly providers?: readonly RuntimeProviderDefinition[];
+  /** Test-only traversal/mutation seam; production uses the one closed async catalog. */
+  readonly hostCapabilityRecords?: readonly AsyncHostAdapter[];
 }
 
 type BuilderState = "open" | "building" | "frozen" | "failed";
@@ -473,6 +720,7 @@ export class RuntimeManifestBuilder {
   readonly #uses: IntrinsicUse[] = [];
   readonly #requestedFeatures = new Set<RuntimeFeature>();
   readonly #providers: RuntimeProviderDefinition[];
+  readonly #hostCapabilityRecords: readonly AsyncHostAdapter[];
   readonly #addedDependencies = new Map<RuntimeFeature, Set<RuntimeFeature>>();
   readonly #declaredCycles = new Map<string, readonly RuntimeFeature[]>();
   readonly #plannedIntrinsicIds = new Set<IntrinsicId>();
@@ -491,6 +739,7 @@ export class RuntimeManifestBuilder {
     }
     this.#policy = Object.freeze({ ...policy });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
+    this.#hostCapabilityRecords = options.hostCapabilityRecords ?? ASYNC_HOST_CAPABILITY_RECORDS;
   }
 
   addIntrinsicUse(use: IntrinsicUse, effects: IntrinsicEffectEvidence): void {
@@ -579,7 +828,7 @@ export class RuntimeManifestBuilder {
     return this.#manifest;
   }
 
-  resolveProvider(feature: MathRuntimeFeature): RuntimeProviderPlan;
+  resolveProvider(feature: IntrinsicRuntimeFeature): RuntimeProviderPlan;
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();
@@ -664,6 +913,19 @@ export class RuntimeManifestBuilder {
       for (const capability of provider.hostCapabilities) hostCapabilityIds.add(capability);
     }
     const hostCapabilities = Object.freeze([...hostCapabilityIds].sort(compareStrings));
+    let capabilityCatalog: readonly AsyncHostAdapter[];
+    try {
+      capabilityCatalog = canonicalizeAsyncHostCapabilityCatalog(this.#hostCapabilityRecords);
+    } catch (error) {
+      throw new RuntimeManifestInvariantError(
+        "invalid-host-capability-catalog",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const hostCapabilityRecords = Object.freeze(
+      hostCapabilities.map((capability) => resolveAsyncHostCapabilityRecord(capabilityCatalog, capability)),
+    );
+    const backendRequirements = projectRuntimeBackendRequirements(providers);
 
     for (const use of intrinsicUses) this.#plannedIntrinsicIds.add(use.id);
     for (const value of providers) this.#plannedProviderIds.add(value.id);
@@ -676,6 +938,8 @@ export class RuntimeManifestBuilder {
       providers,
       providerComponents,
       hostCapabilities,
+      hostCapabilityRecords,
+      backendRequirements,
     });
   }
 

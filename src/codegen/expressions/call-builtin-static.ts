@@ -149,6 +149,40 @@ function classConstructorLength(ctx: CodegenContext, className: string): number 
 }
 
 /**
+ * (#5099) Test262 bootstraps `%StringIteratorPrototype%` with the exact
+ * intrinsic expression `Object.getPrototypeOf(new String()[Symbol.iterator]())`.
+ * The standalone iterator record is not a JS iterable object yet, so compiling
+ * that dead intermediate call reaches the generic `value is not iterable`
+ * throw before the enclosing getPrototypeOf arm can return its prototype
+ * singleton. Recognize only an unshadowed, zero-argument intrinsic `String`
+ * construction; no user expression is bypassed.
+ */
+function isPristineStringIteratorCall(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): boolean {
+  if (!ts.isCallExpression(expression) || expression.arguments.length !== 0) return false;
+  const callee = expression.expression;
+  if (!ts.isElementAccessExpression(callee)) return false;
+  const key = callee.argumentExpression;
+  if (
+    !key ||
+    !ts.isPropertyAccessExpression(key) ||
+    !ts.isIdentifier(key.expression) ||
+    key.expression.text !== "Symbol" ||
+    key.name.text !== "iterator" ||
+    !isGlobalBuiltinIdentifier(ctx, fctx, key.expression)
+  ) {
+    return false;
+  }
+  const receiver = callee.expression;
+  return (
+    ts.isNewExpression(receiver) &&
+    receiver.arguments?.length === 0 &&
+    ts.isIdentifier(receiver.expression) &&
+    receiver.expression.text === "String" &&
+    isGlobalBuiltinIdentifier(ctx, fctx, receiver.expression)
+  );
+}
+
+/**
  * Reified builtin method closures are ordinary function objects whose
  * [[Prototype]] is %Function.prototype%. Preserve their exact metadata subtype
  * long enough to route around the generic `$Object`-only prototype helper.
@@ -657,7 +691,12 @@ export function compileBuiltinStaticCall(
       return { kind: "i32" };
     }
     // (#4556) A ref to a real array CARRIER — ref-ness alone is NOT array-ness.
-    const isArr = isArrayCarrierValType(ctx, argWasmType);
+    // (#5154 cluster A) A TUPLE-typed operand is a JS Array — `let [, ...x] =
+    // [1, 2]` gives `x` the checker type `[number]`, which lowers to a tuple
+    // STRUCT, and tuple structs are (correctly) not `__vec_*` carriers. §7.2.2
+    // asks about the VALUE, and every tuple-typed value is an Array, so answer
+    // from the checker type when the carrier test declines.
+    const isArr = isArrayCarrierValType(ctx, argWasmType) || ctx.oracle.typeFactOf(expr.arguments[0]!).kind === "tuple";
     // Still compile the argument for side effects, then drop it
     const argSideType = compileExpression(ctx, fctx, expr.arguments[0]!);
     if (argSideType) fctx.body.push({ op: "drop" });
@@ -1119,6 +1158,20 @@ export function compileBuiltinStaticCall(
     // `_wrapWasmClosure`. The fast path's `array.copy` would silently
     // drop the mapFn.
     const hasMapFn = expr.arguments.length >= 2;
+    // A Symbol is never callable. The standalone native mapper arm below
+    // invokes a Wasm closure directly, so reject this statically-known value
+    // before it reaches `__hof_map` instead of silently treating it as a
+    // callback. Evaluate and discard the complete argument list first, as a
+    // normal call does, so `thisArg` and extra-argument side effects are not
+    // skipped. Keep dynamic values on the existing runtime path.
+    if (ctx.standalone && hasMapFn && ctx.oracle.staticJsTypeOf(expr.arguments[1]!) === "symbol") {
+      for (const arg of expr.arguments) {
+        const argType = compileExpression(ctx, fctx, arg);
+        if (argType) fctx.body.push({ op: "drop" });
+      }
+      emitThrowTypeError(ctx, fctx, "Array.from mapper is not a function");
+      return VOID_RESULT;
+    }
     // (#1470) Array.from(string) without a mapFn — the string iterable
     // yields code points (§23.1.2.1 via §22.1.5.1). In native-strings mode
     // materialize the char vec in pure Wasm. Without this the string fell
@@ -1954,6 +2007,17 @@ export function compileBuiltinStaticCall(
           return { kind: "externref" };
         }
       }
+    }
+
+    // (#5099) The iterator allocation is an unobservable intermediate in this
+    // intrinsic bootstrap query. Route directly to the metadata-bearing
+    // singleton so the generic standalone `__iterator` fallback cannot throw
+    // before `StringIteratorPrototype.next` is inspected.
+    if ((ctx.standalone || ctx.wasi) && isPristineStringIteratorCall(ctx, fctx, arg0)) {
+      const protoType = emitIteratorPrototypeSingleton(ctx, fctx, "String");
+      if (protoType) return protoType;
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
     }
 
     // (#2743 a) `Object.getPrototypeOf(arguments)` is %Object.prototype%

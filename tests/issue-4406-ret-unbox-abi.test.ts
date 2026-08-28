@@ -58,12 +58,25 @@ function predicateAxis(body: string): string {
   `;
 }
 
+/** `[box-bool-fuse]` debug lines produced by the most recent {@link build}. */
+let lastFuseNotes: string[] = [];
+
 async function build(src: string, env?: Record<string, string>) {
   const saved = new Map<string, string | undefined>();
   for (const [k, v] of Object.entries(env ?? {})) {
     saved.set(k, process.env[k]);
     process.env[k] = v;
   }
+  const notes: string[] = [];
+  const realWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+    if (/^\[box-bool-fuse\]/m.test(text)) {
+      notes.push(...text.split("\n").filter((l) => l.trim().length > 0));
+      return true;
+    }
+    return (realWrite as (...a: unknown[]) => boolean)(chunk, ...rest);
+  }) as typeof process.stderr.write;
   try {
     const result = await compile(src, { fileName: "pred.mjs", skipSemanticDiagnostics: true, target: "standalone" });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
@@ -72,6 +85,8 @@ async function build(src: string, env?: Record<string, string>) {
     );
     return result;
   } finally {
+    process.stderr.write = realWrite;
+    lastFuseNotes = notes;
     for (const [k, v] of saved) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -109,16 +124,23 @@ function shimTailAfterTwinCall(wat: string): string[] {
 const runExport = async (r: { binary: Uint8Array }) =>
   ((await WebAssembly.instantiate(r.binary, {})).instance.exports as { run(): number }).run();
 
+/**
+ * (#4406 Phase 4) `JS2WASM_RET_UNBOX_ABI` is now DEFAULT-ON, so a bare build is
+ * the ON lane. Every OFF lane below therefore spells the token out. The
+ * differentials are unchanged — only which side needed naming moved.
+ */
+const OFF = { JS2WASM_RET_UNBOX_ABI: "0" } as const;
+
 describe("#4406 — boolean-return twins", () => {
   const AXIS = predicateAxis('var p = new P(5); return ("" + p.pred(5)).length;');
 
   it('the value differential: OFF stringifies to "1", ON to "true" (node\'s answer)', async () => {
-    expect(await runExport(await build(AXIS))).toBe(1); // "1" — the defect
+    expect(await runExport(await build(AXIS, OFF))).toBe(1); // "1" — the defect
     expect(await runExport(await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "1" }))).toBe(4); // "true"
   });
 
   it("ON the shim re-boxes with __box_boolean; OFF it takes the f64 box", async () => {
-    const off = shimTailAfterTwinCall((await build(AXIS)).wat!);
+    const off = shimTailAfterTwinCall((await build(AXIS, OFF)).wat!);
     const on = shimTailAfterTwinCall((await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "1" })).wat!);
     expect(
       on.some((tail) => tail.startsWith("call $__box_boolean")),
@@ -164,24 +186,30 @@ describe("#4406 — boolean-return twins", () => {
     `;
     const on = await build(src, { JS2WASM_RET_UNBOX_ABI: "1" });
     expect(shimTailAfterTwinCall(on.wat!).some((tail) => tail.includes("__box_boolean"))).toBe(false);
-    expect(await runExport(on)).toBe(await runExport(await build(src)));
+    expect(await runExport(on)).toBe(await runExport(await build(src, OFF)));
     expect(await runExport(on)).toBe(8);
   });
 
-  it("the flag is OFF by default and every off-token disables it", async () => {
-    const base = await build(AXIS);
+  it("every off-token disables it, and the DEFAULT is now ON (#4406 Phase 4)", async () => {
+    const base = await build(AXIS, OFF);
     for (const token of ["0", "off", "false", "no", ""]) {
       const { binary } = await build(AXIS, { JS2WASM_RET_UNBOX_ABI: token });
       expect(Buffer.from(binary).equals(Buffer.from(base.binary)), `token ${JSON.stringify(token)}`).toBe(true);
     }
+    // The flip itself, pinned: unset must NOT reproduce the off lane, and a
+    // typo must land on the new default rather than half-disabling anything.
+    const unset = await build(AXIS);
+    expect(Buffer.from(unset.binary).equals(Buffer.from(base.binary)), "unset must be ON").toBe(false);
+    const typo = await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "yes" });
+    expect(Buffer.from(typo.binary).equals(Buffer.from(unset.binary)), "a typo is the default").toBe(true);
   });
 
   it("POISON alone (main flag off) is inert", async () => {
     // The poison switch inverts every refined boolean result at the trampoline
     // edge, which is how a null result is told apart from a path that never ran
     // (#4157 entry 22). It must never fire on its own.
-    const base = await build(AXIS);
-    const poisonOnly = await build(AXIS, { JS2WASM_RET_UNBOX_ABI_POISON: "1" });
+    const base = await build(AXIS, OFF);
+    const poisonOnly = await build(AXIS, { ...OFF, JS2WASM_RET_UNBOX_ABI_POISON: "1" });
     expect(Buffer.from(poisonOnly.binary).equals(Buffer.from(base.binary))).toBe(true);
   });
 
@@ -197,5 +225,107 @@ describe("#4406 — boolean-return twins", () => {
       JS2WASM_RET_UNBOX_ABI_POISON: "1",
     });
     expect(Buffer.from(poisoned.binary).equals(Buffer.from(on.binary))).toBe(false);
+  });
+});
+
+/**
+ * Phase 2 — the MERGE half.
+ *
+ * Phase 1 typed the callee's result; nothing consumed it differently, and on the
+ * acorn lane it moved `__box_boolean` by +35 out of 275,113 (the null §4
+ * predicts). The boxes live in the logical-value MERGE: `expressions/logical-
+ * ops.ts` unifies `i32 || externref` to `externref`, so a proven-boolean arm
+ * re-boxes for a value that is about to be ToBoolean'd again — and lever 4
+ * (#4157, `box-boolean-fuse.ts`) declines the whole site because its sibling arm
+ * tails in an externref-returning call it cannot specialise.
+ *
+ * Phase 2 adds the general leaf: keep the consumer, move a COPY of it into the
+ * arm. The sibling's box then fuses.
+ *
+ * `pick` below is deliberately built from PLAIN functions, not fnctor prototype
+ * methods — `refinedTwinReturnType` never fires on it, so nothing here can be
+ * carried by Phase 1 and every delta is the merge's.
+ */
+const MERGE_AXIS = `
+  function box(o) { return o.v; }
+  function pick(a, b, o) { return ((a === b) && box(o)) ? 11 : 22; }
+  export function run() {
+    var o = { v: "yes" };
+    return pick(1, 1, o) * 10000 + pick(1, 2, o) * 100 + pick(1, 1, { v: "" });
+  }
+`;
+
+/** Lever 4 on (its own default-OFF gate) plus its stats line. */
+const FUSE = { JS2WASM_UNBOXED_BOOL_FUSE: "1", JS2WASM_UNBOXED_BOOL_FUSE_DEBUG: "1" };
+
+/** The single `[box-bool-fuse]` stats line from the most recent build. */
+function fuseTally(): string {
+  const line = lastFuseNotes.find((l) => l.startsWith("[box-bool-fuse] fused-sink="));
+  expect(line, `no fuse stats line; got ${JSON.stringify(lastFuseNotes)}`).toBeDefined();
+  return line!;
+}
+
+describe("#4406 Phase 2 — the merge sink", () => {
+  it("lever 4 ALONE declines this merge on arm-tail-call", async () => {
+    // The before-state, asserted rather than assumed: without the merge half the
+    // site is stranded, so the next test's `fused-sink=1` cannot be a shape that
+    // was already fusing.
+    await build(MERGE_AXIS, { ...FUSE, ...OFF });
+    expect(fuseTally()).toMatch(/fused-sink=0\b/);
+    expect(fuseTally()).toMatch(/arm-tail-call=1\b/);
+  });
+
+  it("with the ABI flag the site fuses, taking a copy of the consumer", async () => {
+    await build(MERGE_AXIS, { ...FUSE, JS2WASM_RET_UNBOX_ABI: "1" });
+    const tally = fuseTally();
+    expect(tally).toMatch(/fused-sink=1\b/);
+    expect(tally).toMatch(/box-call=1\b/); // the sibling's box — the point of the change
+    expect(tally).toMatch(/sunk-consumer=1 \(sites=1, merge-sink=on\)/);
+    expect(tally).not.toMatch(/arm-tail-call/);
+  });
+
+  it("the merged VALUE is identical with and without the sink", async () => {
+    // 11 (both true) · 22 (a !== b) · 22 (box(o) is the falsy "") — node's answer
+    // for the same source, and the invariant the rewrite must not disturb.
+    const plain = await runExport(await build(MERGE_AXIS, OFF));
+    const fused = await runExport(await build(MERGE_AXIS, { ...FUSE, ...OFF }));
+    const sunk = await runExport(await build(MERGE_AXIS, { ...FUSE, JS2WASM_RET_UNBOX_ABI: "1" }));
+    expect(plain).toBe(112222);
+    expect(fused).toBe(112222);
+    expect(sunk).toBe(112222);
+  });
+
+  it("POISON inverts a sunk merge — the path is executed, not merely emitted", async () => {
+    // The liveness proof #4157 entry 22 asks for, isolated to Phase 2: this
+    // source has no refined trampoline for Phase 1's poison to touch, so an
+    // unchanged answer here would mean the sunk consumer never ran.
+    const poisoned = await build(MERGE_AXIS, {
+      ...FUSE,
+      JS2WASM_RET_UNBOX_ABI: "1",
+      JS2WASM_RET_UNBOX_ABI_POISON: "1",
+    });
+    expect(fuseTally()).toMatch(/RET-ABI-POISON=ON/);
+    expect(await runExport(poisoned)).toBe(221111); // every arm's verdict flipped
+  });
+
+  it("the sink needs BOTH gates — the ABI flag alone changes nothing", async () => {
+    // Lever 4 is the vehicle, so with it off the merge half cannot fire and the
+    // shipping default stays byte-for-byte where it was.
+    const base = await build(MERGE_AXIS, OFF);
+    const abiOnly = await build(MERGE_AXIS, { JS2WASM_RET_UNBOX_ABI: "1" });
+    expect(Buffer.from(abiOnly.binary).equals(Buffer.from(base.binary))).toBe(true);
+  });
+
+  it("a merge with no free leaf is declined rather than paying size for nothing", async () => {
+    // `??` unifies through a branch that is not a tee'd ToBoolean, so neither arm
+    // is a box or a cond-reuse leaf. Sinking both would copy the consumer twice
+    // and delete zero boxes — the pass declines instead.
+    const src = `
+      function box(o) { return o.v; }
+      function pick(o, d) { return (box(o) ?? box(d)) ? 11 : 22; }
+      export function run() { return pick({ v: "yes" }, { v: "no" }); }
+    `;
+    await build(src, { ...FUSE, JS2WASM_RET_UNBOX_ABI: "1" });
+    expect(fuseTally()).toMatch(/no-free-leaf=\d+/);
   });
 });

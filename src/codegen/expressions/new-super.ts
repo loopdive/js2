@@ -17,10 +17,13 @@ import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js"
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnctor-ctor-arguments.js";
 import {
+  GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES,
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
+  resolvesToNamedAmbientGlobal,
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
+import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import * as newConstructors from "./new-non-constructable-value.js"; // (#4246)
 import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
@@ -584,17 +587,7 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
  * `eval` is included because it is an ordinary built-in function without
  * [[Construct]], just like the other global callables in this set.
  */
-const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
-  "decodeURI",
-  "decodeURIComponent",
-  "encodeURI",
-  "encodeURIComponent",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "eval",
-]);
+const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES;
 
 /**
  * (#1519 sub-issue B) The built-in non-constructor NAMESPACES. Hoisted to module
@@ -3721,6 +3714,15 @@ function prepareNativeSetAdderDispatch(
   fctx: FunctionContext,
   collTmp: number,
 ): NativeSetAdderDispatch | undefined {
+  // Reading a builtin prototype as a value (for example the Test262
+  // `Object.getPrototypeOf(s)` assertion) arms the companion store and seeds
+  // its intrinsic members, but it does not install a user override.  Treating
+  // that seeded `Set.prototype.add` as custom makes the constructor invoke the
+  // deliberately-refusing first-class member closure instead of the native
+  // `__set_add` fast path.  The pre-scan's named-write bit is the narrow gate
+  // for an observable override; descriptor and assignment writes both set it.
+  if (!ctx.protoNamedDirty) return undefined;
+
   const hasIdx = ctx.funcMap.get("__protoidx_has_r");
   const getIdx = ctx.funcMap.get("__protoidx_get_r");
   if (hasIdx === undefined || getIdx === undefined) return undefined;
@@ -3954,6 +3956,23 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // outer allocation degrades to the union layout (fat, never narrow).
   maybeEmitLayoutHint(ctx, fctx, expr);
 
+  // (#3481) §25.2.3.1 `SharedArrayBuffer(length)` step 2 is `? ToIndex(length)`,
+  // whose ToNumber throws on a Symbol. Unlike `ArrayBuffer` (handled natively in
+  // new-indexed.ts) SAB has no in-Wasm lowering: it falls all the way through to
+  // the generic `__new_SharedArrayBuffer` host import, where a native symbol
+  // arrives as an opaque carrier struct and `ToIndex` reads it as 0 instead of
+  // throwing (built-ins/SharedArrayBuffer/return-abrupt-from-length-symbol.js).
+  // Guarded on the ambient global so a user `class SharedArrayBuffer` keeps its
+  // own constructor.
+  if (
+    (expr.arguments?.length ?? 0) >= 1 &&
+    resolvesToNamedAmbientGlobal(ctx, expr.expression, "SharedArrayBuffer") &&
+    !ctx.classSet.has("SharedArrayBuffer") &&
+    emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments![0]!, "number")
+  ) {
+    return { kind: "externref" };
+  }
+
   // (#1528b) Unwrap parens AND `as`/`!`/type-assertion wrappers so the static
   // non-constructor guards below still fire on `new ((() => {}) as any)()` etc.
   // — the bare paren-only unwrap let cast arrows slip through to the dynamic
@@ -3982,6 +4001,39 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // constructor path. The paren-only form previously fell through to a null
   // placeholder without evaluating the constructor body at all.
   const unwrappedLiteralCtor = unwrapNewTarget(expr.expression);
+
+  // (#5141) §27.3.4 — a generator function object has NO [[Construct]] slot, so
+  // `new g()` is a TypeError even though `g` is callable. Both spellings are
+  // statically decidable: a literal `new (function*(){})()`, and an identifier
+  // bound to a generator declaration / lifted generator expression (the
+  // `ctx.generatorFunctions` name set the `.prototype` reads already key on).
+  // Without this the callee fell through to the ordinary-function construct
+  // path and silently produced an object.
+  {
+    const gen = unwrappedLiteralCtor;
+    const literalGenerator =
+      (ts.isFunctionExpression(gen) || ts.isFunctionDeclaration(gen)) && gen.asteriskToken !== undefined;
+    // A `var g = function*(){}` binding is NOT in `ctx.generatorFunctions` (the
+    // lifted closure registers under its synthetic `__closure_N` name), so also
+    // resolve the initializer through the oracle (#1930 — never the raw TS
+    // checker).
+    const initIsGenerator = (id: ts.Identifier): boolean => {
+      const init = ctx.oracle.variableInitializerOf(id);
+      return !!init && ts.isFunctionExpression(init) && init.asteriskToken !== undefined;
+    };
+    const namedGenerator =
+      ts.isIdentifier(gen) &&
+      (ctx.generatorFunctions.has(gen.text) || initIsGenerator(gen)) &&
+      !ctx.classSet.has(gen.text) &&
+      !ctx.externClasses.has(gen.text);
+    if (literalGenerator || namedGenerator) {
+      const label = ts.isIdentifier(gen) ? gen.text : "generator function";
+      emitThrowTypeError(ctx, fctx, `${label} is not a constructor`);
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+  }
+
   // #682 — standalone mode supports a reduced native RegExp subset for static
   // literal patterns. Keep this before the non-constructable guards so the
   // ambient `Function` type of `RegExp.prototype.constructor` cannot reject

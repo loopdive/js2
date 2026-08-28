@@ -100,7 +100,15 @@ function funcBody(wat: string, name: string): string {
   let seen = false;
   for (let i = start; i < lines.length; i++) {
     const raw = lines[i]!;
-    const cm = /\bcall (\d+)\b/.exec(raw);
+    // (#4784) `return_call` too, not just `call`. `\bcall` cannot match inside
+    // `return_call` — the preceding `_` is a word character, so there is no
+    // boundary — which silently blinded every assertion here to a TAIL call.
+    // That is exactly how the POSITIVE CONTROL below died: strict equality is
+    // now OUTLINED into `$__extern_strict_eq` and reached by `return_call`, so
+    // the control's function body listed no helper NAME at all and read as
+    // "the generic ladder was never reached". The ladder is reached; only the
+    // detection was stale.
+    const cm = /\b(?:return_call|call) (\d+)\b/.exec(raw);
     out.push(cm ? `${raw}   ;; ${names[Number(cm[1])] ?? "?"}` : raw);
     for (const ch of raw) {
       if (ch === "(") {
@@ -219,7 +227,14 @@ describe("#3688 shape — the narrowed site emits no boxing and no string compar
 export function dyn(a: any, b: any): boolean { return a === b; }
 export function test(): number { return dyn(1, 1) ? 1 : 0; }`);
     const body = funcBody(wat, "dyn");
-    const reached = LADDER.some((h) => body.includes(h)) || body.includes("__any_strict_eq");
+    // (#4784) `__extern_strict_eq` is the generic cascade's OUTLINED form: the
+    // inline ladder was factored into one shared routine that `dyn` reaches by
+    // `return_call`. Naming it here (alongside the older inline markers) is
+    // what keeps this control alive across that refactor — matching on the
+    // inline helper names alone silently reported "ladder not reached" for a
+    // site that reaches it on every call.
+    const GENERIC = [...LADDER, "__any_strict_eq", "__extern_strict_eq"];
+    const reached = GENERIC.some((h) => body.includes(h));
     expect(reached, "dynamic `===` must still use the generic path").toBe(true);
   });
 });

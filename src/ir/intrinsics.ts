@@ -6,51 +6,105 @@
  * These identifiers name meaning, never a concrete helper, import, or module
  * index. The initial vocabulary deliberately matches the exact deterministic,
  * exact-arity f64 Math surface certified by `IR_MATH_METHOD_TABLE`. Widening
- * any of these unions is therefore a reviewed runtime-contract change.
+ * `PURE_MATH_INTRINSIC_IDS` remains the exact source-Math catalogue; other
+ * reviewed semantic families are composed into `INTRINSIC_IDS` separately.
  */
 import { effectsArePure, effectsOf } from "./effects.js";
 import { irTypeEquals, type IrInstr, type IrType } from "./nodes.js";
 
 export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.abs",
+  "math.acos",
+  "math.acosh",
+  "math.asin",
+  "math.asinh",
+  "math.atan",
   "math.atan2",
+  "math.atanh",
+  "math.cbrt",
   "math.ceil",
+  "math.clz32",
   "math.cos",
+  "math.cosh",
   "math.exp",
+  "math.expm1",
   "math.floor",
+  "math.fround",
+  "math.imul",
   "math.log",
+  "math.log10",
+  "math.log1p",
   "math.log2",
+  "math.max",
+  "math.min",
   "math.pow",
+  "math.round",
+  "math.sign",
   "math.sin",
+  "math.sinh",
   "math.sqrt",
+  "math.tan",
+  "math.tanh",
   "math.trunc",
 ] as const);
 
-export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
+export const NUMERIC_COERCION_INTRINSIC_IDS = Object.freeze(["js.to_uint32"] as const);
+
+export const INTRINSIC_IDS = Object.freeze([...NUMERIC_COERCION_INTRINSIC_IDS, ...PURE_MATH_INTRINSIC_IDS] as const);
+
+export type IntrinsicId = (typeof INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the twelve intrinsic entry points.
- * `math.atan` and `math.reduce-trig` are provider-only dependencies and are
- * intentionally not source-level intrinsic IDs in this slice.
+ * Provider requirements reachable from the thirty-three intrinsic entry points.
+ * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.abs",
+  "math.acos",
+  "math.acosh",
+  "math.asin",
+  "math.asinh",
   "math.atan",
   "math.atan2",
+  "math.atanh",
+  "math.cbrt",
   "math.ceil",
+  "math.clz32",
   "math.cos",
+  "math.cosh",
   "math.exp",
+  "math.expm1",
   "math.floor",
+  "math.fround",
+  "math.imul",
   "math.log",
+  "math.log10",
+  "math.log1p",
   "math.log2",
+  "math.max",
+  "math.min",
   "math.pow",
   "math.reduce-trig",
+  "math.round",
+  "math.sign",
   "math.sin",
+  "math.sinh",
   "math.sqrt",
+  "math.tan",
+  "math.tanh",
   "math.trunc",
 ] as const);
 
-export type RuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
+export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"] as const);
+
+export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
+  ...NUMERIC_COERCION_RUNTIME_FEATURES,
+  ...PURE_MATH_RUNTIME_FEATURES,
+] as const);
+
+export type PureMathRuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
+export type NumericCoercionRuntimeFeature = (typeof NUMERIC_COERCION_RUNTIME_FEATURES)[number];
+export type RuntimeFeature = (typeof INTRINSIC_RUNTIME_FEATURES)[number];
 
 /**
  * The certified deterministic Math slice is host-free by construction.
@@ -107,6 +161,18 @@ const F64_TYPE = Object.freeze({
   val: Object.freeze({ kind: "f64" as const }),
 });
 
+const U32_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "i32" as const }),
+  signed: false as const,
+});
+
+export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([F64_TYPE]),
+  result: U32_TYPE,
+});
+
 export const F64_UNARY_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
@@ -125,21 +191,43 @@ function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: Run
 
 /** Exhaustive entry contract. Record typing makes an added ID fail closed. */
 export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
+  "js.to_uint32": definition("js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.asin": definition("math.asin", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.asinh": definition("math.asinh", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.atan": definition("math.atan", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.atan2": definition("math.atan2", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.atanh": definition("math.atanh", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.cbrt": definition("math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.clz32": definition("math.clz32", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.cosh": definition("math.cosh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.exp": definition("math.exp", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.expm1": definition("math.expm1", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.floor": definition("math.floor", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.fround": definition("math.fround", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.imul": definition("math.imul", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.log": definition("math.log", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.log10": definition("math.log10", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.log1p": definition("math.log1p", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.log2": definition("math.log2", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.max": definition("math.max", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.min": definition("math.min", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.pow": definition("math.pow", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.round": definition("math.round", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.sign": definition("math.sign", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sin": definition("math.sin", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.sinh": definition("math.sinh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sqrt": definition("math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.tan": definition("math.tan", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.tanh": definition("math.tanh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.trunc": definition("math.trunc", F64_UNARY_INTRINSIC_SIGNATURE),
 });
 
-const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(PURE_MATH_INTRINSIC_IDS);
+const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(INTRINSIC_IDS);
 
 export function isIntrinsicId(value: string): value is IntrinsicId {
   return INTRINSIC_ID_SET.has(value);

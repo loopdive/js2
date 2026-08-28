@@ -1794,6 +1794,10 @@ export function tryCompileNativeCollectionForEach(
       ts.isNumericLiteral(cbArg) ||
       ts.isStringLiteral(cbArg) ||
       ts.isNoSubstitutionTemplateLiteral(cbArg) ||
+      // A Symbol primitive is never callable. Keep this in the same
+      // compile-time guard as the #3573 literal cases so standalone does not
+      // fall through to the host Set_forEach/Map_forEach import. (#5091)
+      ctx.oracle.staticJsTypeOf(cbArg) === "symbol" ||
       (ts.isIdentifier(cbArg) && cbArg.text === "undefined" && !fctx.localMap.has("undefined"));
     if (!staticNonCallable) return undefined;
     // Evaluate the receiver for its side effects first (this native path only

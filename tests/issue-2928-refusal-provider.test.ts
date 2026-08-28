@@ -54,7 +54,43 @@ async function compileStandalone(source: string, fileName: string): Promise<Uint
   return result.binary;
 }
 
+/**
+ * (#4784) The COMPLETE `js2wasm:runtime-eval` ABI. Every name here is a
+ * separate Wasm function import, so a provider — or the namespace built from
+ * it — that omits ONE makes every module importing that entry fail to LINK
+ * ("function import requires a callable"), which is the very failure the
+ * refusal provider exists to prevent.
+ *
+ * `__runtime_script_eval` (the global-SCRIPT route) joined the ABI on
+ * 2026-08-26 with the annex-B global-lexical work (7d8021e8). That commit
+ * taught the real provider and the QuickJS adapter to export it, but neither
+ * the REFUSAL provider source nor `instantiateRuntimeEvalNamespace` — the
+ * namespace every import object is actually built from — was extended, so no
+ * NATIVE provider could supply it. Keep this list as the one place the ABI's
+ * width is stated, so the next entry cannot land in only some of them.
+ */
+const RUNTIME_EVAL_ABI_ENTRIES = [
+  "__runtime_new_function",
+  "__runtime_indirect_eval",
+  "__runtime_script_eval",
+  "__runtime_direct_eval",
+  "__runtime_apply_interpreted",
+] as const;
+
 describe("#2928 E7 — refusal runtime-eval provider", () => {
+  it("binds every entry of the runtime-eval ABI in the linkable namespace (#4784)", { timeout: 600_000 }, async () => {
+    // Asserting on the NAMESPACE, not just the module's export list, is the
+    // load-bearing part: the module exported `__runtime_script_eval` while the
+    // namespace literal still had four entries, so the import object silently
+    // dropped it and modules failed to link against a provider that looked
+    // complete from the outside.
+    const refusalBinary = await compileStandalone(buildRuntimeEvalRefusalProviderSource(), "runtime-eval-refusal.ts");
+    const namespace = instantiateRuntimeEvalNamespace(new WebAssembly.Module(refusalBinary)) as Record<string, unknown>;
+    for (const entry of RUNTIME_EVAL_ABI_ENTRIES) {
+      expect(typeof namespace[entry], `namespace entry ${entry}`).toBe("function");
+    }
+  });
+
   it("keeps a distinct cache path from the real provider", () => {
     const key = runtimeEvalProviderCacheKey(buildRuntimeEvalRefusalProviderSource(), "bundle");
     expect(runtimeEvalRefusalCachePath("/cache", key)).toBe(`/cache/runtime-eval-refusal-${key}.wasm`);
@@ -73,12 +109,7 @@ describe("#2928 E7 — refusal runtime-eval provider", () => {
       // same compiler under test, with nothing to import.
       expect(WebAssembly.Module.imports(refusalModule)).toEqual([]);
       expect(WebAssembly.Module.exports(refusalModule).map((e) => e.name)).toEqual(
-        expect.arrayContaining([
-          "__runtime_new_function",
-          "__runtime_indirect_eval",
-          "__runtime_direct_eval",
-          "__runtime_apply_interpreted",
-        ]),
+        expect.arrayContaining([...RUNTIME_EVAL_ABI_ENTRIES]),
       );
 
       // A file shaped like test262's built-ins/Function/S15.3.2.1_A1_T1.js: the

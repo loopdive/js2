@@ -287,6 +287,8 @@ import {
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
+  ensureErrorNativeProtoGlue,
+  ensureNativeErrorNativeProtoGlue,
   ensureNumberNativeProtoGlue,
   ensureBooleanNativeProtoGlue,
   ensureObjectNativeProtoGlue,
@@ -416,6 +418,7 @@ import {
   compileStandaloneRegExpConstructor,
   emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
+  tryCompileStandaloneRegExpCompile,
   tryCompileStandaloneRegExpExec,
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
@@ -1206,6 +1209,56 @@ function tryEmitNativeProtoReflectiveCall(
   {
     const syntactic = wrapperProtoSyntacticMember(ctx, unwrapTransparent(receiver), member);
     if (syntactic !== undefined) ({ member, ifaceName } = syntactic);
+  }
+
+  // TypeScript declares `Error.prototype.toString` through the broad Object
+  // method signature, so the member symbol above can report `Object` even
+  // though the value read is an Error-family prototype. Recover the concrete
+  // owner from this exact intrinsic syntax before selecting the native-proto
+  // glue. This is intentionally limited to the Error family; other
+  // `<Builtin>.prototype.toString.call` forms retain their existing resolver.
+  {
+    const syntax = unwrapTransparent(receiver);
+    if (
+      ts.isPropertyAccessExpression(syntax) &&
+      syntax.name.text === "toString" &&
+      ts.isPropertyAccessExpression(syntax.expression) &&
+      syntax.expression.name.text === "prototype" &&
+      ts.isIdentifier(syntax.expression.expression)
+    ) {
+      const owner = resolveBuiltinNamespaceValueName(ctx, syntax.expression.expression);
+      if (
+        owner === "Error" ||
+        owner === "TypeError" ||
+        owner === "RangeError" ||
+        owner === "SyntaxError" ||
+        owner === "URIError" ||
+        owner === "EvalError" ||
+        owner === "ReferenceError"
+      ) {
+        ifaceName = owner;
+        // A direct object-literal argument normally receives a closed
+        // WasmGC struct. Error.prototype.toString performs dynamic [[Get]], so
+        // promote this exact receiver (and a one-hop variable initializer) to
+        // the open object carrier before pushReflectiveCallReceiver compiles
+        // it. Other prototype calls keep their existing representation.
+        const receiverArg = expr.arguments[0];
+        const receiverArgUnwrapped = receiverArg === undefined ? undefined : unwrapTransparent(receiverArg);
+        if (receiverArgUnwrapped && ts.isObjectLiteralExpression(receiverArgUnwrapped)) {
+          ctx.dynamicProtoLiteralNodes.add(receiverArgUnwrapped);
+        } else if (receiverArgUnwrapped && ts.isIdentifier(receiverArgUnwrapped)) {
+          const declaration = ctx.oracle.valueDeclarationOf(receiverArgUnwrapped);
+          if (
+            declaration &&
+            ts.isVariableDeclaration(declaration) &&
+            declaration.initializer &&
+            ts.isObjectLiteralExpression(declaration.initializer)
+          ) {
+            ctx.dynamicProtoLiteralNodes.add(declaration.initializer);
+          }
+        }
+      }
+    }
   }
 
   // (#4119) `Object.prototype.toString.call(v)` written in its DIRECT syntactic
@@ -7569,6 +7622,12 @@ function compileCallExpression(
     const standaloneRegExpToString = tryCompileStandaloneRegExpToString(ctx, fctx, expr, propAccess);
     if (standaloneRegExpToString !== undefined) return standaloneRegExpToString;
 
+    // (#5142) `re.compile(pattern, flags)` — Annex B §B.2.4.1 in-place
+    // re-initialization. Without an arm here the call fell through to a generic
+    // path that silently no-op'd.
+    const standaloneRegExpCompile = tryCompileStandaloneRegExpCompile(ctx, fctx, expr, propAccess);
+    if (standaloneRegExpCompile !== undefined) return standaloneRegExpCompile;
+
     // Handle Array.prototype.METHOD.call(obj, ...args) — inline as array method on shape-inferred obj
     {
       const callResult = compileArrayPrototypeCall(ctx, fctx, expr, propAccess);
@@ -10018,6 +10077,21 @@ export function emitDynamicCombinatorArg(
 export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: string): number | undefined {
   if (ifaceName === "Array" || ifaceName === "ReadonlyArray") return ensureArrayNativeProtoGlue(ctx);
   if (ifaceName === "Object") return ensureObjectNativeProtoGlue(ctx);
+  // ES2015 Error.prototype.toString is a reflective native-proto member just
+  // like the other standalone Error-family prototype methods. Keep this
+  // resolver arm narrow: the shared body in array-object-proto.ts owns the
+  // actual ordered Get/ToString semantics and NativeError inheritance.
+  if (ifaceName === "Error") return ensureErrorNativeProtoGlue(ctx);
+  if (
+    ifaceName === "TypeError" ||
+    ifaceName === "RangeError" ||
+    ifaceName === "SyntaxError" ||
+    ifaceName === "URIError" ||
+    ifaceName === "EvalError" ||
+    ifaceName === "ReferenceError"
+  ) {
+    return ensureNativeErrorNativeProtoGlue(ctx, ifaceName);
+  }
   if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
   if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
   if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)

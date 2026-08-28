@@ -76,7 +76,14 @@ import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
-import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
+import {
+  closureSignatureEquals,
+  type IrClassShape,
+  type IrClosureSignature,
+  type IrIntrinsicBackendComposite,
+  type IrIntrinsicBackendSequence,
+  type IrType,
+} from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { isAffineThreeDeepElementAccess, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -277,26 +284,58 @@ export type IrMathMethodPlan =
       readonly intrinsic: IntrinsicId;
       readonly op: "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
     }
+  | {
+      readonly arity: 1;
+      readonly intrinsic: IntrinsicId;
+      readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
+      readonly arity: 1 | 2;
+      readonly intrinsic: IntrinsicId;
+      readonly composite: IrIntrinsicBackendComposite;
+    }
   | { readonly arity: 1 | 2; readonly intrinsic: IntrinsicId };
 
 /**
  * Exact-arity Math surface shared by selection, call-graph closure, and the
  * AST→IR builder. Every accepted method becomes a versioned semantic
- * intrinsic. `op` remains only as a selector compatibility signal for the
- * five methods that never require a callable provider; provider selection is
- * performed after middle-end transforms. Keeping arity here prevents
- * selector/builder drift and preserves ambient-Math identity checks.
+ * intrinsic. `op` remains the selector compatibility signal for the five
+ * single-op methods, while `sequence` and `composite` mark closed native
+ * multi-op paths; provider selection is performed after middle-end transforms.
+ * Keeping arity here prevents selector/builder drift and preserves ambient-
+ * Math identity checks.
  */
 export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = {
   abs: { arity: 1, intrinsic: "math.abs", op: "f64.abs" },
   sqrt: { arity: 1, intrinsic: "math.sqrt", op: "f64.sqrt" },
   floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
+  fround: { arity: 1, intrinsic: "math.fround", sequence: "f64.fround" },
   ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
+  clz32: { arity: 1, intrinsic: "math.clz32", composite: "math.clz32" },
+  imul: { arity: 2, intrinsic: "math.imul", composite: "math.imul" },
+  max: { arity: 2, intrinsic: "math.max", composite: "math.max" },
+  min: { arity: 2, intrinsic: "math.min", composite: "math.min" },
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
+  asin: { arity: 1, intrinsic: "math.asin" },
+  acos: { arity: 1, intrinsic: "math.acos" },
+  asinh: { arity: 1, intrinsic: "math.asinh" },
+  acosh: { arity: 1, intrinsic: "math.acosh" },
+  atan: { arity: 1, intrinsic: "math.atan" },
+  atanh: { arity: 1, intrinsic: "math.atanh" },
+  cbrt: { arity: 1, intrinsic: "math.cbrt" },
+  round: { arity: 1, intrinsic: "math.round" },
+  sign: { arity: 1, intrinsic: "math.sign" },
   sin: { arity: 1, intrinsic: "math.sin" },
   cos: { arity: 1, intrinsic: "math.cos" },
+  tan: { arity: 1, intrinsic: "math.tan" },
+  sinh: { arity: 1, intrinsic: "math.sinh" },
+  cosh: { arity: 1, intrinsic: "math.cosh" },
+  tanh: { arity: 1, intrinsic: "math.tanh" },
   exp: { arity: 1, intrinsic: "math.exp" },
+  expm1: { arity: 1, intrinsic: "math.expm1" },
   log: { arity: 1, intrinsic: "math.log" },
+  log10: { arity: 1, intrinsic: "math.log10" },
+  log1p: { arity: 1, intrinsic: "math.log1p" },
   log2: { arity: 1, intrinsic: "math.log2" },
   pow: { arity: 2, intrinsic: "math.pow" },
   atan2: { arity: 2, intrinsic: "math.atan2" },
@@ -1295,6 +1334,7 @@ export function assessIrImplicitConstructorSubject(
   owner: ts.ClassDeclaration | ts.ClassExpression,
   localClasses: ReadonlySet<string>,
 ): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
+  currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set<string>();
@@ -1382,6 +1422,10 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
+// #4787's exact exponentiation checkpoint is limited to an already-prepared
+// top-level function body. Retain the subject identity so a nested closure or
+// class member cannot inherit the outer function's checker proof.
+let currentSelectionSubject: IrClaimableSubject | null = null;
 let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression> = new Map();
 let currentClaimClassName: string | null = null;
 // #2949 Acorn follow-up — the current top-level function's return expressions
@@ -1560,6 +1604,7 @@ export function configureIrStructuralSelectorPredicates(
   asyncDeclarationNames: ReadonlySet<string>,
 ): void {
   currentSelectionOptions = options;
+  currentSelectionSubject = null;
   currentLocalClassDeclarations = localClassDeclarations;
   configureDynamicScanSource(sourceFile, functionDeclarations);
   currentAsyncDeclNames = asyncDeclarationNames;
@@ -1643,6 +1688,7 @@ function directOnlyDynMemberEqualityFunctions(): ReadonlySet<ts.FunctionDeclarat
 }
 
 function prepareDynamicEqualitySubject(fn: IrClaimableSubject, isMethod: boolean): void {
+  currentSelectionSubject = fn;
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
   currentDynEqualityBoxableParamNames = new Set<string>();
@@ -6378,7 +6424,7 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
       recv.text === "Math" &&
       selectorSeesAmbientBinding(recv) &&
       plan !== undefined &&
-      selectorSupportsMathPlan(plan) &&
+      selectorSupportsMathPlan(plan, candidate) &&
       candidate.arguments.length === plan.arity &&
       candidate.arguments.every((arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg, seen))
     );
@@ -6387,6 +6433,135 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
     currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "f64" ||
     currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "number"
   );
+}
+
+/**
+ * #4787 — exact admission for the bounded `**` retirement checkpoint.
+ *
+ * This is intentionally narrower than {@link expressionIsProvenNumber}:
+ * that older helper also consumes propagated numeric facts and module scalar
+ * families for coercion-sensitive builtins. Exponentiation is the first
+ * checkpoint whose claim must prove the complete operand contract, so it
+ * requires checker evidence, rejects declared unions, and follows only
+ * source forms whose evaluation/lowering is already owned by this function's
+ * Phase-1 walk. The non-null module resolver is the existing prepared
+ * single-source marker; multi-source overlays deliberately omit it.
+ */
+function exactNumericExponentiationContextReady(): boolean {
+  return (
+    !currentSubjectIsModuleInit &&
+    currentSelectionSubject !== null &&
+    ts.isFunctionDeclaration(currentSelectionSubject) &&
+    currentSelectionSubject.body !== undefined &&
+    currentModuleBindingResolver !== null &&
+    currentSelectionOptions?.classifyPrimitiveExpression !== undefined &&
+    selectorMathPlanEnabled(IR_MATH_METHOD_TABLE.pow)
+  );
+}
+
+function exactNumericExponentiationOwner(node: ts.Node): boolean {
+  let parent = node.parent;
+  while (parent) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)
+    ) {
+      return parent === currentSelectionSubject;
+    }
+    parent = parent.parent;
+  }
+  return false;
+}
+
+function exactNumericExponentiationOperand(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  seen = new Set<ts.VariableDeclaration>(),
+): boolean {
+  if (!exactNumericExponentiationContextReady() || !exactNumericExponentiationOwner(expression)) return false;
+  const candidate = unwrapProjectionExpression(expression);
+  if (currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) !== "number") return false;
+  // The declared classifier intentionally preserves a useful distinction for
+  // mixed/nullable primitives. Keep the checkpoint fail-closed for every
+  // declared union, including an all-number union.
+  if (currentSelectionOptions?.classifyDeclaredPrimitiveExpression?.(candidate) === "primitive-union") return false;
+
+  if (ts.isNumericLiteral(candidate)) return true;
+  if (ts.isIdentifier(candidate)) {
+    const binding = currentModuleBindingResolver?.(candidate);
+    if (binding && binding.valueKind.kind !== "f64") return false;
+    if (!binding && !scope.has(candidate.text)) return false;
+    const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
+    if (!declaration) return true; // checker-proven parameter / non-local scalar
+    if (declaration.type !== undefined && !typeNodeIsStrictNumberOnly(declaration.type)) return false;
+    if (!declaration.initializer || seen.has(declaration)) return false;
+    const nextSeen = new Set(seen);
+    nextSeen.add(declaration);
+    return exactNumericExponentiationOperand(declaration.initializer, scope, localClasses, nextSeen);
+  }
+  if (ts.isPrefixUnaryExpression(candidate)) {
+    if (
+      candidate.operator !== ts.SyntaxKind.PlusToken &&
+      candidate.operator !== ts.SyntaxKind.MinusToken &&
+      candidate.operator !== ts.SyntaxKind.TildeToken
+    ) {
+      return false;
+    }
+    return exactNumericExponentiationOperand(candidate.operand, scope, localClasses, seen);
+  }
+  if (ts.isBinaryExpression(candidate)) {
+    switch (candidate.operatorToken.kind) {
+      case ts.SyntaxKind.PlusToken:
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken:
+      case ts.SyntaxKind.PercentToken:
+      case ts.SyntaxKind.AsteriskAsteriskToken:
+        return (
+          exactNumericExponentiationOperand(candidate.left, scope, localClasses, seen) &&
+          exactNumericExponentiationOperand(candidate.right, scope, localClasses, seen)
+        );
+      default:
+        return false;
+    }
+  }
+  if (ts.isCallExpression(candidate)) {
+    if (ts.isPropertyAccessExpression(candidate.expression)) {
+      const receiver = candidate.expression.expression;
+      const plan = IR_MATH_METHOD_TABLE[candidate.expression.name.text];
+      if (
+        !ts.isIdentifier(receiver) ||
+        receiver.text !== "Math" ||
+        scope.has("Math") ||
+        !selectorSeesAmbientBinding(receiver) ||
+        plan === undefined ||
+        !selectorSupportsMathPlan(plan, candidate) ||
+        candidate.arguments.length !== plan.arity
+      ) {
+        return false;
+      }
+      return candidate.arguments.every(
+        (argument) =>
+          !ts.isSpreadElement(argument) && exactNumericExponentiationOperand(argument, scope, localClasses, seen),
+      );
+    }
+    // Direct-call plans are prepared after selection. Without an exact
+    // AST-site plan and its f64 return ABI, a checker-number result is not
+    // enough to admit this operand: lowering may otherwise demote it after the
+    // enclosing exponentiation claim. Generic call selection remains unchanged
+    // outside this exact checkpoint.
+    return false;
+  }
+  // Conditional/property/element/object/closure expressions deliberately stay
+  // outside the first checkpoint. In particular, a property with a declared
+  // number type is still a property shape, not a primitive local/parameter.
+  return false;
 }
 
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
@@ -6468,8 +6643,44 @@ function selectorPrimitiveWrapperOrGenericBinary(
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
 }
 
-function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
-  return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
+function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
+  if (
+    call.questionDotToken !== undefined ||
+    (ts.isPropertyAccessExpression(call.expression) && call.expression.questionDotToken !== undefined)
+  ) {
+    return false;
+  }
+  return selectorMathPlanEnabled(plan);
+}
+
+function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
+  if (plan.intrinsic === "math.asin" && process.env.JS2WASM_IR_MATH_ASIN === "0") return false;
+  if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
+  if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
+  if (plan.intrinsic === "math.tan" && process.env.JS2WASM_IR_MATH_TAN === "0") return false;
+  if (plan.intrinsic === "math.log10" && process.env.JS2WASM_IR_MATH_LOG10 === "0") return false;
+  if (plan.intrinsic === "math.log1p" && process.env.JS2WASM_IR_MATH_LOG1P === "0") return false;
+  if (plan.intrinsic === "math.sinh" && process.env.JS2WASM_IR_MATH_SINH === "0") return false;
+  if (plan.intrinsic === "math.cosh" && process.env.JS2WASM_IR_MATH_COSH === "0") return false;
+  if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
+  if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
+  if (plan.intrinsic === "math.fround" && process.env.JS2WASM_IR_MATH_FROUND === "0") return false;
+  if (plan.intrinsic === "math.clz32" && process.env.JS2WASM_IR_MATH_CLZ32 === "0") return false;
+  if (plan.intrinsic === "math.imul" && process.env.JS2WASM_IR_MATH_IMUL === "0") return false;
+  if (plan.intrinsic === "math.max" && process.env.JS2WASM_IR_MATH_MAX === "0") return false;
+  if (plan.intrinsic === "math.min" && process.env.JS2WASM_IR_MATH_MIN === "0") return false;
+  if (plan.intrinsic === "math.round" && process.env.JS2WASM_IR_MATH_ROUND === "0") return false;
+  if (plan.intrinsic === "math.sign" && process.env.JS2WASM_IR_MATH_SIGN === "0") return false;
+  if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
+  if (plan.intrinsic === "math.asinh" && process.env.JS2WASM_IR_MATH_ASINH === "0") return false;
+  if (plan.intrinsic === "math.acosh" && process.env.JS2WASM_IR_MATH_ACOSH === "0") return false;
+  if (plan.intrinsic === "math.atanh" && process.env.JS2WASM_IR_MATH_ATANH === "0") return false;
+  return (
+    "op" in plan ||
+    "sequence" in plan ||
+    "composite" in plan ||
+    currentSelectionOptions?.supportsSymbolicMathHelpers === true
+  );
 }
 
 function selectorSupportsNumberToString(): boolean {
@@ -6569,6 +6780,22 @@ function typeNodeIsNumberOnly(typeNode: ts.TypeNode): boolean {
     );
   }
   if (ts.isUnionTypeNode(typeNode)) return typeNode.types.every(typeNodeIsNumberOnly);
+  return false;
+}
+
+/** #4787 — unlike the legacy numeric proof, declared unions are not exact. */
+function typeNodeIsStrictNumberOnly(typeNode: ts.TypeNode): boolean {
+  if (typeNode.kind === ts.SyntaxKind.NumberKeyword) return true;
+  if (ts.isParenthesizedTypeNode(typeNode)) return typeNodeIsStrictNumberOnly(typeNode.type);
+  if (ts.isLiteralTypeNode(typeNode)) {
+    return (
+      ts.isNumericLiteral(typeNode.literal) ||
+      (ts.isPrefixUnaryExpression(typeNode.literal) &&
+        (typeNode.literal.operator === ts.SyntaxKind.PlusToken ||
+          typeNode.literal.operator === ts.SyntaxKind.MinusToken) &&
+        ts.isNumericLiteral(typeNode.literal.operand))
+    );
+  }
   return false;
 }
 
@@ -8385,6 +8612,25 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
+    // #4787 — `**` is the first bounded operator retirement checkpoint. Do
+    // not let the shared claim row widen the old shape walk: only a prepared
+    // single-source top-level function with two exact checker-proven numeric
+    // operands may reach the semantic `math.pow` builder arm. Everything else
+    // is a typed pre-claim Unsupported, including provider-unavailable lanes.
+    if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
+      if (!exactNumericExponentiationContextReady()) {
+        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
+      }
+      if (
+        !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
+        !exactNumericExponentiationOperand(expr.right, scope, localClasses) ||
+        !isPhase1Expr(expr.left, scope, localClasses) ||
+        !isPhase1Expr(expr.right, scope, localClasses)
+      ) {
+        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
+      }
+      return true;
+    }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
       if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
@@ -8698,7 +8944,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         selectorSeesAmbientBinding(expr.expression.expression) &&
         !scope.has(expr.expression.expression.text) &&
         mathPlan !== undefined &&
-        selectorSupportsMathPlan(mathPlan) &&
+        selectorSupportsMathPlan(mathPlan, expr) &&
         expr.arguments.length === mathPlan.arity
       ) {
         return expr.arguments.every(
@@ -9829,7 +10075,7 @@ export function buildLocalCallGraph(
             node.expression.expression.text === "Math" &&
             selectorSeesAmbientBinding(node.expression.expression) &&
             mathPlan !== undefined &&
-            selectorSupportsMathPlan(mathPlan) &&
+            selectorSupportsMathPlan(mathPlan, node) &&
             node.arguments.length === mathPlan.arity
           ) {
             for (const a of node.arguments) visit(a);

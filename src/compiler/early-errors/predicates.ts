@@ -785,6 +785,34 @@ export function isInsideGeneratorFunction(node: ts.Node): boolean {
   return final;
 }
 
+/**
+ * (#5141) Is this identifier in a [+Yield] parameter context?
+ *
+ * Like {@link isInsideGeneratorFunction}, but correct for BindingIdentifier
+ * positions. A function's own name is NOT evaluated in that function's [Yield]
+ * context: `FunctionExpression : function BindingIdentifier[~Yield, ~Await]` is
+ * always [~Yield] (`function* g(){ (function yield(){}) }` is legal), while
+ * `FunctionDeclaration`/`GeneratorDeclaration` take `BindingIdentifier[?Yield]`
+ * from the ENCLOSING context (`function* yield(){}` at sloppy script top level
+ * is legal). Arrow functions inherit [Yield] and are therefore not boundaries.
+ */
+export function isInYieldParamContext(node: ts.Node): boolean {
+  let child: ts.Node = node;
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isClassStaticBlockDeclaration(current)) return false;
+    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isMethodDeclaration(current)) {
+      if (current.name !== child) return !!current.asteriskToken;
+      // BindingIdentifier of this very function.
+      if (ts.isFunctionExpression(current)) return false;
+      // Declaration: inherit the enclosing context — keep walking outward.
+    }
+    child = current;
+    current = current.parent;
+  }
+  return false;
+}
+
 /** Check if a function declaration is in a single-statement position (not a block). */
 export function isStatementPosition(parent: ts.Node, child: ts.Node): boolean {
   // If the parent is a block/source file, this is a normal declaration — allowed

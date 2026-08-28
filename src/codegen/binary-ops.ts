@@ -17,6 +17,7 @@ import {
   isWrapperObjectType,
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { ensureAnyFromExternHelper, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -248,6 +249,28 @@ const SYMBOL_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.GreaterThanToken,
   ts.SyntaxKind.LessThanEqualsToken,
   ts.SyntaxKind.GreaterThanEqualsToken,
+]);
+
+/**
+ * (#5158) Binary operators whose §13.15.2 runtime semantics are
+ * "evaluate lhs, evaluate rhs, ToNumeric(lhs), ToNumeric(rhs)". When either
+ * operand is an anonymous object type the coercion must be deferred until both
+ * operand expressions have run; otherwise the numeric hint calls `valueOf` on
+ * the left while the right expression has not been evaluated yet. `+` is
+ * excluded — its object arm is ToPrimitive with the string-concat fallback.
+ */
+const DEFERRED_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
 ]);
 
 /**
@@ -944,8 +967,12 @@ export function compileBinaryExpression(
   // Anonymous object types cover object literals and inferred object bindings;
   // named/class/wrapper and BigInt-containing objects remain on their existing
   // dispatches so this narrow ordering repair cannot change those semantics.
+  // (#5158) The same ordering defect applies to every ToNumeric binary
+  // operator, not just `**` — `obj - f()` ran `obj.valueOf()` before `f()`.
+  // `+` is deliberately absent: its object arm is ToPrimitive/string-concat,
+  // owned by the `admitsObjectAdd` dispatch below.
   if (
-    op === ts.SyntaxKind.AsteriskAsteriskToken &&
+    DEFERRED_TONUMERIC_OPS.has(op) &&
     (isDeferredExponentiationObject(expr.left, leftTsType) || isDeferredExponentiationObject(expr.right, rightTsType))
   ) {
     const leftReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.left, leftTsType);
@@ -3412,79 +3439,7 @@ export function emitToInt32(fctx: FunctionContext): void {
   const e = allocTempLocal(fctx, { kind: "i64" });
   const significand = allocTempLocal(fctx, { kind: "i64" });
   const magnitude = allocTempLocal(fctx, { kind: "i64" });
-
-  fctx.body.push({ op: "i64.reinterpret_f64" });
-  fctx.body.push({ op: "local.set", index: bits });
-
-  fctx.body.push({ op: "local.get", index: bits });
-  fctx.body.push({ op: "i64.const", value: 52n });
-  fctx.body.push({ op: "i64.shr_u" });
-  fctx.body.push({ op: "i64.const", value: 0x7ffn });
-  fctx.body.push({ op: "i64.and" });
-  fctx.body.push({ op: "i64.const", value: 1023n });
-  fctx.body.push({ op: "i64.sub" });
-  fctx.body.push({ op: "local.set", index: e });
-
-  fctx.body.push({ op: "local.get", index: bits });
-  fctx.body.push({ op: "i64.const", value: 0xfffffffffffffn });
-  fctx.body.push({ op: "i64.and" });
-  fctx.body.push({ op: "i64.const", value: 0x10000000000000n });
-  fctx.body.push({ op: "i64.or" });
-  fctx.body.push({ op: "local.set", index: significand });
-
-  const shiftLeft: Instr[] = [
-    { op: "local.get", index: significand },
-    { op: "local.get", index: e },
-    { op: "i64.const", value: 52n },
-    { op: "i64.sub" },
-    { op: "i64.shl" },
-  ];
-  const shiftRight: Instr[] = [
-    { op: "local.get", index: significand },
-    { op: "i64.const", value: 52n },
-    { op: "local.get", index: e },
-    { op: "i64.sub" },
-    { op: "i64.shr_u" },
-  ];
-  fctx.body.push({ op: "local.get", index: e });
-  fctx.body.push({ op: "i64.const", value: 0n });
-  fctx.body.push({ op: "i64.ge_s" });
-  fctx.body.push({ op: "local.get", index: e });
-  fctx.body.push({ op: "i64.const", value: 83n });
-  fctx.body.push({ op: "i64.le_s" });
-  fctx.body.push({ op: "i32.and" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "i64" } as ValType },
-    then: [
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 52n },
-      { op: "i64.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i64" } as ValType },
-        then: shiftLeft,
-        else: shiftRight,
-      },
-    ],
-    else: [{ op: "i64.const", value: 0n }],
-  });
-  fctx.body.push({ op: "local.set", index: magnitude });
-
-  fctx.body.push({ op: "local.get", index: bits });
-  fctx.body.push({ op: "i64.const", value: 0n });
-  fctx.body.push({ op: "i64.lt_s" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "i32" } as ValType },
-    then: [
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: magnitude },
-      { op: "i32.wrap_i64" },
-      { op: "i32.sub" },
-    ],
-    else: [{ op: "local.get", index: magnitude }, { op: "i32.wrap_i64" }],
-  });
+  emitWasmInt32Coercion(fctx.body, { bits, exponent: e, significand, magnitude });
 
   releaseTempLocal(fctx, bits);
   releaseTempLocal(fctx, e);
