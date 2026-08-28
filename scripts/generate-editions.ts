@@ -641,6 +641,33 @@ export interface ClassifiedTest {
   status: StatusKey;
 }
 
+/**
+ * (#5201) Per-edition breakdown of the tests that score ONE landing-page row.
+ *
+ * A row's SECTION is hand-authored per feature ("Comma operator" sits under
+ * ES3 / Core because the operator is ES3), while its NUMBER is computed from
+ * the tests that match it. Those answer different questions and routinely
+ * disagree: all six `language/expressions/comma` tests classify as ES5
+ * (Sputnik files carry `es5id`, which names the ES5.1 section defining the
+ * operator, not the edition that introduced it) except `tco-final.js`, which
+ * carries `features: [tail-call-optimization]` and classifies as ES2015 — the
+ * one that fails in the standalone lane. Presented as a bare "5 / 6" under an
+ * "ES3 / Core" heading whose own 100% is computed from an entirely different
+ * 273-test bucket, that reads as "ES3 is broken". The spread makes the row's
+ * real population visible instead.
+ */
+export interface FeatureEditionSlice {
+  edition: string;
+  pass: number;
+  total: number;
+}
+
+/** Order a spread by EDITION_ORDER — the same sequence the edition table uses. */
+function editionSortKey(label: string): number {
+  const idx = EDITION_ORDER.findIndex((e) => EDITION_NAMES[e] === label);
+  return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+}
+
 export interface FeatureRowCount {
   pass: number;
   fail: number;
@@ -1184,7 +1211,7 @@ async function main() {
     !args.includes("--no-feature-examples") &&
     (outputPath === OUTPUT_PATH || getArg(args, "--feature-examples") != null || featureExamplesOut != null);
   if (wantFeatureExamples) {
-    patchFeatureExamples(featureExamplesPath, taggedTests, pathTests, featureExamplesOut);
+    patchFeatureExamples(featureExamplesPath, taggedTests, pathTests, featureExamplesOut, fileEditions);
   }
 }
 
@@ -1203,6 +1230,7 @@ export function patchFeatureExamples(
   taggedTests: ClassifiedTest[],
   pathTests: Array<{ file: string; status: StatusKey }>,
   outPath?: string,
+  fileEditions: Record<string, string> = {},
 ): void {
   if (!existsSync(examplesPath)) {
     console.warn(`[#2910] feature-examples not found at ${examplesPath} — skipping row reconciliation.`);
@@ -1256,13 +1284,26 @@ export function patchFeatureExamples(
     f: t.file.startsWith("test/") ? t.file.slice(5) : t.file,
     s: t.status,
   }));
-  const countByPaths = (prefixes: string[]): FeatureRowCount => {
+  const countByPaths = (prefixes: string[]): FeatureRowCount & { spread: FeatureEditionSlice[] } => {
     const acc: Record<StatusKey, number> = { pass: 0, fail: 0, ce: 0, skip: 0 };
+    const byEdition = new Map<string, { pass: number; total: number }>();
     for (const t of normTests) {
-      if (prefixes.some((p) => t.f === p || t.f.startsWith(p + "/"))) acc[t.s]++;
+      if (!prefixes.some((p) => t.f === p || t.f.startsWith(p + "/"))) continue;
+      acc[t.s]++;
+      // A path-scored row is NOT confined to the section it is displayed under,
+      // so record which edition each matched test actually belongs to.
+      const label = fileEditions[t.f];
+      if (!label) continue;
+      const slot = byEdition.get(label) ?? { pass: 0, total: 0 };
+      slot.total++;
+      if (t.s === "pass") slot.pass++;
+      byEdition.set(label, slot);
     }
     const total = acc.pass + acc.fail + acc.ce + acc.skip;
-    return { ...acc, total, pct: total > 0 ? Math.round((acc.pass / total) * 100) : 0 };
+    const spread = [...byEdition.entries()]
+      .map(([edition, c]) => ({ edition, pass: c.pass, total: c.total }))
+      .sort((a, b) => editionSortKey(a.edition) - editionSortKey(b.edition));
+    return { ...acc, total, pct: total > 0 ? Math.round((acc.pass / total) * 100) : 0, spread };
   };
 
   let reconciled = 0;
@@ -1275,6 +1316,9 @@ export function patchFeatureExamples(
       const c = rowCounts[nm]!;
       f.passCount = c.pass;
       f.totalCount = c.total;
+      // A tag-sliced row is matched WITHIN its own edition year, so its spread
+      // is that one edition by construction — nothing to disclose.
+      f.editionSpread = undefined;
       reconciled++;
     } else {
       // Not in the tag map. If the row carries `testCategories` paths, score it
@@ -1287,11 +1331,14 @@ export function patchFeatureExamples(
         const c = countByPaths(paths);
         f.passCount = c.pass;
         f.totalCount = c.total;
+        if (c.spread.length > 0) f.editionSpread = c.spread;
+        else f.editionSpread = undefined;
         if (c.total > 0) pathScored++;
         else headlineOnly++;
       } else {
         f.passCount = 0;
         f.totalCount = 0;
+        f.editionSpread = undefined;
         headlineOnly++;
       }
       // Only warn about a row that ended up with NO number at all. A row the
@@ -1320,6 +1367,11 @@ export function patchFeatureExamples(
           testCategories: f.testCategories,
           passCount: f.passCount,
           totalCount: f.totalCount,
+          // Lane-dependent: the same tests, but a different pass column, so the
+          // twin needs its own copy or the toggle would show host per-edition
+          // numbers under standalone totals. Bounded — one entry per edition a
+          // row actually touches, a few dozen bytes.
+          ...(f.editionSpread ? { editionSpread: f.editionSpread } : {}),
         })),
       }
     : examples;

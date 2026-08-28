@@ -1403,6 +1403,21 @@
         color: var(--err, #f87171);
       }
 
+      /* (#5201) Per-edition breakdown of the tests scoring this row. A row's
+         SECTION is its feature's origin edition; its NUMBER comes from the
+         tests that match its paths, which are not confined to that section.
+         Shown only when they actually disagree, so it reads as an explanation
+         rather than noise. */
+      .feat-edition-spread {
+        grid-column: 2;
+        margin-top: 2px;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--fg-faint);
+        opacity: 0.85;
+      }
+
       /* #1327 — "View test results →" link inside expanded feat-row body. */
       .feat-report-link {
         margin: 12px 0 4px;
@@ -6403,6 +6418,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 }
                 badge.title = "No isolated test262 subset scores this feature individually.";
               }
+              row.querySelector(".feat-edition-spread")?.remove();
               // (#4362) Drop any chip/percentage left by the other lane — a row
               // that is unmeasured here must not keep showing the other lane's
               // "N / M".
@@ -6445,6 +6461,36 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               }
               span.textContent = `${pass} / ${total}`;
               span.dataset.tone = tone;
+
+              // (#5201) Edition spread. The row sits under the section its
+              // FEATURE belongs to, but it is scored by the tests its paths
+              // match, and those carry their own edition markers — the six
+              // `language/expressions/comma` tests are five ES5 (Sputnik files
+              // whose `es5id` names the ES5.1 section defining the operator)
+              // plus one ES2015 (`tco-final.js`, tail-call). Without this the
+              // row reads "ES3 / Core … 5 / 6" and blames ES3 for an ES2015
+              // failure. Rendered only when the spread reaches outside the
+              // row's own section — otherwise it says nothing new.
+              const sectionLabel = row.closest(".feat-section")?.querySelector(".feat-edition")?.textContent?.trim();
+              const spread = Array.isArray(feature.editionSpread) ? feature.editionSpread : [];
+              const straysOutside = spread.some((s) => s.edition !== sectionLabel);
+              let spreadEl = row.querySelector(".feat-edition-spread");
+              if (spread.length > 0 && straysOutside) {
+                if (!spreadEl) {
+                  spreadEl = document.createElement("div");
+                  spreadEl.className = "feat-edition-spread";
+                  row.appendChild(spreadEl);
+                }
+                spreadEl.textContent = `by edition: ${spread
+                  .map((s) => `${s.edition} ${s.pass}/${s.total}`)
+                  .join(" · ")}`;
+                spreadEl.title =
+                  `This row is placed under "${sectionLabel ?? "its section"}" because that is when the feature ` +
+                  `entered the language. Its ${total} test262 test(s) carry their own edition markers, shown here — ` +
+                  `so the row's rate is not a statement about ${sectionLabel ?? "that edition"}.`;
+              } else if (spreadEl) {
+                spreadEl.remove();
+              }
 
               // Explicit `NN%` under the badge glyph when below 95% — gives an
               // at-a-glance "not everything passes yet" signal even on green rows.
