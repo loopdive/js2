@@ -2325,6 +2325,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   nativeIteratorUserArmPending?: boolean;
   /**
+   * (#5147) Set by `reserveAnyIterNext` — `__any_iter_next` was minted with a
+   * placeholder body that `fillAnyIterNext` must replace at finalize (it needs
+   * the `$LazyIterHelper` type and the ladder's late arms, which only exist by
+   * then). Same reserve-then-fill discipline as `nativeIteratorUserArmPending`.
+   */
+  anyIterNextPending?: boolean;
+  /** (#5147) `__iter_result_obj` reserved with a placeholder body; filled at finalize. */
+  iterResultObjPending?: boolean;
+  /** (#5147) the `$__IterRec` identity arm was already prepended to `__iterator`. */
+  iterRecIdentityArmDone?: boolean;
+  /**
    * Static property initializer expressions to compile into __module_init.
    * `className` (#1395) is the owning class name — used to set
    * `enclosingClassName` + `isStaticContext` on the initFctx so `this`

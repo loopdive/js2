@@ -291,7 +291,12 @@ import {
 // (#4491 wave-5 T7 slice B) §20.2.2 own-key surface of the provider-realm
 // `%Function%` marker — see runtime-eval-intrinsic-own-props.ts.
 import { fillRuntimeEvalIntrinsicFunctionOwnProps } from "./runtime-eval-intrinsic-own-props.js";
-import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
+import {
+  ensureNativeIteratorRuntime,
+  fillAnyIterNext,
+  fillIterResultObject,
+  fillNativeIteratorLateArms,
+} from "./iterator-native.js";
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
@@ -5652,6 +5657,12 @@ export function generateModule(
     // MUST run AFTER `fillNativeIteratorLateArms` (which rebuilds those bodies).
     // No-op unless a lazy wrapper was constructed.
     fillLazyIterLadderArms(ctx);
+
+    // (#5147) Fill `__any_iter_next` — source-level `.next()` on a native
+    // iterator carrier. MUST run after both fills above: it delegates to the
+    // fully-armed `__iterator_next`.
+    fillIterResultObject(ctx);
+    fillAnyIterNext(ctx);
 
     // (#2922) Rebuild `__combinator_to_vec`'s user-iterable arm with the same
     // closed-struct dispatchers (identical five-dispatcher condition, so the
