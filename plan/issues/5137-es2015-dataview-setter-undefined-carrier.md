@@ -16,6 +16,7 @@ language_feature: dataview-setter-return-undefined
 goal: standalone-mode
 assignee: "ttraenkler/codex-5137-es2015-dataview-setter-undefined"
 branch: codex/5137-es2015-dataview-setter-undefined
+pr: 5152
 files:
   - src/codegen/dataview-native.ts
   - tests/issue-5137-es2015-dataview-setter-undefined-carrier.test.ts
@@ -165,6 +166,12 @@ result that is unconditionally `undefined`.
 
 Worktree: `/private/tmp/js2-es2015-dataview-setter-undefined-20260828`.
 Branch: `codex/5137-es2015-dataview-setter-undefined`.
+Draft upstream PR: <https://github.com/loopdive/js2/pull/5152>.
+
+The plan checkpoint is `c808092cb828e9b2abef4ef6af27d95e1d822ee1`.
+It was pushed without force after the full pre-push hook passed. The PR is
+intentionally draft because this checkpoint contains the plan and baseline,
+not the implementation.
 
 The implementation commit, exact post-fix A/B, quality evidence, upstream PR
 URL/head, and final queue state will be appended here as the work progresses.
