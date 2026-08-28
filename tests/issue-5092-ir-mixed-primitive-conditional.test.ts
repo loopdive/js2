@@ -50,6 +50,60 @@ const CONSUMER_SOURCE = `
   }
 `;
 
+// (2026-08-28 review repair, HOLD 1) `typeof` over the mixed carrier must read
+// the arms' REAL primitive kinds. An `as` assertion is not runtime evidence, so
+// each forged spelling below has to answer exactly what Node answers.
+const TYPEOF_CODE = `return t === "number" ? 1 : t === "string" ? 2 : t === "boolean" ? 3 : 0;`;
+const FORGED_TYPEOF_SOURCE = `
+  export function forgedInline(c: boolean): number {
+    const t = typeof ((c ? 7 : "s") as number | boolean);
+    ${TYPEOF_CODE}
+  }
+  export function forgedOnLocal(c: boolean): number {
+    const v = c ? 7 : "s";
+    const t = typeof (v as number | boolean);
+    ${TYPEOF_CODE}
+  }
+  export function forgedThroughLocal(c: boolean): number {
+    const v = c ? true : "s";
+    const w = v as number | string;
+    const t = typeof w;
+    ${TYPEOF_CODE}
+  }
+  export function honestTypeof(c: boolean): number {
+    const t = typeof (c ? 7 : "s");
+    ${TYPEOF_CODE}
+  }
+`;
+/** `1` number · `2` string · `3` boolean — the answer Node gives for each arm. */
+const FORGED_TYPEOF_EXPECTED: ReadonlyArray<readonly [string, number, number]> = [
+  ["forgedInline", 1, 2],
+  ["forgedOnLocal", 1, 2],
+  ["forgedThroughLocal", 3, 2],
+  ["honestTypeof", 1, 2],
+];
+
+const LOST_PROOF_CASES: ReadonlyArray<readonly [string, string, string, string]> = [
+  [
+    "conditional",
+    `export function choose(c: boolean): string { const v = c ? 7 : "s"; return "" + v; }`,
+    "choose",
+    "mixed conditional",
+  ],
+  [
+    "String wrapper",
+    `export function asString(c: boolean): number { return String(c ? 7 : "s") === (c ? "7" : "s") ? 1 : 0; }`,
+    "asString",
+    "String wrapper",
+  ],
+  [
+    "Number wrapper",
+    `export function asNumber(c: boolean): number { return Number(c ? 7 : true); }`,
+    "asNumber",
+    "Number wrapper",
+  ],
+];
+
 function expectSuccess(result: CompileResult, label: string): void {
   expect(
     result.success,
@@ -281,6 +335,36 @@ describe("#5092 mixed primitive conditional IR ownership", () => {
       irBodyEmitted: false,
     });
   });
+
+  it("answers typeof from the arms' real kinds, not a forged assertion", async () => {
+    const result = await compileTracked(FORGED_TYPEOF_SOURCE, "issue-5092-forged-typeof.ts");
+    expectSuccess(result, "forged-assertion typeof");
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    for (const [name] of FORGED_TYPEOF_EXPECTED) {
+      expect(outcome(result, name)).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+    }
+
+    const exports = await instantiate(result);
+    for (const [name, whenTrue, whenFalse] of FORGED_TYPEOF_EXPECTED) {
+      const probe = exports[name] as (condition: number) => number;
+      expect(probe(1), `${name}(true)`).toBe(whenTrue);
+      expect(probe(0), `${name}(false)`).toBe(whenFalse);
+    }
+  });
+
+  it.each(LOST_PROOF_CASES)(
+    "fails closed when the %s consumer loses its prepared proof",
+    async (label, source, name, site) => {
+      vi.stubEnv(TAMPER, "proof");
+      const result = await compileTracked(source, `issue-5092-lost-proof-${label.replace(/\s+/g, "-")}.ts`);
+      expect(result.success).toBe(false);
+      expect(result.binary.length).toBe(0);
+      expect(result.errors.map((error) => error.message).join("\n")).toContain(
+        `#5092 ${site} lost its prepared mixed-conditional proof`,
+      );
+      expect(outcome(result, name)).toMatchObject({ kind: "invariant", stage: "build" });
+    },
+  );
 
   it.each(["tag", "result"])("fails closed on injected %s drift after claim", async (tamper) => {
     vi.stubEnv(TAMPER, tamper);

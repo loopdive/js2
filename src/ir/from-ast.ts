@@ -4882,35 +4882,57 @@ function lowerNumericSubstitutionToString(
   return result;
 }
 
+/** Strip the type-erased assertion wrappers `lowerExpr` already lowers through. */
+function unwrapMixedPrimitiveProjection(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * #5092 — the two arm families `typeof`'s runtime tag dispatch may test.
+ *
+ * (2026-08-28 review repair) These come from the mixed-conditional PROOF, not
+ * from `checker.getTypeAtLocation` at the operand's syntactic location. The
+ * checker reports the ASSERTED type there, so
+ * `typeof ((c ? 7 : "s") as number | boolean)` compiled to a number-vs-BOOLEAN
+ * dispatch and answered `"boolean"` on the string arm — a wrong answer, not a
+ * demote. An assertion is not runtime evidence: this walk strips the erased
+ * wrappers and follows a local `const` to its initializer (the provenance rule
+ * `makeIrPrimitiveExpressionClassifier` already applies), then reads the arms
+ * off the same proof the carrier's box tags were emitted from. `whenTrue` stays
+ * first so the emitted `tag.test` interrogates the then-arm's honest tag. An
+ * operand whose dynamic value is not backed by that proof returns null and
+ * demotes exactly as before.
+ */
 function exactDynamicPrimitiveTypeofFamilies(
   expression: ts.Expression,
   cx: LowerCtx,
+  seen: ReadonlySet<ts.VariableDeclaration> = new Set(),
 ): readonly [IrPrimitiveExpressionFamily, IrPrimitiveExpressionFamily] | null {
   if (!cx.checker) return null;
   try {
-    const type = cx.checker.getTypeAtLocation(expression);
-    const members = type.isUnion() ? type.types : [type];
-    const families = new Set<IrPrimitiveExpressionFamily>();
-    for (const member of members) {
-      if (
-        (member.flags &
-          (ts.TypeFlags.Any |
-            ts.TypeFlags.Unknown |
-            ts.TypeFlags.TypeParameter |
-            ts.TypeFlags.Never |
-            ts.TypeFlags.Null |
-            ts.TypeFlags.Undefined)) !==
-        0
-      ) {
-        return null;
-      }
-      if ((member.flags & ts.TypeFlags.NumberLike) !== 0) families.add("number");
-      else if ((member.flags & ts.TypeFlags.BooleanLike) !== 0) families.add("boolean");
-      else if ((member.flags & ts.TypeFlags.StringLike) !== 0) families.add("string");
-      else return null;
+    const candidate = unwrapMixedPrimitiveProjection(expression);
+    if (ts.isConditionalExpression(candidate)) {
+      const proof = proveMixedPrimitiveConditional(candidate, cx);
+      return proof === null ? null : [proof.whenTrue, proof.whenFalse];
     }
-    if (families.size !== 2) return null;
-    return [...families] as [IrPrimitiveExpressionFamily, IrPrimitiveExpressionFamily];
+    if (!ts.isIdentifier(candidate)) return null;
+    const symbol = cx.checker.getSymbolAtLocation(candidate);
+    const declaration = [symbol?.valueDeclaration, ...(symbol?.declarations ?? [])].find(
+      (node): node is ts.VariableDeclaration =>
+        node !== undefined && ts.isVariableDeclaration(node) && node.getSourceFile() === candidate.getSourceFile(),
+    );
+    if (declaration?.initializer === undefined || seen.has(declaration)) return null;
+    return exactDynamicPrimitiveTypeofFamilies(declaration.initializer, cx, new Set(seen).add(declaration));
   } catch {
     return null;
   }
@@ -11235,18 +11257,13 @@ function proveExactMixedPrimitiveWrapperCall(
       ? cx.resolver?.isAmbientStringBinding?.(expr.expression) === true
       : cx.resolver?.isAmbientBinding?.(expr.expression) === true;
   if (!ambient) return null;
-  let argument = expr.arguments[0]!;
-  while (
-    ts.isParenthesizedExpression(argument) ||
-    ts.isAsExpression(argument) ||
-    ts.isTypeAssertionExpression(argument) ||
-    ts.isSatisfiesExpression(argument) ||
-    ts.isNonNullExpression(argument)
-  ) {
-    argument = argument.expression;
-  }
+  const argument = unwrapMixedPrimitiveProjection(expr.arguments[0]!);
   if (!ts.isConditionalExpression(argument)) return null;
-  const mixed = proveMixedPrimitiveConditional(argument, cx);
+  // (2026-08-28 review repair) Same fail-closed treatment as `lowerConditional`:
+  // an ambient `String`/`Number` over a CLAIMED mixed conditional whose proof
+  // vanished is a desync, so it raises the typed invariant instead of returning
+  // null into the generic call path (which demotes the whole function).
+  const mixed = requireMixedPrimitiveConditionalProof(argument, `${expr.expression.text} wrapper`, cx);
   return mixed === null ? null : { kind: expr.expression.text, conditional: argument, mixed };
 }
 
@@ -11345,7 +11362,13 @@ function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: Low
   }
 }
 
-function proveMixedPrimitiveConditional(
+/**
+ * #5092 — the selector's `expr-mixed-conditional-proof` gate, restated at
+ * build. This is the CLAIM predicate: when it holds, selection has already
+ * committed the enclosing function to the IR route, so no consumer of this
+ * shape may quietly step off it.
+ */
+function mixedPrimitiveConditionalClaim(
   expr: ts.ConditionalExpression,
   cx: LowerCtx,
 ): MixedPrimitiveConditionalProof | null {
@@ -11363,6 +11386,49 @@ function proveMixedPrimitiveConditional(
     return null;
   }
   return { whenTrue, whenFalse };
+}
+
+/**
+ * The PREPARED proof the mixed-conditional lowering consumes. Production
+ * returns the claim verbatim; `JS2WASM_TEST_TAMPER_…=proof` models the
+ * prepared proof going MISSING between selection and lowering, which is the
+ * fault `requireMixedPrimitiveConditionalProof` must fail closed on.
+ */
+function proveMixedPrimitiveConditional(
+  expr: ts.ConditionalExpression,
+  cx: LowerCtx,
+): MixedPrimitiveConditionalProof | null {
+  const claim = mixedPrimitiveConditionalClaim(expr, cx);
+  if (claim === null) return null;
+  return process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL === "proof" ? null : claim;
+}
+
+/**
+ * (2026-08-28 review repair) Consume the proof for a shape whose CLAIM still
+ * holds, and fail closed when the proof is gone.
+ *
+ * A selector-claimed shape whose proof vanished before lowering is a
+ * selector⇄builder desync, not a capability gap — the STRICT_IR_POSTCLAIM_CODES
+ * doctrine (src/codegen/index.ts) says such a post-claim failure must be a
+ * typed invariant, never a silent demote to legacy. Returning null here (as the
+ * first cut did) let a claimed function fall back to the legacy compiler with
+ * no diagnostic, hiding exactly the drift this route's other guards exist to
+ * catch. A conditional whose claim does NOT hold is an ordinary non-#5092
+ * expression and returns null for its caller's normal path.
+ */
+function requireMixedPrimitiveConditionalProof(
+  expr: ts.ConditionalExpression,
+  site: string,
+  cx: LowerCtx,
+): MixedPrimitiveConditionalProof | null {
+  const proof = proveMixedPrimitiveConditional(expr, cx);
+  if (proof !== null) return proof;
+  if (mixedPrimitiveConditionalClaim(expr, cx) === null) return null;
+  throw new IrInvariantError(
+    "selection-preparation-mismatch",
+    "build",
+    `ir/from-ast: #5092 ${site} lost its prepared mixed-conditional proof between selection and lowering in ${cx.funcName}`,
+  );
 }
 
 function boxMixedConditionalArm(
@@ -11410,7 +11476,7 @@ function boxMixedConditionalArm(
 }
 
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
-  const mixedProof = proveMixedPrimitiveConditional(expr, cx);
+  const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {
       const carrier = cx.resolver?.resolveDynamic?.();

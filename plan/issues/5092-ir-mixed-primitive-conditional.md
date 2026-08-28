@@ -157,3 +157,100 @@ and therefore is not an IR-owned unit.
 - Targeted Biome lint, Prettier formatting, `git diff --check`, IR fallback,
   IR dialect/layering, oracle, coercion-site, LOC, function, issue, and done-
   status gates passed.
+
+## 2026-08-28 — repair of two independent-review HOLDs
+
+Independent review of PR #5102 raised two HOLDs. Both reproduced against the
+PR head (`b354381`); both are fixed here.
+
+### HOLD 1 — forged-assertion `typeof` gave a WRONG ANSWER (not a demote)
+
+`exactDynamicPrimitiveTypeofFamilies` read `checker.getTypeAtLocation` at the
+operand's syntactic location, which reports the **asserted** type. So a mixed
+conditional selected through its real arms was interrogated with a family pair
+taken from an `as` clause that disagreed with them.
+
+Reproduced by compiling and executing (standalone, `experimentalIR`), comparing
+against Node:
+
+| source                                                       | Node               | PR head            |
+| ------------------------------------------------------------ | ------------------ | ------------------ |
+| `typeof ((c ? 7 : "s") as number \| boolean)`                 | `number` / `string` | `number` / **`boolean`** |
+| `const v = c ? 7 : "s"; typeof (v as number \| boolean)`      | `number` / `string` | `number` / **`boolean`** |
+| `const v = c ? 7 : "s"; const w = v as number \| boolean; typeof w` | `number` / `string` | `number` / **`boolean`** |
+| `typeof ((c ? true : "s") as number \| string)`               | `boolean` / `string` | **`number`** / `string` |
+
+The wrong answer is attributable to this route: the same four sources answer
+correctly with `JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL=0`.
+
+**Fix mechanism** — derive the families from the proof, never from the asserted
+union. `exactDynamicPrimitiveTypeofFamilies` now strips the type-erased
+assertion wrappers (`unwrapMixedPrimitiveProjection`), follows a local `const`
+to its initializer (the provenance rule `makeIrPrimitiveExpressionClassifier`
+already applies), and reads `[whenTrue, whenFalse]` off
+`proveMixedPrimitiveConditional` — the same proof the carrier's box tags were
+emitted from — so the emitted `tag.test` interrogates the then-arm's honest tag.
+An operand not backed by that proof returns null and demotes as before. All four
+forged spellings now answer exactly what Node answers; the honest spellings
+(`typeof (c ? 7 : "s")`, `const v = …; typeof v`, number/boolean, boolean/string)
+are unchanged.
+
+### HOLD 2 — a lost proof DEMOTED instead of failing closed
+
+With the prepared proof removed after selection, a selector-claimed function
+silently fell back to the legacy compiler instead of raising the promised
+`selection-preparation-mismatch` invariant. Measured on the PR head with
+`proveMixedPrimitiveConditional` forced to return null (file-copy A/B) and
+`JS2WASM_IR_FIRST=0` so a legacy body exists: **`success: true`, a 122 KB binary,
+`kind: "unsupported"`, `stage: "build"`, `legacyBodyEmitted: true`** — for the
+conditional and for BOTH wrapper consumers.
+
+**Analogous-wrapper audit result: the hole was present, identically.**
+`proveExactMixedPrimitiveWrapperCall` returned `null` on a null mixed proof,
+which dropped `String(c ? 7 : "s")` / `Number(c ? 7 : true)` into the generic
+call path and demoted the whole function with an untyped
+`direct call to "String" has no exact AST-site plan` message. It now gets the
+same fail-closed treatment.
+
+**Fix mechanism** — split claim from proof. `mixedPrimitiveConditionalClaim` is
+the selector's `expr-mixed-conditional-proof` gate restated at build (the
+predicate that means "selection already committed this function");
+`proveMixedPrimitiveConditional` is the prepared artifact it hands the lowering.
+`requireMixedPrimitiveConditionalProof` consumes the proof and, when the proof
+is gone while the claim still holds, throws
+`IrInvariantError("selection-preparation-mismatch", "build", …)` per the
+`STRICT_IR_POSTCLAIM_CODES` doctrine. Both consumption sites — `lowerConditional`
+and `proveExactMixedPrimitiveWrapperCall` — go through it. Production behaviour
+is unchanged (claim and proof are the same computation); the injection point is
+the new `JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL=proof` value, which
+models the proof going missing.
+
+### Tests added (both red on the PR head)
+
+- `answers typeof from the arms' real kinds, not a forged assertion` — compiles
+  and executes the four forged spellings plus an honest control. Red on head:
+  `forgedInline(false): expected 3 to be 2` (it answered `boolean` for the
+  string arm).
+- `fails closed when the {conditional, String wrapper, Number wrapper} consumer
+  loses its prepared proof` — three cases. Red on head: `expected true to be
+  false` (the compile succeeded and demoted instead of failing closed).
+
+### Gates re-run for the repair
+
+`tests/issue-5092-…` 21/21 · `#4178` + `#3143` + `#3203` + both `#4787` suites
+79/79 · `ir-ternary/if-else/numeric-bool/let-const-equivalence` 73/73 ·
+`check:ir-fallbacks` OK · `check:ir-kind-neutrality` OK ·
+`check-loc-budget` / `check-func-budget` / `check-coercion-sites` /
+`check:oracle-ratchet` / `check:dead-exports` all exit 0, also with
+`LOC_GATE_BASE=origin/main` · TypeScript 7 typecheck clean.
+
+`scripts/ir-kind-neutrality-baseline.json` is relocked (two evidence line
+numbers in `src/ir/from-ast.ts`, `4502 → 4508` and `380 → 386`) via the script's
+documented `--update-on-decrease`. That drift came from this branch's own import
+block and was already failing the gate before this repair.
+
+Pre-existing failures observed and confirmed NOT caused by this work (identical
+on the PR head and with the route disabled): `tests/issue-1472-es5-getprototypeof`
+and `tests/issue-3037-cs1c-getprototypeof-carrier` (4), plus 5 in
+`ir-frontend-widening` / `ir-scaffold` / `ir-bytecode-*` — byte-identical
+pass/fail sets before and after.
