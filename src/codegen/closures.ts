@@ -97,8 +97,10 @@ import {
   emitTypedThisPrologue,
   recordDirectCallGeneric,
   recordDirectCallTwin,
+  refinedTwinParamTypes,
   refinedTwinReturnType,
 } from "./typed-this.js";
+import { noteShimSuppressed } from "./param-unbox-abi.js"; // (#4406 Phase 3) shim-suppression cost counter
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
 // (#4601 route 1) The pure-AST scope / free-variable walks now live BELOW the
 // IR so `statements/loop-analysis.ts` — which five `src/ir/` modules import —
@@ -3327,8 +3329,16 @@ export function compileArrowAsClosure(
       // `return_call` constrains only RESULTS to match the caller, so the shim
       // in the generic body can tail-call across this param-type difference.
       const useReceiverParam = directCallLoweringEnabled();
+      // (#4406 Phase 3) The PARAMETER half. Slots the whole-program verdict
+      // proved only ever receive booleans are minted as boolean-branded `i32`,
+      // so every devirtualized call site passes one unboxed. `refinedParams` is
+      // `undefined` when nothing is refined, and then `twinArrowParams` IS
+      // `arrowParams` — the flag-off build reuses the same array and is
+      // byte-identical.
+      const refinedParams = useReceiverParam ? refinedTwinParamTypes(ctx, arrow, arrowParams) : undefined;
+      const twinArrowParams = refinedParams ?? arrowParams;
       const twinParams: ValType[] = useReceiverParam
-        ? [{ kind: "ref", typeIdx: admitted.structTypeIdx }, ...arrowParams]
+        ? [{ kind: "ref", typeIdx: admitted.structTypeIdx }, ...twinArrowParams]
         : liftedParams;
       // (#3754) NUMERIC-RETURN twin. When the whole-program fixpoint proved this
       // method returns a number on every path, the twin is minted with `f64`
@@ -3345,7 +3355,7 @@ export function compileArrowAsClosure(
         closureName: twinName,
         captures,
         selfBindingName,
-        arrowParams,
+        arrowParams: twinArrowParams,
         // The concise-body return repair cannot fire (admission requires a
         // BLOCK body), but this is the twin's OWN array so a future shape
         // change can never let it rewrite the generic's results in place.
@@ -3421,7 +3431,18 @@ export function compileArrowAsClosure(
         // an ill-typed tail call. The generic body then simply stays generic —
         // the direct-call trampolines still reach the twin, so the only cost is
         // an unmonomorphized dynamic entry.
-        if (refinedReturn === undefined || boxTwinResult !== undefined) {
+        // (#4406 Phase 3) A refined PARAMETER suppresses the shim entirely, and
+        // that suppression is what makes the parameter half sound rather than a
+        // convenience. The shim forwards the GENERIC body's parameters — which
+        // arrive from arbitrary dynamic callers — straight into the twin; with a
+        // slot narrowed to `i32`, forwarding would impose ToBoolean on whatever
+        // an un-enumerable caller (`arr.map(o.m)`, `o.m.call(…)`, `o["m"](…)`)
+        // happened to pass. Suppressed, the twin's only entry is the direct-call
+        // trampoline, whose sites the verdict enumerated. The cost is one
+        // unmonomorphized dynamic entry for that method — real, and measured in
+        // the PR rather than assumed.
+        if (refinedParams !== undefined) noteShimSuppressed();
+        if (refinedParams === undefined && (refinedReturn === undefined || boxTwinResult !== undefined)) {
           liftedFctx.body.unshift(
             ...buildTypedThisForwardGuard(
               admitted.structTypeIdx,
