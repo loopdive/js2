@@ -246,6 +246,7 @@ function linearInstrError(instr: IrInstr): string | null {
         case "js.to_uint32":
         case "math.abs":
         case "math.ceil":
+        case "math.clz32":
         case "math.floor":
         case "math.fround":
         case "math.sqrt":

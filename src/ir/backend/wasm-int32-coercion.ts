@@ -95,3 +95,9 @@ export function emitWasmInt32Coercion(out: Instr[], scratch: WasmInt32CoercionSc
     },
   );
 }
+
+/** Consume one f64 and leave the exact Number result of `Math.clz32`. */
+export function emitWasmMathClz32(out: Instr[], scratch: WasmInt32CoercionScratch): void {
+  emitWasmInt32Coercion(out, scratch);
+  out.push({ op: "i32.clz" }, { op: "f64.convert_i32_s" });
+}

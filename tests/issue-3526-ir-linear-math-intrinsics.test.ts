@@ -13,6 +13,7 @@ const F64 = irVal({ kind: "f64" });
 const LINEAR_NATIVE_INTRINSICS = [
   "math.abs",
   "math.ceil",
+  "math.clz32",
   "math.floor",
   "math.fround",
   "math.sqrt",
@@ -30,7 +31,7 @@ function intrinsicFunction(id: IntrinsicId): IrFunction {
 }
 
 describe("#3526 linear semantic Math intrinsic legality", () => {
-  it("admits exactly the six semantic intrinsics backed by native linear operations", () => {
+  it("admits exactly the seven semantic intrinsics backed by native linear operations", () => {
     const admitted = PURE_MATH_INTRINSIC_IDS.filter(
       (id) => verifyIrBackendLegality(intrinsicFunction(id), "linear").length === 0,
     );

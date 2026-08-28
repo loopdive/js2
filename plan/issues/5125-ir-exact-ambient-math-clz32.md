@@ -1,7 +1,7 @@
 ---
 id: 5125
 title: "IR: own exact ambient Math.clz32 calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -25,6 +25,8 @@ files:
   - src/ir/lower.ts
   - src/ir/select.ts
   - src/ir/backend/legality.ts
+  - src/ir/backend/wasm-int32-coercion.ts
+  - scripts/ir-kind-neutrality-baseline.json
   - tests/issue-3526-ir-math-intrinsic-integration.test.ts
   - tests/issue-3526-ir-runtime-manifest.test.ts
   - tests/issue-3526-ir-linear-math-intrinsics.test.ts
@@ -50,9 +52,9 @@ func-budget-allow:
 Retire the direct AST-to-Wasm route for exact ambient
 `Math.clz32(numberExpression)` calls in otherwise IR-eligible synchronous
 functions. Represent the source operation as a typed
-`math.clz32: f64 -> u32` semantic intrinsic and freeze one host-free composite
+`math.clz32: f64 -> f64` semantic intrinsic and freeze one host-free composite
 provider that applies the exact shared `ToUint32` expansion from #5119 followed
-by native `i32.clz` on WasmGC and production linear.
+by native `i32.clz` and Number conversion on WasmGC and production linear.
 
 This checkpoint is intentionally stacked on #5137/#5119. It claims only
 `Math.clz32`; `Math.imul` remains the independent #5126 follow-up.
@@ -79,25 +81,25 @@ primitive `number`, and the containing unit passes ordinary ownership and
 call-graph gates. Aliased, computed, optional, shadowed, coercive, Symbol,
 spread, zero-argument, and extra-argument forms remain direct.
 
-The semantic result is unsigned i32 because `Math.clz32` returns an integer in
-`[0, 32]` and the existing propagation contract classifies it as `u32`.
-Ordinary number return/export boundaries must widen it with
-`f64.convert_i32_u`; no signed `-1` interpretation is permitted to leak from
-the raw i32 carrier.
+The semantic result remains f64 because JavaScript exposes `Math.clz32` as a
+Number. The closed provider may use an unsigned i32 carrier internally because
+the count is always in `[0, 32]`, then restores the semantic Number boundary
+with `f64.convert_i32_s` after `i32.clz`.
 
 ## Closed provider contract
 
 Extend the backend-composite vocabulary with exactly `math.clz32`. Its provider
-consumes one f64, emits the shared exact low-32-bit expansion, then emits one
-`i32.clz`, leaving a u32-shaped i32 result. The provider is dependency-free in
-the runtime graph because it calls no helper/provider at runtime; #5119 is the
-implementation prerequisite and the shared expansion is linked code, not a
-second semantic invocation.
+consumes one f64, emits the shared exact low-32-bit expansion, then emits
+`i32.clz` and `f64.convert_i32_s`, leaving the JavaScript Number result. The
+provider is dependency-free in the runtime graph because it calls no
+helper/provider at runtime; #5119 is the implementation prerequisite and the
+shared expansion is linked code, not a second semantic invocation.
 
 The provider must:
 
 - evaluate the source argument exactly once;
-- import no host function and call no `__toUint32` or Math helper;
+- import no host function and call no `__toUint32` or Math helper from the IR
+  body;
 - preserve exact `ToUint32` behavior for every f64, including NaN, infinities,
   fractions, and finite magnitudes beyond signed i64;
 - emit the same closed instruction stream on WasmGC and production linear;
@@ -108,20 +110,19 @@ The provider must:
 1. Renumber #5119's stale follow-up references to the atomically reserved
    #5125/#5126 IDs.
 2. Add `math.clz32` to the certified pure-Math ID and runtime-feature
-   catalogues with the existing f64-to-u32 signature. Add one
-   `backend.js.math.clz32` composite provider for all targets and both Wasm
+   catalogues with the existing f64-unary signature. Add one
+   `backend.math.clz32` composite provider for all targets and both Wasm
    backends, with no dependencies or host capabilities.
 3. Add a composite-marked `clz32` method plan and narrow
    `JS2WASM_IR_MATH_CLZ32=0` rollback. Preserve the generic ambient binding,
    exact arity, non-spread, and primitive-number selector/from-AST path.
 4. Extend the closed composite operation union and lower `math.clz32` by
    reusing `emitWasmInt32Coercion` with the existing lazy i64 scratch pool,
-   followed by one `i32.clz`.
+   followed by `i32.clz` and `f64.convert_i32_s`.
 5. Admit only `math.clz32` at the linear legality boundary; bytecode and
    Porffor retain explicit semantic-intrinsic rejection.
 6. Widen the #3526 exhaustive catalogue, runtime manifest, and exact native
-   linear set from twenty-nine to thirty Math methods while special-casing the
-   typed u32 result assertion.
+   linear set from twenty-nine to thirty Math methods.
 7. Add focused host, zero-import standalone, and production-linear ownership;
    provider attachment; exact WAT; direct parity over boundary and huge-finite
    values; rollback; and pre-claim exclusions.
@@ -133,7 +134,7 @@ The provider must:
 ## Acceptance criteria
 
 - Exact ambient one-number `Math.clz32` calls emit IR only on WasmGC and
-  production linear with one typed u32 result and no helper/import.
+  production linear with one typed f64 Number result and no helper call/import.
 - Runtime results match native JavaScript across zero/high-bit patterns,
   fractions, signed zero, NaN, infinities, `2**32` boundaries, `2**63`,
   `2**64`, `2**65`, `1e20`, and `Number.MAX_VALUE`.
@@ -165,4 +166,14 @@ legacy-owned. `JS2WASM_IR_MATH_CLZ32=0` provides narrow rollback, while
 
 ## Outcome
 
-Pending implementation and final Luna Max review.
+Implemented in PR #5141. Exact ambient one-number `Math.clz32` calls now enter
+semantic IR as `f64 -> f64`, freeze a dependency-free `backend.math.clz32`
+composite, and lower through the shared exact IEEE-754 ToUint32 expansion plus
+`i32.clz`/`f64.convert_i32_s` on both WasmGC and production linear. Bytecode and
+Porffor remain fail-closed, excluded/coercive shapes remain direct, and
+`JS2WASM_IR_MATH_CLZ32=0` withdraws only this claim.
+
+Validation covers 23 focused ownership/catalogue/provider cases, native and
+direct parity through huge finite values, zero-import standalone, composed
+Number semantics, TypeScript 7, LOC/function/oracle/coercion ratchets, issue
+integrity, and the mechanically refreshed no-growth neutrality baseline.

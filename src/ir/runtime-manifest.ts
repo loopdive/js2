@@ -60,6 +60,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "backend.f64.fround",
   "backend.f64.sqrt",
   "backend.f64.trunc",
+  "backend.math.clz32",
   "selfhost.math.acos",
   "selfhost.math.acosh",
   "selfhost.math.asin",
@@ -126,7 +127,7 @@ export type RuntimeProviderImplementation =
 
 export type MathRuntimeProviderImplementation = Extract<
   RuntimeProviderImplementation,
-  { readonly kind: "backend-op" | "backend-sequence" | "self-hosted" }
+  { readonly kind: "backend-op" | "backend-sequence" | "backend-composite" | "self-hosted" }
 >;
 
 export type IntrinsicRuntimeProviderImplementation = Extract<
@@ -217,6 +218,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.atanh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cbrt": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.ceil": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.clz32": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cosh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.exp": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -323,6 +325,10 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProvi
   "math.ceil": provider("backend.f64.ceil", "math.ceil", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.ceil",
+  }),
+  "math.clz32": provider("backend.math.clz32", "math.clz32", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "math.clz32",
   }),
   "math.cos": provider(
     "selfhost.math.cos",
@@ -436,7 +442,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProvi
   }),
 });
 
-/** Canonically ordered default provider catalogue for the twenty-nine-method slice. */
+/** Canonically ordered default provider catalogue for the thirty-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),

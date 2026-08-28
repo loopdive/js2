@@ -80,6 +80,7 @@ import {
   closureSignatureEquals,
   type IrClassShape,
   type IrClosureSignature,
+  type IrIntrinsicBackendComposite,
   type IrIntrinsicBackendSequence,
   type IrType,
 } from "./nodes.js";
@@ -288,16 +289,21 @@ export type IrMathMethodPlan =
       readonly intrinsic: IntrinsicId;
       readonly sequence: IrIntrinsicBackendSequence;
     }
+  | {
+      readonly arity: 1;
+      readonly intrinsic: IntrinsicId;
+      readonly composite: IrIntrinsicBackendComposite;
+    }
   | { readonly arity: 1 | 2; readonly intrinsic: IntrinsicId };
 
 /**
  * Exact-arity Math surface shared by selection, call-graph closure, and the
  * AST→IR builder. Every accepted method becomes a versioned semantic
  * intrinsic. `op` remains the selector compatibility signal for the five
- * single-op methods, while `sequence` marks the closed native multi-op path;
- * provider selection is performed after middle-end transforms. Keeping arity
- * here prevents selector/builder drift and preserves ambient-Math identity
- * checks.
+ * single-op methods, while `sequence` and `composite` mark closed native
+ * multi-op paths; provider selection is performed after middle-end transforms.
+ * Keeping arity here prevents selector/builder drift and preserves ambient-
+ * Math identity checks.
  */
 export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = {
   abs: { arity: 1, intrinsic: "math.abs", op: "f64.abs" },
@@ -305,6 +311,7 @@ export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = 
   floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
   fround: { arity: 1, intrinsic: "math.fround", sequence: "f64.fround" },
   ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
+  clz32: { arity: 1, intrinsic: "math.clz32", composite: "math.clz32" },
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
   asin: { arity: 1, intrinsic: "math.asin" },
   acos: { arity: 1, intrinsic: "math.acos" },
@@ -6515,13 +6522,19 @@ function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpressio
   if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
   if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
   if (plan.intrinsic === "math.fround" && process.env.JS2WASM_IR_MATH_FROUND === "0") return false;
+  if (plan.intrinsic === "math.clz32" && process.env.JS2WASM_IR_MATH_CLZ32 === "0") return false;
   if (plan.intrinsic === "math.round" && process.env.JS2WASM_IR_MATH_ROUND === "0") return false;
   if (plan.intrinsic === "math.sign" && process.env.JS2WASM_IR_MATH_SIGN === "0") return false;
   if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
   if (plan.intrinsic === "math.asinh" && process.env.JS2WASM_IR_MATH_ASINH === "0") return false;
   if (plan.intrinsic === "math.acosh" && process.env.JS2WASM_IR_MATH_ACOSH === "0") return false;
   if (plan.intrinsic === "math.atanh" && process.env.JS2WASM_IR_MATH_ATANH === "0") return false;
-  return "op" in plan || "sequence" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
+  return (
+    "op" in plan ||
+    "sequence" in plan ||
+    "composite" in plan ||
+    currentSelectionOptions?.supportsSymbolicMathHelpers === true
+  );
 }
 
 function selectorSupportsNumberToString(): boolean {

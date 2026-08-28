@@ -58,7 +58,11 @@ import type {
   IrVecLowering,
 } from "./backend/handles.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
-import { emitWasmInt32Coercion, type WasmInt32CoercionScratch } from "./backend/wasm-int32-coercion.js";
+import {
+  emitWasmInt32Coercion,
+  emitWasmMathClz32,
+  type WasmInt32CoercionScratch,
+} from "./backend/wasm-int32-coercion.js";
 import {
   type AllocSiteId,
   type IrBlock,
@@ -1624,6 +1628,9 @@ export function lowerIrFunctionBody<S, Slot>(
               );
             }
             switch (operation) {
+              case "math.clz32":
+                emitWasmMathClz32(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
+                return;
               case "to-uint32":
                 emitWasmInt32Coercion(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
                 return;

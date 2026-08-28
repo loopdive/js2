@@ -23,6 +23,7 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.atanh",
   "math.cbrt",
   "math.ceil",
+  "math.clz32",
   "math.cos",
   "math.cosh",
   "math.exp",
@@ -51,7 +52,7 @@ export const INTRINSIC_IDS = Object.freeze([...NUMERIC_COERCION_INTRINSIC_IDS, .
 export type IntrinsicId = (typeof INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the twenty-nine intrinsic entry points.
+ * Provider requirements reachable from the thirty intrinsic entry points.
  * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
@@ -65,6 +66,7 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.atanh",
   "math.cbrt",
   "math.ceil",
+  "math.clz32",
   "math.cos",
   "math.cosh",
   "math.exp",
@@ -194,6 +196,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.atanh": definition("math.atanh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cbrt": definition("math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.clz32": definition("math.clz32", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cosh": definition("math.cosh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.exp": definition("math.exp", F64_UNARY_INTRINSIC_SIGNATURE),

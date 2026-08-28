@@ -19,6 +19,7 @@ const identities = createTestIrFunctionIdentityFactory("issue-3526-ir-math-intri
 const F64 = irVal({ kind: "f64" });
 const BACKEND_OP_INTRINSICS = new Set<IntrinsicId>(["math.abs", "math.sqrt", "math.floor", "math.ceil", "math.trunc"]);
 const BACKEND_SEQUENCE_INTRINSICS = new Set<IntrinsicId>(["math.fround"]);
+const BACKEND_COMPOSITE_INTRINSICS = new Set<IntrinsicId>(["math.clz32"]);
 
 const METHODS = PURE_MATH_INTRINSIC_IDS.map((id) => id.slice("math.".length));
 
@@ -68,7 +69,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
   it("keeps source meaning provider-free until the frozen manifest attaches exact providers", () => {
     const analysis = analyzeSource(`
       export function allMath(x: number, y: number): number {
-        return Math.abs(x) + Math.sqrt(x) + Math.floor(x) + Math.ceil(x) + Math.trunc(x)
+        return Math.abs(x) + Math.sqrt(x) + Math.floor(x) + Math.ceil(x) + Math.clz32(x) + Math.trunc(x)
           + Math.asin(x) + Math.acos(x) + Math.atan(x) + Math.sin(x) + Math.cos(x) + Math.tan(x)
           + Math.asinh(x) + Math.acosh(x) + Math.atanh(x)
           + Math.sinh(x) + Math.cosh(x) + Math.tanh(x)
@@ -108,6 +109,8 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
         expect(instr.provider).toMatchObject({ kind: "backend-op" });
       } else if (BACKEND_SEQUENCE_INTRINSICS.has(instr.id)) {
         expect(instr.provider).toEqual({ kind: "backend-sequence", sequence: "f64.fround" });
+      } else if (BACKEND_COMPOSITE_INTRINSICS.has(instr.id)) {
+        expect(instr.provider).toEqual({ kind: "backend-composite", operation: "math.clz32" });
       } else {
         expect(instr.provider).toMatchObject({
           kind: "callable",
@@ -125,6 +128,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function sqrt(): number { return Math.sqrt(144); }
       export function floor(): number { return Math.floor(3.9); }
       export function ceil(): number { return Math.ceil(3.1); }
+      export function clz32(): number { return Math.clz32(0x100); }
       export function trunc(): number { return Math.trunc(-3.9); }
       export function asin(): number { return Math.asin(0.5); }
       export function acos(): number { return Math.acos(0.5); }
@@ -182,6 +186,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
     }
     expect(ir.wat).toContain("f32.demote_f64");
     expect(ir.wat).toContain("f64.promote_f32");
+    expect(ir.wat).toContain("i32.clz");
     for (const helper of [
       "asin",
       "acos",
