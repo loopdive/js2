@@ -928,9 +928,18 @@ async function main() {
     processed++;
 
     if (record.scope_official === false || record.scope === "proposal") {
+      const proposalKey = resolveStatusKey(record, hostFree);
       const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
-      proposalBucket[resolveStatusKey(record, hostFree)]++;
+      proposalBucket[proposalKey]++;
       fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
+      // Proposal tests are excluded from every EDITION bucket by design, but a
+      // landing-page row for a proposal feature (Temporal) is scored by its
+      // `testCategories` paths, not by an edition. Withholding these records
+      // left such a row at 0/0 — rendered "not individually measured" — while
+      // thousands of its tests were in the baseline. `pathTests` feeds only
+      // patchFeatureExamples' path scorer, so this does not move any edition
+      // headline.
+      pathTests.push({ file, status: proposalKey });
       unclassified++;
       continue;
     }
@@ -1222,7 +1231,11 @@ export function patchFeatureExamples(
   const featureTags: Record<string, string[]> = {};
   for (const [name, tags] of Object.entries(rawMap)) {
     if (name.startsWith("_")) continue;
-    if (Array.isArray(tags)) featureTags[name] = tags.map(String);
+    // An EMPTY tag array means "this row's tests predate `features:`" — it is
+    // not a request for a zeroed row. Such a row falls through to the path
+    // scorer below (like an unmapped row) so its `testCategories` still yield a
+    // real number; mapping it to [] here would force 0/0 and hide the count.
+    if (Array.isArray(tags) && tags.length > 0) featureTags[name] = tags.map(String);
   }
 
   // Landing feature name → the edition YEAR it is displayed under (from the
@@ -1281,8 +1294,10 @@ export function patchFeatureExamples(
         f.totalCount = 0;
         headlineOnly++;
       }
+      // Only warn about a row that ended up with NO number at all. A row the
+      // path scorer resolved needs no tag mapping to be reported honestly.
       const yr = editionStringToYear(typeof f.edition === "string" ? f.edition : "");
-      if (yr !== undefined && yr >= 2015 && nm) unmapped.push(nm);
+      if (yr !== undefined && yr >= 2015 && nm && Number(f.totalCount) === 0) unmapped.push(nm);
     }
   }
 

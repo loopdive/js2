@@ -1802,14 +1802,18 @@
           <p class="feat-tables-note">
             Each edition's
             <span class="feat-tables-note-mono">pass / total</span>
-            covers every Test262 test in that edition; each row below is a
-            <strong>subset</strong>
-            of it, sliced by the tests'
+            covers every Test262 test in that edition. A row is scored one of two ways: by the tests'
             <span class="feat-tables-note-mono">features:</span>
-            tags — so a section at 100% has every row at 100%. Rows
+            tags, which makes it a
+            <strong>subset</strong>
+            of its section (rows then
             <em>overlap</em>
-            (a test can carry several tags), and the ≤ES3 / ES5 sections predate those tags, so they show the edition
-            headline only. ES2016+ membership syncs from TC39's finished-proposals record on every build.
+            — a test can carry several tags); or, where the feature predates those tags, by the test paths the row
+            links to, which are
+            <strong>not</strong>
+            confined to the section it is displayed under. So a row can sit below a 100% header and still be under
+            100% — the two count different populations. ES2016+ membership syncs from TC39's finished-proposals record
+            on every build.
           </p>
           <div class="compatibility-report-actions">
             <span class="compatibility-report-label">Compatibility Test Report:</span>
