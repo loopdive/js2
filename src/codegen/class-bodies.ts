@@ -41,6 +41,7 @@ import {
   structHintForBindingPattern,
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, emitThrowTypeError, getFuncParamTypes } from "./expressions/helpers.js";
+import { findTdzViolatingParamRef, paramDefaultsReferenceArguments } from "./param-tdz.js";
 import { pushDefaultValue } from "./type-coercion.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
@@ -627,6 +628,23 @@ export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyNam
     return resolveComputedKeyExpression(ctx, name.expression);
   }
   return undefined;
+}
+
+/**
+ * (#5139) True when this class member needs an `arguments` object ONLY because a
+ * parameter default reads one (`method(x = arguments[2])`). Consulted at two
+ * sites that must agree: the collection phase (which registers the member in
+ * `ctx.funcUsesArguments` so CALLERS publish the overflow args through
+ * `__extras_argv`) and the emit phase (which materializes the object before the
+ * defaults run, per §10.2.11). A parameter literally named `arguments` shadows
+ * the object, so it is excluded.
+ */
+function methodParamDefaultsNeedArguments(member: ts.FunctionLikeDeclarationBase): boolean {
+  return (
+    member.body !== undefined &&
+    paramDefaultsReferenceArguments(member) &&
+    !member.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")
+  );
 }
 
 const voidClearedInstanceFieldsCache = new WeakMap<ts.ClassLikeDeclaration, ReadonlySet<string>>();
@@ -1439,7 +1457,7 @@ export function collectClassDeclaration(
       // Track methods that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
-      if (needsImplicitArgumentsObject(member)) {
+      if (needsImplicitArgumentsObject(member) || methodParamDefaultsNeedArguments(member)) {
         ctx.funcUsesArguments.add(fullName);
       }
 
@@ -2748,6 +2766,25 @@ function compileClassBodiesInner(
 
       ctx.currentFunc = fctx;
 
+      // (#5139) §10.2.11 creates the arguments object BEFORE the parameter
+      // defaults run, so `method(x = arguments[2])` must see a materialized
+      // object. The emission below the parameter loop is too late — the default
+      // read an unallocated slot and threw "Cannot access property on null or
+      // undefined". Hoist it (only for the bodies that need it; every other
+      // method keeps the original emission point and its bytes).
+      // `needsImplicitArgumentsObject` only scans the BODY, so a method whose
+      // `arguments` use lives solely in a default got no object at all.
+      const argumentsHoisted = methodParamDefaultsNeedArguments(member);
+      if (argumentsHoisted) {
+        emitArgumentsObject(
+          ctx,
+          fctx,
+          params.slice(isStatic ? 0 : 1).map((p) => p.type),
+          isStatic ? 0 : 1,
+          true,
+        );
+      }
+
       // Emit default-value initialization for method parameters with initializers.
       const defaultArgcLocal = member.parameters.some((param, i) => {
         if (!param.initializer) return false;
@@ -2778,9 +2815,20 @@ function compileClassBodiesInner(
           (ts.isObjectBindingPattern(param.name) || ts.isArrayBindingPattern(param.name)) &&
           isNullOrUndefinedLiteral(param.initializer);
 
+        // (#2121/#5139) Parameter-scope TDZ: a default that reads its own
+        // parameter or a later one (`m(x = x)`, `m(x = y, y)`) observes that
+        // binding uninitialized (§10.2.11) and must throw ReferenceError when it
+        // fires. `function-body.ts` has done this for plain functions since
+        // #2121; the class method/accessor lane read the still-zeroed local
+        // instead and returned silently. Shared detector: `param-tdz.ts`.
+        const tdzViolatingName = findTdzViolatingParamRef(member, pi);
+
         // Build the "then" block: compile default expression, local.set
         const savedBody = pushBody(fctx);
-        if (dstrNullDefault) {
+        if (tdzViolatingName !== undefined) {
+          emitThrowReferenceError(ctx, fctx, `Cannot access '${tdzViolatingName}' before initialization`);
+          fctx.body.push({ op: "unreachable" });
+        } else if (dstrNullDefault) {
           for (const ins of buildDestructureNullThrow(ctx, fctx)) fctx.body.push(ins);
         } else {
           // (#1451) For array binding patterns with externref param, force the
@@ -2850,7 +2898,7 @@ function compileClassBodiesInner(
       // Set up `arguments` object if the method body references it (#820).
       // Class methods (like standalone functions) need an arguments vec struct
       // so that `arguments.length` and `arguments[n]` work at runtime.
-      if (needsImplicitArgumentsObject(member)) {
+      if (needsImplicitArgumentsObject(member) && !argumentsHoisted) {
         const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
         const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
         // Class bodies are always strict code → unmapped arguments (#779e).

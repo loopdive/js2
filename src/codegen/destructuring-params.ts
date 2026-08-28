@@ -59,7 +59,8 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 // (#4768) Recover a native generator state after it crosses a known closure
 // parameter's externref ABI, then drain only the binding pattern's steps.
 import { emitNativeGeneratorToVec } from "./generators-native.js";
-import { arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
+import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 // (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
 // `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
 // already imports `destructureParamArray` from here — a module cycle. ESM
@@ -407,6 +408,67 @@ function emitBoundsCheckedArrayGetUndef(
     then: inBoundsThen,
     else: oobElse,
   });
+}
+
+/**
+ * (#5154 cluster A) Read a vec element for a binding whose SLOT is externref
+ * while the vec's element type is a scalar (`f64`/`i32`).
+ *
+ * `emitBoundsCheckedArrayGetUndef` only knows how to produce `undefined` for an
+ * externref-element array; for a numeric array it falls back to the plain
+ * bounds-checked read, which yields `0`. Coercing that `0` into the externref
+ * binding slot boxes it as the Number 0 — so `let [x] = []` bound `0` where
+ * §8.5.2 step 5 requires `undefined` (the `ary-ptrn-elem-id-iter-done` /
+ * `-iter-complete` family).
+ *
+ * Emits: `[arrayref, i32 index] → [externref]`, in-bounds ⇒ the coerced
+ * element, out-of-bounds ⇒ real `undefined`. Returns `false` (having emitted
+ * nothing) when no undefined producer is available, so the caller keeps the
+ * historical path.
+ */
+function emitBoundsCheckedArrayGetUndefBoxed(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elementType: ValType,
+): boolean {
+  const getUndefIdx = ctx.nativeStrings
+    ? undefined
+    : ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  const oobElse: Instr[] | undefined =
+    getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : undefinedExternInstrs(ctx);
+  if (oobElse === undefined) return false;
+  flushLateImportShifts(ctx, fctx);
+
+  const idxLocal = allocLocal(fctx, `__undefb_idx_${fctx.locals.length}`, { kind: "i32" });
+  const arrLocal = allocLocal(fctx, `__undefb_arr_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: idxLocal });
+  fctx.body.push({ op: "local.set", index: arrLocal });
+
+  fctx.body.push({ op: "local.get", index: idxLocal });
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "array.len" });
+  fctx.body.push({ op: "i32.lt_u" });
+
+  const savedBody = pushBody(fctx);
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "ref.as_non_null" });
+  fctx.body.push({ op: "local.get", index: idxLocal });
+  fctx.body.push({ op: "array.get", typeIdx: arrTypeIdx });
+  coerceType(ctx, fctx, elementType, { kind: "externref" });
+  const inBoundsThen = fctx.body;
+  popBody(fctx, savedBody);
+
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: inBoundsThen,
+    else: oobElse,
+  });
+  return true;
 }
 
 /**
@@ -1134,6 +1196,13 @@ export function structHintForBindingPattern(
   pattern: ts.ObjectBindingPattern,
 ): ValType | undefined {
   if (pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken)) return undefined;
+  // (#5139) An EMPTY pattern (`{} = obj`) binds nothing, so the hint buys no
+  // field read — and it actively harms: the default value is materialized under
+  // a `ref.test (ref $Anon{})` whose FALSE arm yields `ref.null`, so
+  // `method({} = obj)` stored null in the param and the destructure guard threw
+  // "Cannot destructure 'null' or 'undefined'" for any `obj` whose runtime
+  // carrier is not that anonymous struct. Fall back to the plain externref hint.
+  if (pattern.elements.length === 0) return undefined;
   const tsType = ctx.checker.getTypeAtLocation(pattern);
   if (!tsType) return undefined;
   ensureStructForType(ctx, tsType);
@@ -1519,6 +1588,20 @@ export function destructureParamObject(
 }
 
 /**
+ * (#5139) Emit the §7.4.2 GetIterator TypeError guard for an array binding
+ * pattern when the program contains `delete Array.prototype[Symbol.iterator]`.
+ * No-op (and no emitted bytes) for every source without such a delete, because
+ * the flag global is only rooted by the pre-scan that sees one.
+ */
+function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const flagIdx = arrayIteratorDeletedGlobalIdx(ctx);
+  if (flagIdx === undefined) return;
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "array is not iterable", { flush: fctx });
+  fctx.body.push({ op: "global.get", index: flagIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+}
+
+/**
  * Destructure a function parameter that is an ArrayBindingPattern.
  * The parameter value (a vec struct ref) is at param index `paramIdx`.
  * We extract each element into a new local.
@@ -1559,6 +1642,13 @@ export function destructureParamArray(
       return;
     }
   }
+
+  // (#5139) §7.4.2 GetIterator step 3: after `delete
+  // Array.prototype[Symbol.iterator]` an array has no `@@iterator` method, so
+  // binding it to an array pattern throws a TypeError BEFORE any element read.
+  // The flag global exists only for a source that contains such a delete, so
+  // this is byte-identical everywhere else.
+  emitArrayIteratorDeletedGuard(ctx, fctx);
 
   if (paramType.kind !== "ref" && paramType.kind !== "ref_null") {
     // externref parameters: convert to vec struct before destructuring (#647)
@@ -2524,6 +2614,30 @@ export function destructureParamArray(
       }
     }
     const localIdx = fctx.localMap.get(localName)!;
+    // (#5154 cluster A) An externref binding slot fed from a NUMERIC vec must
+    // see real `undefined` past the end, not the boxed `0` the plain
+    // bounds-checked read produces (§8.5.2 step 5). Only for a default-less,
+    // non-rest element: with `= init` the default lane owns the miss.
+    const slotType = getLocalType(fctx, localIdx);
+    if (
+      !element.initializer &&
+      slotType?.kind === "externref" &&
+      elemType.kind !== "externref" &&
+      elemType.kind !== "ref_extern"
+    ) {
+      fctx.body.push({ op: "local.get", index: paramIdx });
+      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+      fctx.body.push({ op: "i32.const", value: i });
+      if (emitBoundsCheckedArrayGetUndefBoxed(ctx, fctx, arrTypeIdx, elemType)) {
+        fctx.body.push({ op: "local.set", index: localIdx });
+        if (isDecl) emitLocalTdzInit(fctx, localName);
+        continue;
+      }
+      // Producer unavailable — undo the operands and take the historical path.
+      fctx.body.pop();
+      fctx.body.pop();
+      fctx.body.pop();
+    }
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // get data
     fctx.body.push({ op: "i32.const", value: i });

@@ -44,6 +44,28 @@ function outermostTransparentExpression(expression: ts.Expression): ts.Expressio
   return current;
 }
 
+/** (#5140) `Object.*` meta-object statics that consume an externref carrier. */
+const OBJECT_MOP_STATICS = new Set([
+  "keys",
+  "values",
+  "entries",
+  "getOwnPropertyNames",
+  "getOwnPropertySymbols",
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "getPrototypeOf",
+  "setPrototypeOf",
+  "defineProperty",
+  "defineProperties",
+  "isExtensible",
+  "preventExtensions",
+  "freeze",
+  "isFrozen",
+  "seal",
+  "isSealed",
+  "create",
+]);
+
 function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   const outer = outermostTransparentExpression(expression);
   const parent = outer.parent;
@@ -63,6 +85,26 @@ function expressionIsEscapingArgument(expression: ts.Expression): boolean {
     parent.expression.name.text === "assign"
   ) {
     return false;
+  }
+
+  // (#5140) The same reasoning covers every consumer whose lowering already
+  // takes a raw externref carrier: `new Proxy(p, h)` / `Proxy.revocable(p, h)`
+  // (a proxy is a legal proxy target), the whole `Reflect` namespace, and the
+  // `Object` meta-object statics. Keeping the nominal target struct for those
+  // arguments guarded-casts the live `$Proxy` to null, which is what made
+  // `new Proxy(new Proxy({foo: 1}, {}), {})` throw "Cannot create proxy with a
+  // non-object as target or handler" at ProxyCreate.
+  if (ts.isNewExpression(parent) && ts.isIdentifier(parent.expression) && parent.expression.text === "Proxy") {
+    return false;
+  }
+  if (ts.isCallExpression(parent) && ts.isPropertyAccessExpression(parent.expression)) {
+    const ns = parent.expression.expression;
+    const member = parent.expression.name.text;
+    if (ts.isIdentifier(ns)) {
+      if (ns.text === "Reflect") return false;
+      if (ns.text === "Proxy" && member === "revocable") return false;
+      if (ns.text === "Object" && OBJECT_MOP_STATICS.has(member)) return false;
+    }
   }
 
   // This includes argument zero of `.call` / `.apply`, the generic-method

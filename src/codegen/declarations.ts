@@ -3086,6 +3086,19 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
           opKind === ts.SyntaxKind.BarBarEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
+        // (#5140) `k in o;` and `v instanceof C;` in statement position are
+        // observable relational operators, not dead code: §13.10.1 performs
+        // [[HasProperty]] (which runs a Proxy `has` trap, or throws for a
+        // primitive RHS) and §13.10.2 performs OrdinaryHasInstance /
+        // @@hasInstance. Same collection-gap family as the top-level `delete`
+        // (#2992), `throw` (#3592) and bare property read (#3615) arms: the
+        // identical expression inside a function body has always been
+        // evaluated. Dropping them made `"attr" in p;` a VACUOUS PASS in the
+        // whole `Proxy/has/call-*` family — the trap never ran.
+        if (opKind === ts.SyntaxKind.InKeyword || opKind === ts.SyntaxKind.InstanceOfKeyword) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
         if (!isAssignOp) {
           // (#4181) This `continue` used to skip the #3623 classifier at the
           // end of the block, so non-assignment binary statements (`a, b`,
