@@ -3753,6 +3753,188 @@ function _callExoticToPrimitiveSlot(
 }
 
 /**
+ * (#3481 cause 2) `ToString` of the primitive a ToPrimitive walk produced.
+ *
+ * The re-validation family B of this issue is named for: §7.1.17 step 3 makes
+ * ToString(Symbol) a TypeError, and `String(sym)` does NOT throw — §22.1.1.1
+ * short-circuits it to SymbolDescriptiveString. So a `@@toPrimitive` that
+ * returns a Symbol has to be caught HERE; letting it reach `String()` silently
+ * produced the message `"Symbol()"`.
+ * (Measured: without this, `built-ins/AggregateError/message-tostring-abrupt-symbol.js`
+ * regressed from pass to fail.)
+ */
+function _errorPrimitiveToString(prim: any): string | undefined {
+  if (typeof prim === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+  // BOTH walkers report "this struct bottomed out" by returning the literal
+  // "[object Object]" sentinel rather than by throwing (see the slice-1 and
+  // slice-3 records). Accepting it as a real answer is what stopped
+  // `{toString: undefined, valueOf: undefined}` from throwing and regressed
+  // `built-ins/Error/error-message-tostring-toprimitive.js` plus its
+  // NativeErrors twin, both of which assert that TypeError.
+  //
+  // The cost is that a method genuinely RETURNING "[object Object]" is refused
+  // and falls back to the pre-existing throw — the same conservative trade as
+  // the number case below, and again identical to base rather than worse.
+  if (prim === "[object Object]") return undefined;
+  if (typeof prim === "string") return prim;
+  if (typeof prim === "boolean" || typeof prim === "bigint") return String(prim);
+  // A NUMBER is deliberately refused, and this is the one non-obvious rule
+  // here. A native Symbol is represented as a bare i32 id, so a `@@toPrimitive`
+  // that returns `Symbol()` arrives at this boundary as the NUMBER `100` —
+  // measured — and is indistinguishable from a method that genuinely returned
+  // `100`. ToString(Symbol) must throw (§7.1.17 step 3), and the existing
+  // re-checks elsewhere in this file test `typeof prim === "symbol"`, which
+  // cannot see an id either.
+  //
+  // Refusing means the caller falls back to the pre-existing TypeError, i.e.
+  // EXACTLY the base behaviour, for both the symbol case and the rarer
+  // `{toString(){ return 5 }}`. Accepting instead regressed
+  // `built-ins/AggregateError/message-tostring-abrupt-symbol.js` from pass to
+  // fail, because that row asserts the TypeError. Given the two are
+  // indistinguishable and only one has a test, the throw wins — this slice
+  // claims only the shapes it can answer without guessing.
+  return undefined;
+}
+
+/**
+ * (#3481 cause 2) §20.5.1.1 step 3 / §20.5.7.1 step 5a / §20.5.10.1 step 6a —
+ * `ToString(message)` for the Error family, tolerant of a WasmGC-struct message.
+ */
+function _errorMessageToString(
+  message: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): string {
+  // (#3481 cause 2) §20.5.1.1 step 3 / §20.5.7.1 step 5a / §20.5.10.1 step 6a
+  // are all `? ToString(message)`. A WasmGC struct message is OPAQUE to V8, so
+  // the plain `String(message)` below raised
+  // "Cannot convert object to primitive value" — an OVER-throw where the spec
+  // asks for ordinary coercion (`{toString(){return "m"}}` → `"m"`, `{}` →
+  // `"[object Object]"`). Reduce such a struct through the #1319
+  // OrdinaryToPrimitive walker first so the user's own `@@toPrimitive` /
+  // `toString` / `valueOf` actually runs — and so an ABRUPT completion from it
+  // propagates unchanged, which is what the `message-tostring-abrupt.js`
+  // family asserts.
+  //
+  // Guarded on `_isWasmStruct`, so a string, number, boolean or genuine host
+  // object reaches `String()` on exactly the path it always did.
+  if (message !== null && typeof message === "object" && _isWasmStruct(message)) {
+    // TWO walkers, and the order is load-bearing.
+    //
+    // `_hostToPrimitive` is the only one that implements §7.1.1 step 2 in full
+    // — it dispatches an `@@toPrimitive` METHOD as well as the FIELD shape
+    // slice 1 taught it. `_toPrimitive` still has that blind spot (recorded at
+    // the end of this issue's slice-1 notes), so running it first answers
+    // `{[Symbol.toPrimitive](){throw …}, toString(){throw "toString called"}}`
+    // with the WRONG method.
+    //
+    // But `_hostToPrimitive` is not a superset: it rejects
+    // `{[Symbol.toPrimitive]: undefined, toString(){…}}`, where the explicitly
+    // undefined slot must be SKIPPED (§7.1.1 step 2b), not read as a
+    // non-callable method. So the host walker leads and the module walker is
+    // the fallback, entered ONLY on the host walker's own "no conversion"
+    // verdict.
+    //
+    // A throw from the USER's coercion method is never a verdict: it passes
+    // straight out of here, which is what `message-tostring-abrupt.js` asserts.
+    // A walker that RETURNS has performed the whole of ToPrimitive; its answer
+    // is final. The second walker runs only when the first one THREW its own
+    // "no conversion" verdict, i.e. found no method at all.
+    //
+    // Committing like this is not tidiness, it is correctness. An earlier cut
+    // fell through to `_toPrimitive` whenever the host walker's answer was one
+    // this helper could not stringify — and because the two walkers dispatch
+    // DIFFERENT methods, that ran user code the spec never calls. For
+    // `{[Symbol.toPrimitive](){return Symbol()}, toString(){throw …}}` the
+    // §7.1.1 result is a Symbol and ToString must throw TypeError; instead
+    // `toString` ran and its error escaped, which
+    // `built-ins/AggregateError/message-tostring-abrupt-symbol.js` reported as
+    // "Expected a TypeError but got a undefined".
+    // The flag, rather than a throw, is what separates the two outcomes: a
+    // "cannot stringify this answer" throw would be indistinguishable from the
+    // walker's own verdict in the catch below, and would fall through to the
+    // second walker — the exact bug described above.
+    let hostAnswered = false;
+    try {
+      const prim = _hostToPrimitive(message, "string", callbackState);
+      // The "[object Object]" sentinel is how a walker reports that it found no
+      // coercion method — it is a BOTTOM-OUT, not a ToPrimitive result, so it
+      // must not stop the fallback below. (Measured: treating it as an answer
+      // made `built-ins/AggregateError/message-tostring-abrupt.js` case 2 raise
+      // the ToString TypeError instead of letting the object's own `toString`
+      // throw its `Test262Error`.) A refused REAL answer — a bare number that
+      // may be a symbol id — still sets the flag, because there a method did
+      // run and re-running a different one would violate §7.1.1.
+      //
+      // `null` / `undefined` are excluded for a second, different reason, and
+      // it is the one that decides the target row. They ARE valid ToPrimitive
+      // results (§7.1.1 step 4), but `_hostToPrimitive` also returns `null`
+      // when the `@@toPrimitive` slot merely HOLDS `undefined` — a slot §7.1.1
+      // step 2b says to SKIP, after which OrdinaryToPrimitive must run
+      // `toString`. Measured on
+      // `built-ins/AggregateError/message-tostring-abrupt.js` case 2
+      // (`{[Symbol.toPrimitive]: undefined, toString(){throw new Test262Error()}}`):
+      // the host walker answered `null`, so treating that as a result raised
+      // the ToString TypeError instead of letting `toString` throw.
+      //
+      // Treating a null/undefined host answer as "no answer" hands those shapes
+      // to `_toPrimitive`, which skips the slot correctly. The cost is that a
+      // method GENUINELY returning `null` yields the `toString` result rather
+      // than "null" — an untested shape that THREW on base either way, so no
+      // row can regress on it.
+      hostAnswered = prim !== "[object Object]" && prim !== null && prim !== undefined;
+      // May throw the Symbol TypeError, whose message differs from the verdict
+      // and so propagates rather than being absorbed.
+      const answered = _errorPrimitiveToString(prim);
+      if (answered !== undefined) return answered;
+    } catch (e) {
+      // A throw from the USER's coercion method is never a verdict — it passes
+      // straight out of here, which is what `message-tostring-abrupt.js`
+      // asserts.
+      if (!(e instanceof TypeError && e.message === "Cannot convert object to primitive value")) throw e;
+    }
+    if (hostAnswered) {
+      // ToPrimitive completed; the result is simply one this boundary cannot
+      // safely stringify (see `_errorPrimitiveToString`). Fall back to the
+      // pre-existing TypeError — NOT to another walker, which would re-run
+      // different user methods.
+      throw new TypeError("Cannot convert object to primitive value");
+    }
+    // The host walker found nothing. `_hostToPrimitive` is the only one that
+    // implements §7.1.1 step 2 in full (it dispatches an `@@toPrimitive` METHOD
+    // as well as the FIELD shape slice 1 taught it), but it is not a superset:
+    // it rejects `{[Symbol.toPrimitive]: undefined, toString(){…}}`, where the
+    // explicitly undefined slot must be SKIPPED (§7.1.1 step 2b) rather than
+    // read as a non-callable method. `_toPrimitive` answers exactly that shape,
+    // so it is the fallback — reached only here, where no method has run yet.
+    // `undefined` is its "found nothing" report.
+    const prim = _toPrimitive(message, "string", callbackState);
+    if (prim !== undefined) {
+      const answered = _errorPrimitiveToString(prim);
+      if (answered !== undefined) return answered;
+    }
+    // NEITHER walker found a callable coercion method, so §7.1.1.1 step 6 is a
+    // TypeError and this helper must NOT invent an answer.
+    //
+    // An earlier cut returned "[object Object]" here, reasoning that a real
+    // object inherits `Object.prototype.toString`. Measured against the base
+    // run, that REGRESSED two rows —
+    // `built-ins/Error/error-message-tostring-toprimitive.js` and
+    // `built-ins/NativeErrors/nativeerror-tostring-message-throws-toprimitive.js`
+    // both construct `{toString: undefined, valueOf: undefined}` and assert the
+    // TypeError. That shape is indistinguishable from `{a: 1}` once both
+    // walkers have failed, and only one of the two has a test, so the throw
+    // wins.
+    //
+    // Consequence, stated plainly: `new Error({a: 1})` still throws where the
+    // spec wants "[object Object]". That is UNCHANGED from base, not a new
+    // defect, and it keeps this slice to shapes that genuinely have a coercion
+    // method.
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  return typeof message === "string" ? message : String(message);
+}
+
+/**
  * Full ToPrimitive for proxied WasmGC structs and plain JS objects (#1090).
  * Unlike _toPrimitive (which only checks sidecar + Wasm exports), this function
  * also checks real JS properties on the object/proxy. This handles the case where
@@ -10253,6 +10435,24 @@ function resolveImport(
           intent.className === "Number";
         const argCoercionHint: "number" | "string" | "default" =
           intent.className === "Number" ? "number" : intent.className === "Date" ? "default" : "string";
+        // (#3481 cause 2) The Error family belongs to the same #1716 class as
+        // the four above — `new Error(struct)` makes V8 run ToString on an
+        // opaque WasmGC value and throw "Cannot convert object to primitive
+        // value" — but it CANNOT join `coercesArgsToPrimitive`, because that
+        // loop coerces EVERY argument. §20.5.1.1 runs ToString on the message
+        // ONLY; argument 1 is the `options` bag whose `cause` must survive as
+        // an object (reducing it to a primitive would destroy `e.cause`). So
+        // this is a single-INDEX coercion rather than a whole-argument-list one.
+        const errorMessageArgIndex =
+          intent.className === "Error" ||
+          intent.className === "TypeError" ||
+          intent.className === "RangeError" ||
+          intent.className === "SyntaxError" ||
+          intent.className === "URIError" ||
+          intent.className === "EvalError" ||
+          intent.className === "ReferenceError"
+            ? 0
+            : -1;
         // (#2637 B1) The Promise constructor consumes its first argument as an
         // executor callback (`new Promise((resolve, reject) => …)`). For a
         // `class Sub extends Promise { constructor(a) { super(a); … } }`, the
@@ -10293,6 +10493,20 @@ function resolveImport(
             _isWasmStruct(args[webInitArgIndex])
           ) {
             args[webInitArgIndex] = _wrapForHost(args[webInitArgIndex], callbackState?.getExports());
+          }
+          if (
+            errorMessageArgIndex >= 0 &&
+            args.length > errorMessageArgIndex &&
+            args[errorMessageArgIndex] != null &&
+            typeof args[errorMessageArgIndex] === "object" &&
+            _isWasmStruct(args[errorMessageArgIndex])
+          ) {
+            // Shared with the AggregateError / SuppressedError message steps —
+            // one ToString spelling for all three, so the three constructors
+            // cannot drift. An abrupt completion from the user's coercion
+            // method propagates from here unchanged, which is what
+            // `message-tostring-abrupt.js` asserts.
+            args[errorMessageArgIndex] = _errorMessageToString(args[errorMessageArgIndex], callbackState);
           }
           if (coercesArgsToPrimitive && args.length > 0) {
             for (let i = 0; i < args.length; i++) {
@@ -14716,6 +14930,24 @@ assert._isSameValue = isSameValue;
           return Object(sym);
         };
       }
+      // (#5159) InstallErrorCause for `new Error(msg, options)` and its six
+      // siblings (TypeError / RangeError / SyntaxError / URIError / EvalError /
+      // ReferenceError). Codegen calls this immediately after `__new_<Name>`,
+      // and ONLY when the call site actually passed an options argument.
+      //
+      // The Error family had no options plumbing at all until now: the lowering
+      // evaluated the bag and dropped its value, so `e.cause` was always absent
+      // even though `new Error("m", { cause: c })` is §20.5.1.1 step 4. Reusing
+      // `_installErrorCause` keeps one spelling of HasProperty-not-truthiness
+      // (`{ cause: undefined }` still installs) and of the reference-identity
+      // read, so Error / AggregateError / SuppressedError cannot drift apart.
+      //
+      // Returns the error so the value stays on the Wasm stack for the caller.
+      if (name === "__error_install_cause")
+        return (inst: any, options: any): any => {
+          _installErrorCause(inst, options, callbackState?.getExports());
+          return inst;
+        };
       if (name === "__new_AggregateError")
         return (errors: any, message: any, options: any): any => {
           // Spec step 4: IterableToList(errors). `undefined`/`null` are NOT
@@ -14793,7 +15025,7 @@ assert._isSameValue = isSameValue;
           // `properties-of-error-objects.js`).
           const inst = new AggregateError([]);
           if (message !== undefined && message !== null) {
-            const msgStr = typeof message === "string" ? message : String(message);
+            const msgStr = _errorMessageToString(message, callbackState);
             Object.defineProperty(inst, "message", {
               value: msgStr,
               writable: true,
@@ -14855,7 +15087,7 @@ assert._isSameValue = isSameValue;
           // (#1339-residuals) Codegen passes `ref.null.extern` for absent
           // optional args (JS `null` here); treat null as absent.
           if (message !== undefined && message !== null) {
-            const msgStr = typeof message === "string" ? message : String(message);
+            const msgStr = _errorMessageToString(message, callbackState);
             Object.defineProperty(inst, "message", {
               value: msgStr,
               writable: true,

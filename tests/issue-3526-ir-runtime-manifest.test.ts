@@ -15,9 +15,16 @@ import {
 } from "../src/ir/intrinsics.js";
 import { asValueId, irVal, type IrInstr } from "../src/ir/nodes.js";
 import {
+  ASYNC_RUNTIME_FEATURES,
+  ASYNC_RUNTIME_PROVIDERS,
+  type AsyncRuntimeFeature,
+} from "../src/ir/async-runtime-providers.js";
+import {
   PURE_MATH_RUNTIME_PROVIDERS,
+  RUNTIME_BACKEND_REQUIREMENTS,
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
+  projectRuntimeBackendRequirements,
   type FrozenRuntimeManifest,
   type RuntimeBackend,
   type RuntimeManifestPolicy,
@@ -84,6 +91,8 @@ function semanticView(manifest: FrozenRuntimeManifest): object {
     features: manifest.features,
     providerComponents: manifest.providerComponents,
     hostCapabilities: manifest.hostCapabilities,
+    hostCapabilityRecords: manifest.hostCapabilityRecords,
+    backendRequirements: manifest.backendRequirements,
   };
 }
 
@@ -148,6 +157,8 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     expect(first.features).toEqual(PURE_MATH_RUNTIME_FEATURES);
     expect(new Set(first.providers.map((provider) => provider.id)).size).toBe(first.providers.length);
     expect(first.hostCapabilities).toEqual([]);
+    expect(first.hostCapabilityRecords).toEqual([]);
+    expect(first.backendRequirements).toEqual([]);
 
     const dependencies = Object.fromEntries(
       first.providers.map((provider) => [provider.feature, provider.dependencies]),
@@ -177,6 +188,38 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     expect(dependencies["math.cos"]).toEqual(["math.reduce-trig"]);
     expect(dependencies["math.tan"]).toEqual(["math.cos", "math.sin"]);
     expect(first.features.filter((feature) => feature === "math.reduce-trig")).toHaveLength(1);
+  });
+
+  it("projects one canonical backend-requirement union from exact async providers", () => {
+    const build = (
+      target: "host" | "standalone",
+      intents: readonly AsyncRuntimeFeature[],
+      providers = ASYNC_RUNTIME_PROVIDERS,
+    ): FrozenRuntimeManifest => {
+      const builder = new RuntimeManifestBuilder(policy(target), { providers });
+      for (const intent of intents) builder.requestFeature(intent);
+      return builder.freeze();
+    };
+    const host = build("host", ASYNC_RUNTIME_FEATURES);
+    const native = build("standalone", ASYNC_RUNTIME_FEATURES);
+    const nativeVoid = build("standalone", [...ASYNC_RUNTIME_FEATURES, "value.undefined"]);
+    const reversed = build(
+      "standalone",
+      [...ASYNC_RUNTIME_FEATURES, "value.undefined"].reverse(),
+      [...ASYNC_RUNTIME_PROVIDERS].reverse(),
+    );
+
+    expect(host.backendRequirements).toEqual([]);
+    expect(native.backendRequirements).toEqual(RUNTIME_BACKEND_REQUIREMENTS.slice(0, 2));
+    expect(nativeVoid.backendRequirements).toEqual(RUNTIME_BACKEND_REQUIREMENTS);
+    expect(reversed).toEqual(nativeVoid);
+    expect(Object.isFrozen(nativeVoid.backendRequirements)).toBe(true);
+    expect(() =>
+      projectRuntimeBackendRequirements([
+        ASYNC_RUNTIME_PROVIDERS.find((provider) => provider.id === "host.promise.resolve")!,
+        ASYNC_RUNTIME_PROVIDERS.find((provider) => provider.id === "native.promise.resolve")!,
+      ]),
+    ).toThrowError(thrown("invalid-backend-requirement-projection"));
   });
 
   it("keeps the pure fixed point host-free in every target/backend policy", () => {
@@ -211,6 +254,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
         const manifest = builder.freeze();
         semanticClosures.push([...manifest.features]);
         expect(manifest.hostCapabilities, `${target}/${backend}`).toEqual([]);
+        expect(manifest.hostCapabilityRecords, `${target}/${backend}`).toEqual([]);
       }
     }
 
@@ -319,6 +363,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
 
     expect(Object.isFrozen(manifest)).toBe(true);
     expect(Object.isFrozen(manifest.features)).toBe(true);
+    expect(Object.isFrozen(manifest.hostCapabilityRecords)).toBe(true);
     expect(Object.isFrozen(sinProvider)).toBe(true);
     expect(Object.isFrozen(sinProvider.dependencies)).toBe(true);
     expect(builder.manifest).toBe(manifest);

@@ -16,6 +16,15 @@ horizon: xl
 related: [3422, 3328]
 loc-budget-allow:
   - src/codegen/binary-ops.ts
+  # 2026-08-28, cause 2 — restated so the grant is not STRANDED (a grant only
+  # counts when it lives in an issue file the PR itself modifies). +214 lines in
+  # `src/runtime.ts`, and they cannot live anywhere else: the over-throw happens
+  # where an opaque WasmGC struct meets the HOST constructor, which is the
+  # import bridge in this file. `_errorMessageToString` is one shared helper for
+  # all three Error-family lanes (extern-class, AggregateError, SuppressedError)
+  # precisely so the ToString spelling cannot drift between them; most of the
+  # +83 is the comment explaining the two-walker order, which is load-bearing
+  # and was arrived at by measurement.
   - src/runtime.ts
   # 2026-08-27, step 2 — the §7.1.4 / §7.1.17 Symbol guard is a per-site early
   # return, so it lands where each argument is coerced rather than in one new
@@ -46,6 +55,16 @@ coercion-sites-allow:
   # return, in the coercion engine's own file.
   - src/codegen/type-coercion.ts
 func-budget-allow:
+  # 2026-08-28, cause 2 — `resolveImport` +32. The Error family's message
+  # argument is coerced in the extern-class constructor bridge, which lives
+  # inside this (already very large) dispatcher; the coercion has to sit exactly
+  # there, between the argument arriving and `new Ctor(...)` running. It could
+  # NOT join the existing `coercesArgsToPrimitive` list next to it — that loop
+  # walks EVERY argument, and §20.5.1.1 runs ToString on the message alone
+  # (argument 1 is the `options` bag, whose `cause` must survive as an object),
+  # so it is a single-INDEX arm instead. The reusable half is already factored
+  # out into `_errorMessageToString` at module level.
+  - src/runtime.ts::resolveImport
   # 2026-08-27, step 2 — same reason as the LOC grant: the Symbol guard belongs
   # at the argument-coercion site, which is inside these already-large builtin
   # dispatchers. +8…+22 lines each, all of it one `if (…) return …;` plus the
@@ -841,3 +860,243 @@ fails on Node ≤ 22 in the standalone generator-resume path and is green in CI
   and an arrow reading the hint. All either answered correctly (`8`) or threw
   `RangeError` from the module-scope path above; none trapped. Recorded as
   unreproduced rather than as fixed.
+
+## Cause-2 record — 2026-08-28, opus (branch `claude/issue-3481-cause2-error-tostring`)
+
+**The Error-family `message` over-throw is fixed, in `src/runtime.ts` alone.
+`built-ins/AggregateError/message-tostring-abrupt.js` flips fail → pass, 0 rows
+regress, and every compiled module is byte-identical.** The step-3 record handed
+this forward as "independent of everything above"; that held, but the *mechanism*
+it implied (a coercion-site fix) was wrong, and so was my own first
+implementation. Both corrections are recorded below, because each was found only
+by a measurement that is cheap to skip.
+
+### Root cause — an existing mechanism the Error family was never added to
+
+The message argument crosses to the host `__new_<Name>` import as an **opaque
+WasmGC struct**. V8's own `new Error(msg)` then performs `ToString` on a value it
+cannot introspect and raises `TypeError: Cannot convert object to primitive
+value`. So *every* object message over-threw:
+
+| expression | on main | spec |
+| --- | --- | --- |
+| `new Error({toString(){return "msg"}})` | TypeError | `message === "msg"` |
+| `new Error({[Symbol.toPrimitive](){…}})` | TypeError | the method's result |
+| `new AggregateError([], {toString(){…}})` | TypeError | the method's result |
+| `new Error({a: 1})` | TypeError | `"[object Object]"` |
+
+This is **not a new bug class**. `resolveImport`'s extern-class constructor
+bridge already carries `coercesArgsToPrimitive` for exactly it — added by #1716
+for `RegExp` / `Date` / `String` / `Number`, with a comment describing this
+failure verbatim. The Error family was simply never added to the list.
+
+It could not simply *join* that list: the loop coerces **every** argument, while
+§20.5.1.1 runs ToString on the message alone (argument 1 is the `options` bag,
+and `AggregateError`'s argument 0 is an iterable that must survive as a list). So
+the fix is a single-INDEX coercion, plus the shared helper
+`_errorMessageToString` also used by the `__new_AggregateError` and
+`__new_SuppressedError` builtins, whose `String(message)` had the same defect.
+
+### Correction 1 — the codegen fix was built, measured, and DISCARDED
+
+The first implementation was a codegen change (compile the message without the
+`externref` target so the struct type is visible, then
+`coerceType(ref → externref, "string")`). It worked on an inline object literal
+and **not** on the shape test262 actually uses:
+
+```js
+var case1 = { … };                                  // module scope
+assert.throws(Test262Error, () => new AggregateError([], case1));
+```
+
+`case1` reaches the constructor as an `externref` CARRIER, not a `ref`, so
+codegen cannot see that it is a struct at all. Measured side by side, the runtime
+fix alone matched the codegen fix on 22 of 23 probe rows; the only difference was
+an object message at MODULE scope, which is the `__module_init` START-function
+blocker this issue's step-3 record already sized as a non-slice.
+
+So the codegen change was deleted. The payoff is not just simplicity: with no
+codegen change, **no compiled module can move**, which turns the blast-radius
+argument from a sampling exercise into a proof (measured below anyway).
+
+### Correction 2 — the first runtime cut REGRESSED 3 rows; the base run caught it
+
+The first runtime cut looked right on every hand-written probe. Run against the
+234-row cohort it was **96 → 93 pass**: three rows that pass on `main` **because
+of the over-throw** turned into failures. Each exposed a separate defect, and
+none was visible without the base side:
+
+| row | what my code did | why it was wrong |
+| --- | --- | --- |
+| `Error/error-message-tostring-toprimitive.js` + `NativeErrors/…-toprimitive.js` | answered `"[object Object]"` for `{toString: undefined, valueOf: undefined}` | no callable method ⇒ §7.1.1.1 step 6 is a **TypeError**; both rows assert it |
+| `AggregateError/message-tostring-abrupt-symbol.js` | answered `"Symbol()"` / ran `toString` | `@@toPrimitive` returned a Symbol ⇒ ToString must throw, and `toString` must NOT run |
+
+Three rules came out of fixing them, and all three are load-bearing:
+
+1. **A walker that RETURNS has completed ToPrimitive — commit to its answer.**
+   The first cut fell through to the second walker whenever the answer was one it
+   could not stringify. The two walkers dispatch *different* methods, so that ran
+   user code the spec never calls: for
+   `{[Symbol.toPrimitive](){return Symbol()}, toString(){throw …}}` the `toString`
+   error escaped, which the row reported as "Expected a TypeError but got a
+   undefined".
+2. **A NUMBER result is refused.** A native Symbol crosses this boundary as a
+   bare i32 id — measured, the id `100` — so it is indistinguishable from a
+   method that genuinely returned `100`. The existing re-checks elsewhere in
+   `runtime.ts` test `typeof prim === "symbol"` and cannot see an id either.
+   Refusing falls back to the pre-existing TypeError, i.e. exactly base.
+3. **`"[object Object]"`, `null` and `undefined` from the host walker mean
+   "found nothing", not "answered".** `_hostToPrimitive` returns `null` when the
+   `@@toPrimitive` slot merely HOLDS `undefined` — a slot §7.1.1 step 2b says to
+   SKIP. Treating that `null` as a result is what kept
+   `message-tostring-abrupt.js` failing (case 2 raised the ToString TypeError
+   instead of letting `toString` throw its `Test262Error`). **This one line is
+   the difference between the target row passing and not.**
+
+The two walkers are ordered `_hostToPrimitive` first, `_toPrimitive` second.
+Only the host walker implements §7.1.1 step 2 in full (it dispatches an
+`@@toPrimitive` METHOD as well as the FIELD shape slice 1 taught it), but it is
+not a superset — it mishandles an explicitly-undefined slot, which the module
+walker gets right.
+
+### Measured deltas — the COMPLETE Error-family cohort, both sides run by me
+
+**Cohort: all 234 counted rows under `built-ins/{Error,NativeErrors,AggregateError,SuppressedError}/`.**
+Not a sample — the whole of the four directories. `--isolate`, one child process
+per row; base captured with the file-copy A/B pattern (`git show HEAD:src/runtime.ts`
+taken before the first edit) so both sides ran the same harness.
+
+| | pass | fail |
+| --- | --- | --- |
+| base | 96 | 138 |
+| fix | **97** | **137** |
+
+**+1 fixed, 0 regressed.** The fixed row is
+`built-ins/AggregateError/message-tostring-abrupt.js` — the row cause 2 was
+written against. On base it aborts at case 1 (`'toPrimitive'`); mid-way through
+this work it aborted at case 2 (`'toString'`); it now passes all three.
+
+Behaviour, A/B on the same harness:
+
+| case | base | fix | spec |
+| --- | --- | --- | --- |
+| `new Error({toString(){return "msg"}})` | TypeError | **"msg"** | "msg" |
+| `new Error({toString: fn})` (property shape) | TypeError | **"msg"** | "msg" |
+| `new Error({[Symbol.toPrimitive]: fn})` | TypeError | **"tp"** | "tp" |
+| `new TypeError/RangeError/SyntaxError/EvalError/URIError/ReferenceError({toString(){…}})` | TypeError | **the method's result** | ditto |
+| `new AggregateError([], {toString(){…}})` | TypeError | **"ag"** | "ag" |
+| a `toString` that throws | TypeError | **the user's error** | the user's error |
+| `{[Symbol.toPrimitive](){return Symbol()}}` | TypeError | TypeError | TypeError |
+| `{toString: undefined, valueOf: undefined}` | TypeError | TypeError | TypeError |
+| `new Error("s" / 42 / true / absent / undefined / null / [1,2] / new Object())` | unchanged | unchanged | — |
+
+### Byte-identity sweep — 1,392 rows, 0 changed
+
+The change is runtime-only, but `src/index.ts` does import from `src/runtime.ts`,
+so "compiled output cannot move" is an argument that needed measuring rather than
+asserting. Each row's compiled binary was hashed on both sides.
+
+| group | rows |
+| --- | --- |
+| the full Error-family cohort | 234 |
+| stride sample — every 80th of the 48,619 counted rows | 608 |
+| **every** counted row anywhere that constructs an Error-family ctor | 605 |
+| swept (deduped) | **1,392** |
+
+**1,392 / 1,392 byte-IDENTICAL, 0 changed.** No compiled module moves, so the
+only reachable behaviour change is host-side, on the path that previously always
+threw.
+
+### Why the upside is +1 and not more — stated plainly
+
+Most of the 137 remaining failures in these four directories are nothing to do
+with message coercion: `SuppressedError` is **not implemented by the host at all**
+(`typeof SuppressedError === "undefined"` → its whole directory fails, including
+its own `message-tostring-abrupt.js` twin), and `AggregateError`'s
+`newtarget-*` / `errors-iterabletolist*` / `cause` rows fail on separate
+mechanisms. Cause 2 was one defect with one row that isolates it, and that row
+now passes.
+
+### Tests
+
+`tests/issue-3481-cause2-error-message-tostring.test.ts` — 37 cases: the object
+shapes that must now stringify (method, property, `@@toPrimitive` property and
+method, one per intrinsic error name, `AggregateError`); the three
+`message-tostring-abrupt.js` cases transcribed verbatim, each selecting a
+different rung of §7.1.1; the ordering guard that `toString` must NOT run once
+`@@toPrimitive` has answered; a thrown STRING propagating unchanged (which pins
+the narrow catch); `toString` running exactly once; and regression guards for
+every shape that must not move — string, number, boolean, absent, `undefined`,
+`null`, a genuine host object, an array, `Error.prototype.toString` rendering,
+`AggregateError`'s errors list surviving, and the options bag never being
+coerced. Three KNOWN RESIDUALS are pinned as throws rather than quietly left
+untested, each with its reason inline.
+
+**Non-vacuity: 23 of the first 34 cases fail against the base runtime**; the 11
+that pass on base are exactly the regression guards.
+
+### Known residuals, deliberate
+
+- `new Error({a: 1})` still throws where the spec wants `"[object Object]"`.
+  Once both walkers bottom out, that shape is **indistinguishable** from
+  `{toString: undefined, valueOf: undefined}`, which MUST throw and which two
+  test262 rows assert. Only one of the two has a test, so the throw wins.
+- An object message at **MODULE scope** still throws: `__module_init` is the wasm
+  START function, so the host has no `instance.exports` and no walker can call
+  the module's own `toString`. That is the blocker sized as a non-slice in the
+  step-3 record, and it is not chased here.
+- A `valueOf`-only object throws rather than answering — the refused-NUMBER rule
+  above. V8 answers `"[object Object]"` here anyway (via the inherited
+  `Object.prototype.toString` that neither walker models).
+- `SuppressedError` is wired for the same ToString repair, but that constructor
+  is **unimplemented in this host** (`SuppressedError is not supported by the
+  host`), so the repair is unverifiable today and no row can move.
+
+### Out of scope, measured and unchanged (base == branch)
+
+- **`Error`/`AggregateError` `options.cause` does not work at all.**
+  `new AggregateError([], "m", {cause: 7}).cause` is absent on both sides, and
+  `new Error("hi", {cause: 7}).cause` reads `NaN`. A separate defect.
+- The Error-family lowering **compiles and drops** arguments after the message,
+  so a side effect in the options position (`new Error(o, {cause: later()})`) does
+  not run. Same on both sides.
+- In `--target standalone` the object-message ToString is **already correct**
+  (`{toString(){…}}` → the result, `{}` → `"[object Object]"`), which is why this
+  slice is host-lane only and standalone is untouched by construction.
+
+### Gates
+
+`typecheck` · `lint` · `prettier --check` · `check:loc-budget` ·
+`check:func-budget` · `check:coercion-sites` · `check:oracle-ratchet` ·
+`check:dead-exports` · `check:ir-fallbacks` · `check:ir-dialect` ·
+`check:ir-layering` · `check:ir-kind-neutrality` · `check:stack-balance` ·
+`check:codegen-fallbacks` · `check:any-box-sites` · `check:jstag-seam` ·
+`check:speculative-rollback` · `check:issues` · `check:issue-spec-coverage` ·
+`check:done-status-integrity` · `check:pushraw` · `check:harness-compile-budget` ·
+`check:ir-adoption` · `check:verdict-oracle` · `sync:conformance:check` ·
+`generate:feature-badges:check` · `check:standalone-ir-cutover-corpus` ·
+`check:host-import-policy` · 8/8 equivalence shards.
+
+`plan/audit/host-import-policy-baseline.json` is ratcheted to the exact measured
+values, per the precedent in this file's own history (raised in the PR that needs
+it, no rounding). **Only the two line counts move; every metric the gate exists to
+police is unchanged** — measured by running the gate on both sides:
+
+| metric | base | new |
+| --- | --- | --- |
+| `runtimeTsLines` | 18475 | 18689 (+214) |
+| `resolveImportLines` | 7592 | 7624 (+32) |
+| `resolveImportCases` | 15 | 15 |
+| `ownedAdapterLines` | 792 | 792 |
+| `explicitCapabilityLines` | 1194 | 1194 |
+| native-first `imports` | 394 | 394 |
+| native-first `legacySemanticImports` | 0 | 0 |
+| native-first `unknownImports` | 0 | 0 |
+| `compatibilityLegacySemanticImports` | 23 | 23 |
+
+The change adds **no host import**, no `resolveImport` case and no adapter — it
+repairs the coercion on an argument that already crossed this boundary.
+
+Local-validation note, unchanged from the step-3 record:
+`scripts/run-guard-suite.mjs` fails on Node ≤ 22 in the standalone
+generator-resume path and is green in CI (Node 25). This container is Node 22.

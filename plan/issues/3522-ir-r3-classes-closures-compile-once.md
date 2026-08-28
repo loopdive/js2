@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-27
+updated: 2026-08-28
 assignee: ttraenkler/codex
 branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
@@ -28,6 +28,8 @@ files:
   - .github/workflows/test262-sharded.yml
   - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
+  - src/ir/class-accessor-safety.ts
+  - src/ir/class-field-call-planning.ts
   - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
   - src/ir/extern-support.ts
@@ -51,6 +53,7 @@ files:
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-overlay-safety.ts
+  - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-imported-call-planning.ts
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -67,6 +70,11 @@ files:
   - tests/issue-3214-callable-abi.test.ts
   - tests/issue-2859.test.ts
   - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
+  - tests/issue-3522-ir-nested-class-ownership.test.ts
+  - tests/issue-3522-nested-class-field-call-planning.test.ts
+  - tests/issue-3520-ir-first-identity.test.ts
+  - tests/issue-3520-ir-unit-identity.test.ts
+  - tests/issue-3520-planning-owner.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
@@ -3300,6 +3308,73 @@ inventory and typed fallback/outcome rows, never by an admitted body.
 F3 shares the identity-selection and direct-call sidecar seam with #3521.
 Rebase it onto the exact landed #3521 L1/L3 API and use that API's ownership and
 copy-on-write rules. Do not land a competing resolver or mutable sidecar.
+
+##### F3a disjoint dormant-evidence checkpoint (2026-08-28, non-authoritative)
+
+The disjoint F3 core is intentionally separable from the active
+`src/codegen/index.ts` merge surface. It establishes the following contracts
+without activating F4:
+
+- `isNestedOrdinaryClassFieldCallInventoryCandidate` is a syntax-only
+  inventory predicate. The existing
+  `isBoundedPreparedNestedOrdinaryClass` selector/preparation gate remains
+  unchanged.
+- The inventory promotes only that exact direct-nested candidate's constructor
+  and body members to terminal identities, keeps every field initializer as a
+  constructor-owned support row, and retains an immutable marker tied to the
+  exact inventory, source, class, constructor, containing terminal, fields,
+  calls, and terminal-member rows.
+- `class-field-call-planning.ts` reuses the exact identity imported-function
+  resolver's same-source top-level value path. It retains a frozen
+  source-qualified `IrFuncRef`, explicit stable callable signature, and exact
+  argument population only after every forward/reverse AST and inventory join
+  revalidates.
+- Selection consumes the proof-independent marker only to force every newly
+  inventoried constructor/member terminal to
+  `class-member-unsupported@select`; it does not consume the optional proof for
+  admission. Identity and overlay plans retain the marker and optional proof
+  sidecar as dormant evidence.
+
+This checkpoint is **not F3 acceptance** while the final production seam is
+unwired. The overlap audit originally found #5154 at `be5ec432…`, #5148 at
+`fd7b280c…`, and #5097 at `f10283be…` touching `src/codegen/index.ts`. #5154 is
+now present in the refreshed `a2191bb09520…` base; the disjoint branch still
+deliberately leaves that file untouched while #5148/#5097 remain adjacent.
+After those heads settle, the remaining narrow follow-up is:
+
+1. construct the already-shared exact resolver once before identity selection;
+2. call `planIrNestedClassFieldCalls` over the exact planning context and pass
+   its sidecar through `IrIdentitySelectionOptions`;
+3. retain that same sidecar on the outer overlay plan without rebuilding it;
+4. run the proof-enabled/proof-disabled full compiler A/B matrix and pin exact
+   inventory/outcome deltas, unchanged claims/preparation/runtime/bytes, and
+   proof-only sidecar variance.
+
+Direct planner/identity tests are necessary evidence for this checkpoint but
+cannot substitute for that final compile A/B. Until the follow-up lands, the
+production path intentionally behaves as proof-disabled: the typed candidate
+inventory and exact unsupported terminal outcomes exist, but no field-call
+body is admitted or prepared.
+
+Checkpoint evidence on the refreshed `a2191bb09520…` base. The only
+intervening changes since the measured `9f5c421b9849…` baseline were the
+unrelated #5157/#5158 issue plans; they did not touch this source or test
+surface:
+
+- TS 7 and TS 5 no-emit checks pass.
+- The focused dormant-planner matrix passes **16/16** and the four directly
+  affected identity/ownership files pass **55/55**.
+- The complete 20-file #3522 matrix on code-identical `9f5c421b9849…` reports
+  **300 pass / 17 fail**. A clean detached worktree at that same base reproduces
+  those exact 17 failures in the same four files (two cross-owner expectations,
+  eleven stale GC import-surface expectations, and four nested-static poison
+  expectations), so they are current-main baseline debt rather than an F3a
+  delta.
+- Prettier, IR layering, IR fallback, IR-only readiness, IR adoption,
+  codegen-fallback, oracle, coercion-site, optimization-retirement,
+  dead-export, LOC, and function-budget gates pass. The LOC gate measures
+  **+669 src LOC** with no unallowed growth; the existing issue-local function
+  grant accounts for `planIrCompilationByIdentity` growing **481 → 542**.
 
 #### F4. Activate only the exact prepared field-call family
 

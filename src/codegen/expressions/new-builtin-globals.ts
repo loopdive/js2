@@ -789,7 +789,36 @@ export function tryCompileBuiltinGlobalNew(
         fctx.body.push({ op: "ref.null.extern" });
       }
       fctx.body.push({ op: "local.set", index: msgTmp });
+      // (#5159) §20.5.1.1 step 4 — `InstallErrorCause(O, options)`. Argument 1
+      // is the options bag; every later argument is surplus and stays dropped.
+      //
+      // Until now argument 1 was dropped with the rest, so `new Error(m, {cause})`
+      // evaluated the bag (side effects DID run) and then threw the VALUE away —
+      // `e.cause` was permanently absent. Keep it in a local instead and hand it
+      // to `__error_install_cause` after construction (below).
+      //
+      // Scoped to the JS-host lowering: the native-first / standalone branches
+      // below build an `$Error_struct`, which carries no `cause` slot at all, and
+      // capturing there would move bytes in every standalone Error module for no
+      // behavioural gain. Option-less constructions (`args.length < 2`) allocate
+      // nothing and emit nothing new, so their bytes are unchanged.
+      const hostErrorCtorPath =
+        !(ctx.targetProfile.semanticProviders === "native-first" && isWasiErrorName(ctorName)) &&
+        !((ctx.wasi || ctx.standalone) && ctorName === "Test262Error");
+      const optionsTmp =
+        hostErrorCtorPath && args.length >= 2 ? allocTempLocal(fctx, { kind: "externref" }) : undefined;
       for (let i = 1; i < args.length; i++) {
+        if (i === 1 && optionsTmp !== undefined) {
+          // The bag crosses UNCOERCED (#3481 cause 2): only the message takes
+          // ToString; reducing the options struct to a primitive would destroy
+          // the very `cause` reference this is here to preserve.
+          const optType = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
+          if (optType && optType.kind !== "externref") {
+            coerceType(ctx, fctx, optType, { kind: "externref" });
+          }
+          fctx.body.push({ op: "local.set", index: optionsTmp });
+          continue;
+        }
         const argType = compileExpression(ctx, fctx, args[i]!);
         if (argType !== null) fctx.body.push({ op: "drop" });
       }
@@ -914,6 +943,29 @@ export function tryCompileBuiltinGlobalNew(
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
+      }
+      // (#5159) §20.5.1.1 step 4 — InstallErrorCause(O, options), applied to the
+      // freshly constructed error. It is a SEPARATE import rather than a second
+      // parameter on `__new_<Name>` on purpose: widening that signature would
+      // re-emit every option-less `new Error(msg)` in every module. Here the
+      // import (and the call) exist only in modules that actually pass options.
+      //
+      // V8's own InstallErrorCause cannot do this for us — a compiled object
+      // literal reaches the host as an opaque WasmGC struct with no readable
+      // `cause` property — so the install runs host-side through the shared
+      // `_installErrorCause` helper that AggregateError / SuppressedError use.
+      if (optionsTmp !== undefined) {
+        const installIdx = ensureLateImport(
+          ctx,
+          "__error_install_cause",
+          [{ kind: "externref" }, { kind: "externref" }], // (error, options)
+          [{ kind: "externref" }], // returns the same error
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (installIdx !== undefined) {
+          fctx.body.push({ op: "local.get", index: optionsTmp }, { op: "call", funcIdx: installIdx });
+        }
+        releaseTempLocal(fctx, optionsTmp);
       }
       // If import not available (standalone), value is already on stack as externref message
       return { kind: "externref" };

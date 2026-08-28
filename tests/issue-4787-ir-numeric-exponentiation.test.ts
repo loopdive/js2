@@ -225,6 +225,36 @@ describe("#4787 exact numeric exponentiation IR checkpoint", () => {
   });
 
   it.each([
+    [
+      "type-alias return",
+      `type N = number;
+       function helper(): N { return 2; }
+       export function p(a: number, b: number): number { return helper() ** b; }`,
+    ],
+    [
+      "overload implementation returning any",
+      `function helper(x: number): number;
+       function helper(x: number): any { return x; }
+       export function p(a: number, b: number): number { return helper(a) ** b; }`,
+    ],
+  ])("keeps a %s direct-call operand on the legacy path", async (label, source) => {
+    const result = await compileTracked(source, `issue-4787-unprepared-${String(label)}.ts`);
+    expectSuccess(result, `unprepared ${String(label)}`);
+    expect(result.irPostClaimErrors ?? []).not.toContainEqual(expect.objectContaining({ func: "p", kind: "build" }));
+    expect(outcome(result, "p")).toMatchObject({
+      kind: "unsupported",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+
+    const direct = await compile(source, {
+      fileName: `issue-4787-direct-${String(label)}.ts`,
+      experimentalIR: false,
+    });
+    expectSuccess(direct, `direct ${String(label)}`);
+  });
+
+  it.each([
     ["bigint", `export function p(a: bigint, b: bigint): bigint { return a ** b; }`],
     ["any", `export function p(a: any, b: number): number { return a ** b; }`],
     ["unknown", `export function p(a: unknown, b: number): number { return (a as number) ** b; }`],

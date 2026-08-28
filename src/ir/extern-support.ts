@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irImportFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
+import { sealPreparedIrAsyncRuntimeContainers } from "./async-plan.js";
 import { mapNestedBuffers, type IrFuncRef, type IrFunction, type IrInstr } from "./nodes.js";
 
 function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
@@ -73,7 +74,9 @@ export function attachIrExternSupport(fn: IrFunction): IrFunction {
           const body = mapBuffer(state.body);
           return body === state.body ? state : { ...state, body };
         });
-        return states === fn.asyncRuntime.states ? fn.asyncRuntime : { ...fn.asyncRuntime, states };
+        return states === fn.asyncRuntime.states
+          ? fn.asyncRuntime
+          : sealPreparedIrAsyncRuntimeContainers({ ...fn.asyncRuntime, states });
       })()
     : undefined;
   return blocks === fn.blocks && asyncRuntime === fn.asyncRuntime
