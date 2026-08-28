@@ -26,6 +26,25 @@ loc-budget-allow:
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/expressions/new-builtin-globals.ts
   - src/codegen/expressions/new-super.ts
+  # 2026-08-27, step 3 — the @@toPrimitive-FIELD dispatch. The new driver pair
+  # lives in its own module (src/codegen/objlit-to-primitive.ts, ~180 lines,
+  # well under the threshold); what lands in these three is the minimum that
+  # cannot live anywhere else. `type-coercion.ts` +147: the ref -> f64 arm is
+  # where §7.1.1 step 2 has to happen, and the arm must build BOTH branches
+  # inside `fctx.body` (index discipline, see the helper's comment), so it
+  # cannot be a one-line delegation. `index.ts` +10 and `context/types.ts` +9
+  # are the two `fillObjLitToPrimitive` calls and the reserved-flag field, i.e.
+  # the fixed cost of the reserve/fill pattern this file's own precedents use.
+  - src/codegen/type-coercion.ts
+  - src/codegen/index.ts
+  - src/codegen/context/types.ts
+coercion-sites-allow:
+  # 2026-08-27, step 3 — one added `__unbox_number` in `type-coercion.ts`: the
+  # driver returns the §7.1.1 step-2 primitive as externref and the coercion's
+  # target is f64. It is not a hand-rolled matrix — it is the SAME unbox the
+  # neighbouring @@toPrimitive-METHOD arm already uses for its externref
+  # return, in the coercion engine's own file.
+  - src/codegen/type-coercion.ts
 func-budget-allow:
   # 2026-08-27, step 2 — same reason as the LOC grant: the Symbol guard belongs
   # at the argument-coercion site, which is inside these already-large builtin
@@ -36,6 +55,13 @@ func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  # 2026-08-27, step 3 — see the LOC note above. `coerceType` +28 is the new
+  # arm plus its fallback-capture comment; the two `generateModule` /
+  # `generateMultiModule` deltas are one `fillObjLitToPrimitive(ctx);` call and
+  # its comment on each finalize path.
+  - src/codegen/type-coercion.ts::coerceType
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #3481 — bigint/symbol coercion fidelity (value substrate)
@@ -576,3 +602,242 @@ and has two twin lowerings, dot-access and element-access, that would both need
 the guard; and the step-3 list from the original scope note (`1n >>> 1n`,
 `toFixed` coercion order, `sort` comparefn, `ArrayBuffer.slice` species,
 `String.fromCharCode(1n)`).
+
+## Step-3 record — 2026-08-28, senior-dev (branch `claude/issue-3481-step3-number-hint`)
+
+**The `@@toPrimitive`-FIELD dispatch is fixed for the number hint. The premise
+step 2 handed forward is HALF right, and the half it got wrong is the half that
+was blocking the 7 rows** — so read the root-cause section below before sizing
+anything else in this family. (Third slice in a row whose first job was to
+correct the previous slice's inherited premise; the pattern is that each slice
+measured only the shape it fixed.)
+
+### What step 2 handed forward, and what is actually true
+
+Step 2 recorded cause (1) as "`@@toPrimitive` is not dispatched for the NUMBER
+hint on an object argument", citing 7 rows. Re-measured on main, that splits in
+two, and only the first is what this slice fixes:
+
+| | claim | measured |
+| --- | --- | --- |
+| **1a** | `@@toPrimitive` in a struct FIELD is not dispatched by the number-hint coercion | **TRUE.** `Number({[Symbol.toPrimitive]: () => 5, valueOf: () => 7})` answered **7**, inside an ordinary function, on `main`. |
+| **1b** | …and that is why the 7 named test262 rows fail | **FALSE.** Those rows fail because **NO** ToPrimitive works at module scope — `valueOf` and `toString` fail there too. |
+
+The 2 × 17 matrix that settled it (each expression run once at MODULE scope and
+once inside an exported function, on `main`):
+
+| expression | module scope | in a function | spec |
+| --- | --- | --- | --- |
+| `BigInt.asIntN({[Symbol.toPrimitive]:()=>1}, 1n)` | `0` | `-1` | `-1` |
+| `BigInt.asIntN({valueOf:()=>1}, 1n)` | `0` | `-1` | `-1` |
+| `BigInt.asIntN({toString:()=>1}, 1n)` | `0` | `-1` | `-1` |
+| `"aaa".indexOf("a", {valueOf:()=>1})` | `0` | `1` | `1` |
+| `new DataView(buf).getBigInt64({valueOf:()=>0})` | TypeError | `0` | `0` |
+| `Number({[Symbol.toPrimitive]:()=>5})` | `NaN` | `5` | `5` |
+| `Number({valueOf:()=>5})` | `5` | `5` | `5` |
+
+**Root cause of the module-scope column: `__module_init` is the wasm START
+function.** It runs inside `WebAssembly.instantiate`, i.e. **before**
+`__setExports` can hand the host runtime `instance.exports` — so
+`callbackState.getExports()` is `undefined`, `_resolveHostField` cannot call any
+`__sget_<name>` / `__call_fn_method_N`, and `_hostToPrimitive` falls through to
+its `"[object Object]"` sentinel. `BigInt.asIntN("[object Object]", 1n)` is
+`asIntN(0, 1n)` = `0n`, which is exactly the `0` in that column; the V8 message
+step 2 quoted (`'0' returned for property 'Symbol(Symbol.toPrimitive)' … is not a
+function`) is the same failure one shape further along, where a sibling literal
+put a non-closure in the field.
+
+This is a known, documented hazard in this codebase — `finalizeInModuleInitFlag`
+(#2800), the numeric-key `struct.get` switch (#2582) and the lazy Proxy bridge
+(#2618) all exist to work around it — but it had not been connected to this
+family. **Every test262 file is module-level code**, which is why the whole
+`*-toprimitive.js` cluster sits behind it.
+
+**Consequence for sizing.** Those 7 rows are not a coercion-site slice. Each
+needs a full §7.1.1.1 walk (skip a non-callable `valueOf`, skip a `valueOf` that
+returns an object, honour `[Symbol.toPrimitive]: undefined`, …) available with
+**no host at all**, at the point where a struct is handed to a host builtin.
+That is either (a) a host-free compiled OrdinaryToPrimitive at each such
+argument slot, or (b) making the module's own accessors reachable from the host
+during start — a `ref.func` hand-over at the top of `__module_init`, or retiring
+the `start` section in favour of the WASI-style `__init_done` + call-on-entry
+that #1789 already implements for the other lane. (b) is the one that also
+retires the #2800 / #2582 / #2618 workarounds. Neither is a slice.
+
+### What this slice changes
+
+`@@toPrimitive` reaches codegen in three physically different shapes — slice 1's
+taxonomy. Only the METHOD shape had a **compiled** dispatch:
+
+| shape | source | storage | compiled dispatch before this slice |
+| --- | --- | --- | --- |
+| sidecar | `o[Symbol.toPrimitive] = fn` | host sidecar | n/a (host-only) |
+| method | `{ [Symbol.toPrimitive](hint) {…} }` | `${name}_@@toPrimitive` | yes |
+| **property** | `{ [Symbol.toPrimitive]: fn }` | struct FIELD `@@toPrimitive` | **no** |
+
+`coerceType(ref → f64)` therefore skipped §7.1.1 step 2 for the property shape
+and went straight into OrdinaryToPrimitive, so `valueOf` won.
+
+The fix adds the missing arm, host-free:
+
+- `src/codegen/objlit-to-primitive.ts` (new) — the reserved driver pair
+  `__objlit_tp_callable(tp) -> i32` and
+  `__objlit_tp_call(recv, tp, hint) -> externref`, filled at finalize
+  (`fillObjLitToPrimitive`, on both `index.ts` paths) once the closure
+  base-wrapper set and the `__call_fn_method_N` family exist. Reserve/fill
+  rather than inline calls because a coercion site is compiled long before
+  either exists — the #2191 stale-funcIdx hazard; same discipline as
+  `reserveAccessorGetDriver` / `reserveClassToPrimitive`.
+- `src/codegen/type-coercion.ts` — the `ref → f64` arm reads the
+  `@@toPrimitive` field and dispatches only when `__objlit_tp_callable` says the
+  value is a live closure. That guard is what makes the change inert: a null
+  field, a **host `undefined` carrier** (which is NOT `ref.null`, so a plain
+  null test would have mistaken it for a method), and any non-callable value all
+  answer 0 and take the untouched fallback.
+
+**Two implementation notes worth keeping.**
+
+1. _Both_ branches of the new `if` are emitted into `fctx.body` and lifted into
+   the `if` only at the very end, with no registration in between. Registering
+   the hint string constant adds an imported GLOBAL and shifts the
+   defined-global range; the shift pass rewrites the ops **in `fctx.body`**, so
+   the first cut — which built the dispatch as a detached array — left the
+   fallback's `__current_this` save/restore pointing at a string-constant global
+   and the module failed to validate with _"immutable global #2 cannot be
+   assigned"_. That is the #2679 / `project_type_index_shift_and_deadelim`
+   hazard in a new costume.
+2. The fallback branch is obtained by **re-entering `coerceType`** under a skip
+   flag and splicing off what it emitted, so the existing valueOf/toString
+   lowering is reused verbatim rather than duplicated. The re-entry must hand
+   back `__insideValueOfCoercion`, or the recursive call short-circuits to NaN.
+
+### Measured deltas
+
+Behaviour, A/B on this branch with the file-copy pattern (`git show
+HEAD:src/codegen/type-coercion.ts` and the three other touched files captured
+before the first edit, so both sides ran the same harness):
+
+| case | before | after | spec |
+| --- | --- | --- | --- |
+| `Number({@@tp:()=>5, valueOf:()=>7})` (in a function) | 7 | **5** | 5 |
+| sibling literals `{@@tp:()=>5, valueOf:()=>1}` / `{valueOf:()=>7}` | `1,7` | **`5,7`** | `5,7` |
+| `Number({@@tp:()=>5})` at MODULE scope | NaN | **5** | 5 |
+| `{@@tp:()=>5} * 2` at MODULE scope | NaN | **10** | 10 |
+| `Math.abs({@@tp:()=>5})` at MODULE scope | NaN | **5** | 5 |
+| `Number({@@tp:()=>5})` under `--target standalone` | NaN | **5** | 5 |
+| `{[Symbol.toPrimitive]: undefined, valueOf:()=>7}` | 7 | 7 | 7 |
+| `{[Symbol.toPrimitive]: null / 1, valueOf:()=>7}` | 7 | 7 | 7 |
+| `{valueOf:()=>7}` (no `@@toPrimitive` at all) | 7 | 7 | 7 |
+
+The standalone row is the one with no fallback at all before this slice: the
+host lane at least had `_hostToPrimitive` inside a function; standalone had
+nothing.
+
+### Byte-identity sweep — 1,170 rows, **0 changed verdicts**
+
+Byte-identity is the right instrument here because the change is pure codegen: a
+row whose compiled module is byte-identical cannot have changed verdict, which
+is stronger than "scored the same twice". Both sides ran the same harness
+(`.tmp/hash-shard.mts`, reused from step 2), the base captured by swapping in
+`git show HEAD:` copies of all four touched files.
+
+| group | rows | what it is |
+| --- | --- | --- |
+| `Symbol.toPrimitive` | 268 | **every** counted row whose source mentions it |
+| stride sample | 607 | every 80th row of the 48,619 counted rows |
+| valueOf/toString sample | 332 | every 3rd row under Array / String.indexOf / DataView / BigInt / ArrayBuffer / language-expressions mentioning `valueOf` or `toString` |
+| **swept (deduped)** | **1,170** |  |
+
+|  | rows |
+| --- | --- |
+| byte-IDENTICAL | **1,166** |
+| binary changed | **4** |
+
+The 4 changed rows were then run through the real runner on both sides
+(`--isolate`) and are **`fail` → `fail` with byte-identical error text**:
+`language/expressions/{exponentiation/bigint-toprimitive, exponentiation/bigint-errors, bitwise-not/bigint-non-primitive, unary-minus/bigint-non-primitive}.js`
+— each aborts at an earlier assertion for an unrelated reason.
+
+**So: 0 pass→fail, and 0 fail→pass.** Stated plainly — **this slice flips no
+test262 row.** The reason is the same asymmetry the root-cause section
+describes: the arm fires only when the object is statically STRUCT-typed
+(`ref`), and test262 writes its object literals straight into a builtin's
+argument position, where they travel as `any`/`externref` and are coerced by the
+host `__unbox_number` — correct inside a function, unavailable at module scope.
+What the slice buys is a real spec fix (`@@toPrimitive` losing to `valueOf` is a
+plain §7.1.1 violation), the first `@@toPrimitive`-property support in the
+**standalone** lane, and correctness at module-init for the struct-typed shape.
+
+The completeness argument for the rows NOT swept is the same one slice 1 used,
+and it is tight here: the arm needs a struct field literally named
+`@@toPrimitive`, which a test can only build if `Symbol.toPrimitive` appears in
+its own source or in an included harness file — and only `typeCoercion.js` (no
+test includes it) and `testIntl.js` (only `intl402/`, not counted) use it. All
+268 such rows are in the sweep.
+
+### Tests
+
+`tests/issue-3481-step3-toprimitive-field-number-hint.test.ts` — 23 cases:
+precedence over `valueOf` / `toString` / both; the `number` hint reaching the
+method; the receiver bound as `this`; arithmetic and `Math.*` argument coercion;
+a user throw propagating; sibling shapes keeping their own answers; the three
+module-scope cases and the standalone case; and regression guards for every
+shape that must NOT change — no `@@toPrimitive` at all, an `@@toPrimitive` field
+holding `undefined` / `null` / a non-callable, the #1716 METHOD shape, and a
+plain object still coercing to NaN. **Non-vacuity: 8 of 23 fail against base**;
+the 15 that pass on base are exactly the guards.
+
+One case is pinned as a KNOWN GAP rather than as correct behaviour: the STRING
+hint still ignores the `@@toPrimitive` field
+(`String({@@tp:()=>5, toString:()=>"s"})` is `"s"`, spec says `"5"`).
+`ref → externref` has its own, differently shaped lowering; pinning it forces a
+future string-hint fix to update the expectation instead of quietly flipping an
+untested path.
+
+### Gates
+
+`typecheck` · `lint` · `prettier --check` · `check:loc-budget` ·
+`check:func-budget` · `check:coercion-sites` · `check:oracle-ratchet` (+0) ·
+`check:dead-exports` · `check:ir-fallbacks` (unchanged) · `check:ir-dialect` ·
+`check:ir-kind-neutrality` · `check:jstag-seam` · `check:ir-layering` ·
+`check:codegen-fallbacks` · `check:any-box-sites` ·
+`check:speculative-rollback` · `check:issues` · `check:issue-spec-coverage` ·
+`check:done-status-integrity` · `check:pushraw` ·
+`check:harness-compile-budget` · `check:ir-adoption` · `check:stack-balance` ·
+`check:host-import-policy` · **8/8 equivalence shards** ("No new equivalence
+regressions" each) · the slice-1 (38) and step-2 (36) suites, 97/97 together
+with this slice's 23.
+
+`plan/audit/host-import-policy-baseline.json` needs **no** bump: this slice does
+not touch `src/runtime.ts`, so `runtimeTsLines` is unmoved. The LOC / func /
+coercion-site grants added to this issue's frontmatter are the reserve/fill
+pattern's fixed cost plus the one `__unbox_number` that turns the driver's
+externref result into the coercion's `f64` target.
+
+Local-validation note for whoever runs this next: `scripts/run-guard-suite.mjs`
+fails on Node ≤ 22 in the standalone generator-resume path and is green in CI
+(Node 25) — see the slice-1 correction above. This container is Node 22.22.2.
+
+### What remains after this slice
+
+- **Cause (2) from step 2 — `new Error(obj)` / `new AggregateError([], obj)`
+  OVER-throw** on a plain-`toString` message. Re-confirmed on this branch and
+  **unchanged by this slice** — it does not fall out of the dispatch correction,
+  as step 2 hoped: `new Error({toString(){return "msg"}})` raises TypeError
+  instead of producing `message === "msg"`, inside a function as well as at
+  module scope. That is the next slice, and it is independent of everything
+  above.
+- **The 7 `*-toprimitive.js` rows** — blocked on the module-init/exports
+  problem, not on hint dispatch. Sized above.
+- **The STRING hint** for the `@@toPrimitive` FIELD shape (pinned in the tests).
+- Unchanged from step 2: the Symbol ×18 cluster, `bigint-and-number.js` (9
+  files), `Number.prototype.toExponential(sym)`'s nameless payload, and the
+  original isolated list (`1n >>> 1n`, `toFixed` coercion order, `sort`
+  comparefn, `ArrayBuffer.slice` species, `String.fromCharCode(1n)`).
+- **Could not reproduce** step 2's `RuntimeError: illegal cast` for a
+  closure-captured `{[Symbol.toPrimitive](){…}}` passed to `new ArrayBuffer`.
+  Six shapes were tried on `main` — property and method form, inline and
+  closure-returned, module scope and function scope, an outer-variable capture,
+  and an arrow reading the hint. All either answered correctly (`8`) or threw
+  `RangeError` from the module-scope path above; none trapped. Recorded as
+  unreproduced rather than as fixed.

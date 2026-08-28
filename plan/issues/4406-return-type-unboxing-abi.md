@@ -853,17 +853,19 @@ The interesting lane is **lever 4 ON, flag OFF** — that is the one that execut
 every refactored line (`tryFuseSite`, `FuseOpts`, `planFuse`'s reordered
 declines) while the sink is disabled:
 
-| | binary B | sha256 |
+| lane | binary B | sha256 |
 | --- | ---: | --- |
-| base @ `76c47838e1`, lane B | 3,799,937 | `089085568d8216b7f5e16d65bc72898ee4891fe56fac3d4930e6173c6a856077` |
+| base @ `76c47838e1`, lane B (lever 4 on) | 3,799,937 | `089085568d8216b7f5e16d65bc72898ee4891fe56fac3d4930e6173c6a856077` |
 | **branch, lane B** | 3,799,937 | **identical** |
+| base @ `76c47838e1`, default (no lever 4) | 3,809,529 | `ece895706b9551bfbfbd2f130fc9867c110a8e34cbfa7c4b90910d37b4159d41` |
+| **branch, default** | 3,809,529 | **identical** |
 
-Its decline tally is identical character-for-character as well
+Lane B's decline tally is identical character-for-character as well
 (`arm-tail-call=88 arm-local.get=28 arm-extern.convert_any=14 …`), which is the
 stronger statement: the planner reaches the same verdict on the same sites, not
-merely the same bytes. The default lane (no lever 4) is identical too — see the
-digest pair in the PR — and is so by construction, since the pass returns before
-touching anything.
+merely the same bytes. The two base digests were taken by reverting exactly the
+two touched sources to `origin/main` in place and re-running in a fresh process;
+the restore was verified with `git diff HEAD` before anything else was measured.
 
 Off-token coverage is unchanged: the sink reads the same
 `optInFlagEnabled(JS2WASM_RET_UNBOX_ABI)` predicate Phase 1 does.
@@ -882,8 +884,10 @@ fires on it and Phase 1's poison has nothing to touch. There, poison flips the
 answer `112222 → 221111` — every arm's verdict inverted. A dead path could not
 do that.
 
-The acorn lane adds the dynamic half: the −18,959 executed boxes can only come
-from newly-fused sites, and all 134 of those used at least one sink leaf.
+The acorn lane adds the dynamic half twice over: the −18,959 executed boxes can
+only come from newly-fused sites, and all 134 of those used at least one sink
+leaf; and with flag + poison ON the self-parse **throws** out of the parser
+(`WebAssembly.Exception`, no checksum), where flag-on/poison-off returns 422.
 
 ### Gates
 
@@ -909,6 +913,14 @@ where the pass is off) · all 8 equivalence shards · the adjacent canaries
   remains a ranking. This slice did not need it: the lever-4 tally is an exact,
   reproducible instrument for the merge subset, and it is what the phase is
   scored against.
-- **Pre-existing defects from Phase 0+1**: #4774 is fixed on main; the
-  `tests/issue-3754-numeric-return-twin.test.ts` failures were re-checked as
-  canaries for this slice.
+- **Both Phase 0+1 defects were FIXED on `main` between that slice and this one
+  — re-checked as canaries, not assumed.**
+  `tests/issue-3754-numeric-return-twin.test.ts` was recorded above as failing
+  **9 of 10** on `7e0b03ebb7`; it passes **10/10** on `76c47838e1` because
+  **PR #5076 fixed it** — it restored the route-c devirtualization try-order
+  that `ad543a660e` broke, and that suite was its acceptance gate (see
+  `plan/issues/4775-numeric-return-twin-suite-red-on-main.md`). The record is
+  "fixed by #5076", not "stale": the entry was accurate when written.
+  `tests/issue-4774-…` passes 10/10 as well (PR #5078), and the invalid-module
+  shape it pins is the second defect. The adjacent #4157 suites
+  (`box-boolean-fuse`, `is-truthy-inline-ic`) pass 3/3 and 5/5.

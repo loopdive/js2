@@ -88,15 +88,19 @@ function semanticView(manifest: FrozenRuntimeManifest): object {
 }
 
 describe("#3526 typed IR runtime manifest foundation", () => {
-  it("is exhaustive for the exact twelve certified pure Math methods and excludes random", () => {
+  it("is exhaustive for the exact thirteen certified pure Math methods and excludes random", () => {
     const certifiedMethods = Object.keys(IR_MATH_METHOD_TABLE).sort();
     const intrinsicMethods = PURE_MATH_INTRINSIC_IDS.map((id) => id.slice("math.".length)).sort();
 
     expect(intrinsicMethods).toEqual(certifiedMethods);
-    expect(intrinsicMethods).toHaveLength(12);
+    expect(intrinsicMethods).toHaveLength(13);
     expect(intrinsicMethods).not.toContain("random");
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual([...PURE_MATH_RUNTIME_FEATURES].sort());
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual(expect.arrayContaining(["math.atan", "math.reduce-trig"]));
+    const intrinsicFeatures = new Set<string>(PURE_MATH_INTRINSIC_IDS);
+    expect(PURE_MATH_RUNTIME_FEATURES.filter((feature) => !intrinsicFeatures.has(feature))).toEqual([
+      "math.reduce-trig",
+    ]);
     expect(PURE_MATH_HOST_CAPABILITIES).toEqual([]);
 
     for (const [method, plan] of Object.entries(IR_MATH_METHOD_TABLE)) {
@@ -115,7 +119,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     const first = forward.freeze();
     const second = reverse.freeze();
     expect(second).toEqual(first);
-    expect(first.intrinsicUses).toHaveLength(12);
+    expect(first.intrinsicUses).toHaveLength(13);
     expect(first.features).toEqual(PURE_MATH_RUNTIME_FEATURES);
     expect(new Set(first.providers.map((provider) => provider.id)).size).toBe(first.providers.length);
     expect(first.hostCapabilities).toEqual([]);

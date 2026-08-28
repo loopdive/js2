@@ -50,6 +50,7 @@ import {
   mapTsTypeToWasm,
   resolveBindingElementType,
 } from "../checker/type-mapper.js";
+import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
@@ -311,6 +312,7 @@ import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
+import { fillObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   collectGlobalObjectPropertyNames,
@@ -5795,6 +5797,12 @@ export function generateModule(
     // method-dispatch site reserved the bridge (`ctx.applyClosureReserved`).
     fillApplyClosure(ctx);
 
+    // (#3481 step 3) Fill the reserved `@@toPrimitive`-FIELD dispatch drivers
+    // now that the closure base-wrapper set and `__call_fn_method_N` /
+    // `__closure_arity` are final. No-op when no `ref → f64` coercion reserved
+    // them (`ctx.objLitToPrimitiveReserved`).
+    fillObjLitToPrimitive(ctx);
+
     // (#2660 M3) FIRST — `fillClosurePropHelpers` reads the same edge table.
     fillClosurePrototypeEdge(ctx);
 
@@ -9880,6 +9888,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Fill apply only after every multi-source arity dispatcher exists.
     fillApplyClosure(ctx);
 
+    // (#3481 step 3) Same fill on the multi-source path — see the primary path.
+    fillObjLitToPrimitive(ctx);
+
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);
 
@@ -10749,12 +10760,25 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       return { kind: "ref_null", typeIdx: templateVecTypeIdx };
     }
 
+    // (#5096) The intrinsic-name arms below (`Array`, the wrapper objects,
+    // `Promise`, the TypedArrays, `Date`, `Map`/`Set`/`WeakMap`/`WeakSet`)
+    // decide a value's Wasm REPRESENTATION from the symbol's spelling. A user
+    // binding of the same name is a different type with a different layout, so
+    // the spelling must not outrank it: `class Date { v: number }` was giving
+    // its instances `ref $__Date` (one i64 timestamp), and the ctor's real user
+    // struct then failed the `ref.test` on the way into that slot — the value
+    // became null and the next read trapped. Nulled here, the arms fall through
+    // to the ordinary user-class struct resolution below. `symbolShadowsBuiltin
+    // Global` answers `false` for every ambient symbol, so an unshadowed
+    // program resolves byte-identically.
+    const builtinSymName = symbolShadowsBuiltinGlobal(sym) ? undefined : sym?.name;
+
     // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
     // is a TS-only modifier with no runtime representation. Without this, a
     // ReadonlyArray-typed struct field falls through to the anonymous-struct /
     // externref path and mismatches the vec the array literal builds, trapping
     // on indexed read (#1748).
-    if (sym?.name === "Array" || sym?.name === "ReadonlyArray") {
+    if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       const elemTsType = typeArgs[0];
       let elemWasm: ValType = elemTsType
@@ -10793,18 +10817,18 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
 
     // Wrapper types (Number, String, Boolean) — map to externref.
     // new Number(x), new String(x), new Boolean(x) are wrapper objects (typeof "object").
-    if (sym?.name === "Number" && tsType.flags & ts.TypeFlags.Object) {
+    if (builtinSymName === "Number" && tsType.flags & ts.TypeFlags.Object) {
       return { kind: "externref" };
     }
-    if (sym?.name === "String" && tsType.flags & ts.TypeFlags.Object) {
+    if (builtinSymName === "String" && tsType.flags & ts.TypeFlags.Object) {
       return { kind: "externref" };
     }
-    if (sym?.name === "Boolean" && tsType.flags & ts.TypeFlags.Object) {
+    if (builtinSymName === "Boolean" && tsType.flags & ts.TypeFlags.Object) {
       return { kind: "externref" };
     }
 
     // Promise<T> → unwrap to T (host/GC) OR externref (native carrier).
-    if (sym?.name === "Promise") {
+    if (builtinSymName === "Promise") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       if (typeArgs.length > 0) {
         const inner = typeArgs[0]!;
@@ -10838,15 +10862,18 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // works — the native i64-vec has no js-host Atomics bridge yet (see the
     // construction-path notes in new-builtin-globals.ts / new-super.ts). Numeric
     // views map to a native vec in js-host too, but their Atomics bridge exists.
-    const isBigIntView838 = sym?.name !== undefined && BIGINT_TYPED_ARRAY_NAMES.has(sym.name);
-    if (sym?.name && (TYPED_ARRAY_NAMES.has(sym.name) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))) {
-      const storage = typedArrayVecStorage(ctx, sym.name);
+    const isBigIntView838 = builtinSymName !== undefined && BIGINT_TYPED_ARRAY_NAMES.has(builtinSymName);
+    if (
+      builtinSymName &&
+      (TYPED_ARRAY_NAMES.has(builtinSymName) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))
+    ) {
+      const storage = typedArrayVecStorage(ctx, builtinSymName);
       const vecIdx = getOrRegisterVecType(ctx, storage.key, storage.type);
       return { kind: "ref_null", typeIdx: vecIdx };
     }
 
     // Date → WasmGC struct with i64 timestamp field
-    if (sym?.name === "Date") {
+    if (builtinSymName === "Date") {
       const dateTypeIdx = ensureDateStructForCtx(ctx);
       return { kind: "ref", typeIdx: dateTypeIdx };
     }
@@ -10856,7 +10883,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // becomes `ref $Map` so `new Map()` stores directly and method/.size
     // dispatch reads a typed receiver (no externref round-trip / illegal cast).
     // JS-host mode keeps Map as an externref-backed externClass (falls through).
-    if (sym?.name === "Map" && ctx.nativeStrings) {
+    if (builtinSymName === "Map" && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -10865,7 +10892,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // mode (a Set is a Map with key === value). A `Set`-typed binding becomes
     // `ref $Map` so `new Set()` stores directly and method/.size dispatch reads
     // a typed receiver. JS-host mode keeps Set as an externref externClass.
-    if (sym?.name === "Set" && ctx.nativeStrings) {
+    if (builtinSymName === "Set" && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -10873,7 +10900,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // (#2162) WeakMap / WeakSet → the SAME native `$Map` struct in standalone /
     // nativeStrings mode (they reuse the Map backing store with object-identity
     // keys and no iteration). JS-host mode keeps them as externref externClasses.
-    if ((sym?.name === "WeakMap" || sym?.name === "WeakSet") && ctx.nativeStrings) {
+    if ((builtinSymName === "WeakMap" || builtinSymName === "WeakSet") && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }

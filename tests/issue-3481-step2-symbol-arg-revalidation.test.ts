@@ -215,26 +215,18 @@ describe("#3481 step 2 — regression guards: non-Symbol arguments are untouched
 
   it("the SharedArrayBuffer guard does not hijack a same-named user class", async () => {
     // The SAB guard lives in the generic `new` path, so it must not claim a
-    // constructor that merely shares the name. A user `class SharedArrayBuffer`
-    // does not work in this compiler at all today (measured identically on base
-    // and on this branch: "SharedArrayBuffer is not a constructor"), so the
-    // assertion is that the failure is still THAT one — not the guard's
-    // "Cannot convert a Symbol value to a number", which is what a hijack
-    // would produce.
+    // constructor that merely shares the name. This case used to assert only
+    // that the failure was the pre-existing "SharedArrayBuffer is not a
+    // constructor" rather than the guard's "Cannot convert a Symbol value to a
+    // number"; #5096 made the user class constructable, so it now asserts the
+    // user constructor's own value — the strongest form of "not hijacked".
     const exports = await run(`
       class SharedArrayBuffer { v: number; constructor(_v: any) { this.v = 7; } }
       const s = Symbol();
       try { return new SharedArrayBuffer(s).v; }
       catch (e: any) { return String((e as any).message); }
     `);
-    let message: string;
-    try {
-      message = String(exports.test());
-    } catch (e: any) {
-      message = String(e?.message ?? e);
-    }
-    expect(message).not.toContain("Cannot convert a Symbol value");
-    expect(message).toContain("SharedArrayBuffer");
+    expect(exports.test()).toBe(7);
   });
 });
 

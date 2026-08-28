@@ -1976,6 +1976,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   reviverDriverReserved?: boolean;
   /**
+   * (#3481 step 3) True once a `ref → f64` coercion reserved the
+   * `__objlit_tp_callable` / `__objlit_tp_call` pair used to dispatch an
+   * `@@toPrimitive` held in a struct FIELD (`{ [Symbol.toPrimitive]: fn }`).
+   * Filled in finalize once the closure base-wrapper set and the
+   * `__call_fn_method_N` family exist — same reserve/fill funcIdx-authority
+   * pattern as the accessor drivers above.
+   */
+  objLitToPrimitiveReserved?: boolean;
+  /**
    * (#2166 PR-D2) True once the standalone `JSON.stringify` codec reserved its
    * `__call_to_json(value, method, key) -> externref` driver funcIdx — filled in
    * finalize to wrap `__call_fn_method_1` (value bound as the `toJSON`
