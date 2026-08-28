@@ -46,7 +46,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 972,
+      "passCount": 969,
       "totalCount": 1083
     },
     {
@@ -88,7 +88,7 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 347,
+      "passCount": 341,
       "totalCount": 357
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1089,
+      "passCount": 1088,
       "totalCount": 1177
     },
     {
@@ -173,7 +173,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 124,
+      "passCount": 104,
       "totalCount": 234
     },
     {
@@ -185,7 +185,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1639,
+      "passCount": 1633,
       "totalCount": 1896
     },
     {
@@ -203,7 +203,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 408,
+      "passCount": 400,
       "totalCount": 440
     },
     {
@@ -263,7 +263,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 332,
+      "passCount": 326,
       "totalCount": 461
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1105,
+      "passCount": 1063,
       "totalCount": 1955
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 697,
+      "passCount": 691,
       "totalCount": 1072
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2736,
+      "passCount": 2730,
       "totalCount": 3812
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 333,
+      "passCount": 343,
       "totalCount": 1048
     },
     {
@@ -396,7 +396,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3671,
+      "passCount": 3683,
       "totalCount": 4979
     },
     {
@@ -588,7 +588,7 @@
     {
       "name": "escape() / unescape()",
       "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
-      "passCount": 31,
+      "passCount": 29,
       "totalCount": 35
     },
     {

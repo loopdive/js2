@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 7942,
+    "pass": 7941,
     "fail": 1060,
-    "ce": 27,
+    "ce": 28,
     "skip": 0,
     "total": 9029,
     "pct": 88,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9700,
-    "fail": 1923,
+    "pass": 9671,
+    "fail": 1952,
     "ce": 81,
     "skip": 0,
     "total": 11704,
@@ -102,17 +102,17 @@
       },
       {
         "name": "Symbol",
-        "pass": 486,
-        "fail": 123,
+        "pass": 475,
+        "fail": 134,
         "ce": 0,
         "skip": 0,
         "total": 609,
-        "pct": 80
+        "pct": 78
       },
       {
         "name": "arrow-function",
-        "pass": 397,
-        "fail": 43,
+        "pass": 395,
+        "fail": 45,
         "ce": 0,
         "skip": 0,
         "total": 440,
@@ -291,12 +291,12 @@
       },
       {
         "name": "new.target",
-        "pass": 21,
-        "fail": 14,
+        "pass": 18,
+        "fail": 17,
         "ce": 0,
         "skip": 0,
         "total": 35,
-        "pct": 60
+        "pct": 51
       },
       {
         "name": "DataView",
@@ -426,12 +426,12 @@
       },
       {
         "name": "super",
-        "pass": 13,
-        "fail": 6,
+        "pass": 10,
+        "fail": 9,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 68
+        "pct": 53
       },
       {
         "name": "Symbol.unscopables",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3608,
-    "fail": 1179,
+    "pass": 3602,
+    "fail": 1185,
     "ce": 36,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2671,
-        "fail": 1108,
+        "pass": 2665,
+        "fail": 1114,
         "ce": 31,
         "skip": 0,
         "total": 3810,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 946,
-        "fail": 437,
+        "pass": 940,
+        "fail": 443,
         "ce": 2,
         "skip": 0,
         "total": 1385,
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1335,
-    "fail": 669,
+    "pass": 1346,
+    "fail": 658,
     "ce": 13,
     "skip": 18,
     "total": 2035,
@@ -1516,12 +1516,12 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 808,
-        "fail": 239,
+        "pass": 819,
+        "fail": 228,
         "ce": 1,
         "skip": 0,
         "total": 1048,
-        "pct": 77
+        "pct": 78
       },
       {
         "name": "TypedArray",
@@ -1543,12 +1543,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 109,
-        "fail": 44,
+        "pass": 119,
+        "fail": 34,
         "ce": 0,
         "skip": 0,
         "total": 153,
-        "pct": 71
+        "pct": 78
       },
       {
         "name": "globalThis",
@@ -1597,12 +1597,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 27,
-        "fail": 38,
+        "pass": 38,
+        "fail": 27,
         "ce": 0,
         "skip": 0,
         "total": 65,
-        "pct": 42
+        "pct": 58
       },
       {
         "name": "Atomics",
@@ -1624,12 +1624,12 @@
       },
       {
         "name": "computed-property-names",
-        "pass": 27,
-        "fail": 29,
+        "pass": 38,
+        "fail": 18,
         "ce": 0,
         "skip": 0,
         "total": 56,
-        "pct": 48
+        "pct": 68
       },
       {
         "name": "Symbol.species",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4318,
-    "fail": 1426,
+    "pass": 4326,
+    "fail": 1418,
     "ce": 48,
     "skip": 0,
     "total": 5792,
@@ -2195,8 +2195,8 @@
     "features": [
       {
         "name": "class",
-        "pass": 3535,
-        "fail": 732,
+        "pass": 3543,
+        "fail": 724,
         "ce": 16,
         "skip": 0,
         "total": 4283,
@@ -2204,12 +2204,12 @@
       },
       {
         "name": "class-fields-public",
-        "pass": 1549,
-        "fail": 508,
+        "pass": 1559,
+        "fail": 498,
         "ce": 0,
         "skip": 0,
         "total": 2057,
-        "pct": 75
+        "pct": 76
       },
       {
         "name": "class-methods-private",
@@ -2240,8 +2240,8 @@
       },
       {
         "name": "class-fields-private",
-        "pass": 985,
-        "fail": 132,
+        "pass": 991,
+        "fail": 126,
         "ce": 16,
         "skip": 0,
         "total": 1133,
@@ -2456,12 +2456,12 @@
       },
       {
         "name": "new.target",
-        "pass": 12,
-        "fail": 12,
+        "pass": 4,
+        "fail": 20,
         "ce": 0,
         "skip": 0,
         "total": 24,
-        "pct": 50
+        "pct": 17
       },
       {
         "name": "class-fields-private-in",
