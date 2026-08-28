@@ -36,6 +36,7 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
+import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
@@ -91,6 +92,10 @@ function typeFactMayCarrySymbol(fact: TypeFact): boolean {
     case "unknown":
     case "unresolvable":
       return true;
+    case "array":
+      return typeFactMayCarrySymbol(fact.element);
+    case "tuple":
+      return fact.elements.some(typeFactMayCarrySymbol);
     case "union":
       return fact.parts.some(typeFactMayCarrySymbol);
     default:
@@ -99,7 +104,183 @@ function typeFactMayCarrySymbol(fact: TypeFact): boolean {
 }
 
 function nativeProxyArgsMayCarrySymbol(ctx: CodegenContext, args: readonly ts.Expression[]): boolean {
-  return args.slice(0, 2).some((arg) => typeFactMayCarrySymbol(ctx.oracle.typeFactOf(arg)));
+  let positionalCount = 0;
+  for (const arg of args) {
+    // A spread source may supply either required position at runtime, so its
+    // element fact is part of the target/handler carrier query. Once two
+    // ordinary values have been seen, later extras cannot affect validation.
+    const fact = ctx.oracle.typeFactOf(ts.isSpreadElement(arg) ? arg.expression : arg);
+    if (typeFactMayCarrySymbol(fact)) return true;
+    if (!ts.isSpreadElement(arg)) {
+      positionalCount++;
+      if (positionalCount === 2) return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Mirror the existing static call/new spread fast path: direct array-literal
+ * spreads can be flattened without materializing an intermediate iterable.
+ * A non-literal source stays on the iterator path; nested spread elements are
+ * intentionally retained for that path, matching the canonical one-level
+ * call-argument flattener.
+ */
+function flattenProxyArguments(args: readonly ts.Expression[]): ts.Expression[] | null {
+  const flattened: ts.Expression[] = [];
+  for (const arg of args) {
+    if (!ts.isSpreadElement(arg)) {
+      flattened.push(arg);
+      continue;
+    }
+    if (!ts.isArrayLiteralExpression(arg.expression)) return null;
+    for (const element of arg.expression.elements) flattened.push(element);
+  }
+  return flattened;
+}
+
+interface ExpandedProxyArgumentLocals {
+  target: number;
+  handler: number;
+  count: number;
+  value: number;
+  source: number;
+  iterator: number;
+  done: number;
+}
+
+/**
+ * Emit Proxy's full ArgumentListEvaluation for a call containing a spread.
+ *
+ * A SpreadElement contributes zero or more positional values. Drive every
+ * spread through the iterator protocol used by for-of and array spread,
+ * retaining only the first two expanded values while evaluating all the rest.
+ * The caller resolves the Proxy provider after this emitter has finished, so
+ * late imports registered by argument expressions cannot stale that call.
+ */
+function emitExpandedProxyArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  compileValue: (arg: ts.Expression) => void,
+): ExpandedProxyArgumentLocals {
+  const targetLocal = allocTempLocal(fctx, { kind: "externref" });
+  const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
+  const countLocal = allocTempLocal(fctx, { kind: "i32" });
+  const valueLocal = allocTempLocal(fctx, { kind: "externref" });
+  const sourceLocal = allocTempLocal(fctx, { kind: "externref" });
+  const iteratorLocal = allocTempLocal(fctx, { kind: "externref" });
+  const doneLocal = allocTempLocal(fctx, { kind: "i32" });
+
+  // Missing target/handler use the same nullish carrier as the ordinary path.
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "local.set", index: targetLocal },
+    { op: "ref.null.extern" },
+    { op: "local.set", index: handlerLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: countLocal },
+  );
+
+  const captureValue = (): Instr[] => [
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: valueLocal },
+        { op: "local.set", index: targetLocal },
+      ],
+      else: [
+        { op: "local.get", index: countLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: valueLocal },
+            { op: "local.set", index: handlerLocal },
+          ],
+          else: [{ op: "local.get", index: valueLocal }, { op: "drop" }],
+        },
+      ],
+    },
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: countLocal },
+  ];
+
+  for (const arg of args) {
+    if (!ts.isSpreadElement(arg)) {
+      compileValue(arg);
+      fctx.body.push({ op: "local.set", index: valueLocal });
+      fctx.body.push(...captureValue());
+      continue;
+    }
+
+    // Evaluate the source once, obtain its iterator, and drain it before the
+    // next argument. Abrupt source/iterator steps therefore win over Proxy
+    // validation exactly as they do in JavaScript ArgumentListEvaluation.
+    const sourceType = compileExpression(ctx, fctx, arg.expression);
+    if (sourceType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (sourceType.kind !== "externref") {
+      coerceTypeImpl(ctx, fctx, sourceType, { kind: "externref" });
+    }
+    fctx.body.push({ op: "local.set", index: sourceLocal });
+    flushLateImportShifts(ctx, fctx);
+
+    const iterIdx = ctx.funcMap.get("__iterator");
+    const nextIdx = ctx.funcMap.get("__iterator_next");
+    if (iterIdx === undefined || nextIdx === undefined) {
+      // The iterator runtime/imports are registered before this helper. Keep a
+      // defensive index-space-frozen fallback that still evaluates the source
+      // and preserves the old one-positional behavior without invalid Wasm.
+      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "local.set", index: valueLocal });
+      fctx.body.push(...captureValue());
+      continue;
+    }
+
+    fctx.body.push(
+      { op: "local.get", index: sourceLocal },
+      { op: "call", funcIdx: iterIdx },
+      { op: "local.set", index: iteratorLocal },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: iteratorLocal },
+              { op: "call", funcIdx: nextIdx },
+              { op: "local.set", index: valueLocal },
+              { op: "local.set", index: doneLocal },
+              { op: "local.get", index: doneLocal },
+              { op: "br_if", depth: 1 },
+              ...captureValue(),
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  return {
+    target: targetLocal,
+    handler: handlerLocal,
+    count: countLocal,
+    value: valueLocal,
+    source: sourceLocal,
+    iterator: iteratorLocal,
+    done: doneLocal,
+  };
 }
 
 /**
@@ -782,6 +963,47 @@ export function tryCompileBuiltinGlobalNew(
         }
       };
 
+      if (args.some((arg) => ts.isSpreadElement(arg))) {
+        const proxyArgs = flattenProxyArguments(args) ?? args;
+        // Standalone/native-first uses the native GetIterator bridge for
+        // non-literal sources (and for nested spreads retained by the
+        // canonical one-level flattener). Register it before compiling any
+        // such source so late helper registration cannot stale its calls.
+        if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) ensureNativeIteratorRuntime(ctx);
+        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileToExternref(arg));
+        flushLateImportShifts(ctx, fctx);
+        const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
+        if (proxyCreateIdx !== undefined) {
+          fctx.body.push(
+            { op: "local.get", index: locals.target },
+            { op: "local.get", index: locals.handler },
+            { op: "call", funcIdx: proxyCreateIdx },
+          );
+        } else {
+          // Runtime not available (should not happen) — drop staged values and
+          // leave the same undefined result as the ordinary defensive path.
+          fctx.body.push(
+            { op: "local.get", index: locals.target },
+            { op: "drop" },
+            { op: "local.get", index: locals.handler },
+            { op: "drop" },
+            { op: "ref.null.extern" },
+          );
+        }
+        for (const local of [
+          locals.done,
+          locals.iterator,
+          locals.source,
+          locals.value,
+          locals.count,
+          locals.handler,
+          locals.target,
+        ]) {
+          releaseTempLocal(fctx, local);
+        }
+        return { kind: "externref" };
+      }
+
       // §28.2.1.1 starts with ArgumentListEvaluation.  Keep the first two
       // values alive while every remaining argument is evaluated and dropped;
       // validation in __proxy_create must not run until that whole list has
@@ -835,6 +1057,56 @@ export function tryCompileBuiltinGlobalNew(
           fctx.body.push({ op: "ref.null.extern" });
         }
       };
+
+      if (args.some((arg) => ts.isSpreadElement(arg))) {
+        const proxyArgs = flattenProxyArguments(args) ?? args;
+        // The host provider exposes the same iterator protocol as for-of. Do
+        // the registration up front for any source that remains dynamic, then
+        // resolve its indices after each source expression adds late imports.
+        if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) {
+          ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+          ensureLateImport(ctx, "__iterator_next", [{ kind: "externref" }], [{ kind: "i32" }, { kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+        }
+        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileHostProxyArg(arg));
+
+        // Emit the provider only after ArgumentListEvaluation has completed.
+        let proxyIdx = ensureLateImport(
+          ctx,
+          "__proxy_create",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        proxyIdx = ctx.funcMap.get("__proxy_create") ?? proxyIdx;
+        if (proxyIdx !== undefined) {
+          fctx.body.push(
+            { op: "local.get", index: locals.target },
+            { op: "local.get", index: locals.handler },
+            { op: "call", funcIdx: proxyIdx },
+          );
+        } else {
+          fctx.body.push(
+            { op: "local.get", index: locals.target },
+            { op: "drop" },
+            { op: "local.get", index: locals.handler },
+            { op: "drop" },
+            { op: "ref.null.extern" },
+          );
+        }
+        for (const local of [
+          locals.done,
+          locals.iterator,
+          locals.source,
+          locals.value,
+          locals.count,
+          locals.handler,
+          locals.target,
+        ]) {
+          releaseTempLocal(fctx, local);
+        }
+        return { kind: "externref" };
+      }
 
       // Evaluate the target and handler once, retain them while all extra
       // arguments run in source order, then invoke the host provider.  This

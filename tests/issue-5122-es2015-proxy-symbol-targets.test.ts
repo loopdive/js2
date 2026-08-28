@@ -75,8 +75,48 @@ function laterAbrupt(): any {
   throw new Error("later extra argument");
 }
 
+function dynamicProxyArgs(): any[] {
+  order = order * 10 + 2;
+  return [mark(3), mark(4)];
+}
+
+function expectSpreadValid(args: any[]): number {
+  try {
+    const proxy = new Proxy(...args);
+    return proxy === null ? 0 : 1;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function expectSpreadTypeError(args: any[]): number {
+  try {
+    new Proxy(...args);
+    return 0;
+  } catch (error) {
+    return error instanceof TypeError ? 1 : 2;
+  }
+}
+
+function abruptSpreadIterable(): any {
+  return {
+    [Symbol.iterator](): any {
+      return {
+        next(): any {
+          order = order * 10 + 6;
+          throw new Error("iterator step");
+        },
+      };
+    },
+  };
+}
+
 function proxyCalleeBeforeSymbolCaller(target: any, handler: any): number {
   return expectTypeError(target, handler);
+}
+
+function proxyCalleeBeforeSpreadCaller(args: any[]): number {
+  return expectSpreadValid(args);
 }
 
 function symbolCaller(): any {
@@ -92,23 +132,59 @@ export function test(): number {
   if (proxyCalleeBeforeSymbolCaller(symbolCaller(), {}) !== 1) return 3;
   if (proxyCalleeBeforeSymbolCaller({}, symbolCaller()) !== 1) return 4;
 
+  // Static and dynamic spread sources expand before Proxy validation. The
+  // dynamic helper also exercises the callee-before-caller index-shift seam.
+  if (expectSpreadValid([{}, {}]) !== 1) return 5;
+  if (expectSpreadValid([{}, {}, {}, {}]) !== 1) return 6;
+  if (proxyCalleeBeforeSpreadCaller([{}, {}]) !== 1) return 7;
+  if (expectSpreadTypeError([Symbol(), {}]) !== 1) return 8;
+  if (expectSpreadTypeError([{}, Symbol()]) !== 1) return 9;
+
   // ArgumentListEvaluation: retain target/handler, then evaluate every extra
   // exactly once and in order before the constructor validates either value.
   order = 0;
   try {
     const proxy = new Proxy(mark(1), mark(2), mark(3), mark(4));
-    if (proxy === null || order !== 1234) return 5;
+    if (proxy === null || order !== 1234) return 10;
   } catch (_error) {
-    return 6;
+    return 11;
+  }
+
+  // Mixed ordinary and spread arguments preserve source evaluation order, and
+  // every expanded extra is evaluated before construction validates the pair.
+  order = 0;
+  try {
+    const proxy = new Proxy(mark(1), ...[mark(2), mark(3)], mark(4));
+    if (proxy === null || order !== 1234) return 12;
+  } catch (_error) {
+    return 13;
+  }
+
+  order = 0;
+  try {
+    const proxy = new Proxy(mark(1), ...dynamicProxyArgs(), mark(5));
+    if (proxy === null || order !== 12345) return 14;
+  } catch (_error) {
+    return 15;
   }
 
   // A later abrupt extra argument wins over target/handler validation.
   order = 0;
   try {
     new Proxy(invalidTarget(), invalidHandler(), extraSideEffect(), laterAbrupt());
-    return 7;
+    return 16;
   } catch (error) {
-    if (!(error instanceof Error) || error instanceof TypeError || order !== 1234) return 8;
+    if (!(error instanceof Error) || error instanceof TypeError || order !== 1234) return 17;
+  }
+
+  // The iterator itself is driven before Proxy validation; an abrupt later
+  // step wins even when the syntactic target is valid.
+  order = 0;
+  try {
+    new Proxy({}, ...abruptSpreadIterable());
+    return 18;
+  } catch (error) {
+    if (!(error instanceof Error) || error instanceof TypeError || order !== 6) return 19;
   }
 
   // Target validation precedes all handler trap reads.
@@ -119,16 +195,36 @@ export function test(): number {
       return undefined;
     },
   };
-  if (expectTypeError(Symbol(), handlerWithGetter) !== 1) return 9;
-  if (trapReads !== 0) return 10;
+  if (expectTypeError(Symbol(), handlerWithGetter) !== 1) return 20;
+  if (trapReads !== 0) return 21;
+
+  trapReads = 0;
+  if (expectSpreadTypeError([Symbol(), handlerWithGetter]) !== 1) return 22;
+  if (trapReads !== 0) return 23;
+
+  // Expanded object/array/function/nested-Proxy carriers remain valid.
+  if (expectSpreadValid([{}, {}]) !== 1) return 24;
+  if (expectSpreadValid([[], {}]) !== 1) return 25;
+  if (expectSpreadValid([function spreadCallable() {}, {}]) !== 1) return 26;
+  const spreadNested = new Proxy({}, {});
+  if (expectSpreadValid([spreadNested, {}]) !== 1) return 27;
 
   // Valid object-like siblings: ordinary object, array, callable, and nested
   // Proxy carriers remain accepted by the shared native constructor.
-  if (expectValid({}, {}) !== 1) return 11;
-  if (expectValid([], {}) !== 1) return 12;
-  if (expectValid(function callable() {}, {}) !== 1) return 13;
+  if (expectValid({}, {}) !== 1) return 28;
+  if (expectValid([], {}) !== 1) return 29;
+  if (expectValid(function callable() {}, {}) !== 1) return 30;
   const nested = new Proxy({}, {});
-  if (expectValid(nested, {}) !== 1) return 14;
+  if (expectValid(nested, {}) !== 1) return 31;
+
+  // Keep the original reported blocker as a direct static regression, not
+  // only through the dynamic helper above.
+  try {
+    const directSpread = new Proxy(...[{}, {}]);
+    if (directSpread === null) return 32;
+  } catch (_error) {
+    return 33;
+  }
 
   return 0;
 }
