@@ -527,6 +527,13 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     hasOwnProperty: 1,
     isPrototypeOf: 1,
     propertyIsEnumerable: 1,
+    // ES2015 Map/Set collection clear and iterator methods take no arguments.
+    // Keep these in the shared null-prototyped table so direct and reflective
+    // prototype-method metadata use the same canonical arity.
+    clear: 0,
+    entries: 0,
+    keys: 0,
+    values: 0,
     // (#4479 slice 2) Annex B §B.2.2, declared beside the bodies that read the
     // arg slots this arity sizes.
     ...ANNEX_B_ACCESSOR_ARITY,
