@@ -304,6 +304,7 @@ export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = 
   cosh: { arity: 1, intrinsic: "math.cosh" },
   tanh: { arity: 1, intrinsic: "math.tanh" },
   exp: { arity: 1, intrinsic: "math.exp" },
+  expm1: { arity: 1, intrinsic: "math.expm1" },
   log: { arity: 1, intrinsic: "math.log" },
   log10: { arity: 1, intrinsic: "math.log10" },
   log1p: { arity: 1, intrinsic: "math.log1p" },
@@ -6495,6 +6496,7 @@ function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpressio
   if (plan.intrinsic === "math.cosh" && process.env.JS2WASM_IR_MATH_COSH === "0") return false;
   if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
   if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
+  if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
 

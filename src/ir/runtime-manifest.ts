@@ -59,6 +59,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.cos",
   "selfhost.math.cosh",
   "selfhost.math.exp",
+  "selfhost.math.expm1",
   "selfhost.math.log",
   "selfhost.math.log10",
   "selfhost.math.log1p",
@@ -186,6 +187,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.cos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cosh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.exp": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.expm1": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.floor": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log10": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -276,6 +278,13 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     kind: "self-hosted",
     symbol: "Math_exp",
   }),
+  "math.expm1": provider(
+    "selfhost.math.expm1",
+    "math.expm1",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_expm1" },
+    ["math.exp"],
+  ),
   "math.floor": provider("backend.f64.floor", "math.floor", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.floor",
@@ -351,7 +360,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
   }),
 });
 
-/** Canonically ordered default provider catalogue for the twenty-two-method slice. */
+/** Canonically ordered default provider catalogue for the twenty-three-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),
