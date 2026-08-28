@@ -1,7 +1,7 @@
 ---
 id: 5116
 title: "ES2015 standalone Map/Set prototype Symbol.toStringTag"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -15,6 +15,7 @@ area: codegen
 es_edition: es2015
 language_feature: map-set-prototype-tostringtag
 goal: host-and-standalone
+pr: 5122
 files:
   - src/codegen/array-object-proto.ts
   - tests/issue-5116-map-set-prototype-tostringtag.test.ts
@@ -132,6 +133,11 @@ repository's unrelated generated-index/dependency drift warnings; no issue
 plan was rewritten. `git diff --check` is clean and the change remains limited
 to the collection glue, this plan, and the focused regression.
 
-The implementation commit SHA, non-draft upstream PR URL, final head audit,
-CI state, and review state will be appended after publication. No GitHub issue
-is created or referenced.
+Implementation commit `770c6e1781fb694005be510caf6968c7981611f3`
+was pushed to `ttraenkler/js2:codex/es2015-next-lane-g` after the normal
+pre-push hooks passed. The single non-draft upstream delivery PR is
+https://github.com/loopdive/js2/pull/5122 against `loopdive/js2:main`.
+
+Root review confirmed the PR body uses the repository template and tracks this
+file explicitly. CI, exact-head, review-thread, and merge-queue state remain
+the shepherding handoff; no GitHub issue was created or referenced.
