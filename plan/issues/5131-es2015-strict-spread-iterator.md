@@ -1,7 +1,7 @@
 ---
 id: 5131
 title: "ES2015 strict native spread iterator materializer"
-status: planned
+status: in-progress
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -16,6 +16,7 @@ language_feature: spread-getiterator-iteratorresult
 goal: standalone-mode
 assignee: "ttraenkler/codex-es2015-strict-spread-iterator"
 branch: codex/5131-es2015-strict-spread-iterator
+pr: 5147
 related: [5122, 681, 1592, 1970, 2159, 2651, 3643, 4275, 4768]
 required_by: [5122]
 files:
@@ -221,8 +222,10 @@ a standalone-only approximation.
 
 Use only `/private/tmp/js2-es2015-strict-spread-iterator-20260828` on branch
 `codex/5131-es2015-strict-spread-iterator`. The branch starts from
-`upstream/main` `b02345bc590dffc76e914f58731ad783834e868b`. Publish this plan
-as a draft checkpoint before implementation. Keep the PR draft while the
-strict provider or its dependent dynamic consumer is incomplete; mark it ready
-only when the complete acceptance matrix is mergeable. Push every checkpoint
+`upstream/main` `b02345bc590dffc76e914f58731ad783834e868b`. The validated plan
+checkpoint is published in upstream draft PR 5147 from fork branch
+`ttraenkler:codex/5131-es2015-strict-spread-iterator`; its pre-PR head is
+`cfd9d3d1ccbbf42254096f02c1a3f267042a5ee8`. Keep the PR draft while the strict
+provider or its dependent dynamic consumer is incomplete; mark it ready only
+when the complete acceptance matrix is mergeable. Push every checkpoint
 without force, preserve unrelated work, and never create a GitHub issue.
