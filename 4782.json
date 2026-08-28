@@ -1,10 +1,11 @@
 {
   "id": "4782",
   "assignee": "ttraenkler/opus-4782",
-  "requested_by": "ttraenkler/opus-4782",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4782-mixed-spread-arguments",
   "claimed_at": "2026-08-27T19:34:52Z",
-  "updated_at": "2026-08-27T19:34:52Z",
-  "write_id": "7302-2l4e134s"
+  "updated_at": "2026-08-28T01:38:22Z",
+  "write_id": "1834-6sdpx3a6",
+  "released_at": "2026-08-28T01:38:22Z"
 }
