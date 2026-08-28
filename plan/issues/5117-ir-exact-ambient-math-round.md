@@ -1,7 +1,7 @@
 ---
 id: 5117
 title: "IR: own exact ambient Math.round calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -142,6 +142,34 @@ instructions inside the helper; they are not callable provider dependencies.
   before claim without invariants or post-claim errors.
 - The narrow rollback, affected regressions, TypeScript 7, and all pre-push
   gates pass.
+
+## Implementation outcome and validation
+
+- `math.round` is the twenty-eighth certified pure Math intrinsic. Exact
+  ambient one-number calls now emit IR-only bodies and resolve through the
+  dependency-free `selfhost.math.round` provider and `Math_round` symbol.
+- The self-hosted source mirrors the established floor/fraction/ceil schedule.
+  Raw-bit direct/IR parity passes for custom positive and negative NaNs, both
+  zeros, adjacent half ties, subnormals, finite range edges, large integral
+  values, and infinities. Ties remain toward positive infinity and
+  `[-0.5, 0)` remains negative zero.
+- Host execution requests no Math import; standalone execution has zero Wasm
+  imports. The manifest closure contains only `math.round`, with no dependency
+  or host capability, and the intrinsic carries one SSA argument.
+- Shadowed, aliased, computed, optional-invocation, optional-receiver,
+  wrong-arity, spread, and non-number forms decline before claim. Symbol and
+  coercive forms retain the direct path and established `TypeError` behavior.
+- Focused ownership tests pass 14/14, affected #3526 manifest, integration,
+  and linear-legality suites pass 13/13, and scoped #249, #1371, Symbol,
+  equivalence, and codegen regressions pass 9/9. TypeScript 7,
+  kind-neutrality, Prettier, Biome, LOC/function budgets, oracle/coercion
+  ratchets, numeric-local parity (18/18), and issue integrity pass.
+- Luna Max final review returned GO with no P0/P1 finding and independently
+  confirmed NaN payload parity, signed zero, the tie rule, large integrals,
+  one evaluation, provider materialization, fallbacks, rollback, linear
+  legality, and all twenty-eight-entry contracts.
+- PR #5132 is open non-draft and mergeable, stacked directly on #5129's exact
+  `Math.sign` ownership branch with CLA green and merge automation armed.
 
 ## Non-goals
 
