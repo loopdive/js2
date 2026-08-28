@@ -53,6 +53,7 @@ import {
 import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
@@ -10336,6 +10337,8 @@ export const MATH_HOST_METHODS_1ARG = new Set([
   "asinh",
   "atanh",
   "cbrt",
+  "round",
+  "sign",
   "expm1",
   "log1p",
 ]);
@@ -10356,24 +10359,17 @@ export function emitToUint32Helper(ctx: CodegenContext): void {
   const typeIdx = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "i32" }]);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.funcMap.set("__toUint32", funcIdx);
-  const body: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "local.get", index: 0 },
-    { op: "f64.ne" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    { op: "local.get", index: 0 },
-    { op: "f64.abs" },
-    { op: "f64.const", value: Infinity },
-    { op: "f64.eq" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    { op: "local.get", index: 0 },
-    { op: "i64.trunc_sat_f64_s" },
-    { op: "i32.wrap_i64" },
-  ];
+  const body: Instr[] = [{ op: "local.get", index: 0 }];
+  emitWasmInt32Coercion(body, { bits: 1, exponent: 2, significand: 3, magnitude: 4 });
   ctx.mod.functions.push({
     name: "__toUint32",
     typeIdx,
-    locals: [],
+    locals: [
+      { name: "$to_uint32_bits", type: { kind: "i64" } },
+      { name: "$to_uint32_exponent", type: { kind: "i64" } },
+      { name: "$to_uint32_significand", type: { kind: "i64" } },
+      { name: "$to_uint32_magnitude", type: { kind: "i64" } },
+    ],
     body,
     exported: false,
   });
