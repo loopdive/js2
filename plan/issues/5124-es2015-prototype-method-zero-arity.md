@@ -172,6 +172,10 @@ guarded and each `runTest262File(..., 120_000)` wrapper has an outer
 - The complete `.husky/pre-push` hook passed end-to-end with an empty ref
   stream: typecheck/lint, format, ratchets, numeric-local parity, conformance
   sync, and issue-integrity stages all passed. No remote mutation was made.
+- Current-upstream reconciliation was then performed as a clean non-fast-
+  forward merge of local `upstream/main` at `59ab7c0e6627a1d200e406aa0454fc99d5147615`;
+  the corrected merge commit preserved both parents and all three owned files.
+  The post-merge pinned focused rerun again passed `22/22` tests.
 
 ## Handoff Evidence
 
@@ -179,6 +183,7 @@ Only the three owned files are changed. No GitHub issue or PR was opened by
 this worker; root owns the final review and single non-draft PR handoff. The
 implementation checkpoint (parent of this documentation-only handoff) is
 `621de07f7c9a36c1fb1735465debf2ebd5ed8fdd`; the final branch SHA is reported
-to root separately and the worktree is clean. The fork
+to root separately. The corrected upstream merge checkpoint (parent of this
+post-merge documentation update) is `0098c6cbed`; the worktree is clean. The fork
 ref equality check was not available in this sandbox because GitHub DNS was
 blocked, and the parent explicitly requested no push.
