@@ -842,6 +842,9 @@ export interface IrInstrCall extends IrInstrBase {
 /** Backend primitive choices available to the first semantic-intrinsic family. */
 export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
 
+/** Closed multi-op backend expansions available to semantic intrinsics. */
+export type IrIntrinsicBackendSequence = "f64.fround";
+
 /**
  * Provider attachment selected after middle-end transforms and manifest
  * freeze. Source/type lowering emits no provider; preparation attaches either
@@ -849,6 +852,7 @@ export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.c
  */
 export type IrIntrinsicProvider =
   | { readonly kind: "backend-op"; readonly opcode: IrIntrinsicBackendOp }
+  | { readonly kind: "backend-sequence"; readonly sequence: IrIntrinsicBackendSequence }
   | { readonly kind: "callable"; readonly target: IrFuncRef };
 
 /**

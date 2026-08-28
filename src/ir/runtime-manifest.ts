@@ -9,7 +9,7 @@
  * frozen arrays/records. Lowering receives lookup-only `resolveProvider` calls;
  * a request absent from the frozen plan is a typed invariant.
  */
-import { irTypeEquals, type IrIntrinsicBackendOp } from "./nodes.js";
+import { irTypeEquals, type IrIntrinsicBackendOp, type IrIntrinsicBackendSequence } from "./nodes.js";
 import {
   ASYNC_HOST_CAPABILITY_IDS,
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -49,6 +49,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "backend.f64.abs",
   "backend.f64.ceil",
   "backend.f64.floor",
+  "backend.f64.fround",
   "backend.f64.sqrt",
   "backend.f64.trunc",
   "selfhost.math.acos",
@@ -86,6 +87,10 @@ export type RuntimeProviderImplementation =
       readonly opcode: IrIntrinsicBackendOp;
     }
   | {
+      readonly kind: "backend-sequence";
+      readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
       readonly kind: "self-hosted";
       /** Concrete ABI spelling, deliberately below the semantic feature. */
       readonly symbol: string;
@@ -107,7 +112,7 @@ export type RuntimeProviderImplementation =
 
 export type MathRuntimeProviderImplementation = Extract<
   RuntimeProviderImplementation,
-  { readonly kind: "backend-op" | "self-hosted" }
+  { readonly kind: "backend-op" | "backend-sequence" | "self-hosted" }
 >;
 
 export interface RuntimeProviderDefinition {
@@ -197,6 +202,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.exp": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.expm1": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.floor": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.fround": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log10": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log1p": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -320,6 +326,10 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     kind: "backend-op",
     opcode: "f64.floor",
   }),
+  "math.fround": provider("backend.f64.fround", "math.fround", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "backend-sequence",
+    sequence: "f64.fround",
+  }),
   "math.log": provider("selfhost.math.log", "math.log", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_log",
@@ -399,7 +409,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
   }),
 });
 
-/** Canonically ordered default provider catalogue for the twenty-eight-method slice. */
+/** Canonically ordered default provider catalogue for the twenty-nine-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),

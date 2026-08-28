@@ -402,8 +402,25 @@ function emitPreparedIntrinsic<S>(
       `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
     );
   }
-  if (instr.provider.kind === "backend-op") emitter.emitUnary(instr.provider.opcode, out);
-  else emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
+  if (instr.provider.kind === "backend-op") {
+    emitter.emitUnary(instr.provider.opcode, out);
+    return;
+  }
+  if (instr.provider.kind === "backend-sequence") {
+    switch (instr.provider.sequence) {
+      case "f64.fround":
+        emitter.emitNumericConversion("f32.demote_f64", out);
+        emitter.emitNumericConversion("f64.promote_f32", out);
+        return;
+    }
+    const sequence: never = instr.provider.sequence;
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: semantic intrinsic ${instr.id} has unsupported backend sequence ${String(sequence)} (${funcName})`,
+    );
+  }
+  emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
 }
 
 /**

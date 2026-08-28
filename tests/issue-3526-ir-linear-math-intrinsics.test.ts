@@ -10,10 +10,11 @@ import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js"
 
 const identities = createTestIrFunctionIdentityFactory("issue-3526-ir-linear-math-intrinsics");
 const F64 = irVal({ kind: "f64" });
-const LINEAR_BACKEND_OP_INTRINSICS = [
+const LINEAR_NATIVE_INTRINSICS = [
   "math.abs",
   "math.ceil",
   "math.floor",
+  "math.fround",
   "math.sqrt",
   "math.trunc",
 ] as const satisfies readonly IntrinsicId[];
@@ -29,17 +30,17 @@ function intrinsicFunction(id: IntrinsicId): IrFunction {
 }
 
 describe("#3526 linear semantic Math intrinsic legality", () => {
-  it("admits exactly the five semantic intrinsics backed by native linear f64 operations", () => {
+  it("admits exactly the six semantic intrinsics backed by native linear operations", () => {
     const admitted = PURE_MATH_INTRINSIC_IDS.filter(
       (id) => verifyIrBackendLegality(intrinsicFunction(id), "linear").length === 0,
     );
 
-    expect(admitted).toStrictEqual(LINEAR_BACKEND_OP_INTRINSICS);
+    expect(admitted).toStrictEqual(LINEAR_NATIVE_INTRINSICS);
   });
 
   it("rejects every callable-backed Math intrinsic at the linear boundary", () => {
     const callableBacked = PURE_MATH_INTRINSIC_IDS.filter(
-      (id) => !LINEAR_BACKEND_OP_INTRINSICS.includes(id as (typeof LINEAR_BACKEND_OP_INTRINSICS)[number]),
+      (id) => !LINEAR_NATIVE_INTRINSICS.includes(id as (typeof LINEAR_NATIVE_INTRINSICS)[number]),
     );
 
     for (const id of callableBacked) {

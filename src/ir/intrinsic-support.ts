@@ -121,6 +121,9 @@ function providerAttachment(id: IrInstrIntrinsic["id"], provider: RuntimeProvide
   if (provider.implementation.kind === "backend-op") {
     return Object.freeze({ kind: "backend-op", opcode: provider.implementation.opcode });
   }
+  if (provider.implementation.kind === "backend-sequence") {
+    return Object.freeze({ kind: "backend-sequence", sequence: provider.implementation.sequence });
+  }
   return Object.freeze({
     kind: "callable",
     // Structural identity remains the semantic ID. The compatibility name is
@@ -132,6 +135,9 @@ function providerAttachment(id: IrInstrIntrinsic["id"], provider: RuntimeProvide
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
+  if (left.kind === "backend-sequence" && right.kind === "backend-sequence") {
+    return left.sequence === right.sequence;
+  }
   return (
     left.kind === "callable" &&
     right.kind === "callable" &&

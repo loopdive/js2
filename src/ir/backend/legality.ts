@@ -246,6 +246,7 @@ function linearInstrError(instr: IrInstr): string | null {
         case "math.abs":
         case "math.ceil":
         case "math.floor":
+        case "math.fround":
         case "math.sqrt":
         case "math.trunc":
           return null;

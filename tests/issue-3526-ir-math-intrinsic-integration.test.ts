@@ -17,7 +17,8 @@ import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js"
 
 const identities = createTestIrFunctionIdentityFactory("issue-3526-ir-math-intrinsic-integration");
 const F64 = irVal({ kind: "f64" });
-const BACKEND_INTRINSICS = new Set<IntrinsicId>(["math.abs", "math.sqrt", "math.floor", "math.ceil", "math.trunc"]);
+const BACKEND_OP_INTRINSICS = new Set<IntrinsicId>(["math.abs", "math.sqrt", "math.floor", "math.ceil", "math.trunc"]);
+const BACKEND_SEQUENCE_INTRINSICS = new Set<IntrinsicId>(["math.fround"]);
 
 const METHODS = PURE_MATH_INTRINSIC_IDS.map((id) => id.slice("math.".length));
 
@@ -71,7 +72,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
           + Math.asin(x) + Math.acos(x) + Math.atan(x) + Math.sin(x) + Math.cos(x) + Math.tan(x)
           + Math.asinh(x) + Math.acosh(x) + Math.atanh(x)
           + Math.sinh(x) + Math.cosh(x) + Math.tanh(x)
-          + Math.cbrt(x) + Math.round(x) + Math.sign(x)
+          + Math.cbrt(x) + Math.fround(x) + Math.round(x) + Math.sign(x)
           + Math.exp(x) + Math.expm1(x) + Math.log(x) + Math.log10(x) + Math.log1p(x) + Math.log2(x)
           + Math.pow(x, y) + Math.atan2(x, y);
       }
@@ -103,8 +104,10 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
 
     expect(prepared.manifest.intrinsicUses.map((use) => use.id).sort()).toEqual([...PURE_MATH_INTRINSIC_IDS].sort());
     for (const instr of instructions) {
-      if (BACKEND_INTRINSICS.has(instr.id)) {
+      if (BACKEND_OP_INTRINSICS.has(instr.id)) {
         expect(instr.provider).toMatchObject({ kind: "backend-op" });
+      } else if (BACKEND_SEQUENCE_INTRINSICS.has(instr.id)) {
+        expect(instr.provider).toEqual({ kind: "backend-sequence", sequence: "f64.fround" });
       } else {
         expect(instr.provider).toMatchObject({
           kind: "callable",
@@ -136,6 +139,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function cosh(): number { return Math.cosh(0.75); }
       export function tanh(): number { return Math.tanh(0.75); }
       export function cbrt(): number { return Math.cbrt(27); }
+      export function fround(): number { return Math.fround(1.337); }
       export function round(): number { return Math.round(-27.5); }
       export function sign(): number { return Math.sign(-27); }
       export function exp(): number { return Math.exp(1.25); }
@@ -176,6 +180,8 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
     for (const opcode of ["f64.abs", "f64.sqrt", "f64.floor", "f64.ceil", "f64.trunc"]) {
       expect(ir.wat).toContain(opcode);
     }
+    expect(ir.wat).toContain("f32.demote_f64");
+    expect(ir.wat).toContain("f64.promote_f32");
     for (const helper of [
       "asin",
       "acos",
