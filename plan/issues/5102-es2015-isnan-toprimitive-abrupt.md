@@ -160,3 +160,12 @@ there were **zero pass-to-non-pass transitions**. The earlier 9,580 label did
 not describe the standalone lane and is not used by this issue's acceptance
 evidence. This correction changes only this markdown handoff; the exact
 four-row and focused validation above is unchanged.
+
+### Mergeability refresh
+
+After the corrected head remained in GitHub's `mergeable: unknown` state,
+current `upstream/main` at `0ccc264fa183484edfa852af4084dd899f9b433f`
+was merged without rewriting history in
+`f18bf910e08b4b50a4a3741894855292ad93562b`. This is the final supported
+base refresh before publication; the focused issue suite and normal pre-push
+gates must be green on this integrated tree before PR #5109 is re-enqueued.
