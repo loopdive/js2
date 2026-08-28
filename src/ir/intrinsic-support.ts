@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irImportFuncRef, irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
-import { createIrAsyncPlan, type IrAsyncPlan, type PreparedIrAsyncRuntime } from "./async-plan.js";
+import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import type { AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
@@ -19,6 +19,7 @@ import {
 } from "./nodes.js";
 import {
   RuntimeManifestBuilder,
+  projectRuntimeBackendRequirements,
   type FrozenRuntimeManifest,
   type RuntimeManifestPolicy,
   type RuntimeProviderPlan,
@@ -280,7 +281,11 @@ export function prepareIrRuntimeManifest(input: {
   const attachAsyncRuntime = (fn: IrFunction): IrFunction => {
     const plan = asyncPlans.get(fn.unitId);
     if (!plan) return fn;
-    const selectedProviders = plan.runtimeIntents.map((intent) => builder.resolveProvider(intent));
+    const intents = new Set<string>(plan.runtimeIntents);
+    const selectedProviders = Object.freeze(manifest.providers.filter((provider) => intents.has(provider.feature)));
+    if (selectedProviders.length !== intents.size) {
+      throw new Error(`IR async runtime attachment for ${fn.name} is missing an exact provider`);
+    }
     const nativeProjection = selectedProviders.every((provider) => provider.implementation.kind === "native-managed");
     const hostProjection = selectedProviders.every(
       (provider) =>
@@ -304,10 +309,23 @@ export function prepareIrRuntimeManifest(input: {
         return body === state.body ? state : Object.freeze({ ...state, body });
       }),
     );
-    const runtime: PreparedIrAsyncRuntime = nativeProjection
-      ? Object.freeze({ kind: "standalone-native-wasmgc", adapters: Object.freeze([] as const), states })
-      : Object.freeze({
+    const backendRequirements = projectRuntimeBackendRequirements(selectedProviders);
+    const runtime = nativeProjection
+      ? createPreparedIrAsyncRuntime({
+          kind: "standalone-native-wasmgc",
+          plan,
+          manifest,
+          providers: selectedProviders,
+          backendRequirements,
+          adapters: Object.freeze([] as const),
+          states,
+        })
+      : createPreparedIrAsyncRuntime({
           kind: "host-wasmgc",
+          plan,
+          manifest,
+          providers: selectedProviders,
+          backendRequirements,
           adapters: Object.freeze(
             records.map((record) =>
               Object.freeze({
