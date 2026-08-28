@@ -177,8 +177,27 @@ export function tryEmitArrayProtoIteratorReadDrive(
       if (ts.isOmittedExpression(el) || !ts.isIdentifier(el.name)) continue; // elision: just advance
 
       const name = el.name.text;
-      const localIdx = fctx.localMap.get(name);
-      if (localIdx === undefined) continue;
+      let localIdx = fctx.localMap.get(name);
+      if (localIdx === undefined) {
+        // (#5144 cluster A) A for-of HEAD binding (`for (var [x,y,z] of …)`)
+        // at module scope lives in a module global, not a local — the drain
+        // silently skipped every such element, so the override's values were
+        // never bound. Materialize the local; the caller's
+        // `syncDestructuredLocalsToGlobals` writes it back.
+        const moduleGlobalIdx = ctx.moduleGlobals.get(name);
+        if (moduleGlobalIdx !== undefined) {
+          const globalType =
+            ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)]?.type ?? ({ kind: "externref" } as ValType);
+          localIdx = allocLocal(fctx, name, globalType);
+        } else {
+          // A `let`/`const` for-of head binding has no slot yet at drive time.
+          const declType = resolveBindingElementType(el, ctx.checker.getTypeAtLocation(el), (t) =>
+            resolveWasmType(ctx, t),
+          );
+          localIdx = allocLocal(fctx, name, declType);
+        }
+      }
+      console.error("DBG drain elem", name, localIdx, JSON.stringify(getLocalType(fctx, localIdx)));
       const localType = getLocalType(fctx, localIdx) ?? ({ kind: "externref" } as ValType);
 
       // value-present arm: coerce `value` externref → the binding's local type.
