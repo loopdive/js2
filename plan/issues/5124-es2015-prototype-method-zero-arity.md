@@ -1,7 +1,7 @@
 ---
 id: 5124
 title: "ES2015 Map and Set zero-argument prototype method length metadata"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -136,3 +136,48 @@ Work only in
 without force. Do not open the PR from the worker; root will review the final
 clean branch and open exactly one non-draft PR against `loopdive/js2:main` when
 it is mergeable.
+
+## Implementation Summary
+
+The shared null-prototyped `PROTO_METHOD_LENGTH` table now records the four
+omitted zero arities: `clear`, `entries`, `keys`, and `values`. This keeps
+direct and reflective/dynamic Map, Set, and Array prototype metadata on the
+same canonical carrier; no harness special case, method-body change, or
+property-read fold was added. `Set.prototype.keys` remains the intrinsic alias
+of `Set.prototype.values`, including its canonical function name.
+
+The regression suite adds mandatory host and standalone controls independent
+of corpus availability. It checks all seven owned Map/Set rows, three Array
+sibling rows, dynamic aliases, function and prototype descriptors, names,
+non-zero siblings, actual `clear()` calls, TypedArray iterator metadata, and
+the standalone zero-import boundary. The exact Test262 rows are existence
+guarded and each `runTest262File(..., 120_000)` wrapper has an outer
+180-second timeout.
+
+## Validation Evidence
+
+- Focused pinned run: `22/22` tests passed (`2` controls plus `20` exact
+  host/standalone rows), with
+  `JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`
+  and one worker (within the two-worker maximum).
+- Both mandatory controls passed; the standalone control compiled with zero
+  WebAssembly imports. All seven owned rows and all three Array sibling rows
+  passed in both lanes.
+- TypeScript 5 and TypeScript 7 typechecks, Biome lint, and Prettier checks
+  passed. LOC/function budgets, oracle/coercion ratchets, issue IDs and
+  integrity, conformance-number sync, verdict-oracle, spec-coverage, and
+  numeric-local parity also passed. Spec-coverage emitted only pre-existing
+  warnings for unrelated ready issues; no gated done-flip was missing a
+  probe/test reference.
+- The complete `.husky/pre-push` hook passed end-to-end with an empty ref
+  stream: typecheck/lint, format, ratchets, numeric-local parity, conformance
+  sync, and issue-integrity stages all passed. No remote mutation was made.
+
+## Handoff Evidence
+
+Only the three owned files are changed. No GitHub issue or PR was opened by
+this worker; root owns the final review and single non-draft PR handoff. The
+implementation commit is
+`9f928c9b5c3a6dd7a7ea4a3cc5ed49b5cef2d58a`; the worktree is clean. The fork
+ref equality check was not available in this sandbox because GitHub DNS was
+blocked, and the parent explicitly requested no push.
