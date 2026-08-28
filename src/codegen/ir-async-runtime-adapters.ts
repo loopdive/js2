@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
-  ALL_ASYNC_HOST_ADAPTERS,
+  ASYNC_RUNTIME_PROVIDERS,
+  assertCanonicalAsyncHostCapabilityRecord,
   type AsyncHostAdapter,
   type AsyncHostAdapterValueType,
   type AsyncHostCapabilityId,
 } from "../ir/async-runtime-providers.js";
+import type { IrAsyncRuntimeIntent } from "../ir/async-plan.js";
 import { sameIrCallableBinding, irImportFuncRef } from "../ir/callable-bindings.js";
 import type { IrFunction } from "../ir/nodes.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";
@@ -60,6 +62,23 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
   return undefined;
 }
 
+function expectedHostCapabilities(intents: readonly IrAsyncRuntimeIntent[]): ReadonlySet<AsyncHostCapabilityId> {
+  const capabilities = new Set<AsyncHostCapabilityId>();
+  for (const intent of intents) {
+    const providers = ASYNC_RUNTIME_PROVIDERS.filter(
+      (provider) =>
+        provider.feature === intent &&
+        provider.supportedTargets.includes("host") &&
+        provider.supportedBackends.includes("wasmgc"),
+    );
+    if (providers.length !== 1) {
+      throw new Error(`IR async runtime intent ${intent} has ${providers.length} exact host-WasmGC providers`);
+    }
+    for (const capability of providers[0]!.hostCapabilities) capabilities.add(capability);
+  }
+  return capabilities;
+}
+
 /**
  * Materialize the concrete host adapter projection selected after semantic
  * runtime-manifest freeze. This runs before prepared component / Program ABI
@@ -68,7 +87,6 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
  */
 export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
   const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
-  const catalogue = new Map(ALL_ASYNC_HOST_ADAPTERS.map((adapter) => [adapter.capability, adapter] as const));
   let nativeRuntimeRequested = false;
   let nativeUndefinedRequested = false;
 
@@ -78,6 +96,9 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
       throw new Error(`IR async runtime attachment for ${fn.name} has no valid async plan owner`);
     }
     if (fn.asyncRuntime.kind === "standalone-native-wasmgc") {
+      if (fn.asyncRuntime.adapters.length !== 0) {
+        throw new Error(`IR async function ${fn.name} attached host capability records to a native runtime`);
+      }
       if (
         !ctx.standalone ||
         ctx.wasi ||
@@ -91,14 +112,42 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
       nativeUndefinedRequested ||= fn.asyncPlan.runtimeIntents.includes("value.undefined");
       continue;
     }
+    const expectedCapabilities = expectedHostCapabilities(fn.asyncPlan.runtimeIntents);
+    if (fn.asyncRuntime.adapters.length !== expectedCapabilities.size) {
+      throw new Error(
+        `IR async function ${fn.name} has ${fn.asyncRuntime.adapters.length} frozen adapter records; expected ${expectedCapabilities.size}`,
+      );
+    }
+    const attachedCapabilities = new Set<AsyncHostCapabilityId>();
     for (const attached of fn.asyncRuntime.adapters) {
-      const adapter = catalogue.get(attached.capability);
-      if (!adapter) throw new Error(`IR async runtime attachment uses unknown capability ${attached.capability}`);
-      const expectedTarget = irImportFuncRef(adapter.module, adapter.field, adapter.field);
-      if (!sameIrCallableBinding(attached.target.binding, expectedTarget.binding)) {
+      assertCanonicalAsyncHostCapabilityRecord(attached.record);
+      if (attached.capability !== attached.record.capability) {
+        throw new Error(`IR async adapter ${attached.capability} carries record ${attached.record.capability}`);
+      }
+      if (!expectedCapabilities.has(attached.capability)) {
+        throw new Error(`IR async function ${fn.name} carries unrequested adapter ${attached.capability}`);
+      }
+      if (attachedCapabilities.has(attached.capability)) {
+        throw new Error(`IR async function ${fn.name} repeats adapter ${attached.capability}`);
+      }
+      attachedCapabilities.add(attached.capability);
+      const expectedTarget = irImportFuncRef(attached.record.module, attached.record.field, attached.record.field);
+      if (
+        !sameIrCallableBinding(attached.target.binding, expectedTarget.binding) ||
+        attached.target.name !== expectedTarget.name
+      ) {
         throw new Error(`IR async adapter ${attached.capability} does not match its frozen import projection`);
       }
-      requested.set(attached.capability, adapter);
+      const prior = requested.get(attached.capability);
+      if (prior && prior !== attached.record) {
+        throw new Error(`IR async adapter ${attached.capability} differs across prepared functions`);
+      }
+      requested.set(attached.capability, attached.record);
+    }
+    for (const capability of expectedCapabilities) {
+      if (!attachedCapabilities.has(capability)) {
+        throw new Error(`IR async function ${fn.name} is missing frozen adapter ${capability}`);
+      }
     }
   }
 
@@ -113,8 +162,10 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
     }
   }
 
-  for (const adapter of ALL_ASYNC_HOST_ADAPTERS) {
-    if (!requested.has(adapter.capability)) continue;
+  const selectedRecords = [...requested.values()].sort((left, right) =>
+    left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0,
+  );
+  for (const adapter of selectedRecords) {
     let imported = findExactImport(ctx, adapter);
     if (!imported) {
       const signature = expectedSignature(adapter);

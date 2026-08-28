@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-28
 priority: critical
 horizon: xl
 complexity: XL
@@ -474,6 +474,38 @@ fresh finite, non-negative one-minute load sample strictly below
 audit of the exact signed head before push, open the implementation PR ready
 for review, and keep production R6 routing blocked until its upstream
 transactions and typed permission/mode contract are separately approved.
+
+#### A1 implementation evidence — 2026-08-28
+
+The bounded A1 checkpoint is implemented without opening production R6
+routing. `async-runtime-providers.ts` now owns one exact, deeply frozen
+seven-record catalog. Manifest freeze validates that complete catalog, resolves
+each selected provider capability ID once, and publishes the corresponding
+canonical record identities beside the compatibility ID projection. Prepared
+host attachments retain those exact records, and codegen authenticates their
+identity, capability, and symbolic binding before any type/import allocation.
+ABI materialization reads only the attached records; the semantic provider
+graph supplies only the expected capability-ID census, including a focused
+control proving that a valid two-capability plan is not widened to all six
+imports.
+
+The three owned suites pass 26 focused tests covering reversed provider,
+feature, catalog, function, and attachment traversal; full and partial provider
+closure; the optional seventh record; exact record/target joins; Program-ABI
+dependencies; deep freeze; and malformed, missing, duplicated, cloned,
+substituted, or cross-wired catalogs and attachments. TypeScript 7 and 5,
+Prettier, IR layering, IR/codegen fallback, IR dialect, and oracle ratchets pass.
+The unchanged #4106 and #4167 affected controls each retain one
+standalone-native `WebAssembly.validate` failure that reproduces identically on
+clean `fb4c01e6ad4f00c116897d7686d5c96c31426465`; their other 13 assertions pass.
+That preserved baseline is not A1 acceptance evidence, was not weakened, and
+A1 makes no standalone-native runtime acceptance claim.
+
+The checkpoint changes no provider choice, public compile result, semantic
+async plan, concrete import spelling/signature/order, lowering, or Wasm policy.
+The issue remains `blocked`: public import-intent projection, provider
+transactions, lazy-registration deletion, and typed permission/mode authority
+still require their separately approved upstream checkpoints.
 
 ### Later measured family slices
 

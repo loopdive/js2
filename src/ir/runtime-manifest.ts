@@ -16,11 +16,15 @@ import {
   type IrIntrinsicBackendSequence,
 } from "./nodes.js";
 import {
+  ASYNC_HOST_CAPABILITY_RECORDS,
   ASYNC_HOST_CAPABILITY_IDS,
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
   ASYNC_RUNTIME_PROVIDERS,
   ASYNC_RUNTIME_PROVIDER_IDS,
+  canonicalizeAsyncHostCapabilityCatalog,
+  resolveAsyncHostCapabilityRecord,
+  type AsyncHostAdapter,
   type AsyncHostCapabilityId,
   type AsyncRuntimeFeature,
   type AsyncRuntimeProviderId,
@@ -168,6 +172,8 @@ export interface FrozenRuntimeManifest {
   readonly providers: readonly RuntimeProviderDefinition[];
   readonly providerComponents: readonly RuntimeProviderComponent[];
   readonly hostCapabilities: readonly HostCapabilityId[];
+  /** Exact selected ABI records, in the same canonical capability-ID order. */
+  readonly hostCapabilityRecords: readonly AsyncHostAdapter[];
 }
 
 export type RuntimeManifestInvariantCode =
@@ -178,6 +184,7 @@ export type RuntimeManifestInvariantCode =
   | "unknown-runtime-feature"
   | "unknown-runtime-provider"
   | "unknown-host-capability"
+  | "invalid-host-capability-catalog"
   | "duplicate-runtime-provider"
   | "duplicate-cycle-declaration"
   | "invalid-cycle-declaration"
@@ -655,6 +662,8 @@ function buildProviderComponents(
 export interface RuntimeManifestBuilderOptions {
   /** Test/integration seam; omission uses the exhaustive production catalogue. */
   readonly providers?: readonly RuntimeProviderDefinition[];
+  /** Test-only traversal/mutation seam; production uses the one closed async catalog. */
+  readonly hostCapabilityRecords?: readonly AsyncHostAdapter[];
 }
 
 type BuilderState = "open" | "building" | "frozen" | "failed";
@@ -664,6 +673,7 @@ export class RuntimeManifestBuilder {
   readonly #uses: IntrinsicUse[] = [];
   readonly #requestedFeatures = new Set<RuntimeFeature>();
   readonly #providers: RuntimeProviderDefinition[];
+  readonly #hostCapabilityRecords: readonly AsyncHostAdapter[];
   readonly #addedDependencies = new Map<RuntimeFeature, Set<RuntimeFeature>>();
   readonly #declaredCycles = new Map<string, readonly RuntimeFeature[]>();
   readonly #plannedIntrinsicIds = new Set<IntrinsicId>();
@@ -682,6 +692,7 @@ export class RuntimeManifestBuilder {
     }
     this.#policy = Object.freeze({ ...policy });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
+    this.#hostCapabilityRecords = options.hostCapabilityRecords ?? ASYNC_HOST_CAPABILITY_RECORDS;
   }
 
   addIntrinsicUse(use: IntrinsicUse, effects: IntrinsicEffectEvidence): void {
@@ -855,6 +866,18 @@ export class RuntimeManifestBuilder {
       for (const capability of provider.hostCapabilities) hostCapabilityIds.add(capability);
     }
     const hostCapabilities = Object.freeze([...hostCapabilityIds].sort(compareStrings));
+    let capabilityCatalog: readonly AsyncHostAdapter[];
+    try {
+      capabilityCatalog = canonicalizeAsyncHostCapabilityCatalog(this.#hostCapabilityRecords);
+    } catch (error) {
+      throw new RuntimeManifestInvariantError(
+        "invalid-host-capability-catalog",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const hostCapabilityRecords = Object.freeze(
+      hostCapabilities.map((capability) => resolveAsyncHostCapabilityRecord(capabilityCatalog, capability)),
+    );
 
     for (const use of intrinsicUses) this.#plannedIntrinsicIds.add(use.id);
     for (const value of providers) this.#plannedProviderIds.add(value.id);
@@ -867,6 +890,7 @@ export class RuntimeManifestBuilder {
       providers,
       providerComponents,
       hostCapabilities,
+      hostCapabilityRecords,
     });
   }
 

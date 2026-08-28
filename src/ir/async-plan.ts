@@ -17,6 +17,7 @@
 import {
   ASYNC_RUNTIME_FEATURES,
   isAsyncRuntimeFeature,
+  type AsyncHostAdapter,
   type AsyncHostCapabilityId,
   type AsyncRuntimeFeature,
 } from "./async-runtime-providers.js";
@@ -189,6 +190,8 @@ export interface IrAsyncPlan {
 export interface PreparedIrAsyncHostAdapter {
   readonly capability: AsyncHostCapabilityId;
   readonly target: IrFuncRef;
+  /** Exact canonical capability record selected by the frozen manifest. */
+  readonly record: AsyncHostAdapter;
 }
 
 interface PreparedIrAsyncRuntimeBase {
