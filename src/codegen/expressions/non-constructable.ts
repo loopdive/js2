@@ -25,6 +25,30 @@ export function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier):
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/**
+ * (#5158) Ambient global FUNCTIONS that the spec gives no `[[Construct]]`.
+ * `new escape('')` must throw a TypeError, and — the part that used to be
+ * missed — `Reflect.construct(fn, [], escape)` must throw too, because
+ * test262's `isConstructor` helper probes exactly that. Their declarations live
+ * in the TypeScript lib `.d.ts` as ordinary `declare function`s, which the
+ * "statically constructible" analysis otherwise reads as an ordinary function.
+ * A user shadow (`function escape() {}`) IS constructable, so every consumer
+ * pairs this set with `resolvesToAmbientGlobal`.
+ */
+export const GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES: ReadonlySet<string> = new Set([
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+  "escape",
+  "unescape",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "eval",
+]);
+
 /** Ambient-global proof with the source spelling checked at the same boundary. */
 export function resolvesToNamedAmbientGlobal(ctx: CodegenContext, expr: ts.Expression, name: string): boolean {
   return ts.isIdentifier(expr) && expr.text === name && resolvesToAmbientGlobal(ctx, expr);

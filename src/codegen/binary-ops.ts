@@ -252,6 +252,28 @@ const SYMBOL_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
 ]);
 
 /**
+ * (#5158) Binary operators whose §13.15.2 runtime semantics are
+ * "evaluate lhs, evaluate rhs, ToNumeric(lhs), ToNumeric(rhs)". When either
+ * operand is an anonymous object type the coercion must be deferred until both
+ * operand expressions have run; otherwise the numeric hint calls `valueOf` on
+ * the left while the right expression has not been evaluated yet. `+` is
+ * excluded — its object arm is ToPrimitive with the string-concat fallback.
+ */
+const DEFERRED_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
+
+/**
  * Operators eligible for chain flattening — arithmetic and bitwise ops that
  * take two numeric operands and produce a numeric result of the same type.
  * We exclude ** (exponentiation) because it calls Math_pow and comparison
@@ -945,8 +967,12 @@ export function compileBinaryExpression(
   // Anonymous object types cover object literals and inferred object bindings;
   // named/class/wrapper and BigInt-containing objects remain on their existing
   // dispatches so this narrow ordering repair cannot change those semantics.
+  // (#5158) The same ordering defect applies to every ToNumeric binary
+  // operator, not just `**` — `obj - f()` ran `obj.valueOf()` before `f()`.
+  // `+` is deliberately absent: its object arm is ToPrimitive/string-concat,
+  // owned by the `admitsObjectAdd` dispatch below.
   if (
-    op === ts.SyntaxKind.AsteriskAsteriskToken &&
+    DEFERRED_TONUMERIC_OPS.has(op) &&
     (isDeferredExponentiationObject(expr.left, leftTsType) || isDeferredExponentiationObject(expr.right, rightTsType))
   ) {
     const leftReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.left, leftTsType);

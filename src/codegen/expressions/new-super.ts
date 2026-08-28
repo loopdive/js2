@@ -17,6 +17,7 @@ import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js"
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnctor-ctor-arguments.js";
 import {
+  GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES,
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
   resolvesToNamedAmbientGlobal,
@@ -586,17 +587,7 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
  * `eval` is included because it is an ordinary built-in function without
  * [[Construct]], just like the other global callables in this set.
  */
-const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
-  "decodeURI",
-  "decodeURIComponent",
-  "encodeURI",
-  "encodeURIComponent",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "eval",
-]);
+const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES;
 
 /**
  * (#1519 sub-issue B) The built-in non-constructor NAMESPACES. Hoisted to module

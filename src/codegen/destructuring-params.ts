@@ -35,6 +35,7 @@ import { emitLocalTdzInit } from "./statements/tdz.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
 import {
+  canonicalUndefinedExternInstrs,
   emitIsUndefinedSingletonExternAt,
   ensureAnyFromExternHelper,
   ensureAnyHelpers,
@@ -407,6 +408,65 @@ function emitBoundsCheckedArrayGetUndef(
     then: inBoundsThen,
     else: oobElse,
   });
+}
+
+/**
+ * (#5158) Bounds-checked read of a PRIMITIVE-element array that answers a real
+ * `undefined` past the end.
+ *
+ * `emitBoundsCheckedArrayGetUndef` early-outs to `emitBoundsCheckedArrayGet`
+ * whenever the backing element is not an externref, and that emitter's
+ * out-of-bounds arm produces the element type's zero — so `let [_, x] = []`
+ * bound `x === 0` where §13.3.3.6 step 5 ("if iteratorRecord.[[done]] is true,
+ * let v be undefined") requires `undefined`. Here the in-bounds arm boxes the
+ * element to externref and the OOB arm yields the `undefined` producer, so the
+ * whole read is externref-typed. The caller must widen the binding local to
+ * match (see `undefWidenedLocals`).
+ *
+ * Returns false — leaving the stack untouched — when neither an `undefined`
+ * producer nor a boxing sequence is available, so the caller keeps the legacy
+ * narrow read.
+ *
+ * Stack: [arrayref, i32 index] → [externref element or undefined]
+ */
+function emitBoundsCheckedArrayGetUndefWidened(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elementType: ValType,
+): boolean {
+  if (!ctx.nativeStrings && !ctx.standalone) ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  const oobElse: Instr[] = canonicalUndefinedExternInstrs(ctx);
+  const boxInstrs = boxToExternref(ctx, elementType.kind, elementType, fctx);
+  // A no-op box would mean the element is already externref — that shape is the
+  // existing emitter's job, not this one.
+  if (boxInstrs.length === 0) return false;
+  flushLateImportShifts(ctx, fctx);
+
+  const idxLocal = allocLocal(fctx, `__undefw_idx_${fctx.locals.length}`, { kind: "i32" });
+  const arrLocal = allocLocal(fctx, `__undefw_arr_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: idxLocal });
+  fctx.body.push({ op: "local.set", index: arrLocal });
+  fctx.body.push({ op: "local.get", index: idxLocal });
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "array.len" });
+  fctx.body.push({ op: "i32.lt_u" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: arrLocal },
+      { op: "ref.as_non_null" },
+      { op: "local.get", index: idxLocal },
+      { op: "array.get", typeIdx: arrTypeIdx },
+      ...boxInstrs,
+    ],
+    else: oobElse,
+  });
+  return true;
 }
 
 /**
@@ -2165,6 +2225,23 @@ export function destructureParamArray(
         if (!fctx.localMap.has(localName)) {
           allocLocal(fctx, localName, fieldType);
         }
+        // (#5158) A decl binding with NO default whose tuple FIELD is externref
+        // must keep the externref representation: an absent element rides that
+        // field as the `undefined` producer, and coercing it into an f64/i32
+        // local unboxes it to 0 — `let [_, x] = []` bound `x === 0` where
+        // §13.3.3.6 step 5 requires `undefined`. Same re-typing shape as #1553d
+        // on the vec lane; param/catch mode keeps its fixed signature type. The
+        // re-alloc must run BEFORE `localIdx` is read: `allocLocal` mints a NEW
+        // slot and remaps the name, so an index captured first would keep writing
+        // the stale narrow slot while every later read saw the (never-written)
+        // widened one.
+        if (isDecl && ts.isBindingElement(element) && !element.initializer && fieldType.kind === "externref") {
+          const existing = getLocalType(fctx, fctx.localMap.get(localName)!);
+          if (existing && existing.kind !== "externref") {
+            allocLocal(fctx, localName, { kind: "externref" });
+            (fctx.undefWidenedLocals ??= new Set()).add(localName);
+          }
+        }
         const localIdx = fctx.localMap.get(localName)!;
         const localType = getLocalType(fctx, localIdx);
         // (#2574) When the tuple FIELD is f64 (it carries the sNaN "undefined"
@@ -2523,11 +2600,35 @@ export function destructureParamArray(
         allocLocal(fctx, localName, { kind: "externref" });
       }
     }
-    const localIdx = fctx.localMap.get(localName)!;
+    // (#5158) A declaration binding with NO initializer and a primitive element
+    // carrier must still see `undefined` past the source's end (§13.3.3.6 step
+    // 5) — the narrow read below answers the carrier's zero, so `let [_, x] = []`
+    // bound `x === 0`. Widen the read (and the local) to externref for exactly
+    // that shape. Bindings WITH an initializer already run through the externref
+    // default-check arm, and param/catch mode keeps its fixed signature type.
+    const widenUndef =
+      isDecl &&
+      !element.initializer &&
+      elemType.kind !== "externref" &&
+      elemType.kind !== "ref_extern" &&
+      elemType.kind !== "ref" &&
+      elemType.kind !== "ref_null";
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // get data
     fctx.body.push({ op: "i32.const", value: i });
-    emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType); // #1016a
+    let readType = elemType;
+    if (widenUndef && emitBoundsCheckedArrayGetUndefWidened(ctx, fctx, arrTypeIdx, elemType)) {
+      readType = { kind: "externref" };
+      // Re-alloc BEFORE reading `localIdx` — `allocLocal` mints a fresh slot and
+      // remaps the name, so an index captured earlier would write the stale
+      // narrow slot that nothing reads afterwards.
+      const existing = getLocalType(fctx, fctx.localMap.get(localName)!);
+      if (existing && existing.kind !== "externref") allocLocal(fctx, localName, { kind: "externref" });
+      (fctx.undefWidenedLocals ??= new Set()).add(localName);
+    } else {
+      emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType); // #1016a
+    }
+    const localIdx = fctx.localMap.get(localName)!;
     // Handle default initializer: [x = 23] — use default when element is null/undefined
     if (element.initializer) {
       const dfltTmpLocal = allocLocal(fctx, `__dparam_dflt_${fctx.locals.length}`, elemType);
@@ -2537,9 +2638,9 @@ export function destructureParamArray(
     }
     // Coerce array element type to local's declared type if they differ (#658)
     const vecLocalType = getLocalType(fctx, localIdx);
-    if (vecLocalType && !valTypesMatch(elemType, vecLocalType)) {
-      if (!coerceArrayBindingExternrefToAnyValue(ctx, fctx, elemType, vecLocalType)) {
-        coerceType(ctx, fctx, elemType, vecLocalType);
+    if (vecLocalType && !valTypesMatch(readType, vecLocalType)) {
+      if (!coerceArrayBindingExternrefToAnyValue(ctx, fctx, readType, vecLocalType)) {
+        coerceType(ctx, fctx, readType, vecLocalType);
       }
     }
     fctx.body.push({ op: "local.set", index: localIdx });
