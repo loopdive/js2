@@ -32,6 +32,7 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.log1p",
   "math.log2",
   "math.pow",
+  "math.round",
   "math.sign",
   "math.sin",
   "math.sinh",
@@ -44,7 +45,7 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
 export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the twenty-seven intrinsic entry points.
+ * Provider requirements reachable from the twenty-eight intrinsic entry points.
  * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
@@ -69,6 +70,7 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.log2",
   "math.pow",
   "math.reduce-trig",
+  "math.round",
   "math.sign",
   "math.sin",
   "math.sinh",
@@ -173,6 +175,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.log1p": definition("math.log1p", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.log2": definition("math.log2", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.pow": definition("math.pow", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.round": definition("math.round", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sign": definition("math.sign", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sin": definition("math.sin", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sinh": definition("math.sinh", F64_UNARY_INTRINSIC_SIGNATURE),

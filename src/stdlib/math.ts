@@ -75,6 +75,25 @@ export function Math_cbrt(x: number): number {
 `;
 
 /**
+ * Math.round — floor/fraction/ceil implements ties toward +Infinity without
+ * perturbing large integral f64 values. The explicit zero arm preserves -0
+ * for x === -0 and every x in [-0.5, 0). NaN follows the same floor path as
+ * the direct emitter so its payload behavior remains identical.
+ */
+const ROUND_SOURCE = `
+export function Math_round(x: number): number {
+  let floorValue: number = Math.floor(x);
+  let fraction: number = x - floorValue;
+  let result: number = fraction >= 0.5 ? Math.ceil(x) : floorValue;
+  if (result === 0) {
+    if (x === 0) return x;
+    return x < 0 ? -0 : 0;
+  }
+  return result;
+}
+`;
+
+/**
  * Math.sign — preserve signed zero, canonicalize NaN like the direct emitter,
  * and otherwise return the exact sign unit. The argument is evaluated once by
  * the ordinary call boundary.
@@ -638,6 +657,7 @@ export const POW_BUILTIN: StdlibMathBuiltin = {
  */
 export const SELF_HOSTED_MATH: ReadonlyMap<string, StdlibMathBuiltin> = new Map([
   ["cbrt", { name: "Math_cbrt", callees: [], source: CBRT_SOURCE }],
+  ["round", { name: "Math_round", callees: [], source: ROUND_SOURCE }],
   ["sign", { name: "Math_sign", callees: [], source: SIGN_SOURCE }],
   ["sinh", { name: "Math_sinh", callees: ["Math_exp"], source: SINH_SOURCE }],
   ["cosh", { name: "Math_cosh", callees: ["Math_exp"], source: COSH_SOURCE }],

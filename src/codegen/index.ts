@@ -10246,6 +10246,7 @@ export const MATH_HOST_METHODS_1ARG = new Set([
   "asinh",
   "atanh",
   "cbrt",
+  "round",
   "sign",
   "expm1",
   "log1p",

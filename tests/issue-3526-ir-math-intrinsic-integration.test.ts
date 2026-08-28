@@ -71,7 +71,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
           + Math.asin(x) + Math.acos(x) + Math.atan(x) + Math.sin(x) + Math.cos(x) + Math.tan(x)
           + Math.asinh(x) + Math.acosh(x) + Math.atanh(x)
           + Math.sinh(x) + Math.cosh(x) + Math.tanh(x)
-          + Math.cbrt(x) + Math.sign(x)
+          + Math.cbrt(x) + Math.round(x) + Math.sign(x)
           + Math.exp(x) + Math.expm1(x) + Math.log(x) + Math.log10(x) + Math.log1p(x) + Math.log2(x)
           + Math.pow(x, y) + Math.atan2(x, y);
       }
@@ -136,6 +136,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function cosh(): number { return Math.cosh(0.75); }
       export function tanh(): number { return Math.tanh(0.75); }
       export function cbrt(): number { return Math.cbrt(27); }
+      export function round(): number { return Math.round(-27.5); }
       export function sign(): number { return Math.sign(-27); }
       export function exp(): number { return Math.exp(1.25); }
       export function expm1(): number { return Math.expm1(1.25); }
@@ -189,6 +190,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       "cosh",
       "tanh",
       "cbrt",
+      "round",
       "sign",
       "exp",
       "expm1",
