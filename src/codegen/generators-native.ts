@@ -4426,28 +4426,27 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         // instead of re-entering the throwing state. Keep this wrapper out of
         // the JS-host lane: its foreign-exception recovery and legacy lowering
         // have their own established path.
-        // (#5139) The wrapper spills the trampoline's result into `resultLocal`
-        // and wraps an EMPTY-typed try region, instead of a `{kind:"val"}` one
-        // that hands its result across the try_table boundary. A valued
-        // `try_table` whose normal exit crosses the synthesized handler/join
-        // blocks (`buildStandardTryTable`) traps at runtime on the fallthrough
-        // path; every other tagged-try call site in the compiler is
-        // `{kind:"empty"}`, and #5060's wrapper was the sole valued one — which
-        // is why it broke every standalone generator resume (`unreachable` in
-        // `__gen_resume_*`) while the JS-host lane, which keeps the legacy
-        // `try`, stayed green.
+        // (#5141) The wrapper must NOT be a result-typed `try_table`: V8 12.4
+        // (Node 22, the floor in `package.json` engines) executes
+        // `try_table (ref null $result)` as `unreachable`, so every first
+        // resume trapped. Every other standalone EH site emits the empty
+        // blocktype (`promise-executor.ts`, `expressions/calls.ts`), so match
+        // them: keep the trampoline's own value-producing shape inside a plain
+        // `block (result R)`, spill it to `resultLocal`, and read it back after
+        // the (empty-typed) try scaffold. Branch depths inside the trampoline
+        // are unchanged relative to that inner block, and `bumpBranches` still
+        // retargets the ones escaping it.
+        const tryBody: Instr[] = [
+          { op: "block", blockType: { kind: "val", type: resultType }, body: trampoline },
+          { op: "local.set", index: resultLocal },
+        ];
         resumeFctx.body.push(
-          buildTargetTaggedTry(
-            ctx,
-            { kind: "empty" },
-            [...trampoline, { op: "local.set", index: resultLocal }],
-            [
-              {
-                tagIdx: ensureExnTag(ctx),
-                body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
-              },
-            ],
-          ),
+          buildTargetTaggedTry(ctx, { kind: "empty" }, tryBody, [
+            {
+              tagIdx: ensureExnTag(ctx),
+              body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
+            },
+          ]),
         );
         resumeFctx.body.push({ op: "local.get", index: resultLocal });
       } else {
