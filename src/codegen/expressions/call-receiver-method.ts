@@ -3310,8 +3310,26 @@ export function compileReceiverMethodCall(
         // coerces to "null" → e.g. `"abc".padStart(6)` returned "nulabc"
         // instead of "   abc". Pass JS `undefined` so the host applies the
         // spec default. (Same null-vs-undefined distinction as endsWith.)
+        // #5155 — `indexOf` joins this list. §22.1.3.9 step 3 runs
+        // `ToString(searchString)`, so `"aundefinedb".indexOf()` searches for
+        // the STRING "undefined" (answer 1); padding the absent search slot
+        // with `ref.null.extern` made the host search for "null" → -1.
+        // `lastIndexOf` was already listed, which is exactly why it answered 1
+        // on the same probe while `indexOf` did not. (#3763 fixed the
+        // *explicit* undefined-VALUED spelling via
+        // `tryCompileIndexOfHoistedUndefinedSearch` above, which only fires
+        // when `args[0]` exists — a zero-argument call never reached it.)
+        // Also covers indexOf's boxed fromIndex slot, which is spec-equivalent:
+        // ToIntegerOrInfinity of `null` and of `undefined` are both +0.
+        // Deliberately NOT widened to `includes`/`startsWith`/`search`, which
+        // have the identical defect from this list — see the follow-up section
+        // in `plan/issues/5155-string-indexof-no-argument-gc.md`.
         const padsUndefined =
-          method === "endsWith" || method === "lastIndexOf" || method === "padStart" || method === "padEnd";
+          method === "endsWith" ||
+          method === "indexOf" ||
+          method === "lastIndexOf" ||
+          method === "padStart" ||
+          method === "padEnd";
         let undefIdx: number | undefined;
         if (padsUndefined) {
           undefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
