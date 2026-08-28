@@ -4935,6 +4935,41 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
       if (boxSymbolIdx === undefined) return [];
       const applyClosureIdx = reserveApplyClosure(ctx);
+      // (#5156) §7.1.1 step 4 is `GetMethod(input, @@toPrimitive)` — an ordinary
+      // [[Get]], so an ACCESSOR entry must have its getter INVOKED (and its
+      // abrupt completion propagated: `isNaN/toprimitive-get-abrupt.js`). Load
+      // the method from whichever entry shape is present, then share one
+      // invocation tail.
+      const loadDataMethod: Instr[] = [
+        { op: "local.get", index: L_ENTRY },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+        { op: "extern.convert_any" },
+        ...s1ToPrimNorm.map((i) => ({ ...i })),
+        { op: "local.set", index: L_METHOD },
+      ];
+      const loadAccessorMethod: Instr[] = [
+        // getter = extern.convert_any(e.$get); a null getter is §6.2.5.5's
+        // `undefined`, which GetMethod treats as absent.
+        { op: "local.get", index: L_ENTRY },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
+        { op: "extern.convert_any" },
+        { op: "local.tee", index: L_METHOD },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: L_METHOD },
+            { op: "call", funcIdx: callMethod0Idx },
+            ...s1ToPrimNorm.map((i) => ({ ...i })),
+            { op: "local.set", index: L_METHOD },
+          ],
+        },
+      ];
       const ownDataMethod: Instr[] = [
         { op: "local.get", index: L_ENTRY },
         { op: "ref.as_non_null" },
@@ -4945,66 +4980,65 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: L_ENTRY },
-            { op: "ref.as_non_null" },
-            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-            { op: "extern.convert_any" },
-            ...s1ToPrimNorm.map((i) => ({ ...i })),
-            { op: "local.set", index: L_METHOD },
-            { op: "local.get", index: L_METHOD },
-            { op: "ref.is_null" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [],
-              else: [
-                { op: "local.get", index: L_METHOD },
-                { op: "call", funcIdx: typeofFunctionIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "call", funcIdx: objVecNewIdx },
-                    { op: "local.set", index: L_ARGS },
-                    { op: "local.get", index: L_ARGS },
-                    { op: "local.get", index: 1 },
-                    { op: "call", funcIdx: objVecPushIdx },
-                    { op: "local.get", index: L_METHOD },
-                    { op: "local.get", index: 0 },
-                    { op: "local.get", index: L_ARGS },
-                    { op: "call", funcIdx: applyClosureIdx },
-                    { op: "local.set", index: L_RESULT },
-                    ...returnIfPrimitive(L_RESULT, false),
-                    // ToNumber(Symbol) is abrupt. Keep the Symbol result for
-                    // string-hint users such as ToPropertyKey; number/default
-                    // consumers must throw before __unbox_number can degrade
-                    // the carrier to NaN.
-                    { op: "local.get", index: L_RESULT },
-                    { op: "any.convert_extern" },
-                    { op: "ref.test", typeIdx: symbolTypeIdx },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: [
-                        ...isStringHint,
-                        {
-                          op: "if",
-                          blockType: { kind: "empty" },
-                          then: [{ op: "local.get", index: L_RESULT }, { op: "return" }],
-                          else: [...throwTypeError()],
-                        },
-                      ],
-                      else: [...throwTypeError()],
-                    },
-                    ...throwTypeError(),
-                  ],
-                  else: [...throwTypeError()],
-                },
-              ],
-            },
-          ],
+          then: loadDataMethod,
+          else: loadAccessorMethod,
         },
+        ...([
+          {
+            op: "local.get",
+            index: L_METHOD,
+          },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [],
+            else: [
+              { op: "local.get", index: L_METHOD },
+              { op: "call", funcIdx: typeofFunctionIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "call", funcIdx: objVecNewIdx },
+                  { op: "local.set", index: L_ARGS },
+                  { op: "local.get", index: L_ARGS },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: objVecPushIdx },
+                  { op: "local.get", index: L_METHOD },
+                  { op: "local.get", index: 0 },
+                  { op: "local.get", index: L_ARGS },
+                  { op: "call", funcIdx: applyClosureIdx },
+                  { op: "local.set", index: L_RESULT },
+                  ...returnIfPrimitive(L_RESULT, false),
+                  // ToNumber(Symbol) is abrupt. Keep the Symbol result for
+                  // string-hint users such as ToPropertyKey; number/default
+                  // consumers must throw before __unbox_number can degrade
+                  // the carrier to NaN.
+                  { op: "local.get", index: L_RESULT },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: symbolTypeIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      ...isStringHint,
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [{ op: "local.get", index: L_RESULT }, { op: "return" }],
+                        else: [...throwTypeError()],
+                      },
+                    ],
+                    else: [...throwTypeError()],
+                  },
+                  ...throwTypeError(),
+                ],
+                else: [...throwTypeError()],
+              },
+            ],
+          },
+        ] satisfies Instr[]),
       ];
       return [
         { op: "local.get", index: L_ANY },

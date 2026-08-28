@@ -802,6 +802,15 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
     if (ctorType !== null) return ctorType;
     return undefined;
   }
+  // (#5156) Own string-valued DATA property of the prototype (Error family
+  // `name`/`message`). These are absent from `memberCsv` on purpose, so the
+  // read used to fall to the dynamic path, whose `$Object` cast of the
+  // `$NativeProto` struct trapped with "illegal cast in __module_init".
+  const dataProp = getNativeProtoBuiltinGlue(ctx, brand)?.dataProps?.find(([key]) => key === member);
+  if (dataProp) {
+    const literal = compileStringLiteral(ctx, fctx, dataProp[1]);
+    if (literal) return literal;
+  }
   // (#2984 Phase 2) Own-CSV gate + Object.prototype inheritance + un-wired-
   // member refusal fallback — policy lives in native-proto-value-read.ts.
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
@@ -865,22 +874,19 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   if (!ctx.standalone) return undefined;
 
   const key = skipTransparentExpressions(expr.argumentExpression);
-  if (
-    !ts.isPropertyAccessExpression(key) ||
-    !ts.isIdentifier(key.expression) ||
-    key.expression.text !== "Symbol" ||
-    key.name.text !== "iterator" ||
-    getWellKnownSymbolId(key.name.text) === undefined
-  ) {
+  if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
     return undefined;
   }
+  const symbolId = getWellKnownSymbolId(key.name.text);
+  if (symbolId === undefined) return undefined;
 
   const receiver = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(receiver) || receiver.name.text !== "prototype") return undefined;
   if (!ts.isIdentifier(receiver.expression)) return undefined;
 
   const builtinName = receiver.expression.text;
-  if (builtinName !== "Map" && builtinName !== "Set") return undefined;
+  const isIteratorAlias = key.name.text === "iterator" && (builtinName === "Map" || builtinName === "Set");
+  if (!isIteratorAlias && !BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
   if (
     fctx.localMap.has(builtinName) ||
     (fctx.boxedCaptures?.has(builtinName) ?? false) ||
@@ -892,7 +898,18 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const member = builtinName === "Set" ? "values" : "entries";
+  // (#5156) The general case: a well-known-symbol member advertised in the
+  // brand's glue CSV under its `@@<id>` sentinel (e.g. `Date.prototype[
+  // Symbol.toPrimitive]` → `@@3`). Map/Set's `@@iterator` stays an IDENTITY
+  // ALIAS of `entries`/`values`, so it keeps its own resolution.
+  const member = isIteratorAlias
+    ? builtinName === "Set"
+      ? "values"
+      : "entries"
+    : getNativeProtoBuiltinGlue(ctx, brand)?.memberCsv.split(",").includes(`@@${symbolId}`)
+      ? `@@${symbolId}`
+      : undefined;
+  if (member === undefined) return undefined;
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved || resolved.kind !== "method") return undefined;
 
