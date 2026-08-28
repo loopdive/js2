@@ -58,9 +58,11 @@ normal result. The neighbouring getter-abrupt row
 authoritative host row also fails; it remains a diagnostic control, not an
 acceptance row.
 
-For context only, the same authoritative ES2015 edition contains 11,704 rows;
-the full edition snapshot is 9,580 standalone passes and 9,606 host passes.
-No full-corpus census is part of this issue.
+For context only, the authoritative ES2015 edition contains 11,704 rows. The
+source summary at `857b343f` used for the original aggregate note is a
+non-standalone run, so its edition count is not standalone evidence; the
+previously recorded 9,580 figure was mislabeled and has been removed. No
+full-corpus census is part of this bounded issue.
 
 ## Implementation plan
 
@@ -143,5 +145,18 @@ temporary root `/private/tmp/js2-5102-no-corpus.7uw5uw`, it ran **2 passed /
 only the eight Test262-dependent cases skipped. The direct final exact run on
 the synchronized tree was **4/4 host and 4/4 standalone pass**.
 
-The final evidence commit and upstream synchronization commit will be pushed
-before opening the single compliant PR; no GitHub issue is created or linked.
+Implementation is published as upstream PR
+`https://github.com/loopdive/js2/pull/5109` from the `ttraenkler/js2` fork.
+Only an exact pushed head with fresh green CI may enter the merge queue. No
+GitHub issue is created or linked; this file is the canonical task record.
+
+### Aggregate-evidence correction
+
+A post-PR audit on 2026-08-28 compared the authoritative standalone
+`current.before` and `current` per-file snapshots promoted for main
+`18785a67c6682b9fc41d3a220a6b88f3f42dc59e`. ES2015 improved from
+**8,676/11,704** to **8,681/11,704**: five non-pass rows became passes and
+there were **zero pass-to-non-pass transitions**. The earlier 9,580 label did
+not describe the standalone lane and is not used by this issue's acceptance
+evidence. This correction changes only this markdown handoff; the exact
+four-row and focused validation above is unchanged.
