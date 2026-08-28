@@ -14,9 +14,15 @@ area: codegen
 language_feature: boolean-wrapper
 es_edition: 2015
 goal: spec-completeness
+loc-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 assignee: "ttraenkler/es2015-next-lane-b2"
 files:
   - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/standalone-primitive-tail.ts
   - tests/issue-5104-boolean-prototype-tostringtag.test.ts
   - plan/issues/5104-boolean-prototype-tostringtag.md
 ---
@@ -45,42 +51,90 @@ or generic `Object.prototype.toString` behavior.
 
 ## Root-cause theory
 
-Standalone Boolean wrapper prototypes are represented by the shared native
-prototype companion. Boolean glue currently registers only the string-named
-`toString` and `valueOf` members, without the required own
-`Symbol.toStringTag` data property. When the method is deleted, the generic
-object tag therefore falls through to the Boolean payload representation and
-returns `"false"`.
+The `loc-budget-allow` and `func-budget-allow` entries are limited to the
+existing call-receiver dispatcher because that is the one dispatch seam that
+orders the standalone primitive tails; the eight added lines only pass the
+deleted-Boolean callback through to the subsystem helper. The helper
+implementation itself lives in `standalone-primitive-tail.ts`, keeping the
+behavioral code out of the dispatcher.
 
-Passing the existing glue registration the tag string `"Boolean"` should let
-the existing native-prototype companion seeder install the spec descriptor
-(`writable: false`, `enumerable: false`, `configurable: true`) in standalone
-output. Host output and all Boolean method/boxing paths remain unchanged.
+Standalone Boolean wrapper prototypes are represented by the shared native
+prototype companion. Boolean glue registered only the string-named `toString`
+and `valueOf` members, without the required own `Symbol.toStringTag` data
+property. The first metadata-only probe confirmed that this omission was one
+part of the defect: the descriptor was absent in standalone output.
+
+The exact rows still failed after that metadata change. A direct standalone
+probe showed that deleting `Boolean.prototype.toString` left the tag present
+and made an explicit `Object.prototype.toString.call(proto)` return
+`"[object Boolean]"`, but the normal `proto.toString()` call returned
+`"false"`. The specialized `tryCompileStandaloneBooleanToString` fast path
+ran before the deleted-method fallback and recovered the internal Boolean
+slot even though the own method had been removed.
+
+The final fix therefore has two narrow pieces: pass the existing glue
+registration the tag string `"Boolean"` so the companion seeder installs the
+standard descriptor, then route only deleted standalone Boolean `toString`
+calls through the inherited `Object.prototype.toString` path before that fast
+path. Host output and all unrelated Boolean method/boxing paths remain
+unchanged.
 
 ## Implementation plan
 
-1. Add only the Boolean glue's existing `symbolTag` metadata argument; do not
-   alter method dispatch or wrapper conversion.
-2. Add a focused regression covering both exact rows in host and standalone,
-   plus direct value/descriptor controls for the Boolean prototype tag.
-3. Re-run the exact rows with pass/fail controls and determinism in both lanes,
+1. Seed the Boolean native-prototype companion with its existing `symbolTag`
+   metadata argument.
+2. Add a deleted-Boolean-only standalone dispatch guard that borrows
+   `Object.prototype.toString` after the own method is removed; leave generic
+   call dispatch and Boolean wrapper conversion untouched.
+3. Add a focused regression with one corpus-backed test per exact row in both
+   lanes, plus mandatory descriptor and ordinary-object controls. Guard only
+   the optional corpus-backed cases when `test262` is absent.
+4. Re-run the exact rows with pass/fail controls and determinism in both lanes,
    using no more than two workers, then run focused and repository gates.
 
 ## Acceptance criteria
 
 - Both exact rows pass in host and standalone, with no control loss or new hard
   error; repeats report zero nondeterminism.
-- `Boolean.prototype[Symbol.toStringTag]` is exactly `"Boolean"` with the
-  standard non-writable, non-enumerable, configurable descriptor in both lanes.
+- Standalone `Boolean.prototype[Symbol.toStringTag]` is exactly `"Boolean"`
+  with the standard non-writable, non-enumerable, configurable descriptor;
+  the host control records the host realm's intentional absence of an own
+  tag while both host exact rows remain green.
 - The source diff remains confined to Boolean native-prototype glue and the
-  regression test; no host imports or iterator/collection paths are touched.
+  deleted-Boolean standalone call-dispatch seam plus the regression test; no
+  host imports or iterator/collection paths are touched.
 - Typecheck, lint, format, budget, ratchet, issue-integrity, and normal
   pre-push gates pass.
+
+## Validation evidence
+
+- Baseline at `caeaa2e1cf2aa225297c53076d27f97c8449a527`: host `2/2`, standalone
+  `0/2`; structural must-pass/must-fail controls were intact and deterministic.
+- Final authoritative repeat 1: host `2/2`, standalone `2/2`; each run's
+  controls reported one pass and one expected failure, totals summed, and
+  nondeterminism was `0`.
+- Final authoritative repeat 2: host `2/2`, standalone `2/2`; the same
+  controls and `nondeterministic: 0` were observed with
+  `COMPILER_POOL_SIZE=2`.
+- Focused Vitest with the corpus: `6 passed` (two exact-row cases and four
+  mandatory controls). Simulated changed-root packaging without the corpus
+  (`JS2_TEST262_AVAILABLE=0`): `4 passed | 2 skipped`; controls remained
+  mandatory and green.
+- Hermetic packaging copy with both `test262` and `.test262-cache` absent (and
+  only the dependency install symlinked): `4 passed | 2 skipped` with no
+  environment override; the copy was removed after the run and the source
+  worktree's provisioned corpus wrapper is intact.
+- Required gates observed locally: TypeScript 7 typecheck, Biome lint,
+  Prettier check, LOC/function budgets (the two documented dispatch allowances),
+  oracle ratchet, coercion-site ratchet, and issue integrity all passed.
+- The optional TypeScript 5 compatibility command emitted no diagnostics but
+  did not finish after several minutes and was interrupted; it is not part of
+  the normal pre-push hook.
 
 ## Handoff
 
 The atomic assignment reservation for this plan is held on the upstream
 assignment registry as `5104`; no external issue is used for tracking. Update
-this file with exact baseline/final counts, commit/head, and PR state after
-implementation. Keep any PR draft and held outside the merge queue until the
-exact rows, focused controls, and CI are green and the branch is mergeable.
+this file with exact commit/head, gate, and PR state after implementation.
+Keep any PR draft and held outside the merge queue until the exact rows,
+focused controls, and CI are green and the branch is mergeable.

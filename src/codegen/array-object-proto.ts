@@ -1966,7 +1966,7 @@ export function ensureBooleanNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "Boolean");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS, "Boolean"));
   }
   return brand;
 }
