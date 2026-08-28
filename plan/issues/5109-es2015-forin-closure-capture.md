@@ -63,8 +63,8 @@ Both snapshots use oracle version 13 and the official standard population.
 The current baseline source metadata is `4c2bc1de6a65e5abafa471881a64b441e501a4d4`.
 
 The standalone row's test body creates closures during
-`for (let p in x)` and calls them after the loop. The four keys are `a`, `b`,
-`c`, and `d`; each closure must retain its own per-iteration binding. The
+`for (let p in x)` and calls them after the loop. The five keys are `a`, `b`,
+`c`, `d`, and `e`; each closure must retain its own per-iteration binding. The
 standalone failure proves the first closure instead observes the uninitialized
 `null` value. The host pass is the positive lane control. No open upstream PR
 targets this exact fixture, and the upstream assignment registry has no claim
@@ -115,7 +115,7 @@ per-iteration body environment.
    Do not add host imports, skip filters, broad closure rewrites, or changes to
    for-of/counting-loop semantics.
 5. Add `tests/issue-5109-forin-closure-capture.test.ts` with the exact row's
-   four-key closure behavior, host/standalone parity, a non-capturing for-in
+   five-key closure behavior, host/standalone parity, a non-capturing for-in
    control, and a real self-contained no-corpus standalone shape. Assert the
    standalone module has no `env::*` imports.
 6. Run focused tests with at most two workers, exact host/standalone cohort
@@ -135,7 +135,7 @@ expanded design to the lead rather than widening this one-row lane.
 - The standalone module for the exact row and the self-contained equivalent
   has zero `env::*` host imports; the host lane remains passing.
 - Every closure made by a captured `for (let p in x)` body observes its own
-  enumerated key (`a`, `b`, `c`, `d`) after the loop; a non-capturing for-in
+  enumerated key (`a`, `b`, `c`, `d`, `e`) after the loop; a non-capturing for-in
   and receiver-TDZ control retain their prior behavior.
 - No changes are made to the excluded active cohorts or to generic closure,
   for-of, array, generator, or host-property semantics beyond the proven
