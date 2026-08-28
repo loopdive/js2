@@ -15,6 +15,8 @@ es_edition: ES2015
 language_feature: dataview-byteoffset-toindex-symbol
 goal: standalone-mode
 assignee: "ttraenkler/codex/es2015-next-lane-h"
+loc-budget-allow:
+  - src/codegen/dataview-native.ts
 files:
   - src/codegen/dataview-native.ts
   - tests/issue-5117-dataview-byteoffset-symbol.test.ts
@@ -83,6 +85,32 @@ Both local runs observed the required structural controls in both directions:
 diff will compare these local artifacts with post-fix local artifacts only;
 the supplied authoritative snapshots are evidence, not a diff arm.
 
+## Post-fix local A/B and determinism evidence
+
+After the static-Symbol guard and argument-expression controls were added, the
+same assembled harness completed `16/16 pass` in both host and standalone
+modes. The structural controls remained `control-must-pass -> pass` and
+`control-must-fail -> fail` in each run.
+
+```text
+.tmp/issue-5117/post-host.jsonl
+  sha256 2e15df276233e0d7ccf00111a420b1d3c0eac7a8d4c2da091f93726683d6f595
+.tmp/issue-5117/post-standalone.jsonl
+  sha256 62b12dc40f9aa8f3440bf8bfb98672a6344dc7888fca17b9ac4e3d178bfe397a
+.tmp/issue-5117/post-standalone-repeat.jsonl
+  sha256 62b12dc40f9aa8f3440bf8bfb98672a6344dc7888fca17b9ac4e3d178bfe397a
+```
+
+The row-level comparison is `16` standalone fail-to-pass flips, `0` losses,
+`0` status churn, and `0` host losses. The repeated standalone output is
+byte-identical (`16/16` rows; nondeterminism `0`). The focused lane test
+passed all `13` tests (five mandatory no-corpus controls and eight chunked
+host/standalone corpus checks) without an unhandled Vitest worker timeout.
+The related `#2199b` and `#2199` suites passed `19` tests. The optional `#1654`
+WASI suite reproduced three `RuntimeError: illegal cast` failures in its
+existing runtime exercise; its other `21` tests passed, and the failure uses
+numeric/WASI paths outside this static-Symbol change.
+
 ## Root cause
 
 The direct native path `emitDataViewAccessor` handles every DataView get/set
@@ -98,15 +126,19 @@ The same module already uses `ctx.oracle.staticJsTypeOf` plus
 `emitThrowTypeError` for setter values, and `emitToIndexI32` has the required
 static-Symbol guard for typed-array construction. The missing guard is this
 shared direct DataView byteOffset conversion. A correct guard must still
-compile and drop the offset expression first, preserving its side effects,
-then throw before a setter evaluates its value or littleEndian arguments.
+compile and drop every supplied argument expression in source order, preserving
+their side effects, then throw without applying later ToNumber/ToBoolean
+coercions. An abrupt later argument expression must win over the method's
+static-Symbol TypeError, while an object's `valueOf` must remain untouched.
 
 ## Implementation plan
 
 1. In `emitDataViewAccessor`, gate a static-Symbol byteOffset guard to
-   `noJsHost(ctx)`, evaluate the expression for side effects, drop its physical
-   result, emit the existing in-module TypeError machinery, and leave a typed
-   unreachable f64 sentinel for the shared downstream locals.
+   `noJsHost(ctx)`, evaluate and drop every supplied argument expression in
+   source order, emit the existing in-module TypeError machinery, and leave a
+   typed unreachable f64 sentinel for the shared downstream locals. This
+   preserves argument-expression effects and abrupt later arguments but does
+   not invoke later value/littleEndian coercion hooks.
 2. Keep the current dynamic ToIndex conversion, NaN/truncation/range checks,
    native DataView read/write paths, setter value and littleEndian order, and
    JS-host lowering unchanged.
@@ -126,8 +158,9 @@ then throw before a setter evaluates its value or littleEndian arguments.
 ## Acceptance criteria
 
 - All 16 exact rows pass in standalone and remain pass in JS-host mode.
-- Static Symbol byteOffset conversion throws a catchable TypeError, after
-  evaluating the offset expression and before later setter arguments.
+- Static Symbol byteOffset conversion throws a catchable TypeError after
+  evaluating all argument expressions; later coercions are not invoked, and an
+  abrupt later expression wins.
 - Dynamic numeric byteOffsets still read/write correctly, and omitted/default
   littleEndian behavior remains unchanged.
 - Mandatory no-corpus standalone controls validate, instantiate with an empty
