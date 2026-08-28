@@ -47,6 +47,7 @@ import {
 import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
+import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
 import {
   emitHostTaBufferConstruct,
@@ -587,6 +588,17 @@ export function tryCompileBuiltinGlobalNew(
     }
     // Compile message argument as externref
     if (args.length >= 2) {
+      // (#3481) §20.5.7.1 step 5a is `? ToString(message)`, which throws on a
+      // Symbol (§7.1.17 step 3). A native symbol crosses to
+      // `__new_AggregateError` as an opaque carrier, where the host-side
+      // `String(message)` renders it as "Symbol()" instead of throwing — and
+      // `String()` would not throw on a REAL symbol either, since §22.1.1.1
+      // short-circuits to SymbolDescriptiveString. So the check has to happen
+      // here, at the coercion site. `errors` is already evaluated above, which
+      // is the §13.3.6.1 order the spec wants.
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, args[1]!, "string")) {
+        return { kind: "externref" };
+      }
       const msgType = compileExpression(ctx, fctx, args[1]!, {
         kind: "externref",
       });

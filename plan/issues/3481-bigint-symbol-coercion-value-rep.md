@@ -17,6 +17,25 @@ related: [3422, 3328]
 loc-budget-allow:
   - src/codegen/binary-ops.ts
   - src/runtime.ts
+  # 2026-08-27, step 2 — the §7.1.4 / §7.1.17 Symbol guard is a per-site early
+  # return, so it lands where each argument is coerced rather than in one new
+  # file. +9…+23 lines per site; the shared helper it calls
+  # (src/codegen/tonumber-symbol-throw.ts) stays under the 1500-line threshold.
+  - src/codegen/array-methods.ts
+  - src/codegen/literals.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/codegen/expressions/new-super.ts
+func-budget-allow:
+  # 2026-08-27, step 2 — same reason as the LOC grant: the Symbol guard belongs
+  # at the argument-coercion site, which is inside these already-large builtin
+  # dispatchers. +8…+22 lines each, all of it one `if (…) return …;` plus the
+  # comment that explains which spec step it implements.
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 ---
 
 # #3481 — bigint/symbol coercion fidelity (value substrate)
@@ -377,3 +396,183 @@ will look like a red main and it is not), but it blocks nothing.
   mostly chain to `_hostToPrimitive` on a miss, so they inherit this fix; the
   non-chaining sites were left alone to keep this slice's blast radius at the measured
   293 rows.
+
+## Step-2 record — 2026-08-27, senior-dev (branch `claude/issue-3481-step2-revalidation`)
+
+**Step 2 landed as a Symbol re-validation at the ToString / ToInteger / ToIndex
+argument sites. 12 test262 rows fail→pass, 0 regress.** The premise the slice-1
+notes handed forward — "the ToPrimitive RESULT is not re-validated" — turned out
+to describe only part of the family, and not the part that was blocking rows.
+The measurement below is what redirected the work; it is recorded because the
+same wrong premise will otherwise be inherited again by step 3.
+
+### What was actually broken (measured on main, 2026-08-27)
+
+A per-site matrix (24 sites × the shapes that reach them) was run in the shape
+the failing test262 files use — a symbol bound as a plain local inside a
+function, e.g. `var s = Symbol(); … new ArrayBuffer(s)`. Writing
+`Symbol() as any` instead probes a **different** path and answers "already
+correct", which is why the earlier reading of this family looked smaller than it
+is.
+
+| site | on main | spec |
+| --- | --- | --- |
+| `new ArrayBuffer(s)` · `new SharedArrayBuffer(s)` | allocated a buffer of `id` bytes | TypeError |
+| `new DataView(buf, s)` · `new DataView(buf, 0, s)` | no throw | TypeError |
+| `Symbol(s)` | description `"101"` | TypeError |
+| `new AggregateError([], s)` | message `"Symbol()"` | TypeError |
+| `[1,2].at(s)` · `[1,2].includes(1, s)` | ordinary index | TypeError |
+| `isNaN(s)` · `isFinite(s)` | `false` / `true` | TypeError |
+| `new Error(s)` · `"".indexOf(s)` · `"".replaceAll("a", s)` · `BigInt.asUintN(s, 1n)` · `Number(s)` | already TypeError | — |
+
+**Root cause: the guard that exists is STATIC-only and was simply absent at
+these nine sites — not a missing re-validation of a ToPrimitive result.** A
+symbol VALUE lowers to a bare `i32` id (`compileSymbolCall`, literals.ts), so an
+argument compiled with an `{kind:"f64"}` target is a silent
+`f64.convert_i32_s` of that id and `ToIndex` then sees an ordinary small
+integer. The DYNAMIC twin — a symbol that reaches the site as an `externref` —
+was never broken: `__unbox_number` runs ToPrimitive and lets `Number(prim)`'s
+TypeError propagate (runtime.ts, the `unbox`/`number` intent). That asymmetry is
+why `new ArrayBuffer(Symbol() as any)` threw while
+`var s = Symbol(); new ArrayBuffer(s)` did not.
+
+`src/codegen/tonumber-symbol-throw.ts` already existed for exactly this class
+(#4556, extracted "so a third site cannot forget it") but owns a whole argument
+LIST, which only fits a site that has evaluated nothing yet. Every site here
+coerces an argument in the MIDDLE of a lowering that has already stashed the
+earlier operands, so the slice adds the single-operand form,
+`emitSymbolOperandCoercionThrow`, with an explicit `before` list for the one
+site (`arr.at` / `arr.includes`) whose receiver is evaluated inside the arm the
+guard skips.
+
+### Deltas — per row, both sides run on this branch
+
+**Method: a byte-identity sweep, not a two-sided status run.** Every guard is an
+early return that emits NOTHING unless `staticJsTypeOf(arg) === "symbol"`, so a
+row whose emitted module is byte-identical cannot have changed verdict. The box
+was at load ~12 on 4 cores, where a two-sided 265-row status run projected to
+>5 h; hashing the compiled binary is ~15× cheaper per row (in-process, one
+compiler load per shard) and is *stronger* evidence — it separates "unchanged"
+from "changed but happened to score the same".
+
+**1,160 rows swept on each side** (base captured via `git apply -R` of this
+branch's own diff, so both sides share the harness):
+
+| group | rows | what it is |
+| --- | --- | --- |
+| candidates | 265 | a guarded builtin called with a non-literal argument, in a file that mentions `Symbol` |
+| dropped | 596 | a guarded builtin called only with a numeric/string LITERAL (`new ArrayBuffer(8)`, `Symbol("d")`) — the tightening made to keep the run affordable, checked rather than assumed |
+| excluded | 300 | deterministic stride sample of the 34,560 otherwise-PASSING rows |
+
+| | rows |
+| --- | --- |
+| byte-IDENTICAL | **1,148** |
+| binary changed | **12** |
+
+**All 12 changed rows are the intended targets, and all 12 flip fail → pass:**
+
+| row | before | after |
+| --- | --- | --- |
+| `built-ins/ArrayBuffer/return-abrupt-from-length-symbol.js` | fail | **pass** |
+| `built-ins/SharedArrayBuffer/return-abrupt-from-length-symbol.js` | fail | **pass** |
+| `built-ins/DataView/return-abrupt-tonumber-byteoffset-symbol.js` | fail | **pass** |
+| `built-ins/DataView/return-abrupt-tonumber-byteoffset-symbol-sab.js` | fail | **pass** |
+| `built-ins/DataView/return-abrupt-tonumber-bytelength-symbol.js` | fail | **pass** |
+| `built-ins/DataView/return-abrupt-tonumber-bytelength-symbol-sab.js` | fail | **pass** |
+| `built-ins/AggregateError/message-tostring-abrupt-symbol.js` | fail | **pass** |
+| `built-ins/Symbol/desc-to-string-symbol.js` | fail | **pass** |
+| `built-ins/Array/prototype/at/index-non-numeric-argument-tointeger-invalid.js` | fail | **pass** |
+| `built-ins/Array/prototype/includes/return-abrupt-tointeger-fromindex-symbol.js` | fail | **pass** |
+| `built-ins/isNaN/return-abrupt-from-tonumber-number-symbol.js` | fail | **pass** |
+| `built-ins/isFinite/return-abrupt-from-tonumber-number-symbol.js` | fail | **pass** |
+
+**ZERO pass→fail, and for 1,148 of the 1,160 rows that is a byte-level
+guarantee rather than a same-verdict observation.** An earlier 22-row status run
+of the originally-scoped family-B cohort agrees (8 fixed / 0 regressed on its
+overlap).
+
+**What the sweep does NOT cover, stated plainly:** it is 1,160 of 48,735 counted
+rows. The completeness argument for the rest is syntactic — a guard sits inside
+the lowering of `new ArrayBuffer` / `new SharedArrayBuffer` / `new DataView` /
+`new AggregateError` / `Symbol(…)` / `.at(` / `.includes(` / `isNaN(` /
+`isFinite(`, and fires only when the oracle types that argument `symbol`, which
+needs a symbol-typed binding in the test's own source. The 300-row excluded
+sample is the empirical check on that argument, and it found nothing. The 8
+equivalence shards are the independent backstop.
+
+### Tests
+
+`tests/issue-3481-step2-symbol-arg-revalidation.test.ts` — 36 cases: one per
+guarded site; two that pin the *terminal* nature of the throw (pre-fix the call
+SUCCEEDED with a wrong buffer length / description, so "something threw" is too
+weak an assertion); two evaluation-order cases (`new ArrayBuffer(mk())` still
+calls `mk`, `recv().at(s)` still calls `recv`); regression guards for every
+non-Symbol argument shape including `String(sym)` and `sym.toString()`, which
+must keep returning the descriptive string (§22.1.1.1 is the one ToString
+spelling that does not throw); and the dynamic-`externref` cases that already
+worked, kept so a later refactor of the static guard cannot quietly take the
+dynamic one with it. Assertions use `e instanceof TypeError`, not a `.name`
+match — the issue's acceptance bar is a real catchable TypeError, and a
+bare-string throw passes a name check while failing the authentic harness.
+**Non-vacuity: 12 of 36 fail against base**; the 24 that pass on base are
+exactly the regression, evaluation-order and dynamic-path guards.
+
+### Two PRE-EXISTING gaps this slice measured but did not touch
+
+Both were found while writing the tests, verified identical on base and on this
+branch, and are recorded so they are not misread later as collateral:
+
+- `[10, 20].at()` with **no** argument answers `0` where §23.1.3.1 says `10`.
+  The guard keys off `arguments[0]`, so an absent argument never reaches it; the
+  test asserts only that nothing throws, rather than pinning the wrong value.
+- A user `class SharedArrayBuffer` does not work at all (`SharedArrayBuffer is
+  not a constructor`, from the runtime's generic construct bridge). The SAB
+  guard is behind `resolvesToNamedAmbientGlobal` + `!ctx.classSet.has(…)`, so
+  the test asserts the failure is still that one and **not** the guard's
+  message — which is what a hijack would look like.
+
+### Gates
+
+`typecheck` · `lint` · `prettier --check` · `check:loc-budget` ·
+`check:func-budget` · `check:oracle-ratchet` · `check:coercion-sites` ·
+`check:dead-exports` · `check:ir-fallbacks` (unchanged) · 8/8 equivalence
+shards. `plan/audit/host-import-policy-baseline.json` needs **no** bump: this
+slice does not touch `src/runtime.ts`, so `runtimeTsLines` is unmoved (slice 1's
+`18275 → 18396` ratchet stands).
+
+The five `loc-budget-allow:` paths added to this issue's frontmatter are the
+guarded call sites that are already over the 1,500-line threshold. The guard is
+a per-site early return by construction — a central chokepoint would have to be
+`coerceType(i32 → f64)`, which cannot distinguish a symbol id from a number
+(the `{kind:"i32", symbol:true}` brand is carried only in the native-symbol
+lanes, deliberately: branding it in the js-host lane shifted baked function
+indices and cost 216 invalid-module regressions — see the #4626 note in
+`compileSymbolCall`).
+
+### What step 3 inherits — the premise is NOT what slice 1 recorded
+
+The remaining family-B rows are **not** blocked on ToString/ToInteger/ToIndex
+re-validation. Re-measured, they split into two different root causes:
+
+1. **`@@toPrimitive` is not dispatched for the NUMBER hint** on an object
+   argument — `built-ins/BigInt/as{Int,Uint}N/{bits-toindex,bigint-tobigint}-toprimitive.js`
+   (×4), `built-ins/DataView/prototype/getBig{Int,Uint}64/toindex-byteoffset-toprimitive.js`
+   (×2), `built-ins/String/prototype/indexOf/position-tointeger-toprimitive.js`.
+   All fail at assertion #1 (`{[Symbol.toPrimitive](){return 1}}` → `0`, or the
+   V8 message `'0' returned for property 'Symbol(Symbol.toPrimitive)' … is not a
+   function`), i.e. the host reads the struct FIELD's raw value. This is
+   slice 1's shape 3 again, but on the host `Number()` / ToIndex path rather
+   than in `_hostToPrimitive`. `{valueOf}` and `{toString}` already work.
+   Additionally `{[Symbol.toPrimitive](){…}}` captured into a closure and passed
+   to `new ArrayBuffer` traps with `RuntimeError: illegal cast`.
+2. **`new Error(obj)` / `new AggregateError([], obj)` OVER-throw** — an object
+   message with a plain `toString` raises TypeError instead of stringifying,
+   which is what `built-ins/{AggregateError,SuppressedError}/message-tostring-abrupt.js`
+   report as "Expected a Test262Error but got a TypeError".
+
+Also still open and unchanged: `Number.prototype.toExponential(sym)` throws a
+NAMELESS payload (so `assert.throws(TypeError, …)` fails on the `.name` check)
+and has two twin lowerings, dot-access and element-access, that would both need
+the guard; and the step-3 list from the original scope note (`1n >>> 1n`,
+`toFixed` coercion order, `sort` comparefn, `ArrayBuffer.slice` species,
+`String.fromCharCode(1n)`).

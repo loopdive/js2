@@ -2301,6 +2301,8 @@ export interface IrOverlayPlan {
   /** Exact Promise-delay plans, keyed separately by each owned AST call. */
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
+  /** One checker-backed resolver shared by source direct-call projection and reconciliation. */
+  readonly directCallResolver: irOverlayIdentity.IrIdentityImportedFunctionResolver;
   readonly importedFunctionResolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
   /** Exact late #3521 fnctor parameter projection, when fully prepared. */
   readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
@@ -2613,23 +2615,46 @@ function resolveIrOverrideParamType(
   return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
 }
 
+function makeIrResolver(
+  checker: ts.TypeChecker,
+  identityContext: IrPlanningIdentityContext,
+  existing?: irOverlayIdentity.IrIdentityImportedFunctionResolver,
+): irOverlayIdentity.IrIdentityImportedFunctionResolver {
+  return existing ?? irOverlayIdentity.makeIrOverlayImportedResolver(checker, identityContext);
+}
+
+interface IrPlanningAuthority {
+  readonly identityContext: IrPlanningIdentityContext;
+  readonly resolver: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+}
+
+function makeIrPlanningAuthority(
+  checker: ts.TypeChecker,
+  identityContext: IrPlanningIdentityContext | undefined,
+  enabled: boolean | undefined,
+): IrPlanningAuthority | undefined {
+  return enabled && identityContext
+    ? { identityContext, resolver: makeIrResolver(checker, identityContext) }
+    : undefined;
+}
+
+interface IrOverlayPlanningOptions {
+  readonly resolveModuleBindings?: boolean;
+  readonly resolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+  readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+  /** Transaction B2 is single-source only; Transaction C owns graph composition. */
+  readonly enableCountedStringAppendProof?: boolean;
+  /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
+  readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
+  /** C2 supplies the already-certified multi-source string loop only. */
+  readonly countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan };
+}
+
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
   identityContext: IrPlanningIdentityContext,
-  options: {
-    readonly resolveModuleBindings?: boolean;
-    readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
-    /** Transaction B2 is single-source only; Transaction C owns graph composition. */
-    readonly enableCountedStringAppendProof?: boolean;
-    /** Exact post-legacy route snapshot for dormant #3521 L1 evidence. */
-    readonly fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute;
-    /** C2 supplies the already-certified multi-source string loop only. */
-    readonly countedStringAppendProof?: {
-      readonly loop: ts.ForStatement;
-      readonly plan: IrCountedStringAppendPlan;
-    };
-  } = {},
+  options: IrOverlayPlanningOptions = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
@@ -3240,6 +3265,7 @@ function planIrOverlay(
     ...calendarLoweringPlans,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
+    directCallResolver: makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
     ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
     ...(fnctorParameterPreselection?.nativeStringBoundaries
@@ -3660,6 +3686,7 @@ function planMultiIrOverlaySource(
   multiAst: MultiTypedAST,
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
+  identityResolver: irOverlayIdentity.IrIdentityImportedFunctionResolver,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   fnctorArgumentProjectionRoute?: IrFnctorArgumentProjectionRoute,
   countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan },
@@ -3674,6 +3701,7 @@ function planMultiIrOverlaySource(
   };
   return planIrOverlay(ctx, sourceAst, identityContext, {
     resolveModuleBindings,
+    resolver: identityResolver,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
     ...(fnctorArgumentProjectionRoute ? { fnctorArgumentProjectionRoute } : {}),
     ...(countedStringAppendProof ? { countedStringAppendProof } : {}),
@@ -3704,12 +3732,13 @@ function compileMultiIrOverlaySource(
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
   safety: MultiIrGraphSafety,
+  identityResolver: irOverlayIdentity.IrIdentityImportedFunctionResolver,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
   early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
 ): MultiPreparedProgramOverlayResult {
   const plan =
     early?.plan ??
-    planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions, {
+    planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, identityResolver, hostImportedFunctions, {
       experimentalIR: true,
       postLegacyPhysicalReservation: true,
       irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
@@ -8949,9 +8978,10 @@ function planMultiPreparedProgramRoutes(
   multiAst: MultiTypedAST,
   options: CodegenOptions | undefined,
   ctx: CodegenContext,
-  identityContext: IrPlanningIdentityContext | undefined,
+  authority: IrPlanningAuthority | undefined,
 ): void {
-  if (!owner || !identityContext) return;
+  if (!owner || !authority) return;
+  const { identityContext, resolver } = authority;
   planMultiPreparedProgramEarlyRoutes({
     owner,
     multiAst,
@@ -8965,12 +8995,23 @@ function planMultiPreparedProgramRoutes(
         multiAst,
         sourceFile,
         identityContext,
+        resolver,
         undefined,
         undefined,
         stringShape ? { loop: stringShape.loop, plan: stringShape.plan } : undefined,
       ),
     planResolvedModuleInitSource: (sourceFile) =>
-      planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined, undefined, undefined, true),
+      planMultiIrOverlaySource(
+        ctx,
+        multiAst,
+        sourceFile,
+        identityContext,
+        resolver,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      ),
     buildSafety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
@@ -9006,15 +9047,13 @@ function compileMultiPreparedProgramOverlays(
   multiAst: MultiTypedAST,
   options: CodegenOptions | undefined,
   ctx: CodegenContext,
-  identityContext: IrPlanningIdentityContext | undefined,
+  authority: IrPlanningAuthority | undefined,
 ): void {
   // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
   // ABI cannot safely be replaced by the current f64 IR ABI.
-  if (!options?.experimentalIR || ctx.fast) return;
-  const hostImportedFunctions =
-    ctx.standalone || ctx.wasi || ctx.strictNoHostImports
-      ? undefined
-      : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, identityContext!);
+  if (!options?.experimentalIR || ctx.fast || !authority) return;
+  const { identityContext, resolver } = authority;
+  const hostImportedFunctions = ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? undefined : resolver;
   const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
   profilePhase("ir-overlay", () => {
     for (const sourceFile of multiAst.sourceFiles) {
@@ -9026,6 +9065,7 @@ function compileMultiPreparedProgramOverlays(
             sourceFile,
             identityContext!,
             safety,
+            resolver,
             hostImportedFunctions,
             early,
           );
@@ -9055,6 +9095,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
+  const irAuthority = makeIrPlanningAuthority(multiAst.checker, irPlanningIdentityContext, options?.experimentalIR);
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
@@ -9450,7 +9491,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 
-    planMultiPreparedProgramRoutes(multiPreparedProgram, multiAst, options, ctx, irPlanningIdentityContext);
+    planMultiPreparedProgramRoutes(multiPreparedProgram, multiAst, options, ctx, irAuthority);
 
     // Phase 3: Compile all function bodies.
     //
@@ -9514,10 +9555,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     frameStage(ctx, "finalizeMethodTrampolines");
     profileCount("functions-after-bodies", ctx.mod.functions.length);
 
-    compileMultiPreparedProgramOverlays(multiPreparedProgram, multiAst, options, ctx, irPlanningIdentityContext);
+    compileMultiPreparedProgramOverlays(multiPreparedProgram, multiAst, options, ctx, irAuthority);
 
     multiPreparedProgram?.sealRoutesComplete();
-
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
     frameStage(ctx, "fixupStructNewArgCounts");

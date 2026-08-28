@@ -39,6 +39,7 @@ import {
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
+import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import {
   boundFunctionTargetIsDefinitelyCompiled,
   calleeIsBoundFunctionVar,
@@ -657,6 +658,11 @@ export function compileIdentifierCall(
     const funcName = globalParseBuiltin ?? expr.expression.text;
 
     if (funcName === "isNaN" && expr.arguments.length >= 1) {
+      // (#3481) §19.2.3 step 1 is `? ToNumber(number)`, which throws on a
+      // Symbol. The `n !== n` lowering below reads the symbol's `i32` id as an
+      // ordinary number, so `isNaN(Symbol())` answered `false`
+      // (built-ins/isNaN/return-abrupt-from-tonumber-number-symbol.js).
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
       // isNaN(n) → n !== n
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       const tmp = allocLocal(fctx, `__isnan_${fctx.locals.length}`, {
@@ -669,6 +675,9 @@ export function compileIdentifierCall(
     }
 
     if (funcName === "isFinite" && expr.arguments.length >= 1) {
+      // (#3481) §19.2.2 step 1 — same `? ToNumber(number)` Symbol throw as
+      // `isNaN` above (built-ins/isFinite/return-abrupt-from-tonumber-number-symbol.js).
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
       // isFinite(n) → n - n === 0.0  (Infinity - Infinity = NaN, NaN - NaN = NaN, finite - finite = 0)
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       const tmp = allocLocal(fctx, `__isfin_${fctx.locals.length}`, {

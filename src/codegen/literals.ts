@@ -104,6 +104,7 @@ import {
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
+import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -2532,6 +2533,16 @@ export function ensureSymbolCounter(ctx: CodegenContext): number {
  * The description argument (if any) is evaluated for side effects but discarded.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  // (#3481) §20.4.1.1 step 2: a description that is not `undefined` goes
+  // through `? ToString(description)`, and ToString(Symbol) throws (§7.1.17
+  // step 3). `Symbol(anotherSymbol)` used to succeed — the description
+  // argument is coerced with a STRING target, which for a bare `i32` symbol id
+  // renders the id, so the nested symbol became the description "101"
+  // (built-ins/Symbol/desc-to-string-symbol.js). Guarded before the counter is
+  // bumped so a throwing call reserves no id.
+  if (args.length > 0 && emitSymbolOperandCoercionThrow(ctx, fctx, args[0]!, "string")) {
+    return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+  }
   if (usesNativeSymbolProvider(ctx)) ensureNativeSymbolBoundaryBridge(ctx);
   const counterIdx = ensureSymbolCounter(ctx);
   // Increment counter first so the new id is reserved before we register a

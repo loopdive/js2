@@ -2,7 +2,8 @@
 
 import { ts } from "../ts-api.js";
 import {
-  collectIrDirectCallLoweringPlans,
+  collectIrDirectCallLoweringPlansByIdentity,
+  irDirectCallLoweringPlanEquals,
   type IrDirectCallTarget,
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
@@ -298,6 +299,7 @@ export function projectIrIntegrationLoweringPlans(
   plan: {
     readonly identityPlan: IrOverlayIdentityPlan;
     readonly overrideMapByUnitId: IrIntegrationLoweringPlans["signaturesByUnitId"];
+    readonly directCallResolver?: IrIdentityImportedFunctionResolver;
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
     readonly classShapesById?: IrIntegrationLoweringPlans["classShapesById"];
     readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"];
@@ -353,16 +355,41 @@ export function projectIrIntegrationLoweringPlans(
     });
   }
   const directCalls = new Map(plan.directCalls ?? []);
+  const retainDirectCall = (
+    call: ts.CallExpression,
+    directCall: import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan,
+  ): void => {
+    const existing = directCalls.get(call);
+    if (existing && !irDirectCallLoweringPlanEquals(existing, directCall)) {
+      mismatch(`direct-call plan at ${call.getSourceFile().fileName}:${call.pos} has conflicting producers`);
+    }
+    if (!existing) directCalls.set(call, directCall);
+  };
   for (const { unitId } of ownerProjection.entries) {
     const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(unitId);
     if (!declaration) continue;
-    for (const [call, directCall] of collectIrDirectCallLoweringPlans(declaration, unitId, directCallTargets)) {
+    if (!plan.directCallResolver) continue;
+    let collected: ReadonlyMap<ts.CallExpression, import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan>;
+    try {
+      collected = collectIrDirectCallLoweringPlansByIdentity(declaration, unitId, {
+        identityContext: plan.identityPlan.identityContext,
+        resolver: plan.directCallResolver,
+        activeOwnerUnitIds,
+        signaturesByUnitId: callableSignaturesByUnitId,
+        targetsByLegacyName: directCallTargets,
+      });
+    } catch (error) {
+      mismatch(
+        `direct-call identity for ${unitId} disagrees with the retained source projection: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    for (const [call, directCall] of collected) {
       // The projected callable ABI is authoritative for every exact active
       // source edge. In particular, a prepared suspending async target keeps
       // its numeric fulfillment type in `signaturesByUnitId`, while calls to
       // its source slot observe the Promise-returning externref ABI. A stale
       // pre-projection plan would otherwise unbox that Promise as a number.
-      directCalls.set(call, directCall);
+      retainDirectCall(call, directCall);
     }
   }
   const countedStringAppends = new Map<
@@ -406,6 +433,7 @@ export function projectIrIntegrationLoweringPlans(
   }
   return {
     identityContext: plan.identityPlan.identityContext,
+    ...(plan.directCallResolver ? { directCallResolver: plan.directCallResolver } : {}),
     ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
     ...(fnctorNativeStringBoundaries && fnctorNativeStringBoundaries.size > 0 ? { fnctorNativeStringBoundaries } : {}),
     ...(fnctorParameterPreselection && plan.fnctorParameterPreselectionIsCurrent
@@ -416,6 +444,7 @@ export function projectIrIntegrationLoweringPlans(
     ownerUnitIdByLegacyName,
     directCalls,
     signaturesByUnitId,
+    directCallSignaturesByUnitId: callableSignaturesByUnitId,
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
     hostVoidCallbacks: plan.hostVoidCallbacks,

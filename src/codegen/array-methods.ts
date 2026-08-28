@@ -110,6 +110,7 @@ const {
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 import { emitRuntimeEvalCarrierUnwrapAny } from "./runtime-eval-callable.js";
+import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -2126,6 +2127,28 @@ export function compileArrayMethodCall(
       // host-only ambient globals — the #2838 Temporal hazard. The standalone/
       // wasi lanes keep their unconditional widening (no host globals exist).
       (ctx.standalone || ctx.wasi || hofRefElemClosureLaneSafe(ctx, callExpr)));
+
+  // (#3481) §23.1.3.1 `at(index)` step 3 and §23.1.3.14 `includes(x, fromIndex)`
+  // step 4 both run `? ToIntegerOrInfinity(...)`, whose ToNumber throws on a
+  // Symbol (§7.1.4 step 5). Both have TWO lowerings (native vec and the host
+  // fallback) that each read the argument as a number, so a symbol's `i32` id
+  // flowed through as an ordinary index — `[1,2].at(Symbol())` answered
+  // `undefined` instead of throwing. Guarding at the shared dispatch covers
+  // both arms once; the receiver is passed as a `before` operand so its side
+  // effects still run in §13.3.6.1 order.
+  {
+    const symbolIndexArg = methodName === "at" ? 0 : methodName === "includes" ? 1 : -1;
+    const indexArg = symbolIndexArg < 0 ? undefined : callExpr.arguments[symbolIndexArg];
+    if (
+      indexArg !== undefined &&
+      emitSymbolOperandCoercionThrow(ctx, fctx, indexArg, "number", [
+        methodAccess.expression,
+        ...callExpr.arguments.slice(0, symbolIndexArg),
+      ])
+    ) {
+      return methodName === "includes" ? { kind: "i32" } : { kind: "externref" };
+    }
+  }
 
   let result: ValType | null | undefined;
   switch (methodName) {

@@ -7038,10 +7038,9 @@ function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName
     }
     return lowerNativeNumberToString(value, cx.funcName, cx);
   }
+  if (irTypeIsBoolean(valueType)) return lowerBooleanToString(cx.builder, value);
   // A number that propagation narrowed to i32 is still a number; widen and use
   // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
-  // `boolean: true` is excluded — a boolean prints "true"/"false", not "1"/"0",
-  // and that rendering is not in this slice.
   if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
     const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
     return lowerHostFreeConsoleArgument(widened, cx, methodName);
@@ -11914,13 +11913,23 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
 
   // #2135 — capability-table invariant (shared with the selector via
   // `src/ir/capability.ts`). The old slice-11 "shape-only acceptance" list
-  // (`%` / `**` / `in` / `instanceof` claimed by the selector, thrown here)
-  // is retired: those ops are table-deferred, the selector rejects them
-  // up-front, and an op arriving here with a "defer" capability is a
-  // claim-path BUG (loud internal error), not a legitimate legacy fallback.
-  // Checked BEFORE operand lowering so a violation reports cleanly without
-  // cascading operand errors.
+  // (`%` / `in` / `instanceof` claimed by the selector, thrown here) is
+  // retired: those ops are table-deferred, while #4787's exact numeric `**`
+  // arm has a semantic intrinsic lowering. An op arriving here with a
+  // "defer" capability is a claim-path BUG (loud internal error), not a
+  // legitimate legacy fallback. Checked BEFORE operand lowering so a
+  // violation reports cleanly without cascading operand errors.
   assertNotDeferred(binaryOpCapability(op), `binary operator '${ts.tokenToString(op) ?? op}'`, cx.funcName);
+
+  // #4787 — the exact numeric exponentiation checkpoint. Once selection has
+  // published this claim, a missing checker proof, a non-f64 operand, or any
+  // nested lowering failure is a selection/build invariant, not a residual
+  // demotion. Emit the semantic intrinsic only after lowering the left value
+  // and then the right value so JavaScript's left-to-right evaluation order is
+  // retained in the IR.
+  if (op === ts.SyntaxKind.AsteriskAsteriskToken) {
+    return lowerExactNumericExponentiation(expr, cx);
+  }
 
   // === / !== / == / != with a `null` literal: slice 1 has no nullable IR
   // types yet, so every operand we can lower trivially evaluates to false
@@ -12475,6 +12484,84 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
     elseValue: rhs,
     resultType,
   });
+}
+
+function checkerProvesExactNumericExponentOperand(expr: ts.Expression, cx: LowerCtx): boolean {
+  const checker = cx.checker;
+  if (!checker) return false;
+  try {
+    const type = checker.getTypeAtLocation(expr);
+    return (
+      !type.isUnionOrIntersection() &&
+      (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter | ts.TypeFlags.Never)) ===
+        0 &&
+      (type.flags & ts.TypeFlags.NumberLike) !== 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  const plan = IR_MATH_METHOD_TABLE.pow;
+  if (plan.intrinsic !== "math.pow") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 exponentiation plan is not math.pow in ${cx.funcName}`,
+    );
+  }
+  if (
+    !checkerProvesExactNumericExponentOperand(expr.left, cx) ||
+    !checkerProvesExactNumericExponentOperand(expr.right, cx)
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 exponentiation operands lost their exact checker-proven number types in ${cx.funcName}`,
+    );
+  }
+
+  let lhs: IrValueId;
+  let rhs: IrValueId;
+  try {
+    lhs = lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
+    rhs = lowerExpr(expr.right, cx, irVal({ kind: "f64" }));
+  } catch (error) {
+    if (error instanceof IrUnsupportedError) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: #4787 exponentiation operand demoted after claim in ${cx.funcName}: ${error.message}`,
+        error,
+      );
+    }
+    throw error;
+  }
+  const lhsType = cx.builder.typeOf(lhs);
+  const rhsType = cx.builder.typeOf(rhs);
+  if (lhsType.kind !== "val" || lhsType.val.kind !== "f64" || rhsType.kind !== "val" || rhsType.val.kind !== "f64") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 exponentiation requires f64 operands, got ${describeIrType(lhsType)} and ${describeIrType(rhsType)} in ${cx.funcName}`,
+    );
+  }
+  const source = expr.getSourceFile();
+  const position = source.getLineAndCharacterOfPosition(expr.getStart(source));
+  const result = cx.builder.emitIntrinsic(plan.intrinsic, [lhs, rhs], {
+    line: position.line + 1,
+    column: position.character,
+  });
+  const resultType = cx.builder.typeOf(result);
+  if (resultType.kind !== "val" || resultType.val.kind !== "f64") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 math.pow returned ${describeIrType(resultType)} in ${cx.funcName}`,
+    );
+  }
+  return result;
 }
 
 function requireF64(isF64: boolean, op: string, fn: string): void {
