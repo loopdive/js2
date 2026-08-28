@@ -1500,28 +1500,48 @@ export function emitDataViewAccessor(
   // RangeError BEFORE any access. Capture the f64 request, derive the i32
   // getIndex (the *view-relative* index, before adding base), then guard.
   const reqLocal = allocLocal(fctx, `__dvn_req_${fctx.locals.length}`, { kind: "f64" });
-  if (args.length >= 1) {
-    compileExpr(args[0]!, { kind: "f64" });
-  } else {
-    // ToIndex(undefined) = 0 (§7.1.22 step 1).
-    fctx.body.push({ op: "f64.const", value: 0 });
-  }
-  fctx.body.push({ op: "local.set", index: reqLocal });
-
   // (#3173) §7.1.22 ToIndex: integer = ToIntegerOrInfinity(value) — NaN → +0,
   // truncate toward zero — then RangeError iff integer < 0 or > 2^53-1. The
   // NaN → 0 rewrite runs FIRST (a NaN request reads offset 0; the previous code
   // wrongly threw). The range check runs in the f64 domain so ±Infinity / 2^53
   // requests throw at ToIndex time (BEFORE a setter's ToNumber(value) — the
   // index-check-before-value-conversion ordering), not at the bounds check.
-  fctx.body.push({ op: "local.get", index: reqLocal }); // val-if-true: req
-  fctx.body.push({ op: "f64.const", value: 0 }); // val-if-false: 0
-  fctx.body.push({ op: "local.get", index: reqLocal });
-  fctx.body.push({ op: "local.get", index: reqLocal });
-  fctx.body.push({ op: "f64.eq" }); // req == req (false only for NaN)
-  fctx.body.push({ op: "select" });
-  fctx.body.push({ op: "f64.trunc" }); // toward zero (−0.9 → −0, not negative)
+  // (#5117) Symbols are represented as i32 handles in standalone mode. A
+  // direct f64-hinted compile would therefore treat the handle as an offset,
+  // eventually producing the bounds RangeError instead of ToNumber's
+  // TypeError. Evaluate every supplied argument expression in source order
+  // first (the call's ArgumentListEvaluation happens before ToIndex), then
+  // throw without applying later ToNumber/ToBoolean coercions. Host lowering
+  // deliberately keeps the old path byte-for-byte unchanged.
+  const staticSymbolOffset = args.length >= 1 && noJsHost(ctx) && ctx.oracle.staticJsTypeOf(args[0]!) === "symbol";
+  if (staticSymbolOffset) {
+    for (const arg of args) {
+      const argType = compileExpr(arg);
+      if (argType !== null) fctx.body.push({ op: "drop" });
+    }
+    emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+    // Unreachable-but-validated value for the shared ToIndex locals below.
+    fctx.body.push({ op: "f64.const", value: 0 });
+  } else {
+    if (args.length >= 1) {
+      compileExpr(args[0]!, { kind: "f64" });
+    } else {
+      // ToIndex(undefined) = 0 (§7.1.22 step 1).
+      fctx.body.push({ op: "f64.const", value: 0 });
+    }
+  }
   fctx.body.push({ op: "local.set", index: reqLocal });
+
+  if (!staticSymbolOffset) {
+    fctx.body.push({ op: "local.get", index: reqLocal }); // val-if-true: req
+    fctx.body.push({ op: "f64.const", value: 0 }); // val-if-false: 0
+    fctx.body.push({ op: "local.get", index: reqLocal });
+    fctx.body.push({ op: "local.get", index: reqLocal });
+    fctx.body.push({ op: "f64.eq" }); // req == req (false only for NaN)
+    fctx.body.push({ op: "select" });
+    fctx.body.push({ op: "f64.trunc" }); // toward zero (−0.9 → −0, not negative)
+    fctx.body.push({ op: "local.set", index: reqLocal });
+  }
 
   const getIdxLocal = allocLocal(fctx, `__dvn_gidx_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: reqLocal });

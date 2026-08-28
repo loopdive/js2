@@ -189,11 +189,12 @@ describe("#3481 step 2 — regression guards: non-Symbol arguments are untouched
 
   it("[].at() with no argument does not reach the guard", async () => {
     // The guard keys off `arguments[0]`, so an ABSENT argument must leave the
-    // call untouched. Asserting "no throw" rather than a value on purpose:
-    // `at()` with no argument is a separate, PRE-EXISTING gap (measured on
-    // base and on this branch, both answer 0 where §23.1.3.1 says 10), and
-    // pinning that wrong value here would turn a bug into a fixture.
+    // call untouched. This deliberately asserted only "no throw" while the
+    // separate, PRE-EXISTING no-argument gap was open (it answered 0 where
+    // §23.1.3.1 says 10) rather than pinning a wrong value as a fixture. #5095
+    // closed that gap, so the value is now pinned too.
     expect(await throwKind("[10, 20].at();")).toBe("no-throw");
+    expect(await value("return [10, 20].at();")).toBe(10);
   });
 
   it("[].includes(x, fromIndex) still searches", async () => {

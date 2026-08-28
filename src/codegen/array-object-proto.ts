@@ -1748,6 +1748,11 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     brand,
     name,
     memberCsv: [...members, "size"].join(","),
+    // ES2015 §23.1.3.14 / §23.2.4.15: each collection prototype owns a
+    // non-writable, non-enumerable, configurable Symbol.toStringTag whose
+    // value is the collection's intrinsic name. The companion seeder already
+    // emits this descriptor when the glue supplies its symbol tag.
+    symbolTag: name,
     memberKind: (member) => (member === "size" ? "getter" : "method"),
     memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
     // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
