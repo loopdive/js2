@@ -200,8 +200,9 @@ CI-style no-corpus checkouts still exercise the two mandatory controls.
 
 Final follow-up branch: `/private/tmp/js2-4786-optional-corpus-guard`,
 `codex/4786-optional-corpus-guard`, at fork head
-`fa3b69487116a4a34c2a5f5e4380f99409aeb49e`. PR creation was blocked by the
-external approval policy; the exact authorized command is:
+verified with `git ls-remote fork refs/heads/codex/4786-optional-corpus-guard`.
+PR creation was blocked by the external approval policy; the exact authorized
+command is:
 
 ```text
 gh pr create --repo loopdive/js2 --head ttraenkler:codex/4786-optional-corpus-guard --base main --title 'test(test262): guard optional WeakCollection corpus rows ✓' --body-file /private/tmp/issue-4786-pr-body.md
