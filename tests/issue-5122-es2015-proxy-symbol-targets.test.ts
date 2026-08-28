@@ -14,7 +14,11 @@ const EXACT_FILES = [
   "built-ins/Proxy/create-handler-not-object-throw-symbol.js",
 ] as const;
 
-const TEST262_AVAILABLE = existsSync(join("test262", "harness", "assert.js"));
+const REPO_ROOT = join(import.meta.dirname ?? ".", "..");
+const TEST262_ROOT = join(REPO_ROOT, "test262");
+const EXACT_TEST_TIMEOUT_MS = 180_000;
+const CONTROL_TEST_TIMEOUT_MS = 180_000;
+const TEST262_AVAILABLE = existsSync(join(TEST262_ROOT, "harness", "assert.js"));
 const test262It = TEST262_AVAILABLE ? it : it.skip;
 
 /**
@@ -148,21 +152,37 @@ async function runControl(lane: Lane): Promise<number> {
 }
 
 describe("#5122 Proxy Symbol target/handler validation", () => {
-  test262It.each(EXACT_FILES)("passes the exact host Test262 row %s", async (file) => {
-    const result = await runTest262File(join("test262/test", file), "issue-5122", 120_000);
-    expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
-  });
+  test262It.each(EXACT_FILES)(
+    "passes the exact host Test262 row %s",
+    async (file) => {
+      const result = await runTest262File(join(TEST262_ROOT, "test", file), "issue-5122", 120_000);
+      expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
+    },
+    EXACT_TEST_TIMEOUT_MS,
+  );
 
-  test262It.each(EXACT_FILES)("passes the exact standalone Test262 row %s", async (file) => {
-    const result = await runTest262File(join("test262/test", file), "issue-5122", 120_000, "standalone");
-    expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
-  });
+  test262It.each(EXACT_FILES)(
+    "passes the exact standalone Test262 row %s",
+    async (file) => {
+      const result = await runTest262File(join(TEST262_ROOT, "test", file), "issue-5122", 120_000, "standalone");
+      expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
+    },
+    EXACT_TEST_TIMEOUT_MS,
+  );
 
-  it("passes the static/dynamic, ordering, validation, and sibling controls in host mode", async () => {
-    await expect(runControl("host")).resolves.toBe(0);
-  });
+  it(
+    "passes the static/dynamic, ordering, validation, and sibling controls in host mode",
+    async () => {
+      await expect(runControl("host")).resolves.toBe(0);
+    },
+    CONTROL_TEST_TIMEOUT_MS,
+  );
 
-  it("passes the static/dynamic, ordering, validation, and sibling controls host-free", async () => {
-    await expect(runControl("standalone")).resolves.toBe(0);
-  });
+  it(
+    "passes the static/dynamic, ordering, validation, and sibling controls host-free",
+    async () => {
+      await expect(runControl("standalone")).resolves.toBe(0);
+    },
+    CONTROL_TEST_TIMEOUT_MS,
+  );
 });
