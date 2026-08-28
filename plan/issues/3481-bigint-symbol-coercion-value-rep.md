@@ -47,6 +47,17 @@ loc-budget-allow:
   - src/codegen/type-coercion.ts
   - src/codegen/index.ts
   - src/codegen/context/types.ts
+  # 2026-08-28, Symbol-cluster slice — +38 net lines in the `Symbol.keyFor` arm.
+  # The executable change is ~8 lines (drop the `{kind:"i32"}` hint, dispatch on
+  # the ValType `compileExpression` actually produced, route the non-i32 case to
+  # the externref host arm that already exists two lines below). The rest is the
+  # comment recording WHY the hint had to go, which is the one thing a future
+  # editor must not undo: `compileExpression` HONOURS its hint, so passing
+  # `{kind:"i32"}` emitted the very `__unbox_number` this arm must avoid and
+  # then returned `i32` — making the defect invisible to any check placed after
+  # the call. That trap cost a full measured A/B cycle to find (the first fix
+  # attempt was byte-identical in behaviour for exactly this reason).
+  - src/codegen/expressions/call-namespace-static.ts
 coercion-sites-allow:
   # 2026-08-27, step 3 — one added `__unbox_number` in `type-coercion.ts`: the
   # driver returns the §7.1.1 step-2 primitive as externref and the coercion's
@@ -74,6 +85,12 @@ func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  # 2026-08-28, Symbol-cluster slice — same +38 lines as the LOC grant above.
+  # This file is one giant dispatch function, so the growth lands entirely
+  # inside it. No new branch nesting: the arm keeps its single
+  # `staticJsTypeOf(...) === "symbol"` gate and splits only on the ValType the
+  # operand actually compiled to.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   # 2026-08-27, step 3 — see the LOC note above. `coerceType` +28 is the new
   # arm plus its fallback-capture comment; the two `generateModule` /
   # `generateMultiModule` deltas are one `fillObjLitToPrimitive(ctx);` call and
@@ -1098,5 +1115,241 @@ The change adds **no host import**, no `resolveImport` case and no adapter — i
 repairs the coercion on an argument that already crossed this boundary.
 
 Local-validation note, unchanged from the step-3 record:
+`scripts/run-guard-suite.mjs` fails on Node ≤ 22 in the standalone
+generator-resume path and is green in CI (Node 25). This container is Node 22.
+
+## Slice record — 2026-08-28, Opus (branch `claude/issue-3481-symbol-cluster`)
+
+**The Symbol ×18 cluster is not one bug. It is FOUR independent root causes, and
+this slice fixes the largest one (10 of the 18 rows).** The fix removes a
+spurious TypeError that the spec does not permit; it flips **zero** rows to
+`pass`, because each of the 10 is blocked by a *second*, unrelated defect that
+the Symbol throw was masking. Both halves of that sentence are measured below.
+
+### Re-measured cluster membership (delta from the 2026-08-27 ×18)
+
+Baseline: `loopdive/js2wasm-baselines` `test262-current.jsonl`, **downloaded
+fresh 2026-08-28 17:50** (85,158,743 bytes, 48,735 entries; rows stamped
+`28.8.2026, 19:2x`, oracle_version 13, lane `honest`).
+
+Rows whose baseline `error` contains "Cannot convert a Symbol value to a
+number": **18, all `status: fail`.** The count is unchanged from 2026-08-27.
+**Membership drift cannot be asserted** — the 2026-08-27 record gives the count
+but never enumerates the rows, so there is nothing to diff against. This is the
+first enumeration; future slices can diff it.
+
+| sub-family | rows | root cause |
+| --- | --- | --- |
+| `built-ins/Array/fromAsync/asyncitems-*` | 8 | **(1)** `Symbol.keyFor` on a narrowed `any` |
+| `built-ins/Iterator/from/{get-return-method-when-call-return,return-method-calls-base-return-method}` | 2 | **(1)** same |
+| `built-ins/Map/prototype/{set,getOrInsert,getOrInsertComputed}/append-new-values` | 3 | **(3)** statically-symbol key type |
+| `built-ins/Object/getOwnPropertySymbols/object-contains-symbol-property-{with,without}-description` | 2 | **(2)** `symbol[]`-typed declaration |
+| `built-ins/Proxy/ownKeys/call-parameters-object-getownpropertysymbols` | 1 | **(2)** same (`return Object.getOwnPropertySymbols(t)`) |
+| `built-ins/JSON/stringify/value-array-proxy` | 1 | **(4)** `Number(key)` inside a Proxy `get` trap |
+| `built-ins/Symbol/prototype/Symbol.toPrimitive/redefined-symbol-wrapper-ordinary-toprimitive` | 1 | **(4)** `Object(Symbol.iterator) == Symbol.iterator` |
+
+All 18 reproduce locally, one child process per row, through the real
+`runTest262File` (`.tmp/row.mts`) — not a hand-written approximation.
+
+### Cause 1 (FIXED) — `Symbol.keyFor` on a NARROWED `any` operand
+
+The 10 rows do not fail in their own source. They fail inside test262's own
+`harness/temporalHelpers.js`, in `formatPropertyName`. Established by
+**instrumenting the real harness** (temporarily; restored and verified clean),
+not by a replica — three replicas all behaved *correctly* and would have sent
+this slice down the wrong path:
+
+```
+PROBE = typeof=symbol,
+        A_direct[Symbol.keyFor(propertyKey)] = THROW: Cannot convert a Symbol value to a number,
+        B_viaVar [var pk2 = propertyKey; Symbol.keyFor(pk2)] = undefined,
+        desc = Symbol.asyncIterator,  descStarts = true,  tmpl = items[Symbol.asyncIterator]
+```
+
+Same value, same line: through the parameter it throws, through a fresh `var`
+it answers `undefined`. So it is not the value, it is the **static type at the
+call site**.
+
+A symbol VALUE lowers to an i32 id (`mapTsTypeToWasm`: `symbol` → i32), so
+`Symbol.keyFor` has an id-keyed arm (`__symbol_keyFor_id`, #3676) gated on
+`ctx.oracle.staticJsTypeOf(arg) === "symbol"`. **Static type is not physical
+representation, and TypeScript makes them diverge**: inside
+`switch (typeof k) { case "symbol": … }` — exactly `formatPropertyName`'s shape
+— an `any` binding NARROWS to `symbol` while remaining physically an
+`externref` holding a real host Symbol. The arm then compiled it under a
+`{kind:"i32"}` hint, `coerceType` bridged externref → i32 with
+`__unbox_number` — literally `Number(Symbol())` — and §7.1.4 threw.
+
+**The trap that cost a full A/B cycle, and the reason the comment is long:**
+the obvious fix (compile with the i32 hint, then check the returned ValType and
+re-route if it is not i32) is a **no-op**. `compileExpression` HONOURS its hint,
+so it had already emitted `__unbox_number` and duly reported `i32`. Measured,
+not reasoned: the first fix produced a **byte-identical 18-row result table**,
+and an instrumented run printed `staticJs=symbol producedKind=i32`. The
+operand must be compiled **hint-free** so its natural representation is
+observable; dispatch then goes i32 ⇒ id helper (unchanged), otherwise ⇒ the
+externref `__symbol_keyFor` host arm that already sat two lines below.
+
+Fix: `src/codegen/expressions/call-namespace-static.ts`, +43/−5 (+38 net), all
+inside the `Symbol.keyFor` arm. No new import, no runtime change, no standalone
+change — the standalone/no-JS-host lane returns earlier via
+`usesNativeSymbolProvider(ctx)` and never reaches this code.
+
+### Measured deltas — complete reachable cohort, not a sample
+
+The blast radius of this change is exactly the set of counted test262 rows that
+can execute a `Symbol.keyFor` call: files naming `Symbol.keyFor` in their own
+source (**13**), plus files including the one harness that names it,
+`temporalHelpers.js` (**2,809**) → union **2,822**. Of those, **2,792 are
+`built-ins/Temporal/`** (Temporal is unimplemented — every row fails or skips
+identically on both sides), leaving a **non-Temporal reachable set of 30 rows
+that were run COMPLETELY**, plus a **stride sample of 28** Temporal rows
+(every 100th) as a control. 58 rows, both sides, one child process per row.
+
+Base and fix were measured with the file-copy A/B pattern —
+`git show HEAD:src/codegen/expressions/call-namespace-static.ts` captured
+**before the first edit**, sha256 `4f3a6716…`, and the tree restored to the fix
+(sha256 `881c733c…`) after the base run — so both sides ran on one harness.
+
+| | pass | fail | skip |
+| --- | --- | --- | --- |
+| base | 8 | 21 | 29 |
+| fix | **8** | **21** | **29** |
+
+**0 fail→pass, 0 pass→fail.** Per-row, **48 of 58 are byte-identical on both
+`status` AND the full error string**. The 10 that changed are exactly the 10
+cluster rows, and all 10 changed *cause*, not status:
+
+- 8 × `Array/fromAsync/asyncitems-*`: `Cannot convert a Symbol value to a
+  number` → an ordinary `compareArray` mismatch. `formatPropertyName` now
+  returns the right text; what surfaces is a **genuine, separate**
+  `Array.fromAsync` defect — the observed reads are
+  `[get items[Symbol.iterator], get items[Symbol.asyncIterator], get
+  items[Symbol.iterator], get items[Symbol.iterator]]` where the spec requires
+  `[get items[Symbol.asyncIterator], get items[Symbol.iterator]]`: wrong order,
+  and `@@iterator` read three times instead of once.
+- 2 × `Iterator/from/*`: → `TypeError: Iterator helper: argument is not
+  iterable`, a pre-existing `Iterator.from` gap.
+
+That is the honest bottom line: **cause removed on 10 rows, conformance
+unchanged, nothing regressed.** The 10 rows are now blocked on two named,
+attributable defects instead of on a coercion artefact that hid them.
+
+### Byte-identity sweep — host, standalone AND wasi
+
+Ten source shapes × three targets = 30 compiles, sha256 of the emitted binary,
+base vs fix. **28 of 30 are byte-identical; exactly 2 differ, and they are the
+two shapes this slice targets** (`host / narrowed-switch`,
+`host / narrowed-if`).
+
+| target | shapes compiled | binaries changed |
+| --- | --- | --- |
+| host (JS-host, default) | 10 | **2** — the narrowed-`any` shapes |
+| standalone | 10 | **0** |
+| wasi | 10 | **0** |
+
+Standalone and WASI are therefore unchanged **by measurement**, not by
+argument: the no-JS-host lane returns earlier via `usesNativeSymbolProvider(ctx)`
+and never reaches the edited code. The eight unchanged host shapes are the
+shapes that must not move — static `Symbol.keyFor` (registered and
+unregistered, i.e. the id arm this slice must leave alone), `Symbol.for`
+identity, symbol-keyed property assignment with no `keyFor` at all, plain
+arithmetic, a Math loop, `boolean[]`, and a `Uint8Array` literal (the last two
+share the i32-element vec path that cause 2 below would touch, so they are the
+guard for the slice that comes next).
+
+### The three causes deliberately NOT fixed here, with per-row evidence
+
+**Cause 2 — a `symbol[]`-TYPED variable declaration (3 rows: both
+`getOwnPropertySymbols`, plus `Proxy/ownKeys`).** Not the call, the
+declaration. Measured, module top level, JS-host lane:
+
+| shape | result |
+| --- | --- |
+| `var syms; syms = Object.getOwnPropertySymbols(obj);` (type `any`) | ok |
+| `const syms: any = Object.getOwnPropertySymbols(obj);` | ok |
+| `Object.getOwnPropertySymbols(obj);` (no declaration) | ok |
+| `const syms = Object.getOwnPropertySymbols(obj);` (inferred `symbol[]`) | **THROWS** |
+| `const syms: symbol[] = …` / `const syms: readonly symbol[] = …` | **THROWS** |
+
+It throws even when `syms` is never read, so it is the initializer's
+materialization, not any later use. `symbol[]` lowers to the unbranded
+`$__arr_i32` vec, and `buildElemCoerce` (`src/codegen/type-coercion.ts`)
+unboxes each element of the host Symbol array with `__unbox_number`. **#2866
+slice 3 already wrote the correct dispatch for this exact case** — its comment
+names `Object.getOwnPropertySymbols` — but gates it on
+`(ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0`, so the JS-host lane
+falls straight through to the throwing unbox.
+
+Why it is a separate slice, not an extension of this one: in host mode there is
+no `$Symbol` carrier to `ref.test`, so the host lane needs a **new host import**
+mapping a real JS Symbol back to its canonical module i32 id (the mirror of
+`__box_symbol`, registered into the same per-instance `symbolCache` so identity
+round-trips — the `__symbol_for_id` pattern from #3676). That crosses the
+`check:host-import-policy` ratchet, and the i32 arm it would touch is shared
+with `boolean[]` and packed TypedArray materialization, where
+`new Uint8Array([Symbol()])` **must keep throwing**. It needs its own
+regression budget. Cheap confirmation it is worth doing: with the declaration
+typed `any`, the assertions those two rows make already hold —
+`len=1, typeof syms[0]="symbol", syms[0] === sym` — so the rows should flip.
+
+**Cause 3 — a statically-symbol key type on `Map` (3 rows).**
+`new Map([[4,4],['foo3',3],[s,2]])` infers `Map<string|number|symbol, number>`
+and `map.forEach` throws; `new Map()` followed by `map.set(s,2)`
+(`Map<any,any>`) gives `forEach-ok symbol,number`, `iter-ok symbol,number`,
+`get=2`. Same family as cause 2 — a `symbol` in a static type driving a
+numeric lowering — but a different lowering site.
+
+**Cause 4 — 2 unrelated singletons.** `JSON/stringify/value-array-proxy` throws
+inside the test's own Proxy `get` trap at `return Number(key);`, i.e. our
+`JSON.stringify` hands the trap a Symbol key where V8 does not.
+`Symbol.toPrimitive/redefined-symbol-wrapper-ordinary-toprimitive` throws at
+`assert(Object(Symbol.iterator) == Symbol.iterator)`. Neither was investigated
+beyond locating the throw.
+
+**Not the blocker for any of them:** none of the four causes is behind the
+module-init START-function blocker, and none requires a tagged value
+representation (#2949). Causes 2 and 3 are ordinary lowering gaps with a known
+precedent (#2866 slice 3, #3676) — they are *ordinary work*, just not this
+slice's.
+
+### Adjacent defects found while measuring (not fixed, worth an issue)
+
+- `Symbol.keyFor(Symbol.iterator)` on the **static i32 path** fails with
+  `1 is not a symbol` — a well-known symbol's id reaches the host helper
+  unmapped. The narrowed-`any` path fixed here answers `undefined` correctly.
+- `Symbol("d").description` answers `undefined` through the TS-typed compile
+  API, while the same read through the test262 lane answers correctly.
+
+### Tests
+
+`tests/issue-3481-symbol-keyfor-narrowed-any.test.ts` — 15 cases: both
+narrowing shapes (`switch (typeof k)` and `if (typeof k === "symbol")`) ×
+{unregistered, registered, well-known, non-symbol}; regression guards for the
+genuinely-i32 operands that must keep the id arm (static `symbol` local
+registered/unregistered, `Symbol.keyFor(Symbol.for(x))` round trip,
+`Symbol.for(k) === Symbol.for(k)` identity); and two throws-guards that a
+non-symbol still raises the spec TypeError. **Non-vacuity: 6 of the 15 fail
+against the base compiler** — exactly the six narrowed-any symbol cases (3 per
+shape); the other 9 are the guards and pass on both sides.
+
+### Suites and gates
+
+Green on this branch: the four #3481 suites plus #3676 (**158 tests**), and the
+broader Symbol suites #1732 / #2610 / #2378 / #3961 / #4616 / #4776 / #5091 /
+#5107 (**65 tests**) — 223 in total, plus the 15 new.
+
+`typecheck` · `lint` · `prettier --check` · `check:coercion-sites`
+(no net vocabulary growth) · `check:oracle-ratchet` (`getTypeAtLocation +0`,
+`ctx.checker +0`) · `check:dead-exports` (23 known, 0 new) ·
+`check:loc-budget` and `check:func-budget` — both run with
+`LOC_GATE_BASE=$(git rev-parse origin/main)` so CI's merge-preview base is
+simulated; both report the +38 as *granted by this issue file*, the grants
+being added in this PR so they cannot be stranded.
+
+`src/runtime.ts` is untouched, so the `check:host-import-policy` ceiling does
+not move.
+
+Local-validation note, unchanged from the earlier records:
 `scripts/run-guard-suite.mjs` fails on Node ≤ 22 in the standalone
 generator-resume path and is green in CI (Node 25). This container is Node 22.

@@ -537,13 +537,51 @@ export function compileNamespaceStaticCall(
       // identical static-type gate #3085 added for `String(sym)`.
       // A non-symbol / `any` argument keeps the original externref path, where
       // the host `Symbol.keyFor` produces the spec TypeError itself.
+      // (#3481) The id-keyed helper applies only when the operand's PHYSICAL
+      // representation really is the i32 id. A static type of `symbol` does not
+      // imply that: TypeScript NARROWS an `any` binding to `symbol` inside
+      // `switch (typeof k) { case "symbol": … }` / `if (typeof k === "symbol")`,
+      // yet the binding is still physically an `externref` holding a real host
+      // Symbol. Coercing that externref to i32 runs `__unbox_number` — literally
+      // `Number(Symbol())` — so `Symbol.keyFor(k)` threw
+      // "Cannot convert a Symbol value to a number" instead of answering
+      // `undefined`. That is exactly test262's `temporalHelpers.js`
+      // `formatPropertyName`, whose `case "symbol"` arm calls `Symbol.keyFor`
+      // on a narrowed `any` parameter — it gated the whole
+      // `Array/fromAsync/asyncitems-*` and `Iterator/from/*-return-method-*`
+      // families.
+      //
+      // So compile the operand ONCE under the i32 hint and dispatch on what it
+      // actually produced: i32 ⇒ the id helper (unchanged, byte-identical for
+      // every genuinely-i32 symbol); anything else ⇒ the externref host arm,
+      // where the real `Symbol.keyFor` answers `undefined` for an unregistered
+      // symbol and raises the spec TypeError for a non-symbol.
       if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
-        const symIdType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "i32" });
-        if (symIdType && symIdType.kind !== "i32") coerceType(ctx, fctx, symIdType, { kind: "i32" });
-        const keyForIdIdx = ensureLateImport(ctx, "__symbol_keyFor_id", [{ kind: "i32" }], [{ kind: "externref" }]);
+        // NO i32 hint here: `compileExpression` HONOURS the hint and coerces
+        // internally, so passing `{kind:"i32"}` would emit the very
+        // `__unbox_number` this arm must avoid and then report `i32` — the
+        // dispatch below could never see the externref. Compiling hint-free
+        // yields the operand's natural representation, which is `i32` for
+        // every genuinely id-carrying symbol (a `symbol` local/param, a
+        // `Symbol()` result, `Symbol.for(...)`) and `externref` only for the
+        // narrowed-`any` case this fixes.
+        const symIdType = compileExpression(ctx, fctx, expr.arguments[0]!);
+        if (symIdType === null || symIdType.kind === "i32") {
+          const keyForIdIdx = ensureLateImport(ctx, "__symbol_keyFor_id", [{ kind: "i32" }], [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+          if (keyForIdIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: keyForIdIdx });
+            return { kind: "externref" };
+          }
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+        if (symIdType.kind !== "externref") coerceType(ctx, fctx, symIdType, { kind: "externref" });
+        const dynIdx = ensureLateImport(ctx, "__symbol_keyFor", [{ kind: "externref" }], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
-        if (keyForIdIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: keyForIdIdx });
+        if (dynIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: dynIdx });
           return { kind: "externref" };
         }
         fctx.body.push({ op: "drop" });
