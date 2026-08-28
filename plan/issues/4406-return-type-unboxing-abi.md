@@ -1416,3 +1416,12 @@ zero newly-fixed, so the failing NAME set is unchanged.
   phases at once.** That is deliberate (they compose, and Phase 4's filter is
   unsound to enable without Phase 1's arm), but it means a future bisect of any
   one half needs a finer switch added first.
+- **A third boolean site the Phase 4 filter deliberately leaves alone
+  (2026-08-28, PR #5171):** `var f = this.pred(x); "" + f` still reads `"1"` —
+  the prover's *internal* call arm consumes `numericFunctionNames` before the
+  publication-boundary filter runs. Fixable only by the measured-and-rejected
+  loop variant, at **+51,252 executed `__box_boolean` (+19.9 %)** on the acorn
+  self-parse; taking that trade is a deliberate future decision, not a rider.
+  The property-write form of the same shape is already correct via #2847's
+  boolean brand. (The unrelated constructor→own-prototype-method trap found by
+  the same probe set is filed as #5162.)
