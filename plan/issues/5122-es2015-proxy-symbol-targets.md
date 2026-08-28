@@ -134,10 +134,10 @@ over the target/handler `TypeError`.
 ## Final validation and handoff
 
 Implementation and validation completed on the synchronized branch. The final
-validated tree is rooted at `upstream/main` `abf224159c32447eff7e36d51849278bb07ddf83`
-through merge commit `b88aef9ae77872680316a79dddfa2fdd6fde63f4`; the final
-implementation/test head before this status update is
-`896030a58aa2d2ded1ce3d6147d958eb73f159db`. All three commits are authored by
+validated tree is rooted at `upstream/main` `1d110ec6bda80a1303f73df96944ef892e91d71f`
+through merge commit `b2668dd61209bf8aae1d08b590ecaa11fc04f585`; the final
+implementation/test head before the upstream sync is
+`896030a58aa2d2ded1ce3d6147d958eb73f159db`. All lane commits are authored by
 Thomas Tränkler and carry real newline-separated Codex trailers.
 
 - Focused Vitest with the pinned artifact and two workers: **6/6 passed**;
@@ -159,7 +159,7 @@ Thomas Tränkler and carry real newline-separated Codex trailers.
 - The fork push is pending explicit external-write authorization from the
   environment; no remote state was changed and no PR was opened. Once
   authorized, push this exact branch without force and verify the remote SHA
-  equals `896030a58aa2d2ded1ce3d6147d958eb73f159db` before root opens the one
+  equals `b2668dd61209bf8aae1d08b590ecaa11fc04f585` before root opens the one
   non-draft upstream PR.
 
 ## Handoff
