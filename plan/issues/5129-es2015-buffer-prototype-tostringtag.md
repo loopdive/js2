@@ -1,7 +1,7 @@
 ---
 id: 5129
 title: "ES2015 ArrayBuffer and DataView prototype toStringTag metadata"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -135,6 +135,50 @@ install, so direct reads and `Object.getOwnPropertyDescriptor` answer
   integrity, numeric-local parity, and the full pre-push hook pass.
 - This markdown issue records final evidence, synchronized head, and the single
   upstream PR URL; no GitHub issue is created.
+
+## Final validation (2026-08-28)
+
+The implementation uses the existing native-prototype `symbolTag` seeder:
+`makeGlueWithGetters` accepts an optional tag and only the ArrayBuffer and
+DataView registrations supply `"ArrayBuffer"` and `"DataView"`. No TypedArray
+registration or classifier path changed. The source-plus-focused-test
+checkpoint is `222d08408e976f220948c03a16aba37daea5d802`; the worktree-anchored
+Test262 path correction is `bb57f648773745b9ef416a0c26e8b2c6cc7aa6f3`.
+
+The branch was refreshed by a plain merge of fetched `upstream/main`
+`3ea0547d42d372d9c44cc9498fb7a019f48aafbc`; the synchronized implementation
+head is `74745afcbe1794079ff24ea04c5c33c72cf545e0`. The merge was clean and
+preserved the four-line source wiring. The pinned authoritative snapshots remain
+standalone SHA-256
+`260a57b7fb4d53516fa81e1c949d81337968e30ce790d457bcc2d3945c2e9e1e` and host
+SHA-256 `a395f2a88d289a8e0fd78ccd76e090215ef3a85f1960aa8fe96f7d3a0445bd49`:
+both owned host rows are `pass`, while both pre-fix standalone rows are the
+expected `undefined` tag failures. After the merge, the exact standalone A/B
+through the maintained runner passed **2/2** (ArrayBuffer and DataView), and
+the host snapshot remains **2/2 pass**. The local in-process host rerun's
+ArrayBuffer strict phase is affected by the pre-existing runner snapshot gap
+(`restoreHostBuiltins` does not include `ArrayBuffer.prototype`); this does not
+alter the authoritative host result or the standalone result.
+
+The focused compiler controls passed **2/2** in host and standalone modes after
+the merge, including exact descriptors, dynamic/aliased reads, deletion and
+redefinition, ordinary member metadata, Map/Set controls, SharedArrayBuffer
+identity/member controls, and `Object.prototype.toString` branding. The
+standalone control emitted zero imports. With the optional corpus guard disabled,
+the corrected test file passed **2 controls | 4 exact rows skipped**. Numeric
+local parity passed **18/18**; the complete pre-push chain passed after the
+upstream merge (TS7 typecheck, lint, format, oracle/coercion ratchets, numeric
+parity, and issue integrity). Focused Prettier/Biome, LOC/function budgets,
+issue-spec coverage, IR retirement, dead-export, stack-balance, and committed
+issue-integrity checks also passed. The TS5 no-emit check was attempted twice
+and stopped after a silent local run exceeding 240 seconds with no diagnostics;
+the passing TS7/full pre-push typecheck is the repository's current required
+typecheck lane.
+
+This issue is **ready**, not done. The branch is clean at the synchronized head
+plus this evidence update, retains `pr: 5142`, creates no GitHub issue, and is
+handed back to root for publication/review and final PR state management. The
+global ES2015 goal and unrelated TypedArray work remain open.
 
 ## Handoff
 
