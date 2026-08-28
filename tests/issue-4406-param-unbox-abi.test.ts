@@ -117,6 +117,13 @@ function shimTailCalls(wat: string): number {
 const runExport = async (r: { binary: Uint8Array }) =>
   ((await WebAssembly.instantiate(r.binary, {})).instance.exports as { run(): number }).run();
 
+/**
+ * (#4406 Phase 4) `JS2WASM_RET_UNBOX_ABI` is now DEFAULT-ON, so a bare build is
+ * the ON lane. Every OFF lane below therefore spells the token out. The
+ * differentials are unchanged — only which side needed naming moved.
+ */
+const OFF = { JS2WASM_RET_UNBOX_ABI: "0" } as const;
+
 describe("#4406 Phase 3 — boolean parameter slots", () => {
   // `(typeof flag).length` is 7 for "boolean" and 6 for "number": the callee
   // itself reports which representation arrived, so a slot narrowed to a raw
@@ -124,7 +131,7 @@ describe("#4406 Phase 3 — boolean parameter slots", () => {
   const AXIS = paramAxis("return (typeof flag).length;");
 
   it("the box differential: OFF boxes both arguments, ON passes them unboxed", async () => {
-    expect(boxesBeforeTrampoline((await build(AXIS)).wat!), "OFF: every argument boxes").toBeGreaterThan(0);
+    expect(boxesBeforeTrampoline((await build(AXIS, OFF)).wat!), "OFF: every argument boxes").toBeGreaterThan(0);
     expect(boxesBeforeTrampoline((await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "1" })).wat!), "ON: none do").toBe(0);
   });
 
@@ -141,7 +148,7 @@ describe("#4406 Phase 3 — boolean parameter slots", () => {
       const on = await build(src, { JS2WASM_RET_UNBOX_ABI: "1" });
       expect(await runExport(on), body).toBe(want);
       // The ABI must not change the observable value, only its carrier.
-      expect(await runExport(await build(src)), `${body} (flag off)`).toBe(want);
+      expect(await runExport(await build(src, OFF)), `${body} (flag off)`).toBe(want);
     }
   });
 
@@ -150,7 +157,7 @@ describe("#4406 Phase 3 — boolean parameter slots", () => {
     // GENERIC body's externref parameters into the twin, so with a slot
     // narrowed to i32 it would impose ToBoolean on whatever an un-enumerable
     // caller (`arr.map(o.m)`, `o.m.call(…)`, `o["m"](…)`) passed.
-    expect(shimTailCalls((await build(AXIS)).wat!)).toBeGreaterThan(0);
+    expect(shimTailCalls((await build(AXIS, OFF)).wat!)).toBeGreaterThan(0);
     expect(shimTailCalls((await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "1" })).wat!)).toBe(0);
   });
 
@@ -160,7 +167,7 @@ describe("#4406 Phase 3 — boolean parameter slots", () => {
     const src = paramAxis("return (typeof flag).length;", "return this.takeFlag(this.n > 3) + this.takeFlag(7);");
     const on = await build(src, { JS2WASM_RET_UNBOX_ABI: "1" });
     expect(boxesBeforeTrampoline(on.wat!), "slot must NOT be refined").toBeGreaterThan(0);
-    expect(await runExport(on)).toBe(await runExport(await build(src)));
+    expect(await runExport(on)).toBe(await runExport(await build(src, OFF)));
     expect(await runExport(on)).toBe(13); // "boolean" + "number"
   });
 
@@ -170,16 +177,22 @@ describe("#4406 Phase 3 — boolean parameter slots", () => {
     const src = paramAxis('if (flag) { flag = "x"; } return (typeof flag).length;');
     const on = await build(src, { JS2WASM_RET_UNBOX_ABI: "1" });
     expect(boxesBeforeTrampoline(on.wat!), "slot must NOT be refined").toBeGreaterThan(0);
-    expect(await runExport(on)).toBe(await runExport(await build(src)));
+    expect(await runExport(on)).toBe(await runExport(await build(src, OFF)));
     expect(await runExport(on)).toBe(13); // "string" + "boolean"
   });
 
-  it("the flag is OFF by default and every off-token disables it", async () => {
-    const base = await build(AXIS);
+  it("every off-token disables it, and the DEFAULT is now ON (#4406 Phase 4)", async () => {
+    const base = await build(AXIS, OFF);
     for (const token of ["0", "off", "false", "no", ""]) {
       const { binary } = await build(AXIS, { JS2WASM_RET_UNBOX_ABI: token });
       expect(Buffer.from(binary).equals(Buffer.from(base.binary)), `token ${JSON.stringify(token)}`).toBe(true);
     }
+    // The flip itself, pinned: unset must NOT reproduce the off lane, and a
+    // typo must land on the new default rather than half-disabling anything.
+    const unset = await build(AXIS);
+    expect(Buffer.from(unset.binary).equals(Buffer.from(base.binary)), "unset must be ON").toBe(false);
+    const typo = await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "yes" });
+    expect(Buffer.from(typo.binary).equals(Buffer.from(unset.binary)), "a typo is the default").toBe(true);
   });
 
   it("POISON: inert alone, and ON it inverts every refined argument", async () => {
@@ -188,8 +201,8 @@ describe("#4406 Phase 3 — boolean parameter slots", () => {
     // already breaks the acorn parse on its own and so could not attribute a
     // break to this half.
     const src = paramAxis("return flag ? 1 : 0;");
-    const base = await build(src);
-    const poisonOnly = await build(src, { JS2WASM_PARAM_UNBOX_ABI_POISON: "1" });
+    const base = await build(src, OFF);
+    const poisonOnly = await build(src, { ...OFF, JS2WASM_PARAM_UNBOX_ABI_POISON: "1" });
     expect(Buffer.from(poisonOnly.binary).equals(Buffer.from(base.binary)), "poison alone is inert").toBe(true);
 
     // The two calls must be WEIGHTED, or inverting both is the identity on the
