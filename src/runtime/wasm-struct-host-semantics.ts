@@ -4,6 +4,17 @@
 export const NO_GENERATED_FIELD = Symbol("no-generated-field");
 export const PRIMITIVE_STRING_UNDEFINED = Symbol("primitive-string-undefined");
 const CONFIGURABLE_FLAG = 4;
+
+/** Return whether a failed native assignment is a sloppy-mode no-op. */
+export function failedSloppyNativeSetIsNoOp(obj: any, desc: PropertyDescriptor | undefined): boolean {
+  if (desc && (("value" in desc && desc.writable === false) || (!("value" in desc) && !desc.set))) return true;
+  try {
+    return !Object.isExtensible(obj);
+  } catch {
+    return false;
+  }
+}
+
 type CallbackState = { getExports: () => Record<string, Function> | undefined };
 const callableOwners = new WeakMap<Function, CallbackState>();
 const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({

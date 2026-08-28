@@ -4,7 +4,8 @@ title: "ES2015 standalone Set.prototype.forEach rejects Symbol callbacks"
 status: done
 sprint: current
 created: 2026-08-27
-updated: 2026-08-27
+updated: 2026-08-28
+completed: 2026-08-28
 priority: high
 horizon: s
 feasibility: easy
@@ -24,7 +25,11 @@ loc-budget-allow:
   - src/codegen/map-runtime.ts
 ---
 
-# #5091 — ES2015 standalone `Set.prototype.forEach` rejects Symbol callbacks
+# Repository-local markdown issue 5091 — ES2015 standalone `Set.prototype.forEach` rejects Symbol callbacks
+
+This is the repository-local issue record at
+`plan/issues/5091-es2015-set-foreach-symbol-callback.md`; it is not a GitHub
+issue.
 
 ## Problem
 
@@ -35,8 +40,10 @@ throw a `TypeError`; the standalone native collection path does not classify a
 Symbol callback as statically non-callable and falls through to the host
 `Set_forEach` import instead.
 
-This is the one Symbol-shaped tail left by #3573, whose five literal callback
-cases (`null`, `undefined`, number, boolean, and string) are already green.
+This is the one Symbol-shaped tail left by the repository-local issue record
+`plan/issues/3573-standalone-set-foreach-noncallable-symbol-matchall.md`, whose
+five literal callback cases (`null`, `undefined`, number, boolean, and string)
+are already green.
 The change is limited to the native `Set`/`Map` forEach callback guard. Dynamic
 callbacks and Wasm closures must retain their existing routing.
 
@@ -131,10 +138,9 @@ for the selected row before the source change.
 
 ## Handoff
 
-Upstream tracking issue: #5091. The provisional local reservation `#4789`
-collided with an existing merged PR and was replaced before publication. The
-canonical delivery branch is `codex/5091-set-foreach-symbol` in
-`/private/tmp/js2-5091-set-foreach-symbol`. The completed fix is published as
-non-draft upstream PR #5093 against `loopdive/js2:main`. Root owns CI and
-merge-queue shepherding; implementation heads are `e0a1d88454` and
-`13d94cbc9b` before this publication handoff checkpoint.
+This repository-local issue record is complete at
+`plan/issues/5091-es2015-set-foreach-symbol-callback.md`; no GitHub issue was
+created for this work. The completed implementation was delivered by upstream
+pull request #5093 and is merged into `loopdive/js2:main` at merge commit
+`63e80e392879e286569ba5ebf8de33f546c3632b` (2026-08-28). The frontmatter
+therefore records `status: done` and `completed: 2026-08-28`.
