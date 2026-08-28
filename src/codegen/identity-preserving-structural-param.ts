@@ -12,10 +12,7 @@ const identityPreservingParams = new WeakMap<
   WeakMap<ts.ParameterDeclaration, IdentityPreservingStructuralCarrier>
 >();
 
-export function markIdentityPreservingStructuralParam(
-  ctx: CodegenContext,
-  parameter: ts.ParameterDeclaration,
-): void {
+export function markIdentityPreservingStructuralParam(ctx: CodegenContext, parameter: ts.ParameterDeclaration): void {
   let parameters = identityPreservingParams.get(ctx);
   if (!parameters) {
     parameters = new WeakMap();

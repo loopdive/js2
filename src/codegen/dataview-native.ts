@@ -63,6 +63,7 @@ import { coerceType } from "./type-coercion.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js"; // (#4449) TypedArraySpeciesCreate
 import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449) custom species constructors
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
+import { ensureNativeArrayFromIterN } from "./iterator-native.js"; // (#5138 A1) iterable ctor arg
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
 interface DvAccessor {
@@ -1500,28 +1501,48 @@ export function emitDataViewAccessor(
   // RangeError BEFORE any access. Capture the f64 request, derive the i32
   // getIndex (the *view-relative* index, before adding base), then guard.
   const reqLocal = allocLocal(fctx, `__dvn_req_${fctx.locals.length}`, { kind: "f64" });
-  if (args.length >= 1) {
-    compileExpr(args[0]!, { kind: "f64" });
-  } else {
-    // ToIndex(undefined) = 0 (§7.1.22 step 1).
-    fctx.body.push({ op: "f64.const", value: 0 });
-  }
-  fctx.body.push({ op: "local.set", index: reqLocal });
-
   // (#3173) §7.1.22 ToIndex: integer = ToIntegerOrInfinity(value) — NaN → +0,
   // truncate toward zero — then RangeError iff integer < 0 or > 2^53-1. The
   // NaN → 0 rewrite runs FIRST (a NaN request reads offset 0; the previous code
   // wrongly threw). The range check runs in the f64 domain so ±Infinity / 2^53
   // requests throw at ToIndex time (BEFORE a setter's ToNumber(value) — the
   // index-check-before-value-conversion ordering), not at the bounds check.
-  fctx.body.push({ op: "local.get", index: reqLocal }); // val-if-true: req
-  fctx.body.push({ op: "f64.const", value: 0 }); // val-if-false: 0
-  fctx.body.push({ op: "local.get", index: reqLocal });
-  fctx.body.push({ op: "local.get", index: reqLocal });
-  fctx.body.push({ op: "f64.eq" }); // req == req (false only for NaN)
-  fctx.body.push({ op: "select" });
-  fctx.body.push({ op: "f64.trunc" }); // toward zero (−0.9 → −0, not negative)
+  // (#5117) Symbols are represented as i32 handles in standalone mode. A
+  // direct f64-hinted compile would therefore treat the handle as an offset,
+  // eventually producing the bounds RangeError instead of ToNumber's
+  // TypeError. Evaluate every supplied argument expression in source order
+  // first (the call's ArgumentListEvaluation happens before ToIndex), then
+  // throw without applying later ToNumber/ToBoolean coercions. Host lowering
+  // deliberately keeps the old path byte-for-byte unchanged.
+  const staticSymbolOffset = args.length >= 1 && noJsHost(ctx) && ctx.oracle.staticJsTypeOf(args[0]!) === "symbol";
+  if (staticSymbolOffset) {
+    for (const arg of args) {
+      const argType = compileExpr(arg);
+      if (argType !== null) fctx.body.push({ op: "drop" });
+    }
+    emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+    // Unreachable-but-validated value for the shared ToIndex locals below.
+    fctx.body.push({ op: "f64.const", value: 0 });
+  } else {
+    if (args.length >= 1) {
+      compileExpr(args[0]!, { kind: "f64" });
+    } else {
+      // ToIndex(undefined) = 0 (§7.1.22 step 1).
+      fctx.body.push({ op: "f64.const", value: 0 });
+    }
+  }
   fctx.body.push({ op: "local.set", index: reqLocal });
+
+  if (!staticSymbolOffset) {
+    fctx.body.push({ op: "local.get", index: reqLocal }); // val-if-true: req
+    fctx.body.push({ op: "f64.const", value: 0 }); // val-if-false: 0
+    fctx.body.push({ op: "local.get", index: reqLocal });
+    fctx.body.push({ op: "local.get", index: reqLocal });
+    fctx.body.push({ op: "f64.eq" }); // req == req (false only for NaN)
+    fctx.body.push({ op: "select" });
+    fctx.body.push({ op: "f64.trunc" }); // toward zero (−0.9 → −0, not negative)
+    fctx.body.push({ op: "local.set", index: reqLocal });
+  }
 
   const getIdxLocal = allocLocal(fctx, `__dvn_gidx_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: reqLocal });
@@ -4537,6 +4558,19 @@ export function emitTaDynCtorConstructFromLocals(
       fctx.body = saved;
     }
     let chain: Instr[] = countArm;
+    // (#5138) Every arm below is built DETACHED and only spliced into
+    // `fctx.body` at the end, so a late import minted by a LATER arm (the
+    // `coerceType` ToNumber path pulls `__unbox_number`/`__to_primitive`)
+    // would shift funcIdxs that earlier arms have already baked. Registering
+    // each chain link in `ctx.liveBodies` makes `shiftLateImportIndices` walk
+    // them like any attached body. Cleared once the chain is spliced in.
+    const liveChains: Instr[][] = [];
+    const trackChain = (next: Instr[]): Instr[] => {
+      ctx.liveBodies.add(next);
+      liveChains.push(next);
+      return next;
+    };
+    trackChain(countArm);
 
     // ── Array-LIKE `$Object` arm (§23.2.5.1 InitializeTypedArrayFromArrayLike):
     // the harness `makeArrayLike` factory passes `{length: n, 0: v, …}` — read
@@ -4550,8 +4584,11 @@ export function emitTaDynCtorConstructFromLocals(
       const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
       if (objTypeIdx >= 0 && externLengthIdx !== undefined && externGetIdxIdx !== undefined) {
         const objArm: Instr[] = [];
+        trackChain(objArm);
         const saved = fctx.body;
-        fctx.body = objArm;
+        const arrayLikeArm: Instr[] = [];
+        trackChain(arrayLikeArm);
+        fctx.body = arrayLikeArm;
         const lenF64 = allocLocal(fctx, `__dtac_olen_${fctx.locals.length}`, { kind: "f64" });
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "call", funcIdx: externLengthIdx });
@@ -4581,11 +4618,115 @@ export function emitTaDynCtorConstructFromLocals(
           coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
         });
         fctx.body = saved;
-        chain = [
+
+        // (#5138 A1) §23.2.5.1 step 6: `usingIterator = ? GetMethod(O,
+        // @@iterator)` is consulted BEFORE the array-like path. Without this
+        // probe `new TA({[Symbol.iterator](){…}})` fell through the array-like
+        // arm (no `length` → 0) — the harness `makeIterable` factory shape,
+        // which every `testWithTypedArrayConstructors` body runs.
+        //
+        // A present-but-non-callable, non-nullish `@@iterator` is a TypeError
+        // (GetMethod step 3); a null/undefined one keeps the array-like arm.
+        // Materialization reuses the native iterator ladder
+        // (`__array_from_iter_n(obj, -1)` — the same helper spread uses), so an
+        // abrupt completion out of `next()` propagates unwrapped and no host
+        // import is introduced.
+        let iterablePrelude: Instr[] | null = null;
+        {
+          ensureSymbolCarrier(ctx);
+          const externGetPropIdx = ensureLateImport(
+            ctx,
+            "__extern_get",
+            [{ kind: "externref" }, { kind: "externref" }],
+            [{ kind: "externref" }],
+          );
+          const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+          const typeofFunctionIdx = ensureLateImport(
+            ctx,
+            "__typeof_function",
+            [{ kind: "externref" }],
+            [{ kind: "i32" }],
+          );
+          const isUndefinedIdx = ensureLateImport(
+            ctx,
+            "__extern_is_undefined",
+            [{ kind: "externref" }],
+            [{ kind: "i32" }],
+          );
+          const afinIdx = ensureNativeArrayFromIterN(ctx);
+          if (
+            externGetPropIdx !== undefined &&
+            boxSymbolIdx !== undefined &&
+            typeofFunctionIdx !== undefined &&
+            isUndefinedIdx !== undefined &&
+            afinIdx !== undefined
+          ) {
+            const usingIterLocal = allocLocal(fctx, `__dtac_ui_${fctx.locals.length}`, { kind: "externref" });
+            const matLocal = allocLocal(fctx, `__dtac_mat_${fctx.locals.length}`, { kind: "externref" });
+            const iterArm: Instr[] = [];
+            trackChain(iterArm);
+            fctx.body = iterArm;
+            const notCallableArm: Instr[] = [];
+            trackChain(notCallableArm);
+            fctx.body = notCallableArm;
+            emitThrowTypeError(ctx, fctx, "TypedArray source is not iterable");
+            fctx.body = iterArm;
+            fctx.body.push({ op: "local.get", index: usingIterLocal });
+            fctx.body.push({ op: "call", funcIdx: typeofFunctionIdx });
+            fctx.body.push({ op: "i32.eqz" });
+            fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: notCallableArm, else: [] });
+            fctx.body.push({ op: "local.get", index: argLocals[0]! });
+            fctx.body.push({ op: "f64.const", value: -1 });
+            fctx.body.push({ op: "call", funcIdx: afinIdx });
+            fctx.body.push({ op: "local.set", index: matLocal });
+            fctx.body.push({ op: "local.get", index: matLocal });
+            fctx.body.push({ op: "call", funcIdx: externLengthIdx });
+            fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+            fctx.body.push({ op: "local.set", index: dstNLocal });
+            fctx.body.push({ op: "local.get", index: dstNLocal });
+            fctx.body.push({ op: "i32.const", value: 0 });
+            fctx.body.push({ op: "i32.lt_s" });
+            fctx.body.push({
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: dstNLocal },
+              ],
+              else: [],
+            });
+            emitAllocViewFromN();
+            emitCopyLoop((iLocal) => {
+              fctx.body.push({ op: "local.get", index: matLocal });
+              fctx.body.push({ op: "local.get", index: iLocal });
+              fctx.body.push({ op: "f64.convert_i32_s" });
+              fctx.body.push({ op: "call", funcIdx: externGetIdxIdx });
+              coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+            });
+            fctx.body = saved;
+            iterablePrelude = [
+              { op: "local.get", index: argLocals[0]! },
+              { op: "i32.const", value: 1 }, // @@iterator well-known id
+              { op: "call", funcIdx: boxSymbolIdx },
+              { op: "call", funcIdx: externGetPropIdx },
+              { op: "local.set", index: usingIterLocal },
+              { op: "local.get", index: usingIterLocal },
+              { op: "ref.is_null" },
+              { op: "local.get", index: usingIterLocal },
+              { op: "call", funcIdx: isUndefinedIdx },
+              { op: "i32.or" },
+              { op: "if", blockType: { kind: "empty" }, then: arrayLikeArm, else: iterArm },
+            ];
+          }
+        }
+        if (iterablePrelude) objArm.push(...iterablePrelude);
+        else objArm.push(...arrayLikeArm);
+
+        chain = trackChain([
           { op: "local.get", index: a0AnyLocal },
           { op: "ref.test", typeIdx: objTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: objArm, else: chain },
-        ];
+        ]);
       }
     }
 
@@ -4602,6 +4743,7 @@ export function emitTaDynCtorConstructFromLocals(
       const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx ?? -1;
       if (objVecTypeIdx >= 0 && objVecArrTypeIdx >= 0) {
         const objVecArm: Instr[] = [];
+        trackChain(objVecArm);
         const saved = fctx.body;
         fctx.body = objVecArm;
         const srcVecLocal = allocLocal(fctx, `__dtac_ov_${fctx.locals.length}`, {
@@ -4628,11 +4770,11 @@ export function emitTaDynCtorConstructFromLocals(
           coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
         });
         fctx.body = saved;
-        chain = [
+        chain = trackChain([
           { op: "local.get", index: a0AnyLocal },
           { op: "ref.test", typeIdx: objVecTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: objVecArm, else: chain },
-        ];
+        ]);
       }
     }
 
@@ -4647,6 +4789,7 @@ export function emitTaDynCtorConstructFromLocals(
       if (!srcArrDef || srcArrDef.kind !== "array") continue;
       const elemType = srcArrDef.element;
       const vecArm: Instr[] = [];
+      trackChain(vecArm);
       const saved = fctx.body;
       fctx.body = vecArm;
       const srcVecLocal = allocLocal(fctx, `__dtac_sv_${fctx.locals.length}`, { kind: "ref", typeIdx: vIdx });
@@ -4671,16 +4814,17 @@ export function emitTaDynCtorConstructFromLocals(
         }
       });
       fctx.body = saved;
-      chain = [
+      chain = trackChain([
         { op: "local.get", index: a0AnyLocal },
         { op: "ref.test", typeIdx: vIdx },
         { op: "if", blockType: { kind: "empty" }, then: vecArm, else: chain },
-      ];
+      ]);
     }
 
     // ── `$__ta_dyn_view` copy arm: re-encode element-by-element on both kinds.
     {
       const dvArm: Instr[] = [];
+      trackChain(dvArm);
       const saved = fctx.body;
       fctx.body = dvArm;
       const srcDvLocal = allocLocal(fctx, `__dtac_sdv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
@@ -4719,11 +4863,11 @@ export function emitTaDynCtorConstructFromLocals(
         );
       });
       fctx.body = saved;
-      chain = [
+      chain = trackChain([
         { op: "local.get", index: a0AnyLocal },
         { op: "ref.test", typeIdx: dynIdx },
         { op: "if", blockType: { kind: "empty" }, then: dvArm, else: chain },
-      ];
+      ]);
     }
 
     // ── ArrayBuffer arm (outermost test): shared-backing view over the byte vec
@@ -4736,6 +4880,7 @@ export function emitTaDynCtorConstructFromLocals(
     // replaces the old clamp-offset + static-resizable-flag heuristics.
     {
       const bufArm: Instr[] = [];
+      trackChain(bufArm);
       const saved = fctx.body;
       fctx.body = bufArm;
       ctx.liveBodies.add(saved);
@@ -4817,14 +4962,15 @@ export function emitTaDynCtorConstructFromLocals(
         fctx.body = saved;
         ctx.liveBodies.delete(saved);
       }
-      chain = [
+      chain = trackChain([
         { op: "local.get", index: a0AnyLocal },
         { op: "ref.test", typeIdx: byteVecIdx },
         { op: "if", blockType: { kind: "empty" }, then: bufArm, else: chain },
-      ];
+      ]);
     }
 
     for (const instr of chain) fctx.body.push(instr);
+    for (const link of liveChains) ctx.liveBodies.delete(link);
   }
 
   fctx.body = savedTa;

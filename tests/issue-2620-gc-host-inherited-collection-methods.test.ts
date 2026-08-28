@@ -144,7 +144,8 @@ export function test(): number { return m.own(); }
   });
 
   it("keeps inherited collection calls on this inside an own method", async () => {
-    expect(await compileAndRunTestSyncNumber(`
+    expect(
+      await compileAndRunTestSyncNumber(`
 class R extends Map<string, number> {
   seed(): void { this.set("x", 3); }
 }
@@ -152,6 +153,7 @@ const m = new R();
 m.seed();
 m.set("y", 4);
 export function test(): number { return (m.get("x") ?? 0) * 10 + (m.get("y") ?? 0) + m.size * 100; }
-`)).toBe(234);
+`),
+    ).toBe(234);
   });
 });

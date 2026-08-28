@@ -573,10 +573,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     for (let arg = 0; arg < arity; arg++) body.push({ op: "local.get", index: arg + 1 });
     body.push({ op: "call", funcIdx: methodCallIdx }, { op: "local.set", index: resultLocal });
 
-    const boxedSelf: Instr[] = [
-      { op: "local.get", index: selfLocal },
-      { op: "extern.convert_any" },
-    ];
+    const boxedSelf: Instr[] = [{ op: "local.get", index: selfLocal }, { op: "extern.convert_any" }];
     body.push(
       { op: "local.get", index: resultLocal },
       { op: "any.convert_extern" },

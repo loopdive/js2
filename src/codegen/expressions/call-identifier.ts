@@ -39,6 +39,7 @@ import {
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
+import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import {
   boundFunctionTargetIsDefinitelyCompiled,
   calleeIsBoundFunctionVar,
@@ -86,6 +87,7 @@ import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
 import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import {
   emitThrowTypeError,
   getFuncParamTypes,
@@ -660,6 +662,11 @@ export function compileIdentifierCall(
     const funcName = globalParseBuiltin ?? expr.expression.text;
 
     if (funcName === "isNaN" && expr.arguments.length >= 1) {
+      // (#3481) §19.2.3 step 1 is `? ToNumber(number)`, which throws on a
+      // Symbol. The `n !== n` lowering below reads the symbol's `i32` id as an
+      // ordinary number, so `isNaN(Symbol())` answered `false`
+      // (built-ins/isNaN/return-abrupt-from-tonumber-number-symbol.js).
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
       // isNaN(n) → n !== n
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       const tmp = allocLocal(fctx, `__isnan_${fctx.locals.length}`, {
@@ -672,6 +679,9 @@ export function compileIdentifierCall(
     }
 
     if (funcName === "isFinite" && expr.arguments.length >= 1) {
+      // (#3481) §19.2.2 step 1 — same `? ToNumber(number)` Symbol throw as
+      // `isNaN` above (built-ins/isFinite/return-abrupt-from-tonumber-number-symbol.js).
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
       // isFinite(n) → n - n === 0.0  (Infinity - Infinity = NaN, NaN - NaN = NaN, finite - finite = 0)
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       const tmp = allocLocal(fctx, `__isfin_${fctx.locals.length}`, {
@@ -816,7 +826,7 @@ export function compileIdentifierCall(
       const esc = compileAnnexBEscapeCall(ctx, fctx, expr, funcName, {
         compileExpr: (e) => compileExpression(ctx, fctx, e),
         compileStringLit: (text, node) => compileStringLiteral(ctx, fctx, text, node as ts.Expression),
-        toString: (t, tsType, hint) => emitToString(ctx, fctx, t, tsType as never, hint),
+        toString: (t, staticType, hint) => emitToString(ctx, fctx, t, staticType, hint),
       });
       if (esc !== undefined) return esc;
     }
@@ -1807,10 +1817,7 @@ export function compileIdentifierCall(
           const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType; // null for void
 
           const declaredRefSubtypeOf = (from: ValType, to: ValType): boolean => {
-            if (
-              (from.kind !== "ref" && from.kind !== "ref_null") ||
-              (to.kind !== "ref" && to.kind !== "ref_null")
-            ) {
+            if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
               return false;
             }
             let current: number | undefined = from.typeIdx;
@@ -1973,12 +1980,7 @@ export function compileIdentifierCall(
             // generic callback signature erases its result to externref.
             // Number-boxing 0/1 here would make truthiness work accidentally
             // while breaking typeof/equality at the callback boundary.
-            if (
-              sigParamWasmTypes.length === 0 &&
-              from.kind === "i32" &&
-              from.boolean === true &&
-              isHostExtern(to)
-            ) {
+            if (sigParamWasmTypes.length === 0 && from.kind === "i32" && from.boolean === true && isHostExtern(to)) {
               return helpers.boxBooleanIdx === null ? null : [{ op: "call", funcIdx: helpers.boxBooleanIdx }];
             }
 
@@ -3479,6 +3481,15 @@ export function compileIdentifierCall(
       // entirely from the runtime extras-vec length built above.
       maybeSetArgcForKnownCall(ctx, fctx, funcName, 0, 0);
     } else if (hasSpreadArg) {
+      // (#5093) Same shape as the zero-param branch above, but the callee HAS
+      // formals: bind them from the FLATTENED list and hand the rest to
+      // `__extras_argv`. It publishes the runtime `__argc` itself — the
+      // positional lowering below sets none, so nothing can clobber it.
+      const viaArguments =
+        calleeReadsArgsEarly &&
+        !restInfo &&
+        !hasLinearParamsForCall &&
+        compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, captureCountEarly, funcName);
       // Spread in function call: fn(...arr) — unpack array elements as positional args
       // Capturing nested declarations already have their synthetic capture
       // operands on the stack. Their Wasm signature includes those leading
@@ -3487,7 +3498,9 @@ export function compileIdentifierCall(
       // the prefix at offset zero strands the real capture operands below the
       // call result (the TypeScript node factory surfaced this as a function
       // fallthrough carrying a struct ref where its result expected externref).
-      compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfo, captureCountEarly);
+      if (!viaArguments) {
+        compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfo, captureCountEarly);
+      }
     } else {
       // Normal call — compile provided arguments with type hints from function signature
       const paramTypes = getFuncParamTypes(ctx, funcIdx);

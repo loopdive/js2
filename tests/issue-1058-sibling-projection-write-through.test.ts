@@ -247,9 +247,7 @@ describe("#1058 sibling interface projection write-through", () => {
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
     expect(
-      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some(
-        ({ name }) => name.startsWith("Map_"),
-      ),
+      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some(({ name }) => name.startsWith("Map_")),
     ).toBe(false);
   });
 
@@ -282,5 +280,4 @@ describe("#1058 sibling interface projection write-through", () => {
     const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
     expect((instance.exports.test as () => number)()).toBe(5);
   });
-
 });

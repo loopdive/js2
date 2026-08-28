@@ -85,6 +85,15 @@ const NON_CALLABLE_BUILTIN_NAMESPACES: ReadonlySet<string> = new Set(["Math", "J
 const FUNCTION_PROTOTYPE_INVOKERS: ReadonlySet<string> = new Set(["bind", "call", "apply"]);
 
 /**
+ * (#5140) Namespace statics whose NAME collides with a `%Function.prototype%`
+ * invoker but which the namespace genuinely owns. `Reflect.apply` (§28.1.1) is
+ * a real function; `Reflect.bind` and `Reflect.call` are not.
+ */
+const NAMESPACE_OWN_INVOKER_STATICS: Readonly<Record<string, ReadonlySet<string>>> = {
+  Reflect: new Set(["apply"]),
+};
+
+/**
  * (§20.2.3.1-.3) `JSON.bind()` / `Math.call()` / `Reflect.apply()`-as-a-method:
  * degrade to the catchable TypeError the spec calls for instead of leaking the
  * dynamic `env::__get_builtin` host import.
@@ -122,6 +131,11 @@ export function tryEmitNonCallableNamespaceInvokerThrow(
   const member = propAccess.name.text;
   if (!NON_CALLABLE_BUILTIN_NAMESPACES.has(namespaceName)) return false;
   if (!FUNCTION_PROTOTYPE_INVOKERS.has(member)) return false;
+  // (#5140) `Reflect.apply` is an OWN method of the Reflect namespace
+  // (§28.1.1), not the inherited `%Function.prototype%.apply` — the name
+  // collision made every standalone `Reflect.apply(f, t, args)` throw
+  // "Reflect.apply is not a function". The namespace's own statics win.
+  if (NAMESPACE_OWN_INVOKER_STATICS[namespaceName]?.has(member)) return false;
   emitThrowTypeError(ctx, fctx, `${namespaceName}.${member} is not a function (${namespaceName} is not callable)`);
   return true;
 }

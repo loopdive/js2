@@ -8,7 +8,8 @@ import {
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import { irIntrinsicFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
-import type { IrUnitId } from "../ir/identity.js";
+import type { IrNestedClassFieldCallInventoryCandidate, IrUnitId } from "../ir/identity.js";
+import type { IrNestedClassFieldCallProofSidecar } from "../ir/class-field-call-planning.js";
 import { irVal } from "../ir/nodes.js";
 import {
   makeIrIdentityImportedFunctionResolver,
@@ -61,6 +62,10 @@ export interface IrOverlayIdentityPlan {
   readonly unitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
   readonly functionUnitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
   readonly declarationByLegacyName: ReadonlyMap<string, ts.FunctionDeclaration>;
+  /** Typed-but-unclaimed F3 inventory population for this exact source. */
+  readonly nestedClassFieldCallCandidates?: readonly IrNestedClassFieldCallInventoryCandidate[];
+  /** Optional dormant evidence built before selection; never an admission input in F3. */
+  readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
   readonly safeFunctionUnitIds: Set<IrUnitId>;
 }
 
@@ -162,6 +167,12 @@ export function planIrOverlayByIdentity(
     unitIdByLegacyName,
     functionUnitIdByLegacyName,
     declarationByLegacyName,
+    ...(identitySelection.nestedClassFieldCallCandidates
+      ? { nestedClassFieldCallCandidates: identitySelection.nestedClassFieldCallCandidates }
+      : {}),
+    ...(identitySelection.nestedClassFieldCallProofs
+      ? { nestedClassFieldCallProofs: identitySelection.nestedClassFieldCallProofs }
+      : {}),
     safeFunctionUnitIds: new Set(),
   };
 }

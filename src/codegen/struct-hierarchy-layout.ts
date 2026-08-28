@@ -39,11 +39,7 @@ export function hasStructPrefix(child: StructTypeDef, parent: StructTypeDef): bo
 }
 
 /** Whether a GC struct ref can flow to a declared nominal ancestor unchanged. */
-export function isDeclaredStructRefSubtypeAssignable(
-  mod: WasmModule,
-  actual: ValType,
-  expected: ValType,
-): boolean {
+export function isDeclaredStructRefSubtypeAssignable(mod: WasmModule, actual: ValType, expected: ValType): boolean {
   if (
     (actual.kind !== "ref" && actual.kind !== "ref_null") ||
     (expected.kind !== "ref" && expected.kind !== "ref_null") ||

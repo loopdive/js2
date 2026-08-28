@@ -3,7 +3,7 @@ id: 4591
 title: "Cut the exact Fibonacci call component over to Prepared IR"
 status: done
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-28
 completed: 2026-08-21
 priority: critical
 feasibility: medium
@@ -117,6 +117,23 @@ roles to 253/129. Each final slot points to the one expected allocator object,
 and only `bench_fib` owns a trampoline/cache pair. The source and support
 callable signatures agree with their published intents; the cache is one
 mutable `externref` global.
+
+## 2026-08-28 current-main cache-slot maintenance
+
+On current `main` at `48abcb949c9d1b539cb58472256e4545cacd9dc8`, the full
+#4591 suite retains all 26 semantic, body, artifact, Program ABI, and runtime
+controls before reaching one obsolete direct-lane physical cache assertion.
+The exact direct `bench_fib` support pair now resolves to function/global slots
+`291 / 136`; only the cache slot moved from 135 to 136. The source callables
+remain at 76/77, the Prepared lane remains intentionally allocator-derived at
+this assertion, and every singleton-object, binding, signature, body, surface,
+binary, and runtime check stays unchanged.
+
+Carry this one-number pin maintenance with the #3525 telemetry-only lifecycle
+repair because its mandatory adjacent/changed-root validation selects #4591.
+Do not replace the exact slot with an inequality or derive the expected value
+from the object under test. Require the suite to return to 27/27 before the
+signed commit, with LOC/function ratchets and both hooks unchanged.
 
 ## Completion evidence
 

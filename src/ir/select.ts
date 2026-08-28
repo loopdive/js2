@@ -76,7 +76,14 @@ import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
-import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
+import {
+  closureSignatureEquals,
+  type IrClassShape,
+  type IrClosureSignature,
+  type IrIntrinsicBackendComposite,
+  type IrIntrinsicBackendSequence,
+  type IrType,
+} from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { isAffineThreeDeepElementAccess, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -277,26 +284,58 @@ export type IrMathMethodPlan =
       readonly intrinsic: IntrinsicId;
       readonly op: "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
     }
+  | {
+      readonly arity: 1;
+      readonly intrinsic: IntrinsicId;
+      readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
+      readonly arity: 1 | 2;
+      readonly intrinsic: IntrinsicId;
+      readonly composite: IrIntrinsicBackendComposite;
+    }
   | { readonly arity: 1 | 2; readonly intrinsic: IntrinsicId };
 
 /**
  * Exact-arity Math surface shared by selection, call-graph closure, and the
  * AST→IR builder. Every accepted method becomes a versioned semantic
- * intrinsic. `op` remains only as a selector compatibility signal for the
- * five methods that never require a callable provider; provider selection is
- * performed after middle-end transforms. Keeping arity here prevents
- * selector/builder drift and preserves ambient-Math identity checks.
+ * intrinsic. `op` remains the selector compatibility signal for the five
+ * single-op methods, while `sequence` and `composite` mark closed native
+ * multi-op paths; provider selection is performed after middle-end transforms.
+ * Keeping arity here prevents selector/builder drift and preserves ambient-
+ * Math identity checks.
  */
 export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = {
   abs: { arity: 1, intrinsic: "math.abs", op: "f64.abs" },
   sqrt: { arity: 1, intrinsic: "math.sqrt", op: "f64.sqrt" },
   floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
+  fround: { arity: 1, intrinsic: "math.fround", sequence: "f64.fround" },
   ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
+  clz32: { arity: 1, intrinsic: "math.clz32", composite: "math.clz32" },
+  imul: { arity: 2, intrinsic: "math.imul", composite: "math.imul" },
+  max: { arity: 2, intrinsic: "math.max", composite: "math.max" },
+  min: { arity: 2, intrinsic: "math.min", composite: "math.min" },
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
+  asin: { arity: 1, intrinsic: "math.asin" },
+  acos: { arity: 1, intrinsic: "math.acos" },
+  asinh: { arity: 1, intrinsic: "math.asinh" },
+  acosh: { arity: 1, intrinsic: "math.acosh" },
+  atan: { arity: 1, intrinsic: "math.atan" },
+  atanh: { arity: 1, intrinsic: "math.atanh" },
+  cbrt: { arity: 1, intrinsic: "math.cbrt" },
+  round: { arity: 1, intrinsic: "math.round" },
+  sign: { arity: 1, intrinsic: "math.sign" },
   sin: { arity: 1, intrinsic: "math.sin" },
   cos: { arity: 1, intrinsic: "math.cos" },
+  tan: { arity: 1, intrinsic: "math.tan" },
+  sinh: { arity: 1, intrinsic: "math.sinh" },
+  cosh: { arity: 1, intrinsic: "math.cosh" },
+  tanh: { arity: 1, intrinsic: "math.tanh" },
   exp: { arity: 1, intrinsic: "math.exp" },
+  expm1: { arity: 1, intrinsic: "math.expm1" },
   log: { arity: 1, intrinsic: "math.log" },
+  log10: { arity: 1, intrinsic: "math.log10" },
+  log1p: { arity: 1, intrinsic: "math.log1p" },
   log2: { arity: 1, intrinsic: "math.log2" },
   pow: { arity: 2, intrinsic: "math.pow" },
   atan2: { arity: 2, intrinsic: "math.atan2" },
@@ -6385,7 +6424,7 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
       recv.text === "Math" &&
       selectorSeesAmbientBinding(recv) &&
       plan !== undefined &&
-      selectorSupportsMathPlan(plan) &&
+      selectorSupportsMathPlan(plan, candidate) &&
       candidate.arguments.length === plan.arity &&
       candidate.arguments.every((arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg, seen))
     );
@@ -6416,7 +6455,7 @@ function exactNumericExponentiationContextReady(): boolean {
     currentSelectionSubject.body !== undefined &&
     currentModuleBindingResolver !== null &&
     currentSelectionOptions?.classifyPrimitiveExpression !== undefined &&
-    selectorSupportsMathPlan(IR_MATH_METHOD_TABLE.pow)
+    selectorMathPlanEnabled(IR_MATH_METHOD_TABLE.pow)
   );
 }
 
@@ -6502,7 +6541,7 @@ function exactNumericExponentiationOperand(
         scope.has("Math") ||
         !selectorSeesAmbientBinding(receiver) ||
         plan === undefined ||
-        !selectorSupportsMathPlan(plan) ||
+        !selectorSupportsMathPlan(plan, candidate) ||
         candidate.arguments.length !== plan.arity
       ) {
         return false;
@@ -6512,11 +6551,12 @@ function exactNumericExponentiationOperand(
           !ts.isSpreadElement(argument) && exactNumericExponentiationOperand(argument, scope, localClasses, seen),
       );
     }
-    // A direct local call is allowed when the ordinary Phase-1 call walk has
-    // already certified its callee/arity/arguments and the checker proves its
-    // result is number. Member calls, wrappers, and coercive constructors stay
-    // outside this checkpoint.
-    return ts.isIdentifier(candidate.expression) && isPhase1Expr(candidate, scope, localClasses);
+    // Direct-call plans are prepared after selection. Without an exact
+    // AST-site plan and its f64 return ABI, a checker-number result is not
+    // enough to admit this operand: lowering may otherwise demote it after the
+    // enclosing exponentiation claim. Generic call selection remains unchanged
+    // outside this exact checkpoint.
+    return false;
   }
   // Conditional/property/element/object/closure expressions deliberately stay
   // outside the first checkpoint. In particular, a property with a declared
@@ -6603,8 +6643,44 @@ function selectorPrimitiveWrapperOrGenericBinary(
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
 }
 
-function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
-  return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
+function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
+  if (
+    call.questionDotToken !== undefined ||
+    (ts.isPropertyAccessExpression(call.expression) && call.expression.questionDotToken !== undefined)
+  ) {
+    return false;
+  }
+  return selectorMathPlanEnabled(plan);
+}
+
+function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
+  if (plan.intrinsic === "math.asin" && process.env.JS2WASM_IR_MATH_ASIN === "0") return false;
+  if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
+  if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
+  if (plan.intrinsic === "math.tan" && process.env.JS2WASM_IR_MATH_TAN === "0") return false;
+  if (plan.intrinsic === "math.log10" && process.env.JS2WASM_IR_MATH_LOG10 === "0") return false;
+  if (plan.intrinsic === "math.log1p" && process.env.JS2WASM_IR_MATH_LOG1P === "0") return false;
+  if (plan.intrinsic === "math.sinh" && process.env.JS2WASM_IR_MATH_SINH === "0") return false;
+  if (plan.intrinsic === "math.cosh" && process.env.JS2WASM_IR_MATH_COSH === "0") return false;
+  if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
+  if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
+  if (plan.intrinsic === "math.fround" && process.env.JS2WASM_IR_MATH_FROUND === "0") return false;
+  if (plan.intrinsic === "math.clz32" && process.env.JS2WASM_IR_MATH_CLZ32 === "0") return false;
+  if (plan.intrinsic === "math.imul" && process.env.JS2WASM_IR_MATH_IMUL === "0") return false;
+  if (plan.intrinsic === "math.max" && process.env.JS2WASM_IR_MATH_MAX === "0") return false;
+  if (plan.intrinsic === "math.min" && process.env.JS2WASM_IR_MATH_MIN === "0") return false;
+  if (plan.intrinsic === "math.round" && process.env.JS2WASM_IR_MATH_ROUND === "0") return false;
+  if (plan.intrinsic === "math.sign" && process.env.JS2WASM_IR_MATH_SIGN === "0") return false;
+  if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
+  if (plan.intrinsic === "math.asinh" && process.env.JS2WASM_IR_MATH_ASINH === "0") return false;
+  if (plan.intrinsic === "math.acosh" && process.env.JS2WASM_IR_MATH_ACOSH === "0") return false;
+  if (plan.intrinsic === "math.atanh" && process.env.JS2WASM_IR_MATH_ATANH === "0") return false;
+  return (
+    "op" in plan ||
+    "sequence" in plan ||
+    "composite" in plan ||
+    currentSelectionOptions?.supportsSymbolicMathHelpers === true
+  );
 }
 
 function selectorSupportsNumberToString(): boolean {
@@ -8868,7 +8944,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         selectorSeesAmbientBinding(expr.expression.expression) &&
         !scope.has(expr.expression.expression.text) &&
         mathPlan !== undefined &&
-        selectorSupportsMathPlan(mathPlan) &&
+        selectorSupportsMathPlan(mathPlan, expr) &&
         expr.arguments.length === mathPlan.arity
       ) {
         return expr.arguments.every(
@@ -9999,7 +10075,7 @@ export function buildLocalCallGraph(
             node.expression.expression.text === "Math" &&
             selectorSeesAmbientBinding(node.expression.expression) &&
             mathPlan !== undefined &&
-            selectorSupportsMathPlan(mathPlan) &&
+            selectorSupportsMathPlan(mathPlan, node) &&
             node.arguments.length === mathPlan.arity
           ) {
             for (const a of node.arguments) visit(a);

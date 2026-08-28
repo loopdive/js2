@@ -45,6 +45,7 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.j
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
@@ -105,6 +106,7 @@ import {
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
+import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -1665,6 +1667,33 @@ function _hasRealmGlobalObjectValue(ctx: CodegenContext, expr: ts.ObjectLiteralE
   return sawGlobal;
 }
 
+// (#5108) TypeScript gives the selected computed-only arithmetic literals a
+// numeric/string index signature with no named properties. The literal emitter
+// can still build a closed struct field, but the binding mapper then chooses
+// externref and the dynamic reader cannot see that struct. Keep this syntactic:
+// the predicate itself makes every consumer choose the open-object carrier, so
+// no additional raw checker query is needed. Mixed/named and non-arithmetic
+// computed shapes retain their existing representation.
+function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || expr.properties.length === 0) return false;
+  if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
+  for (const prop of expr.properties) {
+    if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
+    if (!ts.isBinaryExpression(prop.name.expression)) return false;
+    const operator = prop.name.expression.operatorToken.kind;
+    if (
+      operator !== ts.SyntaxKind.PlusToken &&
+      operator !== ts.SyntaxKind.MinusToken &&
+      operator !== ts.SyntaxKind.AsteriskToken &&
+      operator !== ts.SyntaxKind.SlashToken
+    ) {
+      return false;
+    }
+    if (resolveComputedKeyExpression(ctx, prop.name.expression) === undefined) return false;
+  }
+  return true;
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
@@ -1695,7 +1724,8 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       ) ||
       // (#4638) a data-only literal holding the realm global object — see
       // `_hasRealmGlobalObjectValue`.
-      _hasRealmGlobalObjectValue(ctx, expr))
+      _hasRealmGlobalObjectValue(ctx, expr) ||
+      computedOnlyArithmeticLiteralNeedsHostCarrier(ctx, expr))
   );
 }
 
@@ -2549,6 +2579,21 @@ export function getWellKnownSymbolId(name: string): number | undefined {
 }
 
 /**
+ * (#5142) Reverse of {@link getWellKnownSymbolId}: the JavaScript spelling of a
+ * well-known symbol id, e.g. `7` → `"match"`. The `@@<id>` member keys used by
+ * the native-proto glue are physical compiler keys; §10.2.9 SetFunctionName
+ * spells the exposed `.name` of a symbol-keyed method `"[Symbol.match]"`, and
+ * that display name is derived from this table so a new well-known symbol does
+ * not need a second hand-maintained mapping.
+ */
+export function wellKnownSymbolName(id: number): string | undefined {
+  for (const [name, value] of Object.entries(WELL_KNOWN_SYMBOLS)) {
+    if (value === id) return name;
+  }
+  return undefined;
+}
+
+/**
  * Ensure the __symbol_counter mutable global exists (lazy init).
  * Starts at 100 so well-known symbol IDs (1-12) never collide.
  */
@@ -2570,6 +2615,16 @@ export function ensureSymbolCounter(ctx: CodegenContext): number {
  * The description argument (if any) is evaluated for side effects but discarded.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  // (#3481) §20.4.1.1 step 2: a description that is not `undefined` goes
+  // through `? ToString(description)`, and ToString(Symbol) throws (§7.1.17
+  // step 3). `Symbol(anotherSymbol)` used to succeed — the description
+  // argument is coerced with a STRING target, which for a bare `i32` symbol id
+  // renders the id, so the nested symbol became the description "101"
+  // (built-ins/Symbol/desc-to-string-symbol.js). Guarded before the counter is
+  // bumped so a throwing call reserves no id.
+  if (args.length > 0 && emitSymbolOperandCoercionThrow(ctx, fctx, args[0]!, "string")) {
+    return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+  }
   if (usesNativeSymbolProvider(ctx)) ensureNativeSymbolBoundaryBridge(ctx);
   const counterIdx = ensureSymbolCounter(ctx);
   // Increment counter first so the new id is reserved before we register a
@@ -4278,7 +4333,12 @@ export function compileTupleLiteral(
       } else if (expectedType.kind === "i32") {
         fctx.body.push({ op: "i32.const", value: 0 });
       } else if (expectedType.kind === "externref") {
-        emitUndefined(ctx, fctx);
+        // (#5158) A missing tuple slot IS `undefined`, so use the canonical
+        // producer: `emitUndefined` is gated on the (default-off) #2106
+        // singleton flag and otherwise emits `ref.null.extern`, which the
+        // standalone value model reads back as JS **null** — `let [_, x] = []`
+        // then answered `x === null`, not `undefined`.
+        fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         fctx.body.push({ op: "ref.null", typeIdx: expectedType.typeIdx });
       } else {
@@ -4319,7 +4379,10 @@ export function compileTupleLiteral(
       } else if (expectedType.kind === "i32") {
         fctx.body.push({ op: "i32.const", value: 0 });
       } else if (expectedType.kind === "externref") {
-        emitUndefined(ctx, fctx);
+        // (#5158) See the note on the spread-expansion padding above: the
+        // canonical producer is what makes an absent element read back as
+        // `undefined` instead of `null` in the host-free value model.
+        fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         const typeIdx = (expectedType as { typeIdx: number }).typeIdx;
         fctx.body.push({ op: "ref.null", typeIdx });

@@ -1002,9 +1002,7 @@ function patchStructNewsWithShapeIds(ctx: CodegenContext, shapeIdByTypeIdx: Read
       for (let i = arr.length - 1; i >= 0; i--) {
         const instr = arr[i]!;
         const shapeId =
-          instr.op === "struct.new"
-            ? shapeIdByTypeIdx.get((instr as { typeIdx?: number }).typeIdx ?? -1)
-            : undefined;
+          instr.op === "struct.new" ? shapeIdByTypeIdx.get((instr as { typeIdx?: number }).typeIdx ?? -1) : undefined;
         if (shapeId !== undefined) {
           arr.splice(i, 0, { op: "i32.const", value: shapeId });
         }
@@ -1096,10 +1094,7 @@ function emitStructFieldNamesExport(
     typeIdx,
     csv: names.map(escapeStructFieldNameForCsv).join(","),
   }));
-  addStringConstantGlobals(ctx, [
-    ...legacyCsvEntries.map(({ csv }) => csv),
-    ...ctx.shapeNameCsvById,
-  ]);
+  addStringConstantGlobals(ctx, [...legacyCsvEntries.map(({ csv }) => csv), ...ctx.shapeNameCsvById]);
   const legacyTypeIdxToGlobalIdx = new Map<number, number>();
   for (const { typeIdx, csv } of legacyCsvEntries) {
     const globalIdx = ctx.stringGlobalMap.get(csv);

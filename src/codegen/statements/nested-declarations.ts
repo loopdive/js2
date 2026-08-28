@@ -581,13 +581,6 @@ export function transitiveSiblingCaptures(
         // reserves one fewer leading parameter than the body later requires.
         if (fctx.localMap.has(referencedName)) {
           captures.add(referencedName);
-          continue;
-        }
-        if (
-          ctx.funcMap.has(referencedName) &&
-          ctx.funcMap.get(referencedName) !== ctx.jsStringImports.get(referencedName)
-        ) {
-          continue;
         }
       }
       directCapturesByDecl.set(decl, captures);
@@ -3075,6 +3068,13 @@ export function emitSetExtrasArgv(
     // stays on the existing best-effort path: unlike standalone, its object
     // runtime does not expose the array-like reader arm yet.
     const useNativeMaterializer = ctx.standalone;
+    // (#4782) Register the number boxer HERE — before the reader funcidxs are
+    // captured and the shift is flushed. `boxVecElem` caches `__box_number`
+    // once and silently drops the value when it is absent, and this loop can
+    // be the first site in the module that needs it, so every spread-sourced
+    // numeric element reached `arguments` as `null`. Registering later would
+    // shift `lenFn`/`getFn`/`iterFn` out from under the emitted body.
+    ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
     let lenFn: number | undefined;
     let getFn: number | undefined;
     let iterFn: number | undefined;

@@ -263,8 +263,7 @@ function collectPropertyCallArgLocals(
   expr: ts.CallExpression,
   paramTypes: ValType[],
   evaluateOverflow = true,
-  pushMissingArgument: (index: number, type: ValType) => void = (_index, type) =>
-    pushDefaultValue(fctx, type, ctx),
+  pushMissingArgument: (index: number, type: ValType) => void = (_index, type) => pushDefaultValue(fctx, type, ctx),
 ): number[] {
   const argLocals: number[] = [];
   const paramCount = paramTypes.length;

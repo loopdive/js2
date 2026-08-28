@@ -40,5 +40,4 @@ describe("#1058 namespace re-export member calls", () => {
     (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
     expect((instance.exports.test as () => number)()).toBe(42);
   });
-
 });

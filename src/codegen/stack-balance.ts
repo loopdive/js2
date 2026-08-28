@@ -1921,9 +1921,10 @@ function fixCallArgTypesInBody(
       // But ops like i32.xor (pop 2, push 1, net -1) also produce a value
       // that becomes a call argument — we handle those too.
       const simpleProducer = SIMPLE_PRODUCERS.has(op);
-      const inferredType = simpleProducer || delta === 0
-        ? inferInstrTypeWithSigs(instr, localTypes, globalTypes, types, mod, numImports, sigs)
-        : null;
+      const inferredType =
+        simpleProducer || delta === 0
+          ? inferInstrTypeWithSigs(instr, localTypes, globalTypes, types, mod, numImports, sigs)
+          : null;
       const producedType = simpleProducer ? inferredType : null;
       const producesValue = producedType !== null;
 

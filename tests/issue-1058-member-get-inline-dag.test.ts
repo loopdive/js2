@@ -9,7 +9,7 @@ import type { Instr, WasmFunction } from "../src/ir/types.js";
 const originalGuardReuse = process.env.JS2WASM_IC_GUARD_REUSE;
 
 afterEach(() => {
-  if (originalGuardReuse === undefined) delete process.env.JS2WASM_IC_GUARD_REUSE;
+  if (originalGuardReuse === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IC_GUARD_REUSE");
   else process.env.JS2WASM_IC_GUARD_REUSE = originalGuardReuse;
 });
 

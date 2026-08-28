@@ -178,11 +178,7 @@ export function currentSourceModuleGlobalIndex(
   if (sourceFile.isDeclarationFile) return undefined;
   const declaration = resolvedDeclaration(ctx, id, allowUnresolvedTopLevelVariable);
   if (!declaration || declaration.getSourceFile() !== sourceFile) return undefined;
-  if (
-    ts.isVariableDeclaration(declaration) &&
-    ts.isIdentifier(declaration.name) &&
-    declaration.name.text === id.text
-  ) {
+  if (ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) && declaration.name.text === id.text) {
     const projectedIdx = ctx.moduleGlobals.get(id.text);
     if (projectedIdx === undefined) return undefined;
 

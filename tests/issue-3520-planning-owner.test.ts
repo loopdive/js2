@@ -164,13 +164,16 @@ describe("#3520 exact planning owner identity", () => {
     const unsupportedConstructorId = unitId(context, unsupportedConstructor);
     const unsupportedField = unsupported.members.find(ts.isPropertyDeclaration)!;
 
-    expect(context.terminalByUnitId.has(unsupportedConstructorId)).toBe(false);
+    expect(context.terminalByUnitId.get(unsupportedConstructorId)).toBe(
+      context.unitByUnitId.get(unsupportedConstructorId),
+    );
     expect(context.unitByUnitId.get(unsupportedConstructorId)).toMatchObject({
-      terminal: false,
-      terminalOwnerId: outerId,
+      terminal: true,
+      terminalOwnerId: unsupportedConstructorId,
+      containingTerminalOwnerId: outerId,
     });
-    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(outerId);
-    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(outerId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(unsupportedConstructorId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(unsupportedConstructorId);
   });
 
   it("returns the outer terminal for nested, arrow, object-method, and Promise-like support units", () => {

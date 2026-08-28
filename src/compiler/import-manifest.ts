@@ -287,6 +287,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // through the dedicated builtin handler in the runtime.
   if (name === "__new_AggregateError") return { type: "builtin", name };
 
+  // (#5159) §20.5.1.1 step 4 InstallErrorCause for the plain Error family
+  // (`new Error(msg, { cause })` and its 6 siblings). Their `__new_<Name>`
+  // import stays a 1-arg message constructor so option-less constructions are
+  // untouched; this companion installs `cause` on the returned error.
+  if (name === "__error_install_cause") return { type: "builtin", name };
+
   // (#1339) SuppressedError likewise needs spec-specific construction
   // (CreateNonEnumerableDataPropertyOrThrow for error/suppressed/message,
   // InstallErrorCause via HasProperty for opaque WasmGC options struct).

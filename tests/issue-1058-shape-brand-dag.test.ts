@@ -27,10 +27,7 @@ it("#1058 brands a shared instruction DAG once", () => {
   expect(brandCollidingShapeTypes(mod)).toEqual([1, 2]);
   expect(mod.types[1]).toMatchObject({
     kind: "struct",
-    fields: [
-      { name: "x" },
-      { name: SHAPE_BRAND_FIELD, type: { kind: "ref_null", typeIdx: 0 } },
-    ],
+    fields: [{ name: "x" }, { name: SHAPE_BRAND_FIELD, type: { kind: "ref_null", typeIdx: 0 } }],
   });
   expect(leaf).toEqual([
     { op: "ref.null", typeIdx: 0 },

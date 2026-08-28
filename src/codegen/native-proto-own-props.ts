@@ -73,6 +73,7 @@ import {
   ensureStandaloneNativeMethodClosure,
   getBuiltinBrand,
   seededNativeProtoOwnMembersByBrand,
+  seededNativeProtoSymbolMembersByBrand,
   seededNativeProtoSymbolTagsByBrand,
 } from "./native-proto.js";
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
@@ -222,6 +223,7 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return undefined;
   const seededOwnMembers = seededNativeProtoOwnMembersByBrand(ctx);
+  const seededSymbolMembers = seededNativeProtoSymbolMembersByBrand(ctx);
   const seededSymbolTags = seededNativeProtoSymbolTagsByBrand(ctx);
   const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
   const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
@@ -322,6 +324,52 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
                 ],
               },
             ],
+          } as Instr,
+        ])),
+    // Well-known symbol members (for example Symbol.prototype[@@toPrimitive])
+    // are also own companion entries, but unlike Symbol.toStringTag they are
+    // represented by `@@<id>` CSV sentinels and must compare the native Symbol
+    // carrier's identity field. Keep this arm separate from the string CSV
+    // ladder so a symbol key can never be coerced into text.
+    ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined || symbolType === undefined
+      ? []
+      : [...seededSymbolMembers.entries()].flatMap(([brand, symbolIds]) => [
+          { op: "local.get", index: L_ANY } as Instr,
+          { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
+          { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,
+          { op: "i32.const", value: brand } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: symbolIds.flatMap((symbolId) => [
+              { op: "local.get", index: 1 } as Instr,
+              { op: "any.convert_extern" } as Instr,
+              { op: "ref.test", typeIdx: symbolType } as Instr,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 1 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: symbolType },
+                  { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+                  { op: "i32.const", value: symbolId },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 0 },
+                      { op: "call", funcIdx: protoOwnRecvIdx },
+                      { op: "local.get", index: 1 },
+                      { op: "call", funcIdx: objectHasOwnIdx },
+                      { op: "return" },
+                    ],
+                  },
+                ],
+              },
+            ]),
           } as Instr,
         ])),
     // A non-string key (other symbols, boxed number) names no member of a prototype.

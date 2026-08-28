@@ -7,7 +7,7 @@ import { compileMultiSource } from "../src/compiler.js";
 const originalProfileMode = process.env.JS2WASM_COMPILE_PROFILE;
 
 afterEach(() => {
-  if (originalProfileMode === undefined) delete process.env.JS2WASM_COMPILE_PROFILE;
+  if (originalProfileMode === undefined) Reflect.deleteProperty(process.env, "JS2WASM_COMPILE_PROFILE");
   else process.env.JS2WASM_COMPILE_PROFILE = originalProfileMode;
   refreshCompileProfileConfig();
   resetCompileProfile();

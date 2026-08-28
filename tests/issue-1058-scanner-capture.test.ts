@@ -172,5 +172,4 @@ describe("#1058 scanner callback-object captures", () => {
     imports.__setInstance?.(instance);
     expect((instance.exports.test as Function)()).toBe(10);
   });
-
 });

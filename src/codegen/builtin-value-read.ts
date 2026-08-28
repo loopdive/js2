@@ -802,6 +802,15 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
     if (ctorType !== null) return ctorType;
     return undefined;
   }
+  // (#5156) Own string-valued DATA property of the prototype (Error family
+  // `name`/`message`). These are absent from `memberCsv` on purpose, so the
+  // read used to fall to the dynamic path, whose `$Object` cast of the
+  // `$NativeProto` struct trapped with "illegal cast in __module_init".
+  const dataProp = getNativeProtoBuiltinGlue(ctx, brand)?.dataProps?.find(([key]) => key === member);
+  if (dataProp) {
+    const literal = compileStringLiteral(ctx, fctx, dataProp[1]);
+    if (literal) return literal;
+  }
   // (#2984 Phase 2) Own-CSV gate + Object.prototype inheritance + un-wired-
   // member refusal fallback — policy lives in native-proto-value-read.ts.
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
@@ -849,13 +858,17 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
 }
 
 /**
- * (#4731) `<Map|Set>.prototype[Symbol.iterator]` is an alias for the
- * prototype's `entries`/`values` method.  The ordinary computed-property path
- * materializes the `$NativeProto` object and asks `__extern_get` for a dynamic
- * symbol key; standalone has no symbol-key arm there, so it returned null.
- * Resolve this exact static shape through the same identity-stable method
- * closure used by the dot form.  Keeping this in the value-read subsystem also
- * makes the Set and nearby Map controls share one spec-derived path.
+ * (#4731 / #5142) `<Builtin>.prototype[Symbol.<wellKnown>]` value read.  The
+ * ordinary computed-property path materializes the `$NativeProto` object and
+ * asks `__extern_get` for a dynamic symbol key; standalone has no symbol-key arm
+ * there, so it returned null (`undefined` at run time).  Resolve this static
+ * shape through the same identity-stable method closure the dot form uses.
+ *
+ * #4731 covered `<Map|Set>.prototype[Symbol.iterator]`, which is an ALIAS for
+ * that prototype's `entries`/`values` method; #5142 generalizes the arm to every
+ * well-known symbol advertised by a brand's glue under its physical `@@<id>` key
+ * (RegExp's `@@7`/`@@8`/`@@9`/`@@10` = `[Symbol.match]`/`[Symbol.replace]`/
+ * `[Symbol.search]`/`[Symbol.split]`).
  */
 function tryCompileStandaloneBuiltinProtoIteratorRead(
   ctx: CodegenContext,
@@ -865,22 +878,19 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   if (!ctx.standalone) return undefined;
 
   const key = skipTransparentExpressions(expr.argumentExpression);
-  if (
-    !ts.isPropertyAccessExpression(key) ||
-    !ts.isIdentifier(key.expression) ||
-    key.expression.text !== "Symbol" ||
-    key.name.text !== "iterator" ||
-    getWellKnownSymbolId(key.name.text) === undefined
-  ) {
+  if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
     return undefined;
   }
+  const symbolId = getWellKnownSymbolId(key.name.text);
+  if (symbolId === undefined) return undefined;
 
   const receiver = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(receiver) || receiver.name.text !== "prototype") return undefined;
   if (!ts.isIdentifier(receiver.expression)) return undefined;
 
   const builtinName = receiver.expression.text;
-  if (builtinName !== "Map" && builtinName !== "Set") return undefined;
+  const isIteratorAlias = key.name.text === "iterator" && (builtinName === "Map" || builtinName === "Set");
+  if (!isIteratorAlias && !BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
   if (
     fctx.localMap.has(builtinName) ||
     (fctx.boxedCaptures?.has(builtinName) ?? false) ||
@@ -892,7 +902,15 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const member = builtinName === "Set" ? "values" : "entries";
+  // Map/Set keep their §24.1.3.12/§24.2.3.11 ALIAS resolution: `@@iterator` on
+  // those prototypes is the very same function object as `entries`/`values`, so
+  // it must resolve to that member's singleton rather than a distinct closure.
+  // Every other builtin resolves its symbol-keyed member under the physical
+  // `@@<id>` key (e.g. RegExp's `@@7` = `[Symbol.match]`, Date's `@@3` =
+  // `[Symbol.toPrimitive]`); `resolveStandaloneProtoMemberValueClosure` below
+  // answers undefined for a member the brand never registered, which keeps the
+  // pre-#5142/#5156 fallthrough for those.
+  const member = isIteratorAlias ? (builtinName === "Set" ? "values" : "entries") : `@@${symbolId}`;
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved || resolved.kind !== "method") return undefined;
 

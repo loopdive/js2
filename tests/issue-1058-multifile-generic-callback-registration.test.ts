@@ -90,7 +90,7 @@ export function test(): number {
       { target: "gc", platform: "node", skipSemanticDiagnostics: true },
     );
 
-    expect(result.success, result.errors.map(error => error.message).join("\n")).toBe(true);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
 
     const imports = result.importObject ?? {};

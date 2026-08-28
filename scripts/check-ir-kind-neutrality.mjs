@@ -183,7 +183,7 @@ const VERDICTS = {
   intrinsic: {
     verdict: "unresolved",
     why:
-      "Neutral envelope, ECMAScript-sourced vocabulary. `IntrinsicId` is 12 `math.*` ids drawn " +
+      "Neutral envelope, ECMAScript-sourced vocabulary. `IntrinsicId` is 33 `math.*` ids drawn " +
       "explicitly from the JS `Math` surface, but ECMA-262 §21.3 leaves the transcendentals " +
       "implementation-approximated, so most of them carry no ECMAScript commitment at all — while " +
       "`math.pow` does (§21.3.2.26 mandates pow(1, NaN) = NaN, where C99 pow returns 1).",

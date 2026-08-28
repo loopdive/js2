@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 feasibility: hard
 model: fable
@@ -13,10 +13,92 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
-  # The stacked TypeScript-source validation branch includes #4267/#4268's
-  # overload-owner fixes in the declaration driver. The pruning subsystem
-  # itself lives in src/resolve/consumer-driven-barrels.ts.
+  # This is a consolidated TypeScript-parser stress harvest. The branch predates
+  # the change-scoped file/function ratchets and intentionally spans the
+  # compiler frontiers documented in the implementation handoff below.
   - src/codegen/declarations.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/closures.ts
+  - src/codegen/stack-balance.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/property-access.ts
+  - src/emit/binary.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/type-coercion.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/literals.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/expressions/eval-inline.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/context/types.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/typeof-delete.ts
+  - src/codegen/statements/variables.ts
+  - src/compiler.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/codegen/ir-inline.ts::inlineUserFunctions
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/eval-inline.ts::tryStaticEvalInline
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/statements.ts::compileStatementInner
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/member-set-dispatch.ts::fillMemberSetDispatch
+  - src/codegen/expressions/calls.ts::compileIIFE
+  - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/codegen/index.ts::ensureStructForType
+  - src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs
+  - src/codegen/expressions/operator-assignment.ts::compilePropertyCompoundAssignmentExternref
+  - src/codegen/index.ts::generateModule
+  - src/compiler.ts::runPipeline
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/native-construct.ts::fillNativeConstructDrivers
+  - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
+oracle-ratchet-allow:
+  # The parser stress harvest predates the ctx.oracle migration and exposes
+  # TypeScript checker queries across these existing codegen paths.
+  - src/codegen/declarations.ts
+  - src/codegen/declarations/struct-type-registration.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/identifier-module-storage.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/property-access.ts
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
 
@@ -395,6 +477,23 @@ resolved empty-AST, comment-directive, or generic callback paths unless their
 focused regressions fail. After this frontier, rerun the three fingerprints,
 then the strict 11-callback upstream suite and final TS5/TS7 typechecks/oracle
 ratchet.
+
+### PR refresh against current main (2026-08-29)
+
+PR #5183 was refreshed onto `main` at
+`33099f218fb4f09dba5331de9301ca043403403f`. The merge keeps the parser
+branch's nested-capture offset for spread calls while honoring main's newer
+`arguments`-based spread path, uses the prepared multi-source module-init
+finalizer, profiles both return- and parameter-unboxing statistics, and
+combines inherited-array carriers with builtin-shadow protection. The latter
+also guards recursive base-type discovery so a user-defined `Array` cannot be
+reclassified as the intrinsic.
+
+After the refresh, both TS5 and TS7 typechecks pass, repository lint reports no
+errors, all 45 issue-1058 test files pass (151 tests), and the merge-sensitive
+main regressions pass (8 files, 94 tests). The runtime `createIdentifier` null
+deref above remains the only known Tier-3 fingerprint blocker; this refresh
+does not claim it is resolved.
 
 ## Acceptance criteria
 

@@ -71,9 +71,13 @@ export function allocatedStructTypeIndices(mod: WasmModule): ReadonlySet<number>
   const out = new Set<number>();
   const visited = new WeakSet<Instr[]>();
   for (const body of [...mod.functions.map((fn) => fn.body), ...mod.globals.map((global) => global.init)])
-    walkInstructionDag(body, (instr) => {
-      if (instr.op === "struct.new" && typeof instr.typeIdx === "number") out.add(instr.typeIdx);
-    }, visited);
+    walkInstructionDag(
+      body,
+      (instr) => {
+        if (instr.op === "struct.new" && typeof instr.typeIdx === "number") out.add(instr.typeIdx);
+      },
+      visited,
+    );
   return out;
 }
 

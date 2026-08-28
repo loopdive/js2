@@ -22,6 +22,7 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { markNoBrandSiblingShapes } from "./shape-brand.js";
 import { symbolBoundaryCoercionInstrs } from "./symbol-field-carrier.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
@@ -714,6 +715,124 @@ function toPrimitiveHostCallInstrs(
     }
   }
   return out;
+}
+
+/**
+ * (#3481 step 3) §7.1.1 step 2 for an `@@toPrimitive` held in a struct FIELD.
+ *
+ * Three physically different shapes carry `@@toPrimitive` (slice 1's taxonomy):
+ * a sidecar slot from `o[Symbol.toPrimitive] = fn`, a struct METHOD from
+ * `[Symbol.toPrimitive](hint) {…}`, and — the one handled here — an
+ * object-literal computed PROPERTY `{ [Symbol.toPrimitive]: fn }`, whose
+ * closure lives in a field named `@@toPrimitive` with no
+ * `${name}_@@toPrimitive` function to call. The `ref → f64` coercion therefore
+ * skipped step 2 entirely and went straight to OrdinaryToPrimitive, so
+ * `[10, 20].at({[Symbol.toPrimitive]: () => 1})` read index 0 and
+ * `Number({[Symbol.toPrimitive]: () => 5})` was NaN at module scope.
+ *
+ * Emits (struct ref in, f64 out):
+ *
+ *     local.set  $s
+ *     $s.@@toPrimitive → externref → local.set $tp
+ *     if (__closure_arity($tp) >= 0)          ; null / undefined / non-closure → -1
+ *       then  __call_fn_method_N($s, $tp, hint) → __unbox_number
+ *       else  <caller's unchanged valueOf/toString lowering>
+ *
+ * `__closure_arity` is the callability guard AND the arity selector in one: it
+ * `ref.test`s the base closure type, so a null field, a host `undefined`
+ * carrier (`{[Symbol.toPrimitive]: undefined}` — NOT ref.null) and a
+ * non-callable value all report `-1` and take the untouched fallback, which is
+ * why this cannot change behaviour for any object that lacks a live
+ * `@@toPrimitive` closure. Dispatch goes through `__call_fn_method_N` so the
+ * receiver is installed as `this` (the trampoline reads `__current_this`,
+ * #2679) and so an under-applied arity-0 method still runs (#4392 rule:
+ * `__call_fn_method_N` holds closures of declared arity ≤ N).
+ *
+ * Deliberately NOT covered here: a step-2 result that is an OBJECT must throw
+ * TypeError (§7.1.1 step 5); `__unbox_number` yields NaN instead, which is what
+ * the pre-existing paths already do for that case.
+ *
+ * @param emitFallback appends the else-branch lowering to `fctx.body`; it is
+ *   spliced back out and nested, so it must be self-contained apart from
+ *   expecting the struct ref to be pushed for it (this function does that).
+ * @returns true when it emitted the whole coercion.
+ */
+function emitToPrimitiveFieldDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  from: ValType,
+  typeIdx: number,
+  name: string,
+  toPrimitiveHint: "number" | "string" | "default" | undefined,
+  emitFallback: () => void,
+): boolean {
+  if ((ctx as any).__toPrimitiveFieldArm) return false;
+  const fields = ctx.structFields.get(name);
+  if (!fields) return false;
+  const tpFieldIdx = fields.findIndex((f) => f.name === "@@toPrimitive");
+  if (tpFieldIdx < 0) return false;
+  const tpField = fields[tpFieldIdx];
+  if (!tpField) return false;
+  // The field must be a reference the closure can be recovered from. A numeric
+  // or boolean field can never hold a closure, so leave those alone.
+  const fk = tpField.type.kind;
+  if (fk !== "externref" && fk !== "eqref" && fk !== "anyref" && fk !== "ref" && fk !== "ref_null") return false;
+
+  // Every dependency is resolved BEFORE a single instruction is emitted — a
+  // bail-out after the `local.set` below would leave the stack unbalanced.
+  addUnionImports(ctx);
+  const unboxIdx = ctx.funcMap.get("__unbox_number");
+  if (unboxIdx === undefined) return false;
+  const { callableIdx, callIdx } = reserveObjLitToPrimitive(ctx);
+
+  const hint = toPrimitiveHint ?? "number";
+  const structLocal = allocLocal(fctx, `__tpf_struct_${fctx.locals.length}`, from);
+  const tpLocal = allocLocal(fctx, `__tpf_fn_${fctx.locals.length}`, { kind: "externref" });
+
+  // §7.1.1 step 2a — Get(input, @@toPrimitive), normalised to externref.
+  fctx.body.push({ op: "local.set", index: structLocal });
+  fctx.body.push({ op: "local.get", index: structLocal });
+  fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: tpFieldIdx });
+  if (fk !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.set", index: tpLocal });
+  // §7.1.1 step 2b/2d — a null field, a host `undefined` carrier (which is NOT
+  // `ref.null`, so a plain null test would miss it) and any non-callable value
+  // all answer 0 here and take the unchanged fallback.
+  fctx.body.push({ op: "local.get", index: tpLocal });
+  fctx.body.push({ op: "call", funcIdx: callableIdx });
+
+  // INDEX DISCIPLINE (#2679 / `project_type_index_shift_and_deadelim`). Both
+  // arms are emitted into `fctx.body` and only lifted into the `if` at the very
+  // END, with no registration in between. Registering a string constant adds an
+  // imported GLOBAL and shifts the defined-global range; the shift pass rewrites
+  // the `global.get`/`global.set` ops sitting in `fctx.body`, so an arm built
+  // OUTSIDE it during that window silently keeps a stale index — the first cut
+  // of this code built the dispatch as a detached array and made the fallback's
+  // `__current_this` save/restore target an immutable string-constant global
+  // ("immutable global #2 cannot be assigned").
+  const markDispatch = fctx.body.length;
+  // §7.1.1 step 2c — Call(exoticToPrim, input, «hint»).
+  fctx.body.push({ op: "local.get", index: structLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.get", index: tpLocal });
+  pushStringHint(ctx, fctx, hint);
+  fctx.body.push({ op: "call", funcIdx: callIdx });
+  fctx.body.push({ op: "call", funcIdx: unboxIdx });
+
+  // The else-branch is the caller's UNCHANGED OrdinaryToPrimitive lowering.
+  const markFallback = fctx.body.length;
+  fctx.body.push({ op: "local.get", index: structLocal });
+  emitFallback();
+
+  const fallbackInstrs = fctx.body.splice(markFallback);
+  const dispatch = fctx.body.splice(markDispatch);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "f64" } },
+    then: dispatch,
+    else: fallbackInstrs,
+  } as Instr);
+  return true;
 }
 
 /**
@@ -1584,10 +1703,7 @@ function getStructNarrowInfo(
  * to emit the conversion (and its temporary locals).
  */
 export function canStructurallyProjectRef(ctx: CodegenContext, from: ValType, to: ValType): boolean {
-  if (
-    (from.kind !== "ref" && from.kind !== "ref_null") ||
-    (to.kind !== "ref" && to.kind !== "ref_null")
-  ) {
+  if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
     return false;
   }
   return getStructNarrowInfo(ctx, from.typeIdx, to.typeIdx) !== null;
@@ -3172,6 +3288,34 @@ export function coerceType(
           }
         }
         // f64 return → already correct type
+        cleanup();
+        return;
+      }
+      // (#3481 step 3) `@@toPrimitive` written as an object-literal COMPUTED
+      // PROPERTY — `{ [Symbol.toPrimitive]: fn }` — is not a method: codegen
+      // stores the closure in a struct FIELD named `@@toPrimitive` and emits no
+      // `${name}_@@toPrimitive` function, so the arm above misses it and the
+      // number-hint coercion fell straight through to `valueOf`/`toString`
+      // (§7.1.1 step 2 skipped). Slice 1 fixed the same "shape 3" blind spot in
+      // the HOST walker (`_hostToPrimitive`); this is its compiled twin, and it
+      // is the one that matters at module-init time, where the host has no
+      // exports yet and cannot dispatch anything.
+      // The fallback branch is the UNCHANGED valueOf/toString lowering, obtained
+      // by re-entering `coerceType` under `__toPrimitiveFieldArm` (which makes
+      // this arm skip) and splicing off what it emitted. Re-entry also has to
+      // hand back the `__insideValueOfCoercion` flag this arm already set, or
+      // the recursive call short-circuits to NaN.
+      const emitFallback = (): void => {
+        (ctx as any).__insideValueOfCoercion = wasInsideValueOf;
+        (ctx as any).__toPrimitiveFieldArm = true;
+        try {
+          coerceType(ctx, fctx, from, to, toPrimitiveHint, compileStringLiteralFn);
+        } finally {
+          (ctx as any).__toPrimitiveFieldArm = false;
+          (ctx as any).__insideValueOfCoercion = true;
+        }
+      };
+      if (emitToPrimitiveFieldDispatch(ctx, fctx, from, typeIdx, name, toPrimitiveHint, emitFallback)) {
         cleanup();
         return;
       }

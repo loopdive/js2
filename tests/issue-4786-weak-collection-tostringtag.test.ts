@@ -3,6 +3,7 @@
 // #4786 — standalone WeakMap/WeakSet prototypes own their ES2015
 // Symbol.toStringTag data properties.
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -15,6 +16,9 @@ const EXACT_FILES = [
   "built-ins/WeakMap/prototype/Symbol.toStringTag.js",
   "built-ins/WeakSet/prototype/Symbol.toStringTag.js",
 ] as const;
+
+const TEST262_ROOT = join(__dirname, "..", "test262");
+const TEST262_AVAILABLE = existsSync(join(TEST262_ROOT, "harness", "assert.js"));
 
 const CONTROL_SOURCE = `
   export function test(): number {
@@ -49,7 +53,10 @@ const CONTROL_SOURCE = `
 
 async function runControl(lane: Lane): Promise<number> {
   const options = lane === "standalone" ? { target: "standalone" as const } : {};
-  const result = await compile(CONTROL_SOURCE, { fileName: "issue-4786-control.ts", ...options });
+  const result = await compile(CONTROL_SOURCE, {
+    fileName: "issue-4786-control.ts",
+    ...options,
+  });
   expect(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n")).toBe(true);
   if (!result.success) return -1;
 
@@ -60,22 +67,33 @@ async function runControl(lane: Lane): Promise<number> {
 }
 
 describe("#4786 — WeakMap/WeakSet prototype Symbol.toStringTag", () => {
-  it.each(EXACT_FILES)("passes the exact host Test262 row %s", async (file) => {
-    const result = await runTest262File(join("test262/test", file), "issue-4786", 120_000);
-    expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
-  });
+  it.skipIf(!TEST262_AVAILABLE).each(EXACT_FILES)(
+    "passes the exact host Test262 row %s",
+    async (file) => {
+      const result = await runTest262File(join(TEST262_ROOT, "test", file), "issue-4786", 120_000);
+      expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
+    },
+    120_000,
+  );
 
-  it.each(EXACT_FILES)("passes the exact standalone Test262 row %s", async (file) => {
-    const result = await runTest262File(join("test262/test", file), "issue-4786", 120_000, "standalone");
-    expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
-  });
+  it.skipIf(!TEST262_AVAILABLE).each(EXACT_FILES)(
+    "passes the exact standalone Test262 row %s",
+    async (file) => {
+      const result = await runTest262File(join(TEST262_ROOT, "test", file), "issue-4786", 120_000, "standalone");
+      expect(result.status, `${file}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
+    },
+    120_000,
+  );
 
   it("keeps WeakMap and WeakSet tags identity-stable with exact descriptors in host mode", async () => {
     await expect(runControl("host")).resolves.toBe(0);
   });
 
   it("keeps WeakMap and WeakSet tags identity-stable with exact descriptors in standalone mode", async () => {
-    const result = await compile(CONTROL_SOURCE, { fileName: "issue-4786-control.ts", target: "standalone" });
+    const result = await compile(CONTROL_SOURCE, {
+      fileName: "issue-4786-control.ts",
+      target: "standalone",
+    });
     expect(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n")).toBe(true);
     if (!result.success) return;
     const module = await WebAssembly.compile(result.binary);

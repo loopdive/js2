@@ -401,13 +401,7 @@ function compilePropertyLogicalAssignment(
   const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
 
   // Resolve struct type
-  const typeName = resolveStructNameForExpr(
-    ctx,
-    fctx,
-    target.expression,
-    target.name,
-    resolveWasmType(ctx, objType),
-  );
+  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (!typeName) {
     // Fallback: treat as externref property access via __extern_get / __extern_set
     return compilePropertyLogicalAssignmentExternref(ctx, fctx, target, rhs, op, propName);
@@ -2661,13 +2655,7 @@ function compilePropertyCompoundAssignment(
   }
 
   // Resolve struct type
-  const typeName = resolveStructNameForExpr(
-    ctx,
-    fctx,
-    target.expression,
-    target.name,
-    resolveWasmType(ctx, objType),
-  );
+  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (!typeName) {
     // Fallback: treat as externref property access via __extern_get / __extern_set
     return compilePropertyCompoundAssignmentExternref(ctx, fctx, target, rhs, op, propName);
