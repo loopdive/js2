@@ -49,9 +49,10 @@ shared number space and must never be used as shorthand for this tracker; PR
 bodies and handoffs must cite
 `plan/issues/5131-es2015-strict-spread-iterator.md` explicitly.
 
-The work was separated from
-`plan/issues/5122-es2015-proxy-symbol-targets.md` after an independent
-Luna-max review of draft PR 5138. The reviewed Proxy-specific dynamic-spread
+The work was separated from repository-local markdown issue 5122 after an
+independent Luna-max review of draft PR 5138. That issue file is still carried
+on its own draft branch and is therefore intentionally not linked as a path
+from this current-main branch. The reviewed Proxy-specific dynamic-spread
 lowering called the general native `__iterator` / `__iterator_next` bridge.
 Those helpers intentionally accept internal flattenable carriers and degrade
 some malformed protocol values, so exposing them as ECMAScript spread silently
