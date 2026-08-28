@@ -62,7 +62,8 @@ computed property value should be present:
 
 The edition classification is verified through
 `website/public/benchmarks/results/test262-file-editions.json`: each path
-without the leading `test/` is indexed under `ES2015`.
+without the leading `test/` is indexed at value `2`, and
+`editions[2]` is exactly `ES2015`.
 
 Fresh probes against `upstream/main` at `18785a67c6682b9fc41d3a220a6b88f3f42dc59e`
 on 2026-08-28 confirm the required differential: the host lane passes all
