@@ -549,7 +549,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
     name: "__combinator_subscribe",
     typeIdx: subscribeTypeIdx,
     locals: buildSubscribeLocals(promiseTypeIdx),
-    body: buildSubscribeBody(ids, rt),
+    body: buildSubscribeBody(ids, rt, ctx.funcMap.get("__promise_resolve_value") ?? -1),
     exported: false,
   });
   ctx.funcMap.set("__combinator_subscribe", subscribeFuncIdx);
@@ -733,7 +733,7 @@ function buildSubscribeLocals(promiseTypeIdx: number): LocalDef[] {
   ];
 }
 
-function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Instr[] {
+function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, resolveValueFuncIdx: number): Instr[] {
   const INPUT = 0;
   const STATE = 1;
   const INDEX = 2;
@@ -758,14 +758,36 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Ins
         { op: "ref.cast", typeIdx: ids.promiseTypeIdx },
         { op: "local.set", index: P },
       ],
-      else: [
-        { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-        { op: "local.get", index: INPUT },
-        { op: "ref.null.extern" },
-        { op: "ref.null.extern" },
-        { op: "struct.new", typeIdx: ids.promiseTypeIdx },
-        { op: "local.set", index: P },
-      ],
+      else:
+        resolveValueFuncIdx >= 0
+          ? // (#5143 Step 1a) Spec PromiseResolve(C, x): allocate a fresh
+            // PENDING `$Promise` and drive it through
+            // `__promise_resolve_value`, which implements §27.2.1.3.2 in full
+            // — a user THENABLE element gets a PromiseResolveThenableJob on
+            // the microtask ring (its `then` is actually invoked), a poisoned
+            // `then` getter rejects, and a plain value still fulfils
+            // synchronously (same observable result as the old sync-FULFILLED
+            // wrap, one extra struct + call).
+            ([
+              { op: "i32.const", value: PROMISE_STATE_PENDING },
+              { op: "ref.null.extern" },
+              { op: "ref.null.extern" },
+              { op: "ref.null.extern" },
+              { op: "struct.new", typeIdx: ids.promiseTypeIdx },
+              { op: "local.set", index: P },
+              { op: "local.get", index: P },
+              { op: "local.get", index: INPUT },
+              { op: "call", funcIdx: resolveValueFuncIdx },
+              { op: "drop" },
+            ] satisfies Instr[])
+          : ([
+              { op: "i32.const", value: PROMISE_STATE_FULFILLED },
+              { op: "local.get", index: INPUT },
+              { op: "ref.null.extern" },
+              { op: "ref.null.extern" },
+              { op: "struct.new", typeIdx: ids.promiseTypeIdx },
+              { op: "local.set", index: P },
+            ] satisfies Instr[]),
     },
 
     // caps = $CombinatorElemCaps{ state, index } (boxed to externref).

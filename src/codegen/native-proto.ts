@@ -38,6 +38,8 @@ import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./bu
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
+import { wellKnownSymbolName } from "./literals.js"; // (#5142) @@<id> → "[Symbol.x]" display name
 // (#4491 T9) `constructor` is an own data property of every builtin prototype and
 // is deliberately NOT in `memberCsv`; the companion gets it from the #4200 carrier.
 import { pushCompanionConstructorSeed } from "./builtin-proto-constructor-seed.js";
@@ -148,6 +150,24 @@ export interface NativeProtoBuiltinGlue {
   /** Own member-name CSV for the proto object (string-named members; `@@<id>`
    *  sentinels for well-known-symbol members — see spec §"Symbol cell"). */
   memberCsv: string;
+  /**
+   * Optional own `Symbol.toStringTag` data property. The tag is not part of
+   * `memberCsv` because it is symbol-keyed, but a flowing prototype companion
+   * still needs the identity-stable symbol entry for dynamic reads and
+   * descriptors.
+   */
+  symbolTag?: string;
+  /**
+   * (#5156) String-keyed own DATA properties whose value is a plain string
+   * constant — `Error.prototype.name` / `.message` and the NativeError
+   * equivalents (§20.5.3.2/.3). They cannot join `memberCsv`: every consumer of
+   * that CSV mints a METHOD closure for the key, so `Error.prototype.message`
+   * would read as a function. Listed here as `[key, value]` pairs, they are
+   * seeded into the brand companion with the §17 data attributes
+   * `{writable:true, enumerable:false, configurable:true}` and answered as a
+   * string constant by the static value read.
+   */
+  dataProps?: ReadonlyArray<readonly [string, string]>;
   /** Which members are accessor getters (`kind:"getter"`) vs data methods
    *  (`kind:"method"`). `@@<id>` symbol members are always `"method"`. */
   memberKind: (member: string) => "getter" | "method";
@@ -443,6 +463,48 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
         return kind === "method" || (kind === "getter" && accessorSeederAvailable);
       });
     if (seededCtors.has(brand)) members.push("constructor");
+    // (#5156) Seeded string DATA properties are companion entries too, so
+    // `delete Error.prototype.message` / a redefinition must be observable.
+    for (const [key] of glue.dataProps ?? []) members.push(key);
+    if (members.length > 0) out.set(brand, members);
+  }
+  return out;
+}
+
+/**
+ * Return the symbol-keyed own tags seeded on native-prototype companions.
+ * `__nproto_hasown` uses the map to recognize `Symbol.toStringTag` before its
+ * historical string-only CSV ladder. The seeder registry is the demand gate:
+ * no materialized/seeded prototype means no extra own-property arm.
+ */
+export function seededNativeProtoSymbolTagsByBrand(ctx: CodegenContext): ReadonlyMap<number, string> {
+  const out = new Map<number, string>();
+  for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
+    if (ctx.funcMap.get(seederName) === undefined) continue;
+    const tag = getNativeProtoBuiltinGlue(ctx, brand)?.symbolTag;
+    if (tag !== undefined) out.set(brand, tag);
+  }
+  return out;
+}
+
+/**
+ * Return well-known-symbol members seeded on native-prototype companions.
+ * Unlike `symbolTag`, these entries are callable/data members represented by
+ * `@@<id>` CSV sentinels. Keep the IDs separate from string members so own
+ * property checks compare the interned `$Symbol` carrier rather than a native
+ * string spelling.
+ */
+export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): ReadonlyMap<number, readonly number[]> {
+  const out = new Map<number, readonly number[]>();
+  for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
+    if (ctx.funcMap.get(seederName) === undefined) continue;
+    const members =
+      getNativeProtoBuiltinGlue(ctx, brand)
+        ?.memberCsv.split(",")
+        .map((member) => member.trim())
+        .filter((member) => member.startsWith("@@"))
+        .map((member) => Number(member.slice(2)))
+        .filter((id) => Number.isInteger(id)) ?? [];
     if (members.length > 0) out.set(brand, members);
   }
   return out;
@@ -458,6 +520,9 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
  * §17 rule.
  */
 const PROTO_METHOD_DEFINE_FLAGS = 0xbd;
+
+/** §17 attributes for an intrinsic `Symbol.toStringTag` data property. */
+const PROTO_SYMBOL_TAG_DEFINE_FLAGS = 0xbc;
 
 /** §17 accessor attributes in `__defineProperty_accessor`'s flag encoding. */
 const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
@@ -604,11 +669,56 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       body.push({ op: "call", funcIdx: defineIdx });
     } else {
       // [obj, key, value, flags] → §17 data entry.
-      body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+      // `<X>.prototype[Symbol.toPrimitive]` is the one native-proto method
+      // whose initial descriptor is read-only — for Symbol (§20.4.3.5) and
+      // (#5156) for Date (§21.4.4.45) alike. Keep its configurable bit so the
+      // companion still observes replacement/deletion exactly like the spec,
+      // while every ordinary method retains the historical flags.
+      const defineFlags = member === "@@3" ? PROTO_SYMBOL_TAG_DEFINE_FLAGS : PROTO_METHOD_DEFINE_FLAGS;
+      body.push({ op: "f64.const", value: defineFlags });
       body.push({ op: "call", funcIdx: defineIdx });
     }
     body.push({ op: "drop" }); // the helper returns the target
     installed++;
+  }
+
+  // (#5156) String-keyed own DATA properties (Error.prototype.name/.message).
+  // Same §17 attributes as a proto method, so one shared flag constant.
+  for (const [key, value] of glue.dataProps ?? []) {
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    if (defineIdx === undefined) continue;
+    const body = seedFctx.body;
+    body.push({ op: "local.get", index: 0 });
+    addStringConstantGlobal(ctx, key);
+    for (const instr of stringConstantExternrefInstrs(ctx, key)) body.push(instr);
+    addStringConstantGlobal(ctx, value);
+    for (const instr of stringConstantExternrefInstrs(ctx, value)) body.push(instr);
+    body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+    body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
+    installed++;
+  }
+
+  // Well-known symbol tags are ordinary data properties with
+  // { writable:false, enumerable:false, configurable:true }. They are seeded
+  // into the same companion as string members so flowing reads, own checks,
+  // descriptors, writes, and deletes all observe one mutable entry.
+  if (glue.symbolTag !== undefined) {
+    // The symbol carrier is normally requested by the computed-key read before
+    // this seeder runs. Ensure it here as well so an early prototype materializer
+    // cannot silently omit its own tag.
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    if (boxSymbolIdx !== undefined && defineIdx !== undefined) {
+      const body = seedFctx.body;
+      body.push({ op: "local.get", index: 0 });
+      body.push({ op: "i32.const", value: 4 }, { op: "call", funcIdx: boxSymbolIdx });
+      addStringConstantGlobal(ctx, glue.symbolTag);
+      body.push(...stringConstantExternrefInstrs(ctx, glue.symbolTag));
+      body.push({ op: "f64.const", value: PROTO_SYMBOL_TAG_DEFINE_FLAGS });
+      body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
+      installed++;
+    }
   }
 
   if (installed === 0) {
@@ -679,6 +789,21 @@ function makeNativeClosureFctx(
     fctx.localMap.set(fctx.params[i]!.name, i);
   }
   return fctx;
+}
+
+/**
+ * (#5142) §10.2.9 display name for a native-proto member key. `@@<id>` keys are
+ * physical compiler spellings for well-known-symbol-keyed members; the exposed
+ * `.name` of such a method is `"[Symbol.<wellKnown>]"` (e.g. `@@7` →
+ * `"[Symbol.match]"`). Ordinary string members are their own name. Derived from
+ * the single well-known-symbol table so the mapping cannot drift member-by-member
+ * (it previously hard-coded `@@3` alone, leaving every other symbol-keyed member
+ * reporting its raw `@@N` key as its JavaScript `name`).
+ */
+function nativeProtoMemberDisplayName(member: string): string {
+  if (!member.startsWith("@@")) return member;
+  const wellKnown = wellKnownSymbolName(Number(member.slice(2)));
+  return wellKnown === undefined ? member : `[Symbol.${wellKnown}]`;
 }
 
 /**
@@ -850,7 +975,11 @@ export function ensureStandaloneNativeMethodClosure(
     // `"set <key>"`). The reflective `desc.get.name` read resolves the closure's
     // name from `nativeClosureMeta`, so getter closures must carry the accessor
     // spelling, not the bare member. Methods keep the bare member name.
-    const accessorName = kind === "getter" ? `get ${member}` : member;
+    // Native well-known-symbol sentinels are physical compiler keys, not the
+    // JavaScript function names exposed by SetFunctionName. This member is
+    // Symbol.prototype[Symbol.toPrimitive], whose name is bracketed.
+    const displayMember = nativeProtoMemberDisplayName(member);
+    const accessorName = kind === "getter" ? `get ${displayMember}` : displayMember;
     ctx.nativeClosureMeta.set(funcIdx, { name: accessorName, length: arity });
   }
 
@@ -862,7 +991,8 @@ export function ensureStandaloneNativeMethodClosure(
   // them through runtime params — a compile-time fold cannot satisfy it). All
   // call paths are unaffected: the meta type subtypes the wrapper the lifted
   // func expects. Getters carry the §10.2.9 accessor spelling ("get <key>").
-  const metaName = kind === "getter" ? `get ${member}` : member;
+  const displayMember = nativeProtoMemberDisplayName(member);
+  const metaName = kind === "getter" ? `get ${displayMember}` : displayMember;
   const metaTypeIdx = ensureBuiltinFnMetaType(
     ctx,
     wrapperTypes.structTypeIdx,

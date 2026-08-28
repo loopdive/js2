@@ -448,3 +448,36 @@ Common thread across three of the five: **nothing validates frontmatter against
 `check:issue-ids:against-main`, so a status-enum check is nearly free — but the
 schema needs reconciling first (it says `review`; practice and 17 live issues
 say `in-review`, and `suspended` is unlisted).
+
+## 2026-08-28 — IR-lane remote session: waves 4–7, #4406 Phase 4 landed, wave 7 in flight
+
+Remote CCR orchestrator session (Fable plans/dispatches, Opus implements) on the
+IR-migration lane, coordinated against the parallel codex session via the
+`origin/issue-assignments` ledger + `pre-dispatch-gate.mjs` on every dispatch.
+
+- **Merged (16 PRs)**: #5125, #5126, #5127, #5128, #5130, #5140, #5153, #5154,
+  #5156, #5157, #5161, #5164, #5168, #5169, #5171, #5174. Zero regressions
+  landed; every code PR carried file-copy A/B + complete-cohort byte-identity
+  + red-on-base pins. Baseline on main at session end: 34,416 / 43,621
+  (`dbdd620789`, scheduled refresh 2026-08-28).
+- **Headline**: #4406 boolean unboxing ABI default-ON (PR #5171) — fixes 4
+  shipping miscompiles, −11.7% executed boolean boxes; survived merge_group
+  re-validation. #3481 Symbol cluster enumerated (18 rows = 4 root causes),
+  largest fixed (#5174 hint-free Symbol.keyFor).
+- **Filed**: #5155/#5159 (fixed same session), #5127/#5128 (CI tooling, parked
+  for Lane A), #5160/#5161/#5162 (wave-7 scope), #5161-config + #4406
+  third-site records appended to their issues.
+- **Systemic finds**: the #1222 wasm-unchanged noise filter is dead
+  (`diff-test262.ts:1747` — baseline has no `wasm_sha`, so every flake reads
+  "wasm-hash-changed"; filed #5127); `run-test262-row.mts` drops nans.js
+  (#5128); `__module_init` is the wasm START function so host coercion fails
+  at module scope (blocks the toprimitive test262 cluster).
+- **Incidents**: draft-green PRs strand (auto-enqueue's workflow_run trigger
+  skips drafts) — recovered via `workflow_dispatch` on auto-enqueue.yml;
+  #5125 auto-park diagnosed as main-side hash drift (A/B zero-byte proof),
+  re-admitted once with evidence; one GitHub API rate-limit window (~20 min)
+  rode out via a scheduled retry.
+- **Wave 7 dispatched 21:10Z** (claims opus-5160/5161/5162 on the ledger):
+  #5160 padsUndefined siblings, #5161 config-lane Error cause, #5162
+  ctor-prototype trap. #3481 Symbol sub-families stagger at the 22:07Z
+  check-in. Handoff: `plan/agent-context/ir-migration-handover-2026-08-28.md`.

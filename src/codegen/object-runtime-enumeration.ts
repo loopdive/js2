@@ -50,6 +50,8 @@ export interface ObjectEnumerationHelperState {
   ) => number;
   /** `ctx.standalone` — gates the native $Object array-like arms. */
   objArrayLikeArms: boolean;
+  /** Native `$Symbol` carrier index, ensured before this helper is built. */
+  symbolTypeIdx: number;
   anyStrTypeIdx: number;
   propEntryTypeIdx: number;
   propMapTypeIdx: number;
@@ -112,7 +114,7 @@ function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: 
  * Locals it uses, as registered by the caller: 1=any(anyref), 2=lenF64(f64),
  * 3=lenTrunc(f64), 4=primExt(externref, the ToPrimitive scratch).
  */
-function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number): Instr[] {
+function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number, symbolTypeIdx: number): Instr[] {
   const MAX_SAFE = 9007199254740991; // 2^53 - 1
   const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
   const unboxIdx2036 = ctx.funcMap.get("__unbox_number")!;
@@ -140,12 +142,34 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
   const typeofStrIdx2036 = ctx.funcMap.get("__typeof_string");
   const strToNumIdx2036 = getStringToNumberProvider(ctx);
   const L_PRIM = 4; // scratch externref local (registered below)
+  // §7.1.4 ToNumber(Symbol) is abrupt.  Native Symbols cross the externref
+  // boundary as the `$Symbol` carrier, which otherwise falls through
+  // `__unbox_number`'s opaque-value NaN result and makes ToLength answer zero.
+  // Keep this discriminator local to the array-like length conversion: the
+  // `__unbox_number` fallback remains permissive for valid opaque object/array
+  // carriers used by unrelated numeric coercions.
+  const symbolToNumberGuard: Instr[] =
+    symbolTypeIdx >= 0
+      ? [
+          { op: "local.get", index: L_PRIM },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", {
+              forceInModuleCtor: true,
+            }),
+          },
+        ]
+      : [];
   const toNumberInstrs: Instr[] =
     toPrimIdx2036 !== undefined && typeofStrIdx2036 !== undefined && strToNumIdx2036 !== undefined
       ? [
           { op: "ref.null.extern" }, // hint: number/default (valueOf → toString)
           { op: "call", funcIdx: toPrimIdx2036 },
           { op: "local.tee", index: L_PRIM },
+          ...symbolToNumberGuard,
           { op: "call", funcIdx: typeofStrIdx2036 },
           {
             op: "if",
@@ -160,7 +184,12 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
             ],
           },
         ]
-      : [{ op: "call", funcIdx: unboxIdx2036 }];
+      : [
+          { op: "local.set", index: L_PRIM },
+          ...symbolToNumberGuard,
+          { op: "local.get", index: L_PRIM },
+          { op: "call", funcIdx: unboxIdx2036 },
+        ];
   return [
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: objectTypeIdx },
@@ -613,7 +642,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // arm is omitted and the body stays the original $ObjVec-or-0 to keep host
     // output byte-identical.
     const objLengthArm: Instr[] = objArrayLikeArms
-      ? buildObjectArrayLikeLengthArm(ctx, objectTypeIdx)
+      ? buildObjectArrayLikeLengthArm(ctx, objectTypeIdx, s.symbolTypeIdx)
       : [{ op: "f64.const", value: 0 }];
     // (#2186) `$__vec_base` arm: a real array literal / array result boxed to
     // externref is a `__vec_<elemKind>` struct subtyping `$__vec_base`. Its

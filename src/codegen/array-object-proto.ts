@@ -32,7 +32,7 @@ import {
   type NativeProtoBuiltinGlue,
 } from "./native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
-import { emitThrowTypeError } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./expressions/helpers.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS, NATIVE_HOF_REDUCE } from "./hof-native.js"; // (#4394)
 import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody } from "./dataview-native.js";
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
@@ -50,6 +50,7 @@ import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
   flatStringType,
+  nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
@@ -97,6 +98,8 @@ import {
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
+import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
+import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -222,6 +225,10 @@ const DATE_PROTO_METHODS = [
   "toTimeString",
   "toUTCString",
   "valueOf",
+  // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — a well-known-
+  // symbol member, so it uses the `@@<id>` CSV sentinel form. Its native body
+  // lives in date-proto-to-primitive.ts.
+  "@@3",
 ] as const;
 
 /**
@@ -302,6 +309,17 @@ const BOOLEAN_PROTO_METHODS = ["toString", "valueOf"] as const;
  * data properties (own on the proto), not methods. */
 const ERROR_PROTO_METHODS = ["toString"] as const;
 
+/** Error.prototype.toString is inherited by every NativeError prototype. */
+const ERROR_PROTO_OWNER_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "URIError",
+  "EvalError",
+  "ReferenceError",
+]);
+
 /** (#2861) `NativeError.prototype`'s own method names — a `<NativeError>.prototype`
  * (TypeError/RangeError/ReferenceError/SyntaxError/EvalError/URIError) inherits
  * `toString` from `Error.prototype`; its own data props (`constructor`/`name`/
@@ -335,8 +353,10 @@ const ITERATOR_PROTO_METHODS = [
 const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
 
 /** `Symbol.prototype`'s own method names (ES2024 §20.4.3). `description` is an
- * accessor getter, resolved by the computed-access path. */
-const SYMBOL_PROTO_METHODS = ["toString", "valueOf"] as const;
+ * accessor getter, resolved by the computed-access path. `@@toPrimitive` is
+ * represented by its native-symbol sentinel so flowing prototype values seed
+ * the same identity-stable well-known-symbol entry as string methods. */
+const SYMBOL_PROTO_METHODS = ["@@3", "toString", "valueOf"] as const;
 
 /** `BigInt.prototype`'s own method names (ES2024 §21.2.3). */
 const BIGINT_PROTO_METHODS = ["toLocaleString", "toString", "valueOf"] as const;
@@ -512,6 +532,13 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     hasOwnProperty: 1,
     isPrototypeOf: 1,
     propertyIsEnumerable: 1,
+    // ES2015 Map/Set collection clear and iterator methods take no arguments.
+    // Keep these in the shared null-prototyped table so direct and reflective
+    // prototype-method metadata use the same canonical arity.
+    clear: 0,
+    entries: 0,
+    keys: 0,
+    values: 0,
     // (#4479 slice 2) Annex B §B.2.2, declared beside the bodies that read the
     // arg slots this arity sizes.
     ...ANNEX_B_ACCESSOR_ARITY,
@@ -1746,6 +1773,11 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     brand,
     name,
     memberCsv: [...members, "size"].join(","),
+    // ES2015 §23.1.3.14 / §23.2.4.15: each collection prototype owns a
+    // non-writable, non-enumerable, configurable Symbol.toStringTag whose
+    // value is the collection's intrinsic name. The companion seeder already
+    // emits this descriptor when the glue supplies its symbol tag.
+    symbolTag: name,
     memberKind: (member) => (member === "size" ? "getter" : "method"),
     memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
     // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
@@ -1758,16 +1790,234 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
   };
 }
 
+/**
+ * Emit the shared ES2015 §20.5.3.4 Error.prototype.toString body.
+ *
+ * The native-proto closure ABI supplies the function value in local 0 and the
+ * call's `this` value in local 1. Native `__extern_get` performs the ordinary
+ * property walk (including accessors), which keeps the required name-before-
+ * message Get order observable. The generic standalone ToString dispatcher is
+ * intentionally printable for `String(Symbol())`; this body adds the strict
+ * Symbol rejection required by Error.prototype.toString after each property
+ * read, without changing that general-purpose dispatcher.
+ */
+function emitErrorProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  if (!ctx.standalone) return null;
+
+  // Register all runtime dependencies before capturing function indices. The
+  // object runtime owns the native __extern_get implementation; no host import
+  // is admitted by this path under the standalone semantic provider.
+  ensureObjectRuntime(ctx);
+  // The reflective callee can be compiled before its argument expression. Make
+  // the native carrier available at body-mint time so the later `Symbol()`
+  // argument is still recognized by this already-emitted `ref.test` arm.
+  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  const anyToStringIdx = ensureAnyToStringHelper(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const typeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined");
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  if (anyToStringIdx === undefined || externGetIdx === undefined) return null;
+  if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined) return null;
+  const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (concatIdx === undefined || ctx.anyStrTypeIdx < 0) return null;
+
+  const nameValue = allocLocal(fctx, `__error_tostring_name_${fctx.locals.length}`, { kind: "externref" });
+  const messageValue = allocLocal(fctx, `__error_tostring_message_${fctx.locals.length}`, { kind: "externref" });
+
+  const isUndefined = (valueLocal: number): Instr[] =>
+    typeofUndefinedIdx === undefined
+      ? [{ op: "local.get", index: valueLocal }, { op: "ref.is_null" }]
+      : [
+          { op: "local.get", index: valueLocal },
+          { op: "call", funcIdx: typeofUndefinedIdx },
+        ];
+
+  const strictToString = (valueLocal: number): Instr[] => {
+    const convert: Instr[] = [
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "call", funcIdx: anyToStringIdx },
+      { op: "extern.convert_any" },
+    ];
+    if (symbolTypeIdx < 0) return convert;
+    return [
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: symbolTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+          forceInModuleCtor: true,
+        }),
+      },
+      ...convert,
+    ];
+  };
+
+  const key = (value: string): Instr[] => {
+    addStringConstantGlobal(ctx, value);
+    return stringConstantExternrefInstrs(ctx, value);
+  };
+
+  const propertyToString = (valueLocal: number, defaultValue: string): Instr[] => [
+    ...isUndefined(valueLocal),
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: key(defaultValue),
+      else: strictToString(valueLocal),
+    },
+  ];
+
+  // §20.5.3.4 step 2 is the full Type(V)-is-Object guard, not merely
+  // RequireObjectCoercible: numbers, strings, booleans, and Symbols must all
+  // throw before either property is read. `__typeof_object` intentionally
+  // reports the Symbol carrier as object-like, so subtract that carrier after
+  // OR-ing the object and function classifiers. The null/undefined rejection
+  // remains a separate first check because `typeof null` is "object".
+  const rejectNullishReceiver: Instr[] = [{ op: "local.get", index: 1 }, { op: "ref.is_null" }];
+  if (typeofUndefinedIdx !== undefined) {
+    rejectNullishReceiver.push(
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: typeofUndefinedIdx },
+      { op: "i32.or" },
+    );
+  }
+  rejectNullishReceiver.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+      forceInModuleCtor: true,
+    }),
+  });
+
+  fctx.body.push(...rejectNullishReceiver);
+
+  const isObjectValue: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: typeofObjectIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: typeofFunctionIdx },
+    { op: "i32.or" },
+  ];
+  if (symbolTypeIdx >= 0) {
+    isObjectValue.push(
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: symbolTypeIdx },
+      { op: "i32.eqz" },
+      { op: "i32.and" },
+    );
+  }
+  fctx.body.push(
+    ...isObjectValue,
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", "Error.prototype.toString called on a non-object", {
+        forceInModuleCtor: true,
+      }),
+    },
+  );
+
+  // §20.5.3.4 steps 3-4: Get/ToString(name) precedes any message access.
+  fctx.body.push(
+    { op: "local.get", index: 1 },
+    ...key("name"),
+    { op: "call", funcIdx: externGetIdx },
+    { op: "local.set", index: nameValue },
+    ...propertyToString(nameValue, "Error"),
+    { op: "local.set", index: nameValue },
+  );
+
+  // §20.5.3.4 steps 5-6: Get/ToString(message), after name has completed.
+  fctx.body.push(
+    { op: "local.get", index: 1 },
+    ...key("message"),
+    { op: "call", funcIdx: externGetIdx },
+    { op: "local.set", index: messageValue },
+    ...propertyToString(messageValue, ""),
+    { op: "local.set", index: messageValue },
+  );
+
+  // Steps 7-9: empty-name / empty-message cases, followed by `name + ": " +
+  // message`. `__str_concat` is already a dependency of __any_to_string.
+  const nameLength = (): Instr[] => [
+    { op: "local.get", index: nameValue },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 },
+  ];
+  const messageLength = (): Instr[] => [
+    { op: "local.get", index: messageValue },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 },
+  ];
+  fctx.body.push(
+    ...nameLength(),
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: messageValue }],
+      else: [
+        ...messageLength(),
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [{ op: "local.get", index: nameValue }],
+          else: [
+            { op: "local.get", index: nameValue },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+            ...nativeStringLiteralInstrs(ctx, ": "),
+            { op: "call", funcIdx: concatIdx },
+            { op: "local.get", index: messageValue },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+            { op: "call", funcIdx: concatIdx },
+            { op: "extern.convert_any" },
+          ],
+        },
+      ],
+    },
+  );
+  return { kind: "externref" };
+}
+
 function makeGlue(
   ctx: CodegenContext,
   brand: number,
   name: string,
   members: readonly string[],
+  symbolTag?: string,
 ): NativeProtoBuiltinGlue {
   return {
     brand,
     name,
     memberCsv: members.join(","),
+    ...(symbolTag === undefined ? {} : { symbolTag }),
+    // (#5156, §20.5.3.2/.3) Each Error-family prototype has own `name` (the
+    // constructor's name) and `message` ("") data properties. `NativeError.
+    // prototype.toString` is inherited, but `name`/`message` are OWN on every
+    // one of them.
+    ...(ERROR_PROTO_OWNER_NAMES.has(name)
+      ? {
+          dataProps: [
+            ["name", name],
+            ["message", ""],
+          ] as ReadonlyArray<readonly [string, string]>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -1775,7 +2025,12 @@ function makeGlue(
     // (#3181) `Number.prototype.toString(radix)` is arity 1 (§21.1.3.7) — the
     // only family where `toString` differs from the shared default of 0. Every
     // other family (Array/String/Object/Boolean/Date/…) keeps 0 from the table.
-    memberLength: (member) => (name === "Number" && member === "toString" ? 1 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    memberLength: (member) =>
+      name === "Number" && member === "toString"
+        ? 1
+        : name === "String" && member === "next"
+          ? 0
+          : (PROTO_METHOD_LENGTH[member] ?? 1),
     // (#2875 slice 3) String search-family members carry an uncounted optional
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
@@ -1806,6 +2061,13 @@ function makeGlue(
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
+      // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
+      // builtin whose ToPrimitive prefers `toString` under the "default" hint.
+      (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
+      // ES2015 §20.5.3.4 — Error.prototype.toString is inherited by each
+      // NativeError prototype, so all of those glues share the same ordered
+      // property-read and Symbol-rejecting body.
+      (member === "toString" && ERROR_PROTO_OWNER_NAMES.has(name) ? emitErrorProtoToStringBody(c, fctx) : null) ??
       // (#4491 wave-5 T2) `this<X>Value(this)` for the three primitive-wrapper
       // families (§21.1.3.7 / §22.1.3.28 / §20.3.3.3). Routed FIRST so it
       // serves String too — `emitStringProtoMemberBody` would otherwise claim
@@ -1897,11 +2159,13 @@ function makeGlueWithGetters(
   members: readonly string[],
   getters: ReadonlySet<string>,
   lengthTable: Readonly<Record<string, number>>,
+  symbolTag?: string,
 ): NativeProtoBuiltinGlue {
   return {
     brand,
     name,
     memberCsv: members.join(","),
+    ...(symbolTag === undefined ? {} : { symbolTag }),
     memberKind: (member) => (getters.has(member) ? "getter" : "method"),
     memberLength: (member) => lengthTable[member] ?? 1,
     emitMemberBody: (c, fctx, member) => emitProtoMemberBodyRefusal(c, fctx, name, member),
@@ -1964,7 +2228,7 @@ export function ensureBooleanNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "Boolean");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS, "Boolean"));
   }
   return brand;
 }
@@ -2118,7 +2382,7 @@ export function ensureWeakMapNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "WeakMap");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakMap", WEAKMAP_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakMap", WEAKMAP_PROTO_METHODS, "WeakMap"));
   }
   return brand;
 }
@@ -2128,7 +2392,7 @@ export function ensureWeakSetNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "WeakSet");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakSet", WEAKSET_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "WeakSet", WEAKSET_PROTO_METHODS, "WeakSet"));
   }
   return brand;
 }
@@ -2153,6 +2417,7 @@ export function ensureArrayBufferNativeProtoGlue(ctx: CodegenContext): number | 
       ARRAYBUFFER_PROTO_METHODS,
       ARRAYBUFFER_PROTO_GETTERS,
       ARRAYBUFFER_PROTO_METHOD_LENGTH,
+      "ArrayBuffer",
     );
     // (#1595) `transfer` and `transferToFixedLength` have an optional
     // newLength parameter even though their spec `.length` is 0. Give the
@@ -2182,6 +2447,7 @@ export function ensureDataViewNativeProtoGlue(ctx: CodegenContext): number | und
       DATAVIEW_PROTO_METHODS,
       DATAVIEW_PROTO_GETTERS,
       DATAVIEW_PROTO_METHOD_LENGTH,
+      "DataView",
     );
     // (#3173) Real reflective member bodies: get*/set* delegate to the shared
     // `__dv_m_<member>` native core (brand → ToIndex → [ToNumber] → detached →
@@ -2955,6 +3221,32 @@ export function emitIteratorPrototypeSingleton(
       { op: "call", funcIdx: defineValueIdx },
       { op: "drop" },
     );
+  }
+
+  // (#5099) `%StringIteratorPrototype%.next` is an own data property whose
+  // value is a function (`name: "next"`, `length: 0`). The iterator records
+  // themselves still use the existing native stepping path; this singleton
+  // only needs a descriptor-carrying closure so the two metadata rows can
+  // inspect the prototype without pulling iterator dispatch into this slice.
+  // Keep the property off String.prototype's glue CSV: `next` is own only on
+  // the iterator prototype, not on the primitive wrapper prototype.
+  if (kind === "String" && defineValueIdx !== undefined) {
+    const brand = ensureStringNativeProtoGlue(ctx);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
   }
   initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });

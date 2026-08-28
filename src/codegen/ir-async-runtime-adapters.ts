@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
-  ALL_ASYNC_HOST_ADAPTERS,
   type AsyncHostAdapter,
   type AsyncHostAdapterValueType,
   type AsyncHostCapabilityId,
 } from "../ir/async-runtime-providers.js";
-import { sameIrCallableBinding, irImportFuncRef } from "../ir/callable-bindings.js";
+import { assertPreparedIrAsyncRuntimeCurrent } from "../ir/async-plan.js";
 import type { IrFunction } from "../ir/nodes.js";
+import { RUNTIME_BACKEND_REQUIREMENTS, type RuntimeBackendRequirement } from "../ir/runtime-manifest.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
@@ -60,24 +60,35 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
   return undefined;
 }
 
-/**
- * Materialize the concrete host adapter projection selected after semantic
- * runtime-manifest freeze. This runs before prepared component / Program ABI
- * sealing. Existing imports from the transitional AST collector are validated
- * and reused; no body-lowering path may lazily invent another adapter.
- */
-export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
-  const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
-  const catalogue = new Map(ALL_ASYNC_HOST_ADAPTERS.map((adapter) => [adapter.capability, adapter] as const));
-  let nativeRuntimeRequested = false;
-  let nativeUndefinedRequested = false;
+interface PreparedAsyncRuntimeRequestCensus {
+  readonly hostRecords: readonly AsyncHostAdapter[];
+  readonly backendRequirements: readonly RuntimeBackendRequirement[];
+}
 
+const preparedAsyncDrivePromiseTypeIdxByContext = new WeakMap<CodegenContext, number>();
+
+/** Lookup-only frame type reservation populated by the pre-allocation census consumer. */
+export function getPreparedAsyncDrivePromiseTypeIdx(ctx: CodegenContext): number {
+  const promiseTypeIdx = preparedAsyncDrivePromiseTypeIdxByContext.get(ctx);
+  if (promiseTypeIdx === undefined) {
+    throw new Error("IR async native drive runtime was not reserved before frame lowering");
+  }
+  return promiseTypeIdx;
+}
+
+function collectPreparedAsyncRuntimeRequests(
+  ctx: CodegenContext,
+  functions: readonly IrFunction[],
+): PreparedAsyncRuntimeRequestCensus {
+  const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
+  const requirements = new Set<RuntimeBackendRequirement>();
   for (const fn of functions) {
-    if (!fn.asyncRuntime) continue;
-    if (!fn.asyncPlan || fn.funcKind !== "async") {
+    if (!fn.asyncPlan && !fn.asyncRuntime && fn.funcKind !== "async") continue;
+    if (!fn.asyncPlan || !fn.asyncRuntime || fn.funcKind !== "async") {
       throw new Error(`IR async runtime attachment for ${fn.name} has no valid async plan owner`);
     }
-    if (fn.asyncRuntime.kind === "standalone-native-wasmgc") {
+    const runtime = assertPreparedIrAsyncRuntimeCurrent(fn.unitId, fn.name, fn.asyncPlan, fn.asyncRuntime);
+    if (runtime.kind === "standalone-native-wasmgc") {
       if (
         !ctx.standalone ||
         ctx.wasi ||
@@ -87,34 +98,58 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
       ) {
         throw new Error(`IR async function ${fn.name} selected a native standalone runtime on the wrong target`);
       }
-      nativeRuntimeRequested = true;
-      nativeUndefinedRequested ||= fn.asyncPlan.runtimeIntents.includes("value.undefined");
-      continue;
+    } else if (
+      ctx.targetProfile.target !== "gc" ||
+      ctx.targetProfile.backend !== "wasmgc" ||
+      ctx.targetProfile.environment !== "javascript" ||
+      ctx.targetProfile.capabilityPolicy !== "ambient-js" ||
+      ctx.strictNoHostImports
+    ) {
+      throw new Error(`IR async function ${fn.name} selected a host runtime on the wrong target`);
     }
-    for (const attached of fn.asyncRuntime.adapters) {
-      const adapter = catalogue.get(attached.capability);
-      if (!adapter) throw new Error(`IR async runtime attachment uses unknown capability ${attached.capability}`);
-      const expectedTarget = irImportFuncRef(adapter.module, adapter.field, adapter.field);
-      if (!sameIrCallableBinding(attached.target.binding, expectedTarget.binding)) {
-        throw new Error(`IR async adapter ${attached.capability} does not match its frozen import projection`);
+    for (const requirement of runtime.backendRequirements) requirements.add(requirement);
+    for (const adapter of runtime.adapters) {
+      const prior = requested.get(adapter.capability);
+      if (prior && prior !== adapter.record) {
+        throw new Error(`IR async adapter ${adapter.capability} differs across prepared functions`);
       }
-      requested.set(attached.capability, adapter);
+      requested.set(adapter.capability, adapter.record);
     }
   }
+  return Object.freeze({
+    hostRecords: Object.freeze(
+      [...requested.values()].sort((left, right) =>
+        left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0,
+      ),
+    ),
+    backendRequirements: Object.freeze(
+      RUNTIME_BACKEND_REQUIREMENTS.filter((requirement) => requirements.has(requirement)),
+    ),
+  });
+}
 
-  if (nativeRuntimeRequested) {
-    ensureAsyncDriveRuntime(ctx);
-    prepareNativePromiseNumberBoundary(ctx);
-    if (nativeUndefinedRequested) {
-      // Promise<void> must settle with the canonical native `undefined`
-      // singleton, not the null externref sentinel. Reserve it before Program
-      // ABI sealing so async-frame lowering remains allocation-free.
-      canonicalUndefinedExternInstrs(ctx);
-    }
+/**
+ * Materialize the concrete host adapter projection selected after semantic
+ * runtime-manifest freeze. This runs before prepared component / Program ABI
+ * sealing. Existing imports from the transitional AST collector are validated
+ * and reused; no body-lowering path may lazily invent another adapter.
+ */
+export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
+  const census = collectPreparedAsyncRuntimeRequests(ctx, functions);
+  for (const adapter of census.hostRecords) {
+    const imported = findExactImport(ctx, adapter);
+    if (imported) assertImportSignature(ctx, imported, adapter);
   }
-
-  for (const adapter of ALL_ASYNC_HOST_ADAPTERS) {
-    if (!requested.has(adapter.capability)) continue;
+  for (const requirement of census.backendRequirements) {
+    if (requirement === "async.native.drive") {
+      if (!preparedAsyncDrivePromiseTypeIdxByContext.has(ctx)) {
+        const runtime = ensureAsyncDriveRuntime(ctx);
+        preparedAsyncDrivePromiseTypeIdxByContext.set(ctx, runtime.promiseTypeIdx);
+      }
+    } else if (requirement === "async.native.number-boundary") prepareNativePromiseNumberBoundary(ctx);
+    else canonicalUndefinedExternInstrs(ctx);
+  }
+  for (const adapter of census.hostRecords) {
     let imported = findExactImport(ctx, adapter);
     if (!imported) {
       const signature = expectedSignature(adapter);

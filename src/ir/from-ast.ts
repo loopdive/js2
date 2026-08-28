@@ -7110,10 +7110,9 @@ function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName
     }
     return lowerNativeNumberToString(value, cx.funcName, cx);
   }
+  if (irTypeIsBoolean(valueType)) return lowerBooleanToString(cx.builder, value);
   // A number that propagation narrowed to i32 is still a number; widen and use
   // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
-  // `boolean: true` is excluded — a boolean prints "true"/"false", not "1"/"0",
-  // and that rendering is not in this slice.
   if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
     const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
     return lowerHostFreeConsoleArgument(widened, cx, methodName);

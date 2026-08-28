@@ -22,10 +22,10 @@ import { compile } from "../../src/index.js";
 // f64-mapped ops that the IR claims, the call-graph leaves alone, and the
 // lowerer maps to `emitUnary` with the corresponding `f64.<op>` IrUnop tag.
 //
-// `Math.round` is intentionally excluded — JS `Math.round(0.5)` rounds to
-// 1 (away from zero), but Wasm `f64.nearest` rounds to even. A 1:1 lowering
-// would be unsound. Same reason `Math.min/max` (binary) are deferred to a
-// follow-up that extends `IrBinop`.
+// `Math.round` is intentionally excluded from that native-op set — JS ties
+// round toward +Infinity, while Wasm `f64.nearest` rounds to even. It is owned
+// separately by an exact self-hosted semantic intrinsic. `Math.min/max`
+// remain deferred because their variadic evaluation requires a wider plan.
 
 describe("#1371 — IR Math.* unary whitelist", () => {
   it("Math.sqrt — IR-claimed, emits f64.sqrt without host import", async () => {
@@ -74,9 +74,9 @@ describe("#1371 — IR Math.* unary whitelist", () => {
     expect(exp.truncate!(-3.7)).toBe(-3);
   });
 
-  it("Math.<not-whitelisted>(arg) still routes to legacy (round, min, max, pow)", async () => {
-    // These should still compile (via legacy path) and behave correctly —
-    // we are only confirming the whitelist doesn't accidentally over-claim.
+  it("self-hosted and legacy Math calls coexist (round, min, max, pow)", async () => {
+    // round and pow use semantic callable providers; variadic min/max remain
+    // direct. Their ownership split must not change source behavior.
     const exp = await compileToWasm(`
       export function rnd(x: number): number { return Math.round(x); }
       export function mn(a: number, b: number): number { return Math.min(a, b); }

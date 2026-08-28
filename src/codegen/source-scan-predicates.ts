@@ -9,6 +9,7 @@
 // walk-until-found shape and have no dependency on `CodegenContext`.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { directArrayProtoIteratorAssignment } from "./array-proto-iterator-override-ast.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
@@ -648,12 +649,25 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
   }
   function walk(node: ts.Node): void {
     if (found) return;
+    // Exact direct assignment statements share the same AST-only predicate as
+    // the CPR write arm and checkpoint-2's bounded generator admission seam.
+    if (directArrayProtoIteratorAssignment(node) !== undefined) {
+      found = true;
+      return;
+    }
     // (i) assignment: Array.prototype[Symbol.iterator] = … / Array.prototype.values = …
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       isArrayProtoLHS(node.left)
     ) {
+      found = true;
+      return;
+    }
+    // (iii) (#5154) `delete Array.prototype[Symbol.iterator]` — removing the
+    // method is as much an override of the iterator surface as replacing it,
+    // and §7.4.2 then requires a TypeError at every array-iteration site.
+    if (ts.isDeleteExpression(node) && isArrayProtoLHS(unwrap(node.expression))) {
       found = true;
       return;
     }

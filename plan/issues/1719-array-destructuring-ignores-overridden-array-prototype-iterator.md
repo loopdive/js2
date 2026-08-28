@@ -1,7 +1,7 @@
 ---
 id: 1719
 title: "Array destructuring ignores overridden Array.prototype[Symbol.iterator] ('items[Symbol.iterator] must be a function', 71 fails)"
-status: ready
+status: in-progress
 created: 2026-05-29
 updated: 2026-08-27
 priority: high
@@ -1282,3 +1282,45 @@ Route unrelated iterator, GC eager-buffering, `#1750`, and array object-value
 representation findings to their existing owners. Land each coherent
 checkpoint as a ready PR only after its own static, focused, and normal hook
 gates pass.
+
+## 2026-08-27 checkpoint 1a — normalize the shared standalone CPR result
+
+The first implementation checkpoint closes only the already-admitted
+non-receiver producer/consumer ABI edge. It extracts one exact AST-only
+predicate for direct `Array.prototype[Symbol.iterator] = value` and
+`Array.prototype.values = value` statements, then changes the shared
+`emitArrayProtoIteratorDrive` producer in standalone mode to reserve and settle
+the canonical `__iterator` helper before retaining shiftable identities. The
+producer re-resolves the override global and CPR driver after settlement,
+drives the captured override once, normalizes the raw generator state exactly
+once, and stores that `$IterRec`-compatible externref for every existing
+`__iterator_next` consumer. No consumer-local workaround and no widened
+`__iterator_next` ABI is introduced.
+
+The non-standalone branch deliberately retains its prior caller-supplied
+override-global index and the direct `reserveProtoIteratorDriver` result. Exact
+artifact comparison pins GC and WASI unchanged for both override keys and pins
+the override-free standalone artifact unchanged. Focused WAT evidence requires
+one `__iterator` call and one authoritative store of its result. When the
+mandatory peephole pass fuses the first `local.set`/`local.get` pair, the exact
+`local.tee` value must feed only the established null guard, after which every
+`__iterator_next` reloads that same local; without fusion, every consumer also
+loads the stored local. Runtime evidence covers declaration, parameter,
+for-of-head, assignment, and #1749 spread for both override keys with zero host
+imports. The shipped-default inliner remains runtime-correct, while the
+structural probe explicitly disables and restores its environment setting.
+Child execution is bounded by timeout and rejects spawn errors, signals, and
+nonzero status.
+
+Checkpoint evidence is 19/19 focused tests across the new regression and the
+existing #1719 S1 controls, TypeScript 7 and 5, targeted formatting/lint, and
+the LOC/function ratchets. Production growth is +103 LOC without a budget
+baseline change. GC, WASI, and override-free standalone binaries/WAT are
+byte-identical to the exact parent; only the intended standalone override
+artifacts change.
+
+This does not close #1719. The bounded receiver-state/capture and re-entrant
+generator proof, guarded multi-source finalizer parity, source-order matrix,
+mutation proof, and test262 denominator remain the next checkpoints. The issue
+therefore stays `in-progress`; #1750 and the broader array object-value model
+remain out of scope.

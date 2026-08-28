@@ -20,6 +20,29 @@ export function run(): number {
 }
 `;
 
+const OWNER_AWARE_CALL_SOURCE = `
+function seed(value: number): number { return value + 1; }
+export function run(): number {
+  class Calculator {
+    value: number;
+    constructor(value: number) { this.value = seed(value); }
+    add(delta: number): number { return seed(this.value + delta); }
+  }
+  return new Calculator(39).add(1);
+}
+`;
+
+const CLOSED_FIELD_CALL_SOURCE = `
+function seed(value: number): number { return value + 2; }
+export function run(): number {
+  class Box {
+    value = seed(40);
+    read(): number { return this.value; }
+  }
+  return new Box().read();
+}
+`;
+
 function outcome(result: CompileResult, name: string): IrObservedOutcome {
   const observed = (result.irOutcomes ?? []).filter((candidate) => candidate.displayName.startsWith(name));
   expect(observed, `terminal outcome count for ${name}`).toHaveLength(1);
@@ -102,6 +125,109 @@ describe("#3522 nested ordinary class ownership", () => {
     expect(watFunctionBody(prepared.wat, "Calculator_add")).toContain("struct.get");
     expect(watFunctionBody(prepared.wat, "Calculator_scale")).toContain("struct.get");
   });
+
+  it.each(TARGETS)("keeps nested constructor and method calls on their exact owners in the %s lane", async (target) => {
+    const direct = await compile(OWNER_AWARE_CALL_SOURCE, {
+      fileName: `nested-owner-call-direct-${target}.ts`,
+      experimentalIR: false,
+      target,
+    });
+    const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+    const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Calculator_new,Calculator_add";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "seed,run";
+      prepared = await compile(OWNER_AWARE_CALL_SOURCE, {
+        fileName: `nested-owner-call-prepared-${target}.ts`,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      });
+    } finally {
+      if (previousClassPoison === undefined)
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+      if (previousFunctionPoison === undefined)
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!()).toBe(42);
+    }
+    const seedOutcome = outcome(prepared, "seed");
+    const ownerOutcomes = [
+      outcome(prepared, "run"),
+      outcome(prepared, "Calculator_new"),
+      outcome(prepared, "Calculator_add"),
+    ];
+    const observed = [seedOutcome, ...ownerOutcomes];
+    expect(new Set(ownerOutcomes.map((candidate) => candidate.preparedComponentId)).size).toBe(1);
+    expect(seedOutcome.preparedComponentId).not.toBe(ownerOutcomes[0]!.preparedComponentId);
+    for (const candidate of observed) {
+      expect(candidate).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it.each(TARGETS)(
+    "keeps the call-bearing nested field family closed and behavior-neutral in the %s lane",
+    async (target) => {
+      const fileName = `nested-field-call-${target}.ts`;
+      const direct = await compile(CLOSED_FIELD_CALL_SOURCE, {
+        fileName,
+        experimentalIR: false,
+        target,
+      });
+      const preparedControl = await compile(CLOSED_FIELD_CALL_SOURCE, {
+        fileName,
+        experimentalIR: true,
+        target,
+      });
+      const preparedObserved = await compile(CLOSED_FIELD_CALL_SOURCE, {
+        fileName,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      });
+
+      for (const compiled of [direct, preparedControl, preparedObserved]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!()).toBe(42);
+      }
+      expect(Array.from(preparedObserved.binary)).toEqual(Array.from(preparedControl.binary));
+      expect(preparedObserved.irPostClaimErrors ?? []).toEqual([]);
+      expect(preparedObserved.irOutcomes ?? []).toHaveLength(4);
+      expect(outcome(preparedObserved, "seed")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect(outcome(preparedObserved, "run")).toMatchObject({
+        kind: "unsupported",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+      for (const name of ["Box_new", "Box_read"]) {
+        expect(outcome(preparedObserved, name)).toMatchObject({
+          kind: "unsupported",
+          code: "class-member-unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+      }
+    },
+  );
 
   it("withdraws the complete nested class component when one body captures its enclosing frame", async () => {
     const result = await compile(

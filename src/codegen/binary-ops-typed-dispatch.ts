@@ -466,7 +466,17 @@ export function compileTypedBinaryDispatch(
         // For numeric, comparison, and loose equality ops: coerce struct refs → f64 via valueOf
         // Per JS spec, binary + uses ToPrimitive with hint "default",
         // while other numeric/comparison ops use hint "number".
-        const hint: "number" | "default" = op === ts.SyntaxKind.PlusToken ? "default" : "number";
+        // (#5154 cluster F) LOOSE equality is the second "default"-hint
+        // operator: §7.2.15 steps 10-11 call ToPrimitive(operand) with NO hint,
+        // which is "default". A user `[Symbol.toPrimitive]` therefore observed
+        // `"number"` where the spec says `"default"` (`equals/to-prim-hint`).
+        // Strict `===` never reaches ToPrimitive at all, so it keeps its bytes.
+        const hint: "number" | "default" =
+          op === ts.SyntaxKind.PlusToken ||
+          op === ts.SyntaxKind.EqualsEqualsToken ||
+          op === ts.SyntaxKind.ExclamationEqualsToken
+            ? "default"
+            : "number";
         // Coerce right operand (top of stack) first
         if (rightIsRef) {
           coerceType(ctx, fctx, rightType, { kind: "f64" }, hint);

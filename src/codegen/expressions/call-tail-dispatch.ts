@@ -120,6 +120,31 @@ function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: 
  * `return compileTailDispatch(...)`. `expectedType` is threaded through. Moved
  * unchanged so the emitted Wasm is byte-identical.
  */
+/**
+ * (#5154 cluster B) Evaluate a call argument that the callee will DISCARD, for
+ * its observable side effects only.
+ *
+ * §12.3.6.1 ArgumentListEvaluation iterates a `...spread` argument to
+ * exhaustion regardless of the callee's arity, so `(function(){}(...iter))`
+ * must still run `iter[Symbol.iterator]()` and every `next()` — and let any
+ * abrupt completion propagate. `compileExpression` on a bare `SpreadElement`
+ * produces nothing, so the whole spread (and every throw inside it) used to
+ * vanish. Reuse the array-literal spread lowering, which already performs
+ * GetIterator + the IteratorStep loop, and drop its result.
+ */
+function compileDiscardedArgument(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
+  if (ts.isSpreadElement(arg)) {
+    const drive = ts.factory.createArrayLiteralExpression([arg]);
+    ts.setTextRange(drive, arg);
+    (drive as unknown as { parent: ts.Node }).parent = arg.parent;
+    const driven = compileExpression(ctx, fctx, drive);
+    if (driven) fctx.body.push({ op: "drop" });
+    return;
+  }
+  const t = compileExpression(ctx, fctx, arg);
+  if (t) fctx.body.push({ op: "drop" });
+}
+
 export function compileTailDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -242,6 +267,12 @@ export function compileTailDispatch(
             if (iifeNeedsArguments) {
               // Store extra args in locals for the arguments object
               for (let i = params.length; i < args.length; i++) {
+                // A spread contributes no single argument slot to the inlined
+                // `arguments` carrier, but must still be driven (#5154 B).
+                if (ts.isSpreadElement(args[i]!)) {
+                  compileDiscardedArgument(ctx, fctx, args[i]!);
+                  continue;
+                }
                 const t = compileExpression(ctx, fctx, args[i]!);
                 const localType = t ?? { kind: "f64" as const };
                 if (t === null) {
@@ -255,10 +286,7 @@ export function compileTailDispatch(
             } else {
               // Drop extra arguments (evaluate for side effects)
               for (let i = params.length; i < args.length; i++) {
-                const t = compileExpression(ctx, fctx, args[i]!);
-                if (t) {
-                  fctx.body.push({ op: "drop" });
-                }
+                compileDiscardedArgument(ctx, fctx, args[i]!);
               }
             }
 
@@ -1406,8 +1434,18 @@ export function compileTailDispatch(
         const receiverArrayInfo = resolveArrayInfo(ctx, receiverType);
         const externrefArrayElement = receiverArrayInfo?.elemType.kind === "externref";
         const undefinedExternrefElement = elementFact.kind === "undefined" && externrefArrayElement;
+        // (#5154 C2a) `var a = []; a.push(function(){…}); a[0]()` — TypeScript's
+        // evolving-array analysis widens the element type to the SHAPELESS
+        // object type `{}` (not `any`), so the guard above declined and the
+        // call was silently dropped to `ref.null.extern`. A shapeless `{}`
+        // element in an externref-backed array carries no static evidence
+        // either way; the dynamic dispatch below is ref.test-guarded and its
+        // default arm reproduces the historical null, so a genuinely
+        // non-callable element keeps today's behaviour.
+        const shapelessObjectExternrefElement =
+          elementFact.kind === "object" && elementFact.shape === undefined && externrefArrayElement;
         if (
-          (elementIsUnresolved || undefinedExternrefElement) &&
+          (elementIsUnresolved || undefinedExternrefElement || shapelessObjectExternrefElement) &&
           (ctx.standalone || externrefArrayElement) &&
           receiverArrayInfo
         ) {

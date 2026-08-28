@@ -3657,6 +3657,58 @@ interface ForInHeadSaved {
   isConst: boolean;
 }
 
+/** (#5109) A body-captured for-in head binding needs a fresh cell for each
+ * enumerated key so closures created by one iteration do not observe a later
+ * iteration's key. The cell is initialised immediately before that iteration's
+ * body runs and the compile-time name is re-aimed through `boxedCaptures`. */
+interface ForInPerIterationCell {
+  refCellTypeIdx: number;
+  boxedLocal: number;
+}
+
+function prepareForInPerIterationCells(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForInStatement,
+): ForInPerIterationCell[] {
+  const init = stmt.initializer;
+  if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) return [];
+  if (!(init.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) return [];
+  const decl = init.declarations[0]!;
+  if (!ts.isIdentifier(decl.name)) return [];
+  const varName = decl.name.text;
+  if (!collectForInHeadClosureCaptures(stmt, new Set([varName]), true).has(varName)) return [];
+  const refCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "externref" });
+  const boxedLocal = allocLocal(fctx, `__forin_pi_box_${varName}_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: refCellTypeIdx,
+  });
+  fctx.localMap.set(varName, boxedLocal);
+  (fctx.boxedCaptures ??= new Map()).set(varName, {
+    refCellTypeIdx,
+    valType: { kind: "externref" },
+  });
+  return [{ refCellTypeIdx, boxedLocal }];
+}
+
+function emitForInPerIterationCellInitializers(
+  guardedBody: Instr[],
+  keyLocal: number,
+  cells: ForInPerIterationCell[],
+  hasLivenessGuard: boolean,
+): void {
+  if (cells.length === 0) return;
+  const cellInit: Instr[] = [];
+  for (const cell of cells) {
+    cellInit.push(
+      { op: "local.get", index: keyLocal },
+      { op: "struct.new", typeIdx: cell.refCellTypeIdx },
+      { op: "local.set", index: cell.boxedLocal },
+    );
+  }
+  guardedBody.splice(hasLivenessGuard ? 5 : 0, 0, ...cellInit);
+}
+
 export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForInStatement): void {
   // Get the loop variable name
   const init = stmt.initializer;
@@ -4019,7 +4071,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
       }
     }
   }
-
+  const perIterationCells = prepareForInPerIterationCells(ctx, fctx, stmt);
   fctx.body.push({ op: "local.tee", index: objLocal });
   fctx.body.push({ op: "call", funcIdx: keysIdx }); // __for_in_keys(obj) -> keys array
 
@@ -4128,7 +4180,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     guardedBody.unshift({ op: "local.get", index: keyLocal });
     guardedBody.unshift({ op: "local.get", index: objLocal });
   }
-
+  emitForInPerIterationCellInitializers(guardedBody, keyLocal, perIterationCells, hasIdx !== undefined);
   // Wrap user body in block $continue so `continue` exits here
   loopBody.push({
     op: "block",
