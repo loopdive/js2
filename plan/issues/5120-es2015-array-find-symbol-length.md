@@ -1,7 +1,7 @@
 ---
 id: 5120
 title: "ES2015 Array find/findIndex must throw for Symbol length in standalone"
-status: in-progress
+status: ready
 created: 2026-08-28
 updated: 2026-08-28
 priority: high
@@ -119,11 +119,47 @@ unconditionally.
   focused checks pass with at most two workers and `SKIP_SLOW_PRECOMMIT=1`.
 - No standalone imports are emitted by the regression fixture.
 
+## Validation evidence
+
+Validated after the non-destructive merge of current `upstream/main`
+(`abf224159c32447eff7e36d51849278bb07ddf83`) into the implementation branch.
+The #5120 merge parent before the latest upstream update was
+`7336aec74c27ceb35207add95cc36699aec26db4`; no files from concurrent lanes
+were rewritten or reverted.
+
+- Exact corpus rows: host `find` pass, host `findIndex` pass, standalone
+  `find` pass, and standalone `findIndex` pass (4/4). The two standalone
+  invocations emitted zero WebAssembly imports and used the runner's
+  120-second row timeout under a 180-second Vitest timeout.
+- Focused regression command with the required artifact directory and at most
+  two workers: `tests/issue-5120-es2015-array-find-symbol-length.test.ts`,
+  44/44 passed. This includes exact `TypeError` identity, one getter read,
+  callback/callability ordering, later-abrupt argument precedence, dynamic and
+  closed Symbol carriers, arrow `thisArg` evaluation, positive arrays and
+  numeric array-likes, and reduce/reduceRight single evaluation.
+- The changed-root gate also passed 44/44 and exited 0. Its single-fork run
+  printed the repository-documented, ignored `onTaskUpdate` heartbeat while
+  long synchronous standalone compiles were in progress; no test failed.
+- Standalone assertions in the focused fixture verify
+  `WebAssembly.Module.imports(module) === []`; the fixture has no standalone
+  imports.
+- TypeScript 5 and TypeScript 7 typechecks passed. Biome lint, Prettier
+  format-check, LOC/function budgets (including the allowances declared above),
+  oracle/coercion-site ratchets, numeric-local IR parity, issue integrity,
+  changed-root, host-import policy, IR dialect/layering/kind checks, fallback,
+  stack-balance, adoption, dead-export, pushraw, and harness-compile-budget
+  gates passed. The full guard suite passed (250 tests, 4 skipped), as did the
+  standalone IR cutover corpus, conformance sync, feature-badge check, and
+  required issue/IR regression suites.
+- Every checkpoint was pushed to `ttraenkler/js2` with normal verification;
+  no PR was opened from this branch.
+
 ## Handoff
 
-Keep this plan `status: in-progress` until the root agent reviews the branch and
-opens the single non-draft upstream PR. Push every implementation and
-verification checkpoint to `ttraenkler/js2`; do not open a PR from this branch.
-The handoff should include source-review findings, exact A/B and regression
-commands/results, full-gate results, clean worktree status, branch/head SHA, and
-any blockers.
+This plan is `status: ready` for root review; it is not `done`. Root should open
+the single non-draft upstream PR after reviewing the branch and add its URL to
+the eventual issue/PR record. The final branch is
+`codex/5120-es2015-array-find-symbol-length`, based on current `upstream/main`
+and ending in the final handoff commit that follows this plan update. The
+worktree is clean, the branch is pushed to `ttraenkler/js2`, and there are no
+known blockers.
