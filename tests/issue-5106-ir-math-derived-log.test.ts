@@ -77,6 +77,8 @@ const exclusionCases = METHODS.flatMap(
     export function f(x: number): number { return derivedLog(x); }`,
       ],
       [`computed ${method}`, `export function f(x: number): number { return Math["${method}"](x); }`],
+      [`optional invocation ${method}`, `export function f(x: number): number { return Math.${method}?.(x); }`],
+      [`optional receiver ${method}`, `export function f(x: number): number { return Math?.${method}(x); }`],
       [
         `${method} wrong arity`,
         `export function f(x: number): number {
@@ -252,6 +254,9 @@ describe("#5106 exact ambient Math.log10/Math.log1p IR ownership", () => {
     }
 
     const irLog10 = irExports.log10 as (value: number) => number;
+    // #3226 deliberately pins this source-faithful snap-to-integer behavior.
+    // Native Math.log10 returns a small negative value; changing the inherited
+    // approximation is separate from this ownership-only migration.
     expect(Object.is(irLog10(0.999999999999), -0)).toBe(true);
   });
 

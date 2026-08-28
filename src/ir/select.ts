@@ -6384,7 +6384,7 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
       recv.text === "Math" &&
       selectorSeesAmbientBinding(recv) &&
       plan !== undefined &&
-      selectorSupportsMathPlan(plan) &&
+      selectorSupportsMathPlan(plan, candidate) &&
       candidate.arguments.length === plan.arity &&
       candidate.arguments.every((arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg, seen))
     );
@@ -6474,7 +6474,13 @@ function selectorPrimitiveWrapperOrGenericBinary(
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
 }
 
-function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
+function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
+  if (
+    call.questionDotToken !== undefined ||
+    (ts.isPropertyAccessExpression(call.expression) && call.expression.questionDotToken !== undefined)
+  ) {
+    return false;
+  }
   if (plan.intrinsic === "math.asin" && process.env.JS2WASM_IR_MATH_ASIN === "0") return false;
   if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
   if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
@@ -8710,7 +8716,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         selectorSeesAmbientBinding(expr.expression.expression) &&
         !scope.has(expr.expression.expression.text) &&
         mathPlan !== undefined &&
-        selectorSupportsMathPlan(mathPlan) &&
+        selectorSupportsMathPlan(mathPlan, expr) &&
         expr.arguments.length === mathPlan.arity
       ) {
         return expr.arguments.every(
@@ -9841,7 +9847,7 @@ export function buildLocalCallGraph(
             node.expression.expression.text === "Math" &&
             selectorSeesAmbientBinding(node.expression.expression) &&
             mathPlan !== undefined &&
-            selectorSupportsMathPlan(mathPlan) &&
+            selectorSupportsMathPlan(mathPlan, node) &&
             node.arguments.length === mathPlan.arity
           ) {
             for (const a of node.arguments) visit(a);
