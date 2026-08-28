@@ -172,6 +172,9 @@ missing files, so it could not reach the two self-contained compiler controls.
    (host and standalone), yielding four conditional corpus assertions.
 3. Keep both descriptor/identity compiler controls as ordinary mandatory
    `it` tests. Do not skip the enclosing suite or alter `runTest262File`.
+4. Give the exact-row tables the same explicit 120-second Vitest budget as
+   `runTest262File`; otherwise a valid standalone result can be preempted by
+   the suite's 35-second default timeout under normal concurrent load.
 
 ### Follow-up evidence
 
@@ -183,6 +186,14 @@ missing files, so it could not reach the two self-contained compiler controls.
   handoff (the latter was recorded by merge checkpoint `10695cabd5`).
 - Corpus present: the focused Vitest file passed **6/6** — four exact
   host/standalone rows and both mandatory controls.
+- A frozen-head publication rerun reproduced a latent timeout mismatch: both
+  standalone rows exceeded Vitest's 35-second default (44.2s and 36.9s) even
+  though `runTest262File` already allowed 120 seconds. The follow-up now applies
+  the same 120-second budget at the Vitest case boundary; final evidence below
+  supersedes that diagnostic run.
+- Final frozen-head publication rerun after aligning the case timeout: **6/6**
+  passed in 129.53s (four exact corpus rows plus both mandatory controls); the
+  standalone rows completed normally in 20.5s and 22.9s.
 - Hermetic no-corpus shape (only `harness/assert.js` was temporarily moved in
   this worktree and restored): **2 passed, 4 skipped**. The four skips were
   exactly the host and standalone WeakMap/WeakSet rows; both controls ran and
