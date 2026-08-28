@@ -191,6 +191,8 @@ import { prepareSuspendingIrFunction } from "./async-prepare.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import {
   collectIrDirectCallLoweringPlans,
+  collectIrDirectCallLoweringPlansByIdentity,
+  irDirectCallLoweringPlanEquals,
   type IrDirectCallLoweringPlan,
   type IrDirectCallTarget,
   type IrFnctorParameterPreselectionPlan,
@@ -218,7 +220,6 @@ import {
   irSupportFuncRef,
   irUnitCallableBindingId,
   irUnitFuncRef,
-  sameIrCallableBinding,
 } from "./callable-bindings.js";
 import {
   buildIrUnitInventory,
@@ -879,6 +880,58 @@ function makeAmbientStringBindingPredicate(checker: ts.TypeChecker): (node: ts.I
   };
 }
 
+function makeIrDirectCallReconciler(
+  sourceFile: ts.SourceFile,
+  loweringPlans: IrIntegrationLoweringPlans | undefined,
+  targets: ReadonlyMap<string, IrDirectCallTarget>,
+): {
+  readonly directCalls: Map<ts.CallExpression, IrDirectCallLoweringPlan>;
+  readonly collect: (root: ts.Node, ownerUnitId: IrUnitId) => ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
+} {
+  const sourceTargets = new Map([...targets].filter(([, target]) => target.target.binding.kind === "unit"));
+  const compatibilityTargets = new Map([...targets].filter(([, target]) => target.target.binding.kind !== "unit"));
+  const activeOwnerUnitIds = new Set(loweringPlans?.ownerProjection.entries.map(({ unitId }) => unitId) ?? []);
+  const sourceSignatures = loweringPlans?.directCallSignaturesByUnitId ?? loweringPlans?.signaturesByUnitId;
+  const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>(loweringPlans?.directCalls);
+  const collect = (root: ts.Node, ownerUnitId: IrUnitId): ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan> => {
+    let sourcePlans: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan> = new Map();
+    if (loweringPlans?.directCallResolver && sourceTargets.size > 0) {
+      try {
+        sourcePlans = collectIrDirectCallLoweringPlansByIdentity(root, ownerUnitId, {
+          identityContext: loweringPlans.identityContext,
+          resolver: loweringPlans.directCallResolver,
+          activeOwnerUnitIds,
+          signaturesByUnitId: sourceSignatures!,
+          targetsByLegacyName: sourceTargets,
+        });
+      } catch (error) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `direct-call identity at ${sourceFile.fileName} disagrees with exact integration evidence: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+        );
+      }
+    }
+    for (const [call, plan] of [
+      ...sourcePlans,
+      ...collectIrDirectCallLoweringPlans(root, ownerUnitId, compatibilityTargets),
+    ]) {
+      const existing = directCalls.get(call);
+      if (existing && !irDirectCallLoweringPlanEquals(existing, plan)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `direct-call plan at ${sourceFile.fileName}:${call.pos} disagrees with exact integration identity`,
+        );
+      }
+      if (!existing) directCalls.set(call, plan);
+    }
+    return directCalls;
+  };
+  return { directCalls, collect };
+}
+
 export function compileIrPathFunctions(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -1242,8 +1295,9 @@ export function compileIrPathFunctions(
 
   const directCallTargets = new Map<string, IrDirectCallTarget>();
   if (loweringPlans) {
+    const sourceSignatures = loweringPlans.directCallSignaturesByUnitId ?? loweringPlans.signaturesByUnitId;
     for (const [legacyName, unitId] of loweringPlans.ownerUnitIdByLegacyName) {
-      const signature = loweringPlans.signaturesByUnitId.get(unitId);
+      const signature = sourceSignatures.get(unitId);
       if (!signature) continue;
       directCallTargets.set(legacyName, {
         target: irUnitFuncRef({ unitId, name: legacyName }),
@@ -1300,29 +1354,11 @@ export function compileIrPathFunctions(
       });
     }
   }
-  const preparedDirectCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>(loweringPlans?.directCalls);
-  const directCallsFor = (
-    root: ts.Node,
-    ownerUnitId: IrUnitId,
-  ): ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan> => {
-    for (const [call, plan] of collectIrDirectCallLoweringPlans(root, ownerUnitId, directCallTargets)) {
-      const existing = preparedDirectCalls.get(call);
-      if (
-        existing &&
-        (existing.ownerUnitId !== plan.ownerUnitId ||
-          !sameIrCallableBinding(existing.target.binding, plan.target.binding) ||
-          existing.target.name !== plan.target.name)
-      ) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          `direct-call plan at ${sourceFile.fileName}:${call.pos} disagrees with exact integration identity`,
-        );
-      }
-      if (!existing) preparedDirectCalls.set(call, plan);
-    }
-    return preparedDirectCalls;
-  };
+  const { directCalls: preparedDirectCalls, collect: directCallsFor } = makeIrDirectCallReconciler(
+    sourceFile,
+    loweringPlans,
+    directCallTargets,
+  );
 
   for (const owner of unsupportedHostDateOwners.values()) {
     failures.record(
@@ -2033,11 +2069,12 @@ export function compileIrPathFunctions(
           `ir/integration: module init artifact ${moduleInitUnitId} does not match terminal owner ${moduleInitOwner.unitId}`,
         );
       }
+      for (const statement of population) directCallsFor(statement, moduleInitUnitId);
       const result = lowerFunctionAstToIr(synthetic, {
         exported: false,
         funcName: MODULE_INIT_UNIT_NAME,
         ownerUnitId: moduleInitUnitId,
-        directCalls: directCallsFor(synthetic, moduleInitUnitId),
+        directCalls: preparedDirectCalls,
         fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
         fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
