@@ -44,8 +44,8 @@ func-budget-allow:
 Retire the direct AST-to-Wasm route for exact ambient
 `Math.sign(numberExpression)` calls in otherwise IR-eligible synchronous
 functions. Represent the source call as a versioned semantic intrinsic and
-replace its hand-emitted direct body with one dependency-free, host-free
-self-hosted provider shared by direct and IR materialization.
+materialize it through one dependency-free, host-free self-hosted provider.
+Excluded forms retain the established hand-emitted direct fallback.
 
 This checkpoint is intentionally stacked on #5123/#5115. It preserves the
 existing exact semantics for NaN, signed zero, infinities, subnormals, and
@@ -87,7 +87,7 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
 5. Widen #3526 exhaustive vocabulary, integration, linear-deferral, and
    neutrality evidence from twenty-six to twenty-seven source Math intrinsics.
 6. Add focused host/standalone ownership, dependency-free provider closure,
-   exact direct parity, rollback, explicit production-linear deferral, and
+   exact direct parity, rollback, explicit linear-backend rejection, and
    pre-claim exclusion tests across NaN, signed zero, subnormals, finite signs,
    and infinities. Retain the existing Symbol TypeError regression.
 7. Re-run existing Math.sign equivalence/coercion regressions, affected #3526
@@ -100,8 +100,9 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
   dependency-free, host-free self-hosted callable.
 - Host and zero-import standalone execution are bit-identical to the direct
   path across NaN, signed zero, subnormals, finite values, and infinities.
-- Production linear selection remains explicit legacy deferral; the manifest's
-  catalogue support must not be mistaken for backend legality.
+- Linear legality rejects the callable provider; the production target's
+  established direct `Math.sign` limitation remains explicit, and catalogue
+  support is not mistaken for backend support.
 - Symbol/coercive and all other excluded shapes preserve direct behavior and
   decline before claim without invariants or post-claim errors.
 - The narrow rollback, affected regressions, TypeScript 7, and all pre-push

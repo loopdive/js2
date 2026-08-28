@@ -69,6 +69,7 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.log2",
   "selfhost.math.pow",
   "selfhost.math.reduce-trig",
+  "selfhost.math.sign",
   "selfhost.math.sin",
   "selfhost.math.sinh",
   "selfhost.math.tan",
@@ -201,6 +202,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.log2": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.pow": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.reduce-trig": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.sign": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sin": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sinh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.sqrt": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -349,6 +351,10 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     kind: "self-hosted",
     symbol: "__math_reduce_trig",
   }),
+  "math.sign": provider("selfhost.math.sign", "math.sign", F64_UNARY_INTRINSIC_SIGNATURE, {
+    kind: "self-hosted",
+    symbol: "Math_sign",
+  }),
   "math.sin": provider(
     "selfhost.math.sin",
     "math.sin",
@@ -387,7 +393,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
   }),
 });
 
-/** Canonically ordered default provider catalogue for the twenty-six-method slice. */
+/** Canonically ordered default provider catalogue for the twenty-seven-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),

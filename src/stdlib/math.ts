@@ -75,6 +75,19 @@ export function Math_cbrt(x: number): number {
 `;
 
 /**
+ * Math.sign — preserve signed zero, canonicalize NaN like the direct emitter,
+ * and otherwise return the exact sign unit. The argument is evaluated once by
+ * the ordinary call boundary.
+ */
+const SIGN_SOURCE = `
+export function Math_sign(x: number): number {
+  if (x !== x) return 0 / 0;
+  if (x === 0) return x;
+  return x < 0 ? -1 : 1;
+}
+`;
+
+/**
  * Math.sinh = (exp(x) - 1/exp(x)) / 2. §21.3.2.31: sinh(±0) = ±0.
  * ±Infinity specials dropped: Math_exp(+Inf)=Inf → (Inf - 0)/2 = Inf;
  * Math_exp(-Inf)=0 → (0 - Inf)/2 = -Inf — identical to the hand ladder.
@@ -625,6 +638,7 @@ export const POW_BUILTIN: StdlibMathBuiltin = {
  */
 export const SELF_HOSTED_MATH: ReadonlyMap<string, StdlibMathBuiltin> = new Map([
   ["cbrt", { name: "Math_cbrt", callees: [], source: CBRT_SOURCE }],
+  ["sign", { name: "Math_sign", callees: [], source: SIGN_SOURCE }],
   ["sinh", { name: "Math_sinh", callees: ["Math_exp"], source: SINH_SOURCE }],
   ["cosh", { name: "Math_cosh", callees: ["Math_exp"], source: COSH_SOURCE }],
   ["tanh", { name: "Math_tanh", callees: ["Math_exp"], source: TANH_SOURCE }],
