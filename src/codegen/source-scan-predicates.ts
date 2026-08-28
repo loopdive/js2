@@ -664,6 +664,13 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
       found = true;
       return;
     }
+    // (iii) (#5154) `delete Array.prototype[Symbol.iterator]` — removing the
+    // method is as much an override of the iterator surface as replacing it,
+    // and §7.4.2 then requires a TypeError at every array-iteration site.
+    if (ts.isDeleteExpression(node) && isArrayProtoLHS(unwrap(node.expression))) {
+      found = true;
+      return;
+    }
     // (ii) Object.defineProperty(Array.prototype, …) / Object.defineProperties(Array.prototype, …)
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const callee = node.expression;

@@ -33,6 +33,7 @@ import {
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { arrayProtoIteratorOverrideKeyFromTarget } from "../array-proto-iterator-override-ast.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 
 export { isArrayProtoIteratorAssignTarget } from "../array-proto-iterator-override-ast.js";
 
@@ -134,6 +135,42 @@ export function maybeCaptureArrayProtoOverride(
     inner = new Map();
     ctx.protoOverrides.set(ARRAY_PROTO_TOKEN, inner);
   }
+  inner.set(memberKey, { funcIdx: 0, funcTypeIdx: -1, globalIdx });
+  return true;
+}
+
+/**
+ * (#5154 cluster A) `delete Array.prototype[Symbol.iterator]` — record the
+ * override slot as a TOMBSTONE: root the same module global the assignment arm
+ * uses, but never store a closure into it, so it stays `ref.null.extern`.
+ *
+ * The read-drive then reads a null override slot, which is exactly §7.4.2's
+ * "GetMethod(obj, @@iterator) is undefined" ⇒ `Call` of a non-callable ⇒
+ * TypeError. Without this the delete left no trace at all and the typed-vec
+ * fast path bound `1, 2, 3` where the spec requires a throw
+ * (the `ary-init-iter-get-err-array-prototype` family).
+ *
+ * Returns `true` when the target was a recognised Array-prototype iterator
+ * member (the caller still lowers the delete normally — this only registers
+ * the compile-time fact).
+ */
+export function maybeRecordArrayProtoIteratorTombstone(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ctx.arrayIteratorMaybeOverridden) return false;
+  const memberKey = arrayProtoOverrideKey(ctx, target);
+  if (memberKey === undefined) return false;
+  let inner = ctx.protoOverrides.get(ARRAY_PROTO_TOKEN);
+  if (!inner) {
+    inner = new Map();
+    ctx.protoOverrides.set(ARRAY_PROTO_TOKEN, inner);
+  }
+  if (inner.has(memberKey)) return true; // already rooted (assignment or a prior pass)
+  const globalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: `__array_proto_${memberKey === "@@iterator" ? "iterator" : memberKey}_override`,
+    type: { kind: "externref" },
+    mutable: true,
+    init: [{ op: "ref.null.extern" }],
+  });
   inner.set(memberKey, { funcIdx: 0, funcTypeIdx: -1, globalIdx });
   return true;
 }
@@ -299,6 +336,22 @@ export function emitArrayProtoIteratorDrive(
     // global and the direct reserve result remain authoritative.
     driverIdx = reserveProtoIteratorDriver(ctx);
   }
+  // (#5154 cluster A) §7.4.2 GetIterator: an EMPTY override slot means the
+  // program removed `Array.prototype[@@iterator]` (`delete …`), so the method
+  // is `undefined` and calling it is a TypeError. Check before the drive so the
+  // throw happens at the observation boundary, not as a null-funcref trap. A
+  // module that only ASSIGNS an override has stored its closure by the time any
+  // consumer runs, so this branch is dead there.
+  fctx.body.push({ op: "global.get", index: overrideGlobalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Array.prototype[Symbol.iterator] is not a function", {
+      flush: fctx,
+    }),
+    else: [],
+  });
   // Stack: [vec-ref]. Convert to the array-as-`this` externref.
   fctx.body.push({ op: "extern.convert_any" });
   // Push the override closure.

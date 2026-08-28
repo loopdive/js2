@@ -691,7 +691,12 @@ export function compileBuiltinStaticCall(
       return { kind: "i32" };
     }
     // (#4556) A ref to a real array CARRIER — ref-ness alone is NOT array-ness.
-    const isArr = isArrayCarrierValType(ctx, argWasmType);
+    // (#5154 cluster A) A TUPLE-typed operand is a JS Array — `let [, ...x] =
+    // [1, 2]` gives `x` the checker type `[number]`, which lowers to a tuple
+    // STRUCT, and tuple structs are (correctly) not `__vec_*` carriers. §7.2.2
+    // asks about the VALUE, and every tuple-typed value is an Array, so answer
+    // from the checker type when the carrier test declines.
+    const isArr = isArrayCarrierValType(ctx, argWasmType) || ctx.oracle.typeFactOf(expr.arguments[0]!).kind === "tuple";
     // Still compile the argument for side effects, then drop it
     const argSideType = compileExpression(ctx, fctx, expr.arguments[0]!);
     if (argSideType) fctx.body.push({ op: "drop" });
