@@ -1,10 +1,11 @@
 {
   "id": "5093",
   "assignee": "ttraenkler/opus-5093",
-  "requested_by": "ttraenkler/opus-5093",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5093-formalful-spread",
   "claimed_at": "2026-08-28T02:49:23Z",
-  "updated_at": "2026-08-28T02:49:23Z",
-  "write_id": "1739-ixydsi4s"
+  "updated_at": "2026-08-28T07:32:55Z",
+  "write_id": "1731-ilria7c3",
+  "released_at": "2026-08-28T07:32:55Z"
 }
