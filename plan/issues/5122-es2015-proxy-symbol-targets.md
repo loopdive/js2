@@ -17,6 +17,7 @@ goal: standalone-mode
 assignee: "ttraenkler/codex/5122-es2015-proxy-symbol-targets"
 branch: codex/5122-es2015-proxy-symbol-targets
 pr: 5138
+related: [5131]
 files:
   - src/codegen/expressions/new-builtin-globals.ts
   - src/codegen/object-runtime-proxy.ts
@@ -104,7 +105,7 @@ zero standalone imports. Existing ordinary two-argument behavior, exact
 TypeError identity, target-before-handler validation, trap-read suppression,
 and nested-Proxy/object/array/function carriers remain required controls.
 
-## Independent review blockers: strict spread iteration
+## Independent review decision: split strict dynamic spread
 
 An independent Luna-max review of published checkpoint
 `9f41bf3456585e12837945fba579451a5b2a0d85` passed the focused 6/6 suite but
@@ -130,33 +131,35 @@ supersede the ready handoff below and keep PR 5138 draft and dequeued:
   `Array.prototype[Symbol.iterator]`. That is an inherited canonical lowering
   residual, not unique to this patch, but the repair must not broaden it.
 
-### Revised repair plan
+### Scope decision
 
-1. Trace the canonical call/new spread protocol and the native iterator
-   families before changing source. Reuse or add an explicit strict
-   ECMAScript-spread mode; do not globally remove the bare-`next` fallback used
-   by internal flattenable carriers.
-2. At the strict spread boundary, normalize array `$Hole` values to the engine's
-   undefined carrier before positional capture. Preserve source/iterator/next
-   evaluation order, target-before-handler validation, and later-abrupt
-   priority.
-3. Require a callable `@@iterator`, an Object iterator, a callable `next`, and
-   an Object IteratorResult. Missing/non-callable methods and primitive results
-   must throw the engine's catchable exact `TypeError`; `next()` must not be
-   polled again after an invalid result.
-4. Preserve the actual default iterator projection for Map entries and support
-   the already-valid empty typed-array and String-object sources without host
-   imports. If a provider cannot meet those contracts, decline the
-   Proxy-specific dynamic fast path before emitting partial Wasm rather than
-   silently accepting different values.
-5. Extend the mandatory host/standalone controls with every reproduction above,
-   including handler trap suppression, empty/multiple/nested spreads, missing
-   iterator/next, primitive results and call counts, Map entry pairs,
-   typed-array/String sources, and module-import assertions. Keep the exact two
-   ES2015 rows and ordinary no-spread controls green.
-6. Run focused and structural gates, TypeScript 5/7, the full pre-push hook, and
-   a second independent review on the final current-main head. Do not mark the
-   issue ready, mark PR 5138 ready, or enqueue it until all review blockers pass.
+The review compared three repair shapes. Reusing the existing materializer is
+not strict enough. Building the complete strict native provider here would add
+roughly 200–400 cross-cutting lines across iterator acquisition, stepping, Map
+projection, TypedArray/String admission, the host runtime, and this call site.
+That substrate is now separately reserved as repository-local markdown issue
+5131 (`5131-es2015-strict-spread-iterator.md`) and published as draft PR 5147.
+No GitHub issue was created for it.
+
+PR 5138 therefore takes the bounded fail-closed option:
+
+1. Keep the ordinary no-spread Proxy fix and the correct static array-literal
+   flattening/evaluation behavior already covered by this issue.
+2. Remove the Proxy-specific generic iterator loop for non-literal or nested
+   dynamic spreads. Do not expose the internal `GetIteratorFlattenable` bridge
+   as ECMAScript spread and do not silently accept holes, malformed iterator
+   records, value-projected Maps, or unsupported empty carriers.
+3. When the strict provider is unavailable, decline the custom native path
+   before emitting partial Wasm. Preserve an existing canonical host fallback
+   when one is valid; standalone must fail closed with no new host import.
+4. Keep bounded controls proving the supported static/ordinary path, source
+   ordering, later-abrupt priority, exact Symbol TypeErrors, trap suppression,
+   index stability, and zero imports. Move the strict dynamic behavior matrix
+   to markdown issue 5131 rather than weakening its expected outcomes here.
+5. Re-run both exact rows and all focused controls on current main, TypeScript
+   5/7, lint, format, budgets, ratchets, numeric parity, and full pre-push. A
+   second independent review must confirm that no unsupported dynamic path is
+   silently claimed before PR 5138 becomes ready or enters the queue.
 
 ## Implementation plan
 
@@ -167,13 +170,16 @@ supersede the ready handoff below and keep PR 5138 draft and dequeued:
    `__proxy_create` bakes a stable Symbol primitive discriminator even when the
    Proxy callee is compiled before the caller that creates the Symbol. Do not
    add raw TypeScript-checker queries or a Proxy-specific Symbol representation.
-2. Complete `ArgumentListEvaluation` for both native-first and host Proxy
-   construction. Compile every supplied argument exactly once in source order,
-   retain the first target and handler values in externref locals, evaluate and
-   discard extras, then invoke the existing provider. Missing target/handler
-   still become the engine's undefined/nullish carrier and the runtime retains
-   its established TypeError identity. Re-resolve defined function indices
-   after argument compilation to avoid late-registration shifts.
+2. Complete `ArgumentListEvaluation` for ordinary arguments and the bounded
+   static array-literal spread shape. Compile every supported argument exactly
+   once in source order, retain the first target and handler values in
+   externref locals, evaluate and discard extras, then invoke the existing
+   provider. Missing target/handler still become the engine's
+   undefined/nullish carrier and the runtime retains its established TypeError
+   identity. Re-resolve defined function indices after argument compilation to
+   avoid late-registration shifts. Decline non-literal/nested dynamic spreads
+   before the custom native path until markdown issue 5131 supplies the strict
+   provider.
 3. Keep validation inside the shared native `__proxy_create` path so direct
    `new Proxy` and any existing native caller agree. Preserve valid ordinary
    objects, arrays, functions, nested Proxies, trap ordering, constructibility,
@@ -181,12 +187,13 @@ supersede the ready handoff below and keep PR 5138 draft and dequeued:
    opaque externref or object classifiers.
 4. Add `tests/issue-5122-es2015-proxy-symbol-targets.test.ts` with mandatory
    compiler controls independent of Test262 plus existence-guarded exact rows.
-   Cover exact TypeError identity for target and handler; static and dynamic
-   Symbol carriers; callee-before-caller ordering; complete argument evaluation
-   including extra side effects and later abrupt completion; target-before-
-   handler validation; no trap read after invalid validation; valid object,
-   array, callable, and nested-Proxy siblings; host controls for the changed
-   argument path; and zero standalone imports.
+   Cover exact TypeError identity for target and handler; static and ordinary
+   Symbol carriers; callee-before-caller ordering; complete evaluation of the
+   supported ordinary/static argument shapes including extra side effects and
+   later abrupt completion; target-before-handler validation; no trap read
+   after invalid validation; valid object, array, callable, and nested-Proxy
+   siblings; explicit fail-closed controls for unsupported dynamic spread; host
+   controls for the changed argument path; and zero standalone imports.
 5. Run fresh exact host/standalone A/B with the authoritative runner and pinned
    QuickJS artifact, focused regressions with at most two workers, TypeScript
    5/7, lint, Prettier, oracle/coercion and LOC/function budgets, issue
@@ -201,10 +208,10 @@ supersede the ready handoff below and keep PR 5138 draft and dequeued:
   `TypeError`; valid object-like sibling carriers remain accepted.
 - Every constructor argument expression is evaluated once in source order,
   and a later abrupt extra argument wins before Proxy validation.
-- Dynamic holes become undefined before validation; invalid iterator sources,
-  methods, and results throw exact catchable `TypeError` without extra polling.
-- Map entry, typed-array, and String-object spread controls agree across host
-  and standalone without adding imports.
+- Unsupported non-literal/nested dynamic spreads are not routed through the
+  internal flattenable iterator bridge and cannot become silent standalone
+  successes or add host imports. Their complete strict semantics remain owned
+  by repository-local markdown issue 5131.
 - Invalid values do not trigger handler trap reads or allocate a usable Proxy.
 - Focused standalone output has zero host imports.
 - The focused suite, exact cohort, TypeScript 5/7, lint, format, budgets,
@@ -257,10 +264,12 @@ external remote-head verification.
 ## Handoff
 
 Work only in `/private/tmp/js2-es2015-proxy-symbol-targets-20260828` on branch
-`codex/5122-es2015-proxy-symbol-targets`. PR 5138 is draft, its published head
-is `9f41bf3456585e12837945fba579451a5b2a0d85`, and it is explicitly outside the
-merge queue. Resume from the unpublished current-main integration head
-`7b01f19e9d6d4f26a3344d1792b1b30db3140fff` after committing this revised
-review plan. Fix and independently revalidate every strict-iterator blocker
-above before root publishes another checkpoint or changes PR state. Do not
-create a GitHub issue; this markdown file remains the canonical tracker.
+`codex/5122-es2015-proxy-symbol-targets`. PR 5138 is draft, its current
+published head is `e75f7311aee6ebcec493737fcac5c0cd0de9b845`, and it is
+explicitly outside the merge queue. The uncommitted focused-test additions in
+this worktree are review evidence for the strict matrix; their cases have been
+preserved in markdown issue 5131. Remove those uncommitted strict-only additions
+with `apply_patch`, retain bounded fail-closed controls owned here, and implement
+the scope decision above. Do not publish a source checkpoint or change PR state
+until the focused current-main matrix and independent review pass. Do not create
+a GitHub issue; this markdown file remains the canonical tracker.
