@@ -14930,6 +14930,24 @@ assert._isSameValue = isSameValue;
           return Object(sym);
         };
       }
+      // (#5159) InstallErrorCause for `new Error(msg, options)` and its six
+      // siblings (TypeError / RangeError / SyntaxError / URIError / EvalError /
+      // ReferenceError). Codegen calls this immediately after `__new_<Name>`,
+      // and ONLY when the call site actually passed an options argument.
+      //
+      // The Error family had no options plumbing at all until now: the lowering
+      // evaluated the bag and dropped its value, so `e.cause` was always absent
+      // even though `new Error("m", { cause: c })` is §20.5.1.1 step 4. Reusing
+      // `_installErrorCause` keeps one spelling of HasProperty-not-truthiness
+      // (`{ cause: undefined }` still installs) and of the reference-identity
+      // read, so Error / AggregateError / SuppressedError cannot drift apart.
+      //
+      // Returns the error so the value stays on the Wasm stack for the caller.
+      if (name === "__error_install_cause")
+        return (inst: any, options: any): any => {
+          _installErrorCause(inst, options, callbackState?.getExports());
+          return inst;
+        };
       if (name === "__new_AggregateError")
         return (errors: any, message: any, options: any): any => {
           // Spec step 4: IterableToList(errors). `undefined`/`null` are NOT

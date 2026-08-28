@@ -5,13 +5,14 @@ import { emitPreparedAsyncFrameStateMachine, type AsyncFrameInfo, type HostAsync
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ERROR_FIELD, MODE_FIELD, PARAM_FIELD_OFFSET, SENT_FIELD, sanitizeTypeName } from "./frame-core.js";
 import type { AsyncHostCapabilityId } from "../ir/async-runtime-providers.js";
+import { assertPreparedIrAsyncRuntimeCurrent, type CurrentPreparedIrAsyncRuntime } from "../ir/async-plan.js";
 import { irTypeBindingKey } from "../ir/abi-bindings.js";
 import { asVal, type IrFuncRef, type IrFunction, type IrType } from "../ir/nodes.js";
 import type { FieldDef, ValType, WasmFunction } from "../ir/types.js";
 import { coerceType } from "./shared.js";
 import { definedFuncAt } from "./func-space.js";
 import { allocLocal } from "./context/locals.js";
-import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
+import { getPreparedAsyncDrivePromiseTypeIdx } from "./ir-async-runtime-adapters.js";
 
 export interface PreparedIrAsyncFrameResolver {
   resolveFunc(ref: IrFuncRef): number;
@@ -58,6 +59,7 @@ function buildFrameInfo(
   params: readonly { readonly name: string; readonly type: ValType }[],
   hostImports: HostAsyncImports | undefined,
   promiseTypeIdx: number,
+  runtime: CurrentPreparedIrAsyncRuntime,
 ): PreparedIrAsyncFrameLayout {
   const plan = fn.asyncPlan;
   if (!plan) throw new Error(`IR async function ${fn.name} has no prepared plan`);
@@ -117,7 +119,8 @@ function buildFrameInfo(
     resultPromiseFieldIdx,
     promiseTypeIdx,
     host: hostImports !== undefined,
-    canonicalUndefinedResult: hostImports === undefined && plan.runtimeIntents.includes("value.undefined"),
+    canonicalUndefinedResult:
+      hostImports === undefined && runtime.backendRequirements.includes("async.native.undefined"),
     alwaysAsyncAwait: hostImports === undefined,
     ...(hostImports ? { hostImports } : {}),
   };
@@ -363,6 +366,7 @@ export function lowerPreparedIrAsyncFunction(
   resolver: PreparedIrAsyncFrameResolver,
   existing: WasmFunction,
 ): WasmFunction {
+  const runtime = assertPreparedIrAsyncRuntimeCurrent(fn.unitId, fn.name, fn.asyncPlan, fn.asyncRuntime);
   const signature = ctx.mod.types[existing.typeIdx];
   if (
     !signature ||
@@ -390,11 +394,9 @@ export function lowerPreparedIrAsyncFunction(
     labelMap: new Map(),
     savedBodies: [],
   };
-  const runtime = fn.asyncRuntime;
-  if (!runtime) throw new Error(`IR async function ${fn.name} has no prepared runtime attachment`);
   const hostImports = runtime.kind === "host-wasmgc" ? preparedHostImports(fn, resolver) : undefined;
-  const promiseTypeIdx = runtime.kind === "standalone-native-wasmgc" ? ensureAsyncDriveRuntime(ctx).promiseTypeIdx : -1;
-  const layout = buildFrameInfo(ctx, fn, params, hostImports, promiseTypeIdx);
+  const promiseTypeIdx = runtime.kind === "standalone-native-wasmgc" ? getPreparedAsyncDrivePromiseTypeIdx(ctx) : -1;
+  const layout = buildFrameInfo(ctx, fn, params, hostImports, promiseTypeIdx, runtime);
   const previous = ctx.currentFunc;
   ctx.currentFunc = fctx;
   try {
