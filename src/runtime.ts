@@ -3818,6 +3818,28 @@ function _errorMessageToString(
   // Guarded on `_isWasmStruct`, so a string, number, boolean or genuine host
   // object reaches `String()` on exactly the path it always did.
   if (message !== null && typeof message === "object" && _isWasmStruct(message)) {
+    // (#5161) A native-string MESSAGE is a primitive, not an object — decode it
+    // before either walker runs.
+    //
+    // In the `nativeStrings` / `fast` lanes a string literal is a WasmGC
+    // `array i16` carrier, not a host string, so `new Error("m")` handed this
+    // helper a struct that holds a STRING. Both walkers look for coercion
+    // methods, find none on a string carrier, and bottom out — so the whole
+    // construction threw "Cannot convert object to primitive value" on the
+    // plain option-less `new Error("m")`, and every `{cause}` construction
+    // died with it before `__error_install_cause` could run (#5161's filed
+    // symptom was that downstream collateral, measured 2026-08-28).
+    //
+    // This does not touch the walker contract in #3481 cause 2: §7.1.1 step 1
+    // returns a String argument unchanged, so a value the module itself
+    // certifies as a string never reaches ToPrimitive at all. The "found
+    // nothing" sentinels and the refused-NUMBER rule below are unreached on
+    // this path and unmodified. `__str_is_native` is the module's own
+    // discriminator — in the default host lane it is not exported, so
+    // `_nativeStringToHost` misses and that lane keeps byte- and
+    // behaviour-identical behaviour.
+    const nativeMessage = _nativeStringToHost(message, callbackState?.getExports());
+    if (nativeMessage !== _MISS) return String(nativeMessage);
     // TWO walkers, and the order is load-bearing.
     //
     // `_hostToPrimitive` is the only one that implements §7.1.1 step 2 in full
