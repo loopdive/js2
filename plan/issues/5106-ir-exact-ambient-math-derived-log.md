@@ -1,7 +1,7 @@
 ---
 id: 5106
 title: "IR: own exact ambient Math.log10/Math.log1p calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -93,6 +93,31 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
 - Each rollback withdraws only its corresponding method.
 - Excluded shapes decline before claim without invariants or post-claim errors.
 - Affected #3526 suites, TypeScript 7, and all pre-push gates pass.
+
+## Implementation outcome and validation
+
+- `math.log10` and `math.log1p` are now the seventeenth and eighteenth
+  closed source-level Math intrinsics. Both reuse the shared table, generic
+  selector, call-graph walker, and from-AST intrinsic emitter.
+- The frozen manifest attaches the existing `Math_log10` and `Math_log1p`
+  callables, declares `math.log` as each provider's sole dependency, and
+  materializes that dependency once. No Math algorithm or direct-codegen file
+  changed.
+- Independent `JS2WASM_IR_MATH_LOG10=0` and
+  `JS2WASM_IR_MATH_LOG1P=0` controls withdraw only their corresponding claim.
+  Shadowed, aliased, computed, wrong-arity, spread, and non-number forms all
+  decline before claim.
+- Four focused/affected suites pass 32/32. They cover host and zero-import
+  standalone ownership, semantic/provider evidence, exact dependency closure,
+  bit-identical direct-path parity across domain boundaries and the established
+  `log10` snap window, explicit native-Math accuracy envelopes, independent
+  rollbacks, exhaustive integration, every target/backend manifest policy,
+  and linear-backend legality.
+- TypeScript 7, Prettier, Biome lint, the IR kind-neutrality gate, LOC/function
+  budgets, oracle/coercion ratchets, numeric-local parity (18/18), and issue
+  integrity pass. Luna Max dependency and numerical-risk audits confirmed the
+  ownership-only scope and the method-specific oracle bounds.
+- PR #5111 is open non-draft, clean, and green, stacked on #5110's exact head.
 
 ## Non-goals
 
