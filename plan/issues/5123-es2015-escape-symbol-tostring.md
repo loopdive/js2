@@ -1,7 +1,7 @@
 ---
 id: 5123
 title: "ES2015 escape and unescape reject Symbol arguments in standalone"
-status: ready
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -16,6 +16,7 @@ language_feature: annex-b-escape-unescape-tostring
 goal: standalone-mode
 assignee: "ttraenkler/codex/5123-es2015-escape-symbol-tostring"
 branch: codex/5123-es2015-escape-symbol-tostring
+pr: 5143
 files:
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/annexb-escape-call.ts
@@ -142,9 +143,10 @@ completion must win before the Symbol `TypeError`.
 
 ## Final validation
 
-The validated implementation is on the conflict-free upstream sync commit
-`d5d48d363296ab54dde78c98fe8e2d096f610241`, a two-parent merge of the pushed
-implementation checkpoint `9dcb9d4e3f` and `upstream/main` `59ab7c0e66`. All
+The published implementation is on the conflict-free upstream sync commit
+`45526e2acf789e84a776231c41eec3d6d4f459f5`, a two-parent merge of the
+validated issue branch and `upstream/main`
+`358d5e2723d2aebf1f8235a12b85409f3a964a67`. All
 compiler/test commands used
 `JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`,
 the pinned PATH from the handoff instructions, and no more than two workers.
@@ -178,6 +180,10 @@ the pinned PATH from the handoff instructions, and no more than two workers.
   post-sync issue, LOC/function, host-import, dead-export, and stack-balance
   gates pass independently. LOC/function budgets, host-import policy,
   dead-export (0 new entries), and stack-balance (all fixup deltas 0) also pass.
+- Root reran the focused suite after the final upstream merge and passed 9/9.
+  The normal publication push at `45526e2acf` then passed TypeScript 7, lint,
+  Prettier, oracle/coercion ratchets, numeric-local IR parity (18/18), and
+  committed issue integrity before updating the fork ref.
 - The directly relevant Symbol/ToString equivalence fixture passed 3/3. The
   full 1,865-test equivalence gate was bounded after approximately 18 minutes
   without producing a report and stopped; no new equivalence failure was
@@ -190,11 +196,8 @@ the pinned PATH from the handoff instructions, and no more than two workers.
 
 ## Handoff
 
-Work only in `/private/tmp/js2-es2015-escape-symbol-tostring-20260828` on branch
-`codex/5123-es2015-escape-symbol-tostring`. Push checkpoints to the fork without
-force. Do not open the PR from the worker; root will review the final clean
-branch and open exactly one non-draft PR against `loopdive/js2:main` when it is
-mergeable. The pushed checkpoint `9dcb9d4e3f` is verified on
-`ttraenkler/js2`; the corrected integration/validation SHA above is currently
-local and ready for root review before its non-force publication. No GitHub
-issue was created or commented on.
+Root published the validated branch without force and opened the single
+non-draft upstream PR: <https://github.com/loopdive/js2/pull/5143>. The PR head
+was `45526e2acf789e84a776231c41eec3d6d4f459f5` when opened and its body uses the
+repository Description/CLA template. Keep that tested head frozen once it
+enters the merge queue. No GitHub issue was created or commented on.
