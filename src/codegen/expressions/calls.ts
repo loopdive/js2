@@ -418,6 +418,7 @@ import {
   compileStandaloneRegExpConstructor,
   emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
+  tryCompileStandaloneRegExpCompile,
   tryCompileStandaloneRegExpExec,
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
@@ -7614,6 +7615,12 @@ function compileCallExpression(
 
     const standaloneRegExpToString = tryCompileStandaloneRegExpToString(ctx, fctx, expr, propAccess);
     if (standaloneRegExpToString !== undefined) return standaloneRegExpToString;
+
+    // (#5142) `re.compile(pattern, flags)` — Annex B §B.2.4.1 in-place
+    // re-initialization. Without an arm here the call fell through to a generic
+    // path that silently no-op'd.
+    const standaloneRegExpCompile = tryCompileStandaloneRegExpCompile(ctx, fctx, expr, propAccess);
+    if (standaloneRegExpCompile !== undefined) return standaloneRegExpCompile;
 
     // Handle Array.prototype.METHOD.call(obj, ...args) — inline as array method on shape-inferred obj
     {

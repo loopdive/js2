@@ -890,6 +890,59 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     fn.body.unshift(...arm);
   };
 
+  // ── (#5138 A2) `__extern_length` arm ───────────────────────────────────
+  // A `.length` read on an externref does NOT route through `__extern_get`'s
+  // string-key ladder — it lowers to the dedicated `__extern_length` native,
+  // whose `$__vec_base` arm returns the STORED field 0 verbatim. For a
+  // length-TRACKING view over a resizable ArrayBuffer that field holds the
+  // auto-length sentinel `-1` (`emitTaBufferBoundsAndLength`, step 7.b), so
+  // `new TA(resizableBuffer).length` answered −1 and every harness factory
+  // built on `makeResizableArrayBuffer` / `makeGrownArrayBuffer` /
+  // `makeShrunkArrayBuffer` produced a garbage view. `$__ta_dyn_view` subtypes
+  // `$__vec_base`, so the fix is one arm AHEAD of it computing the live
+  // in-bounds element count — the same `pushTaDynViewInBoundsLen` the MOP and
+  // the element engine already use, so all three agree.
+  const lenFn = findFn("__extern_length");
+  if (lenFn) {
+    const base = 1 + lenFn.locals.length;
+    const lAny = base;
+    const lDv = base + 1;
+    const lKind = base + 2;
+    const lEs = base + 3;
+    lenFn.locals.push(
+      { name: "__tal_any", type: { kind: "anyref" } },
+      { name: "__tal_dv", type: { kind: "ref_null", typeIdx: dynIdx } },
+      { name: "__tal_kind", type: { kind: "i32" } },
+      { name: "__tal_es", type: { kind: "i32" } },
+    );
+    const inner: Instr[] = [];
+    const lenFctx = {
+      body: inner,
+      locals: lenFn.locals,
+      params: new Array(1).fill({ name: "p", type: { kind: "externref" } }),
+      localMap: new Map(),
+    } as unknown as FunctionContext;
+    inner.push({ op: "local.get", index: lAny });
+    inner.push({ op: "ref.cast", typeIdx: dynIdx });
+    inner.push({ op: "local.set", index: lDv });
+    inner.push({ op: "local.get", index: lDv });
+    inner.push({ op: "ref.as_non_null" });
+    inner.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 });
+    inner.push({ op: "local.set", index: lKind });
+    pushElemSizeForKind(lenFctx, lKind);
+    inner.push({ op: "local.set", index: lEs });
+    pushTaDynViewInBoundsLen(ctx, lenFctx, lDv, lEs);
+    inner.push({ op: "f64.convert_i32_s" });
+    inner.push({ op: "return" });
+    lenFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: lAny },
+      { op: "ref.test", typeIdx: dynIdx },
+      { op: "if", blockType: { kind: "empty" }, then: inner },
+    );
+  }
+
   const getFn = findFn("__extern_get");
   if (getFn) buildStringKeyArm(getFn, 2, "get");
   const hasFn = findFn("__extern_has");
