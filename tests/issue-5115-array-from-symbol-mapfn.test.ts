@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-// #5111 — standalone Array.from must reject a Symbol mapper.
+// #5115 — standalone Array.from must reject a Symbol mapper.
 
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -39,7 +39,7 @@ const HOST_CONTROL_SOURCE = `
 async function runControl(target: "host" | "standalone"): Promise<{ result: number; imports: string[] }> {
   const compiled = await compile(target === "standalone" ? CONTROL_SOURCE : HOST_CONTROL_SOURCE, {
     allowJs: true,
-    fileName: "issue-5111-array-from-symbol-mapfn.ts",
+    fileName: "issue-5115-array-from-symbol-mapfn.ts",
     skipSemanticDiagnostics: true,
     ...(target === "standalone" ? { target: "standalone" as const } : {}),
   });
@@ -56,16 +56,16 @@ async function runControl(target: "host" | "standalone"): Promise<{ result: numb
   return { result, imports };
 }
 
-describe("#5111 standalone Array.from Symbol mapper guard", () => {
+describe("#5115 standalone Array.from Symbol mapper guard", () => {
   corpusIt("passes the exact Test262 row in the host lane", { timeout: 180_000 }, async () => {
-    const result = await runTest262File(resolve("test262/test", EXACT_ROW), "issue-5111-host", 120_000);
+    const result = await runTest262File(resolve("test262/test", EXACT_ROW), "issue-5115-host", 120_000);
     expect(result.status, result.error ?? result.reason).toBe("pass");
   });
 
   corpusIt("passes the exact Test262 row in standalone", { timeout: 180_000 }, async () => {
     const result = await runTest262File(
       resolve("test262/test", EXACT_ROW),
-      "issue-5111-standalone",
+      "issue-5115-standalone",
       120_000,
       "standalone",
     );

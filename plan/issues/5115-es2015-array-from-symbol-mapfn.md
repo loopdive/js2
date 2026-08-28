@@ -1,5 +1,5 @@
 ---
-id: 5111
+id: 5115
 title: "ES2015 standalone Array.from rejects a Symbol mapper"
 status: done
 created: 2026-08-28
@@ -16,15 +16,15 @@ goal: standalone-mode
 pr: 5117
 files:
   - src/codegen/expressions/call-builtin-static.ts
-  - tests/issue-5111-array-from-symbol-mapfn.test.ts
-  - plan/issues/5111-es2015-array-from-symbol-mapfn.md
+  - tests/issue-5115-array-from-symbol-mapfn.test.ts
+  - plan/issues/5115-es2015-array-from-symbol-mapfn.md
 loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
 func-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 ---
 
-# #5111 — ES2015 standalone `Array.from` rejects a Symbol mapper
+# #5115 — ES2015 standalone `Array.from` rejects a Symbol mapper
 
 ## Problem and exact cohort
 
@@ -133,7 +133,7 @@ and no more than two compiler workers.
   status changes. The determinism repeat reports `nondeterministic: 0`.
   Final standalone JSONL SHA-256 is
   `c1ced43123d06d0189e268a3139df713872f9bfde60230c89a39833911388fcf`.
-- `tests/issue-5111-array-from-symbol-mapfn.test.ts` passes 4/4: exact row
+- `tests/issue-5115-array-from-symbol-mapfn.test.ts` passes 4/4: exact row
   in host and standalone, standalone Symbol/callable/import controls, and
   host behavior control.
 - Focused Biome lint and Prettier checks, TypeScript 7 `--noEmit`,
@@ -154,6 +154,14 @@ supersedes the earlier focused result.
   rows remained passing, the standalone side-effect/import control passed, and
   the host behavior control passed.
 - `git diff --check` passed after the correction.
+
+### Publication ID correction
+
+The first upstream CI run found that another open PR held the authoritative
+reservation for issue ID 5111. The repository allocator reserved ID 5115 for
+this branch on `upstream/issue-assignments`, so this tracker, its focused test,
+and all persisted labels were renamed to 5115 without changing the validated
+implementation. The open-PR collision check is rerun after this checkpoint.
 
 ## Handoff
 
