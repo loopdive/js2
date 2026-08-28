@@ -4101,9 +4101,21 @@ export function emitTaViewDynamicByteLength(
       op: "if",
       blockType: { kind: "empty" },
       then: [
+        // A detached buffer stores -1 as its canonical native marker; the
+        // public byteLength accessor observes zero (#5148 checkpoint — this
+        // arm now also serves STATIC ArrayBuffer receivers when the module
+        // constructs buffer-backed views, so the clamp the concrete arm in
+        // property-access-dispatch.ts applies must hold here too).
         { op: "local.get", index: candidateLocal },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: candidateLocal },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        { op: "select" },
         { op: "local.set", index: resultLocal },
       ],
       else: [],

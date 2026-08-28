@@ -787,7 +787,14 @@ export function tryBufferViewAttributeReads(
     if (
       (propName === "byteLength" || propName === "BYTES_PER_ELEMENT") &&
       noJsHost(ctx) &&
-      (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView)
+      (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) &&
+      // (#5148 checkpoint) Dynamic receivers only — mirrors the sibling
+      // `.byteLength` gate above. A STATIC ArrayBuffer/DataView receiver must
+      // keep its concrete arm below (the DataView one throws the §25.3.4
+      // detached TypeError; the buffer one clamps the -1 detach marker), and
+      // this runtime-ref.test arm can classify neither the `$__dv_window`
+      // wrapper nor detachment.
+      ((objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion())
     ) {
       const r = emitTaViewDynamicByteLength(
         ctx,

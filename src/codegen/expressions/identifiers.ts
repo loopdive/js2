@@ -2065,7 +2065,14 @@ function compileIdentifierCore(
     // prior classic Script introduced (for example Deno tests commonly install
     // a global `assert` before evaluating an ES module), so resolve otherwise
     // unbound identifiers through that linked global object at runtime.
-    if (!unresolvedInModuleGoal && ctx.standaloneGlobalThisImport !== undefined) {
+    // (#5148 checkpoint) `moduleGoalIdentifierIsUndeclared` answers true for
+    // BOTH a foreign module's top-level binding (sym defined, declared in
+    // another module-goal file — the #3505 leak this gate exists for) and a
+    // name with NO symbol at all. Only the former must skip the linked read: a
+    // symbol-less name has no foreign binding to leak, and it is exactly the
+    // script-installed-global shape the linked realm serves (`dynamicAnswer`
+    // written by the owning realm before this module evaluates).
+    if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",
