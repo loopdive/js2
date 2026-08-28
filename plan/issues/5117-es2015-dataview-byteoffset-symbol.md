@@ -1,0 +1,148 @@
+---
+id: 5117
+title: "ES2015 standalone DataView byteOffset Symbol conversion"
+status: in-progress
+sprint: current
+created: 2026-08-28
+updated: 2026-08-28
+priority: high
+horizon: s
+feasibility: easy
+reasoning_effort: medium
+task_type: bug
+area: codegen
+es_edition: ES2015
+language_feature: dataview-byteoffset-toindex-symbol
+goal: standalone-mode
+assignee: "ttraenkler/codex/es2015-next-lane-h"
+files:
+  - src/codegen/dataview-native.ts
+  - tests/issue-5117-dataview-byteoffset-symbol.test.ts
+  - plan/issues/5117-es2015-dataview-byteoffset-symbol.md
+---
+
+# Local plan 5117 — ES2015 standalone DataView byteOffset Symbol conversion
+
+## Exact cohort and baseline evidence
+
+The exact 16-row ES2015 cohort is:
+
+```text
+built-ins/DataView/prototype/getFloat32/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getFloat64/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getInt16/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getInt32/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getInt8/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getUint16/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getUint32/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/getUint8/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setFloat32/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setFloat64/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setInt16/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setInt32/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setInt8/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setUint16/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setUint32/return-abrupt-from-tonumber-byteoffset-symbol.js
+built-ins/DataView/prototype/setUint8/return-abrupt-from-tonumber-byteoffset-symbol.js
+```
+
+All 16 paths map to ES2015 (`editions[2] == "ES2015"`) in
+`website/public/benchmarks/results/test262-file-editions.json`. The supplied
+authoritative snapshots are dated 2026-08-28, oracle version 13, honest lane,
+standard scope, both strictness modes. Every host row is `pass` with
+`reached_test: true`; every standalone row reaches the test but is `fail` with
+`error_category: assertion_fail` and
+`error_signature: Expected a TypeError but got a RangeError`.
+
+| direction | rows | status | reached test | diagnostic |
+| --- | ---: | --- | --- | --- |
+| JS-host | 16 | pass | true | — |
+| standalone | 16 | fail | true | `Expected a TypeError but got a RangeError` |
+
+The authoritative raw rows are read from:
+
+```text
+/private/tmp/js2-baseline-host-current-20260828.jsonl
+/private/tmp/js2-baseline-standalone-current-20260828.jsonl
+```
+
+Before code, the same paths were run through the assembled local harness from
+current `upstream/main` at
+`7dd9f3b5b996a94f254a50ed0cafedd821d8bfa7`. Host was `16/16 pass`; standalone
+was `16/16 fail` with the diagnostic above. The local artifacts are:
+
+```text
+.tmp/issue-5117/baseline-host.jsonl
+  sha256 2e15df276233e0d7ccf00111a420b1d3c0eac7a8d4c2da091f93726683d6f595
+.tmp/issue-5117/baseline-standalone.jsonl
+  sha256 acbab9499e4b1cb3a0fe20b60df9a8cf88fbd33322195ecad4dfca03910efe05
+```
+
+Both local runs observed the required structural controls in both directions:
+`control-must-pass -> pass` and `control-must-fail -> fail`. The local A/B
+diff will compare these local artifacts with post-fix local artifacts only;
+the supplied authoritative snapshots are evidence, not a diff arm.
+
+## Root cause
+
+The direct native path `emitDataViewAccessor` handles every DataView get/set
+member through one shared byteOffset conversion. It currently compiles an
+explicit `args[0]` with an `{ kind: "f64" }` hint before applying the shared
+NaN-to-zero, truncation, and RangeError checks. In standalone code generation,
+a statically known `Symbol` is represented physically as an i32 symbol handle,
+so this path treats the handle as a numeric offset. The operation then reaches
+the bounds check and reports a RangeError instead of the required TypeError
+from `ToNumber(Symbol)`/`ToIndex`.
+
+The same module already uses `ctx.oracle.staticJsTypeOf` plus
+`emitThrowTypeError` for setter values, and `emitToIndexI32` has the required
+static-Symbol guard for typed-array construction. The missing guard is this
+shared direct DataView byteOffset conversion. A correct guard must still
+compile and drop the offset expression first, preserving its side effects,
+then throw before a setter evaluates its value or littleEndian arguments.
+
+## Implementation plan
+
+1. In `emitDataViewAccessor`, gate a static-Symbol byteOffset guard to
+   `noJsHost(ctx)`, evaluate the expression for side effects, drop its physical
+   result, emit the existing in-module TypeError machinery, and leave a typed
+   unreachable f64 sentinel for the shared downstream locals.
+2. Keep the current dynamic ToIndex conversion, NaN/truncation/range checks,
+   native DataView read/write paths, setter value and littleEndian order, and
+   JS-host lowering unchanged.
+3. Add mandatory no-corpus compiler controls that always compile/validate and
+   instantiate standalone modules with zero `env` imports. They will cover
+   static Symbol getter/setter throws, offset-expression side effects, the
+   setter throw-priority over value/littleEndian expressions, and a dynamic
+   numeric offset round trip.
+4. Add the exact host and standalone corpus checks behind a worktree-independent
+   `test262` availability guard, with explicit Vitest timeouts above the
+   120-second per-row runner budget.
+5. Run exact local host/standalone A/B, repeat standalone determinism,
+   structural controls, focused/related tests, no-corpus shape controls,
+   type/lint/format, budgets/ratchets, and the full pre-push gate with at most
+   two workers. Record all results and hashes below.
+
+## Acceptance criteria
+
+- All 16 exact rows pass in standalone and remain pass in JS-host mode.
+- Static Symbol byteOffset conversion throws a catchable TypeError, after
+  evaluating the offset expression and before later setter arguments.
+- Dynamic numeric byteOffsets still read/write correctly, and omitted/default
+  littleEndian behavior remains unchanged.
+- Mandatory no-corpus standalone controls validate, instantiate with an empty
+  import object, and report zero host imports.
+- The local A/B has exactly 16 standalone fail-to-pass flips, zero losses or
+  status churn, and the repeat reports no nondeterminism.
+- The checked-in plan, focused regression, metadata, normal gates, and
+  pre-push checks are clean. No GitHub issue is created or updated.
+
+## Handoff
+
+Implementation is limited to the two owned code/test files plus this plan:
+`src/codegen/dataview-native.ts`,
+`tests/issue-5117-dataview-byteoffset-symbol.test.ts`, and this document.
+The delivery branch is `codex/5117-es2015-dataview-byteoffset-symbol`, based
+directly on the freshly fetched `upstream/main` at the recorded SHA. After
+validation, the clean head and full evidence will be handed to the root agent
+for one upstream PR; no external issue will be created.
