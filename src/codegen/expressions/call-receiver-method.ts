@@ -143,6 +143,7 @@ import {
 } from "./calls-closures.js";
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall, compileSpreadCallArgs } from "./extern.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
 import { sourceOverridesBuiltinPrototypeMember, sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import {
@@ -2040,8 +2041,17 @@ export function compileReceiverMethodCall(
       const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
       const handledSpreadNn =
         !handledRestNn && methodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+      // (#5093) A formal-ful callee that reads `arguments` needs the FLATTENED
+      // argument list, not just its positional prefix — the extras split and
+      // the argument count are both runtime values once a spread is involved.
+      // Emits nothing (and returns false) when it does not apply.
+      const handledArgvSpreadNn =
+        handledSpreadNn &&
+        calleeReadsArgsNn &&
+        restInfoNn === undefined &&
+        compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 1, fullName);
       if (handledSpreadNn) {
-        compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
+        if (!handledArgvSpreadNn) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNn, 1);
       } else if (!handledRestNn) {
         for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
           const sourceParam =
@@ -2069,8 +2079,10 @@ export function compileReceiverMethodCall(
           pushDefaultValue(fctx, paramTypes[i]!, ctx);
         }
       }
-      // Set __argc before the call so the callee knows the actual arg count
-      maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
+      // Set __argc before the call so the callee knows the actual arg count. The
+      // flattened-spread path published a RUNTIME count already; a constant here
+      // would clobber it back to the un-flattened argument-node count (#5093).
+      if (!handledArgvSpreadNn) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
       // Re-lookup funcIdx: argument compilation may trigger addUnionImports
       const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
       fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
