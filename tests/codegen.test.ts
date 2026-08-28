@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { compileAndRunStubs as compileAndRun } from "./helpers/compile.js";
+import { buildImports } from "../src/runtime.js";
+import { compileAndRunBuildImports as compileAndRun } from "./helpers/compile.js";
 
 describe("comparison operators", () => {
   it("less than", async () => {
@@ -114,15 +115,10 @@ describe("math host imports", () => {
     expect(result.wat).toContain("Math_sin");
     expect(result.wat).toContain("Math_cos");
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-        Math_sin: Math.sin,
-        Math_cos: Math.cos,
-      },
-    });
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
     const exports = instance.exports as any;
+    imports.setExports?.(exports);
     expect(exports.sinCos(0)).toBeCloseTo(1); // sin(0)=0, cos(0)=1
   });
 
@@ -135,14 +131,10 @@ describe("math host imports", () => {
     expect(result.success).toBe(true);
     expect(result.wat).toContain("Math_pow");
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-        Math_pow: Math.pow,
-      },
-    });
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
     const exports = instance.exports as any;
+    imports.setExports?.(exports);
     expect(exports.power(2, 10)).toBe(1024);
   });
 
@@ -154,35 +146,27 @@ describe("math host imports", () => {
     `);
     expect(result.success).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-        Math_exp: Math.exp,
-        Math_log: Math.log,
-      },
-    });
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
     const exports = instance.exports as any;
+    imports.setExports?.(exports);
     expect(exports.expLog(1)).toBeCloseTo(1);
   });
 
-  it("Math.round via native f64.nearest", async () => {
+  it("Math.round uses the exact host-free implementation", async () => {
     const result = await compile(`
       export function roundVal(x: number): number {
         return Math.round(x);
       }
     `);
     expect(result.success).toBe(true);
-    // Should NOT create a host import for round (uses f64.nearest)
-    expect(result.wat).not.toContain("Math_round");
+    expect(result.imports.some((descriptor) => descriptor.name === "Math_round")).toBe(false);
+    expect(result.wat).not.toContain("f64.nearest");
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
     const exports = instance.exports as any;
+    (imports as { setExports?: (value: typeof exports) => void }).setExports?.(exports);
     expect(exports.roundVal(3.7)).toBe(4);
     expect(exports.roundVal(3.2)).toBe(3);
   });

@@ -67,6 +67,10 @@ const PROTOS: ReadonlyArray<[string, object]> = [
   ["WeakMap.prototype", WeakMap.prototype],
   ["WeakSet.prototype", WeakSet.prototype],
   ["Promise.prototype", Promise.prototype],
+  // (#5129) The ArrayBuffer @@toStringTag Test262 descriptor probe deletes
+  // this configurable own property during its sloppy pass. Snapshot the
+  // prototype so the in-process strict rerun sees the fresh-realm value.
+  ["ArrayBuffer.prototype", ArrayBuffer.prototype],
   // (#3470) Date/TypedArray/DataView were entirely absent — their prototype
   // methods (including annexB ones like Date.prototype.getYear, which don't
   // even appear in the sharded worker's curated method lists) never got

@@ -5836,8 +5836,7 @@ function _safeSet(
     // Proxy's `set` trap may also throw (abrupt completion) or the host engine
     // may raise the §10.5.9 strict-write invariant TypeError. Propagate both
     // instead of silently diverting to the sidecar. The gate is strictly
-    // `_isUserProxy(obj)`, so the sloppy-mode struct / frozen-builtin cases
-    // below (Math.E=1, Number.NaN=1) are byte-for-byte unchanged (#2017).
+    // `_isUserProxy(obj)`; native descriptor failures are handled below.
     _rethrowIfProxyOrRevoked(e, obj);
     // (#3374) The runtime module itself executes in strict mode, so the native
     // assignment above throws when [[Set]] returns false. The compiler now
@@ -5853,6 +5852,7 @@ function _safeSet(
     if (typeof key === "string" || typeof key === "symbol") {
       const desc = _lookupDescriptorNoProxy(obj, key as PropertyKey);
       if (desc && desc.set) throw e;
+      if (wsh.failedSloppyNativeSetIsNoOp(obj, desc)) return;
     }
     // The sloppy helper retains the legacy silent fallback because this runtime
     // module is itself strict: the native assignment can throw even when the

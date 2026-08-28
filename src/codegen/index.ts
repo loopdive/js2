@@ -53,6 +53,7 @@ import {
 import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
@@ -296,6 +297,7 @@ import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynam
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
 import { noteRetUnboxStats } from "./ret-unbox-abi.js"; // (#4406 Phase 0) return-ABI funnel census
+import { noteParamUnboxStats } from "./param-unbox-abi.js"; // (#4406 Phase 3) parameter-ABI funnel census
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
 import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
 import { fillLazyIterLadderArms } from "./iter-lazy-native.js"; // (#2903 R3)
@@ -5182,6 +5184,7 @@ export function generateModule(
     const booleanNames = analyzeBooleanNames(ctx, [ast.sourceFile]);
     ctx.booleanPropertyNames = booleanNames.properties;
     ctx.booleanFunctionNames = booleanNames.functions;
+    ctx.booleanParamSlots = booleanNames.paramSlots;
 
     // #1677 — final reconcile of native-string helper indices before any USER
     // function is registered. Any imports added by the deferred-helper
@@ -5852,6 +5855,7 @@ export function generateModule(
     // (#4406 Phase 0) The return-ABI funnel. A statement, never a condition —
     // inert without `JS2WASM_RET_UNBOX_STATS=1`.
     noteRetUnboxStats(ctx);
+    noteParamUnboxStats(ctx);
 
     // (#3125) Fill the reserved `__promise_has_callable_then` predicate — the
     // native-Promise resolve path's §27.2.1.3.2 Get("then")+IsCallable test —
@@ -9315,6 +9319,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     );
     ctx.booleanPropertyNames = linkedBooleanNames.properties;
     ctx.booleanFunctionNames = linkedBooleanNames.functions;
+    ctx.booleanParamSlots = linkedBooleanNames.paramSlots;
     // (#3765 multi-source parity) The standalone single-source path installs
     // the definition-site numeric-local oracle before declarations are minted,
     // but linked `compileMulti` graphs never did. That left JS-package locals
@@ -9701,6 +9706,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     fillDirectCallTrampolines(ctx);
     // (#4406 Phase 0) Same funnel report in the linked lane.
     noteRetUnboxStats(ctx);
+    noteParamUnboxStats(ctx);
 
     // (#3493) compileMulti shares the same property-access lowering as the
     // single-source path, so a dynamic property write/read can reserve one of
@@ -10336,6 +10342,8 @@ export const MATH_HOST_METHODS_1ARG = new Set([
   "asinh",
   "atanh",
   "cbrt",
+  "round",
+  "sign",
   "expm1",
   "log1p",
 ]);
@@ -10356,24 +10364,17 @@ export function emitToUint32Helper(ctx: CodegenContext): void {
   const typeIdx = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "i32" }]);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.funcMap.set("__toUint32", funcIdx);
-  const body: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "local.get", index: 0 },
-    { op: "f64.ne" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    { op: "local.get", index: 0 },
-    { op: "f64.abs" },
-    { op: "f64.const", value: Infinity },
-    { op: "f64.eq" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    { op: "local.get", index: 0 },
-    { op: "i64.trunc_sat_f64_s" },
-    { op: "i32.wrap_i64" },
-  ];
+  const body: Instr[] = [{ op: "local.get", index: 0 }];
+  emitWasmInt32Coercion(body, { bits: 1, exponent: 2, significand: 3, magnitude: 4 });
   ctx.mod.functions.push({
     name: "__toUint32",
     typeIdx,
-    locals: [],
+    locals: [
+      { name: "$to_uint32_bits", type: { kind: "i64" } },
+      { name: "$to_uint32_exponent", type: { kind: "i64" } },
+      { name: "$to_uint32_significand", type: { kind: "i64" } },
+      { name: "$to_uint32_magnitude", type: { kind: "i64" } },
+    ],
     body,
     exported: false,
   });

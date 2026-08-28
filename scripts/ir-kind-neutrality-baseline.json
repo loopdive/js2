@@ -40,39 +40,39 @@
     "binary": {
       "verdict": "unresolved",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1018",
+      "declaredAt": "src/ir/nodes.ts:1026",
       "why": "The kind is a neutral envelope; its OPCODE ENUM is not. `IrBinop` mixes ~30 one-to-one Wasm primitives with six `js.*` COMPOSITES (`js.bitand|bitor|bitxor|shl|shr_s|shr_u`), each documented as ToInt32(lhs); ToInt32(rhs); i32.<op>; convert back to f64 — ECMA-262 §7.1.6. `i64.rem_s` is likewise labelled a guarded JS Number remainder fast path. So the declaration cannot be placed on either side: moving `IrInstrBinary` would exile `f64.add`, leaving it in core keeps six ECMAScript operators there. (#4551's contested-family list does not mention `binary`; this is a finding, not a restatement.)",
-      "evidence": ["src/ir/nodes.ts:966", "src/ir/nodes.ts:954"],
+      "evidence": ["src/ir/nodes.ts:974", "src/ir/nodes.ts:962"],
       "settledBy": "Split `IrBinop`: the six `js.*` composites (and the `i64.rem_s` fast path's ECMAScript justification) move to the dialect as a separate opcode union; the Wasm primitives stay. The unit of the fix is the enum, not the interface."
     },
     "box": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1104",
+      "declaredAt": "src/ir/nodes.ts:1112",
       "why": "One boxing concept over a tagged carrier. It also serves plain scalar tagged unions with no JS involvement, so it is not a JS-only operation and moving it to the dialect would be wrong.",
-      "evidence": ["src/ir/nodes.ts:1089"],
+      "evidence": ["src/ir/nodes.ts:1097"],
       "residual": "The JS content is TYPE-LEVEL, via `toType.kind === \"dynamic\"` and the dynamic leaf's `tag?: TagId` refinement — #3954 phase 1's `TagDomain` seam, not a dialect question. Phase 1 made the refinement neutral at the declaration; what is still ECMAScript is the LOWERING, which crosses `TagId -> JsTag` (`lower.ts` `jsTagOf`) to meet the #3029-S1-frozen `IrDynamicLowering` contract. That is #3954 phase 3's W2/W6, and it moves no declaration."
     },
     "br": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2399",
+      "declaredAt": "src/ir/nodes.ts:2407",
       "why": "Unconditional branch with block arguments in place of phi nodes.",
-      "evidence": ["src/ir/nodes.ts:2378"]
+      "evidence": ["src/ir/nodes.ts:2386"]
     },
     "br_if": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2405",
+      "declaredAt": "src/ir/nodes.ts:2413",
       "why": "Two-target conditional branch on an i32 condition.",
-      "evidence": ["src/ir/nodes.ts:2404"]
+      "evidence": ["src/ir/nodes.ts:2412"]
     },
     "br.label": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2129",
+      "declaredAt": "src/ir/nodes.ts:2137",
       "why": "Branch to a named enclosing loop frame in break or continue mode. Labeled break/continue is C-family, not ECMAScript-specific.",
-      "evidence": ["src/ir/nodes.ts:2106"]
+      "evidence": ["src/ir/nodes.ts:2114"]
     },
     "call": {
       "verdict": "neutral",
@@ -84,87 +84,87 @@
     "class.call": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1536",
+      "declaredAt": "src/ir/nodes.ts:1544",
       "why": "Virtual dispatch against the receiver's shape with the receiver prepended. Accessors are a member kind, shared with Kotlin/C#/Dart.",
-      "evidence": ["src/ir/nodes.ts:1521"]
+      "evidence": ["src/ir/nodes.ts:1529"]
     },
     "class.get": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1499",
+      "declaredAt": "src/ir/nodes.ts:1507",
       "why": "Struct field read by declared name.",
-      "evidence": ["src/ir/nodes.ts:1488"]
+      "evidence": ["src/ir/nodes.ts:1496"]
     },
     "class.instanceof": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1600",
+      "declaredAt": "src/ir/nodes.ts:1608",
       "why": "A CLOSED-WORLD NOMINAL TYPE TEST, not the JS operator it is named after: the operand must be statically `IrType.class`, and the test compares a hidden tag against the target's tag plus its transitive children. No prototype chain walk, no `Symbol.hasInstance`, no TypeError on a non-callable right-hand side. This is Java's `instanceof` / Kotlin's `is`.",
-      "evidence": ["src/ir/nodes.ts:1592"]
+      "evidence": ["src/ir/nodes.ts:1600"]
     },
     "class.new": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1481",
+      "declaredAt": "src/ir/nodes.ts:1489",
       "why": "Allocates a nominal class instance through the class-owned constructor wrapper. No `new.target`, no constructor-returns-object override.",
-      "evidence": ["src/ir/nodes.ts:295", "src/ir/nodes.ts:1470"]
+      "evidence": ["src/ir/nodes.ts:295", "src/ir/nodes.ts:1478"]
     },
     "class.set": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1514",
+      "declaredAt": "src/ir/nodes.ts:1522",
       "why": "Struct field write by declared name.",
-      "evidence": ["src/ir/nodes.ts:1505"]
+      "evidence": ["src/ir/nodes.ts:1513"]
     },
     "class.static_call": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1616",
+      "declaredAt": "src/ir/nodes.ts:1624",
       "why": "Direct call to a static member slot, no receiver.",
-      "evidence": ["src/ir/nodes.ts:1606"]
+      "evidence": ["src/ir/nodes.ts:1614"]
     },
     "class.super_call": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1577",
+      "declaredAt": "src/ir/nodes.ts:1585",
       "why": "Statically dispatches to the parent's method slot, bypassing the override — the same operation as Java's `super.m()`.",
-      "evidence": ["src/ir/nodes.ts:1567"]
+      "evidence": ["src/ir/nodes.ts:1575"]
     },
     "class.super_init": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1559",
+      "declaredAt": "src/ir/nodes.ts:1567",
       "why": "Runs the parent's initializer on an ALREADY-ALLOCATED `self`. That is the C++/Java allocate-then-initialize order, which is precisely NOT ECMAScript's derived-constructor protocol (where the base creates `this` and it is in TDZ until `super()` returns).",
-      "evidence": ["src/ir/nodes.ts:1545"]
+      "evidence": ["src/ir/nodes.ts:1553"]
     },
     "closure.call": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1412",
+      "declaredAt": "src/ir/nodes.ts:1420",
       "why": "Indirect call through a typed funcref with EXACT arity — not the ECMAScript call model.",
-      "evidence": ["src/ir/nodes.ts:1393"],
+      "evidence": ["src/ir/nodes.ts:1401"],
       "residual": "`IrClosureSignature.defaultParamStart` lets a caller omit a trailing numeric suffix, padded with a reserved missing-argument sentinel. Optional parameters are widely shared, but the sentinel is a value-model artifact — phase 1 territory, and a signature field rather than an instruction, so it does not move with this kind either way."
     },
     "closure.cap": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1386",
+      "declaredAt": "src/ir/nodes.ts:1394",
       "why": "Reads capture slot N out of the closure's own self parameter.",
-      "evidence": ["src/ir/nodes.ts:1387"]
+      "evidence": ["src/ir/nodes.ts:1395"]
     },
     "closure.new": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1361",
+      "declaredAt": "src/ir/nodes.ts:1369",
       "why": "Lifted function plus a capture struct — the standard closure conversion, older than JS.",
-      "evidence": ["src/ir/nodes.ts:1344"]
+      "evidence": ["src/ir/nodes.ts:1352"]
     },
     "coerce.to_externref": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1841",
+      "declaredAt": "src/ir/nodes.ts:1849",
       "why": "A representation conversion (`extern.convert_any`, or a no-op when the input is already externref). Crossing to the host is a HOST-boundary concern, not a language one — the same reading #4551 records for the backend's emitToExternref/emitFromExternref.",
-      "evidence": ["src/ir/nodes.ts:1834"]
+      "evidence": ["src/ir/nodes.ts:1842"]
     },
     "const": {
       "verdict": "neutral",
@@ -212,9 +212,9 @@
     "early.return": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1936",
+      "declaredAt": "src/ir/nodes.ts:1944",
       "why": "A Wasm `return` from inside a nested buffer. Its soundness scope cites ECMAScript, but as a RESTRICTION against dialect kinds (it is refused inside `try` and `forof.iter`), not as a semantic of its own.",
-      "evidence": ["src/ir/nodes.ts:1920"]
+      "evidence": ["src/ir/nodes.ts:1928"]
     },
     "extern.call": {
       "verdict": "js",
@@ -254,30 +254,30 @@
     "fnctor.get": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1290",
+      "declaredAt": "src/ir/nodes.ts:1298",
       "why": "Reads a declared field from a nominal constructor carrier; field identity and representation come from the resolved layout.",
-      "evidence": ["src/ir/nodes.ts:1288"]
+      "evidence": ["src/ir/nodes.ts:1296"]
     },
     "fnctor.new": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1281",
+      "declaredAt": "src/ir/nodes.ts:1289",
       "why": "Materializes a nominal function-style constructor through an exact ABI handle; the operation is not an ECMAScript protocol by itself.",
-      "evidence": ["src/ir/nodes.ts:1270"]
+      "evidence": ["src/ir/nodes.ts:1278"]
     },
     "for.loop": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2041",
+      "declaredAt": "src/ir/nodes.ts:2049",
       "why": "Pre-test loop with an update buffer. The init clause is ordinary IR emitted before it.",
-      "evidence": ["src/ir/nodes.ts:2023"]
+      "evidence": ["src/ir/nodes.ts:2031"]
     },
     "forof.iter": {
       "verdict": "js",
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:381",
       "why": "`for (x of it)` over the @@iterator protocol, as a statement form.",
-      "evidence": ["src/ir/nodes.ts:1805"]
+      "evidence": ["src/ir/nodes.ts:1813"]
     },
     "forof.string": {
       "verdict": "js",
@@ -289,9 +289,9 @@
     "forof.vec": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1784",
+      "declaredAt": "src/ir/nodes.ts:1792",
       "why": "An index counter over a dense vector — and deliberately NOT ECMAScript's ArrayIterator: the length is read ONCE into a slot before the loop, where §23.1.5.1 re-reads it every step. A producer whose language wants a snapshot loop gets exactly that.",
-      "evidence": ["src/ir/nodes.ts:1750"]
+      "evidence": ["src/ir/nodes.ts:1758"]
     },
     "gen.epilogue": {
       "verdict": "js",
@@ -324,37 +324,37 @@
     "global.get": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:869",
+      "declaredAt": "src/ir/nodes.ts:877",
       "why": "Symbolic module-global read.",
-      "evidence": ["src/ir/nodes.ts:867"]
+      "evidence": ["src/ir/nodes.ts:875"]
     },
     "global.set": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:875",
+      "declaredAt": "src/ir/nodes.ts:883",
       "why": "Symbolic module-global write.",
-      "evidence": ["src/ir/nodes.ts:873"]
+      "evidence": ["src/ir/nodes.ts:881"]
     },
     "if": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1065",
+      "declaredAt": "src/ir/nodes.ts:1073",
       "why": "Value-producing short-circuiting if/else over an i32 condition. Truthiness is NOT part of it — `dyn.truthy` is, and that already lives in the dialect.",
-      "evidence": ["src/ir/nodes.ts:1045"]
+      "evidence": ["src/ir/nodes.ts:1053"]
     },
     "if.stmt": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2155",
+      "declaredAt": "src/ir/nodes.ts:2163",
       "why": "Statement-level if/else over an i32 condition, no carrier values.",
-      "evidence": ["src/ir/nodes.ts:2137"]
+      "evidence": ["src/ir/nodes.ts:2145"]
     },
     "intrinsic": {
       "verdict": "unresolved",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:860",
-      "why": "Neutral envelope, ECMAScript-sourced vocabulary. `IntrinsicId` is 13 `math.*` ids drawn explicitly from the JS `Math` surface, but ECMA-262 §21.3 leaves the transcendentals implementation-approximated, so most of them carry no ECMAScript commitment at all — while `math.pow` does (§21.3.2.26 mandates pow(1, NaN) = NaN, where C99 pow returns 1).",
-      "evidence": ["src/ir/intrinsics.ts:8", "src/ir/intrinsics.ts:24"],
+      "declaredAt": "src/ir/nodes.ts:868",
+      "why": "Neutral envelope, ECMAScript-sourced vocabulary. `IntrinsicId` is 33 `math.*` ids drawn explicitly from the JS `Math` surface, but ECMA-262 §21.3 leaves the transcendentals implementation-approximated, so most of them carry no ECMAScript commitment at all — while `math.pow` does (§21.3.2.26 mandates pow(1, NaN) = NaN, where C99 pow returns 1).",
+      "evidence": ["src/ir/intrinsics.ts:8", "src/ir/intrinsics.ts:40"],
       "settledBy": "State whether a `math.*` id denotes an ECMA-262 clause or an IEEE/libm operation. If the former, the vocabulary (not the instruction) is what moves; if the latter, `intrinsic` is neutral outright and `math.pow` needs an ECMAScript-specific sibling."
     },
     "iter.done": {
@@ -395,87 +395,87 @@
     "labeled.block": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2170",
+      "declaredAt": "src/ir/nodes.ts:2178",
       "why": "A break-only labeled frame lowering to one Wasm block.",
-      "evidence": ["src/ir/nodes.ts:2162"]
+      "evidence": ["src/ir/nodes.ts:2170"]
     },
     "object.get": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1322",
+      "declaredAt": "src/ir/nodes.ts:1330",
       "why": "Static field read by name, resolved to a struct index at lowering. Dynamic keys are `dyn.member_get`, which is in the dialect.",
-      "evidence": ["src/ir/nodes.ts:1315", "src/ir/dialect/js.ts:225"]
+      "evidence": ["src/ir/nodes.ts:1323", "src/ir/dialect/js.ts:225"]
     },
     "object.new": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1309",
+      "declaredAt": "src/ir/nodes.ts:1317",
       "why": "Constructs a record from a declared field layout. No prototype, no descriptors, no insertion order semantics.",
-      "evidence": ["src/ir/nodes.ts:197", "src/ir/nodes.ts:1310"]
+      "evidence": ["src/ir/nodes.ts:197", "src/ir/nodes.ts:1318"]
     },
     "object.set": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1333",
+      "declaredAt": "src/ir/nodes.ts:1341",
       "why": "Static field write by name. The JS `[[Set]]` path is `dyn.member_set`, which is in the dialect.",
-      "evidence": ["src/ir/nodes.ts:1328", "src/ir/dialect/js.ts:241"]
+      "evidence": ["src/ir/nodes.ts:1336", "src/ir/dialect/js.ts:241"]
     },
     "raw.wasm": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1080",
+      "declaredAt": "src/ir/nodes.ts:1088",
       "why": "An opaque backend instruction sequence. Nothing about it is language-specific.",
-      "evidence": ["src/ir/nodes.ts:1074"],
+      "evidence": ["src/ir/nodes.ts:1082"],
       "residual": "Backend axis, not the language axis: it carries `Instr[]`, i.e. concrete backend opcodes, so it is a backend-agnosticism leak (docs/architecture/codegen-axes.md), not an ECMAScript one."
     },
     "refcell.get": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1436",
+      "declaredAt": "src/ir/nodes.ts:1444",
       "why": "Reads the cell's single field.",
-      "evidence": ["src/ir/nodes.ts:1430"]
+      "evidence": ["src/ir/nodes.ts:1438"]
     },
     "refcell.new": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1425",
+      "declaredAt": "src/ir/nodes.ts:1433",
       "why": "One-field mutable cell — the standard boxing of a mutable capture.",
-      "evidence": ["src/ir/nodes.ts:1418"]
+      "evidence": ["src/ir/nodes.ts:1426"]
     },
     "refcell.set": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1447",
+      "declaredAt": "src/ir/nodes.ts:1455",
       "why": "Writes the cell's single field.",
-      "evidence": ["src/ir/nodes.ts:1441"]
+      "evidence": ["src/ir/nodes.ts:1449"]
     },
     "return": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2393",
+      "declaredAt": "src/ir/nodes.ts:2401",
       "why": "Block terminator returning the function's results.",
-      "evidence": ["src/ir/nodes.ts:2392"]
+      "evidence": ["src/ir/nodes.ts:2400"]
     },
     "select": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1037",
+      "declaredAt": "src/ir/nodes.ts:1045",
       "why": "Wasm `select`: both arms evaluated, no short-circuit, no coercion.",
-      "evidence": ["src/ir/nodes.ts:1031"]
+      "evidence": ["src/ir/nodes.ts:1039"]
     },
     "slot.read": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1652",
+      "declaredAt": "src/ir/nodes.ts:1660",
       "why": "Reads a function-level Wasm local.",
-      "evidence": ["src/ir/nodes.ts:1644"]
+      "evidence": ["src/ir/nodes.ts:1652"]
     },
     "slot.write": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1663",
+      "declaredAt": "src/ir/nodes.ts:1671",
       "why": "Writes a function-level Wasm local.",
-      "evidence": ["src/ir/nodes.ts:1657"]
+      "evidence": ["src/ir/nodes.ts:1665"]
     },
     "string.char_at": {
       "verdict": "js",
@@ -494,31 +494,31 @@
     "string.concat": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1212",
+      "declaredAt": "src/ir/nodes.ts:1220",
       "why": "Concatenation of two values already statically known to be strings — no ToString, no `+` overload.",
-      "evidence": ["src/ir/nodes.ts:1207"]
+      "evidence": ["src/ir/nodes.ts:1215"]
     },
     "string.const": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1186",
+      "declaredAt": "src/ir/nodes.ts:1194",
       "why": "Materializes a literal; storage/materializer are backend selections made during preparation.",
-      "evidence": ["src/ir/nodes.ts:1187"],
+      "evidence": ["src/ir/nodes.ts:1195"],
       "residual": "Carrier: the literal's length is counted in UTF-16 code units, the same family commitment that leaves `string.len` unresolved. Settling `string.len` settles this too."
     },
     "string.eq": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1228",
+      "declaredAt": "src/ir/nodes.ts:1236",
       "why": "Value equality of two strings. No abstract equality, no coercion — `dyn.eq` covers that and is already in the dialect.",
-      "evidence": ["src/ir/nodes.ts:1224"]
+      "evidence": ["src/ir/nodes.ts:1232"]
     },
     "string.len": {
       "verdict": "unresolved",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1244",
+      "declaredAt": "src/ir/nodes.ts:1252",
       "why": "The MEANING is settled and it is not encoding-parameterized: every backend returns the UTF-16 CODE-UNIT count. The linear backend calls `__str_length_utf16` regardless of `inputEncoding`, and the WasmGC native provider reads a field documented as the UTF-16 code-unit length. What is NOT settled is the placement: that commitment is shared verbatim with Java/C#/the whole UTF-16 family, so it is not ECMAScript-specific the way `char_at`'s out-of-range sentinel is, yet it is a language commitment a Rust or Python producer could not use.",
-      "evidence": ["src/ir/nodes.ts:1260", "src/ir/backend/linear-integration.ts:1611", "src/ir/string-runtime.ts:15"],
+      "evidence": ["src/ir/nodes.ts:1268", "src/ir/backend/linear-integration.ts:1611", "src/ir/string-runtime.ts:15"],
       "settledBy": "A policy call phase 2 has to make anyway: does `js` mean ECMAScript-SPECIFIC, or LANGUAGE-COMMITTED? If the former, `string.len` stays in core with a documented commitment; if the latter it moves — and the same answer then governs a future `utf16-string` dialect shared by the family, which is the third option."
     },
     "string.repeat": {
@@ -531,96 +531,96 @@
     "switch": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2203",
+      "declaredAt": "src/ir/nodes.ts:2211",
       "why": "The C-family fall-through ladder. Case selection compares literals in the discriminant's own value type, so the NaN/-0 behaviour it documents is IEEE-754's, reached through `f64.eq`, not an ECMAScript rule.",
-      "evidence": ["src/ir/nodes.ts:2183"]
+      "evidence": ["src/ir/nodes.ts:2191"]
     },
     "tag.test": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1160",
+      "declaredAt": "src/ir/nodes.ts:1168",
       "why": "Runtime tag discriminator over a tagged carrier; serves scalar unions as well as the dynamic carrier.",
-      "evidence": ["src/ir/nodes.ts:1145"],
+      "evidence": ["src/ir/nodes.ts:1153"],
       "residual": "Same as `unbox`: the operand is a neutral `tagId?: TagId` since #3954 phase 3 (W4/W5); the residual is the `TagId -> JsTag` crossing in the lowering pass (W2/W6), a seam question."
     },
     "throw": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1903",
+      "declaredAt": "src/ir/nodes.ts:1911",
       "why": "Raises through one Wasm tag with a reference payload. No Error hierarchy, no completion record, no type-based dispatch — a typed language would test in the handler, which this model permits.",
-      "evidence": ["src/ir/nodes.ts:1888"]
+      "evidence": ["src/ir/nodes.ts:1896"]
     },
     "try": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2084",
+      "declaredAt": "src/ir/nodes.ts:2092",
       "why": "Structured try/catch/finally with one untyped handler. Notably it does NOT model completion records: `early.return` is REFUSED inside these buffers rather than being made to run the inlined finally, so the ECMAScript machinery is excluded rather than encoded.",
-      "evidence": ["src/ir/nodes.ts:2055"]
+      "evidence": ["src/ir/nodes.ts:2063"]
     },
     "unary": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1025",
+      "declaredAt": "src/ir/nodes.ts:1033",
       "why": "Every `IrUnop` member is a single Wasm opcode (`f64.neg`, `i32.eqz`, `i32.trunc_sat_f64_s`, `ref.is_null`, the Math f64 family). Their USES are JS-motivated; the operations are not. Contrast `binary`, whose enum carries composite `js.*` ops.",
-      "evidence": ["src/ir/nodes.ts:983"]
+      "evidence": ["src/ir/nodes.ts:991"]
     },
     "unbox": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1136",
+      "declaredAt": "src/ir/nodes.ts:1144",
       "why": "Payload extraction from a tagged carrier after the tag is proven; the union operand form has no JS content.",
-      "evidence": ["src/ir/nodes.ts:1141"],
+      "evidence": ["src/ir/nodes.ts:1149"],
       "residual": "Same as `box`. #3954 phase 3 (W4/W5) made the operand itself neutral — the field is `tagId?: TagId` and `IrFunctionBuilder` asks a `TagDomain` — so the residual is now only the `TagId -> JsTag` crossing in the lowering pass (W2/W6), which is a seam question."
     },
     "unreachable": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:2413",
+      "declaredAt": "src/ir/nodes.ts:2421",
       "why": "Unreachable terminator.",
-      "evidence": ["src/ir/nodes.ts:2412"]
+      "evidence": ["src/ir/nodes.ts:2420"]
     },
     "vec.get": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1691",
+      "declaredAt": "src/ir/nodes.ts:1699",
       "why": "Planned in-bounds `array.get` at an i32 index.",
-      "evidence": ["src/ir/nodes.ts:1681", "(absent from src/ir/: array-holes)"]
+      "evidence": ["src/ir/nodes.ts:1689", "(absent from src/ir/: array-holes)"]
     },
     "vec.len": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1676",
+      "declaredAt": "src/ir/nodes.ts:1684",
       "why": "Reads a dense vector's logical length. Element count is a language-independent unit (contrast `string.len`, whose unit is a language commitment).",
-      "evidence": ["src/ir/nodes.ts:1669"],
+      "evidence": ["src/ir/nodes.ts:1677"],
       "residual": "The result defaults to f64 to compose with the JS number model; `integer?: true` opts back into a physical i32, which is what shows it is a REPRESENTATION default rather than part of the operation. #3954 phase 1."
     },
     "vec.new_fixed": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1733",
+      "declaredAt": "src/ir/nodes.ts:1741",
       "why": "Builds a dense vector from statically-known elements. Sparse literals are explicitly out of scope and fall back to legacy, so no hole can reach this node.",
       "evidence": ["src/ir/from-ast.ts:4502"]
     },
     "vec.set": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1703",
+      "declaredAt": "src/ir/nodes.ts:1711",
       "why": "One planned in-bounds store. Bounds and growth policy stay explicit in the surrounding IR; a holey-array store is routed to a runtime helper instead.",
-      "evidence": ["src/ir/nodes.ts:1697", "src/ir/from-ast.ts:380"]
+      "evidence": ["src/ir/nodes.ts:1705", "src/ir/from-ast.ts:380"]
     },
     "vec.set_length": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1711",
+      "declaredAt": "src/ir/nodes.ts:1719",
       "why": "Writes a resizable vector's logical length.",
-      "evidence": ["src/ir/nodes.ts:1709"]
+      "evidence": ["src/ir/nodes.ts:1717"]
     },
     "while.loop": {
       "verdict": "neutral",
       "where": "core",
-      "declaredAt": "src/ir/nodes.ts:1985",
+      "declaredAt": "src/ir/nodes.ts:1993",
       "why": "Pre-test loop over a condition buffer whose value is an i32. Truthiness conversion happens before it, in `dyn.truthy`.",
-      "evidence": ["src/ir/nodes.ts:1986"]
+      "evidence": ["src/ir/nodes.ts:1994"]
     }
   }
 }

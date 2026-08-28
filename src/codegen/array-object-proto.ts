@@ -2139,11 +2139,13 @@ function makeGlueWithGetters(
   members: readonly string[],
   getters: ReadonlySet<string>,
   lengthTable: Readonly<Record<string, number>>,
+  symbolTag?: string,
 ): NativeProtoBuiltinGlue {
   return {
     brand,
     name,
     memberCsv: members.join(","),
+    ...(symbolTag === undefined ? {} : { symbolTag }),
     memberKind: (member) => (getters.has(member) ? "getter" : "method"),
     memberLength: (member) => lengthTable[member] ?? 1,
     emitMemberBody: (c, fctx, member) => emitProtoMemberBodyRefusal(c, fctx, name, member),
@@ -2395,6 +2397,7 @@ export function ensureArrayBufferNativeProtoGlue(ctx: CodegenContext): number | 
       ARRAYBUFFER_PROTO_METHODS,
       ARRAYBUFFER_PROTO_GETTERS,
       ARRAYBUFFER_PROTO_METHOD_LENGTH,
+      "ArrayBuffer",
     );
     // (#1595) `transfer` and `transferToFixedLength` have an optional
     // newLength parameter even though their spec `.length` is 0. Give the
@@ -2424,6 +2427,7 @@ export function ensureDataViewNativeProtoGlue(ctx: CodegenContext): number | und
       DATAVIEW_PROTO_METHODS,
       DATAVIEW_PROTO_GETTERS,
       DATAVIEW_PROTO_METHOD_LENGTH,
+      "DataView",
     );
     // (#3173) Real reflective member bodies: get*/set* delegate to the shared
     // `__dv_m_<member>` native core (brand → ToIndex → [ToNumber] → detached →

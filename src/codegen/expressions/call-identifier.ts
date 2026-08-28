@@ -823,7 +823,7 @@ export function compileIdentifierCall(
       const esc = compileAnnexBEscapeCall(ctx, fctx, expr, funcName, {
         compileExpr: (e) => compileExpression(ctx, fctx, e),
         compileStringLit: (text, node) => compileStringLiteral(ctx, fctx, text, node as ts.Expression),
-        toString: (t, tsType, hint) => emitToString(ctx, fctx, t, tsType as never, hint),
+        toString: (t, staticType, hint) => emitToString(ctx, fctx, t, staticType, hint),
       });
       if (esc !== undefined) return esc;
     }

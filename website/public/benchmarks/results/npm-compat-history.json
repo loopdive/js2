@@ -10082,6 +10082,99 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-28T09:39:47.609Z",
+      "sourceRevision": "3ea0547d42d372d9c44cc9498fb7a019f48aafbc",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 302359.33160591294,
+            "dynamic": 0.12508923673575265
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 664.4382057617894,
+            "dynamic": 0.2147078333663495
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 17.07652862715636,
+            "dynamic": 0.1484746081785555
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-28T11:03:31.706Z",
+      "sourceRevision": "8e41f500d11ed6a039449e6609b1419988fba9ce",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 212580.89270079086,
+            "dynamic": 0.12131178032609494
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 520.8634610835363,
+            "dynamic": 0.22844140129696425
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.973474021871116,
+            "dynamic": 0.14936305009563738
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-28T11:45:56.249Z",
+      "sourceRevision": "eca3fe7d769654af96ab0c2d24c3e2164603ac95",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 295701.9185361324,
+            "dynamic": 0.12101506982398783
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 514.8033725107862,
+            "dynamic": 0.22512235943797104
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 14.97418099947921,
+            "dynamic": 0.16350850239359066
+          }
+        }
+      }
     }
   ]
 }
