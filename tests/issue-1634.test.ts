@@ -14,6 +14,16 @@ async function run(src: string): Promise<unknown> {
   if (!r.success) throw new Error("CE: " + (r.errors[0]?.message ?? "unknown"));
   const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown>;
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
+  // (#5159) BRAND the instance before wiring exports. Since the data-struct
+  // host bridge was authenticated (708ebbd56d, 2026-07-30) the runtime hands
+  // out `__struct_field_names` — which `_installErrorCause` needs to see a
+  // `cause` field on an opaque WasmGC options struct — only to a host that has
+  // established instance authority this way. Without it the two `cause`
+  // assertions below failed for a harness reason, not a compiler one, and had
+  // been silently red since. Real hosts brand: `tests/test262-runner.ts` does.
+  if (typeof imports.setInstance === "function") {
+    (imports.setInstance as (i: unknown) => void)(instance);
+  }
   if (typeof imports.setExports === "function") {
     (imports.setExports as (e: unknown) => void)(instance.exports);
   }
@@ -70,21 +80,30 @@ describe("#1634 AggregateError / SuppressedError iterable + cause", () => {
     expect(out).toBe(1);
   });
 
-  it("SuppressedError stores error and suppressed (reference identity)", async () => {
+  // (#5159) The three SuppressedError rows below need the HOST to provide
+  // `SuppressedError` — `__new_SuppressedError` constructs through the engine's
+  // own constructor and throws `SuppressedError is not supported by the host`
+  // when there isn't one. Node 22.22 has `typeof SuppressedError === "undefined"`,
+  // so on such a host these fail for a reason that is neither the compiler's nor
+  // this suite's. Gate them on the capability so they still run (and still gate)
+  // wherever the host has it, instead of standing permanently red.
+  const hasSuppressedError = typeof (globalThis as { SuppressedError?: unknown }).SuppressedError === "function";
+
+  it.skipIf(!hasSuppressedError)("SuppressedError stores error and suppressed (reference identity)", async () => {
     const out = await run(
       `export function test(): number { const err = { a: 1 }; const sup = { b: 2 }; const e = new SuppressedError(err, sup, "m"); return ((e as any).error === err && (e as any).suppressed === sup) ? 1 : 0; }`,
     );
     expect(out).toBe(1);
   });
 
-  it("SuppressedError coerces message to string", async () => {
+  it.skipIf(!hasSuppressedError)("SuppressedError coerces message to string", async () => {
     const out = await run(
       `export function test(): number { const e = new SuppressedError(1, 2, "hello"); return e.message === "hello" ? 1 : 0; }`,
     );
     expect(out).toBe(1);
   });
 
-  it("SuppressedError: no cause property when options omitted", async () => {
+  it.skipIf(!hasSuppressedError)("SuppressedError: no cause property when options omitted", async () => {
     const out = await run(
       `export function test(): number { const e = new SuppressedError(1, 2, "m"); return ("cause" in (e as any)) ? 1 : 0; }`,
     );
