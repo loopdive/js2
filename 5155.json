@@ -1,11 +1,10 @@
 {
   "id": "5155",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-28T12:25:44Z",
-  "updated_at": "2026-08-28T12:25:44Z",
-  "write_id": "7450-23gv64sl",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/opus-5155",
+  "requested_by": "ttraenkler/opus-5155",
+  "status": "in-progress",
+  "branch": "claude/issue-5155-string-indexof-noarg",
+  "claimed_at": "2026-08-28T15:50:08Z",
+  "updated_at": "2026-08-28T15:50:08Z",
+  "write_id": "1730-4z4vrjf0"
 }
