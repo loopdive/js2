@@ -18,7 +18,8 @@ related: [3763, 5095, 5121]
 # loc-budget-allow / func-budget-allow justification (2026-08-28): the
 # executable change is ONE list entry — `method === "indexOf"` added to the
 # `padsUndefined` set inside `compileReceiverMethodCall` — which the gate scores
-# as +19/+19 only because the existing 4-condition `||` had to be reflowed onto
+# as +19 ins/−1 del (net +18) only because the existing 4-condition `||` had to
+# be reflowed onto
 # one condition per line and because 14 of the 19 lines are comment. Those
 # comments are the load-bearing part: they record (a) why `lastIndexOf` was
 # already correct and `indexOf` was not, so the next reader does not "simplify"
