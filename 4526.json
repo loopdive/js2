@@ -1,10 +1,11 @@
 {
   "id": "4526",
   "assignee": "ttraenkler/opus-4526-takeover",
-  "requested_by": "ttraenkler/opus-4526-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4526-redux-next",
   "claimed_at": "2026-08-28T21:58:30Z",
-  "updated_at": "2026-08-28T21:58:30Z",
-  "write_id": "11008-qnbjrgli"
+  "updated_at": "2026-08-28T22:41:55Z",
+  "write_id": "26735-1ar45919",
+  "released_at": "2026-08-28T22:41:55Z"
 }
