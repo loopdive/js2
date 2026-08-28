@@ -84,6 +84,7 @@ function semanticView(manifest: FrozenRuntimeManifest): object {
     features: manifest.features,
     providerComponents: manifest.providerComponents,
     hostCapabilities: manifest.hostCapabilities,
+    hostCapabilityRecords: manifest.hostCapabilityRecords,
   };
 }
 
@@ -148,6 +149,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     expect(first.features).toEqual(PURE_MATH_RUNTIME_FEATURES);
     expect(new Set(first.providers.map((provider) => provider.id)).size).toBe(first.providers.length);
     expect(first.hostCapabilities).toEqual([]);
+    expect(first.hostCapabilityRecords).toEqual([]);
 
     const dependencies = Object.fromEntries(
       first.providers.map((provider) => [provider.feature, provider.dependencies]),
@@ -211,6 +213,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
         const manifest = builder.freeze();
         semanticClosures.push([...manifest.features]);
         expect(manifest.hostCapabilities, `${target}/${backend}`).toEqual([]);
+        expect(manifest.hostCapabilityRecords, `${target}/${backend}`).toEqual([]);
       }
     }
 
@@ -319,6 +322,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
 
     expect(Object.isFrozen(manifest)).toBe(true);
     expect(Object.isFrozen(manifest.features)).toBe(true);
+    expect(Object.isFrozen(manifest.hostCapabilityRecords)).toBe(true);
     expect(Object.isFrozen(sinProvider)).toBe(true);
     expect(Object.isFrozen(sinProvider.dependencies)).toBe(true);
     expect(builder.manifest).toBe(manifest);

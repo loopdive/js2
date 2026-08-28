@@ -2,7 +2,7 @@
 
 import { irImportFuncRef, irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import { createIrAsyncPlan, type IrAsyncPlan, type PreparedIrAsyncRuntime } from "./async-plan.js";
-import { ALL_ASYNC_HOST_ADAPTERS, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
+import type { AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
@@ -293,6 +293,10 @@ export function prepareIrRuntimeManifest(input: {
     for (const provider of selectedProviders) {
       for (const capability of provider.hostCapabilities) capabilities.add(capability);
     }
+    const records = manifest.hostCapabilityRecords.filter((record) => capabilities.has(record.capability));
+    if (records.length !== capabilities.size) {
+      throw new Error(`IR async runtime attachment for ${fn.name} is missing a frozen capability record`);
+    }
     const states = Object.freeze(
       plan.states.map((state) => {
         const attached = attachProvidersToBuffer(state.body, providers);
@@ -305,10 +309,11 @@ export function prepareIrRuntimeManifest(input: {
       : Object.freeze({
           kind: "host-wasmgc",
           adapters: Object.freeze(
-            ALL_ASYNC_HOST_ADAPTERS.filter((adapter) => capabilities.has(adapter.capability)).map((adapter) =>
+            records.map((record) =>
               Object.freeze({
-                capability: adapter.capability,
-                target: irImportFuncRef(adapter.module, adapter.field, adapter.field),
+                capability: record.capability,
+                target: irImportFuncRef(record.module, record.field, record.field),
+                record,
               }),
             ),
           ),

@@ -7,7 +7,12 @@ import { materializePreparedAsyncHostAdapters } from "../src/codegen/ir-async-ru
 import { planProgramAbiCallableImports } from "../src/codegen/program-abi-import-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan, type IrAsyncPlan } from "../src/ir/async-plan.js";
-import { ASYNC_HOST_ADAPTERS, ASYNC_RUNTIME_FEATURES } from "../src/ir/async-runtime-providers.js";
+import {
+  ASYNC_HOST_ADAPTERS,
+  ASYNC_HOST_CAPABILITY_RECORDS,
+  ASYNC_RUNTIME_FEATURES,
+  type AsyncHostAdapter,
+} from "../src/ir/async-runtime-providers.js";
 import { irCallableBindingKey } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory, type IrTerminalUnitRecord } from "../src/ir/identity.js";
 import { prepareIrRuntimeManifest } from "../src/ir/intrinsic-support.js";
@@ -40,7 +45,29 @@ function fixture(suffix = ""): {
   return { inventory, unit };
 }
 
-function asyncPlan(unit: IrTerminalUnitRecord, withIntrinsic = false): IrAsyncPlan {
+function pairFixture(): {
+  readonly inventory: ReturnType<typeof buildIrUnitInventory>;
+  readonly units: readonly IrTerminalUnitRecord[];
+} {
+  const source = ts.createSourceFile(
+    "/repo/async-plan-consumer-pair.ts",
+    [
+      "export async function fetchUserA(p: Promise<number>): Promise<number> { return await p; }",
+      "export async function fetchUserB(p: Promise<number>): Promise<number> { return await p; }",
+    ].join("\n"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const inventory = buildIrUnitInventory([source], { entrySource: source });
+  const units = inventory.terminalUnits.filter(
+    (candidate) => candidate.kind === "top-level-function" && candidate.displayName.startsWith("fetchUser"),
+  );
+  if (units.length !== 2) throw new Error("missing paired fetchUser inventory units");
+  return { inventory, units };
+}
+
+function asyncPlan(unit: IrTerminalUnitRecord, withIntrinsic = false, voidResult = false): IrAsyncPlan {
   const promise = asValueId(0);
   const resumed = asValueId(1);
   const absolute = asValueId(2);
@@ -48,7 +75,7 @@ function asyncPlan(unit: IrTerminalUnitRecord, withIntrinsic = false): IrAsyncPl
     schemaVersion: 1,
     ownerUnitId: unit.id,
     kind: "async-function",
-    abi: canonicalPromiseAbi(F64),
+    abi: canonicalPromiseAbi(voidResult ? null : F64),
     entry: asAsyncStateId(0),
     params: [{ value: promise, type: EXTERN }],
     values: [
@@ -84,15 +111,15 @@ function asyncPlan(unit: IrTerminalUnitRecord, withIntrinsic = false): IrAsyncPl
               },
             ]
           : [],
-        terminator: { kind: "resolve", value: withIntrinsic ? absolute : resumed },
+        terminator: voidResult ? { kind: "resolve" } : { kind: "resolve", value: withIntrinsic ? absolute : resumed },
       },
     ],
     handlers: [],
-    runtimeIntents: ASYNC_RUNTIME_FEATURES,
+    runtimeIntents: voidResult ? [...ASYNC_RUNTIME_FEATURES, "value.undefined"] : ASYNC_RUNTIME_FEATURES,
   });
 }
 
-function irFunction(unit: IrTerminalUnitRecord, withIntrinsic = false): IrFunction {
+function irFunction(unit: IrTerminalUnitRecord, withIntrinsic = false, voidResult = false): IrFunction {
   const promise = asValueId(0);
   return {
     unitId: unit.id,
@@ -111,7 +138,39 @@ function irFunction(unit: IrTerminalUnitRecord, withIntrinsic = false): IrFuncti
     exported: true,
     valueCount: 2,
     funcKind: "async",
-    asyncPlan: asyncPlan(unit, withIntrinsic),
+    asyncPlan: asyncPlan(unit, withIntrinsic, voidResult),
+  };
+}
+
+function settleOnlyIrFunction(unit: IrTerminalUnitRecord): IrFunction {
+  const value = asValueId(0);
+  const plan = createIrAsyncPlan({
+    schemaVersion: 1,
+    ownerUnitId: unit.id,
+    kind: "async-function",
+    abi: canonicalPromiseAbi(F64),
+    entry: asAsyncStateId(0),
+    params: [{ value, type: F64 }],
+    values: [{ value, type: F64 }],
+    spills: [],
+    states: [{ id: asAsyncStateId(0), body: [], terminator: { kind: "resolve", value } }],
+    handlers: [],
+    runtimeIntents: ["promise.capability.create", "promise.settle.fulfill"],
+  });
+  return {
+    ...irFunction(unit),
+    params: [{ value, type: F64, name: "value" }],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [],
+        terminator: { kind: "unreachable" },
+      },
+    ],
+    valueCount: 1,
+    asyncPlan: plan,
   };
 }
 
@@ -154,7 +213,7 @@ function prepare(fn: IrFunction) {
 }
 
 describe("#4104 IR async plan runtime consumer", () => {
-  it("closes a semantic plan to exact prepared adapter references without contaminating the plan or manifest", () => {
+  it("closes a semantic plan to the exact frozen capability records without contaminating semantic edges", () => {
     const { unit } = fixture();
     const prepared = prepare(irFunction(unit));
     const fn = prepared.functions[0]!;
@@ -166,10 +225,54 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(fn.asyncRuntime?.adapters.map((adapter) => adapter.target.binding)).toEqual(
       ASYNC_HOST_ADAPTERS.map((adapter) => ({ kind: "import", module: adapter.module, field: adapter.field })),
     );
+    expect(fn.asyncRuntime?.adapters.map((adapter) => adapter.record)).toEqual(prepared.manifest.hostCapabilityRecords);
+    expect(
+      fn.asyncRuntime?.adapters.every(
+        (adapter, index) => adapter.record === prepared.manifest.hostCapabilityRecords[index],
+      ),
+    ).toBe(true);
     expect(verifyIrFunction(fn)).toEqual([]);
 
-    const semanticData = JSON.stringify({ plan: fn.asyncPlan, manifest: prepared.manifest });
+    const semanticData = JSON.stringify({
+      plan: fn.asyncPlan,
+      features: prepared.manifest.features,
+      providers: prepared.manifest.providers,
+      providerComponents: prepared.manifest.providerComponents,
+      hostCapabilities: prepared.manifest.hostCapabilities,
+    });
     for (const adapter of ASYNC_HOST_ADAPTERS) expect(semanticData).not.toContain(adapter.field);
+    expect(JSON.stringify(prepared.manifest.hostCapabilityRecords)).toContain("Promise_resolve");
+  });
+
+  it("attaches the optional undefined record only when the semantic plan requests it", () => {
+    const { unit } = fixture("-undefined");
+    const prepared = prepare(irFunction(unit, false, true));
+    const fn = prepared.functions[0]!;
+
+    expect(prepared.manifest.hostCapabilityRecords).toEqual(ASYNC_HOST_CAPABILITY_RECORDS);
+    expect(fn.asyncRuntime?.adapters.map((adapter) => adapter.record)).toEqual(ASYNC_HOST_CAPABILITY_RECORDS);
+    expect(fn.asyncRuntime?.adapters.at(-1)?.capability).toBe("async.value.undefined");
+    expect(verifyIrFunction(fn)).toEqual([]);
+  });
+
+  it("preserves a valid partial semantic provider closure without widening it to all six imports", () => {
+    const { unit } = fixture("-partial");
+    const prepared = prepare(settleOnlyIrFunction(unit));
+    const fn = prepared.functions[0]!;
+    const expected = ASYNC_HOST_CAPABILITY_RECORDS.filter(
+      (record) =>
+        record.capability === "async.promise.capability.create" || record.capability === "async.promise.settle.fulfill",
+    );
+    expect(prepared.manifest.hostCapabilityRecords).toEqual(expected);
+    expect(fn.asyncRuntime?.adapters.map((adapter) => adapter.record)).toEqual(expected);
+    expect(verifyIrFunction(fn)).toEqual([]);
+
+    const module = createEmptyModule();
+    const ctx = createCodegenContext(module, {} as ts.TypeChecker);
+    materializePreparedAsyncHostAdapters(ctx, prepared.functions);
+    expect(module.imports.map((entry) => `${entry.module}.${entry.name}`)).toEqual(
+      expected.map((record) => `${record.module}.${record.field}`),
+    );
   });
 
   it("keeps semantic plan bodies target-neutral while attaching intrinsic providers to prepared states", () => {
@@ -196,6 +299,7 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(standalone.manifest.policy).toEqual({ target: "standalone", backend: "wasmgc" });
     expect(standalone.manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
     expect(standalone.manifest.hostCapabilities).toEqual([]);
+    expect(standalone.manifest.hostCapabilityRecords).toEqual([]);
     expect(standalone.manifest.providers.every((provider) => provider.implementation.kind === "native-managed")).toBe(
       true,
     );
@@ -213,12 +317,21 @@ describe("#4104 IR async plan runtime consumer", () => {
     const ctx = createCodegenContext(module, {} as ts.TypeChecker, undefined, session);
     const prepared = prepare(irFunction(unit));
 
-    materializePreparedAsyncHostAdapters(ctx, prepared.functions);
+    const reversed = [
+      {
+        ...prepared.functions[0]!,
+        asyncRuntime: Object.freeze({
+          ...prepared.functions[0]!.asyncRuntime!,
+          adapters: Object.freeze([...prepared.functions[0]!.asyncRuntime!.adapters].reverse()),
+        }),
+      },
+    ];
+    materializePreparedAsyncHostAdapters(ctx, reversed);
     const typeCount = module.types.length;
-    materializePreparedAsyncHostAdapters(ctx, prepared.functions);
+    materializePreparedAsyncHostAdapters(ctx, reversed);
 
-    expect(module.imports.map((imported) => `${imported.module}.${imported.name}`).sort()).toEqual(
-      ASYNC_HOST_ADAPTERS.map((adapter) => `${adapter.module}.${adapter.field}`).sort(),
+    expect(module.imports.map((imported) => `${imported.module}.${imported.name}`)).toEqual(
+      ASYNC_HOST_ADAPTERS.map((adapter) => `${adapter.module}.${adapter.field}`),
     );
     expect(module.imports).toHaveLength(6);
     expect(module.types).toHaveLength(typeCount);
@@ -226,7 +339,7 @@ describe("#4104 IR async plan runtime consumer", () => {
     const planned = planProgramAbiCallableImports(ctx);
     expect(planned.size).toBe(6);
     const report = derivePreparedComponentDependencies({
-      module: { functions: prepared.functions },
+      module: { functions: reversed },
       terminalUnitIds: new Set([unit.id]),
       inventory,
       abi: {
@@ -238,13 +351,103 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(
       report.components[0]?.externalCallables.map((dependency) => dependency.structuralReferenceKey).sort(),
     ).toEqual(
-      prepared.functions[0]!.asyncRuntime!.adapters.map((adapter) =>
-        irCallableBindingKey(adapter.target.binding),
-      ).sort(),
+      reversed[0]!.asyncRuntime!.adapters.map((adapter) => irCallableBindingKey(adapter.target.binding)).sort(),
     );
     expect(report.components[0]?.externalCallables.every((dependency) => dependency.programAbiBindingId !== null)).toBe(
       true,
     );
+  });
+
+  it("rejects dropped, duplicated, substituted, cloned, or cross-wired records before allocation", () => {
+    const { unit } = fixture("-poison");
+    const prepared = prepare(irFunction(unit));
+    const fn = prepared.functions[0]!;
+    if (fn.asyncRuntime?.kind !== "host-wasmgc") throw new Error("missing host async runtime");
+    const adapters = fn.asyncRuntime.adapters;
+
+    const reject = (mutated: readonly (typeof adapters)[number][], detail: RegExp): void => {
+      const module = createEmptyModule();
+      const ctx = createCodegenContext(module, {} as ts.TypeChecker);
+      const typeCount = module.types.length;
+      const malformed: IrFunction = {
+        ...fn,
+        asyncRuntime: Object.freeze({ ...fn.asyncRuntime!, adapters: Object.freeze(mutated) }),
+      };
+      expect(() => materializePreparedAsyncHostAdapters(ctx, [malformed])).toThrow(detail);
+      expect(module.imports).toEqual([]);
+      expect(module.types).toHaveLength(typeCount);
+    };
+
+    const first = adapters[0]!;
+    const second = adapters[1]!;
+    reject(adapters.slice(1), /frozen adapter records/);
+    reject([first, first, ...adapters.slice(2)], /repeats adapter/);
+    reject([{ ...first, record: second.record }, ...adapters.slice(1)], /carries record/);
+    reject([{ ...first, capability: second.capability }, ...adapters.slice(1)], /carries record/);
+    reject([{ ...first, target: second.target }, ...adapters.slice(1)], /frozen import projection/);
+    reject(
+      [
+        {
+          ...first,
+          record: {
+            ...first.record,
+            params: [...first.record.params],
+            results: [...first.record.results],
+          } as AsyncHostAdapter,
+        },
+        ...adapters.slice(1),
+      ],
+      /not the canonical catalog record/,
+    );
+  });
+
+  it("keeps import order and Program-ABI dependencies stable under function and attachment reordering", () => {
+    const { inventory, units } = pairFixture();
+    const prepared = prepareIrRuntimeManifest({
+      functions: units.map((unit) => irFunction(unit)),
+      sourceFile: "/repo/async-plan-consumer-pair.ts",
+      policy: { target: "host", backend: "wasmgc" },
+    });
+    if (!prepared) throw new Error("missing paired async runtime manifest");
+    const functions = [...prepared.functions].reverse().map((fn) => {
+      if (fn.asyncRuntime?.kind !== "host-wasmgc") throw new Error("missing paired host runtime");
+      return {
+        ...fn,
+        asyncRuntime: Object.freeze({
+          ...fn.asyncRuntime,
+          adapters: Object.freeze([...fn.asyncRuntime.adapters].reverse()),
+        }),
+      };
+    });
+    const module = createEmptyModule();
+    const session = new ProgramAbiSession(inventory, module);
+    const ctx = createCodegenContext(module, {} as ts.TypeChecker, undefined, session);
+
+    materializePreparedAsyncHostAdapters(ctx, functions);
+    planProgramAbiCallableImports(ctx);
+    expect(module.imports.map((entry) => `${entry.module}.${entry.name}`)).toEqual(
+      ASYNC_HOST_ADAPTERS.map((record) => `${record.module}.${record.field}`),
+    );
+
+    const report = derivePreparedComponentDependencies({
+      module: { functions },
+      terminalUnitIds: new Set(units.map((unit) => unit.id)),
+      inventory,
+      abi: {
+        get: (id) => session.getDraft(id),
+        bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
+      },
+    });
+    const expectedDependencies = ASYNC_HOST_ADAPTERS.map((record) =>
+      irCallableBindingKey({ kind: "import", module: record.module, field: record.field }),
+    ).sort();
+    expect(report.components).toHaveLength(2);
+    for (const component of report.components) {
+      expect(component.status).toBe("complete");
+      expect(component.externalCallables.map((entry) => entry.structuralReferenceKey).sort()).toEqual(
+        expectedDependencies,
+      );
+    }
   });
 
   it("scans semantic async states instead of the discarded pre-transform await block", () => {
