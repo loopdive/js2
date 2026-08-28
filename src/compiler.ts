@@ -819,6 +819,20 @@ function buildCodegenOptions(
         `target: "${options.target}" does not use that cell bridge.`,
     );
   }
+  if (options.standaloneGlobalThisImport !== undefined) {
+    if (options.target !== "standalone") {
+      throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
+    }
+    if (!options.standaloneGlobalThisImport.module || !options.standaloneGlobalThisImport.name) {
+      throw new Error("Compile option standaloneGlobalThisImport requires non-empty module and name fields.");
+    }
+    if (!options.link?.includes(options.standaloneGlobalThisImport.module)) {
+      throw new Error("Compile option standaloneGlobalThisImport requires its provider module to be listed in link.");
+    }
+    if (options.standaloneGlobalThisImport.call !== undefined && !options.standaloneGlobalThisImport.call) {
+      throw new Error("Compile option standaloneGlobalThisImport.call must be non-empty when provided.");
+    }
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
@@ -837,6 +851,7 @@ function buildCodegenOptions(
     link: [...new Set(options.link ?? [])],
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
+    standaloneGlobalThisImport: options.standaloneGlobalThisImport,
     directEval: options.directEval,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,

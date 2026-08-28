@@ -251,10 +251,10 @@ export function tryDynamicReceiverRuntimeDispatchReads(
   // length-tracking-N's `for (ta of tas) … ta.byteLength`). The compile-time-typeIdx
   // `$__ta_view` accessor arm can't fire (the local is externref), and the generic
   // dynamic reader THROWS on `.byteLength`. Runtime `ref.test` dispatch instead.
-  // Gated to a dynamic receiver + at least one registered `$__ta_view` type
+  // Gated to a dynamic receiver + whole-module dynamic/static view demand
   // (byte-inert otherwise); a static ArrayBuffer/DataView/TA `.byteLength` keeps its
   // own concrete arm below (its receiver type is not `any`/union).
-  if (propName === "byteLength" && noJsHost(ctx) && ctx.taDynViewTypeIdx >= 0) {
+  if (propName === "byteLength" && noJsHost(ctx) && (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView)) {
     const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
     if (isDynamicReceiver) {
       const r = emitTaViewDynamicByteLength(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
@@ -781,6 +781,19 @@ export function tryBufferViewAttributeReads(
     if (tvIdx !== undefined) {
       const r = emitTaViewAccessor(ctx, fctx, tvIdx, propName, expr.expression, (e, h) =>
         compileExpression(ctx, fctx, e, h),
+      );
+      if (r) return r;
+    }
+    if (
+      (propName === "byteLength" || propName === "BYTES_PER_ELEMENT") &&
+      noJsHost(ctx) &&
+      (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView)
+    ) {
+      const r = emitTaViewDynamicByteLength(
+        ctx,
+        fctx,
+        () => compileExpression(ctx, fctx, expr.expression),
+        propName === "BYTES_PER_ELEMENT",
       );
       if (r) return r;
     }
@@ -2483,77 +2496,110 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
     );
     addStringConstantGlobal(ctx, "length");
   }
+  // A configurable function `length` may have been deleted and recreated as
+  // an ordinary closure-bag property. On a metadata miss, the closure arm must
+  // consult that bag before falling back to Function.prototype.length (0).
+  // The dynamic-key path already routes through this helper; keep the direct
+  // `fn.length` spelling observably identical.
+  if (closureRootIdx !== undefined) {
+    ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
   const metaLengthToI32 = wantMeta ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
+  const ownLengthToI32 =
+    closureRootIdx !== undefined ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
   flushLateImportShifts(ctx, fctx);
 
   const lenFn = ctx.funcMap.get("__extern_length");
   const bfnGetMetaFn = ctx.funcMap.get("__builtinfn_get_meta");
+  const externGetFn = ctx.funcMap.get("__extern_get");
+  const isUndefinedFn = ctx.funcMap.get("__extern_is_undefined");
   const genericLength = (recvExternLocal: number): Instr[] =>
     lenFn !== undefined
       ? [{ op: "local.get", index: recvExternLocal }, { op: "call", funcIdx: lenFn }, { op: "i32.trunc_sat_f64_s" }]
       : [{ op: "i32.const", value: 0 }];
   const guardedLength = (recvExternLocal: number): Instr[] => {
+    let legacyLength: Instr[];
     if (bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
-      return genericLength(recvExternLocal);
+      legacyLength = genericLength(recvExternLocal);
+    } else {
+      const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
+      const ownLocal = allocLocal(fctx, `__fn_len_own_${fctx.locals.length}`, { kind: "externref" });
+      const closureOwnLength =
+        externGetFn !== undefined && isUndefinedFn !== undefined && ownLengthToI32 !== undefined
+          ? [
+              { op: "local.get", index: recvExternLocal } as Instr,
+              ...stringConstantExternrefInstrs(ctx, "length"),
+              { op: "call", funcIdx: externGetFn } as Instr,
+              { op: "local.tee", index: ownLocal } as Instr,
+              { op: "call", funcIdx: isUndefinedFn } as Instr,
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: 0 }],
+                else: [{ op: "local.get", index: ownLocal }, ...ownLengthToI32],
+              } as Instr,
+            ]
+          : ([{ op: "i32.const", value: 0 }] satisfies Instr[]);
+      // (#2175 S3b-3, defect B) The metadata consult is asked FIRST, for ANY
+      // receiver, instead of only for a closure-root subtype.
+      //
+      // WHY. `__builtinfn_get_meta` answers `length` for more shapes than
+      // closures: `fillTaCtorGetMetaArm` (ta-ctor-meta.ts) splices a `$__ta_ctor`
+      // arm returning 3 per §23.2.5.1. Gating the consult on `ref.test
+      // <closureRoot>` made that arm unreachable from this path, so a reified
+      // TypedArray constructor fell through to `__extern_length`, which has no
+      // notion of a ctor and answered **0**. Measured on `origin/main` @
+      // `9e17d34f3`, standalone: `Int8Array.length` → 0, while `Int8Array["length"]`
+      // → 3 and `gOPD(Int8Array,"length").value` → 3 — i.e. only the
+      // property-access lowering was wrong, which is what the nine
+      // `built-ins/TypedArrayConstructors/<View>/length.js` files assert.
+      //
+      // WHY NOT a `ref.test $__ta_ctor` arm alongside the closure one: this
+      // function runs during BODY compilation, and `$__ta_ctor` is registered
+      // lazily when a TA constructor is first reified. Function compilation order
+      // is not source order, so `ctx.taCtorTypeIdx` can still be unset here even
+      // for a program that does reify one — the same ordering trap that made the
+      // V2-S3b-1 seeder silently skip RegExp. Asking the meta native has no such
+      // dependency: it is a call, resolved at finalize.
+      //
+      // Legacy behaviour is preserved exactly on the miss path: a receiver with no
+      // metadata answers `0` if it is a closure (a plain user closure's arity is
+      // not statically tracked here — the #2580 Cluster-A value) and otherwise
+      // falls to `__extern_length`, which is what each did before.
+      legacyLength = [
+        { op: "local.get", index: recvExternLocal },
+        ...stringConstantExternrefInstrs(ctx, "length"),
+        { op: "call", funcIdx: bfnGetMetaFn },
+        { op: "local.tee", index: metaLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          // Miss path, byte-for-byte the previous semantics: a CLOSURE with no
+          // metadata answers 0 (a plain user closure's arity is not tracked here —
+          // the #2580 Cluster-A value); anything else falls to `__extern_length`.
+          // With no closure root in the module there is no closure to test, so the
+          // generic fallback stands alone.
+          then:
+            closureRootIdx === undefined
+              ? genericLength(recvExternLocal)
+              : [
+                  { op: "local.get", index: recvExternLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: closureRootIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: closureOwnLength,
+                    else: genericLength(recvExternLocal),
+                  },
+                ],
+          else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
+        },
+      ];
     }
-    const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
-    // (#2175 S3b-3, defect B) The metadata consult is asked FIRST, for ANY
-    // receiver, instead of only for a closure-root subtype.
-    //
-    // WHY. `__builtinfn_get_meta` answers `length` for more shapes than
-    // closures: `fillTaCtorGetMetaArm` (ta-ctor-meta.ts) splices a `$__ta_ctor`
-    // arm returning 3 per §23.2.5.1. Gating the consult on `ref.test
-    // <closureRoot>` made that arm unreachable from this path, so a reified
-    // TypedArray constructor fell through to `__extern_length`, which has no
-    // notion of a ctor and answered **0**. Measured on `origin/main` @
-    // `9e17d34f3`, standalone: `Int8Array.length` → 0, while `Int8Array["length"]`
-    // → 3 and `gOPD(Int8Array,"length").value` → 3 — i.e. only the
-    // property-access lowering was wrong, which is what the nine
-    // `built-ins/TypedArrayConstructors/<View>/length.js` files assert.
-    //
-    // WHY NOT a `ref.test $__ta_ctor` arm alongside the closure one: this
-    // function runs during BODY compilation, and `$__ta_ctor` is registered
-    // lazily when a TA constructor is first reified. Function compilation order
-    // is not source order, so `ctx.taCtorTypeIdx` can still be unset here even
-    // for a program that does reify one — the same ordering trap that made the
-    // V2-S3b-1 seeder silently skip RegExp. Asking the meta native has no such
-    // dependency: it is a call, resolved at finalize.
-    //
-    // Legacy behaviour is preserved exactly on the miss path: a receiver with no
-    // metadata answers `0` if it is a closure (a plain user closure's arity is
-    // not statically tracked here — the #2580 Cluster-A value) and otherwise
-    // falls to `__extern_length`, which is what each did before.
-    return [
-      { op: "local.get", index: recvExternLocal },
-      ...stringConstantExternrefInstrs(ctx, "length"),
-      { op: "call", funcIdx: bfnGetMetaFn },
-      { op: "local.tee", index: metaLocal },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        // Miss path, byte-for-byte the previous semantics: a CLOSURE with no
-        // metadata answers 0 (a plain user closure's arity is not tracked here —
-        // the #2580 Cluster-A value); anything else falls to `__extern_length`.
-        // With no closure root in the module there is no closure to test, so the
-        // generic fallback stands alone.
-        then:
-          closureRootIdx === undefined
-            ? genericLength(recvExternLocal)
-            : [
-                { op: "local.get", index: recvExternLocal },
-                { op: "any.convert_extern" },
-                { op: "ref.test", typeIdx: closureRootIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: [{ op: "i32.const", value: 0 }],
-                  else: genericLength(recvExternLocal),
-                },
-              ],
-        else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
-      },
-    ];
+    return legacyLength;
   };
 
   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {

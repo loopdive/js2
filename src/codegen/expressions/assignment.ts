@@ -105,6 +105,7 @@ import {
   emitThrowTypeError,
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
+  noJsHost,
   resolvePrivateThisFieldCarrier,
   updateLocalType,
   widenLocalToNullable,
@@ -5104,19 +5105,16 @@ function compileElementAssignment(
 
   // Non-ref types (externref, f64, i32): fallback to __extern_set(obj, key, val)
   if (arrType.kind !== "ref" && arrType.kind !== "ref_null") {
-    // (#3057) A boxed `$__ta_dyn_view` (dynamic `new <ctorVar>(rab)`) reaches here as
-    // an externref receiver with a numeric index. Its element kind is a RUNTIME
-    // field, so `__extern_set` can't byte-encode it (writes silently no-op'd —
-    // #3054 D+E banked this). Route through the runtime-kind byte codec, which
-    // `ref.test $__ta_dyn_view` FIRST and falls through to the EXACT `__extern_set`
-    // path (via compileExternSetFallback semantics) for any non-dyn-view receiver,
-    // so plain-array `any[i]=v` is unaffected. Gated on the module pre-scan
-    // (`moduleUsesDynTaView`) so a helper compiled before the construct still routes
-    // correctly; byte-inert when the module has no dynamic TA view. Standalone lane.
+    // (#3057) A boxed static `$__ta_view` or dynamic `$__ta_dyn_view` reaches
+    // here as an externref receiver with a numeric index. Its element kind is a
+    // runtime field, so `__extern_set` cannot byte-encode it. Route through the
+    // runtime-kind codec, then fall through to the exact `__extern_set` path for
+    // every other receiver. Whole-module demand bits keep an earlier helper from
+    // missing a view type registered by a later constructor. Host-free lane.
     if (
       arrType.kind === "externref" &&
-      ctx.standalone &&
-      ctx.moduleUsesDynTaView &&
+      noJsHost(ctx) &&
+      (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) &&
       isNumericIndexExpression(ctx, target.argumentExpression, fctx)
     ) {
       const dynR = emitTaDynViewElementSet(ctx, fctx, target.argumentExpression, value, (e, h) =>

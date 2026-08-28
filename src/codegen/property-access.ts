@@ -4980,6 +4980,7 @@ export function compileElementAccess(
     // `moduleUsesDynTaView` deferral are documented in string-element-read.ts.
     if (
       !ctx.moduleUsesDynTaView &&
+      !ctx.moduleUsesStaticTaView &&
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
       receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
     ) {
@@ -5579,7 +5580,7 @@ export function compileElementAccessBody(
     // wasi and host mode keep the existing `__extern_get` path. A non-numeric
     // (string/symbol/computed) key always stays on `__extern_get`.
     if (ctx.standalone && isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
-      // (#3057) A boxed `$__ta_dyn_view` (dynamic `new <ctorVar>(rab)`) reaches this
+      // (#3057) A boxed static `$__ta_view` or `$__ta_dyn_view` reaches this
       // arm as an `any`/externref receiver with a numeric index. Its element kind is
       // a RUNTIME field, so `__extern_get_idx` can't byte-decode it (reads returned
       // 0 — #3054 D+E banked this). Route through the runtime-kind byte codec, which
@@ -5589,7 +5590,7 @@ export function compileElementAccessBody(
       // module pre-scan (`moduleUsesDynTaView`) so a helper compiled before the
       // construct still routes correctly; byte-inert when the module has no
       // dynamic TA view.
-      if (ctx.moduleUsesDynTaView) {
+      if (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) {
         const dynR = emitTaDynViewElementGet(ctx, fctx, expr.argumentExpression, (e, h) =>
           compileExpression(ctx, fctx, e, h),
         );

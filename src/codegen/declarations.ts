@@ -44,7 +44,12 @@ import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // 
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
-import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
+import {
+  asyncFnNeedsHostDrive,
+  asyncGenDrivableUnderCarrier,
+  asyncGenStem,
+  emitAsyncFrameStateMachine,
+} from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
@@ -91,7 +96,12 @@ import {
   unwrapGeneratorYieldType,
 } from "./index.js";
 import { transferredArrayLikeResultNeedsExternref } from "./statements/variables.js";
-import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
+import {
+  ensureAsyncDriveRuntime,
+  ensureNativePromiseBoundaryBridge,
+  getOrRegisterPromiseType,
+  isStandalonePromiseActive,
+} from "./async-scheduler.js";
 import {
   ensureNativeDynamicBoundaryTag,
   prepareStandaloneNativePromiseUndefinedBoundary,
@@ -114,7 +124,7 @@ import {
   sourceNeedsGeneratorHostImports,
 } from "./generators-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
-import { addImport, addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
+import { addImport, addStringConstantGlobal, localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -127,6 +137,7 @@ import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
 import { compileExpression, compileStatement } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
+import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-planning.js";
@@ -1647,6 +1658,37 @@ function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Ex
   );
 }
 
+function inferNativeTaViewFunctionResult(ctx: CodegenContext, declaration: ts.FunctionDeclaration): ValType | null {
+  if (!declaration.body) return null;
+  let result: ValType | null = null;
+  let invalid = false;
+  const visit = (node: ts.Node): void => {
+    if (invalid) return;
+    if (node !== declaration.body && ts.isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node)) {
+      const inferred = inferNativeTaViewConstructType(ctx, node.expression);
+      if (inferred === null) {
+        invalid = true;
+        return;
+      }
+      if (result === null) {
+        result = inferred;
+      } else if (
+        result.kind !== inferred.kind ||
+        ((result.kind === "ref" || result.kind === "ref_null") &&
+          (inferred.kind === "ref" || inferred.kind === "ref_null") &&
+          result.typeIdx !== inferred.typeIdx)
+      ) {
+        invalid = true;
+      }
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(declaration.body);
+  return invalid ? null : result;
+}
+
 export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile, isEntryFile = true): void {
   // (#4754) Snapshot once for this declaration collector. The exact token `0`
   // restores #4931's unconditional module-Proxy widening for same-tree A/B.
@@ -2031,6 +2073,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const r = ctx.checker.getReturnTypeOfSignature(sig);
         // For async functions, unwrap Promise<T> to get T for Wasm return type
         const rUnwrapped = isAsync ? unwrapPromiseType(r, ctx.checker) : r;
+        const nativeTaViewReturn = !isAsync ? inferNativeTaViewFunctionResult(ctx, stmt) : null;
         // #1121: Override TS's implicit-any return with our inferred numeric
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
@@ -2040,7 +2083,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const inferredNumericRet = withScopedReturn
           ? null
           : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
-        if (inferredNumericRet) {
+        if (nativeTaViewReturn !== null) {
+          results = [nativeTaViewReturn];
+        } else if (inferredNumericRet) {
           results = [inferredNumericRet];
         } else if (withScopedReturn || preInitVarReturn) {
           // See `functionReturnsThroughWithScope`: the checker resolved the
@@ -2995,6 +3040,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       while (ts.isParenthesizedExpression(expr) || ts.isVoidExpression(expr)) {
         expr = expr.expression;
       }
+      // A bare `await binding` is itself observable module evaluation work even
+      // when evaluating the operand runs no user code. Historically this total
+      // expression classifier was synchronous; the graph-level async frame now
+      // owns it.
+      if (ts.isAwaitExpression(expr)) {
+        ctx.moduleInitStatements.push(stmt);
+        continue;
+      }
       if (ts.isIdentifier(expr) && topLevelSwitchLexicalNames.has(expr.text) && !topLevelBoundNames.has(expr.text)) {
         ctx.moduleInitStatements.push(stmt);
         continue;
@@ -3449,6 +3502,268 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  *   pure waste.
  */
 export type ModuleInitMode = "full" | "discover" | "skip" | "prepared";
+
+/** Stable Wasm exports consumed by v8x's source-module evaluation bridge. */
+export const GRAPH_ASYNC_EXPORT = "__v8x_graph_async";
+export const GRAPH_EVAL_STATE_EXPORT = "__v8x_graph_eval_state";
+export const GRAPH_EVAL_RESULT_EXPORT = "__v8x_graph_eval_result";
+export const GRAPH_EVAL_PREPARE_RESULT_EXPORT = "__v8x_graph_eval_prepare_result";
+export const GRAPH_EVAL_DRAIN_EXPORT = "__v8x_graph_eval_drain";
+const GRAPH_VALUE_PREPARE_FUNCTION = "__v8x_graph_value_prepare";
+
+/**
+ * Whether a module-initializer population contains an await in its own lexical
+ * scope. Nested functions have their own async lifecycle and therefore do not
+ * make the module graph asynchronous.
+ */
+export function moduleInitHasTopLevelAwait(statements: readonly ts.Statement[]): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    if (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined)) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  for (const statement of statements) {
+    visit(statement);
+    if (found) break;
+  }
+  return found;
+}
+
+function graphAsyncSynthetic(statements: readonly ts.Statement[]): ts.FunctionDeclaration {
+  return ts.factory.createFunctionDeclaration(
+    [ts.factory.createModifier(ts.SyntaxKind.AsyncKeyword)],
+    undefined,
+    "__v8x_graph_eval_body",
+    undefined,
+    [],
+    undefined,
+    ts.factory.createBlock([...statements], true),
+  );
+}
+
+function addGraphExport(ctx: CodegenContext, name: string, results: ValType[], body: Instr[]): FuncHandle {
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx: addFuncType(ctx, [], results, `${name}_type`),
+    locals: [],
+    body,
+    exported: true,
+  });
+  ctx.funcMap.set(name, funcIdx);
+  ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+  return funcIdx;
+}
+
+interface AsyncGraphModuleInit {
+  readonly fctx: FunctionContext;
+}
+
+/**
+ * Compile a graph-wide module initializer as one native async frame while
+ * preserving the public `__module_init: () -> ()` start ABI.
+ *
+ * The returned wrapper starts exactly once and retains the result `$Promise`
+ * in a module global. Four async-only exports let the embedding runtime drain
+ * compiled microtasks and observe settlement without attempting to inspect a
+ * WasmGC Promise struct directly.
+ */
+function compileAsyncGraphModuleInit(
+  ctx: CodegenContext,
+  statements: readonly ts.Statement[],
+  emitPrelude: (fctx: FunctionContext) => void,
+): AsyncGraphModuleInit {
+  const runtime = ensureAsyncDriveRuntime(ctx);
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+
+  // State 0 may be a loop back-edge in the general async CFG. Keep declaration
+  // instantiation and static initialization exactly-once independently of that
+  // control-flow shape.
+  const preludeDoneLocalGlobalIdx = ctx.mod.globals.length;
+  const preludeDoneGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__v8x_graph_prelude_done",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: 0 }],
+  });
+
+  const decl = graphAsyncSynthetic(statements);
+  const plan = analyzeAsyncBody(ctx, decl);
+  const startFuncIdx = mintDefinedFunc(ctx);
+  const startFunc: WasmFunction = {
+    name: "__v8x_graph_eval_start",
+    typeIdx: addFuncType(ctx, [], [{ kind: "externref" }], "__v8x_graph_eval_start_type"),
+    locals: [],
+    body: [{ op: "unreachable" }],
+    exported: false,
+  };
+  pushDefinedFunc(ctx, startFuncIdx, startFunc);
+  ctx.funcMap.set(startFunc.name, startFuncIdx);
+
+  const startFctx: FunctionContext = {
+    name: startFunc.name,
+    params: [],
+    locals: [],
+    localMap: new Map(),
+    returnType: { kind: "externref" },
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  emitAsyncFrameStateMachine(ctx, startFctx, decl, plan, false, {
+    // ES module evaluation always resumes an await on a later microtask, even
+    // when its operand is already fulfilled or is a plain value.
+    alwaysAsyncAwait: true,
+    moduleInit: true,
+    entryPrelude: (resumeFctx) => {
+      const savedBody = resumeFctx.body;
+      const preludeBody: Instr[] = [
+        { op: "i32.const", value: 1 },
+        { op: "global.set", index: preludeDoneGlobalIdx },
+      ];
+      ctx.liveBodies.add(preludeBody);
+      resumeFctx.body = preludeBody;
+      try {
+        emitPrelude(resumeFctx);
+      } finally {
+        resumeFctx.body = savedBody;
+        ctx.liveBodies.delete(preludeBody);
+      }
+      const currentPreludeDoneGlobalIdx = ctx.numImportGlobals + preludeDoneLocalGlobalIdx;
+      savedBody.push(
+        { op: "global.get", index: currentPreludeDoneGlobalIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: preludeBody,
+        },
+      );
+    },
+  });
+  startFunc.locals = startFctx.locals;
+  startFunc.body = startFctx.body;
+
+  // These globals are allocated after the async body has registered every
+  // helper/import it needs, so their absolute indices are final.
+  const resultGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__v8x_graph_eval_promise",
+    type: { kind: "externref" },
+    mutable: true,
+    init: [{ op: "ref.null.extern" }],
+  });
+  const startedGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__v8x_graph_eval_started",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: 0 }],
+  });
+
+  addGraphExport(ctx, GRAPH_ASYNC_EXPORT, [{ kind: "i32" }], [{ op: "i32.const", value: 1 }]);
+  addGraphExport(
+    ctx,
+    GRAPH_EVAL_STATE_EXPORT,
+    [{ kind: "i32" }],
+    [
+      { op: "global.get", index: resultGlobalIdx },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 0 }],
+        else: [
+          { op: "global.get", index: resultGlobalIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: promiseTypeIdx },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+        ],
+      },
+    ],
+  );
+  addGraphExport(
+    ctx,
+    GRAPH_EVAL_RESULT_EXPORT,
+    [{ kind: "externref" }],
+    [
+      { op: "global.get", index: resultGlobalIdx },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "ref.null.extern" }],
+        else: [
+          { op: "global.get", index: resultGlobalIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: promiseTypeIdx },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+        ],
+      },
+    ],
+  );
+  // A host can inspect the raw result through GRAPH_EVAL_RESULT_EXPORT, but a
+  // WasmGC value that leaves this instance as externref and then re-enters a
+  // generic `any` parameter may lose the concrete RTT needed by operations on
+  // objects such as Error. When the embedder has injected its graph-value
+  // serializer, expose a fused sibling that feeds the settled Promise result
+  // to that serializer without crossing the host boundary first.
+  const prepareResultFuncIdx = ctx.funcMap.get(GRAPH_VALUE_PREPARE_FUNCTION);
+  if (prepareResultFuncIdx !== undefined) {
+    addGraphExport(
+      ctx,
+      GRAPH_EVAL_PREPARE_RESULT_EXPORT,
+      [{ kind: "f64" }],
+      [
+        { op: "global.get", index: resultGlobalIdx },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [{ op: "ref.null.extern" }],
+          else: [
+            { op: "global.get", index: resultGlobalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: promiseTypeIdx },
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          ],
+        },
+        { op: "call", funcIdx: prepareResultFuncIdx },
+      ],
+    );
+  }
+  addGraphExport(ctx, GRAPH_EVAL_DRAIN_EXPORT, [], [{ op: "call", funcIdx: runtime.drainFuncIdx }]);
+
+  const fctx: FunctionContext = {
+    name: "__module_init",
+    params: [],
+    locals: [],
+    localMap: new Map(),
+    returnType: null,
+    body: [
+      { op: "global.get", index: startedGlobalIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index: startedGlobalIdx },
+      { op: "call", funcIdx: startFuncIdx },
+      { op: "global.set", index: resultGlobalIdx },
+    ],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  return { fctx };
+}
 
 /** Prepare-before-direct ownership for the exact source module initializer. */
 export interface ModuleInitBodyCompileRouting {
@@ -4076,9 +4391,16 @@ export function compileDeclarations(
   const hasLiveFuncSeeds = (ctx.liveFuncBindingGlobals?.size ?? 0) > 0;
   const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
   const hasStaticInits = ctx.staticInitExprs.length > 0;
+  const hasAsyncGraphInit =
+    ctx.standalone === true &&
+    ctx.deferTopLevelInit === true &&
+    !ctx.wasi &&
+    moduleInitHasTopLevelAwait(ctx.moduleInitStatements);
   let compiledInitFctx: FunctionContext | null = null;
   const skipModuleInitBody =
-    (moduleInitMode === "full" || moduleInitMode === "prepared") && moduleInitBodyRouting?.skipBody === true;
+    !hasAsyncGraphInit &&
+    (moduleInitMode === "full" || moduleInitMode === "prepared") &&
+    moduleInitBodyRouting?.skipBody === true;
   if (skipModuleInitBody) {
     const preparedRoute = moduleInitMode === "prepared";
     if (
@@ -4157,7 +4479,7 @@ export function compileDeclarations(
   // them after pass 2 without truncating pass 1's range.
   let pass1DiagnosticMark = 0;
 
-  function compileModuleInitBody(): FunctionContext {
+  function compileModuleInitBody(targetFctx?: FunctionContext, includeModuleStatements = true): FunctionContext {
     ctx.irBodyRouteAuditSession?.recordRoot("compileModuleInitBody", "__module_init", sourceFile);
     if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
       throw new Error("injected direct module-init body poison");
@@ -4174,7 +4496,7 @@ export function compileDeclarations(
     ctx.capturedGlobalsWidened.clear();
     ctx.capturedBoxGlobals?.clear();
     ctx.capturedGlobalsOwner?.clear();
-    const initFctx: FunctionContext = {
+    const initFctx: FunctionContext = targetFctx ?? {
       name: "__module_init",
       params: [],
       locals: [],
@@ -4187,6 +4509,7 @@ export function compileDeclarations(
       labelMap: new Map(),
       savedBodies: [],
     };
+    const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
 
     // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
@@ -4291,11 +4614,13 @@ export function compileDeclarations(
     }
 
     // Compile module-level variable init statements
-    for (const stmt of ctx.moduleInitStatements) {
-      compileStatement(ctx, initFctx, stmt);
+    if (includeModuleStatements) {
+      for (const stmt of ctx.moduleInitStatements) {
+        compileStatement(ctx, initFctx, stmt);
+      }
     }
 
-    ctx.currentFunc = null;
+    ctx.currentFunc = previousFunc;
     return initFctx;
   }
 
@@ -4451,7 +4776,12 @@ export function compileDeclarations(
     // pre-pass-1 value so this recompile does not treat pass 1's own
     // defineProperty/freeze effects as pre-existing (see snapshot above).
     restorePropOrderState();
-    compiledInitFctx = profilePhase("module-init-pass2", () => compileModuleInitBody());
+    compiledInitFctx = profilePhase("module-init-pass2", () => {
+      if (!hasAsyncGraphInit) return compileModuleInitBody();
+      return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
+        compileModuleInitBody(resumeFctx, false);
+      }).fctx;
+    });
     ctx.pendingInitBody = compiledInitFctx.body;
     dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
   }

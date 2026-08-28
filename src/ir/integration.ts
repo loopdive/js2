@@ -5588,7 +5588,7 @@ function makeResolver(
     // Lazily registers (or retrieves) the standalone `$Promise` WasmGC
     // struct type. The struct layout matches the canonical registration
     // in `src/codegen/async-scheduler.ts`:
-    //   { state: i32, value: externref, callbacks: externref }
+    //   { state: i32, value: externref, callbacks: externref, $bag: externref }
     //
     // Lower's `async.return` / `async.throw` / `await` arms call this
     // to construct or inspect Promise values without going through the

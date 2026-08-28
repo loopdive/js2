@@ -99,7 +99,12 @@ export const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
   // `this` and expects exactly that.
   GeneratorPrototype: BUILTIN_BRAND_BASE + 44,
 
-  // Next free slot: BUILTIN_BRAND_BASE + 45 (append only).
+  // AggregateError is a distinct NativeError constructor/prototype pair. Deno
+  // snapshots it through a computed global lookup, so aliasing Error's brand
+  // would collapse observable prototype identity.
+  AggregateError: BUILTIN_BRAND_BASE + 45,
+
+  // Next free slot: BUILTIN_BRAND_BASE + 46 (append only).
 };
 
 /**
@@ -107,7 +112,7 @@ export const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
  * sizes its per-brand companion table off this. Keep in lockstep with the
  * "next free slot" comment above (append-only contract).
  */
-export const BUILTIN_BRAND_COUNT = 45;
+export const BUILTIN_BRAND_COUNT = 46;
 
 /**
  * (#4176) Static brand OFFSET (0-based slot in the brand band) for a builtin

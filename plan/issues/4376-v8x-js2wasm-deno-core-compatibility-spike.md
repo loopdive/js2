@@ -17,11 +17,80 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-08-28: PR #5148 checkpoint (Deno runtime integration — linked
+  # shared-realm/callable boundaries, runtime-eval + exception transport,
+  # Promise/reflection/buffer-view/finalizer behavior). Broad, measured
+  # growth across codegen accepted for the checkpoint; consolidation is
+  # follow-up work under this issue.
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/declarations.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/async-scheduler.ts
+  - src/interp/emitter.ts
+  - src/interp/loop.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/index.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/context/types.ts
+  - src/codegen/vec-overlay.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/dyn-read.ts
+  - src/codegen/promise-combinators.ts
+  - src/compiler.ts
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/proto-index-store.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions.ts
+  - src/codegen/property-access.ts
 func-budget-allow:
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement
+  # 2026-08-28: PR #5148 checkpoint (same rationale as the loc grants above).
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::generateModule
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/vec-props.ts::fillVecPropHelpers
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/object-runtime.ts::fillApplyClosure
+  - src/codegen/object-runtime.ts::fillExternSetVecArms
+  - src/codegen/property-access-dispatch.ts::tryBufferViewAttributeReads
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/interp/loop.ts::run
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/property-access.ts::compileElementAccess
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
+  - src/codegen/class-bodies.ts::compileSuperCall
+oracle-ratchet-allow:
+  # 2026-08-28: PR #5148 checkpoint — new raw-checker queries in DataView
+  # lowering and source-scan predicates; migrate to ctx.oracle in follow-up.
+  - src/codegen/dataview-native.ts
+  - src/codegen/index.ts
+  - src/codegen/source-scan-predicates.ts
 files:
   - .prettierignore
   - examples/v8x-js2wasm-spike/README.md

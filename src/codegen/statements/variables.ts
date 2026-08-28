@@ -37,10 +37,16 @@ import {
   getOrRegisterSubviewType,
   getOrRegisterTaViewType,
   getOrRegisterVecType,
+  isTaViewTypeIdx,
 } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
+import {
+  inferNativeTaViewCallResultType,
+  inferNativeTaViewConstructType,
+  nativeBufferBuiltinOf,
+} from "../dataview-native.js";
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
@@ -1062,6 +1068,13 @@ function inferSubarraySubviewType(
   }
   receiverType ??= resolveWasmType(ctx, ctx.checker.getTypeAtLocation(receiver));
   if (receiverType.kind !== "ref" && receiverType.kind !== "ref_null") return null;
+  // A subarray of an ArrayBuffer-backed `$__ta_view` remains the SAME carrier
+  // family: it keeps the shared buffer ref and accumulates a BYTE offset. Do not
+  // allocate the ordinary element-array `$__subview` slot here — that would
+  // coerce the emitted `$__ta_view` result to null at the declaration store.
+  if (isTaViewTypeIdx(ctx, receiverType.typeIdx)) {
+    return { kind: "ref_null", typeIdx: receiverType.typeIdx };
+  }
   const recvName = ctx.typeIdxToStructName.get(receiverType.typeIdx);
   const elemKind = recvName?.replace(/^__vec_/, "").replace(/^__subview_/, "");
   if (elemKind === undefined || elemKind === recvName) return null;
@@ -1096,6 +1109,8 @@ const TA_VIEW_CTOR_NAMES = new Set([
  * byteOffset field populated), so 1..3 args are accepted here.
  */
 export function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undefined): ValType | null {
+  const nativeViewType = inferNativeTaViewConstructType(ctx, initializer);
+  if (nativeViewType) return nativeViewType;
   if (!initializer) return null;
   const unwrapped = stripInferenceWrapper(initializer);
   if (!ts.isNewExpression(unwrapped) || !ts.isIdentifier(unwrapped.expression)) return null;
@@ -1850,6 +1865,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const subarraySubviewType = inferSubarraySubviewType(ctx, fctx, decl.initializer);
     // (#3054 B1) `new <TA>(buffer)` → shared-backing `$__ta_view` local type.
     const taViewType = inferTaViewType(ctx, decl.initializer);
+    const taViewCallResultType = inferNativeTaViewCallResultType(ctx, decl.initializer);
     // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
     // slots so dynamic MOP/result-object reads do not become struct.get on the
     // checker-inferred target/revocable shapes.
@@ -1962,6 +1978,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                               ? { kind: "externref" as const }
                               : (escapeWidenedVecType ??
                                 taViewType ??
+                                taViewCallResultType ??
                                 subarraySubviewType ??
                                 inferredVecType ??
                                 standaloneRegExpMatchArrayType ??
