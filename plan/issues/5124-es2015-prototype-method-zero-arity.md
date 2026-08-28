@@ -177,7 +177,8 @@ guarded and each `runTest262File(..., 120_000)` wrapper has an outer
 
 Only the three owned files are changed. No GitHub issue or PR was opened by
 this worker; root owns the final review and single non-draft PR handoff. The
-implementation commit is
-`9f928c9b5c3a6dd7a7ea4a3cc5ed49b5cef2d58a`; the worktree is clean. The fork
+implementation checkpoint (parent of this documentation-only handoff) is
+`621de07f7c9a36c1fb1735465debf2ebd5ed8fdd`; the final branch SHA is reported
+to root separately and the worktree is clean. The fork
 ref equality check was not available in this sandbox because GitHub DNS was
 blocked, and the parent explicitly requested no push.
