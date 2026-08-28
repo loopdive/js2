@@ -134,8 +134,8 @@ over the target/handler `TypeError`.
 ## Final validation and handoff
 
 Implementation and validation completed on the synchronized branch. The final
-validated tree is rooted at `upstream/main` `1d110ec6bda80a1303f73df96944ef892e91d71f`
-through merge commit `b2668dd61209bf8aae1d08b590ecaa11fc04f585`; the final
+validated tree is rooted at `upstream/main` `09a016fd5f69883c910e463fd9aa743b397ec948`
+through merge commit `e23257c8fd11fd54a8a7b2d410169aceea5e4122`; the final
 implementation/test head before the upstream sync is
 `896030a58aa2d2ded1ce3d6147d958eb73f159db`. All lane commits are authored by
 Thomas Tränkler and carry real newline-separated Codex trailers.
@@ -156,6 +156,11 @@ Thomas Tränkler and carry real newline-separated Codex trailers.
 - The complete `.husky/pre-push` hook passed locally with the fixed toolchain
   PATH, including parallel typecheck/lint, format, oracle/coercion ratchets,
   numeric-local parity, conformance sync, and committed issue integrity.
+- After `upstream/main` advanced with the DataView Symbol-offset fix, root
+  merged the exact `09a016fd5f69883c910e463fd9aa743b397ec948` tree without
+  conflict and repeated the focused suite on the integrated head: **6/6
+  passed**, including all four exact host/standalone Test262 rows and both
+  compiler controls.
 - Root should verify the eventual non-force fork remote head externally before
   opening the one non-draft upstream PR. No PR was opened by this worker.
 
