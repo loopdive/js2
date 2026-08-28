@@ -480,8 +480,8 @@ ratchet.
 
 ### PR refresh against current main (2026-08-29)
 
-PR #5183 was refreshed onto `main` at
-`33099f218fb4f09dba5331de9301ca043403403f`. The merge keeps the parser
+PR #5183 was refreshed onto `main` through
+`81e54a98ebf95285e22bd2a82ff339cfd06a3fc8`. The merge keeps the parser
 branch's nested-capture offset for spread calls while honoring main's newer
 `arguments`-based spread path, uses the prepared multi-source module-init
 finalizer, profiles both return- and parameter-unboxing statistics, and
