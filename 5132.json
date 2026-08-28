@@ -1,12 +1,11 @@
 {
   "id": "5132",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5130-ir-math-minmax",
-  "reserved_at": "2026-08-28T10:22:26Z",
   "claimed_at": "2026-08-28T10:22:26Z",
-  "updated_at": "2026-08-28T10:22:26Z",
-  "write_id": "18878-xnztcld5",
-  "pr_scan": "ok"
+  "updated_at": "2026-08-28T11:59:57Z",
+  "write_id": "61370-s5t6tiea",
+  "released_at": "2026-08-28T11:59:57Z"
 }
