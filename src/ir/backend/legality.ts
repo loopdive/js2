@@ -243,6 +243,7 @@ function linearInstrError(instr: IrInstr): string | null {
       }
     case "intrinsic":
       switch (instr.id) {
+        case "js.to_uint32":
         case "math.abs":
         case "math.ceil":
         case "math.floor":
@@ -331,6 +332,8 @@ function bytecodeInstrError(instr: IrInstr): string | null {
       return bytecodeBinopLegal(instr.op) ? null : `bytecode backend does not support binary op '${instr.op}'`;
     case "unary":
       return instr.op === "f64.neg" ? null : `bytecode backend does not support unary op '${instr.op}'`;
+    case "intrinsic":
+      return `bytecode backend does not support semantic intrinsic '${instr.id}'`;
     case "call":
     case "global.get":
     case "global.set":
@@ -392,6 +395,8 @@ function porfforInstrError(instr: IrInstr): string | null {
         : `porffor backend does not support binary op '${instr.op}' before typed composite-op lowering`;
     case "unary":
       return instr.op === "ref.is_null" ? `porffor backend does not support unary op '${instr.op}'` : null;
+    case "intrinsic":
+      return `porffor backend does not support semantic intrinsic '${instr.id}'`;
     case "call":
     case "global.get":
     case "global.set":

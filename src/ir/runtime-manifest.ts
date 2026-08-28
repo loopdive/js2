@@ -9,7 +9,12 @@
  * frozen arrays/records. Lowering receives lookup-only `resolveProvider` calls;
  * a request absent from the frozen plan is a typed invariant.
  */
-import { irTypeEquals, type IrIntrinsicBackendOp, type IrIntrinsicBackendSequence } from "./nodes.js";
+import {
+  irTypeEquals,
+  type IrIntrinsicBackendComposite,
+  type IrIntrinsicBackendOp,
+  type IrIntrinsicBackendSequence,
+} from "./nodes.js";
 import {
   ASYNC_HOST_CAPABILITY_IDS,
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -22,8 +27,10 @@ import {
 } from "./async-runtime-providers.js";
 import {
   F64_BINARY_INTRINSIC_SIGNATURE,
+  F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
+  NUMERIC_COERCION_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
   PURE_MATH_RUNTIME_FEATURES,
   type IntrinsicEffectEvidence,
@@ -31,13 +38,14 @@ import {
   type IntrinsicSignature,
   type IntrinsicUse,
   type IntrinsicVerificationCode,
-  type RuntimeFeature as MathRuntimeFeature,
+  type PureMathRuntimeFeature,
+  type RuntimeFeature as IntrinsicRuntimeFeature,
   verifyIntrinsicUse,
 } from "./intrinsics.js";
 
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
-export type RuntimeFeature = MathRuntimeFeature | AsyncRuntimeFeature;
+export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature;
 export type HostCapabilityId = AsyncHostCapabilityId;
 
 export interface RuntimeManifestPolicy {
@@ -79,7 +87,9 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 
 export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
-export type RuntimeProviderId = MathRuntimeProviderId | AsyncRuntimeProviderId;
+export const NUMERIC_COERCION_RUNTIME_PROVIDER_IDS = Object.freeze(["backend.js.to_uint32"] as const);
+export type NumericCoercionRuntimeProviderId = (typeof NUMERIC_COERCION_RUNTIME_PROVIDER_IDS)[number];
+export type RuntimeProviderId = MathRuntimeProviderId | NumericCoercionRuntimeProviderId | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
   | {
@@ -89,6 +99,10 @@ export type RuntimeProviderImplementation =
   | {
       readonly kind: "backend-sequence";
       readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
+      readonly kind: "backend-composite";
+      readonly operation: IrIntrinsicBackendComposite;
     }
   | {
       readonly kind: "self-hosted";
@@ -115,6 +129,11 @@ export type MathRuntimeProviderImplementation = Extract<
   { readonly kind: "backend-op" | "backend-sequence" | "self-hosted" }
 >;
 
+export type IntrinsicRuntimeProviderImplementation = Extract<
+  RuntimeProviderImplementation,
+  { readonly kind: "backend-op" | "backend-sequence" | "backend-composite" | "self-hosted" }
+>;
+
 export interface RuntimeProviderDefinition {
   readonly id: RuntimeProviderId;
   readonly feature: RuntimeFeature;
@@ -127,9 +146,9 @@ export interface RuntimeProviderDefinition {
   readonly implementation: RuntimeProviderImplementation;
 }
 
-/** Math lowering compatibility view; async providers are consumed by later adapters. */
+/** Semantic-intrinsic lowering view; async providers are consumed by later adapters. */
 export type RuntimeProviderPlan = RuntimeProviderDefinition & {
-  readonly implementation: MathRuntimeProviderImplementation;
+  readonly implementation: IntrinsicRuntimeProviderImplementation;
 };
 
 export interface RuntimeProviderComponent {
@@ -187,6 +206,7 @@ const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone
 const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
 
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
+  "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -238,7 +258,14 @@ function provider(
   });
 }
 
-const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
+export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  provider("backend.js.to_uint32", "js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE, {
+    kind: "backend-composite",
+    operation: "to-uint32",
+  }),
+]);
+
+const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
   "math.abs": provider("backend.f64.abs", "math.abs", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.abs",
@@ -418,15 +445,19 @@ export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] =
 
 /** Closed, canonically ordered catalogue used by production manifest builders. */
 export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
-  [...PURE_MATH_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort((left, right) => left.id.localeCompare(right.id)),
+  [...PURE_MATH_RUNTIME_PROVIDERS, ...NUMERIC_COERCION_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort(
+    (left, right) => left.id.localeCompare(right.id),
+  ),
 );
 
 const FEATURE_SET: ReadonlySet<string> = new Set([
+  ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
 ]);
 const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
+  ...NUMERIC_COERCION_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -715,7 +746,7 @@ export class RuntimeManifestBuilder {
     return this.#manifest;
   }
 
-  resolveProvider(feature: MathRuntimeFeature): RuntimeProviderPlan;
+  resolveProvider(feature: IntrinsicRuntimeFeature): RuntimeProviderPlan;
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();

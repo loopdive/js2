@@ -6,7 +6,8 @@
  * These identifiers name meaning, never a concrete helper, import, or module
  * index. The initial vocabulary deliberately matches the exact deterministic,
  * exact-arity f64 Math surface certified by `IR_MATH_METHOD_TABLE`. Widening
- * any of these unions is therefore a reviewed runtime-contract change.
+ * `PURE_MATH_INTRINSIC_IDS` remains the exact source-Math catalogue; other
+ * reviewed semantic families are composed into `INTRINSIC_IDS` separately.
  */
 import { effectsArePure, effectsOf } from "./effects.js";
 import { irTypeEquals, type IrInstr, type IrType } from "./nodes.js";
@@ -43,7 +44,11 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.trunc",
 ] as const);
 
-export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
+export const NUMERIC_COERCION_INTRINSIC_IDS = Object.freeze(["js.to_uint32"] as const);
+
+export const INTRINSIC_IDS = Object.freeze([...NUMERIC_COERCION_INTRINSIC_IDS, ...PURE_MATH_INTRINSIC_IDS] as const);
+
+export type IntrinsicId = (typeof INTRINSIC_IDS)[number];
 
 /**
  * Provider requirements reachable from the twenty-nine intrinsic entry points.
@@ -82,7 +87,16 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.trunc",
 ] as const);
 
-export type RuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
+export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"] as const);
+
+export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
+  ...NUMERIC_COERCION_RUNTIME_FEATURES,
+  ...PURE_MATH_RUNTIME_FEATURES,
+] as const);
+
+export type PureMathRuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
+export type NumericCoercionRuntimeFeature = (typeof NUMERIC_COERCION_RUNTIME_FEATURES)[number];
+export type RuntimeFeature = (typeof INTRINSIC_RUNTIME_FEATURES)[number];
 
 /**
  * The certified deterministic Math slice is host-free by construction.
@@ -139,6 +153,18 @@ const F64_TYPE = Object.freeze({
   val: Object.freeze({ kind: "f64" as const }),
 });
 
+const U32_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "i32" as const }),
+  signed: false as const,
+});
+
+export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([F64_TYPE]),
+  result: U32_TYPE,
+});
+
 export const F64_UNARY_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
@@ -157,6 +183,7 @@ function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: Run
 
 /** Exhaustive entry contract. Record typing makes an added ID fail closed. */
 export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
+  "js.to_uint32": definition("js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),
@@ -188,7 +215,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "math.trunc": definition("math.trunc", F64_UNARY_INTRINSIC_SIGNATURE),
 });
 
-const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(PURE_MATH_INTRINSIC_IDS);
+const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(INTRINSIC_IDS);
 
 export function isIntrinsicId(value: string): value is IntrinsicId {
   return INTRINSIC_ID_SET.has(value);

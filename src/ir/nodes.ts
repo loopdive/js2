@@ -845,14 +845,18 @@ export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.c
 /** Closed multi-op backend expansions available to semantic intrinsics. */
 export type IrIntrinsicBackendSequence = "f64.fround";
 
+/** Closed backend-neutral composite scalar semantics with backend-owned scratch. */
+export type IrIntrinsicBackendComposite = "to-uint32";
+
 /**
  * Provider attachment selected after middle-end transforms and manifest
- * freeze. Source/type lowering emits no provider; preparation attaches either
- * a backend primitive or one exact symbolic callable.
+ * freeze. Source/type lowering emits no provider; preparation attaches a
+ * backend primitive, closed composite expansion, or exact symbolic callable.
  */
 export type IrIntrinsicProvider =
   | { readonly kind: "backend-op"; readonly opcode: IrIntrinsicBackendOp }
   | { readonly kind: "backend-sequence"; readonly sequence: IrIntrinsicBackendSequence }
+  | { readonly kind: "backend-composite"; readonly operation: IrIntrinsicBackendComposite }
   | { readonly kind: "callable"; readonly target: IrFuncRef };
 
 /**

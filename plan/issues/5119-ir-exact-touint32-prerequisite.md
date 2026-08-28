@@ -1,9 +1,10 @@
 ---
 id: 5119
 title: "IR: share exact ToUint32 lowering prerequisite"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 assignee: ttraenkler/codex
 branch: codex/5119-ir-exact-touint32
 priority: high
@@ -19,17 +20,38 @@ required_by: [5120, 5121]
 related: [83, 111, 936, 1094, 1126, 1371, 3526, 3739, 5118]
 files:
   - src/ir/backend/wasm-int32-coercion.ts
+  - src/ir/nodes.ts
+  - src/ir/intrinsics.ts
+  - src/ir/runtime-manifest.ts
+  - src/ir/intrinsic-support.ts
   - src/ir/lower.ts
+  - src/ir/backend/legality.ts
   - src/codegen/binary-ops.ts
+  - src/codegen/expressions/builtins.ts
   - src/codegen/index.ts
   - tests/issue-5119-ir-exact-touint32.test.ts
 loc-budget-allow:
+  - src/ir/nodes.ts
+  - src/ir/intrinsics.ts
+  - src/ir/runtime-manifest.ts
+  - src/ir/intrinsic-support.ts
   - src/ir/lower.ts
+  - src/ir/backend/legality.ts
   - src/codegen/binary-ops.ts
+  - src/codegen/expressions/builtins.ts
   - src/codegen/index.ts
 func-budget-allow:
+  - src/ir/intrinsic-support.ts::providerAttachment
+  - src/ir/intrinsic-support.ts::sameProvider
+  - src/ir/lower.ts::emitPreparedIntrinsic
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
   - src/ir/lower.ts::emitJsToInt32
+  - src/ir/backend/legality.ts::linearInstrError
+  - src/ir/backend/legality.ts::bytecodeInstrError
+  - src/ir/backend/legality.ts::porfforInstrError
   - src/codegen/binary-ops.ts::emitToInt32
+  - src/codegen/expressions/builtins.ts::compileMathCall
   - src/codegen/index.ts::emitToUint32Helper
 ---
 
@@ -37,9 +59,10 @@ func-budget-allow:
 
 ## Objective
 
-Establish one exact Wasm lowering for the 32-bit bit pattern shared by
-ECMAScript `ToInt32` and `ToUint32`, then make both the production IR bitwise
-lowerer and the legacy `Math.clz32`/`Math.imul` helper consume it.
+Add a typed, provider-backed `js.to_uint32: f64 -> u32` semantic intrinsic and
+establish one exact Wasm lowering for the 32-bit bit pattern shared by
+ECMAScript `ToInt32` and `ToUint32`. Make the production IR bitwise lowerer and
+the legacy `Math.clz32`/`Math.imul` helper consume that same expansion.
 
 This checkpoint repairs the current large-finite direct-codegen bug and removes
 the duplicated IR/direct implementation before either Math method is admitted
@@ -81,8 +104,12 @@ i32 whose raw bits equal `ToUint32(input)`:
 - the i32 bit pattern also represents `ToInt32(input)`, with signedness chosen
   only when a later consumer widens or compares it.
 
-The helper must not import host JavaScript, trap on an f64 input, evaluate the
-input twice, or use a saturating conversion as the semantic modulo operation.
+The semantic signature is post-`ToNumber`: one f64 argument and an unsigned i32
+result. Object, Symbol, BigInt, and dynamic coercion stay outside this
+checkpoint. The provider is a closed `backend-composite` operation, not a
+single Wasm opcode, arbitrary instruction list, or callable helper. It must not
+import host JavaScript, trap on an f64 input, evaluate the input twice, or use a
+saturating conversion as the semantic modulo operation.
 
 ## Implementation plan
 
@@ -92,18 +119,28 @@ input twice, or use a saturating conversion as the semantic modulo operation.
 2. Route direct `emitToInt32` and the WasmGC/linear arm of IR
    `emitJsToInt32` through that utility. Preserve their local allocation and
    release behavior and keep emitted Wasm byte-identical.
-3. Replace `emitToUint32Helper`'s saturating i64 conversion with the same
+3. Add `js.to_uint32` outside the exact twenty-nine-method pure-Math catalogue,
+   with f64-to-unsigned-i32 signature and one host-free `backend-composite`
+   provider available only to WasmGC and production linear preparation.
+   Preserve provider attachment/equality and missing-provider invariants.
+4. Lower the composite provider through the shared exact expansion and the
+   existing lazily allocated four-i64 scratch pool. Admit it in linear legality
+   while keeping bytecode and Porffor explicitly fail-loud before emission.
+5. Replace `emitToUint32Helper`'s saturating i64 conversion with the same
    expansion. Add only the four private i64 locals required by the shared
    contract; preserve the helper name, signature, registration point, and
-   import-free behavior.
-4. Add focused execution vectors for `Math.clz32` and `Math.imul` with IR
+   import-free behavior. Replace the two missing-helper saturation fallbacks
+   with invariants so collection drift cannot silently reintroduce bad output.
+6. Add focused execution vectors for synthetic `js.to_uint32` IR on WasmGC and
+   production linear plus direct `Math.clz32` and `Math.imul` with IR
    disabled, including `2**63`, its negative, very large finite f64 values,
    `2**32` boundaries, fractions, signed zero, NaN, and infinities. Compare to
    native JavaScript rather than duplicating expected conversion logic.
-5. Assert the synthesized helper uses the shared bit-decomposition shape and
+7. Assert both provider and synthesized helper use the shared bit-decomposition
+   shape and that the helper
    no longer contains `i64.trunc_sat_f64_s`. Pin zero imports in standalone
    mode and exact direct/IR parity for representative bitwise coercions.
-6. Run the existing bitwise, Math builtin, #3526 integration, TypeScript 7,
+8. Run the existing bitwise, Math builtin, #3526 integration, TypeScript 7,
    neutrality, formatting/lint/ratchets, and full pre-push suites. Push the
    plan, implementation, and outcome as separate checkpoints on a non-draft
    PR stacked on #5135.
@@ -112,12 +149,14 @@ input twice, or use a saturating conversion as the semantic modulo operation.
 
 - Direct `Math.clz32` and `Math.imul` match native JavaScript for every focused
   edge, especially finite values at and beyond `2**63`.
+- Synthetic `js.to_uint32` IR prepares and executes on WasmGC and production
+  linear with an unsigned-i32 result, no callable/helper, and no host import.
 - Direct and IR bitwise lowering consume one shared exact expansion and retain
   their existing behavior and instruction shape.
 - The generated `__toUint32` helper is import-free, non-trapping for all f64
   inputs, and contains no saturating signed-i64 modulo shortcut.
-- WasmGC and production linear parity remain green; bytecode and Porffor
-  support are unchanged because this checkpoint does not widen IR ownership.
+- Missing providers and unsupported bytecode/Porffor policies fail before
+  emission; no backend silently substitutes saturation.
 - Existing exact ambient Math ownership, fallback, and neutrality evidence
   remains green.
 
@@ -139,4 +178,17 @@ single checkpoint revert with no manifest or public API change.
 
 ## Outcome
 
-Pending implementation and final Luna Max review.
+Implemented one exact IEEE-754 bit-decomposition expansion shared by direct
+`ToInt32`, IR bitwise coercion, the legacy `__toUint32` helper, and the new
+typed `js.to_uint32` semantic intrinsic. The intrinsic freezes to one
+dependency-free, host-free `backend-composite` provider and executes with an
+identical instruction stream on WasmGC and production linear; bytecode and
+Porffor reject it before emission.
+
+The direct Math helper no longer saturates before wrapping, so `Math.clz32`
+and `Math.imul` now match native JavaScript at and beyond the signed-i64 range.
+Focused execution covers f64 boundaries, fractions, signed zero, NaN,
+infinities, `2**63`, `2**64`, `2**65`, and `Number.MAX_VALUE`. The #3739 exact
+ToInt32 suite, #3526 manifest/intrinsic suites, Math stdlib subset, TypeScript 7
+typecheck, formatting, diff integrity, and the reviewed neutrality baseline all
+pass.
