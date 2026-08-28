@@ -2540,6 +2540,21 @@ export function getWellKnownSymbolId(name: string): number | undefined {
 }
 
 /**
+ * (#5142) Reverse of {@link getWellKnownSymbolId}: the JavaScript spelling of a
+ * well-known symbol id, e.g. `7` → `"match"`. The `@@<id>` member keys used by
+ * the native-proto glue are physical compiler keys; §10.2.9 SetFunctionName
+ * spells the exposed `.name` of a symbol-keyed method `"[Symbol.match]"`, and
+ * that display name is derived from this table so a new well-known symbol does
+ * not need a second hand-maintained mapping.
+ */
+export function wellKnownSymbolName(id: number): string | undefined {
+  for (const [name, value] of Object.entries(WELL_KNOWN_SYMBOLS)) {
+    if (value === id) return name;
+  }
+  return undefined;
+}
+
+/**
  * Ensure the __symbol_counter mutable global exists (lazy init).
  * Starts at 100 so well-known symbol IDs (1-12) never collide.
  */

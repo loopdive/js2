@@ -39,6 +39,7 @@ import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
+import { wellKnownSymbolName } from "./literals.js"; // (#5142) @@<id> → "[Symbol.x]" display name
 // (#4491 T9) `constructor` is an own data property of every builtin prototype and
 // is deliberately NOT in `memberCsv`; the companion gets it from the #4200 carrier.
 import { pushCompanionConstructorSeed } from "./builtin-proto-constructor-seed.js";
@@ -761,6 +762,21 @@ function makeNativeClosureFctx(
 }
 
 /**
+ * (#5142) §10.2.9 display name for a native-proto member key. `@@<id>` keys are
+ * physical compiler spellings for well-known-symbol-keyed members; the exposed
+ * `.name` of such a method is `"[Symbol.<wellKnown>]"` (e.g. `@@7` →
+ * `"[Symbol.match]"`). Ordinary string members are their own name. Derived from
+ * the single well-known-symbol table so the mapping cannot drift member-by-member
+ * (it previously hard-coded `@@3` alone, leaving every other symbol-keyed member
+ * reporting its raw `@@N` key as its JavaScript `name`).
+ */
+function nativeProtoMemberDisplayName(member: string): string {
+  if (!member.startsWith("@@")) return member;
+  const wellKnown = wellKnownSymbolName(Number(member.slice(2)));
+  return wellKnown === undefined ? member : `[Symbol.${wellKnown}]`;
+}
+
+/**
  * (#2175) Brand-keyed native-method-closure factory. `kind`:
  *   - `"method"`  — `(ref $wrap, externref this, ...externref args) -> result`;
  *                   first emits the brand-recovery prologue then the member body.
@@ -932,7 +948,7 @@ export function ensureStandaloneNativeMethodClosure(
     // Native well-known-symbol sentinels are physical compiler keys, not the
     // JavaScript function names exposed by SetFunctionName. This member is
     // Symbol.prototype[Symbol.toPrimitive], whose name is bracketed.
-    const displayMember = member === "@@3" ? "[Symbol.toPrimitive]" : member;
+    const displayMember = nativeProtoMemberDisplayName(member);
     const accessorName = kind === "getter" ? `get ${displayMember}` : displayMember;
     ctx.nativeClosureMeta.set(funcIdx, { name: accessorName, length: arity });
   }
@@ -945,7 +961,7 @@ export function ensureStandaloneNativeMethodClosure(
   // them through runtime params — a compile-time fold cannot satisfy it). All
   // call paths are unaffected: the meta type subtypes the wrapper the lifted
   // func expects. Getters carry the §10.2.9 accessor spelling ("get <key>").
-  const displayMember = member === "@@3" ? "[Symbol.toPrimitive]" : member;
+  const displayMember = nativeProtoMemberDisplayName(member);
   const metaName = kind === "getter" ? `get ${displayMember}` : displayMember;
   const metaTypeIdx = ensureBuiltinFnMetaType(
     ctx,

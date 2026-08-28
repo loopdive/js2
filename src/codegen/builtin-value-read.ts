@@ -849,13 +849,17 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
 }
 
 /**
- * (#4731) `<Map|Set>.prototype[Symbol.iterator]` is an alias for the
- * prototype's `entries`/`values` method.  The ordinary computed-property path
- * materializes the `$NativeProto` object and asks `__extern_get` for a dynamic
- * symbol key; standalone has no symbol-key arm there, so it returned null.
- * Resolve this exact static shape through the same identity-stable method
- * closure used by the dot form.  Keeping this in the value-read subsystem also
- * makes the Set and nearby Map controls share one spec-derived path.
+ * (#4731 / #5142) `<Builtin>.prototype[Symbol.<wellKnown>]` value read.  The
+ * ordinary computed-property path materializes the `$NativeProto` object and
+ * asks `__extern_get` for a dynamic symbol key; standalone has no symbol-key arm
+ * there, so it returned null (`undefined` at run time).  Resolve this static
+ * shape through the same identity-stable method closure the dot form uses.
+ *
+ * #4731 covered `<Map|Set>.prototype[Symbol.iterator]`, which is an ALIAS for
+ * that prototype's `entries`/`values` method; #5142 generalizes the arm to every
+ * well-known symbol advertised by a brand's glue under its physical `@@<id>` key
+ * (RegExp's `@@7`/`@@8`/`@@9`/`@@10` = `[Symbol.match]`/`[Symbol.replace]`/
+ * `[Symbol.search]`/`[Symbol.split]`).
  */
 function tryCompileStandaloneBuiltinProtoIteratorRead(
   ctx: CodegenContext,
@@ -865,22 +869,18 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   if (!ctx.standalone) return undefined;
 
   const key = skipTransparentExpressions(expr.argumentExpression);
-  if (
-    !ts.isPropertyAccessExpression(key) ||
-    !ts.isIdentifier(key.expression) ||
-    key.expression.text !== "Symbol" ||
-    key.name.text !== "iterator" ||
-    getWellKnownSymbolId(key.name.text) === undefined
-  ) {
+  if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
     return undefined;
   }
+  const symbolId = getWellKnownSymbolId(key.name.text);
+  if (symbolId === undefined) return undefined;
 
   const receiver = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(receiver) || receiver.name.text !== "prototype") return undefined;
   if (!ts.isIdentifier(receiver.expression)) return undefined;
 
   const builtinName = receiver.expression.text;
-  if (builtinName !== "Map" && builtinName !== "Set") return undefined;
+  if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
   if (
     fctx.localMap.has(builtinName) ||
     (fctx.boxedCaptures?.has(builtinName) ?? false) ||
@@ -892,7 +892,21 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const member = builtinName === "Set" ? "values" : "entries";
+  // Map/Set keep their §24.1.3.12/§24.2.3.11 ALIAS resolution: `@@iterator` on
+  // those prototypes is the very same function object as `entries`/`values`, so
+  // it must resolve to that member's singleton rather than a distinct closure.
+  // Every other builtin advertises its symbol-keyed members under the physical
+  // `@@<id>` key (e.g. RegExp's `@@7` = `[Symbol.match]`), which before #5142 had
+  // no value-read arm at all: the computed read fell through to the dynamic
+  // `__extern_get`, which has no standalone symbol-key arm, so
+  // `RegExp.prototype[Symbol.match]` READ as `undefined` even though the member
+  // was registered and its `typeof` folded to "function".
+  const member =
+    symbolId === 1 && (builtinName === "Map" || builtinName === "Set")
+      ? builtinName === "Set"
+        ? "values"
+        : "entries"
+      : `@@${symbolId}`;
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved || resolved.kind !== "method") return undefined;
 
