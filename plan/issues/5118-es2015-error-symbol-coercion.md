@@ -1,7 +1,7 @@
 ---
 id: 5118
 title: "ES2015 standalone Error ToString(Symbol) must throw TypeError"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -192,8 +192,25 @@ baseline and regression cohort.
 
 ## Handoff
 
-The canonical issue is #5118, already reserved by the root agent. No GitHub
-issue is to be allocated or created from this lane. The delivery branch is
-`codex/5118-es2015-error-symbol-coercion` in
-`/private/tmp/js2-es2015-error-symbol-coercion-20260828`; root owns review and
-the single non-draft PR against `loopdive/js2:main` after this branch is pushed.
+The canonical tracker is this markdown issue, `plan/issues/5118-es2015-error-symbol-coercion.md`;
+no GitHub issue was created. The implementation was synchronized with
+`upstream/main` and validated at code head
+`695893a6b7e519118644f0430de00e5c3b2f879d` on branch
+`codex/5118-es2015-error-symbol-coercion`.
+
+Final evidence on that head:
+
+- focused Vitest: **23/23 passed**;
+- exact Test262 host cohort: **3/3 passed**;
+- exact Test262 standalone cohort: **3/3 passed**;
+- standalone controls emitted zero host imports;
+- TypeScript 7, lint, Prettier, oracle/coercion ratchets, LOC budget, and
+  function budget passed;
+- the repository pre-push hook completed and the exact head was confirmed on
+  `ttraenkler/js2` without rewriting published history;
+- `git diff --check` passed, `upstream/main` is an ancestor, and the worktree
+  was clean after the push.
+
+The later handoff/PR-link commits are documentation-only and do not change the
+validated code. Root owns the single non-draft PR against `loopdive/js2:main`,
+then will record its upstream URL here and mark the issue done.
