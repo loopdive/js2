@@ -23,6 +23,8 @@ files:
   - plan/issues/5123-es2015-escape-symbol-tostring.md
 loc-budget-allow:
   - src/codegen/expressions/call-identifier.ts
+coercion-sites-allow:
+  - src/codegen/expressions/call-identifier.ts
 ---
 
 # #5123 — ES2015 `escape`/`unescape` strict Symbol `ToString`
