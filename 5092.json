@@ -1,12 +1,10 @@
 {
   "id": "5092",
-  "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
+  "assignee": "ttraenkler/opus-5092-takeover",
+  "requested_by": "ttraenkler/opus-5092-takeover",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-08-27T20:37:50Z",
-  "claimed_at": "2026-08-27T20:37:50Z",
-  "updated_at": "2026-08-27T20:37:50Z",
-  "write_id": "90903-cqfsv3t1",
-  "pr_scan": "ok"
+  "branch": "codex/5092-ir-conditional-expression",
+  "claimed_at": "2026-08-28T21:58:36Z",
+  "updated_at": "2026-08-28T21:58:36Z",
+  "write_id": "11059-mw3r8ynr"
 }
