@@ -1,7 +1,7 @@
 ---
 id: 5104
 title: "fix(standalone): preserve Boolean prototype Symbol.toStringTag"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -130,11 +130,16 @@ unchanged.
 - The optional TypeScript 5 compatibility command emitted no diagnostics but
   did not finish after several minutes and was interrupted; it is not part of
   the normal pre-push hook.
+- After syncing current `upstream/main` at `4c2bc1de6a`, merge commit
+  `7a95daac74` reproduced host `2/2` and standalone `2/2` with intact controls
+  and `nondeterministic: 0`; focused coverage remained `6 passed`, and the
+  no-corpus override remained `4 passed | 2 skipped`.
 
 ## Handoff
 
 The atomic assignment reservation for this plan is held on the upstream
-assignment registry as `5104`; no external issue is used for tracking. Update
-this file with exact commit/head, gate, and PR state after implementation.
-Keep any PR draft and held outside the merge queue until the exact rows,
-focused controls, and CI are green and the branch is mergeable.
+assignment registry as `5104`; no external issue is used for tracking. The
+implementation checkpoint is `2141c7852b`, and the current-main sync merge is
+`7a95daac74` (upstream `4c2bc1de6a`). The final handoff is ready for one
+upstream PR from this branch; keep it held outside the merge queue until CI
+confirms the exact rows, focused controls, and current-main mergeability.
