@@ -240,11 +240,17 @@ describe("#5110 exact ambient hyperbolic Math IR ownership", () => {
       { fileName: "issue-5110-native-oracle.ts", experimentalIR: true, trackIrOutcomes: true },
     );
     expectSuccess(result);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
     const exports = await instantiate(result);
     const samples = [-20, -10, -3, -1, -0.5, 0.5, 1, 3, 10, 20];
     const maxRelativeError = { sinh: 2.5e-8, cosh: 1e-8, tanh: 2.5e-8 } as const;
 
     for (const method of METHODS) {
+      expect(outcomeFor(result, method)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
       const compiled = exports[method] as (value: number) => number;
       const native = Math[method];
       for (const value of samples) {
