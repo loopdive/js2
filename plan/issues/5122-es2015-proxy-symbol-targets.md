@@ -156,28 +156,30 @@ and nested-Proxy/object/array/function carriers remain required controls.
 
 ## Final validation and handoff
 
-The reopened spread fix is implemented and validated on the current
-`upstream/main` `358d5e2723d2aebf1f8235a12b85409f3a964a67`, integrated
-non-destructively by merge commit `0a91f4d09001dc419c7c68dc0fc70b1243c0daca`.
-The exact implementation/test checkpoint is `f37dfdec147595ea530097c9f3c16ca2bf13a2e0`;
-the plan-only reopen checkpoint is `865f2f3863ff3c621135697b54944489f018031b`.
-All new commits are authored by Thomas Tränkler and carry real
-newline-separated Codex trailers. The branch remains unpublished for root's
-review and external remote-head verification.
+The reopened spread fix is implemented and validated on the fetched current
+`upstream/main` `a7f9cb784b60b0035f8f2aa19f6421d217c823bd`, integrated
+non-destructively by merge commit `ffbe9a8ba4def364079abe2a722a3e64ecc2b3a4`
+with parents the published checkpoint `9f41bf3456585e12837945fba579451a5b2a0d85`
+and that upstream head. The original implementation/test checkpoint is
+`f37dfdec147595ea530097c9f3c16ca2bf13a2e0`; the plan-only reopen checkpoint is
+`865f2f3863ff3c621135697b54944489f018031b`. All new commits are authored by
+Thomas Tränkler and carry real newline-separated Codex trailers. The branch
+remains unpublished after this merge for root's review and external
+remote-head verification.
 
 - Before the fix, the direct `new Proxy(...[{}, {}])` probe returned the
   caught-TypeError code in both host and standalone; after the fix it returns
   the success code in both lanes. Dynamic array sources likewise succeed.
 - Focused Vitest with the pinned QuickJS artifact and at most two workers:
-  **6/6 passed** on the integrated head. Both exact host rows and both exact
+  **6/6 passed** after the upstream merge. Both exact host rows and both exact
   standalone rows passed. Host and standalone controls cover static/dynamic
-  spread sources, mixed ordinary-plus-spread ordering, expanded extras,
-  later abrupt argument evaluation and iterator steps, target-before-handler
-  validation with no trap reads, Symbol target/handler after expansion,
-  callee-before-caller index stability, and valid ordinary object, array,
-  function, and nested-Proxy carriers. The standalone compiler asserted
-  `imports === []`, including the direct `any`-to-externref/ref.test fallback
-  controls.
+  spread sources, mixed ordinary-plus-spread ordering, empty and multiple
+  spreads, nested spread expansion, expanded extras, later abrupt argument
+  evaluation and iterator steps, target-before-handler validation with no trap
+  reads, Symbol target/handler after expansion, callee-before-caller
+  index stability, and valid ordinary object, array, function, and
+  nested-Proxy carriers. The standalone compiler asserted `imports === []`,
+  including the direct `any`-to-externref/ref.test fallback controls.
 - TypeScript 5 and TypeScript 7 typechecks passed. Full Biome lint and
   Prettier checks passed. Oracle and coercion-site ratchets passed with zero
   net growth. LOC/function budgets passed using only this issue's narrow
