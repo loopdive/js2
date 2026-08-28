@@ -441,10 +441,10 @@ export function analyzeBooleanNames(ctx: CodegenContext, sourceFiles: readonly t
   };
 }
 
-/** Property-only view of {@link analyzeBooleanNames}, for its `excludeNames` caller. */
-export function analyzeBooleanPropertyNames(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): Set<string> {
-  return analyzeBooleanNames(ctx, sourceFiles).properties;
-}
+// (#4406 Phase 4) The property-only view `analyzeBooleanPropertyNames` is gone.
+// Its single caller — the numeric analysis host's `excludeNames` — now asks for
+// the FUNCTION verdict from the same traversal too, so the view had no consumer
+// left and `check:dead-exports` would have flagged it.
 
 /** Brand numeric struct fields whose complete source write set is boolean. */
 export function recoverBooleanStructFieldBrands(ctx: CodegenContext): void {
