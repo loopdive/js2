@@ -1,7 +1,7 @@
 ---
 id: 5118
 title: "IR: own exact ambient Math.fround calls"
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 assignee: ttraenkler/codex
@@ -165,6 +165,32 @@ than silently dropping the popped value.
   before claim without invariants or post-claim errors.
 - The narrow rollback, affected regressions, TypeScript 7, and all pre-push
   gates pass.
+
+## Outcome
+
+Completed on 2026-08-28 in non-draft PR
+[#5135](https://github.com/loopdive/js2/pull/5135), stacked on #5132.
+
+- Added `math.fround` as the twenty-ninth certified pure-Math intrinsic and
+  attached the dependency-free, host-free `backend.f64.fround` provider for
+  WasmGC and linear policies.
+- Added the one-member `backend-sequence` contract and lowered it through the
+  typed emitter seam as exactly `f32.demote_f64` then `f64.promote_f32`.
+  Bytecode remains fail-loud and Porffor now rejects both conversions
+  explicitly.
+- Exact ambient one-number calls are IR-owned on WasmGC and production linear;
+  excluded/coercive forms still decline before claim, and
+  `JS2WASM_IR_MATH_FROUND=0` provides narrow rollback.
+- Focused validation passed 15/15 cases, including production-linear ownership,
+  malformed-sequence rejection, zero-import standalone execution, and raw-bit
+  parity across custom NaNs, signed zero, f32 midpoint ties, subnormal/normal
+  boundaries, overflow, finite extremes, and infinities.
+- The 13 affected #3526 integration, manifest, and linear-legality tests passed.
+  TypeScript 7, IR kind-neutrality, formatting, lint, ratchets, numeric-local
+  parity, issue integrity, and the full pre-push suite passed.
+- Final Luna Max review returned GO with no actionable P0/P1 findings. At the
+  implementation checkpoint, PR #5135 was non-draft, cleanly mergeable, and
+  green on CLA and automation checks.
 
 ## Non-goals
 
