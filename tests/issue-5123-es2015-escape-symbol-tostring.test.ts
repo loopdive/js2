@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,6 +135,37 @@ const POSITIVE_SOURCE = `
   }
 `;
 
+const HOST_SYMBOL_SOURCE = `
+  function directTypeErrorEscape(): number {
+    try {
+      escape(Symbol("escape"));
+      return 0;
+    } catch (error) {
+      return error instanceof TypeError && error.name === "TypeError" ? 1 : 100;
+    }
+  }
+
+  function directTypeErrorUnescape(): number {
+    try {
+      unescape(Symbol("unescape"));
+      return 0;
+    } catch (error) {
+      return error instanceof TypeError && error.name === "TypeError" ? 1 : 100;
+    }
+  }
+
+  export function test(): number {
+    return directTypeErrorEscape() +
+      directTypeErrorUnescape() +
+      (escape() === "undefined" ? 1 : 0) +
+      (unescape() === "undefined" ? 1 : 0) +
+      (escape("A B") === "A%20B" ? 1 : 0) +
+      (unescape("A%20B") === "A B" ? 1 : 0) +
+      (escape(65) === "65" ? 1 : 0) +
+      (unescape(65) === "65" ? 1 : 0);
+  }
+`;
+
 describe("#5123 ES2015 escape/unescape Symbol coercion", () => {
   it("rejects static and dynamic Symbols through direct, aliased, and globalThis calls", async () => {
     const { exports } = await runCompiled(SYMBOL_CALLS_SOURCE, "standalone");
@@ -154,6 +186,11 @@ describe("#5123 ES2015 escape/unescape Symbol coercion", () => {
   it("keeps the host direct route's argument evaluation and Symbol error behavior", async () => {
     const { exports } = await runCompiled(ARGUMENT_ORDER_SOURCE);
     expect(exports.test()).toBe(2);
+  });
+
+  it("keeps host direct Symbol TypeErrors exact and preserves positive arguments", async () => {
+    const { exports } = await runCompiled(HOST_SYMBOL_SOURCE);
+    expect(exports.test()).toBe(8);
   });
 });
 

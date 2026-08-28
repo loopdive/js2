@@ -18,13 +18,12 @@ assignee: "ttraenkler/codex/5123-es2015-escape-symbol-tostring"
 branch: codex/5123-es2015-escape-symbol-tostring
 files:
   - src/codegen/expressions/call-identifier.ts
+  - src/codegen/annexb-escape-call.ts
   - src/codegen/standalone-global-functions.ts
   - tests/issue-5123-es2015-escape-symbol-tostring.test.ts
   - plan/issues/5123-es2015-escape-symbol-tostring.md
-loc-budget-allow:
-  - src/codegen/expressions/call-identifier.ts
 coercion-sites-allow:
-  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/annexb-escape-call.ts
 ---
 
 # #5123 — ES2015 `escape`/`unescape` strict Symbol `ToString`
@@ -40,6 +39,12 @@ The edition map classifies both rows as ES2015. Issue ID 5123 was atomically
 reserved with `node scripts/claim-issue.mjs --allocate`, then claimed for this
 branch on `upstream/issue-assignments`. This file is the canonical tracker; do
 not create a GitHub issue.
+
+The canonical direct-call helper at `src/codegen/annexb-escape-call.ts` is also
+owned by this issue: `call-identifier.ts` delegates the native `escape` and
+`unescape` seam to it. Keeping the strict boundary in that helper reuses the
+existing lowering without leaving a dead, raw-checker implementation or
+broadening the generic coercion boundary.
 
 ## Current-main A/B evidence
 
@@ -107,6 +112,18 @@ completion must win before the Symbol `TypeError`.
    integrity, numeric-local parity, and the complete pre-push hook. Integrate
    current upstream non-destructively and push every checkpoint to
    `ttraenkler/js2` without rewriting published history.
+
+## Measured implementation gates
+
+- The canonical helper refactor leaves no raw checker query in the moved
+  `escape`/`unescape` lowering. `check:dead-exports` reports 0 new entries.
+- A standalone callee-before-caller probe's WAT closure body emits the native
+  Symbol `ref.test` and catchable TypeError sequence before the
+  `__extern_toString` call, then the re-resolved native transform call; the
+  module declares zero imports. This verifies `buildThrowJsErrorInstrs` runs
+  before the closure's ToString-provider lookup and that late helper indices are
+  not captured stale.
+- `check:stack-balance` reports no fixup-bucket increases versus baseline.
 
 ## Acceptance
 

@@ -60,8 +60,8 @@ import {
 } from "../statements/nested-declarations.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
-import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
-import { emitSymbolToString, ensureSymbolCarrier } from "../symbol-native.js";
+import { usesNativeNumberFormat } from "../number-format-native.js";
+import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
 import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-alias.js"; // (#4491 wave-5 T6)
@@ -76,6 +76,7 @@ import {
   pushDefaultValue,
   pushParamSentinel,
 } from "../type-coercion.js";
+import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
 import { annexBDeclaringRange } from "../annexb-cancel.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
@@ -375,114 +376,6 @@ function emitShadowCalleeSelect(ctx: CodegenContext, fctx: FunctionContext, call
     then: staticArm,
     else: [{ op: "global.get", index: slot }],
   });
-}
-
-/**
- * Emit the host-free Annex B escape/unescape call after the complete
- * ArgumentList has been evaluated. The old helper converted argument zero as
- * soon as it was compiled, skipped extra arguments, and captured the native
- * helper index before late carrier/error helpers were registered. Keep this
- * seam local to the identifier dispatch so the generic ToString engine remains
- * permissive for explicit String(Symbol()).
- */
-function compileNativeAnnexBEscapeCall(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  funcName: string,
-): InnerResult | undefined {
-  if ((funcName !== "escape" && funcName !== "unescape") || (!ctx.standalone && !ctx.wasi)) {
-    return undefined;
-  }
-
-  const helperName = funcName === "escape" ? "__escape" : "__unescape";
-  if (ctx.funcMap.get(helperName) === undefined) return undefined;
-
-  if (expr.arguments.length === 0) {
-    const stringType = compileStringLiteral(ctx, fctx, "undefined", expr);
-    if (stringType && stringType.kind !== "externref") {
-      coerceType(ctx, fctx, stringType, { kind: "externref" });
-    }
-    flushLateImportShifts(ctx, fctx);
-    const nativeIdx = ctx.funcMap.get(helperName);
-    if (nativeIdx === undefined) return undefined;
-    fctx.body.push({ op: "call", funcIdx: nativeIdx });
-    return { kind: "externref" };
-  }
-
-  // A dynamic-any operand can carry a Symbol even when the checker cannot
-  // prove it. Register the native carrier before any function index is baked.
-  const symbolTypeIdx = ensureSymbolCarrier(ctx);
-  const arg0 = expr.arguments[0]!;
-  const arg0Fact = ctx.oracle.typeFactOf(arg0);
-  const compiledArg0 = compileExpression(ctx, fctx, arg0);
-  const arg0Type = compiledArg0;
-  let arg0Local: number | undefined;
-  if (arg0Type !== null) {
-    arg0Local = allocLocal(fctx, `__annexb_arg0_${fctx.locals.length}`, arg0Type);
-    fctx.body.push({ op: "local.set", index: arg0Local });
-  }
-  flushLateImportShifts(ctx, fctx);
-
-  // Annex B's native helpers ignore parameters after the first one, but
-  // ArgumentListEvaluation does not. Evaluate each extra exactly once and
-  // discard its value only after its expression has completed.
-  for (const extra of expr.arguments.slice(1)) {
-    const extraType = compileExpression(ctx, fctx, extra);
-    if (extraType !== null) fctx.body.push({ op: "drop" });
-    flushLateImportShifts(ctx, fctx);
-  }
-
-  // `emitToString`'s scalar arm deliberately declines when the native number
-  // formatter has not been requested yet. Direct escape(65)/unescape(65) can
-  // be the first numeric stringification in a module, so register that pure
-  // helper before the direct coercion rather than boxing a number as an
-  // externref and letting the native escape helper cast it as a string.
-  if (
-    arg0Type !== null &&
-    (arg0Type.kind === "f64" || arg0Type.kind === "i64" || (arg0Type.kind === "i32" && arg0Type.boolean !== true)) &&
-    !ctx.funcMap.has("number_toString")
-  ) {
-    emitNativeNumberFormat(ctx, new Set(["number_toString"]));
-    flushLateImportShifts(ctx, fctx);
-  }
-
-  if (arg0Local !== undefined && arg0Type !== null) {
-    const carrierLocal = allocLocal(fctx, `__annexb_carrier_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.get", index: arg0Local });
-    const carrierSource =
-      arg0Type.kind === "i32" && arg0Fact.kind === "symbol" ? { ...arg0Type, symbol: true as const } : arg0Type;
-    if (carrierSource.kind !== "externref" && carrierSource.kind !== "ref_extern") {
-      coerceType(ctx, fctx, carrierSource, { kind: "externref" });
-    }
-    fctx.body.push({ op: "local.set", index: carrierLocal });
-
-    const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
-      flush: fctx,
-    });
-    fctx.body.push(
-      { op: "local.get", index: carrierLocal },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: symbolTypeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
-      { op: "local.get", index: arg0Local },
-    );
-    const stringType = emitToString(ctx, fctx, arg0Type, arg0Fact, "string");
-    if (stringType.kind !== "externref") coerceType(ctx, fctx, stringType, { kind: "externref" });
-  } else {
-    const stringType = compileStringLiteral(ctx, fctx, "undefined", expr);
-    if (stringType && stringType.kind !== "externref") {
-      coerceType(ctx, fctx, stringType, { kind: "externref" });
-    }
-  }
-
-  // Guard/coercion registration can append helpers. Resolve the native index
-  // only after all of those late-import shifts have been flushed.
-  flushLateImportShifts(ctx, fctx);
-  const nativeIdx = ctx.funcMap.get(helperName);
-  if (nativeIdx === undefined) return undefined;
-  fctx.body.push({ op: "call", funcIdx: nativeIdx });
-  return { kind: "externref" };
 }
 
 export function compileIdentifierCall(
@@ -924,9 +817,13 @@ export function compileIdentifierCall(
       }
     }
 
-    // (#3064 / #4556) Legacy `escape` / `unescape`.
+    // (#3064 / #4556) Legacy `escape` / `unescape` — see annexb-escape-call.ts.
     {
-      const esc = compileNativeAnnexBEscapeCall(ctx, fctx, expr, funcName);
+      const esc = compileAnnexBEscapeCall(ctx, fctx, expr, funcName, {
+        compileExpr: (e) => compileExpression(ctx, fctx, e),
+        compileStringLit: (text, node) => compileStringLiteral(ctx, fctx, text, node as ts.Expression),
+        toString: (t, staticType, hint) => emitToString(ctx, fctx, t, staticType, hint),
+      });
       if (esc !== undefined) return esc;
     }
 
