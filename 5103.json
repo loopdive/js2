@@ -1,10 +1,11 @@
 {
   "id": "5103",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5103-ir-math-tan",
   "claimed_at": "2026-08-27T23:06:35Z",
-  "updated_at": "2026-08-27T23:06:35Z",
-  "write_id": "69692-b9j0sdbz"
+  "updated_at": "2026-08-28T11:59:24Z",
+  "write_id": "60226-yn40u4th",
+  "released_at": "2026-08-28T11:59:24Z"
 }
