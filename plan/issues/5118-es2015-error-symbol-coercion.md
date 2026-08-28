@@ -1,10 +1,11 @@
 ---
 id: 5118
 title: "ES2015 standalone Error ToString(Symbol) must throw TypeError"
-status: ready
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: high
 horizon: s
 feasibility: medium
@@ -14,6 +15,7 @@ area: codegen
 language_feature: error-symbol-coercion
 es_edition: es2015
 goal: standalone-mode
+pr: 5131
 assignee: "ttraenkler/codex/5118-es2015-error-symbol-coercion"
 files:
   - src/codegen/expressions/new-builtin-globals.ts
@@ -212,5 +214,8 @@ Final evidence on that head:
   was clean after the push.
 
 The later handoff/PR-link commits are documentation-only and do not change the
-validated code. Root owns the single non-draft PR against `loopdive/js2:main`,
-then will record its upstream URL here and mark the issue done.
+validated code. The single non-draft upstream PR is
+<https://github.com/loopdive/js2/pull/5131>. It was opened from the
+`ttraenkler/js2` branch, targets `loopdive/js2:main`, uses the repository PR
+template with the CLA checked, and was audited as mergeable with no comments,
+reviews, or unresolved review threads at creation.
