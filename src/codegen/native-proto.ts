@@ -473,6 +473,29 @@ export function seededNativeProtoSymbolTagsByBrand(ctx: CodegenContext): Readonl
 }
 
 /**
+ * Return well-known-symbol members seeded on native-prototype companions.
+ * Unlike `symbolTag`, these entries are callable/data members represented by
+ * `@@<id>` CSV sentinels. Keep the IDs separate from string members so own
+ * property checks compare the interned `$Symbol` carrier rather than a native
+ * string spelling.
+ */
+export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): ReadonlyMap<number, readonly number[]> {
+  const out = new Map<number, readonly number[]>();
+  for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
+    if (ctx.funcMap.get(seederName) === undefined) continue;
+    const members =
+      getNativeProtoBuiltinGlue(ctx, brand)
+        ?.memberCsv.split(",")
+        .map((member) => member.trim())
+        .filter((member) => member.startsWith("@@"))
+        .map((member) => Number(member.slice(2)))
+        .filter((id) => Number.isInteger(id)) ?? [];
+    if (members.length > 0) out.set(brand, members);
+  }
+  return out;
+}
+
+/**
  * §17 attributes for a builtin prototype METHOD, in the
  * `__defineProperty_value` host flag encoding: `{writable: true, enumerable:
  * false, configurable: true}` — value bits `0b101` + all three "specified"
@@ -631,7 +654,13 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       body.push({ op: "call", funcIdx: defineIdx });
     } else {
       // [obj, key, value, flags] → §17 data entry.
-      body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+      // Symbol.prototype[Symbol.toPrimitive] is the one native-proto method
+      // whose initial descriptor is read-only. Keep its configurable bit so
+      // the companion still observes replacement/deletion exactly like the
+      // spec, while every ordinary method retains the historical flags.
+      const defineFlags =
+        glue.name === "Symbol" && member === "@@3" ? PROTO_SYMBOL_TAG_DEFINE_FLAGS : PROTO_METHOD_DEFINE_FLAGS;
+      body.push({ op: "f64.const", value: defineFlags });
       body.push({ op: "call", funcIdx: defineIdx });
     }
     body.push({ op: "drop" }); // the helper returns the target
@@ -900,7 +929,11 @@ export function ensureStandaloneNativeMethodClosure(
     // `"set <key>"`). The reflective `desc.get.name` read resolves the closure's
     // name from `nativeClosureMeta`, so getter closures must carry the accessor
     // spelling, not the bare member. Methods keep the bare member name.
-    const accessorName = kind === "getter" ? `get ${member}` : member;
+    // Native well-known-symbol sentinels are physical compiler keys, not the
+    // JavaScript function names exposed by SetFunctionName. This member is
+    // Symbol.prototype[Symbol.toPrimitive], whose name is bracketed.
+    const displayMember = member === "@@3" ? "[Symbol.toPrimitive]" : member;
+    const accessorName = kind === "getter" ? `get ${displayMember}` : displayMember;
     ctx.nativeClosureMeta.set(funcIdx, { name: accessorName, length: arity });
   }
 
@@ -912,7 +945,8 @@ export function ensureStandaloneNativeMethodClosure(
   // them through runtime params — a compile-time fold cannot satisfy it). All
   // call paths are unaffected: the meta type subtypes the wrapper the lifted
   // func expects. Getters carry the §10.2.9 accessor spelling ("get <key>").
-  const metaName = kind === "getter" ? `get ${member}` : member;
+  const displayMember = member === "@@3" ? "[Symbol.toPrimitive]" : member;
+  const metaName = kind === "getter" ? `get ${displayMember}` : displayMember;
   const metaTypeIdx = ensureBuiltinFnMetaType(
     ctx,
     wrapperTypes.structTypeIdx,
