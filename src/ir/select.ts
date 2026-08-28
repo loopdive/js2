@@ -1295,6 +1295,7 @@ export function assessIrImplicitConstructorSubject(
   owner: ts.ClassDeclaration | ts.ClassExpression,
   localClasses: ReadonlySet<string>,
 ): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
+  currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set<string>();
@@ -1382,6 +1383,10 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
+// #4787's exact exponentiation checkpoint is limited to an already-prepared
+// top-level function body. Retain the subject identity so a nested closure or
+// class member cannot inherit the outer function's checker proof.
+let currentSelectionSubject: IrClaimableSubject | null = null;
 let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression> = new Map();
 let currentClaimClassName: string | null = null;
 // #2949 Acorn follow-up — the current top-level function's return expressions
@@ -1560,6 +1565,7 @@ export function configureIrStructuralSelectorPredicates(
   asyncDeclarationNames: ReadonlySet<string>,
 ): void {
   currentSelectionOptions = options;
+  currentSelectionSubject = null;
   currentLocalClassDeclarations = localClassDeclarations;
   configureDynamicScanSource(sourceFile, functionDeclarations);
   currentAsyncDeclNames = asyncDeclarationNames;
@@ -1643,6 +1649,7 @@ function directOnlyDynMemberEqualityFunctions(): ReadonlySet<ts.FunctionDeclarat
 }
 
 function prepareDynamicEqualitySubject(fn: IrClaimableSubject, isMethod: boolean): void {
+  currentSelectionSubject = fn;
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
   currentDynEqualityBoxableParamNames = new Set<string>();
@@ -6389,6 +6396,134 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
   );
 }
 
+/**
+ * #4787 — exact admission for the bounded `**` retirement checkpoint.
+ *
+ * This is intentionally narrower than {@link expressionIsProvenNumber}:
+ * that older helper also consumes propagated numeric facts and module scalar
+ * families for coercion-sensitive builtins. Exponentiation is the first
+ * checkpoint whose claim must prove the complete operand contract, so it
+ * requires checker evidence, rejects declared unions, and follows only
+ * source forms whose evaluation/lowering is already owned by this function's
+ * Phase-1 walk. The non-null module resolver is the existing prepared
+ * single-source marker; multi-source overlays deliberately omit it.
+ */
+function exactNumericExponentiationContextReady(): boolean {
+  return (
+    !currentSubjectIsModuleInit &&
+    currentSelectionSubject !== null &&
+    ts.isFunctionDeclaration(currentSelectionSubject) &&
+    currentSelectionSubject.body !== undefined &&
+    currentModuleBindingResolver !== null &&
+    currentSelectionOptions?.classifyPrimitiveExpression !== undefined &&
+    selectorSupportsMathPlan(IR_MATH_METHOD_TABLE.pow)
+  );
+}
+
+function exactNumericExponentiationOwner(node: ts.Node): boolean {
+  let parent = node.parent;
+  while (parent) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)
+    ) {
+      return parent === currentSelectionSubject;
+    }
+    parent = parent.parent;
+  }
+  return false;
+}
+
+function exactNumericExponentiationOperand(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  seen = new Set<ts.VariableDeclaration>(),
+): boolean {
+  if (!exactNumericExponentiationContextReady() || !exactNumericExponentiationOwner(expression)) return false;
+  const candidate = unwrapProjectionExpression(expression);
+  if (currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) !== "number") return false;
+  // The declared classifier intentionally preserves a useful distinction for
+  // mixed/nullable primitives. Keep the checkpoint fail-closed for every
+  // declared union, including an all-number union.
+  if (currentSelectionOptions?.classifyDeclaredPrimitiveExpression?.(candidate) === "primitive-union") return false;
+
+  if (ts.isNumericLiteral(candidate)) return true;
+  if (ts.isIdentifier(candidate)) {
+    const binding = currentModuleBindingResolver?.(candidate);
+    if (binding && binding.valueKind.kind !== "f64") return false;
+    if (!binding && !scope.has(candidate.text)) return false;
+    const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
+    if (!declaration) return true; // checker-proven parameter / non-local scalar
+    if (declaration.type !== undefined && !typeNodeIsStrictNumberOnly(declaration.type)) return false;
+    if (!declaration.initializer || seen.has(declaration)) return false;
+    const nextSeen = new Set(seen);
+    nextSeen.add(declaration);
+    return exactNumericExponentiationOperand(declaration.initializer, scope, localClasses, nextSeen);
+  }
+  if (ts.isPrefixUnaryExpression(candidate)) {
+    if (
+      candidate.operator !== ts.SyntaxKind.PlusToken &&
+      candidate.operator !== ts.SyntaxKind.MinusToken &&
+      candidate.operator !== ts.SyntaxKind.TildeToken
+    ) {
+      return false;
+    }
+    return exactNumericExponentiationOperand(candidate.operand, scope, localClasses, seen);
+  }
+  if (ts.isBinaryExpression(candidate)) {
+    switch (candidate.operatorToken.kind) {
+      case ts.SyntaxKind.PlusToken:
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken:
+      case ts.SyntaxKind.PercentToken:
+      case ts.SyntaxKind.AsteriskAsteriskToken:
+        return (
+          exactNumericExponentiationOperand(candidate.left, scope, localClasses, seen) &&
+          exactNumericExponentiationOperand(candidate.right, scope, localClasses, seen)
+        );
+      default:
+        return false;
+    }
+  }
+  if (ts.isCallExpression(candidate)) {
+    if (ts.isPropertyAccessExpression(candidate.expression)) {
+      const receiver = candidate.expression.expression;
+      const plan = IR_MATH_METHOD_TABLE[candidate.expression.name.text];
+      if (
+        !ts.isIdentifier(receiver) ||
+        receiver.text !== "Math" ||
+        scope.has("Math") ||
+        !selectorSeesAmbientBinding(receiver) ||
+        plan === undefined ||
+        !selectorSupportsMathPlan(plan) ||
+        candidate.arguments.length !== plan.arity
+      ) {
+        return false;
+      }
+      return candidate.arguments.every(
+        (argument) =>
+          !ts.isSpreadElement(argument) && exactNumericExponentiationOperand(argument, scope, localClasses, seen),
+      );
+    }
+    // A direct local call is allowed when the ordinary Phase-1 call walk has
+    // already certified its callee/arity/arguments and the checker proves its
+    // result is number. Member calls, wrappers, and coercive constructors stay
+    // outside this checkpoint.
+    return ts.isIdentifier(candidate.expression) && isPhase1Expr(candidate, scope, localClasses);
+  }
+  // Conditional/property/element/object/closure expressions deliberately stay
+  // outside the first checkpoint. In particular, a property with a declared
+  // number type is still a property shape, not a primitive local/parameter.
+  return false;
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -6569,6 +6704,22 @@ function typeNodeIsNumberOnly(typeNode: ts.TypeNode): boolean {
     );
   }
   if (ts.isUnionTypeNode(typeNode)) return typeNode.types.every(typeNodeIsNumberOnly);
+  return false;
+}
+
+/** #4787 — unlike the legacy numeric proof, declared unions are not exact. */
+function typeNodeIsStrictNumberOnly(typeNode: ts.TypeNode): boolean {
+  if (typeNode.kind === ts.SyntaxKind.NumberKeyword) return true;
+  if (ts.isParenthesizedTypeNode(typeNode)) return typeNodeIsStrictNumberOnly(typeNode.type);
+  if (ts.isLiteralTypeNode(typeNode)) {
+    return (
+      ts.isNumericLiteral(typeNode.literal) ||
+      (ts.isPrefixUnaryExpression(typeNode.literal) &&
+        (typeNode.literal.operator === ts.SyntaxKind.PlusToken ||
+          typeNode.literal.operator === ts.SyntaxKind.MinusToken) &&
+        ts.isNumericLiteral(typeNode.literal.operand))
+    );
+  }
   return false;
 }
 
@@ -8385,6 +8536,25 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
+    // #4787 — `**` is the first bounded operator retirement checkpoint. Do
+    // not let the shared claim row widen the old shape walk: only a prepared
+    // single-source top-level function with two exact checker-proven numeric
+    // operands may reach the semantic `math.pow` builder arm. Everything else
+    // is a typed pre-claim Unsupported, including provider-unavailable lanes.
+    if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
+      if (!exactNumericExponentiationContextReady()) {
+        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
+      }
+      if (
+        !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
+        !exactNumericExponentiationOperand(expr.right, scope, localClasses) ||
+        !isPhase1Expr(expr.left, scope, localClasses) ||
+        !isPhase1Expr(expr.right, scope, localClasses)
+      ) {
+        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
+      }
+      return true;
+    }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
       if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
