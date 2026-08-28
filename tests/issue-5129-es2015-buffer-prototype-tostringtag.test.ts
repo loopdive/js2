@@ -10,7 +10,7 @@ import { runTest262File } from "./test262-runner.js";
 
 type Lane = "host" | "standalone";
 
-const TEST262_ROOT = join(process.cwd(), "test262");
+const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 const TEST262_AVAILABLE =
   process.env.JS2_TEST262_AVAILABLE !== "0" && existsSync(join(TEST262_ROOT, "harness", "assert.js"));
 const EXACT_ROWS = [
