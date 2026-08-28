@@ -197,3 +197,10 @@ Root review independently reran the focused suite at the rebased head (13/13,
 including all 16 exact rows in both lanes), confirmed the exact PR template and
 fork/base routing, and retained CI, review-thread, exact-head, and merge-queue
 shepherding as the remaining handoff. No GitHub issue was created or updated.
+
+PR 5124's merge queue consumed an earlier snapshot, so the final `status: done`
+and this handoff were not present in its merge commit even though GitHub later
+displayed the advanced fork head. The stranded markdown-only closure is
+published separately as non-draft upstream PR 5150. That closure PR changes
+only this file; it does not duplicate the source fix or regression test already
+landed by PR 5124.
