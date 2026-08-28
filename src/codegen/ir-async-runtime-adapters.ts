@@ -1,15 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
-  ASYNC_RUNTIME_PROVIDERS,
-  assertCanonicalAsyncHostCapabilityRecord,
   type AsyncHostAdapter,
   type AsyncHostAdapterValueType,
   type AsyncHostCapabilityId,
 } from "../ir/async-runtime-providers.js";
-import type { IrAsyncRuntimeIntent } from "../ir/async-plan.js";
-import { sameIrCallableBinding, irImportFuncRef } from "../ir/callable-bindings.js";
+import { assertPreparedIrAsyncRuntimeCurrent } from "../ir/async-plan.js";
 import type { IrFunction } from "../ir/nodes.js";
+import { RUNTIME_BACKEND_REQUIREMENTS, type RuntimeBackendRequirement } from "../ir/runtime-manifest.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
@@ -62,43 +60,35 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
   return undefined;
 }
 
-function expectedHostCapabilities(intents: readonly IrAsyncRuntimeIntent[]): ReadonlySet<AsyncHostCapabilityId> {
-  const capabilities = new Set<AsyncHostCapabilityId>();
-  for (const intent of intents) {
-    const providers = ASYNC_RUNTIME_PROVIDERS.filter(
-      (provider) =>
-        provider.feature === intent &&
-        provider.supportedTargets.includes("host") &&
-        provider.supportedBackends.includes("wasmgc"),
-    );
-    if (providers.length !== 1) {
-      throw new Error(`IR async runtime intent ${intent} has ${providers.length} exact host-WasmGC providers`);
-    }
-    for (const capability of providers[0]!.hostCapabilities) capabilities.add(capability);
-  }
-  return capabilities;
+interface PreparedAsyncRuntimeRequestCensus {
+  readonly hostRecords: readonly AsyncHostAdapter[];
+  readonly backendRequirements: readonly RuntimeBackendRequirement[];
 }
 
-/**
- * Materialize the concrete host adapter projection selected after semantic
- * runtime-manifest freeze. This runs before prepared component / Program ABI
- * sealing. Existing imports from the transitional AST collector are validated
- * and reused; no body-lowering path may lazily invent another adapter.
- */
-export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
-  const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
-  let nativeRuntimeRequested = false;
-  let nativeUndefinedRequested = false;
+const preparedAsyncDrivePromiseTypeIdxByContext = new WeakMap<CodegenContext, number>();
 
+/** Lookup-only frame type reservation populated by the pre-allocation census consumer. */
+export function getPreparedAsyncDrivePromiseTypeIdx(ctx: CodegenContext): number {
+  const promiseTypeIdx = preparedAsyncDrivePromiseTypeIdxByContext.get(ctx);
+  if (promiseTypeIdx === undefined) {
+    throw new Error("IR async native drive runtime was not reserved before frame lowering");
+  }
+  return promiseTypeIdx;
+}
+
+function collectPreparedAsyncRuntimeRequests(
+  ctx: CodegenContext,
+  functions: readonly IrFunction[],
+): PreparedAsyncRuntimeRequestCensus {
+  const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
+  const requirements = new Set<RuntimeBackendRequirement>();
   for (const fn of functions) {
-    if (!fn.asyncRuntime) continue;
-    if (!fn.asyncPlan || fn.funcKind !== "async") {
+    if (!fn.asyncPlan && !fn.asyncRuntime && fn.funcKind !== "async") continue;
+    if (!fn.asyncPlan || !fn.asyncRuntime || fn.funcKind !== "async") {
       throw new Error(`IR async runtime attachment for ${fn.name} has no valid async plan owner`);
     }
-    if (fn.asyncRuntime.kind === "standalone-native-wasmgc") {
-      if (fn.asyncRuntime.adapters.length !== 0) {
-        throw new Error(`IR async function ${fn.name} attached host capability records to a native runtime`);
-      }
+    const runtime = assertPreparedIrAsyncRuntimeCurrent(fn.unitId, fn.name, fn.asyncPlan, fn.asyncRuntime);
+    if (runtime.kind === "standalone-native-wasmgc") {
       if (
         !ctx.standalone ||
         ctx.wasi ||
@@ -108,64 +98,58 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
       ) {
         throw new Error(`IR async function ${fn.name} selected a native standalone runtime on the wrong target`);
       }
-      nativeRuntimeRequested = true;
-      nativeUndefinedRequested ||= fn.asyncPlan.runtimeIntents.includes("value.undefined");
-      continue;
+    } else if (
+      ctx.targetProfile.target !== "gc" ||
+      ctx.targetProfile.backend !== "wasmgc" ||
+      ctx.targetProfile.environment !== "javascript" ||
+      ctx.targetProfile.capabilityPolicy !== "ambient-js" ||
+      ctx.strictNoHostImports
+    ) {
+      throw new Error(`IR async function ${fn.name} selected a host runtime on the wrong target`);
     }
-    const expectedCapabilities = expectedHostCapabilities(fn.asyncPlan.runtimeIntents);
-    if (fn.asyncRuntime.adapters.length !== expectedCapabilities.size) {
-      throw new Error(
-        `IR async function ${fn.name} has ${fn.asyncRuntime.adapters.length} frozen adapter records; expected ${expectedCapabilities.size}`,
-      );
-    }
-    const attachedCapabilities = new Set<AsyncHostCapabilityId>();
-    for (const attached of fn.asyncRuntime.adapters) {
-      assertCanonicalAsyncHostCapabilityRecord(attached.record);
-      if (attached.capability !== attached.record.capability) {
-        throw new Error(`IR async adapter ${attached.capability} carries record ${attached.record.capability}`);
+    for (const requirement of runtime.backendRequirements) requirements.add(requirement);
+    for (const adapter of runtime.adapters) {
+      const prior = requested.get(adapter.capability);
+      if (prior && prior !== adapter.record) {
+        throw new Error(`IR async adapter ${adapter.capability} differs across prepared functions`);
       }
-      if (!expectedCapabilities.has(attached.capability)) {
-        throw new Error(`IR async function ${fn.name} carries unrequested adapter ${attached.capability}`);
-      }
-      if (attachedCapabilities.has(attached.capability)) {
-        throw new Error(`IR async function ${fn.name} repeats adapter ${attached.capability}`);
-      }
-      attachedCapabilities.add(attached.capability);
-      const expectedTarget = irImportFuncRef(attached.record.module, attached.record.field, attached.record.field);
-      if (
-        !sameIrCallableBinding(attached.target.binding, expectedTarget.binding) ||
-        attached.target.name !== expectedTarget.name
-      ) {
-        throw new Error(`IR async adapter ${attached.capability} does not match its frozen import projection`);
-      }
-      const prior = requested.get(attached.capability);
-      if (prior && prior !== attached.record) {
-        throw new Error(`IR async adapter ${attached.capability} differs across prepared functions`);
-      }
-      requested.set(attached.capability, attached.record);
-    }
-    for (const capability of expectedCapabilities) {
-      if (!attachedCapabilities.has(capability)) {
-        throw new Error(`IR async function ${fn.name} is missing frozen adapter ${capability}`);
-      }
+      requested.set(adapter.capability, adapter.record);
     }
   }
+  return Object.freeze({
+    hostRecords: Object.freeze(
+      [...requested.values()].sort((left, right) =>
+        left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0,
+      ),
+    ),
+    backendRequirements: Object.freeze(
+      RUNTIME_BACKEND_REQUIREMENTS.filter((requirement) => requirements.has(requirement)),
+    ),
+  });
+}
 
-  if (nativeRuntimeRequested) {
-    ensureAsyncDriveRuntime(ctx);
-    prepareNativePromiseNumberBoundary(ctx);
-    if (nativeUndefinedRequested) {
-      // Promise<void> must settle with the canonical native `undefined`
-      // singleton, not the null externref sentinel. Reserve it before Program
-      // ABI sealing so async-frame lowering remains allocation-free.
-      canonicalUndefinedExternInstrs(ctx);
-    }
+/**
+ * Materialize the concrete host adapter projection selected after semantic
+ * runtime-manifest freeze. This runs before prepared component / Program ABI
+ * sealing. Existing imports from the transitional AST collector are validated
+ * and reused; no body-lowering path may lazily invent another adapter.
+ */
+export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
+  const census = collectPreparedAsyncRuntimeRequests(ctx, functions);
+  for (const adapter of census.hostRecords) {
+    const imported = findExactImport(ctx, adapter);
+    if (imported) assertImportSignature(ctx, imported, adapter);
   }
-
-  const selectedRecords = [...requested.values()].sort((left, right) =>
-    left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0,
-  );
-  for (const adapter of selectedRecords) {
+  for (const requirement of census.backendRequirements) {
+    if (requirement === "async.native.drive") {
+      if (!preparedAsyncDrivePromiseTypeIdxByContext.has(ctx)) {
+        const runtime = ensureAsyncDriveRuntime(ctx);
+        preparedAsyncDrivePromiseTypeIdxByContext.set(ctx, runtime.promiseTypeIdx);
+      }
+    } else if (requirement === "async.native.number-boundary") prepareNativePromiseNumberBoundary(ctx);
+    else canonicalUndefinedExternInstrs(ctx);
+  }
+  for (const adapter of census.hostRecords) {
     let imported = findExactImport(ctx, adapter);
     if (!imported) {
       const signature = expectedSignature(adapter);

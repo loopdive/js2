@@ -52,6 +52,13 @@ export type RuntimeBackend = "wasmgc" | "linear";
 export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature;
 export type HostCapabilityId = AsyncHostCapabilityId;
 
+export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
+  "async.native.drive",
+  "async.native.number-boundary",
+  "async.native.undefined",
+] as const);
+export type RuntimeBackendRequirement = (typeof RUNTIME_BACKEND_REQUIREMENTS)[number];
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -154,6 +161,43 @@ export interface RuntimeProviderDefinition {
   readonly implementation: RuntimeProviderImplementation;
 }
 
+/**
+ * Project concrete backend reservations from already selected providers.
+ * This is the only semantic-to-backend requirement projection: consumers
+ * receive the resulting closed vector and never rediscover it from features.
+ */
+export function projectRuntimeBackendRequirements(
+  providers: readonly RuntimeProviderDefinition[],
+): readonly RuntimeBackendRequirement[] {
+  const requirements = new Set<RuntimeBackendRequirement>();
+  let family: "host" | "native" | null = null;
+  for (const provider of providers) {
+    const kind = provider.implementation.kind;
+    if (kind === "host-capability" || kind === "host-managed") {
+      if (family === "native") {
+        throw new RuntimeManifestInvariantError(
+          "invalid-backend-requirement-projection",
+          "runtime provider projection mixes host and native async providers",
+        );
+      }
+      family = "host";
+      continue;
+    }
+    if (kind !== "native-managed") continue;
+    if (family === "host") {
+      throw new RuntimeManifestInvariantError(
+        "invalid-backend-requirement-projection",
+        "runtime provider projection mixes host and native async providers",
+      );
+    }
+    family = "native";
+    requirements.add("async.native.drive");
+    requirements.add("async.native.number-boundary");
+    if (provider.feature === "value.undefined") requirements.add("async.native.undefined");
+  }
+  return Object.freeze(RUNTIME_BACKEND_REQUIREMENTS.filter((requirement) => requirements.has(requirement)));
+}
+
 /** Semantic-intrinsic lowering view; async providers are consumed by later adapters. */
 export type RuntimeProviderPlan = RuntimeProviderDefinition & {
   readonly implementation: IntrinsicRuntimeProviderImplementation;
@@ -174,6 +218,8 @@ export interface FrozenRuntimeManifest {
   readonly hostCapabilities: readonly HostCapabilityId[];
   /** Exact selected ABI records, in the same canonical capability-ID order. */
   readonly hostCapabilityRecords: readonly AsyncHostAdapter[];
+  /** Canonical union of concrete backend reservations selected before lowering. */
+  readonly backendRequirements: readonly RuntimeBackendRequirement[];
 }
 
 export type RuntimeManifestInvariantCode =
@@ -192,6 +238,7 @@ export type RuntimeManifestInvariantCode =
   | "ambiguous-runtime-provider"
   | "provider-target-unavailable"
   | "missing-backend-adapter"
+  | "invalid-backend-requirement-projection"
   | "provider-signature-mismatch"
   | "undeclared-provider-cycle"
   | "declared-cycle-mismatch"
@@ -878,6 +925,7 @@ export class RuntimeManifestBuilder {
     const hostCapabilityRecords = Object.freeze(
       hostCapabilities.map((capability) => resolveAsyncHostCapabilityRecord(capabilityCatalog, capability)),
     );
+    const backendRequirements = projectRuntimeBackendRequirements(providers);
 
     for (const use of intrinsicUses) this.#plannedIntrinsicIds.add(use.id);
     for (const value of providers) this.#plannedProviderIds.add(value.id);
@@ -891,6 +939,7 @@ export class RuntimeManifestBuilder {
       providerComponents,
       hostCapabilities,
       hostCapabilityRecords,
+      backendRequirements,
     });
   }
 
