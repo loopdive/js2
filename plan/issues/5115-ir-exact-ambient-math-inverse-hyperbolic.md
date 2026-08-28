@@ -112,6 +112,28 @@ spread, and wrong-arity forms remain direct.
   behavior changes.
 - Async, class, module-init, or broader non-Math ownership expansion.
 
+## Measured numerical disposition
+
+The existing direct and self-hosted paths share the same formulas and
+`Math_log` approximation. This ownership checkpoint preserves them exactly. A
+Luna Max audit measured distinct safe-range envelopes, now pinned by the
+focused IR-only oracle:
+
+- `asinh` on moderate `|x| >= 1e-3`: at most `2e-12` relative error, with a
+  `2e-16` absolute envelope for tiny values;
+- `acosh` away from one: at most `2e-12` relative error, with a measured
+  `5e-13` absolute envelope immediately above one;
+- `atanh` in the regular interior: at most `2e-8` relative error, with
+  `2e-16` absolute error near zero and `1e-8` near the domain endpoints.
+
+These are regression envelopes, not correct-rounding claims. The existing
+`x * x` formulas overflow above roughly `1.3407807929942596e154`, so `asinh`
+and `acosh` return positive or signed infinity while native Math remains
+finite. `asinh` also maps subnormals to signed zero, and `atanh` maps
+`-Number.MIN_VALUE` to positive zero. Exact IR/direct parity explicitly covers
+these inherited range and cancellation behaviors; improving the shared
+algorithms remains separate from this ownership-only PR.
+
 ## Risk and rollback
 
 The principal risks are inherited cancellation near zero, domain endpoints,

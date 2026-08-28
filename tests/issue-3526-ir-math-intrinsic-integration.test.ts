@@ -69,6 +69,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function allMath(x: number, y: number): number {
         return Math.abs(x) + Math.sqrt(x) + Math.floor(x) + Math.ceil(x) + Math.trunc(x)
           + Math.asin(x) + Math.acos(x) + Math.atan(x) + Math.sin(x) + Math.cos(x) + Math.tan(x)
+          + Math.asinh(x) + Math.acosh(x) + Math.atanh(x)
           + Math.sinh(x) + Math.cosh(x) + Math.tanh(x)
           + Math.cbrt(x)
           + Math.exp(x) + Math.expm1(x) + Math.log(x) + Math.log10(x) + Math.log1p(x) + Math.log2(x)
@@ -125,6 +126,9 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function asin(): number { return Math.asin(0.5); }
       export function acos(): number { return Math.acos(0.5); }
       export function atan(): number { return Math.atan(1); }
+      export function asinh(): number { return Math.asinh(1); }
+      export function acosh(): number { return Math.acosh(2); }
+      export function atanh(): number { return Math.atanh(0.5); }
       export function sin(): number { return Math.sin(0.75); }
       export function cos(): number { return Math.cos(0.75); }
       export function tan(): number { return Math.tan(0.75); }
@@ -174,6 +178,9 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       "asin",
       "acos",
       "atan",
+      "asinh",
+      "acosh",
+      "atanh",
       "sin",
       "cos",
       "tan",

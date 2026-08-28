@@ -14,9 +14,12 @@ import { irTypeEquals, type IrInstr, type IrType } from "./nodes.js";
 export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.abs",
   "math.acos",
+  "math.acosh",
   "math.asin",
+  "math.asinh",
   "math.atan",
   "math.atan2",
+  "math.atanh",
   "math.cbrt",
   "math.ceil",
   "math.cos",
@@ -40,15 +43,18 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
 export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
 
 /**
- * Provider requirements reachable from the twenty-three intrinsic entry points.
+ * Provider requirements reachable from the twenty-six intrinsic entry points.
  * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.abs",
   "math.acos",
+  "math.acosh",
   "math.asin",
+  "math.asinh",
   "math.atan",
   "math.atan2",
+  "math.atanh",
   "math.cbrt",
   "math.ceil",
   "math.cos",
@@ -147,9 +153,12 @@ function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: Run
 export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.asin": definition("math.asin", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.asinh": definition("math.asinh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.atan": definition("math.atan", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.atan2": definition("math.atan2", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.atanh": definition("math.atanh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cbrt": definition("math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),

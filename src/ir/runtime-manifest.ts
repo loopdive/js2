@@ -52,9 +52,12 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "backend.f64.sqrt",
   "backend.f64.trunc",
   "selfhost.math.acos",
+  "selfhost.math.acosh",
   "selfhost.math.asin",
+  "selfhost.math.asinh",
   "selfhost.math.atan",
   "selfhost.math.atan2",
+  "selfhost.math.atanh",
   "selfhost.math.cbrt",
   "selfhost.math.cos",
   "selfhost.math.cosh",
@@ -179,9 +182,12 @@ const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.asin": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.asinh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.atan": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.atan2": F64_BINARY_INTRINSIC_SIGNATURE,
+  "math.atanh": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cbrt": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.ceil": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.cos": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -234,12 +240,26 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     { kind: "self-hosted", symbol: "Math_acos" },
     ["math.atan"],
   ),
+  "math.acosh": provider(
+    "selfhost.math.acosh",
+    "math.acosh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_acosh" },
+    ["math.log"],
+  ),
   "math.asin": provider(
     "selfhost.math.asin",
     "math.asin",
     F64_UNARY_INTRINSIC_SIGNATURE,
     { kind: "self-hosted", symbol: "Math_asin" },
     ["math.atan"],
+  ),
+  "math.asinh": provider(
+    "selfhost.math.asinh",
+    "math.asinh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_asinh" },
+    ["math.log"],
   ),
   "math.atan": provider("selfhost.math.atan", "math.atan", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
@@ -251,6 +271,13 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     F64_BINARY_INTRINSIC_SIGNATURE,
     { kind: "self-hosted", symbol: "Math_atan2" },
     ["math.atan"],
+  ),
+  "math.atanh": provider(
+    "selfhost.math.atanh",
+    "math.atanh",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_atanh" },
+    ["math.log"],
   ),
   "math.cbrt": provider("selfhost.math.cbrt", "math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
@@ -360,7 +387,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
   }),
 });
 
-/** Canonically ordered default provider catalogue for the twenty-three-method slice. */
+/** Canonically ordered default provider catalogue for the twenty-six-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),

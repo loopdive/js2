@@ -295,7 +295,10 @@ export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = 
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
   asin: { arity: 1, intrinsic: "math.asin" },
   acos: { arity: 1, intrinsic: "math.acos" },
+  asinh: { arity: 1, intrinsic: "math.asinh" },
+  acosh: { arity: 1, intrinsic: "math.acosh" },
   atan: { arity: 1, intrinsic: "math.atan" },
+  atanh: { arity: 1, intrinsic: "math.atanh" },
   cbrt: { arity: 1, intrinsic: "math.cbrt" },
   sin: { arity: 1, intrinsic: "math.sin" },
   cos: { arity: 1, intrinsic: "math.cos" },
@@ -6497,6 +6500,9 @@ function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpressio
   if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
   if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
   if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
+  if (plan.intrinsic === "math.asinh" && process.env.JS2WASM_IR_MATH_ASINH === "0") return false;
+  if (plan.intrinsic === "math.acosh" && process.env.JS2WASM_IR_MATH_ACOSH === "0") return false;
+  if (plan.intrinsic === "math.atanh" && process.env.JS2WASM_IR_MATH_ATANH === "0") return false;
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
 
