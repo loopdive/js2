@@ -1,10 +1,11 @@
 {
   "id": "3526",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "codex/3526-a1-async-capability-catalog",
   "claimed_at": "2026-08-28T13:01:10Z",
-  "updated_at": "2026-08-28T13:01:10Z",
-  "write_id": "82369-lzahama3"
+  "updated_at": "2026-08-28T22:03:05Z",
+  "write_id": "24310-3vw19q37",
+  "released_at": "2026-08-28T22:03:05Z"
 }
