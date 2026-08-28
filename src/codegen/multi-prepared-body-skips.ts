@@ -2,7 +2,7 @@
 
 import type { CodegenContext } from "./context/types.js";
 import { compileDeclarations } from "./audited-declarations.js";
-import type { ModuleInitMode } from "./declarations.js";
+import type { ModuleInitBodyCompileRouting, ModuleInitMode } from "./declarations.js";
 import type { IrUnitId } from "../ir/identity.js";
 import type { EarlyMultiPreparedScalarLeafState, MultiPreparedScalarLeafPlan } from "./multi-prepared-scalar-leaf.js";
 
@@ -14,6 +14,7 @@ export interface MultiPreparedAdditionalBodySkips {
   readonly preserveBodyUnitIds: ReadonlySet<IrUnitId>;
   readonly onSkippedNames?: (names: readonly string[]) => void;
   readonly onSkippedUnitIds?: (unitIds: readonly IrUnitId[]) => void;
+  readonly moduleInitBodyRouting?: ModuleInitBodyCompileRouting;
 }
 
 function projectedUnitIds(
@@ -63,7 +64,7 @@ export function compileMultiPreparedScalarLeafDeclarations<Plan extends MultiPre
     preserveBodies.size > 0 ? preserveBodies : undefined,
     undefined,
     moduleInitMode,
-    undefined,
+    additional?.moduleInitBodyRouting,
     skipBodyUnitIds.size > 0
       ? {
           skipBodyUnitIds,
