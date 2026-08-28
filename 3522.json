@@ -1,10 +1,10 @@
 {
   "id": "3522",
-  "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
+  "assignee": "ttraenkler/opus-3522-f4",
+  "requested_by": "ttraenkler/opus-3522-f4",
   "status": "in-progress",
-  "branch": "codex/3522-f2-owner-aware-direct-calls",
-  "claimed_at": "2026-08-27T19:13:02Z",
-  "updated_at": "2026-08-27T19:13:02Z",
-  "write_id": "76823-7fk5fkl4"
+  "branch": "claude/issue-3522-f4-field-call-admission",
+  "claimed_at": "2026-08-28T22:01:28Z",
+  "updated_at": "2026-08-28T22:01:28Z",
+  "write_id": "19748-qfwwjmam"
 }
