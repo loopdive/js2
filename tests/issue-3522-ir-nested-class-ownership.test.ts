@@ -206,7 +206,7 @@ describe("#3522 nested ordinary class ownership", () => {
       }
       expect(Array.from(preparedObserved.binary)).toEqual(Array.from(preparedControl.binary));
       expect(preparedObserved.irPostClaimErrors ?? []).toEqual([]);
-      expect(preparedObserved.irOutcomes ?? []).toHaveLength(2);
+      expect(preparedObserved.irOutcomes ?? []).toHaveLength(4);
       expect(outcome(preparedObserved, "seed")).toMatchObject({
         kind: "emitted",
         legacyBodyEmitted: false,
@@ -217,6 +217,15 @@ describe("#3522 nested ordinary class ownership", () => {
         legacyBodyEmitted: true,
         irBodyEmitted: false,
       });
+      for (const name of ["Box_new", "Box_read"]) {
+        expect(outcome(preparedObserved, name)).toMatchObject({
+          kind: "unsupported",
+          code: "class-member-unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+      }
     },
   );
 

@@ -2,7 +2,19 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
-import type { IrClassId, IrSourceId, IrTerminalUnitRecord, IrUnitId, IrUnitRecord } from "./identity.js";
+import {
+  isIrNestedClassFieldCallProofSidecarForInventory,
+  type IrNestedClassFieldCallProofSidecar,
+} from "./class-field-call-planning.js";
+import {
+  getIrNestedClassFieldCallInventoryCandidates,
+  type IrClassId,
+  type IrNestedClassFieldCallInventoryCandidate,
+  type IrSourceId,
+  type IrTerminalUnitRecord,
+  type IrUnitId,
+  type IrUnitRecord,
+} from "./identity.js";
 import { collectModuleInitPopulation } from "./module-init.js";
 import {
   IrPlanningIdentityInvariantError,
@@ -98,6 +110,10 @@ export interface IrIdentitySelection {
   readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
   /** Exact counted-string plans owned by claimed function units. */
   readonly countedStringAppendPlans?: ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]>;
+  /** Proof-independent typed inventory population for the still-dormant F3 family. */
+  readonly nestedClassFieldCallCandidates?: readonly IrNestedClassFieldCallInventoryCandidate[];
+  /** Optional dormant proof sidecar; its presence never changes claims. */
+  readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
   /** Policy needed only while projecting back through the legacy name seam. */
   readonly legacyProjection?: {
@@ -151,6 +167,8 @@ export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveType
   readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
   /** Exact checker/reservation authority used to re-resolve every retained fnctor AST edge. */
   readonly fnctorArgumentProjectionAuthority?: IrFnctorArgumentProjectionAuthority;
+  /** Pre-selection dormant field-call evidence over this exact inventory. */
+  readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
 };
 
 export interface IrLegacySelectionProjection {
@@ -802,7 +820,43 @@ export function planIrCompilationByIdentity(
       `IR identity selector source ${sourceId} does not resolve back to the exact SourceFile`,
     );
   }
-  if (!options?.experimentalIR) return { units: new Map(), funcs: new Map() };
+  const nestedClassFieldCallCandidates = getIrNestedClassFieldCallInventoryCandidates(identityContext.inventory).filter(
+    (candidate) => candidate.sourceFile === sourceFile && candidate.source.id === sourceId,
+  );
+  const fieldCallCandidateByClassId = new Map<IrClassId, IrNestedClassFieldCallInventoryCandidate>();
+  for (const candidate of nestedClassFieldCallCandidates) {
+    if (
+      candidate.inventory !== identityContext.inventory ||
+      identityContext.classIdByDeclaration.get(candidate.declaration) !== candidate.classRecord.id ||
+      identityContext.declarationByClassId.get(candidate.classRecord.id) !== candidate.declaration ||
+      fieldCallCandidateByClassId.has(candidate.classRecord.id)
+    ) {
+      return selectorIdentityInvariant(
+        "class-record-mismatch",
+        `IR field-call candidate ${candidate.classRecord.id} is detached from its exact inventory class`,
+      );
+    }
+    fieldCallCandidateByClassId.set(candidate.classRecord.id, candidate);
+  }
+  if (
+    options?.nestedClassFieldCallProofs &&
+    !isIrNestedClassFieldCallProofSidecarForInventory(options.nestedClassFieldCallProofs, identityContext.inventory)
+  ) {
+    return selectorIdentityInvariant(
+      "unit-record-mismatch",
+      "IR field-call proof sidecar belongs to a different inventory",
+    );
+  }
+  if (!options?.experimentalIR) {
+    return {
+      units: new Map(),
+      funcs: new Map(),
+      ...(nestedClassFieldCallCandidates.length ? { nestedClassFieldCallCandidates } : {}),
+      ...(options?.nestedClassFieldCallProofs
+        ? { nestedClassFieldCallProofs: options.nestedClassFieldCallProofs }
+        : {}),
+    };
+  }
   const population = selectionFunctionPopulation(sourceFile, sourceId, identityContext, options);
   const { functions, fnctorArgumentProjections, functionsByName, units } = population;
 
@@ -919,6 +973,7 @@ export function planIrCompilationByIdentity(
       const parentIsLocal = parentName !== null && localClasses.has(parentName);
       const boundedAccessorClass = isBoundedPreparedAccessorClass(declaration);
       const boundedNestedOrdinaryClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
+      const nestedFieldCallCandidate = fieldCallCandidateByClassId.get(classId);
       const boundedTopLevelAccessorClass =
         !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
       // (#3522) Arms the accessor-only WRITEBACK contract (exact syntax-key
@@ -948,6 +1003,28 @@ export function planIrCompilationByIdentity(
           }
         }
       };
+      if (nestedFieldCallCandidate) {
+        // F3 retains exact terminal identities but keeps admission closed. An
+        // implicit constructor may have been tentatively selected above, so
+        // normalize the complete marker-authored terminal set explicitly.
+        for (const { record } of nestedFieldCallCandidate.terminalMembers) {
+          const populated = units.get(record.id);
+          if (
+            !populated ||
+            populated.kind !== "class-member" ||
+            populated.classId !== classId ||
+            identityContext.terminalByUnitId.get(record.id) !== record
+          ) {
+            return selectorIdentityInvariant(
+              "terminal-record-mismatch",
+              `IR field-call candidate terminal ${record.id} is detached from class ${classId}`,
+            );
+          }
+          classClaims.delete(record.id);
+          if (trackFallbacks) reasons.set(record.id, "class-member-unsupported");
+        }
+        continue;
+      }
       if (nestedClass && !boundedAccessorClass && !boundedNestedOrdinaryClass) {
         markBoundedClassFallback();
         continue;
@@ -1266,6 +1343,8 @@ export function planIrCompilationByIdentity(
     ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
     ...(fnctorArgumentProjections ? { fnctorArgumentProjections } : {}),
     ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),
+    ...(nestedClassFieldCallCandidates.length ? { nestedClassFieldCallCandidates } : {}),
+    ...(options.nestedClassFieldCallProofs ? { nestedClassFieldCallProofs: options.nestedClassFieldCallProofs } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },
   };
