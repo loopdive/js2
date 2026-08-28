@@ -1,7 +1,7 @@
 ---
 id: 5120
 title: "ES2015 Array find/findIndex must throw for Symbol length in standalone"
-status: ready
+status: done
 created: 2026-08-28
 updated: 2026-08-28
 priority: high
@@ -10,6 +10,7 @@ reasoning_effort: max
 goal: standalone-gap
 assignee: ttraenkler/codex-5120-es2015-array-find-symbol-length
 branch: codex/5120-es2015-array-find-symbol-length
+pr: 5136
 task_type: bugfix
 area: codegen
 es_edition: es2015
@@ -156,10 +157,12 @@ were rewritten or reverted.
 
 ## Handoff
 
-This plan is `status: ready` for root review; it is not `done`. Root should open
-the single non-draft upstream PR after reviewing the branch and add its URL to
-the eventual issue/PR record. The final branch is
-`codex/5120-es2015-array-find-symbol-length`, based on current `upstream/main`
-and ending in the final handoff commit that follows this plan update. The
-worktree is clean, the branch is pushed to `ttraenkler/js2`, and there are no
-known blockers.
+The completed fix is published as the single non-draft upstream PR
+[loopdive/js2#5136](https://github.com/loopdive/js2/pull/5136). Before
+publication, current `upstream/main` at
+`8e1df452ec0dae05687b01eff638f278f9253651` was merged non-destructively in
+`c7ada2926a21358bd553c7e25365322c3fcdb56e`; the focused suite then repeated
+44/44 green. The branch is
+`codex/5120-es2015-array-find-symbol-length`, is pushed only to
+`ttraenkler/js2`, and has no known blockers. This markdown file is the sole
+issue tracker; no GitHub issue was created.
