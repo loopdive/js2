@@ -6551,11 +6551,12 @@ function exactNumericExponentiationOperand(
           !ts.isSpreadElement(argument) && exactNumericExponentiationOperand(argument, scope, localClasses, seen),
       );
     }
-    // A direct local call is allowed when the ordinary Phase-1 call walk has
-    // already certified its callee/arity/arguments and the checker proves its
-    // result is number. Member calls, wrappers, and coercive constructors stay
-    // outside this checkpoint.
-    return ts.isIdentifier(candidate.expression) && isPhase1Expr(candidate, scope, localClasses);
+    // Direct-call plans are prepared after selection. Without an exact
+    // AST-site plan and its f64 return ABI, a checker-number result is not
+    // enough to admit this operand: lowering may otherwise demote it after the
+    // enclosing exponentiation claim. Generic call selection remains unchanged
+    // outside this exact checkpoint.
+    return false;
   }
   // Conditional/property/element/object/closure expressions deliberately stay
   // outside the first checkpoint. In particular, a property with a declared
