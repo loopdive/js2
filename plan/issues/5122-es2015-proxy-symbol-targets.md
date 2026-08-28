@@ -1,7 +1,7 @@
 ---
 id: 5122
 title: "ES2015 standalone Proxy rejects Symbol target and handler"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -156,42 +156,43 @@ and nested-Proxy/object/array/function carriers remain required controls.
 
 ## Final validation and handoff
 
-Implementation and validation completed on the synchronized branch. The final
-validated tree is rooted at `upstream/main` `09a016fd5f69883c910e463fd9aa743b397ec948`
-through merge commit `e23257c8fd11fd54a8a7b2d410169aceea5e4122`; the final
-implementation/test head before the upstream sync is
-`896030a58aa2d2ded1ce3d6147d958eb73f159db`. All lane commits are authored by
-Thomas Tränkler and carry real newline-separated Codex trailers.
+The reopened spread fix is implemented and validated on the current
+`upstream/main` `358d5e2723d2aebf1f8235a12b85409f3a964a67`, integrated
+non-destructively by merge commit `0a91f4d09001dc419c7c68dc0fc70b1243c0daca`.
+The exact implementation/test checkpoint is `f37dfdec147595ea530097c9f3c16ca2bf13a2e0`;
+the plan-only reopen checkpoint is `865f2f3863ff3c621135697b54944489f018031b`.
+All new commits are authored by Thomas Tränkler and carry real
+newline-separated Codex trailers. The branch remains unpublished for root's
+review and external remote-head verification.
 
-- Focused Vitest with the pinned artifact and two workers: **6/6 passed**;
-  both exact host rows and both exact standalone rows passed, and host-free
-  controls passed for static/dynamic Symbols, callee-before-caller ordering,
-  all-argument evaluation and later abrupt completion, target-before-handler
-  validation, trap-read suppression, and ordinary object/array/function/
-  nested-Proxy carriers. The standalone compiler result asserted `imports ===
-  []`.
+- Before the fix, the direct `new Proxy(...[{}, {}])` probe returned the
+  caught-TypeError code in both host and standalone; after the fix it returns
+  the success code in both lanes. Dynamic array sources likewise succeed.
+- Focused Vitest with the pinned QuickJS artifact and at most two workers:
+  **6/6 passed** on the integrated head. Both exact host rows and both exact
+  standalone rows passed. Host and standalone controls cover static/dynamic
+  spread sources, mixed ordinary-plus-spread ordering, expanded extras,
+  later abrupt argument evaluation and iterator steps, target-before-handler
+  validation with no trap reads, Symbol target/handler after expansion,
+  callee-before-caller index stability, and valid ordinary object, array,
+  function, and nested-Proxy carriers. The standalone compiler asserted
+  `imports === []`, including the direct `any`-to-externref/ref.test fallback
+  controls.
 - TypeScript 5 and TypeScript 7 typechecks passed. Full Biome lint and
   Prettier checks passed. Oracle and coercion-site ratchets passed with zero
-  net growth. LOC/function budgets passed using only this issue's two narrow
-  source/function allowances. Issue-spec coverage, done-status, full issue
-  integrity, and conformance-sync checks passed. Numeric-local parity passed
-  **18/18**.
-- The complete `.husky/pre-push` hook passed locally with the fixed toolchain
-  PATH, including parallel typecheck/lint, format, oracle/coercion ratchets,
-  numeric-local parity, conformance sync, and committed issue integrity.
-- After `upstream/main` advanced with the DataView Symbol-offset fix, root
-  merged the exact `09a016fd5f69883c910e463fd9aa743b397ec948` tree without
-  conflict and repeated the focused suite on the integrated head: **6/6
-  passed**, including all four exact host/standalone Test262 rows and both
-  compiler controls.
-- Root verified the non-force fork remote at exact pre-PR head
-  `f4209a8f7ff252eb7694a03c511bba31cd358d58` and opened the single non-draft
-  upstream PR: https://github.com/loopdive/js2/pull/5138.
+  net growth. LOC/function budgets passed using only this issue's narrow
+  allowances. Stack-balance, dead-export, issue-spec, done-status, committed
+  issue-integrity, conformance-sync, and IR-adoption checks passed. Numeric-
+  local parity passed **18/18**.
+- The corpus guard is worktree-anchored through `import.meta.dirname` and the
+  exact Test262 rows remain existence-guarded. No source outside the owned
+  files was changed by this fix, and no host import is emitted by standalone
+  controls.
 
 ## Handoff
 
 Work only in `/private/tmp/js2-es2015-proxy-symbol-targets-20260828` on branch
-`codex/5122-es2015-proxy-symbol-targets`. Push checkpoints to the fork without
-force. PR 5138 owns this completed fix; after this final metadata checkpoint,
-do not publish another branch head once the exact green head enters the merge
-queue.
+`codex/5122-es2015-proxy-symbol-targets`. Root should verify the eventual
+branch/remote SHA externally, review the unpublished implementation, and
+publish the single upstream PR when mergeable; this lane does not edit PR
+state, enqueue work, or open a PR.
