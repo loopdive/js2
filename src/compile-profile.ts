@@ -165,6 +165,24 @@ export function profileCount(name: string, value: number): void {
   process.stderr.write(`[js2:profile] count ${name}=${value}\n`);
 }
 
+/**
+ * (#4645) Record the SCALE of the module being compiled — function count,
+ * import count, type count and total instruction count — at a named checkpoint.
+ *
+ * Phase timings alone cannot distinguish "this pass is quadratic in module
+ * size" from "this pass is linear but the module itself grew superlinearly".
+ * On the #4645 repro every whole-module finalize pass grew 50–300x for a 2.8x
+ * source growth, which only these counts explain. `countInstrs` is called
+ * lazily so a non-profiling compile never walks the module.
+ */
+export function profileModuleScale(label: string, counts: () => Record<string, number>): void {
+  if (!enabled) return;
+  const parts = Object.entries(counts())
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  process.stderr.write(`[js2:profile] scale ${label} ${parts}\n`);
+}
+
 /** Snapshot of everything measured so far, sorted by self time descending. */
 export function getCompileProfile(): CompilePhaseRecord[] {
   return [...records.values()].sort((a, b) => b.selfMs - a.selfMs);

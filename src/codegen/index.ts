@@ -435,6 +435,7 @@ import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { reportModuleScale } from "./module-scale-profile.js"; // (#4645) scale checkpoints
 import { frameSnapshotAtCompile } from "./function-body.js";
 import { describeInternalError } from "./internal-error.js";
 import {
@@ -5361,15 +5362,17 @@ export function generateModule(
       classMemberUnitIds: actuallySkippedClassMemberUnitIds,
       implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
       moduleInitNames: actuallySkippedModuleInit,
-    } = compileIrRoutedDeclarations({
-      ctx: standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext, !irFirst),
-      sourceFile: ast.sourceFile,
-      preparedClassMembers,
-      preparedImplicitConstructorUnitIds,
-      preparedModuleInit,
-      irSkipBodies,
-      irPreserveBodies,
-    });
+    } = profilePhase("bodies", () =>
+      compileIrRoutedDeclarations({
+        ctx: standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext, !irFirst),
+        sourceFile: ast.sourceFile,
+        preparedClassMembers,
+        preparedImplicitConstructorUnitIds,
+        preparedModuleInit,
+        irSkipBodies,
+        irPreserveBodies,
+      }),
+    );
     if (irFirst) {
       const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
@@ -5581,10 +5584,14 @@ export function generateModule(
     // Emit exported struct field getter helpers for the runtime.
     // These allow JS host imports to read WasmGC struct fields that are
     // otherwise opaque to JS (V8 returns undefined for direct property access).
-    emitStructFieldGetters(ctx);
-    emitStructFieldBooleanMarkers(ctx);
-    emitStructFieldPresenceGetters(ctx);
-    emitStructFieldSetters(ctx);
+    // (#4645) Named: each helper registers a string-constant import, and the
+    // per-add global-index fixup made this a top cost centre on large modules.
+    profilePhase("struct-field-accessors", () => {
+      emitStructFieldGetters(ctx);
+      emitStructFieldBooleanMarkers(ctx);
+      emitStructFieldPresenceGetters(ctx);
+      emitStructFieldSetters(ctx);
+    });
 
     // Emit __vec_get / __vec_len exports for runtime iterator fallback on WasmGC arrays
     emitVecAccessExports(ctx);
@@ -6283,13 +6290,18 @@ export function generateModule(
     emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
-    eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
+    // (#4645) Every whole-module finalize pass below is named so a pathological
+    // compile is attributable: before this, `module-init-pass2` was the last
+    // marker to close and the remaining (majority) of the time was one opaque
+    // window. See `plan/issues/4645-superlinear-compile-time-large-modules.md`.
+    reportModuleScale("before-finalize", mod);
+    profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    repairStructTypeMismatches(mod);
+    profilePhase("finalize/repair-struct-types", () => repairStructTypeMismatches(mod));
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
-    peepholeOptimize(mod);
+    profilePhase("finalize/peephole", () => peepholeOptimize(mod));
 
     // (#3921) Allocation census — no-op unless JS2WASM_ALLOC_CENSUS=1. Placed
     // here because dead-type elimination has already remapped every `typeIdx`,
@@ -6300,7 +6312,7 @@ export function generateModule(
     // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
-    inlineUserFunctions(ctx);
+    profilePhase("finalize/ir-inline", () => inlineUserFunctions(ctx));
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -6319,15 +6331,16 @@ export function generateModule(
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    repairCrossHierarchyOperands(mod);
+    profilePhase("finalize/cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod));
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
-    stackBalance(mod);
+    reportModuleScale("before-stack-balance", mod);
+    profilePhase("finalize/stack-balance", () => stackBalance(mod));
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     drainStackBalanceTelemetry(ctx, ast.sourceFile.fileName);
 
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
-    fixupExternConvertAny(ctx);
+    profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
@@ -9681,10 +9694,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Emit exported struct field getter helpers for the runtime (mirrors
     // generateModule path — #1308 surfaced that multi-source projects
     // were missing these export emits).
-    emitStructFieldGetters(ctx);
-    emitStructFieldBooleanMarkers(ctx);
-    emitStructFieldPresenceGetters(ctx);
-    emitStructFieldSetters(ctx);
+    profilePhase("struct-field-accessors", () => {
+      emitStructFieldGetters(ctx);
+      emitStructFieldBooleanMarkers(ctx);
+      emitStructFieldPresenceGetters(ctx);
+      emitStructFieldSetters(ctx);
+    });
 
     // (#2660 M3) Same ordering as the single-source pipeline.
     fillClosurePrototypeEdge(ctx);
@@ -10071,13 +10086,15 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
-    eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
+    // (#4645) Named finalize phases — mirrors the single-source pipeline.
+    reportModuleScale("before-finalize", mod);
+    profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    repairStructTypeMismatches(mod);
+    profilePhase("finalize/repair-struct-types", () => repairStructTypeMismatches(mod));
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
-    peepholeOptimize(mod);
+    profilePhase("finalize/peephole", () => peepholeOptimize(mod));
 
     // (#3921) Allocation census — no-op unless JS2WASM_ALLOC_CENSUS=1. Placed
     // here because dead-type elimination has already remapped every `typeIdx`,
@@ -10088,7 +10105,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
-    inlineUserFunctions(ctx);
+    profilePhase("finalize/ir-inline", () => inlineUserFunctions(ctx));
 
     // Mirror the single-source ES5 Function `caller` finalizer.
     finalizeFunctionPoisonPillCalls(ctx);
@@ -10103,9 +10120,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    repairCrossHierarchyOperands(mod);
+    profilePhase("finalize/cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod));
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
-    stackBalance(mod);
+    reportModuleScale("before-stack-balance", mod);
+    profilePhase("finalize/stack-balance", () => stackBalance(mod));
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     drainStackBalanceTelemetry(ctx, multiAst.entryFile.fileName);
 
@@ -10117,7 +10135,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // extern.convert_any ops, the second of which fails validation
     // ("found extern.convert_any of type externref" — externref is NOT a
     // subtype of anyref). Mirror the single-module pipeline at line 1053.
-    fixupExternConvertAny(ctx);
+    profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
   } catch (e) {
     const failure = classifyIrFailure(e, "build");
     for (const sourceFile of multiAst.sourceFiles) {

@@ -47,6 +47,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import {
   ARGUMENTS_LENGTH_ABSENT_FIELD,
   ARGUMENTS_LENGTH_OVERRIDE_FIELD,
@@ -438,32 +439,15 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       // alone can therefore select the wrong logical shape and write another
       // field's slot. Mirror the exported __sset_* guards: verify the hidden
       // per-instance shape id and continue dispatching on a mismatch.
-      const shapeGuardedSetFieldInstrs: Instr[] =
-        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
-          ? [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
-              { op: "i32.const", value: cand.shapeId },
-              { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: presenceAwareSetFieldInstrs,
-                else: next,
-              },
-            ]
-          : presenceAwareSetFieldInstrs;
-      return [
-        { op: "local.get", index: 2 }, // __any
-        { op: "ref.test", typeIdx: cand.structTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: shapeGuardedSetFieldInstrs,
-          else: next,
-        },
-      ];
+      // (#4645) single-`next` arm — see `buildShapeGuardedArm`.
+      return buildShapeGuardedArm(
+        2, // __any
+        cand.structTypeIdx,
+        cand,
+        { kind: "empty" },
+        presenceAwareSetFieldInstrs,
+        next,
+      );
     };
 
     dispFn.locals =
