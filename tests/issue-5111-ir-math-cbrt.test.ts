@@ -98,6 +98,12 @@ describe("#5111 exact ambient Math.cbrt IR ownership", () => {
 
     const exports = await instantiate(result);
     expect(typeof exports.cbrt).toBe("function");
+    const cbrt = exports.cbrt as (value: number) => number;
+    expect(cbrt(27)).toBe(3);
+    expect(cbrt(-8)).toBe(-2);
+    expect(Object.is(cbrt(-0), -0)).toBe(true);
+    expect(cbrt(Number.POSITIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
+    expect(cbrt(Number.NEGATIVE_INFINITY)).toBe(Number.NEGATIVE_INFINITY);
     if (target === "standalone") {
       expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
       expect(result.imports).toEqual([]);
@@ -193,6 +199,10 @@ describe("#5111 exact ambient Math.cbrt IR ownership", () => {
     });
     const cbrt = (await instantiate(result)).cbrt as (value: number) => number;
 
+    // This ownership-only checkpoint preserves the established eight-step
+    // Newton helper. Its range-edge accuracy is intentionally not disguised by
+    // this moderate-value oracle; the direct-parity test above covers MIN/MAX
+    // values and proves the migration itself is bit-identical there.
     for (const value of [-123.456, -27, -8, -2.5, -1, -0.125, 0.125, 1, 2.5, 8, 27, 123.456]) {
       const actual = cbrt(value);
       const expected = Math.cbrt(value);

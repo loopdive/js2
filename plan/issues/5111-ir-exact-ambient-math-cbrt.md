@@ -107,5 +107,10 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 The principal risk is inherited Newton-iteration behavior for very small or
 very large magnitudes. Direct-path bit identity remains the hard migration
 invariant and native Math supplies a coarse independent sanity bound. The
+Luna's numerical audit measured large pre-existing relative error at
+`Number.MIN_VALUE` and `Number.MAX_VALUE`; this PR explicitly executes exact
+values in standalone mode, pins direct/IR identity at both range edges, and
+limits the native oracle to the helper's established moderate-value envelope.
+Changing the eight-step algorithm remains a separate correctness change. The
 method-specific environment flag provides narrow rollback;
 `JS2WASM_IR_FIRST=0` remains the global control.
