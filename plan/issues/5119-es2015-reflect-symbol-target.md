@@ -13,12 +13,16 @@ area: codegen
 es_edition: 2015
 language_feature: reflect-target-validation
 goal: standalone-mode
-assignee: codex/5119-es2015-reflect-symbol-target
+assignee: ttraenkler/codex/5119-es2015-reflect-symbol-target
 related: [4722, 4724]
 files:
   - src/codegen/expressions/call-namespace-static.ts
   - tests/issue-5119-es2015-reflect-symbol-target.test.ts
   - plan/issues/5119-es2015-reflect-symbol-target.md
+loc-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts
+func-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
 ---
 
 # #5119 — Standalone Reflect.get/has Symbol-target validation
@@ -90,6 +94,38 @@ body runs.
    object targets, and zero standalone imports. Add an existence-guarded exact
    corpus check only if the Test262 checkout exposes both target rows; use a
    Vitest timeout greater than 120 s for that optional check.
+
+## Implementation checkpoint
+
+The native standalone route now evaluates every supplied get/has argument once
+into temporary externref locals, then tests only the native `$Symbol` carrier
+before invoking `__extern_get`, `__extern_has`, or the explicit-receiver helper.
+This intentionally does not reuse the broader `$Object` guard: arrays,
+callables, typed arrays, and other native object carriers are sibling heap types
+and must continue to reach their existing helpers. The host route uses the same
+argument-local evaluation and rejects statically known Symbol targets before its
+host wrapper's property-key conversion; no runtime helper or unrelated Reflect
+method was changed.
+
+The Symbol-carrier guard is lazily emitted only when the oracle's `TypeFact`
+for the target can contain `symbol`, `any`, `unknown`, or an unresolvable value
+(including a union containing one of those facts). Concrete object, array, and
+function targets do not add a second guard or direct checker query; the
+oracle-ratchet gate remains net-neutral. A read-only standalone compile probe
+confirmed that the existing native Reflect/object runtime already registers
+the shared `$Symbol`/`__box_symbol` and TypeError machinery for any Reflect
+get/has call, while the new guard contributes only the conditional call-site
+instructions for Symbol-capable targets.
+
+Post-change assembled-harness A/B arms (each with the mandatory pass/fail
+controls and 120 s per-file timeout) are `.tmp/5119-after-host.jsonl` and
+`.tmp/5119-after-standalone.jsonl`. Host remains **2/2 pass**. Standalone is
+**2/2 pass**, with local-vs-local partition `fail -> pass: 2`, `pass -> fail: 0`,
+and no other status changes. The focused suite's 24 tests (20 controls and
+four existence-guarded corpus arms) pass in both host and standalone lanes;
+the controls include a callee-before-caller dynamic `any` target for both
+methods. Every compile-heavy control has a 150 s Vitest timeout and every
+corpus arm has a 150 s timeout with a 130 s runner timeout.
 
 ## Acceptance
 
