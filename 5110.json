@@ -1,10 +1,11 @@
 {
   "id": "5110",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5110-ir-math-hyperbolic",
   "claimed_at": "2026-08-28T00:55:34Z",
-  "updated_at": "2026-08-28T00:55:34Z",
-  "write_id": "16510-7er84uiw"
+  "updated_at": "2026-08-28T11:59:40Z",
+  "write_id": "60800-tjw25cqw",
+  "released_at": "2026-08-28T11:59:40Z"
 }
