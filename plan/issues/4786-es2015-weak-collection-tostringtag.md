@@ -175,9 +175,11 @@ missing files, so it could not reach the two self-contained compiler controls.
 
 ### Follow-up evidence
 
-- Validation source: current `upstream/main` `eafd6700ac`, with the pinned
-  Test262 gitlink `b363f29d3c43c626dc852744ad64a0b48a003693`; compiler worker
-  count was capped at two.
+- Validation source: `upstream/main` `eafd6700ac` when the focused checks ran,
+  with the pinned Test262 gitlink
+  `b363f29d3c43c626dc852744ad64a0b48a003693`; compiler worker count was capped
+  at two. The branch was then synchronized with the current upstream merge
+  `18785a67c6` before handoff.
 - Corpus present: the focused Vitest file passed **6/6** — four exact
   host/standalone rows and both mandatory controls.
 - Hermetic no-corpus shape (only `harness/assert.js` was temporarily moved in
@@ -195,3 +197,7 @@ issue file. It does not change the already-merged WeakMap/WeakSet compiler
 implementation, instance insertion, constructors, or the Test262 gitlink.
 The focused test remains fully enforced when the corpus is present while
 CI-style no-corpus checkouts still exercise the two mandatory controls.
+
+Final follow-up branch: `/private/tmp/js2-4786-optional-corpus-guard`,
+`codex/4786-optional-corpus-guard`, with checkpoint head recorded in the PR
+and fork branch. No Test262 submodule content or pointer is included.
