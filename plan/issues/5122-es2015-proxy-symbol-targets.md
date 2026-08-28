@@ -1,7 +1,7 @@
 ---
 id: 5122
 title: "ES2015 standalone Proxy rejects Symbol target and handler"
-status: ready
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -16,6 +16,7 @@ language_feature: proxy-constructor-validation
 goal: standalone-mode
 assignee: "ttraenkler/codex/5122-es2015-proxy-symbol-targets"
 branch: codex/5122-es2015-proxy-symbol-targets
+pr: 5138
 files:
   - src/codegen/expressions/new-builtin-globals.ts
   - src/codegen/object-runtime-proxy.ts
@@ -161,13 +162,14 @@ Thomas Tränkler and carry real newline-separated Codex trailers.
   conflict and repeated the focused suite on the integrated head: **6/6
   passed**, including all four exact host/standalone Test262 rows and both
   compiler controls.
-- Root should verify the eventual non-force fork remote head externally before
-  opening the one non-draft upstream PR. No PR was opened by this worker.
+- Root verified the non-force fork remote at exact pre-PR head
+  `f4209a8f7ff252eb7694a03c511bba31cd358d58` and opened the single non-draft
+  upstream PR: https://github.com/loopdive/js2/pull/5138.
 
 ## Handoff
 
 Work only in `/private/tmp/js2-es2015-proxy-symbol-targets-20260828` on branch
 `codex/5122-es2015-proxy-symbol-targets`. Push checkpoints to the fork without
-force. Do not open the PR from the worker; root will review the final clean
-branch and open exactly one non-draft PR against `loopdive/js2:main` when it is
-mergeable.
+force. PR 5138 owns this completed fix; after this final metadata checkpoint,
+do not publish another branch head once the exact green head enters the merge
+queue.
