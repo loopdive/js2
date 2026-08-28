@@ -1,7 +1,7 @@
 ---
 id: 5124
 title: "ES2015 Map and Set zero-argument prototype method length metadata"
-status: ready
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -16,6 +16,7 @@ language_feature: builtin-prototype-function-metadata
 goal: standalone-mode
 assignee: "ttraenkler/codex-5124-es2015-prototype-method-zero-arity"
 branch: codex/5124-es2015-prototype-method-zero-arity
+pr: 5139
 files:
   - src/codegen/array-object-proto.ts
   - tests/issue-5124-es2015-prototype-method-zero-arity.test.ts
@@ -179,11 +180,11 @@ guarded and each `runTest262File(..., 120_000)` wrapper has an outer
 
 ## Handoff Evidence
 
-Only the three owned files are changed. No GitHub issue or PR was opened by
-this worker; root owns the final review and single non-draft PR handoff. The
-implementation checkpoint (parent of this documentation-only handoff) is
+Only the three owned files are changed. No GitHub issue was created. Root
+verified the fork at exact pre-PR head
+`5689dc8591104f3aeb1f898ee07261cb903cbb56` and opened the single non-draft
+upstream PR: https://github.com/loopdive/js2/pull/5139. The implementation
+checkpoint (parent of the documentation-only handoff) is
 `621de07f7c9a36c1fb1735465debf2ebd5ed8fdd`; the final branch SHA is reported
-to root separately. The corrected upstream merge checkpoint (parent of this
-post-merge documentation update) is `0098c6cbed`; the worktree is clean. The fork
-ref equality check was not available in this sandbox because GitHub DNS was
-blocked, and the parent explicitly requested no push.
+above. The corrected upstream merge checkpoint (parent of the post-merge
+documentation update) is `0098c6cbed`; the worktree was clean at publication.
