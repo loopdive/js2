@@ -1,10 +1,11 @@
 {
   "id": "5106",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5106-ir-math-log10-log1p",
   "claimed_at": "2026-08-28T00:08:58Z",
-  "updated_at": "2026-08-28T00:08:58Z",
-  "write_id": "40625-9fuqjn5e"
+  "updated_at": "2026-08-28T11:59:35Z",
+  "write_id": "60615-fqxnfbjy",
+  "released_at": "2026-08-28T11:59:35Z"
 }
