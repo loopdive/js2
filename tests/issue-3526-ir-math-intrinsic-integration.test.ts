@@ -69,7 +69,7 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function allMath(x: number, y: number): number {
         return Math.abs(x) + Math.sqrt(x) + Math.floor(x) + Math.ceil(x) + Math.trunc(x)
           + Math.asin(x) + Math.acos(x) + Math.atan(x) + Math.sin(x) + Math.cos(x) + Math.tan(x)
-          + Math.exp(x) + Math.log(x) + Math.log2(x)
+          + Math.exp(x) + Math.log(x) + Math.log10(x) + Math.log1p(x) + Math.log2(x)
           + Math.pow(x, y) + Math.atan2(x, y);
       }
     `);
@@ -128,6 +128,8 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
       export function tan(): number { return Math.tan(0.75); }
       export function exp(): number { return Math.exp(1.25); }
       export function log(): number { return Math.log(3.5); }
+      export function log10(): number { return Math.log10(1000); }
+      export function log1p(): number { return Math.log1p(3.5); }
       export function log2(): number { return Math.log2(32); }
       export function pow(): number { return Math.pow(2.5, 3); }
       export function atan2(): number { return Math.atan2(1, -1); }
@@ -161,7 +163,21 @@ describe("#3526 M1 semantic Math intrinsic integration", () => {
     for (const opcode of ["f64.abs", "f64.sqrt", "f64.floor", "f64.ceil", "f64.trunc"]) {
       expect(ir.wat).toContain(opcode);
     }
-    for (const helper of ["asin", "acos", "atan", "sin", "cos", "tan", "exp", "log", "log2", "pow", "atan2"]) {
+    for (const helper of [
+      "asin",
+      "acos",
+      "atan",
+      "sin",
+      "cos",
+      "tan",
+      "exp",
+      "log",
+      "log10",
+      "log1p",
+      "log2",
+      "pow",
+      "atan2",
+    ]) {
       expect(ir.wat).toContain(`$Math_${helper}`);
     }
     expect(ir.wat).not.toContain("$__box_number");

@@ -58,6 +58,8 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.cos",
   "selfhost.math.exp",
   "selfhost.math.log",
+  "selfhost.math.log10",
+  "selfhost.math.log1p",
   "selfhost.math.log2",
   "selfhost.math.pow",
   "selfhost.math.reduce-trig",
@@ -180,6 +182,8 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "math.exp": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.floor": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.log10": F64_UNARY_INTRINSIC_SIGNATURE,
+  "math.log1p": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.log2": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.pow": F64_BINARY_INTRINSIC_SIGNATURE,
   "math.reduce-trig": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -261,6 +265,20 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
     kind: "self-hosted",
     symbol: "Math_log",
   }),
+  "math.log10": provider(
+    "selfhost.math.log10",
+    "math.log10",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_log10" },
+    ["math.log"],
+  ),
+  "math.log1p": provider(
+    "selfhost.math.log1p",
+    "math.log1p",
+    F64_UNARY_INTRINSIC_SIGNATURE,
+    { kind: "self-hosted", symbol: "Math_log1p" },
+    ["math.log"],
+  ),
   "math.log2": provider("selfhost.math.log2", "math.log2", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "self-hosted",
     symbol: "Math_log2",
@@ -300,7 +318,7 @@ const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderD
   }),
 });
 
-/** Canonically ordered default provider catalogue for the sixteen-method slice. */
+/** Canonically ordered default provider catalogue for the eighteen-method slice. */
 export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   PURE_MATH_RUNTIME_FEATURES.map((feature) => PROVIDERS_BY_FEATURE[feature]).sort((left, right) =>
     left.id.localeCompare(right.id),

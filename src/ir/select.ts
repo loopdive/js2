@@ -301,6 +301,8 @@ export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = 
   tan: { arity: 1, intrinsic: "math.tan" },
   exp: { arity: 1, intrinsic: "math.exp" },
   log: { arity: 1, intrinsic: "math.log" },
+  log10: { arity: 1, intrinsic: "math.log10" },
+  log1p: { arity: 1, intrinsic: "math.log1p" },
   log2: { arity: 1, intrinsic: "math.log2" },
   pow: { arity: 2, intrinsic: "math.pow" },
   atan2: { arity: 2, intrinsic: "math.atan2" },
@@ -6477,6 +6479,8 @@ function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
   if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
   if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
   if (plan.intrinsic === "math.tan" && process.env.JS2WASM_IR_MATH_TAN === "0") return false;
+  if (plan.intrinsic === "math.log10" && process.env.JS2WASM_IR_MATH_LOG10 === "0") return false;
+  if (plan.intrinsic === "math.log1p" && process.env.JS2WASM_IR_MATH_LOG1P === "0") return false;
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
 

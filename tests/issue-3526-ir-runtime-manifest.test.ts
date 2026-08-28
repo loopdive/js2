@@ -88,16 +88,24 @@ function semanticView(manifest: FrozenRuntimeManifest): object {
 }
 
 describe("#3526 typed IR runtime manifest foundation", () => {
-  it("is exhaustive for the exact sixteen certified pure Math methods and excludes random", () => {
+  it("is exhaustive for the exact eighteen certified pure Math methods and excludes random", () => {
     const certifiedMethods = Object.keys(IR_MATH_METHOD_TABLE).sort();
     const intrinsicMethods = PURE_MATH_INTRINSIC_IDS.map((id) => id.slice("math.".length)).sort();
 
     expect(intrinsicMethods).toEqual(certifiedMethods);
-    expect(intrinsicMethods).toHaveLength(16);
+    expect(intrinsicMethods).toHaveLength(18);
     expect(intrinsicMethods).not.toContain("random");
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual([...PURE_MATH_RUNTIME_FEATURES].sort());
     expect(PURE_MATH_RUNTIME_FEATURES).toEqual(
-      expect.arrayContaining(["math.acos", "math.asin", "math.atan", "math.reduce-trig", "math.tan"]),
+      expect.arrayContaining([
+        "math.acos",
+        "math.asin",
+        "math.atan",
+        "math.log10",
+        "math.log1p",
+        "math.reduce-trig",
+        "math.tan",
+      ]),
     );
     const intrinsicFeatures = new Set<string>(PURE_MATH_INTRINSIC_IDS);
     expect(PURE_MATH_RUNTIME_FEATURES.filter((feature) => !intrinsicFeatures.has(feature))).toEqual([
@@ -121,7 +129,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     const first = forward.freeze();
     const second = reverse.freeze();
     expect(second).toEqual(first);
-    expect(first.intrinsicUses).toHaveLength(16);
+    expect(first.intrinsicUses).toHaveLength(18);
     expect(first.features).toEqual(PURE_MATH_RUNTIME_FEATURES);
     expect(new Set(first.providers.map((provider) => provider.id)).size).toBe(first.providers.length);
     expect(first.hostCapabilities).toEqual([]);
@@ -133,6 +141,8 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     expect(dependencies["math.acos"]).toEqual(["math.atan"]);
     expect(dependencies["math.asin"]).toEqual(["math.atan"]);
     expect(dependencies["math.atan2"]).toEqual(["math.atan"]);
+    expect(dependencies["math.log10"]).toEqual(["math.log"]);
+    expect(dependencies["math.log1p"]).toEqual(["math.log"]);
     expect(dependencies["math.sin"]).toEqual(["math.reduce-trig"]);
     expect(dependencies["math.cos"]).toEqual(["math.reduce-trig"]);
     expect(dependencies["math.tan"]).toEqual(["math.cos", "math.sin"]);
@@ -147,7 +157,16 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     for (const target of targets) {
       for (const backend of backends) {
         const builder = new RuntimeManifestBuilder(policy(target, backend));
-        addUses(builder, ["math.asin", "math.acos", "math.sin", "math.tan", "math.pow", "math.atan2"]);
+        addUses(builder, [
+          "math.asin",
+          "math.acos",
+          "math.sin",
+          "math.tan",
+          "math.log10",
+          "math.log1p",
+          "math.pow",
+          "math.atan2",
+        ]);
         const manifest = builder.freeze();
         semanticClosures.push([...manifest.features]);
         expect(manifest.hostCapabilities, `${target}/${backend}`).toEqual([]);
@@ -163,6 +182,8 @@ describe("#3526 typed IR runtime manifest foundation", () => {
       "math.cos",
       "math.exp",
       "math.log",
+      "math.log10",
+      "math.log1p",
       "math.pow",
       "math.reduce-trig",
       "math.sin",
