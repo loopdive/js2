@@ -64,6 +64,11 @@ loc-budget-allow:
   - src/emit/binary.ts
   - src/codegen/statements.ts
   - src/link/linker.ts
+  # 2026-08-29 (post-merge): terminal-flat-body relaxation of the #1058
+  # shared-body refusal + instr-level double-shift guard commentary.
+  - src/codegen/stack-balance.ts
+  - src/codegen/expressions/late-imports.ts
+  - src/codegen/async-scheduler.ts
 func-budget-allow:
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement

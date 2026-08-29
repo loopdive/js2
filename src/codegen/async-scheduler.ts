@@ -4404,14 +4404,22 @@ export function emitStandalonePromiseThen(
   // must still shadow Promise.prototype.then and take the ordinary call path.
   // Promise.resolve(p) preserves p by identity, and only a bag miss takes the
   // compiler's native reaction path above.
-  const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
-  const applyClosureIdx = reserveApplyClosure(ctx);
-  const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
-  const externGetIdx = ctx.funcMap.get("__extern_get");
-  if (carrierBagHasIdx === undefined || externGetIdx === undefined) {
+  // Gate BEFORE any ensure: a module that never materialized the carrier-bag
+  // machinery (no promise expandos anywhere) takes the native reaction path
+  // and must not drag in the ObjVec builders — in a native-first JS build
+  // `ensureObjVecBuilders` → `ensureObjectRuntime` registers the entire
+  // `__boundary_object_*` import family (14 host imports the host-import
+  // ratchet counts against every plain async module).
+  if (ctx.funcMap.get("__carrier_bag_has") === undefined || ctx.funcMap.get("__extern_get") === undefined) {
     fctx.body.push(...nativeBody);
     return;
   }
+  const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
+  const applyClosureIdx = reserveApplyClosure(ctx);
+  // Re-read AFTER the ensures — they can mint imports and shift the space;
+  // funcMap is kept in lockstep by the flush machinery.
+  const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has")!;
+  const externGetIdx = ctx.funcMap.get("__extern_get")!;
   const argsLocal = allocLocal(fctx, `__then_override_args_${fctx.locals.length}`, {
     kind: "externref",
   });
