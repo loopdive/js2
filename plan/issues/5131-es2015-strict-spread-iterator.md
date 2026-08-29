@@ -16,7 +16,7 @@ language_feature: spread-getiterator-iteratorresult
 goal: standalone-mode
 assignee: "ttraenkler/codex-es2015-strict-spread-iterator"
 branch: codex/5131-es2015-strict-spread-iterator
-pr: 5147
+pr: 5272
 related: [5122, 681, 1592, 1970, 2159, 2651, 3643, 4275, 4768]
 required_by: [5122]
 files:
@@ -262,8 +262,12 @@ and run every acceptance gate before changing the PR out of draft.
 
 Use only `/private/tmp/js2-es2015-strict-spread-iterator-20260828` on branch
 `codex/5131-es2015-strict-spread-iterator` for the interrupted prototype. Commit
-and push it as a truthful WIP checkpoint without force, then open a **new draft
-PR** because PR 5147 is already merged and this branch is not mergeable. The
-draft body must name the missing consumer/tests/current-main integration and
-cite this markdown path. Never mark it ready until the complete acceptance
-matrix is implemented and green. Do not create a GitHub issue.
+and push it as a truthful WIP checkpoint without force. The preserved
+implementation head is `69795ed48b08c759a0ad2188058dc3c4a7b5bc2d`; local and fork
+heads were verified equal after the complete pre-push chain passed. The new
+upstream draft is PR 5272: <https://github.com/loopdive/js2/pull/5272>. PR 5147
+is the already-merged plan checkpoint and must not be treated as the active
+implementation PR. PR 5272's body names the missing consumer, tests,
+current-main integration, and host alignment and cites this markdown path.
+Never mark it ready until the complete acceptance matrix is implemented and
+green. Do not create a GitHub issue.
