@@ -265,7 +265,9 @@ implementation PR. The implementation branch is ready for root to open as a
 new non-draft PR targeting `loopdive/js2:main`, and no PR was opened by this
 worker. The implementation commit is
 `97334bd6a5659d3595e6c480e08e8a8f95d2815e`; the handoff-evidence commit below
-records this final validation, and the branch will be pushed without force for
-root to inspect. The plan checkpoint remains
+records this final validation. The normal non-force push was attempted but was
+blocked by the execution environment's external-write approval policy; the
+fork ref remains at the earlier plan checkpoint, so root must publish this
+branch with the permitted fork write. The plan checkpoint remains
 `c808092cb828e9b2abef4ef6af27d95e1d822ee1`.
 No GitHub issue was created.
