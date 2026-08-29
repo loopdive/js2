@@ -38,6 +38,7 @@ import {
 } from "./shared.js";
 import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
+import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -2989,8 +2990,14 @@ export function coerceType(
       ) {
         return;
       }
-      const toStringFuncIdx = ctx.funcMap.get(`${name}_toString`);
-      if (toStringFuncIdx !== undefined) {
+      let toStringFuncIdx = ctx.funcMap.get(`${name}_toString`);
+      // (#4644) `toString` may DECLARE params even though ToPrimitive passes
+      // none (`toString(e = void 0)`); pad to its Wasm arity or the module is
+      // clean at compile() and rejected by WebAssembly.compile().
+      if (toStringFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, toStringFuncIdx)) {
+        // Re-read: the pad may have registered `__get_undefined` and shifted
+        // every defined-function index (#4644).
+        toStringFuncIdx = ctx.funcMap.get(`${name}_toString`)!;
         // Call ClassName_toString(self) — self is already on stack.
         // Only fire when ToPrimitive("string") was explicitly requested.
         fctx.body.push({ op: "call", funcIdx: toStringFuncIdx });
@@ -3349,8 +3356,12 @@ export function coerceType(
         const fieldIdx = fields.findIndex((f) => f.name === "valueOf");
         if (fieldIdx < 0) {
           // No valueOf field — check for a class method valueOf (ClassName_valueOf)
-          const valueOfFuncIdx = ctx.funcMap.get(`${name}_valueOf`);
-          if (valueOfFuncIdx !== undefined) {
+          let valueOfFuncIdx = ctx.funcMap.get(`${name}_valueOf`);
+          // (#4644) pad declared-but-unpassed params before the call, then
+          // re-read the index (the pad may have registered an import and
+          // shifted every defined-function index).
+          if (valueOfFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, valueOfFuncIdx)) {
+            valueOfFuncIdx = ctx.funcMap.get(`${name}_valueOf`)!;
             // Call ClassName_valueOf(self) — self is already on stack
             fctx.body.push({ op: "call", funcIdx: valueOfFuncIdx });
             // Check return type — if not f64, convert to f64
@@ -3672,7 +3683,7 @@ export function coerceType(
           // No closure types found — check for a standalone ClassName_valueOf function (#433)
           // Method shorthand syntax (e.g. { valueOf() { ... } }) compiles as a standalone
           // function rather than a closure stored in the struct field.
-          const standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`);
+          let standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`);
           if (standaloneValueOf !== undefined) {
             const funcType = ctx.mod.types[definedFuncAt(ctx, standaloneValueOf)?.typeIdx ?? -1];
             const retKind = funcType?.kind === "func" ? funcType.results?.[0]?.kind : undefined;
@@ -3688,6 +3699,11 @@ export function coerceType(
               // restore via local.get so the call sees the same value.
               fctx.body.push({ op: "local.tee", index: savedStructLocal });
             }
+            // (#4644) pad declared-but-unpassed params (after the tee, which
+            // must observe the receiver on top of the stack), then re-read the
+            // index — the pad may have registered an import and shifted it.
+            pushZeroArgCallPad(ctx, fctx, standaloneValueOf);
+            standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`)!;
             fctx.body.push({ op: "call", funcIdx: standaloneValueOf });
             if (retKind === "i32") {
               fctx.body.push({ op: "f64.convert_i32_s" });
@@ -3889,8 +3905,11 @@ function tryToStringFallback(
   }
 
   // 2. Check for standalone ClassName_toString method
-  const toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`);
-  if (toStrFuncIdx !== undefined) {
+  let toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`);
+  // (#4644) pad declared-but-unpassed params before the call, then re-read the
+  // index — the pad may have registered an import and shifted it.
+  if (toStrFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, toStrFuncIdx)) {
+    toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`)!;
     fctx.body.push({ op: "call", funcIdx: toStrFuncIdx });
     const funcType = ctx.mod.types[definedFuncAt(ctx, toStrFuncIdx)?.typeIdx ?? -1];
     const retKind = funcType?.kind === "func" ? funcType.results?.[0]?.kind : undefined;
@@ -4186,8 +4205,11 @@ export function tryStructToString(ctx: CodegenContext, fctx: FunctionContext, fr
   }
 
   // 2. Named `${name}_toString` method.
-  const toStrFuncIdx = ctx.funcMap.get(`${name}_toString`);
-  if (toStrFuncIdx !== undefined) {
+  let toStrFuncIdx = ctx.funcMap.get(`${name}_toString`);
+  // (#4644) pad declared-but-unpassed params before the call, then re-read the
+  // index — the pad may have registered an import and shifted it.
+  if (toStrFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, toStrFuncIdx)) {
+    toStrFuncIdx = ctx.funcMap.get(`${name}_toString`)!;
     fctx.body.push({ op: "call", funcIdx: toStrFuncIdx });
     normaliseToString(funcResultKind(toStrFuncIdx));
     return true;

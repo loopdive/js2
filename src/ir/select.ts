@@ -2972,6 +2972,16 @@ function dynamicUsesAreMoveOnly(
       }
       if (expectDyn) return false; // operator results are concrete-shaped
 
+      // (#5164 S3) `<key> in <dynamic receiver>`. This scan decides only whether
+      // a dynamic VALUE may reach the operator; `selectorDynamicLaneIn` stays
+      // the authority on which receivers the slice claims. No representation
+      // changes here — the receiver reaches `__extern_has` as the dynamic
+      // carrier it already is (the same move the for-in arm below makes) and the
+      // boolean result is concrete, hence below the `expectDyn` bail.
+      if (op === ts.SyntaxKind.InKeyword && rightIsDyn) {
+        return scanExpr(e.left, leftIsDyn) && scanExpr(e.right, true);
+      }
+
       if (
         op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
         op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
@@ -4645,6 +4655,22 @@ function isPhase1ForUpdateExpr(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // #5164 S2 — a comma incrementor (`i++, j++`) is N update clauses run left to
+  // right, so each side re-enters THIS function rather than the value walker.
+  // That matters: only the update arm carries the mutation bookkeeping
+  // (`clearProjectionBinding`, the module-slot write rules,
+  // `projectionBindingMutationIsUnsupported`), which is what makes the
+  // MUTATING `i++` idiom admissible here while #4459's pure discard gate still
+  // refuses it in value position. `lowerForUpdateExpr` mirrors this arm.
+  //
+  // Every counted-loop plan that keys on the incrementor's SHAPE (the
+  // dense-fill and reduction matchers, `isIncreasingStep`) requires a
+  // prefix/postfix unary or `i += <positive literal>`, so a comma incrementor
+  // fails each of them closed and the loop takes the general update path.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    if (!isPhase1ForUpdateExpr(expr.left, scope, localClasses)) return false;
+    return isPhase1ForUpdateExpr(expr.right, scope, localClasses);
+  }
   if (ts.isPostfixUnaryExpression(expr)) {
     const op = expr.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
@@ -7025,6 +7051,95 @@ function selectorPrimitiveWrapperConstruction(
   return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
 }
 
+/**
+ * (#5164 S1) `<left> , <right>` in VALUE position (`const c = (a, b)`).
+ *
+ * §13.16.1 is "evaluate left, DISCARD its value, evaluate right and take THAT"
+ * — two halves the IR already owns separately, so the accept test is exactly
+ * `left is discardable ∧ right is a Phase-1 value`, and `lowerBinary`'s comma
+ * arm is the same two calls in the same order.
+ *
+ * Recursing the left through #4459's `isPhase1DiscardedExpr` inherits its
+ * `discard-mutating-operand` line verbatim, so a MUTATING left operand
+ * (`(a = 1, b)`, `(i++, j)`) stays legacy-owned: those need the statement-arm
+ * assignment bookkeeping in value position, which is this issue's documented
+ * follow-up. Nested commas need no extra arm — the left half re-enters the
+ * discard walker's own comma arm and the right half re-enters this one.
+ *
+ * The whole test is PROBED so a decline restores the pre-#5164 reject label
+ * byte-for-byte and cannot move a corpus function into a different
+ * `check:ir-fallbacks` bucket; only the accept path is new behaviour.
+ */
+function selectorValuePositionComma(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return probeShape(
+    () => isPhase1DiscardedExpr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses),
+  );
+}
+
+/** (#5164 S3) Does this `in` key go through legacy's comma-key static fold? */
+function inKeyIsCommaExpression(key: ts.Expression): boolean {
+  const inner = unwrapPhase1Parens(key);
+  return (
+    ts.isCommaListExpression(inner) ||
+    (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken)
+  );
+}
+
+/**
+ * (#5164 S3) `<key> in <receiver>` — the bounded DYNAMIC-LANE slice.
+ *
+ * `in` is §13.10.1 HasProperty, a full prototype-chain walk. The IR does not
+ * model prototype chains, so this slice claims exactly the one lane where the
+ * answer needs no static analysis at all: a receiver the resolver certifies as
+ * the non-fast DYNAMIC externref carrier, probed at runtime by `__extern_has`
+ * — the same dual-mode helper legacy's own `in` calls for that receiver, so
+ * inherited properties answer identically by construction.
+ *
+ * Everything else is rejected BEFORE the claim, which is what keeps the slice
+ * honest rather than claim-then-demote:
+ *
+ *   - the receiver certificate is a CARRIER question (`!fast` ∧ an oracle
+ *     any/unknown type fact), so a provably-primitive receiver (§13.10.1's
+ *     TypeError arm), a struct/vec/class instance, a typed object literal, and
+ *     the fast `$AnyValue` carrier all fail it. It is checker-backed at the
+ *     production call site and ABSENT for bare selector callers, so those
+ *     never claim `in` at all;
+ *   - a COMMA key (`(x, "k") in o`) is legacy's static-key fold (it folds the
+ *     last element and may answer from the type), not a runtime probe — out of
+ *     the accept set so the two paths cannot disagree;
+ *   - `#x in o` is a private-brand check, not a property probe.
+ *
+ * A decline is answered by the caller with the pre-#5164 `expr-binary-op-in`
+ * label, unchanged.
+ */
+function selectorDynamicLaneIn(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
+  // The key must reach `__extern_has` AS an externref, and that coercion only
+  // exists while the lane's string carrier IS the host externref (a string key
+  // passes through; a numeric one boxes via the host `__box_number` of the same
+  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
+  // externref host-arg position accepts — measured 2026-08-29: without this
+  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
+  // which is a post-claim demote of the whole lane rather than of a documented
+  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
+  // the same one, not a for-in-specific one, and an absent certificate (bare
+  // selector callers) reads as unproven and rejects.
+  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  if (inKeyIsCommaExpression(expr.left)) return false;
+  if (ts.isPrivateIdentifier(expr.left)) return false;
+  return probeShape(
+    () => isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses),
+  );
+}
+
 /** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
 function selectorPrimitiveWrapperOrGenericBinary(
   expr: ts.BinaryExpression,
@@ -9038,6 +9153,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
+    // (#5164 S1) VALUE-position comma. Checked here, ahead of the module-value
+    // and module-extern operand rules below, because those model a COMBINING
+    // operator's representation agreement and a comma performs none — see
+    // `selectorValuePositionComma`.
+    if (binOp === ts.SyntaxKind.CommaToken) {
+      if (selectorValuePositionComma(expr, scope, localClasses)) return true;
+      return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
       if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
@@ -9169,6 +9292,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       selectorSupportsStandaloneWrapperInstanceOf(expr.right)
     ) {
       return isPhase1Expr(expr.left, scope, localClasses);
+    }
+    // (#5164 S3) `<key> in <dynamic receiver>` — last of the special binary
+    // arms, so every module guard above has had its say. TERMINAL like the
+    // comma arm: flipping the `in` capability row off "defer" also opens
+    // `isPhase1BinaryOp`, so falling through to the generic tail would accept
+    // EVERY `in` rather than this lane. See `selectorDynamicLaneIn`.
+    if (binOp === ts.SyntaxKind.InKeyword) {
+      if (selectorDynamicLaneIn(expr, scope, localClasses)) return true;
+      return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
     }
     return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }
