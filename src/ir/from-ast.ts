@@ -10018,6 +10018,16 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
  * drops the result.
  */
 function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
+  // (#5164 S2) Comma incrementor — mirrors `isPhase1ForUpdateExpr`'s comma arm:
+  // each side is its own update clause, lowered left to right through THIS
+  // dispatcher so both keep the mutation lowerings (`lowerIncrementDecrement`,
+  // `lowerIdentifierAssignment`, `lowerCompoundAssignment`) rather than the
+  // value-expression fallback.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    lowerForUpdateExpr(expr.left, cx);
+    lowerForUpdateExpr(expr.right, cx);
+    return;
+  }
   if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) {
     const op = expr.operator;
     if ((op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(expr.operand)) {
@@ -12081,6 +12091,44 @@ function findClassMember(
  * dynamic, union, boxed, vec refs) demotes cleanly to legacy, which has the
  * full dynamic `__instanceof_dyn` path.
  */
+/**
+ * (#5164 S3) `<key> in <receiver>` over the non-fast dynamic externref carrier.
+ *
+ * §13.10.1 evaluates the LHS (the KEY, steps 1-2) BEFORE the RHS (the object,
+ * steps 3-4) — the opposite of the `(obj, key)` argument order the helper
+ * takes. Lowering the key first and only then the receiver puts the two
+ * evaluations in the emitted order the spec requires, exactly as legacy's
+ * `binary-ops-in.ts` does with its key temp; the argument array below merely
+ * names already-materialized SSA values, so it cannot reorder them.
+ *
+ * `__extern_has(obj, key) -> i32` is the same helper legacy calls for this
+ * receiver — a host import in JS-host mode, an object-runtime native in
+ * standalone/WASI — so the prototype-chain answer is identical by
+ * construction rather than by a re-implementation.
+ */
+function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  const externref = irVal({ kind: "externref" });
+  const rawKey = lowerExpr(expr.left, cx, externref);
+  const key =
+    cx.builder.typeOf(rawKey).kind === "dynamic"
+      ? rawKey
+      : coerceToExpectedExtern(rawKey, { kind: "externref" }, cx, "`in` key", undefined);
+  const receiver = lowerExpr(expr.right, cx, irDynamic());
+  if (cx.builder.typeOf(receiver).kind !== "dynamic") {
+    // The selector claims this shape only behind the resolver's dynamic-carrier
+    // certificate, so a non-dynamic receiver here is a representation the claim
+    // did not promise. Demote rather than emit an ill-typed host call.
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: \`in\` receiver lost its dynamic carrier in ${cx.funcName}`,
+    );
+  }
+  const result = cx.builder.emitCall(irRuntimeFuncRef("__extern_has"), [receiver, key], IR_BOOL);
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+  if (result === null) throw new Error(`ir/from-ast: __extern_has produced no result in ${cx.funcName}`);
+  return result;
+}
+
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (!ts.isIdentifier(expr.right)) {
     demoteToLegacy(
@@ -12321,6 +12369,23 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // (identifier RHS ∈ localClasses, unshadowed), keeping select↔build parity.
   if (op === ts.SyntaxKind.InstanceOfKeyword) {
     return lowerInstanceOf(expr, cx);
+  }
+
+  // (#5164 S1/S3) The comma operator and the bounded dynamic-lane `in`, both
+  // intercepted before the capability gate for the same reason as the arms
+  // above: the selector owns a bounded lane whose halves are EXISTING
+  // lowerings, not a new binary producer.
+  //
+  // Comma is §13.16.1 evaluate-drop-evaluate — semantically identical to
+  // legacy `binary-ops.ts`'s arm. Left-to-right order falls out of the
+  // emission order of these two calls, and nested commas recurse through
+  // `lowerDiscardedExpression`'s own comma arm.
+  if (op === ts.SyntaxKind.CommaToken) {
+    lowerDiscardedExpression(expr.left, cx);
+    return lowerExpr(expr.right, cx, hint);
+  }
+  if (op === ts.SyntaxKind.InKeyword) {
+    return lowerDynamicLaneIn(expr, cx);
   }
 
   // #2135 — capability-table invariant (shared with the selector via
