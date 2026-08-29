@@ -164,6 +164,33 @@ So this is the CLOSURE facet, not the dispatch-export facet #5202 closed:
   and a bare function value through an `any` alias — that one already worked,
   which is what pins the failure to the class-value route). All 5 pass with
   the fix.
+### Temporal harness (acceptance criterion 2) — measured, both sides
+
+`node --import tsx tests/dogfood/temporal-polyfill-harness.mjs` on a LOCAL
+probe tree (`#5252 + #5256 + #5258` and, in the second row, `+ this`; #5256
+merged for measurement only, not part of this PR):
+
+| probe tree | `moduleInitError` |
+| --- | --- |
+| #5252 + #5256 + #5258 (base) | `TypeError: __clz30 is not a function` |
+| + #5203 | `TypeError: object is not iterable (cannot read property Symbol(Symbol.iterator))` |
+
+Both runs executed here on 2026-08-29, not inherited from the issue text.
+`moduleInitRuns` is **still false** — the polyfill advances past `__clz30` and
+stops at a NEW, later blocker.
+
+**Next blocker, located.** The stack is
+`Object.fromEntries → src/runtime.ts:14436 → __module_init`:
+
+```js
+if (name === "__object_fromEntries") return (iterable: any): any => Object.fromEntries(iterable);
+```
+
+The handler passes the compiled value straight to the host `Object.fromEntries`,
+which needs `Symbol.iterator` — but an opaque WasmGC vec has none. Its immediate
+neighbour `__object_assign` does marshal (`_isWasmStruct(s) ? _wrapForHost(s, exports) : s`);
+this one does not. Reported to the coordinator for id allocation.
+
 - `tests/issue-5202-init-window-class-dispatch.test.ts` 5/5,
   `tests/issue-5193-init-marshal-host-typedarray.test.ts` +
   `tests/issue-5191-builtin-derived-class-value.test.ts` 34/34 — unchanged.
