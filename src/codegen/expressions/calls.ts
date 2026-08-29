@@ -88,7 +88,11 @@ import {
 } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { tryBorrowedPrototypeNullishThisThrow } from "../builtin-prototype-brand.js"; // (#4076)
+import {
+  tryBorrowedPrototypeBrandThisThrow,
+  tryBorrowedPrototypeNullishThisThrow,
+} from "../builtin-prototype-brand.js"; // (#4076, #5143)
+import { tryCompilePromiseCallWithoutNew } from "../promise-newtarget.js"; // (#5143)
 import {
   appendDynamicCandidateArgcSetup,
   appendExternResultArgcReset,
@@ -6963,6 +6967,13 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
+  // (#5143) `Promise(...)` / `Promise.call(...)` — §27.2.3.1 step 1 requires
+  // `new`. Standalone-carrier gated inside the helper.
+  {
+    const r = tryCompilePromiseCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
   // (#1540) JSX runtime call intercept — `_jsx` / `_jsxs` / `_jsxDEV`. Routed to
   // the matching `__jsx_runtime_*` host import. Extracted to calls-guards.ts (#742).
   {
@@ -7662,6 +7673,12 @@ function compileCallExpression(
       const compileOneArg = (a: ts.Expression) => compileExpression(ctx, fctx, a);
       const invalidThis = tryBorrowedPrototypeNullishThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
       if (invalidThis !== undefined) return invalidThis;
+
+      // (#5143) …and the other statically-decidable bad receiver: a builtin
+      // PROTOTYPE object handed to a brand-checked method
+      // (`Promise.prototype.then.call(Promise.prototype, …)`).
+      const brandThis = tryBorrowedPrototypeBrandThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
+      if (brandThis !== undefined) return brandThis;
 
       // (#4483) `Function.call(thisArg, …body)` / `Function.apply(thisArg, [body])`
       // are reflective spellings of the Function CONSTRUCTOR, whose [[Call]]
