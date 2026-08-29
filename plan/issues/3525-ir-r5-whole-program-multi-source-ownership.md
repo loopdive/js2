@@ -4,9 +4,9 @@ title: "IR-only R5: whole-program single- and multi-source Prepared ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-28
+updated: 2026-08-30
 assignee: ttraenkler/codex
-branch: codex/3525-unit-keyed-body-skips
+branch: codex/3525-m1a3-same-spelling-callables
 priority: critical
 horizon: xl
 complexity: XL
@@ -980,6 +980,152 @@ include `issue-3525-multi-prepared-program-census`,
 missing body-route audits treated as failures. Assertions must join actual
 legacy body rows and Prepared component membership by `IrUnitId`; the owner's
 post-route `irOutcomes` projection is not sufficient by itself.
+
+## M1A.3 implementation lock — retire the same-spelling component exclusion (2026-08-30)
+
+This is a Sol-authored bounded continuation of M1A.2, grounded on
+`origin/main` `4881206ab3001505fcfca875589aff8daf375ff9`. It removes the
+remaining name-based *admission* vetoes for the already-structural callable
+component route. It does not change the callable graph, add a new alias
+resolver, widen route eligibility, compose with a dedicated Prepared owner, or
+move any direct fallback body.
+
+### Current authority trace
+
+The first residual is in
+`src/codegen/multi-prepared-callable-orchestration.ts`:
+`collectMultiIrFunctionNameCollisions(...)` builds a program-wide set and
+`collidingFunctionNames.has(claim.legacyName)` rejects an otherwise exact
+candidate. A second legacy-name veto remains in
+`src/ir/ast-lowering-plans.ts`: after the resolver has already joined a direct
+call to its exact retained `targetUnitId`, source, declaration, binding, and
+signature, `collectIrDirectCallLoweringPlansByIdentity(...)` still rejects
+solely because `resolved.legacyProjection !== "unambiguous"`. The exact joins
+that follow that check are the structural authority; the global projection
+remains ambiguous by design for untouched legacy consumers. Those two vetoes are no
+longer authorities on this route:
+
+- `makeMultiIrSafeSelection` already treats the frozen program-callable
+  boundary as the exact cross-source certificate;
+- the identity imported-function resolver publishes `targetUnitId` even when
+  its legacy flat projection is ambiguous, while only untouched direct/legacy
+  consumers discard the ambiguous projection;
+- selector and imported-call planning consume the frozen structural graph and
+  retain exact owner/target `IrUnitId`s;
+- `prepareMultiPreparedCallableGroup` gives every component unit a unique
+  synthetic integration name derived from the deterministic group/unit order,
+  rewrites local and imported call references from their exact unit targets,
+  and reconciles artifact/terminal evidence back to the unit-keyed maps; and
+- post-publication currentness joins `irUnitFuncMap` and
+  `ProgramAbiSourceCallableRegistry` by unit. `WasmFunction.name` remains only
+  a compatibility/currentness assertion on the exact object, never a lookup.
+
+Accordingly the production change is intentionally only:
+
+1. remove the collision-helper import, the computed collision set, and the
+   `collidingFunctionNames.has(...)` candidate condition/comment from
+   `src/codegen/multi-prepared-callable-orchestration.ts`; and
+2. remove only the redundant `legacyProjection` ambiguity veto from the exact
+   unit-keyed branch of
+   `collectIrDirectCallLoweringPlansByIdentity(...)`, retaining its
+   target-unit, source, declaration, binding, legacy-name, and signature joins
+   in `src/ir/ast-lowering-plans.ts`;
+3. add the non-vacuous production regression to
+   `tests/issue-3525-multi-prepared-callable-bindings.test.ts`; and
+4. update `tests/issue-3520-lowering-plan-identity.test.ts` so the structural
+   collector proves both sides of the boundary: an ambiguous flat projection
+   with the exact source-local target succeeds, while a foreign same-spelled
+   target still fails on its exact retained-source mismatch.
+
+`src/codegen/multi-prepared-callable-components.ts`,
+`src/ir/imported-functions.ts`, `src/codegen/index.ts`, declarations,
+integration, `from-ast.ts`, and module-init files are read-only for this
+checkpoint. If the focused regression demonstrates that any of those files
+must change, stop and amend this plan before editing; do not turn the narrow
+deletion into an opportunistic refactor.
+
+### Positive and negative proof
+
+The positive fixture has three modules and five exact top-level units:
+
+- module A exports `same(value)` and `call(value)`, where `call` invokes A's
+  one-argument `same`;
+- module B exports another `same(value, delta)` and another `call(value)`,
+  where `call` invokes B's two-argument `same`; and
+- the entry imports the two `call` bindings under distinct aliases and exports
+  `run`, which invokes both.
+
+The deliberately different provider arities make a flat-name or last-wins
+target substitution fail ABI reconciliation or runtime parity instead of
+accidentally returning the same value. With ordinary standalone,
+`nativeStrings: true`, `experimentalIR: true`, and no cutover environment
+override, acceptance requires:
+
+- exactly five distinct source-qualified unit IDs reserved and skipped;
+- one shared non-null `preparedComponentId` and five `terminal-ir` outcomes;
+- two units diagnosed as `same`, two as `call`, and one as `run`, without
+  collapsing their unit or source identities;
+- exact Program-ABI/allocator object currentness for every unit;
+- no matching direct-body audit row; and
+- runtime parity with the direct control, including the expected result that
+  distinguishes both `same` implementations.
+
+Poisoning direct bodies for `same,call,run` must still compile and run in the
+default-on lane. With
+`JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER=0`, the same poison must
+reach the direct route; without poison the disabled lane must retain artifact,
+surface, import, and runtime parity. Reversing caller input-map insertion must
+preserve the unit set, structural call targets, component membership, and
+runtime result; source evaluation order remains the existing ordered-source
+authority and is not re-sorted by this test.
+
+Add or retain fail-closed controls for:
+
+- a same legacy spelling paired with a foreign unit ID at the body-routing
+  boundary;
+- an ambiguous legacy projection whose exact local retained unit/source joins
+  succeeds, paired with a same-spelled foreign retained unit that fails on the
+  later source-identity join rather than on flat-name ambiguity;
+- a cloned/wrong-owner call node or wrong target unit in the structural graph;
+- one wrong-arity same-spelled call/target planning shape (typed Unsupported or
+  pre-admission direct-only decline, with no Prepared prefix), paired with a
+  retained-target or `signaturesByUnitId` mutation that remains a fatal
+  exact-identity Invariant with no prefix; and
+- one member that cannot be planned or lowered, proving no sibling body,
+  reservation, alias, terminal outcome, or skip is committed before the exact
+  component decision.
+
+An unsupported member may make the component ineligible before integration;
+that is acceptable only when every would-be member retains one direct terminal
+outcome and the poison/control pair proves no partial Prepared prefix. An
+Invariant remains fatal and likewise may not publish a prefix.
+
+### Preserved boundaries and validation
+
+Host, fast, WASI, module-init-bearing, class/closure/function-value, mutable,
+async/generator, dedicated-owner, and single-source families remain on their
+current routes. The legacy resolver's ambiguous-name projection stays for
+those direct consumers. Do not delete `collectMultiIrFunctionNameCollisions`
+itself while other callers remain, change synthetic-name compatibility, or
+weaken exact signature/component/currentness assertions.
+
+Run the focused #3525 callable-binding suite with the direct-body poison,
+`issue-3525-multi-prepared-program-census`, #3214 imported HOF, #2138
+multi-module overlay, multi-file equivalence, and the existing dedicated-route
+controls. Run TypeScript 7 and 5, Prettier/Biome, `check:ir-fallbacks`, issue
+integrity, and the ordinary IR layering/dialect/readiness ratchets. Before
+every commit, under a finite non-negative one-minute load strictly below
+`logical cores - 2`, run both LOC and function regrowth ratchets immediately
+before committing. Let the complete precommit and prepush hooks run without
+bypass. No baseline, LOC, function-size, binary-size, or hook exception is
+authorized.
+
+Luna Max owns only the four implementation/test files named above on branch
+`codex/3525-m1a3-same-spelling-callables`; the plan remains root-owned. Before
+the PR leaves draft, an independent Sol must review the exact pushed SHA and
+confirm the positive matrix, negative mutations, unchanged route boundaries,
+and absence of overlap with the parallel Claude IR session. A mergeable,
+all-green, exact-SHA-approved PR is ready; a real blocker keeps it draft.
 
 ## M2 implementation lock — single-contributor multi-source module init (2026-08-27)
 
