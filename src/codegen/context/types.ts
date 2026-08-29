@@ -3487,6 +3487,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   needsToUint32: boolean;
   /** Map from class name → class AST declaration node */
   classDeclarationMap: Map<string, ts.ClassDeclaration | ts.ClassExpression>;
+  /**
+   * (#4646) Declarations whose constructor/method bodies `compileClassBodies`
+   * has already emitted, keyed by the DECLARATION NODE.
+   *
+   * `structMap` is keyed by class NAME, so "is this class already compiled?"
+   * was answered by `structMap.has(className)` — a name test standing in for a
+   * declaration test. Two same-named classes in different scopes collapse onto
+   * that one key, so the second declaration's bodies were skipped and every
+   * call to it ran the FIRST declaration's code (no invalid wasm, no compile
+   * error — silently wrong results). This set makes the question node-scoped.
+   */
+  compiledClassBodies: Set<ts.ClassDeclaration | ts.ClassExpression>;
   /** Cache for function type deduplication: signature key → type index */
   funcTypeCache: Map<string, number>;
   /** Wrapper type indices */

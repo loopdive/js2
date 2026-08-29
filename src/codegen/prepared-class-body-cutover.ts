@@ -243,7 +243,16 @@ export function routeTopLevelClassBodies(
   declaration: ts.ClassDeclaration,
   funcByName: Map<string, number>,
   routing: ClassBodyCompileRouting | undefined,
+  // (#4646) Per-declaration identity for a class whose source name is owned by
+  // a class in another scope. The exact-cutover correlation below keys off
+  // `declaration.name.text`, which is precisely the name that collides, so a
+  // scoped class always takes the legacy walker under its own identity.
+  syntheticName?: string,
 ): void {
+  if (syntheticName !== undefined) {
+    compileClassBodies(ctx, declaration, funcByName, syntheticName, routing);
+    return;
+  }
   if (!tryCorrelateFullyPreparedStandaloneClassBodies(ctx, declaration, funcByName, routing)) {
     compileClassBodies(ctx, declaration, funcByName, undefined, routing);
   }
