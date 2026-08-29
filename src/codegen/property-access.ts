@@ -8,6 +8,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -1144,9 +1145,7 @@ export function resolveStructNameForExpr(
   if (!typeName && expression.kind === ts.SyntaxKind.ThisKeyword) {
     typeName = resolveThisStructName(ctx, fctx);
   }
-  if (!typeName && (resolvedCarrier?.kind === "ref" || resolvedCarrier?.kind === "ref_null")) {
-    typeName = ctx.typeIdxToStructName.get(resolvedCarrier.typeIdx);
-  }
+  typeName = typeName ?? carrierNameForAccess(ctx, resolvedCarrier, accessedMember); // (#5187)
   return typeName;
 }
 
