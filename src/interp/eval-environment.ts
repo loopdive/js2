@@ -220,7 +220,11 @@ export class EvalDeclarationPlan {
   }
 }
 
-function appendUnique(names: string[], name: string): void {
+// Keep the carrier dynamically typed at this self-hosting boundary. The AOT
+// interpreter receives arrays created in several compiler modules; treating
+// `string[]` as a nominal WasmGC array type makes an otherwise ordinary empty
+// array fail an RTT cast before its first name is appended.
+function appendUnique(names: any, name: string): void {
   for (const existing of names) {
     if (existing === name) return;
   }
@@ -242,7 +246,7 @@ function collectPatternName(pattern: Node, target: string[]): void {
  * parameter: B.3.5 exempts only `CatchParameter : BindingIdentifier`, so a
  * destructuring parameter's bound names must shadow the handler descent and
  * cancel B.3.3's synthetic var for those names. */
-export function appendPatternBoundNames(pattern: Node, target: string[]): void {
+export function appendPatternBoundNames(pattern: Node, target: any): void {
   if (!pattern) return;
   if (pattern.type === "Identifier") {
     appendUnique(target, pattern.name);
@@ -603,6 +607,31 @@ function declarativeWithBindings(parent: EnvRec | null, bindingNames: JSValue, i
     slots.push(cell);
   }
   return new EnvRec(ENV_DECLARATIVE, parent, names, slots, undefined);
+}
+
+/** Create one mutable Function Environment Record for an interpreted call.
+ *
+ * The emitter passes each name with its fixed entry-register index. Copy the
+ * entry values into cells once; all source-level reads/writes then use
+ * LdName/StName, so sibling and escaping closures share the live bindings.
+ * A fresh names vector is required per call because direct eval may extend the
+ * current VariableEnvironment without mutating metadata shared by later calls. */
+export function createFunctionEnvironment(
+  parent: EnvRec | null,
+  bindingNames: JSValue,
+  bindingRegisters: JSValue,
+  registers: Regs,
+): EnvRec {
+  const names: JSValue[] = [];
+  const slots: Regs = [];
+  for (let i = 0; i < bindingNames.length; i += 1) {
+    names.push(bindingNames[i]);
+    const cell: EvalBindingCell = { value: registers[bindingRegisters[i]] };
+    slots.push(cell);
+  }
+  const env = new EnvRec(ENV_DECLARATIVE, parent, names, slots, undefined);
+  registerVariableEnvironment(env, env);
+  return env;
 }
 
 /** Push a TDZ-initialized lexical block over the current interpreter

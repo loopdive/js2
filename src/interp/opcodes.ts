@@ -142,6 +142,15 @@ export const BUILTIN_PUSH_OBJECT_ENV = 27;
  * cannot change the meaning of `/x/g`, and a fresh object is produced on every
  * evaluation of the literal (§13.2.7.3). */
 export const BUILTIN_REGEXP_CREATE = 28;
+/** Dynamic `import()` delegates module resolution/loading to a callback owned
+ * by the current runtime-eval realm. The builtin keeps loader policy outside
+ * the interpreter while preserving ImportCall's Promise/error boundary. */
+export const BUILTIN_DYNAMIC_IMPORT = 29;
+/** Create the per-call Function Environment Record before a non-script body
+ * executes. Parallel name/register-index vectors are emitted after declaration
+ * hoisting, and the builtin seeds mutable cells from those entry registers.
+ * Nested closures capture the cells through the ordinary `frame.envRec` chain. */
+export const BUILTIN_PUSH_FUNCTION_ENV = 30;
 
 // ── Encoding (doc §"Encoding" / ADR-0019) ────────────────────────────────────
 //
@@ -313,4 +322,6 @@ export const BUILTIN_NAMES: string[] = [
   "DirectEval",
   "PushObjectEnv",
   "RegExpCreate",
+  "DynamicImport",
+  "PushFunctionEnv",
 ];

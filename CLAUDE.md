@@ -597,6 +597,19 @@ points at an unrelated PR, not the plan-file issue. Write
 Commit messages keep plain `#NNNN` (tooling greps them); this rule is for PR
 bodies and PR-visible comments.
 
+**Every agent commit names its model (project-lead order, 2026-08-29).** Any
+commit carrying an agent `Co-authored-by:` trailer (Claude/Codex) must also
+carry a `Model:` trailer naming vendor, family, version/subtype, and the
+configured reasoning effort — e.g. `Model: Claude Fable 5 Max`,
+`Model: Codex GPT-5.6 Sol Max`, `Model: Claude Opus 5 High`. Effort comes from
+the dispatch brief or the issue's `reasoning_effort` frontmatter; if genuinely
+unknown, write `Default`. Enforced by `.husky/commit-msg`; details and
+exemptions (`Merge`/`Revert`/`fixup!`/`squash!`/`chore(assign)` subjects) in
+`AGENTS.md` § Commit Attribution. Rationale: PR #5204 shipped three codegen
+regressions in one agent commit and the producing model was unrecoverable from
+git. This project rule deliberately **overrides** any ambient harness default
+of keeping model identifiers out of pushed artifacts.
+
 **ALWAYS open a PR on `loopdive/js2wasm` when a task is done — do not wait to be
 asked** (project-lead decision, 2026-08-01). Finished work that sits on a pushed
 branch with no PR is invisible: it is not in the merge queue, `auto-enqueue`
@@ -734,7 +747,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 34,416 / 43,621 (78.9 %)
+**test262 conformance**: 34,547 / 43,621 (79.2 %)
 
 <!-- AUTO:conformance-end -->
 

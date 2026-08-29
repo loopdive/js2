@@ -291,15 +291,20 @@ export function emitDefinePropertyDescRuntime(
   propArg: ts.Expression,
   descArg: ts.Expression,
   undefinedFields: readonly string[],
+  precompiledObjLocal?: number,
 ): ValType | null {
   markRuntimeDefinedProperty(ctx, objArg, propArg);
 
-  const objType = compileExpression(ctx, fctx, objArg);
-  if (!objType) return null;
-  if (objType.kind === "ref" || objType.kind === "ref_null") {
-    fctx.body.push({ op: "extern.convert_any" });
-  } else if (objType.kind !== "externref") {
-    coerceType(ctx, fctx, objType, { kind: "externref" });
+  if (precompiledObjLocal !== undefined) {
+    fctx.body.push({ op: "local.get", index: precompiledObjLocal });
+  } else {
+    const objType = compileExpression(ctx, fctx, objArg);
+    if (!objType) return null;
+    if (objType.kind === "ref" || objType.kind === "ref_null") {
+      fctx.body.push({ op: "extern.convert_any" });
+    } else if (objType.kind !== "externref") {
+      coerceType(ctx, fctx, objType, { kind: "externref" });
+    }
   }
 
   const propType = compileExpression(ctx, fctx, propArg, { kind: "externref" });

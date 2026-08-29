@@ -810,22 +810,51 @@ export function promoteAccessorCapturesToGlobals(
   /** Static Object.defineProperty accessor whose immutable capture may safely
    * retain the enclosing activation's local binding (#1058). */
   descriptorAccessor?: ts.FunctionLikeDeclaration,
+  /**
+   * (#5148 checkpoint) TRANSITIVE-ONLY mode for lifted nested function
+   * declarations. When set, the direct-name scan is skipped entirely and the
+   * given nested-function names seed the transitive-capture worklist; only
+   * their captures NOT in `excludeNames` (the lifted function's own capture
+   * params) are promoted. A lifted body that direct-calls a sibling nested
+   * function must prepend the sibling's captures, and `cap.outerLocalIdx`
+   * belongs to the shared DECLARING frame the lifted body cannot address —
+   * Deno's `createTimer` → `__isLeakTracingEnabled()` baked declaring-frame
+   * slot 2350 into a 385-slot function ("references local … out of range").
+   * Promotion runs here, in the declaring frame, where the slots are valid.
+   */
+  transitiveOnly?: {
+    fnNames: Iterable<string>;
+    excludeNames: ReadonlySet<string>;
+    /** Names to VALUE-promote from the declaring frame even though they are
+     *  funcMap keys — a declaring-frame LOCAL genuinely shadows the same-named
+     *  nested function from another frame (Deno's destructured
+     *  `__isLeakTracingEnabled` const vs 00_infra's declaration). */
+    forceValueNames?: ReadonlySet<string>;
+  },
 ): void {
-  if (!accessorBody && (!extraNodes || extraNodes.length === 0)) return;
+  if (!transitiveOnly && !accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
   const referencedNames = new Set<string>();
-  if (accessorBody) {
+  if (transitiveOnly?.forceValueNames) {
+    for (const name of transitiveOnly.forceValueNames) referencedNames.add(name);
+  }
+  if (!transitiveOnly && accessorBody) {
     for (const stmt of accessorBody.statements) {
       collectReferencedIdentifiers(stmt, referencedNames);
     }
   }
   // Param-default initializers (#1161) also reference captured variables;
   // scan them here so defaults like `[] = iter` can resolve `iter`.
-  if (extraNodes) {
+  if (!transitiveOnly && extraNodes) {
     for (const node of extraNodes) {
       collectReferencedIdentifiers(node, referencedNames);
     }
   }
+  // (#5148 checkpoint) Recorded-slot fallbacks for transitive captures whose
+  // block-scoped source binding is already unmapped from `localMap` (the
+  // declaring IIFE block of a concatenated multi-module init has ended) but
+  // whose recorded slot still names the binding — promote from that slot.
+  const slotHints = new Map<string, number>();
   if (descriptorAccessor) {
     // The generic body walk starts below the function boundary and therefore
     // sees binding identifiers and direct body `let`/`const` names as apparent
@@ -874,7 +903,13 @@ export function promoteAccessorCapturesToGlobals(
     const directlyReferenced = new Set(referencedNames);
     const fnWorklist: string[] = [];
     for (const name of referencedNames) {
+      if (transitiveOnly?.forceValueNames?.has(name)) continue; // value-promote, don't follow
       if (ctx.funcMap.has(name) && ctx.nestedFuncCaptures.has(name)) fnWorklist.push(name);
+    }
+    if (transitiveOnly) {
+      for (const name of transitiveOnly.fnNames) {
+        if (ctx.nestedFuncCaptures.has(name)) fnWorklist.push(name);
+      }
     }
     const visitedFns = new Set<string>();
     while (fnWorklist.length > 0) {
@@ -888,6 +923,17 @@ export function promoteAccessorCapturesToGlobals(
         if (ctx.funcMap.has(cap.name) && ctx.nestedFuncCaptures.has(cap.name)) {
           fnWorklist.push(cap.name);
           continue;
+        }
+        // (#5148 checkpoint) transitive-only mode: a capture the lifted
+        // function itself carries arrives as a leading param — no promotion
+        // needed, and promoting would only mint an unused global.
+        if (transitiveOnly?.excludeNames.has(cap.name)) continue;
+        if (transitiveOnly && !fctx.localMap.has(cap.name)) {
+          const recorded =
+            cap.outerLocalIdx < fctx.params.length
+              ? fctx.params[cap.outerLocalIdx]
+              : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+          if (recorded?.name === cap.name) slotHints.set(cap.name, cap.outerLocalIdx);
         }
         if (!(cap.mutable && cap.valType) || directlyReferenced.has(cap.name)) {
           // Immutable (value-copy semantics preserved: never written), or
@@ -905,7 +951,7 @@ export function promoteAccessorCapturesToGlobals(
           if (owner === fctx || !fctx.localMap.has(cap.name)) continue;
         }
         if (ctx.capturedGlobals.has(cap.name) || ctx.moduleGlobals.has(cap.name)) continue;
-        const capLocalIdx = fctx.localMap.get(cap.name);
+        const capLocalIdx = fctx.localMap.get(cap.name) ?? slotHints.get(cap.name);
         if (capLocalIdx === undefined) continue;
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
         let boxedLocalIdx: number;
@@ -941,7 +987,7 @@ export function promoteAccessorCapturesToGlobals(
   }
 
   for (const name of referencedNames) {
-    const localIdx = fctx.localMap.get(name);
+    const localIdx = fctx.localMap.get(name) ?? slotHints.get(name);
     const preservableDeclaration =
       localIdx === undefined
         ? undefined
@@ -1012,7 +1058,11 @@ export function promoteAccessorCapturesToGlobals(
     // has no nested owner declaration (it is a module-level function) and
     // the local is not that function's own hoisted value binding, the local
     // provably SHADOWS the function — promote it.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) {
+    if (
+      !transitiveOnly?.forceValueNames?.has(name) &&
+      ctx.funcMap.has(name) &&
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)
+    ) {
       const shadowsModuleFn =
         !ctx.funcMapOwnerDecl.has(name) && !(fctx.hoistedFunctionValueBindings?.has(name) ?? false);
       if (!shadowsModuleFn) continue;

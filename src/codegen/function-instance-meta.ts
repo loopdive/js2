@@ -243,6 +243,74 @@ function isSynthesizedEvalDeclaration(decl: ts.Node): boolean {
 }
 
 /**
+ * (#5149 cluster B) §10.2.9 step 1: when the property key is a SYMBOL, the
+ * function's `name` is the symbol's description wrapped in brackets —
+ * `{ [Symbol('test262')]() {} }` is named `"[test262]"`, and a symbol with NO
+ * description is named `""` (not `"[]"`, not the compiler's internal
+ * `"__computed"`).
+ *
+ * Only the two statically decidable spellings are answered here:
+ *   • a well-known `Symbol.foo` key                → `"[Symbol.foo]"`
+ *   • an identifier bound ONCE to `Symbol("desc")` → `"[desc]"` / `""`
+ *
+ * The binding walk is syntactic on purpose — the question ("which literal built
+ * this symbol") is about SYNTAX, not about a type, so no type query belongs
+ * here at all. It is deliberately conservative:
+ * more than one declaration of the name, any later assignment to it, or a
+ * non-literal description all decline, and declining leaves the pre-existing
+ * answer untouched.
+ *
+ * Returns `undefined` when the key is not a statically decidable symbol.
+ */
+export function symbolComputedKeyFunctionName(key: ts.Expression): string | undefined {
+  let expr = key;
+  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  // `[Symbol.iterator]() {}` → "[Symbol.iterator]".
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Symbol" &&
+    ts.isIdentifier(expr.name)
+  ) {
+    return `[Symbol.${expr.name.text}]`;
+  }
+  if (!ts.isIdentifier(expr)) return undefined;
+  const name = expr.text;
+  const file = expr.getSourceFile?.();
+  if (file === undefined) return undefined;
+  let decls = 0;
+  let initializer: ts.Expression | undefined;
+  let reassigned = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+      decls++;
+      initializer = node.initializer;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      reassigned = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (decls !== 1 || reassigned || initializer === undefined) return undefined;
+  let init: ts.Expression = initializer;
+  while (ts.isParenthesizedExpression(init)) init = init.expression;
+  if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression) || init.expression.text !== "Symbol") {
+    return undefined;
+  }
+  const arg = init.arguments[0];
+  // §20.4.1.1: an absent or `undefined` description leaves [[Description]]
+  // undefined, and §10.2.9 then names the function `""`.
+  if (arg === undefined || (ts.isIdentifier(arg) && arg.text === "undefined")) return "";
+  if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) return `[${arg.text}]`;
+  return undefined;
+}
+
+/**
  * §10.2.9 SetFunctionName for a function-like declaration, as far as it is
  * statically decidable at the closure's mint site.
  *
@@ -298,6 +366,10 @@ export function fnInstanceNameOf(decl: ts.Node): string {
   if (ts.isPropertyAssignment(parent) && parent.initializer === node) {
     const key = parent.name;
     if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
+    // (#5149 cluster B) A symbol-keyed property names its anonymous function
+    // value after the symbol's description: `{ [Symbol('test262')]: () => {} }`
+    // is `"[test262]"`. Undecidable computed keys keep the `""` answer.
+    if (ts.isComputedPropertyName(key)) return symbolComputedKeyFunctionName(key.expression) ?? "";
     return "";
   }
   // (#5146 cluster E) `({ x = function () {} } = {})` — the shorthand

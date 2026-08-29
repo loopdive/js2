@@ -29,7 +29,18 @@
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
-import { TA_CTOR_KINDS } from "./registry/types.js";
+import { TA_CTOR_BYTES, TA_CTOR_KINDS } from "./registry/types.js";
+import { FNINST_BAG_OWNS, FNINST_TOMBSTONE } from "./function-instance-props.js";
+
+/**
+ * `{writable:false, enumerable:false, configurable:false}` — §23.2.6.2's
+ * attribute set for a TypedArray constructor's `BYTES_PER_ELEMENT`. The generic
+ * `__builtinfn_gopd` prologue pairs every `get_meta` hit with
+ * `FLAG_CONFIGURABLE` (right for `name`/`length`, §10.2.x), so this property
+ * needs its own descriptor arm spliced in FRONT of it or `verifyNotConfigurable`
+ * fails on a property `delete` correctly refuses to remove.
+ */
+const FLAG_NONE = 0x00;
 
 /** Splice the `$__ta_ctor` name/length arm into `__builtinfn_get_meta`. */
 export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
@@ -101,6 +112,157 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
     },
   ];
 
+  /**
+   * `i32`: is param 1 the string `key`? Self-contained — reads only the key
+   * PARAM, writes no local, so it composes with `classifyKey`'s local set
+   * without needing a local slot this native has not registered. A non-string
+   * key short-circuits to 0 before the flatten, so numeric-index reads on a
+   * constructor value stay off the string path.
+   *
+   * A FACTORY (fresh `Instr` objects per call): the same shape is spliced into
+   * three different function bodies, and aliasing one `Instr[]` across them
+   * would double-remap on a later import shift.
+   */
+  const keyIs = (key: string): Instr[] => [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+        { op: "call", funcIdx: strFlattenIdx },
+        { op: "ref.as_non_null" },
+        ...nativeStringLiteralInstrs(ctx, key),
+        { op: "call", funcIdx: strEqualsIdx },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+
+  /**
+   * `externref`: the boxed §23.2.6.2 `BYTES_PER_ELEMENT` for the receiver's
+   * kind, or a null miss for an unknown kind (impossible — the singletons are
+   * minted only from `TA_CTOR_KINDS` indices). Reads the receiver from the
+   * PARAM rather than local 2 so the chain is safe to splice into
+   * `__builtinfn_gopd`, whose local 2 is the descriptor value.
+   */
+  const bpeChain = (): Instr[] => {
+    let chain: Instr[] = [{ op: "ref.null.extern" }];
+    for (let k = TA_CTOR_KINDS.length - 1; k >= 0; k--) {
+      chain = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: taCtorTypeIdx },
+        { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: k },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "f64.const", value: TA_CTOR_BYTES[k] ?? 1 },
+            { op: "call", funcIdx: boxNumIdx },
+          ],
+          else: chain,
+        },
+      ];
+    }
+    return chain;
+  };
+
+  /** `local.get 0; any.convert_extern; ref.test $__ta_ctor` — receiver guard. */
+  const isTaCtor = (): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: taCtorTypeIdx },
+  ];
+
+  // ── `BYTES_PER_ELEMENT` static (§23.2.6.2) ────────────────────────────────
+  // Answering it from `get_meta` buys the VALUE, `hasOwnProperty`, and the
+  // §23.2.6.2 `writable: false` write refusal (`buildBuiltinFnSetRefusalArm`
+  // refuses any `__extern_set` whose key `get_meta` claims) in one arm. Int8Array
+  // is NOT excluded here the way `name`/`length` are: its `$Object` carrier never
+  // produces a `$__ta_ctor` value, so the receiver guard already declines for it
+  // and a kind-0 arm is unreachable rather than wrong.
+  getMetaFn.body.splice(0, 0, ...isTaCtor(), {
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      ...keyIs("BYTES_PER_ELEMENT"),
+      { op: "if", blockType: { kind: "empty" }, then: [...bpeChain(), { op: "return" }] },
+    ],
+  });
+
+  // `__builtinfn_gopd`'s generic prologue pairs every `get_meta` hit with
+  // `FLAG_CONFIGURABLE`; `BYTES_PER_ELEMENT` is non-configurable, so its
+  // descriptor is built HERE and returned before that prologue runs (this fill
+  // is ordered after `fillBuiltinFnMeta`, and both splice at index 0, so this
+  // arm lands in front).
+  const gopdFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_gopd");
+  const createDescIdx = ctx.funcMap.get("__create_descriptor");
+  if (gopdFn && createDescIdx !== undefined) {
+    gopdFn.body.splice(0, 0, ...isTaCtor(), {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...keyIs("BYTES_PER_ELEMENT"),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...bpeChain(),
+            { op: "i32.const", value: FLAG_NONE },
+            { op: "call", funcIdx: createDescIdx },
+            { op: "return" },
+          ],
+        },
+      ],
+    });
+  }
+
+  // ── `name` / `length` deletability (§10.2.x `configurable: true`) ─────────
+  // `propertyHelper`'s `isConfigurable` is `delete obj[k]; return
+  // !hasOwnProperty(obj, k)`, so a visible-but-undeletable `name` fails every
+  // `verifyProperty` that names `configurable: true` — which is what
+  // `TypedArrayConstructors/<Kind>/{name,length}.js` do. Tombstoning through the
+  // SAME `__fninst_*` bag the closure arms use keeps one deletion substrate; the
+  // bag is identity-keyed on the receiver's eqref, and `$__ta_ctor` is a plain
+  // struct, so the generic registry arm serves it with no per-carrier slot.
+  const bagOwnsIdx = ctx.funcMap.get(FNINST_BAG_OWNS);
+  const tombstoneIdx = ctx.funcMap.get(FNINST_TOMBSTONE);
+  const deleteFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_delete");
+  if (deleteFn && tombstoneIdx !== undefined) {
+    deleteFn.body.splice(0, 0, ...isTaCtor(), {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...keyIs("name"),
+        ...keyIs("length"),
+        { op: "i32.or" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: tombstoneIdx },
+            // A failed ensure (no bag substrate) must NOT report "handled", or
+            // `delete` would claim success while the property stays visible.
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+            },
+          ],
+        },
+      ],
+    });
+  }
+
   getMetaFn.body.splice(
     0,
     0,
@@ -126,14 +288,34 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
           blockType: { kind: "empty" },
           then: [
             ...classifyKey,
-            { op: "local.get", index: 4 }, // isName
-            { op: "if", blockType: { kind: "empty" }, then: nameChain },
-            { op: "local.get", index: 5 }, // isLen
+            // The bag consult is what makes the synthetic `name`/`length` pair
+            // DELETABLE: once the arm above tombstones the key, `get_meta` must
+            // stop claiming it or `hasOwnProperty` would still answer true and
+            // `isConfigurable` would report false.
+            ...(bagOwnsIdx === undefined
+              ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
+              : ([
+                  { op: "local.get", index: 0 },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: bagOwnsIdx },
+                ] satisfies Instr[])),
             {
               op: "if",
               blockType: { kind: "empty" },
-              // §23.2.5.1: every TypedArray constructor's `length` property is 3.
-              then: [{ op: "f64.const", value: 3 }, { op: "call", funcIdx: boxNumIdx }, { op: "return" }],
+              // Deleted (or overwritten) — decline, and let the receiver's own
+              // bag answer through the ordinary carrier-bag ladder.
+              then: [],
+              else: [
+                { op: "local.get", index: 4 }, // isName
+                { op: "if", blockType: { kind: "empty" }, then: nameChain },
+                { op: "local.get", index: 5 }, // isLen
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  // §23.2.5.1: every TypedArray constructor's `length` is 3.
+                  then: [{ op: "f64.const", value: 3 }, { op: "call", funcIdx: boxNumIdx }, { op: "return" }],
+                },
+              ],
             },
           ],
         },

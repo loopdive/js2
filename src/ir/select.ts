@@ -2972,6 +2972,16 @@ function dynamicUsesAreMoveOnly(
       }
       if (expectDyn) return false; // operator results are concrete-shaped
 
+      // (#5164 S3) `<key> in <dynamic receiver>`. This scan decides only whether
+      // a dynamic VALUE may reach the operator; `selectorDynamicLaneIn` stays
+      // the authority on which receivers the slice claims. No representation
+      // changes here — the receiver reaches `__extern_has` as the dynamic
+      // carrier it already is (the same move the for-in arm below makes) and the
+      // boolean result is concrete, hence below the `expectDyn` bail.
+      if (op === ts.SyntaxKind.InKeyword && rightIsDyn) {
+        return scanExpr(e.left, leftIsDyn) && scanExpr(e.right, true);
+      }
+
       if (
         op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
         op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
@@ -3254,6 +3264,240 @@ function thenArmTerminates(stmt: ts.Statement): boolean {
   return false;
 }
 
+/**
+ * (#5163 S3) Peel a chained assignment `a = b = c = e` into its targets
+ * (OUTERMOST first: `[a, b, c]`) and the single innermost RHS `e`.
+ *
+ * Returns `null` when `expr` is not a chain — i.e. its RHS is not itself a
+ * plain `=` assignment — so a caller can fall through to the ordinary
+ * single-target arms. Exported because the selector and the builder must agree
+ * on the peel EXACTLY: a chain admitted with one target list and lowered with
+ * another is a selector⇄builder divergence.
+ */
+export function peelAssignmentChain(
+  expr: ts.BinaryExpression,
+): { readonly targets: readonly ts.Expression[]; readonly rhs: ts.Expression } | null {
+  const targets: ts.Expression[] = [];
+  let current = expr;
+  for (;;) {
+    targets.push(current.left);
+    const right = unwrapPhase1Parens(current.right);
+    if (ts.isBinaryExpression(right) && right.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      current = right;
+      continue;
+    }
+    return targets.length > 1 ? { targets, rhs: current.right } : null;
+  }
+}
+
+/**
+ * (#5163) The compound-assignment operators the IR desugars to an f64 binop.
+ * Kept in lockstep with `compoundF64Binop` in from-ast.ts — an operator
+ * admitted here but absent there demotes at build stage instead of being
+ * refused cleanly at selection.
+ */
+function isPhase1CompoundAssignOperator(op: ts.SyntaxKind): boolean {
+  return (
+    op === ts.SyntaxKind.PlusEqualsToken ||
+    op === ts.SyntaxKind.MinusEqualsToken ||
+    op === ts.SyntaxKind.AsteriskEqualsToken ||
+    op === ts.SyntaxKind.SlashEqualsToken
+  );
+}
+
+/**
+ * (#5163 S1/S2) Shape gate for the TARGET of a mutating member statement
+ * (`o.x += e`, `a[i]++`). Deliberately the intersection of the plain-`=`
+ * property and element store arms: the same receiver/index restrictions, so a
+ * target admitted here is one both walkers' `=` arms would already admit.
+ *
+ * TYPE restrictions (f64 field/element only, plain field not accessor, non-
+ * extern receiver) are NOT checked here — the selector has no types. They live
+ * in `lowerPropertyCompound` / `lowerElementCompound`, which demote TYPED so
+ * the function falls back to the legacy body rather than being approximated.
+ */
+function isPhase1MutableMemberTarget(
+  target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (target.questionDotToken !== undefined) return false;
+  if (ts.isPropertyAccessExpression(target)) {
+    if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
+    // A DOM/extern member write is a CALL pair, whose re-entrancy the
+    // read-modify-write desugaring does not model. Refuse at selection.
+    if (standaloneDomOperation(target) !== undefined) return false;
+    if (expressionIsModuleExternAccessChain(target.expression)) return false;
+    if (!preflightClassPropertyWrite(target, scope)) return false;
+    return isPhase1Expr(target.expression, scope, localClasses);
+  }
+  if (
+    (!ts.isIdentifier(target.expression) || !scope.has(target.expression.text)) &&
+    !stableDynamicStoreReceiverHasAdmittedRoot(target.expression)
+  ) {
+    return false;
+  }
+  return isPhase1Expr(target.argumentExpression, scope, localClasses);
+}
+
+/**
+ * (#5163 S3) Shape gate for a chained assignment STATEMENT `a = b = e;`.
+ *
+ * Admits chains whose every target is either a plain in-scope local (not a
+ * module binding — those carry TDZ and representation checks this desugaring
+ * does not perform) or a plain-field property access, and whose innermost RHS
+ * is Phase-1. Element targets stay out of this slice.
+ */
+function isPhase1ChainedAssignmentStatement(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const chain = peelAssignmentChain(expr);
+  if (chain === null) return false;
+  for (const target of chain.targets) {
+    if (ts.isIdentifier(target)) {
+      if (isUnrepresentableModuleBinding(target)) return false;
+      if (currentModuleBindingResolver?.(target)) return false;
+      if (!scope.has(target.text)) return false;
+      if (projectionBindingMutationIsUnsupported(target.text, expr)) return false;
+      continue;
+    }
+    if (ts.isPropertyAccessExpression(target)) {
+      if (!isPhase1MutableMemberTarget(target, scope, localClasses)) return false;
+      continue;
+    }
+    return false;
+  }
+  if (!isPhase1Expr(chain.rhs, scope, localClasses)) return false;
+  // Every target is written; none of them keeps a projection binding.
+  for (const target of chain.targets) {
+    if (ts.isIdentifier(target)) clearProjectionBinding(target.text);
+  }
+  return true;
+}
+
+/**
+ * Label for a top-level ExpressionStatement no arm admitted, keyed by the
+ * offending expression kind + operator so the histogram keeps distinguishing
+ * assignment from inc-dec.
+ */
+function nontailExpressionStatementArm(es: ts.Expression): string {
+  if (ts.isBinaryExpression(es)) {
+    return es.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? "nontail-assign-nonprop-lhs"
+      : "nontail-compound-or-binary-stmt";
+  }
+  if (ts.isPrefixUnaryExpression(es) || ts.isPostfixUnaryExpression(es)) return "nontail-incdec-stmt";
+  return "nontail-exprstmt-other";
+}
+
+/**
+ * (#5163) Verdict of the shared mutating-statement gate. `ok` admits the
+ * statement; otherwise `arm` names the rejection, WITHOUT the walker's
+ * position prefix — each caller prepends its own (`nontail-` / `body-`) so the
+ * histogram keeps distinguishing the two positions.
+ */
+type Phase1MutatingVerdict =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly arm: string; readonly node: ts.Node };
+
+/**
+ * (#5163) The one shape gate for every mutating expression statement this
+ * issue adopted: chained assignment, member compound assignment, `++`/`--` on
+ * any target, and (top level only) plain local assignment.
+ *
+ * `null` means "no arm here" — the caller falls through to its own remaining
+ * arms. Shared by BOTH statement walkers so the two positions cannot drift;
+ * `lowerAdoptedMutatingStatement` in from-ast.ts is its exact builder twin,
+ * consulted at the same point in each dispatcher's order.
+ *
+ * `topLevel` enables the two S0 arms that only the top-level walker lacked
+ * (`isPhase1BodyStatement` has admitted plain local assignment and local
+ * `++`/`--` since slice 12; adding them here too would shadow those with
+ * subtly different bookkeeping for no gain).
+ */
+function phase1MutatingStatementVerdict(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  topLevel: boolean,
+): Phase1MutatingVerdict | null {
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    // S3 — `a = b = e;`.
+    if (op === ts.SyntaxKind.EqualsToken && peelAssignmentChain(expr) !== null) {
+      return isPhase1ChainedAssignmentStatement(expr, scope, localClasses)
+        ? { ok: true }
+        : { ok: false, arm: "chained-assign", node: expr };
+    }
+    // S1/S2 — `o.x += e;` / `a[i] *= e;`. The receiver/index restrictions
+    // mirror the plain-`=` arms; the LOWERING differs (it reads the old value
+    // before the RHS), which is why this is a separate arm and not a widening
+    // of the `=` ones.
+    if (
+      isPhase1CompoundAssignOperator(op) &&
+      (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
+    ) {
+      if (!isPhase1MutableMemberTarget(expr.left, scope, localClasses)) {
+        return { ok: false, arm: "member-compound-target", node: expr.left };
+      }
+      return isPhase1Expr(expr.right, scope, localClasses)
+        ? { ok: true }
+        : { ok: false, arm: "member-compound-rhs", node: expr.right };
+    }
+    // S0 — plain assign to an in-scope local, top level only. Module bindings
+    // and directly-mutated params keep their own dedicated arms above.
+    if (
+      topLevel &&
+      op === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(expr.left) &&
+      scope.has(expr.left.text) &&
+      !currentMutableSlotNames.has(expr.left.text) &&
+      currentModuleBindingResolver?.(expr.left) === undefined
+    ) {
+      if (isUnrepresentableModuleBinding(expr.left)) {
+        return { ok: false, arm: "module-storage-unrepresentable", node: expr };
+      }
+      if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) {
+        return { ok: false, arm: "local-assign-projection", node: expr };
+      }
+      if (!isPhase1Expr(expr.right, scope, localClasses)) {
+        return { ok: false, arm: "local-assign-rhs", node: expr.right };
+      }
+      clearProjectionBinding(expr.left.text);
+      const className = localClassNameForExpression(expr.right, scope);
+      if (className !== null) currentClassBindings.set(expr.left.text, className);
+      return { ok: true };
+    }
+    return null;
+  }
+  if (!ts.isPostfixUnaryExpression(expr) && !ts.isPrefixUnaryExpression(expr)) return null;
+  if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return null;
+  const operand = expr.operand;
+  // S1/S2 — `o.x++;` / `--a[i];`. Same target restrictions as the member
+  // compound arm; the result is discarded, so prefix and postfix are identical.
+  if (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) {
+    return isPhase1MutableMemberTarget(operand, scope, localClasses)
+      ? { ok: true }
+      : { ok: false, arm: "member-incdec-target", node: operand };
+  }
+  // S0 — local `x++;`, top level only.
+  if (!topLevel || !ts.isIdentifier(operand)) return null;
+  if (isUnrepresentableModuleBinding(operand)) {
+    return { ok: false, arm: "module-storage-unrepresentable", node: expr };
+  }
+  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) {
+    return { ok: false, arm: "module-update", node: expr };
+  }
+  if (!scope.has(operand.text)) return { ok: false, arm: "incdec-scope", node: operand };
+  if (projectionBindingMutationIsUnsupported(operand.text, expr)) {
+    return { ok: false, arm: "incdec-projection", node: expr };
+  }
+  clearProjectionBinding(operand.text);
+  return { ok: true };
+}
+
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
   let candidate = unwrapPhase1Parens(receiver);
   while (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) {
@@ -3478,6 +3722,15 @@ function isPhase1StatementListInScope(
         }
         continue;
       }
+      // (#5163) The mutating shapes this issue adopted. MUST precede the
+      // single-target `=` arms below: a chain's outer LHS matches those arms
+      // while its RHS is itself an assignment, which `isPhase1Expr` refuses —
+      // so without this the whole statement rejects.
+      const mutating = phase1MutatingStatementVerdict(s.expression, scope, localClasses, /* topLevel */ true);
+      if (mutating !== null) {
+        if (!mutating.ok) return shapeNo(`nontail-${mutating.arm}`, mutating.node);
+        continue;
+      }
       // Capability C: a plain write to the exact checker-owned mutable
       // module declaration. Local assignments remain outside this top-level
       // statement-list arm; body buffers already own them.
@@ -3600,16 +3853,7 @@ function isPhase1StatementListInScope(
       // binding bookkeeping; the two labels below survive for expressions
       // the Phase-1 walker still cannot admit.
       if (expressionStatementIsPhase1Discardable(es, scope, localClasses)) continue;
-      let arm = "nontail-exprstmt-other";
-      if (ts.isBinaryExpression(es)) {
-        arm =
-          es.operatorToken.kind === ts.SyntaxKind.EqualsToken
-            ? "nontail-assign-nonprop-lhs"
-            : "nontail-compound-or-binary-stmt";
-      } else if (ts.isPrefixUnaryExpression(es) || ts.isPostfixUnaryExpression(es)) {
-        arm = "nontail-incdec-stmt";
-      }
-      return shapeNo(arm, es);
+      return shapeNo(nontailExpressionStatementArm(es), es);
     }
     // Phase 2 extension: an `if (cond)` with NO else, split by whether the
     // then-arm unconditionally terminates — mirroring `lowerStatementList`'s
@@ -4411,6 +4655,22 @@ function isPhase1ForUpdateExpr(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // #5164 S2 — a comma incrementor (`i++, j++`) is N update clauses run left to
+  // right, so each side re-enters THIS function rather than the value walker.
+  // That matters: only the update arm carries the mutation bookkeeping
+  // (`clearProjectionBinding`, the module-slot write rules,
+  // `projectionBindingMutationIsUnsupported`), which is what makes the
+  // MUTATING `i++` idiom admissible here while #4459's pure discard gate still
+  // refuses it in value position. `lowerForUpdateExpr` mirrors this arm.
+  //
+  // Every counted-loop plan that keys on the incrementor's SHAPE (the
+  // dense-fill and reduction matchers, `isIncreasingStep`) requires a
+  // prefix/postfix unary or `i += <positive literal>`, so a comma incrementor
+  // fails each of them closed and the loop takes the general update path.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    if (!isPhase1ForUpdateExpr(expr.left, scope, localClasses)) return false;
+    return isPhase1ForUpdateExpr(expr.right, scope, localClasses);
+  }
   if (ts.isPostfixUnaryExpression(expr)) {
     const op = expr.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
@@ -4727,6 +4987,14 @@ function isPhase1BodyStatement(
       }
       if (stmt.expression.asteriskToken) return false;
       return true; // bare `yield;`
+    }
+    // (#5163) The adopted mutating shapes — the SAME gate the top-level walker
+    // uses, consulted at the same point in the order (before the single-target
+    // `=` arms, whose RHS check refuses a nested assignment).
+    const mutating = phase1MutatingStatementVerdict(stmt.expression, scope, localClasses, /* topLevel */ false);
+    if (mutating !== null) {
+      if (!mutating.ok) return shapeNo(`body-${mutating.arm}`, mutating.node);
+      return true;
     }
     if (ts.isBinaryExpression(stmt.expression)) {
       const op = stmt.expression.operatorToken.kind;
@@ -6783,6 +7051,95 @@ function selectorPrimitiveWrapperConstruction(
   return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
 }
 
+/**
+ * (#5164 S1) `<left> , <right>` in VALUE position (`const c = (a, b)`).
+ *
+ * §13.16.1 is "evaluate left, DISCARD its value, evaluate right and take THAT"
+ * — two halves the IR already owns separately, so the accept test is exactly
+ * `left is discardable ∧ right is a Phase-1 value`, and `lowerBinary`'s comma
+ * arm is the same two calls in the same order.
+ *
+ * Recursing the left through #4459's `isPhase1DiscardedExpr` inherits its
+ * `discard-mutating-operand` line verbatim, so a MUTATING left operand
+ * (`(a = 1, b)`, `(i++, j)`) stays legacy-owned: those need the statement-arm
+ * assignment bookkeeping in value position, which is this issue's documented
+ * follow-up. Nested commas need no extra arm — the left half re-enters the
+ * discard walker's own comma arm and the right half re-enters this one.
+ *
+ * The whole test is PROBED so a decline restores the pre-#5164 reject label
+ * byte-for-byte and cannot move a corpus function into a different
+ * `check:ir-fallbacks` bucket; only the accept path is new behaviour.
+ */
+function selectorValuePositionComma(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return probeShape(
+    () => isPhase1DiscardedExpr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses),
+  );
+}
+
+/** (#5164 S3) Does this `in` key go through legacy's comma-key static fold? */
+function inKeyIsCommaExpression(key: ts.Expression): boolean {
+  const inner = unwrapPhase1Parens(key);
+  return (
+    ts.isCommaListExpression(inner) ||
+    (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken)
+  );
+}
+
+/**
+ * (#5164 S3) `<key> in <receiver>` — the bounded DYNAMIC-LANE slice.
+ *
+ * `in` is §13.10.1 HasProperty, a full prototype-chain walk. The IR does not
+ * model prototype chains, so this slice claims exactly the one lane where the
+ * answer needs no static analysis at all: a receiver the resolver certifies as
+ * the non-fast DYNAMIC externref carrier, probed at runtime by `__extern_has`
+ * — the same dual-mode helper legacy's own `in` calls for that receiver, so
+ * inherited properties answer identically by construction.
+ *
+ * Everything else is rejected BEFORE the claim, which is what keeps the slice
+ * honest rather than claim-then-demote:
+ *
+ *   - the receiver certificate is a CARRIER question (`!fast` ∧ an oracle
+ *     any/unknown type fact), so a provably-primitive receiver (§13.10.1's
+ *     TypeError arm), a struct/vec/class instance, a typed object literal, and
+ *     the fast `$AnyValue` carrier all fail it. It is checker-backed at the
+ *     production call site and ABSENT for bare selector callers, so those
+ *     never claim `in` at all;
+ *   - a COMMA key (`(x, "k") in o`) is legacy's static-key fold (it folds the
+ *     last element and may answer from the type), not a runtime probe — out of
+ *     the accept set so the two paths cannot disagree;
+ *   - `#x in o` is a private-brand check, not a property probe.
+ *
+ * A decline is answered by the caller with the pre-#5164 `expr-binary-op-in`
+ * label, unchanged.
+ */
+function selectorDynamicLaneIn(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
+  // The key must reach `__extern_has` AS an externref, and that coercion only
+  // exists while the lane's string carrier IS the host externref (a string key
+  // passes through; a numeric one boxes via the host `__box_number` of the same
+  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
+  // externref host-arg position accepts — measured 2026-08-29: without this
+  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
+  // which is a post-claim demote of the whole lane rather than of a documented
+  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
+  // the same one, not a for-in-specific one, and an absent certificate (bare
+  // selector callers) reads as unproven and rejects.
+  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  if (inKeyIsCommaExpression(expr.left)) return false;
+  if (ts.isPrivateIdentifier(expr.left)) return false;
+  return probeShape(
+    () => isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses),
+  );
+}
+
 /** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
 function selectorPrimitiveWrapperOrGenericBinary(
   expr: ts.BinaryExpression,
@@ -8796,6 +9153,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
+    // (#5164 S1) VALUE-position comma. Checked here, ahead of the module-value
+    // and module-extern operand rules below, because those model a COMBINING
+    // operator's representation agreement and a comma performs none — see
+    // `selectorValuePositionComma`.
+    if (binOp === ts.SyntaxKind.CommaToken) {
+      if (selectorValuePositionComma(expr, scope, localClasses)) return true;
+      return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
       if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
@@ -8927,6 +9292,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       selectorSupportsStandaloneWrapperInstanceOf(expr.right)
     ) {
       return isPhase1Expr(expr.left, scope, localClasses);
+    }
+    // (#5164 S3) `<key> in <dynamic receiver>` — last of the special binary
+    // arms, so every module guard above has had its say. TERMINAL like the
+    // comma arm: flipping the `in` capability row off "defer" also opens
+    // `isPhase1BinaryOp`, so falling through to the generic tail would accept
+    // EVERY `in` rather than this lane. See `selectorDynamicLaneIn`.
+    if (binOp === ts.SyntaxKind.InKeyword) {
+      if (selectorDynamicLaneIn(expr, scope, localClasses)) return true;
+      return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
     }
     return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }

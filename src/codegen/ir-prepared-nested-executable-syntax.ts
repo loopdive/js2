@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrHostVoidCallbackLoweringPlan } from "../ir/ast-lowering-plans.js";
-import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
-import type { IrUnitId } from "../ir/identity.js";
+import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
 import { ts } from "../ts-api.js";
 
 /**
@@ -22,6 +21,8 @@ export function containsUnplannedNestedExecutableSyntax(
   ownerUnitId: IrUnitId,
   ownerName: string,
   hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>,
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed here. */
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): boolean {
   if (!declaration.body) return false;
   const ownerPlans = [...hostVoidCallbacks.entries()].filter(([, plan]) => plan.ownerUnitId === ownerUnitId);
@@ -77,7 +78,10 @@ export function containsUnplannedNestedExecutableSyntax(
       ts.forEachChild(node.body, visit);
       return;
     }
-    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && isBoundedPreparedNestedOrdinaryClass(node)) {
+    if (
+      (ts.isClassDeclaration(node) || ts.isClassExpression(node)) &&
+      irPreparedNestedOrdinaryClass(node, fieldCallAdmission)
+    ) {
       return;
     }
     if (
