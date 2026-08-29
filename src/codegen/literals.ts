@@ -2540,6 +2540,23 @@ export function getWellKnownSymbolId(name: string): number | undefined {
 }
 
 /**
+ * (#5142) §10.2.9 display name for a `@@<id>` native-proto member sentinel:
+ * `"@@8"` → `"[Symbol.replace]"`. `@@<id>` sentinels are physical compiler keys
+ * (CSV-safe), not the JavaScript function names SetFunctionName exposes, so
+ * every reflective `fn.name` read has to translate. Derived from the one
+ * well-known-symbol table above so the two can never drift.
+ */
+export function wellKnownSymbolMemberDisplayName(member: string): string {
+  if (!member.startsWith("@@")) return member;
+  const id = Number(member.slice(2));
+  if (!Number.isFinite(id)) return member;
+  for (const [name, wkId] of Object.entries(WELL_KNOWN_SYMBOLS)) {
+    if (wkId === id) return `[Symbol.${name}]`;
+  }
+  return member;
+}
+
+/**
  * Ensure the __symbol_counter mutable global exists (lazy init).
  * Starts at 100 so well-known symbol IDs (1-12) never collide.
  */

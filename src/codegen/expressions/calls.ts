@@ -418,6 +418,7 @@ import {
   compileStandaloneRegExpConstructor,
   emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
+  tryCompileStandaloneRegExpCompile,
   tryCompileStandaloneRegExpExec,
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
@@ -7614,6 +7615,11 @@ function compileCallExpression(
 
     const standaloneRegExpToString = tryCompileStandaloneRegExpToString(ctx, fctx, expr, propAccess);
     if (standaloneRegExpToString !== undefined) return standaloneRegExpToString;
+
+    // (#5142) Annex B `re.compile(pattern, flags)` — sits with its exec/test/
+    // toString siblings so all four RegExp-receiver methods dispatch from one place.
+    const standaloneRegExpCompile = tryCompileStandaloneRegExpCompile(ctx, fctx, expr, propAccess);
+    if (standaloneRegExpCompile !== undefined) return standaloneRegExpCompile;
 
     // Handle Array.prototype.METHOD.call(obj, ...args) — inline as array method on shape-inferred obj
     {

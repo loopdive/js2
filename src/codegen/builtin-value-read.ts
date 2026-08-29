@@ -865,22 +865,17 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   if (!ctx.standalone) return undefined;
 
   const key = skipTransparentExpressions(expr.argumentExpression);
-  if (
-    !ts.isPropertyAccessExpression(key) ||
-    !ts.isIdentifier(key.expression) ||
-    key.expression.text !== "Symbol" ||
-    key.name.text !== "iterator" ||
-    getWellKnownSymbolId(key.name.text) === undefined
-  ) {
+  if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
     return undefined;
   }
+  const wkId = getWellKnownSymbolId(key.name.text);
+  if (wkId === undefined) return undefined;
 
   const receiver = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(receiver) || receiver.name.text !== "prototype") return undefined;
   if (!ts.isIdentifier(receiver.expression)) return undefined;
 
   const builtinName = receiver.expression.text;
-  if (builtinName !== "Map" && builtinName !== "Set") return undefined;
   if (
     fctx.localMap.has(builtinName) ||
     (fctx.boxedCaptures?.has(builtinName) ?? false) ||
@@ -892,7 +887,18 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const member = builtinName === "Set" ? "values" : "entries";
+  // Map/Set `@@iterator` is an ALIAS for `entries`/`values` (§23.1.3.12); every
+  // other well-known-symbol member is advertised in the brand's glue CSV under
+  // its `@@<id>` sentinel name. Without this generalization the computed read
+  // fell through to `__extern_get`, which has no standalone symbol-key arm, so
+  // e.g. `RegExp.prototype[Symbol.match]` READ as `undefined` while its
+  // `typeof` folded to `"function"` (#5142 cluster 2).
+  let member: string;
+  if (key.name.text === "iterator" && (builtinName === "Map" || builtinName === "Set")) {
+    member = builtinName === "Set" ? "values" : "entries";
+  } else {
+    member = `@@${wkId}`;
+  }
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved || resolved.kind !== "method") return undefined;
 
