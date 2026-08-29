@@ -65,7 +65,7 @@ import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
-import { ensureObjectRuntime, ensureObjVecBuilders } from "../object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCustomCapabilityCheck,
@@ -1387,6 +1387,51 @@ export function compileNamespaceStaticCall(
         }
         releaseTempLocal(fctx, targetLocal);
         return { kind: "i32" };
+      }
+
+      // (#5140) §28.1.1 Reflect.apply(target, thisArgument, argumentsList).
+      // Standalone had NO arm at all, so every call fell through to the
+      // `#1472 Phase C` compile error. `__apply_closure` is the same bridge
+      // `fn.apply(…)` uses: it reads the argumentsList generically through
+      // `__extern_length`/`__extern_get_idx` (so a plain array works as the
+      // list carrier) and carries the `$Proxy` front-guard, so a proxy target
+      // routes into `__proxy_apply_dispatch` and runs its `apply` trap.
+      if (reflectMethod === "apply" && !boundaryReflectInterop) {
+        const argLocals = emitReflectArgumentLocals();
+        const targetLocal = argLocals[0];
+        if (targetLocal === undefined) {
+          emitThrowTypeError(ctx, fctx, "Reflect.apply called on non-object");
+          return { kind: "externref" };
+        }
+        ensureObjectRuntime(ctx);
+        // §28.1.1 step 1 IsCallable(target). Built from POSITIVE primitive
+        // brands (the `resolved-callee-guard.ts` rationale): a callable shape
+        // the classifier does not recognise — a plain compiled closure is
+        // neither `$Object` nor `$Proxy` — must not be turned into a hard
+        // throw, so only a value that positively brands as null or a primitive
+        // is rejected.
+        {
+          const before = fctx.body.length;
+          emitThrowTypeError(ctx, fctx, "Reflect.apply target is not a function");
+          const throwInstrs = fctx.body.splice(before);
+          const brandIdxs = ["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"]
+            .map((name) => ctx.funcMap.get(name))
+            .filter((idx): idx is number => idx !== undefined);
+          fctx.body.push({ op: "local.get", index: targetLocal }, { op: "ref.is_null" });
+          for (const funcIdx of brandIdxs) {
+            fctx.body.push({ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, { op: "i32.or" });
+          }
+          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
+        }
+        const applyIdx = reserveApplyClosure(ctx);
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });
+        else fctx.body.push({ op: "ref.null.extern" });
+        if (argLocals[2] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[2] });
+        else fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "call", funcIdx: applyIdx });
+        releaseReflectArgumentLocals(argLocals);
+        return { kind: "externref" };
       }
 
       if (
