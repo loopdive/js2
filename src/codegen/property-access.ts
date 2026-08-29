@@ -617,6 +617,36 @@ const LOGICAL_ASSIGNMENT_TOKENS = new Set<ts.SyntaxKind>([
  * Returns the inferred `.name` string, or undefined when no qualifying
  * logical-assignment is found.
  */
+/**
+ * (#5146 cluster E) True when the only simple assignments to `sym` install a
+ * COVERED function value — `xCover = (0, function () {})`. A comma expression
+ * is not an AnonymousFunctionDefinition, so §13.15.2 NamedEvaluation does NOT
+ * run and `.name` stays `""`. Without this, the `.name` fold fell back to the
+ * receiver identifier's own text and published `"xCover"`.
+ */
+export function assignsCoveredFunctionValue(ctx: CodegenContext, id: ts.Identifier, binding: ts.Declaration): boolean {
+  const sourceFile = id.getSourceFile();
+  let sawAssignment = false;
+  let allCovered = true;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === id.text &&
+      ctx.oracle.declarationsOf(node.left).includes(binding)
+    ) {
+      let rhs: ts.Expression = node.right;
+      while (ts.isParenthesizedExpression(rhs)) rhs = rhs.expression;
+      sawAssignment = true;
+      if (isAnonymousFunctionDefinition(rhs)) allCovered = false;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return sawAssignment && allCovered;
+}
+
 export function resolveLogicalAssignmentName(
   ctx: CodegenContext,
   id: ts.Identifier,
