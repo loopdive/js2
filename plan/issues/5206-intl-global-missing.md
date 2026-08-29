@@ -1,7 +1,8 @@
 ---
 id: 5206
 title: "Intl is not provided at all — `Intl.DateTimeFormat` throws; eighth Temporal blocker, a capability gap, not an init-window bug"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-dev-5206
 sprint: current
 priority: high
 horizon: l
@@ -10,6 +11,16 @@ feasibility: hard
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-29
+# 2026-08-29 (#5206): the host-`Intl` arm is one condition + its rationale on
+# the existing #3087 host-global-materialization branch — the cheapest place
+# that already owns "ambient name → real host global object". Splitting a
+# 13-line addition (12 of them the comment explaining WHY `Intl` is not
+# claimed by any value-shaped arm) into a new module would cost more than it
+# buys.
+loc-budget-allow:
+  - src/codegen/expressions/identifiers.ts
+func-budget-allow:
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
 ---
 
 # #5206 — no `Intl` global (capability gap)
