@@ -311,15 +311,15 @@ answers match Node (`-"12"` → -12, `+""` → 0). The row is now narrowed to
 exactly the pairs that lower: `string+string` and `string`↔`dynamic`. The four
 excluded pairs demote to legacy with a non-empty binary again.
 
-### 3. `tests/issue-4502.test.ts` — one entry became obsolete
+### 3. `tests/issue-4502.test.ts` — closed gaps become owned pins
 
 `ternary with mixed branch types (lowerConditional)` was listed as a
 claimed-then-demoted capability gap. #5092 closes that gap by design: the shape
 is now `emitted`, IR-owned, legacy body skipped, and returns Node's answer. The
-entry is removed with a comment; the other six entries still hold the demote
-contract, and the shape's runtime correctness is covered by the #5092 and #4178
-suites. This is the only expectation change made — the two reason-drift
-findings above were fixed in the selector, not in the tests.
+entry keeps its row with `code: null`, which flips the demote pin to "records no
+non-emitted outcome at all" while keeping the non-empty-binary, no-hard-error
+and Node-answer pins live. This is the only expectation change made — the two
+reason-drift findings above were fixed in the selector, not in the tests.
 
 ### Denominators after the follow-up
 
@@ -332,5 +332,59 @@ coercion / oracle / dead-exports all exit 0, also with
 
 Six failures remain in the at-risk set (`#4502` unary `!` ×2, `#3529` dataflow
 unary `!` ×2, `#3529` externref console identity, `#3522` standalone console
-parity). All six reproduce with the branch's four source files replaced by
-`origin/main`'s, so they are pre-existing on main and outside this PR.
+parity). **This attribution was made with an unsound A/B and is corrected
+below — see the 2026-08-29 entry.**
+
+## 2026-08-29 — corrected attribution + the `quality` fix
+
+CI `quality` stayed red on `tests/issue-4502.test.ts`. The 2026-08-28 note
+called those failures "pre-existing on main" from an A/B that swapped four
+branch source files for `origin/main`'s **while leaving every other file at the
+branch's older merge-base** — a mixed tree that proves nothing. Redone properly.
+
+**Clean method.** The branch's merge-base is `33099f2`, and
+`git diff 33099f2 origin/main -- src/ scripts/` is **empty** — main has landed
+no source since. So restoring all of `src/codegen/ir-first-gate.ts`,
+`src/codegen/ir-overlay-safety.ts`, `src/ir/from-ast.ts`, `src/ir/select.ts`,
+`tests/issue-4178.test.ts` and `tests/issue-4502.test.ts` to their `33099f2`
+blobs yields a **consistent** tree that is byte-identical to main's source.
+
+**Why quality was red, and why main is green.** `ci.yml`'s changed-root gate
+runs only the `tests/*.test.ts` files a PR **touches** — its own comment says
+"Untouched root test files do NOT run at PR time … touching a rotted one means
+fixing it — the fix-on-touch ratchet". Nothing on main touches
+`tests/issue-4502.test.ts`, so its two rotted rows never ran there. Editing the
+file pulled it into the ratchet, which is working exactly as designed: this PR
+now owns fixing them.
+
+**Per-row disposition** (measured 2026-08-29 — compiled and executed,
+standalone and gc, non-empty binary on both):
+
+| row | outcome codes | runtime | Node | disposition |
+| --- | --- | --- | --- | --- |
+| ternary with mixed branch types | `[]` | 1 | 1 | owned by #5092 → `code: null` |
+| unary `!`, any-carried non-empty string | `[]` | 0 | 0 | owned **before** this branch → `code: null` |
+| unary `!`, any-carried EMPTY string | `[]` | 1 | 1 | owned **before** this branch → `code: null` |
+| `??` on an f64 lhs (control) | `nullish-value-unsupported` | 3 | 3 | still a real gap, unchanged |
+
+All three are doctrine (a): the shape emits and answers correctly, so the
+demote-contract pin is obsolete. Rather than delete the rows, `code: null` keeps
+them as **owned pins** — a demote reappearing there now fails as loudly as an
+untyped invariant would. `tests/issue-4502.test.ts` is **29/29**.
+
+**The other four are genuinely main's.** `#3529` dataflow unary `!` ×2, `#3529`
+externref console identity, and `#3522` standalone console parity give
+**4 failed / 47 passed** at the clean merge-base AND at the branch head — the
+same four names, same counts, CI's own vitest flags. Since main's source is
+identical to the merge-base, these are current-main failures that CI never runs
+because nothing touches those files. They are left untouched: editing them would
+pull them into the fix-on-touch ratchet for no reason.
+
+**Denominators.** `pnpm run test:changed-root` (the gate that was red) **exit
+0** — `issue-4178` 14/14, `issue-4502` 29/29, `issue-5092` 21/21 ·
+`issue-3529-selector-preclaim` 67/67 · at-risk grep set 164/168 (the four above)
+· `#3143` + `#3203` + `#4178` + both `#4787` + ir-ternary / if-else equivalence +
+typeof-expression / typeof-comparison 117/117 · `check:ir-fallbacks` OK ·
+`check:ir-kind-neutrality` OK · loc / func / coercion / oracle / dead-exports
+chained exit 0, also with `LOC_GATE_BASE=origin/main` · TS7 typecheck, Biome
+lint, Prettier clean.
