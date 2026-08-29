@@ -12,7 +12,7 @@ feasibility: hard
 task_type: bugfix
 area: codegen, classes
 goal: dogfood
-related: [4628, 5169, 4644, 4645, 4646, 5179]
+related: [4628, 5169, 4644, 4645, 4646, 5179, 5180]
 assignee: ttraenkler/opus-dev-5178
 ---
 
@@ -118,10 +118,18 @@ case that previously worked.
 
 ## Verification
 
-* **Full linked bundle: `WebAssembly.compile()` OK.** 157,541 source bytes,
-  ~41 s compile, 0 hard diagnostics (2 IR-fallback warnings, both pre-existing),
-  binary accepted. No further blocker appeared behind this one — this closes the
-  temporal-polyfill validate lane.
+* **Full linked bundle: `WebAssembly.compile()` OK** on the tree this fix was
+  developed against (`fc6fd3b5f3` + #4644 + #4645 + #5169). 157,541 source
+  bytes, ~40 s compile, 0 hard diagnostics (2 IR-fallback warnings, both
+  pre-existing), binary accepted. Nothing was left behind #5178 on that tree —
+  this closes the *validate* blocker the lane was stuck on.
+* **The lane is NOT green on current `main`, for an unrelated reason.** After
+  re-merging `origin/main` (`bdb19824b0`) the bundle no longer produces a binary
+  at all: `Binary emit error: RangeError: Codegen error: struct field index out
+  of range — 1 (valid: [0, 1)) at function 'JSBI___toPrimitive'`. Measured with
+  AND without this fix, and on a scratch worktree of **plain `origin/main`** —
+  present in all three, so it is neither caused nor masked by #5178. Filed as
+  **#5180**; it entered `main` between `fc6fd3b5f3` and `bdb19824b0`.
 * `tests/issue-5178-virtual-dispatch-result-type.test.ts` — 4 tests. The two
   reductions fail on this branch's base (`type error in fallthru[0]` and, in
   return position where tail-call optimization turns the arm into
@@ -155,4 +163,13 @@ narrowing is a consumer-side gap, not a dispatch gap; see #5179.
 Branched from `origin/main` (`fc6fd3b5f3`) with `origin/issue-4644-call-thunk-arity`,
 `origin/issue-4645-superlinear-compile` and `origin/issue-5169-immutable-global-jsbi`
 merged in — all three are prerequisites for reaching this failure and none were
-on `main` at the time. They deduplicate when those PRs land.
+on `main` at the time. #4644 has since landed (PR #5187) and deduplicated; #4645
+and #5169 are still in flight (PRs #5188 / #5212).
+
+While this issue was in progress, #5188 was dequeued with `MERGE_CONFLICT`
+against the selfhost/ES2015 merges. That conflict was resolved on **#5188's own
+branch** by this lane at the coordinator's request (commit `d15d666c64`) — the
+selfhost PR had independently rewritten the same dispatch arms with an
+instruction-identical single-`next` shape, so #4645's `buildShapeGuardedArm`
+helper was kept and main's additions in those files preserved. This branch then
+re-merged the updated #5188 branch and `origin/main`, both cleanly.
