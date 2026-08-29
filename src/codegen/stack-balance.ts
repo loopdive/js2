@@ -2614,32 +2614,39 @@ interface StackBalanceFeatures {
 }
 
 /**
- * A FLAT instruction array that unconditionally ends in `throw`/`unreachable`
- * never falls through, so the surrounding context's result expectation never
- * materializes — sharing it by reference across differently-typed `then:`
- * positions is sound (Deno checkpoint: one memoized 4-op TypeError throw
- * snippet reused inside a method under both empty and externref `if` arms).
- * Anything with structure or branches keeps the conservative refusal.
+ * (#5186) Whether the block-context part of the repair is provably a NO-OP for
+ * this body, so two incompatible incoming contexts cannot disagree about it.
+ *
+ * The only context-dependent repairs in this pass are `fixBranch` (value count)
+ * and `fixBranchType` (value type), and `fixBranchType` is reachable ONLY from
+ * inside `fixBranch`. `fixBranch` opens with
+ *
+ *     const actual = sequenceDelta(body, types, sigs);
+ *     if (actual === UNREACHABLE) return 0;   // validator accepts anything
+ *
+ * and `sequenceDelta` returns UNREACHABLE as soon as any element's `instrDelta`
+ * does — which happens for exactly the `isTerminator` op set and for nothing
+ * else (structured blocks report their `blockType` delta, never UNREACHABLE).
+ * So "this array contains a top-level terminator" is *identical* to
+ * "`fixBranch` returns 0 without mutating it", for every `expected`/`blockType`.
+ *
+ * Such a body is stack-polymorphic: `[global.get, extern.convert_any, call,
+ * throw]` validates as a void `if` arm and as an externref-typed `if` arm
+ * alike, which is why producers legitimately share one terminal throw sequence
+ * across arms of different block types (`expressions/calls.ts` hands one
+ * `buildThrowJsErrorInstrs` array to both a `{kind:"val"}` arm and the
+ * `{kind:"empty"}` arm inside `buildInt8ArrayCarrierMatch`).
+ *
+ * This says nothing about the *function-local* repairs (local/call-arg/
+ * struct.new coercion), which resolve local indices against the owning
+ * function — the separate cross-function `firstOwner` refusal still covers
+ * those, and is deliberately left untouched.
  */
-function terminalFlatBody(body: Instr[]): boolean {
-  const last = body[body.length - 1];
-  if (!last || (last.op !== "throw" && last.op !== "unreachable")) return false;
-  for (const ins of body) {
-    if (
-      ins.op === "if" ||
-      ins.op === "block" ||
-      ins.op === "loop" ||
-      ins.op === "br" ||
-      ins.op === "br_if" ||
-      ins.op === "br_table" ||
-      ins.op === "return" ||
-      "body" in ins ||
-      "then" in ins
-    ) {
-      return false;
-    }
+function isContextInvariantBody(body: Instr[]): boolean {
+  for (const instr of body) {
+    if (isTerminator(instr.op)) return true;
   }
-  return true;
+  return false;
 }
 
 function contextAmbiguousFunctions(
@@ -2647,6 +2654,10 @@ function contextAmbiguousFunctions(
   tags: Array<{ typeIdx: number }>,
 ): { blocked: Set<WasmFunction>; features: Map<WasmFunction, StackBalanceFeatures> } {
   const firstOwner = new WeakMap<Instr[], WasmFunction>();
+  // (#5186) Memoized `isContextInvariantBody`. A shared array is reached once
+  // per incoming edge, so answering from the map keeps the walk linear in
+  // instructions rather than in edges.
+  const contextInvariant = new WeakMap<Instr[], boolean>();
   const blocked = new Set<WasmFunction>();
   const invalidLocalRefFunctions = new Set<WasmFunction>();
   const features = new Map<WasmFunction, StackBalanceFeatures>();
@@ -2684,9 +2695,20 @@ function contextAmbiguousFunctions(
         firstOwner.set(body, func);
       }
 
-      const prior = contexts.get(body);
-      if (prior !== undefined && prior !== context && !terminalFlatBody(body)) blocked.add(func);
-      else if (prior === undefined) contexts.set(body, context);
+      // (#5186) Only bodies whose repair actually depends on the incoming
+      // block context can be in conflict about it. A stack-polymorphic body is
+      // left untouched by `fixBranch` under every context, so differing
+      // contexts there are not a disagreement and must not fail the compile.
+      let invariant = contextInvariant.get(body);
+      if (invariant === undefined) {
+        invariant = isContextInvariantBody(body);
+        contextInvariant.set(body, invariant);
+      }
+      if (!invariant) {
+        const prior = contexts.get(body);
+        if (prior !== undefined && prior !== context) blocked.add(func);
+        else if (prior === undefined) contexts.set(body, context);
+      }
       if (expanded.has(body)) continue;
       expanded.add(body);
 
