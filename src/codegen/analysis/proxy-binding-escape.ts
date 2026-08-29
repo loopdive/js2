@@ -44,6 +44,54 @@ function outermostTransparentExpression(expression: ts.Expression): ts.Expressio
   return current;
 }
 
+/**
+ * (#5140) Meta-object consumers whose providers take their arguments as raw
+ * externref carriers and dispatch the MOP at runtime. Passing a Proxy binding
+ * here does NOT require the nominal target struct a generic typed consumer
+ * needs — and keeping that struct is actively wrong: the guarded cast of the
+ * live `$Proxy`/host Proxy to its TypeScript target type yields **null**, so
+ * `new Proxy(p, {})` silently created a proxy over null and every trap
+ * disappeared.
+ *
+ * The families are the ones that are definitionally about the carrier:
+ * `new Proxy` / `Proxy.revocable`, all of `Reflect.*`, and the `Object.*`
+ * meta-object statics.
+ */
+const OBJECT_META_STATICS = new Set([
+  "assign",
+  "keys",
+  "values",
+  "entries",
+  "freeze",
+  "isFrozen",
+  "seal",
+  "isSealed",
+  "preventExtensions",
+  "isExtensible",
+  "getPrototypeOf",
+  "setPrototypeOf",
+  "getOwnPropertyNames",
+  "getOwnPropertySymbols",
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "defineProperty",
+  "defineProperties",
+  "create",
+]);
+
+function consumesExternrefCarrier(parent: ts.CallExpression | ts.NewExpression): boolean {
+  if (ts.isNewExpression(parent)) {
+    return ts.isIdentifier(parent.expression) && parent.expression.text === "Proxy";
+  }
+  const callee = parent.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+  const namespace = callee.expression.text;
+  const member = callee.name.text;
+  if (namespace === "Reflect") return true;
+  if (namespace === "Proxy") return member === "revocable";
+  return namespace === "Object" && OBJECT_META_STATICS.has(member);
+}
+
 function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   const outer = outermostTransparentExpression(expression);
   const parent = outer.parent;
@@ -55,15 +103,7 @@ function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   // struct that generic typed consumers require. Keeping that struct would
   // guarded-cast the actual `$Proxy`/host Proxy to its TypeScript target type,
   // replace it with null, and skip the getOwnPropertyDescriptor trap entirely.
-  if (
-    ts.isCallExpression(parent) &&
-    ts.isPropertyAccessExpression(parent.expression) &&
-    ts.isIdentifier(parent.expression.expression) &&
-    parent.expression.expression.text === "Object" &&
-    parent.expression.name.text === "assign"
-  ) {
-    return false;
-  }
+  if (consumesExternrefCarrier(parent)) return false;
 
   // This includes argument zero of `.call` / `.apply`, the generic-method
   // receiver that motivated #2615. A member receiver (`p.method()`) is not in
