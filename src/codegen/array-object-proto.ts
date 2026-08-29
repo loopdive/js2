@@ -49,6 +49,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
+  ensureStrToCharVecHelper,
   flatStringType,
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
@@ -240,6 +241,11 @@ const DATE_PROTO_METHODS = [
  * resolves host-free.
  */
 const STRING_PROTO_METHODS = [
+  // (#5152) §22.1.3.32 `String.prototype[Symbol.iterator]`. Symbol-keyed
+  // members use the `@@<id>` CSV sentinel (id 1 = Symbol.iterator), the same
+  // form `ARRAY_PROTO_METHODS` uses; unlike Array's it is NOT an alias of an
+  // existing member, so it carries its own body below.
+  "@@1",
   "anchor",
   "at",
   "big",
@@ -981,6 +987,15 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // (#2742) The superseded-wiring carve-out — see string-proto-tostring.ts.
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
+  // (#5152) §22.1.3.32 `String.prototype[Symbol.iterator]`: the spec preamble
+  // (`RequireObjectCoercible(this)` → `ToString(this)`, whose user `toString`
+  // runs and can throw) followed by an iterable over the receiver's CODE POINTS
+  // — `__str_to_char_vec` is the same surrogate-pair-aware splitter the
+  // for-of/spread string lane uses (#3146), so the two agree element for
+  // element. Before this the member did not exist at all and a reflective read
+  // answered `undefined`.
+  if (member === "@@1") return emitStringIteratorMemberBody(ctx, fctx);
+
   const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);
   if (member === "substring") return emitStringSubstringMemberBody(ctx, fctx);
   // (#2875 slice C) `slice` (§22.1.3.22) shares `substring`'s closure ABI —
@@ -1487,6 +1502,26 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
  * helper funcIdxs are fetched by NAME after `ensureNativeStringHelpers` (which
  * flushes any pending import batch on entry) and `ensureAnyToStringHelper`.
  */
+/**
+ * (#5152) Native body for the reflective `String.prototype[Symbol.iterator]`
+ * closure (§22.1.3.32). Arity 0, like the trim family, so it never reads an arg
+ * slot: `? RequireObjectCoercible(this)` → `S = ? ToString(this)` → the
+ * code-point vec of `S`, boxed to the uniform externref closure result.
+ */
+function emitStringIteratorMemberBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  ensureNativeStringHelpers(ctx);
+  ensureStringRocUndefinedNative(ctx, fctx);
+  const anyToStrIdx = ensureAnyToStringHelper(ctx);
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  if (flattenIdx === undefined) return emitProtoMemberBodyRefusal(ctx, fctx, "String", "@@1");
+  emitStringRequireObjectCoercible(ctx, fctx, "[Symbol.iterator]");
+  emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
+  const { funcIdx: charVecIdx } = ensureStrToCharVecHelper(ctx);
+  fctx.body.push({ op: "call", funcIdx: charVecIdx });
+  fctx.body.push({ op: "extern.convert_any" });
+  return { kind: "externref" };
+}
+
 function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
   ensureNativeStringHelpers(ctx);
   ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
@@ -2031,7 +2066,7 @@ function makeGlue(
     memberLength: (member) =>
       name === "Number" && member === "toString"
         ? 1
-        : name === "String" && member === "next"
+        : name === "String" && (member === "next" || member === "@@1")
           ? 0
           : (PROTO_METHOD_LENGTH[member] ?? 1),
     // (#2875 slice 3) String search-family members carry an uncounted optional
