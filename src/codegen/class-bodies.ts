@@ -1188,9 +1188,9 @@ export function collectClassDeclaration(
   // (#1395) Register a class-object singleton global (externref, lazily
   // initialized). The bare class identifier `C` resolves to this global,
   // giving `Object.getOwnPropertyDescriptor(C, "m")` a real receiver to
-  // inspect. Skip for externref-backed builtin subclasses (#1366a) — those
-  // don't have a `$ClassName` WasmGC struct.
-  if (!ctx.classBuiltinParentMap.has(className)) {
+  // inspect. (#5191) NOT skipped for externref-backed builtin subclasses any
+  // more — that #1366a guard left them null-valued; see emitLazyClassObjectGet.
+  {
     const classObjectGlobalIdx = nextModuleGlobalIdx(ctx);
     ctx.mod.globals.push({
       name: `__class_${className}`,
