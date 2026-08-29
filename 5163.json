@@ -1,10 +1,11 @@
 {
   "id": "5163",
   "assignee": "ttraenkler/opus-5163",
-  "requested_by": "ttraenkler/opus-5163",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5163-mutating-stmts",
   "claimed_at": "2026-08-28T23:16:44Z",
-  "updated_at": "2026-08-28T23:16:44Z",
-  "write_id": "27173-63x1toq1"
+  "updated_at": "2026-08-29T10:22:42Z",
+  "write_id": "5501-pz9ajz8n",
+  "released_at": "2026-08-29T10:22:42Z"
 }
