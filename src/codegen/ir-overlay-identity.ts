@@ -8,7 +8,11 @@ import {
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import { irIntrinsicFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
-import type { IrNestedClassFieldCallInventoryCandidate, IrUnitId } from "../ir/identity.js";
+import type {
+  IrNestedClassFieldCallAdmission,
+  IrNestedClassFieldCallInventoryCandidate,
+  IrUnitId,
+} from "../ir/identity.js";
 import type { IrNestedClassFieldCallProofSidecar } from "../ir/class-field-call-planning.js";
 import { irVal } from "../ir/nodes.js";
 import {
@@ -46,6 +50,8 @@ import {
   type IrLegacySelectionProjection,
 } from "../ir/select-identity.js";
 
+export { computeIrNestedClassFieldCallAdmission } from "../ir/select-identity.js";
+
 export interface IrOverlayIdentityFunctionClaim {
   readonly unitId: IrUnitId;
   readonly legacyName: string;
@@ -66,6 +72,8 @@ export interface IrOverlayIdentityPlan {
   readonly nestedClassFieldCallCandidates?: readonly IrNestedClassFieldCallInventoryCandidate[];
   /** Optional dormant evidence built before selection; never an admission input in F3. */
   readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
+  /** (#3522 F4) The one proof-derived admitted-class marker, carried never rebuilt. */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly safeFunctionUnitIds: Set<IrUnitId>;
 }
 
@@ -172,6 +180,9 @@ export function planIrOverlayByIdentity(
       : {}),
     ...(identitySelection.nestedClassFieldCallProofs
       ? { nestedClassFieldCallProofs: identitySelection.nestedClassFieldCallProofs }
+      : {}),
+    ...(identitySelection.nestedClassFieldCallAdmission
+      ? { nestedClassFieldCallAdmission: identitySelection.nestedClassFieldCallAdmission }
       : {}),
     safeFunctionUnitIds: new Set(),
   };

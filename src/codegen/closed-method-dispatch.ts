@@ -45,7 +45,8 @@ import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
 import { COLLECTION_KIND, ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
 import { ensureNativeIterHof, isIterHofForm, NATIVE_ITER_HOF_METHODS } from "./iter-hof-native.js"; // (#2903)
-import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)
+import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_ARG2_METHODS, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)
+import { ensureNativeIteratorRuntime, ensureNativeIterResultObject } from "./iterator-native.js"; // (#5147)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -399,6 +400,13 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   if (ctx.standalone && LAZY_ITER_METHODS.has(methodName) && isLazyIterForm(methodName, arity)) {
     ensureNativeLazyIter(ctx, methodName);
   }
+
+  // (#5147) `.next()` on a dynamic receiver may hit a native iterator carrier —
+  // register the GetIterator ladder + the §7.4.11 result-object builder NOW so
+  // the fill only READS funcMap (#1719).
+  // (`__iter_result_obj` itself is registered from `ensureNativeIteratorRuntime`
+  // — registering it HERE would add imports mid-body and shift funcIdxs under
+  // the caller.)
 
   // Signature: (recv, arg0..arg{arity-1}) all externref → externref.
   const params: ValType[] = Array.from({ length: arity + 1 }, () => ({ kind: "externref" }) as ValType);
@@ -947,9 +955,19 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ) {
         const lazyCall: Instr[] = [
           { op: "local.get", index: 0 }, // recv
-          { op: "local.get", index: 1 }, // arg0 (mapper/predicate | count)
-          { op: "call", funcIdx: lazyCtorIdx },
+          { op: "local.get", index: 1 }, // arg0 (mapper/predicate | count | size)
         ];
+        // (#5147) chunks/windows take a second source-level argument
+        // (`windows(size, undersized)`); pass undefined-as-null when the call
+        // site supplied only one.
+        if (LAZY_ITER_ARG2_METHODS.has(methodName)) {
+          // The trailing i32 says whether the call site SUPPLIED arg1 at all —
+          // `windows(1, null)` must throw while `windows(1)` must not, and a
+          // null externref cannot distinguish "absent" from source-level `null`.
+          lazyCall.push(arity >= 2 ? { op: "local.get", index: 2 } : { op: "ref.null.extern" });
+          lazyCall.push({ op: "i32.const", value: arity >= 2 ? 1 : 0 });
+        }
+        lazyCall.push({ op: "call", funcIdx: lazyCtorIdx });
         // isNotIterTarget = null ∨ $Object ∨ $__vec_base ∨ $ObjVec — a NULL/
         // $Object/vec receiver keeps the legacy route; everything else (iterator
         // carriers) constructs the lazy wrapper.
@@ -981,6 +999,40 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             blockType: { kind: "val", type: { kind: "externref" } },
             then: current,
             else: lazyCall,
+          },
+        ];
+      }
+    }
+
+    // (#5147) NATIVE-ITERATOR `.next()` arm. `it.next()` on a value holding a
+    // `$IterRec` (what `[1,2][Symbol.iterator]()` / `new Map().keys()` produce)
+    // or a `$LazyIterHelper` (`.chunks(2)`) previously fell to
+    // `__extern_method_call`, which answers null on a non-`$Object` receiver —
+    // so `.value`/`.done` then threw "Cannot access property on null". Step the
+    // carrier through the fully-armed `__iterator_next` and materialize a REAL
+    // §7.4.11 result object. Placed outermost: a user closed struct with its own
+    // `next` is neither carrier, so the `ref.test` misses and precedence holds.
+    if (ctx.standalone && methodName === "next" && arity === 0) {
+      const stepResultIdx = ctx.funcMap.get("__iter_next_result");
+      const carrierTypeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
+        (t): t is number => t !== undefined,
+      );
+      if (stepResultIdx !== undefined && carrierTypeIdxs.length > 0) {
+        const carrierTest: Instr[] = [];
+        for (const t of carrierTypeIdxs) {
+          carrierTest.push({ op: "local.get", index: anyLocalIdx }, { op: "ref.test", typeIdx: t });
+          if (carrierTest.length > 2) carrierTest.push({ op: "i32.or" });
+        }
+        current = [
+          ...carrierTest,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: stepResultIdx },
+            ],
+            else: current,
           },
         ];
       }

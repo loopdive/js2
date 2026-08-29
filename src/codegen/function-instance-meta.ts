@@ -300,6 +300,12 @@ export function fnInstanceNameOf(decl: ts.Node): string {
     if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
     return "";
   }
+  // (#5146 cluster E) `({ x = function () {} } = {})` — the shorthand
+  // property's assignment initializer is an AssignmentElement default, and
+  // §13.15.5.5 applies NamedEvaluation with the shorthand's own name.
+  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
+    return parent.name.text;
+  }
   if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
     const key = parent.name;
     return ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
