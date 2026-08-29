@@ -1974,7 +1974,15 @@ function _wrapWasmClosureUnknownArity(
     if (cached) return cached as (...args: any[]) => any;
   }
   if (!callbackState) return null;
-  const exports = callbackState.getExports();
+  // (#5203) During module init `getExports()` is undefined for the whole start
+  // section, so this returned null and every init-window closure — notably a
+  // STATIC method read off a class value (`JSBI.__clz30(t)`) — presented as a
+  // non-callable raw struct ("clz is not a function"). Fall back to the
+  // funcrefs the module registered on itself (#5193/#5202 channel), which now
+  // carries the `__call_fn_*` family. Those are the SAME function objects the
+  // export view yields later, so the snapshot captured below stays correct
+  // once instantiation returns.
+  const exports = marshalExports(callbackState);
   if (!exports) return null;
   let maxArity = -1;
   for (let arity = 0; arity <= 4; arity++) {
@@ -2372,7 +2380,9 @@ function _maybeWrapCallableUnknownArity(
   if (typeof val === "function") return val;
   if (typeof val !== "object") return val;
   if (!callbackState) return val;
-  const exports = callbackState.getExports();
+  // (#5203) Same init-window fallback as `_wrapWasmClosureUnknownArity` — the
+  // `__is_closure` discriminator this needs is an export too.
+  const exports = marshalExports(callbackState);
   if (!exports) return val;
   // (#4618) A registered class ctor VALUE (class expression) presents as the
   // constructible class mirror on every crossing path, not the plain
