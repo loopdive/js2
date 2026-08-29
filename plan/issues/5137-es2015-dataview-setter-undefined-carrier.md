@@ -239,13 +239,22 @@ The focused standalone controls verified an empty Wasm import manifest. The
 exact tests reached their bodies and passed; no timeout, filter, fixture,
 oracle, or skip workaround is involved. TypeScript 5 and TypeScript 7
 typechecks, targeted Biome lint, targeted Prettier check, and `git diff
---check` are also clean at this checkpoint. The final commit SHA and complete
-pre-push evidence will be appended after the documentation and graph updates.
+--check` are also clean. Implementation commit:
+`97334bd6a5659d3595e6c480e08e8a8f95d2815e`.
 
 The adjacent regression controls for #3173, #3183, and #2872 ran with the same
 two-worker bound: **66/67 pass**. The sole failure is the pre-existing
 `#2872.test.ts` dynamic non-typed-array callee control (`expected 7, received
 NaN`); it does not execute the DataView setter producers or touch this change.
+
+The complete pre-push hook passed against that implementation commit. Its
+checks were TypeScript 7 typecheck, repository Biome lint, Prettier format,
+oracle and coercion ratchets, the #3765 numeric-local parity file (**18/18**),
+conformance-number synchronization (**0 updated, 5 unchanged**), and committed
+plus working-tree issue integrity. The TypeScript 5 check, targeted format and
+lint checks, LOC/function budgets, and `git diff --check` also passed before
+the hook; the done-status checker passed with its documented baseline-unavailable
+warning.
 
 ## Handoff
 
@@ -254,7 +263,9 @@ Branch: `codex/5137-es2015-dataview-setter-undefined`.
 The plan-only upstream PR #5152 is merged in `upstream/main`; it is not the
 implementation PR. The implementation branch is ready for root to open as a
 new non-draft PR targeting `loopdive/js2:main`, and no PR was opened by this
-worker. The plan checkpoint remains `c808092cb828e9b2abef4ef6af27d95e1d822ee1`;
-the final implementation commit, push head, and pre-push result will be
-recorded here before handoff.
+worker. The implementation commit is
+`97334bd6a5659d3595e6c480e08e8a8f95d2815e`; the handoff-evidence commit below
+records this final validation, and the branch will be pushed without force for
+root to inspect. The plan checkpoint remains
+`c808092cb828e9b2abef4ef6af27d95e1d822ee1`.
 No GitHub issue was created.
