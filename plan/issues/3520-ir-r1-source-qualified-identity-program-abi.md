@@ -193,6 +193,18 @@ loc-budget-allow:
   - src/codegen/struct-field-exports.ts
   - src/codegen/index.ts
   - src/codegen/expressions/builtins.ts
+  # R1-A (2026-08-29): the vec host-bridge export family gains exact descriptor
+  # ownership — the published-entry records plus the fail-closed finalization
+  # invariants — so standalone/WASI stripping authenticates a compiler-owned
+  # entry by identity instead of by name (a `$v0$$` collision alias matched no
+  # reserved name and survived the strip). Allocation, publication and
+  # finalization of that family all live in this module; splitting the
+  # ownership record away from the allocator it authenticates would reintroduce
+  # exactly the name-matching seam this slice removes. The 1500 threshold is
+  # crossed only after merging main (1492 at the slice tip, 1503 after the
+  # merge), so the grant is restated in a file this PR touches rather than left
+  # stranded.
+  - src/codegen/vec-access-exports.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/context/types.ts

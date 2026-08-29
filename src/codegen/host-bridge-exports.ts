@@ -25,6 +25,7 @@
 
 import type { WasmModule } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { isCompilerOwnedVecHostBridgeExport } from "./vec-access-exports.js";
 
 /**
  * Export-name prefixes owned by the bridge. Short aliases (`$v0`, `$c0`, `$d0`,
@@ -99,6 +100,8 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
   if (ctx.emitHostBridge) return 0;
   const mod: WasmModule = ctx.mod;
   const before = mod.exports.length;
-  mod.exports = mod.exports.filter((ex) => !isHostBridgeExportName(ex.name));
+  mod.exports = mod.exports.filter(
+    (ex) => !isCompilerOwnedVecHostBridgeExport(ctx, ex) && !isHostBridgeExportName(ex.name),
+  );
   return before - mod.exports.length;
 }
