@@ -3258,6 +3258,51 @@ function _convertIterableForHost(
   return obj;
 }
 
+/**
+ * (#5205) Decode ONE compiled `[key, value]` pair into something the engine's
+ * `AddEntriesFromIterable` (§7.1.19) can index with `Get(entry, "0"/"1")`.
+ *
+ * Deliberately SHALLOW, unlike `_convertIterableForHost` above: only the pair
+ * container is rebuilt, and the two slots stay the exact values the module
+ * handed over. A deep conversion would replace a compiled array VALUE with a
+ * fresh JS copy, severing both object identity (`fromEntries([[k, a]]).k === a`)
+ * and live mutation, neither of which this call site has any reason to break.
+ *
+ * Handles both physical pair shapes: a homogeneous vec (`__vec_get`) and a
+ * heterogeneous TUPLE struct whose fields are `_0`, `_1` (`__struct_field_names`
+ * + `__sget_*`). Anything else falls back to the live-mirror proxy
+ * `__object_assign` uses, and a non-struct passes straight through.
+ */
+function _decodeCompiledPair(entry: any, exports: Record<string, Function> | undefined): any {
+  if (entry == null || typeof entry !== "object" || !_isWasmStruct(entry) || !exports) return entry;
+  const vecLen = exports.__vec_len;
+  const vecGet = exports.__vec_get;
+  if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(entry, exports)) {
+    const len = vecLen(entry) as number;
+    if (typeof len === "number" && len >= 0) {
+      const out: any[] = new Array(len);
+      for (let i = 0; i < len; i++) out[i] = vecGet(entry, i);
+      return out;
+    }
+  }
+  const fieldNames = exports.__struct_field_names;
+  if (typeof fieldNames === "function") {
+    const names = fieldNames(entry) as string | null;
+    if (typeof names === "string" && names.length > 0) {
+      const parts = names.split(",");
+      if (parts.every((part) => /^_\d+$/.test(part))) {
+        const out: any[] = new Array(parts.length);
+        for (let i = 0; i < parts.length; i++) {
+          const getter = exports[`__sget_${parts[i]}`];
+          out[i] = typeof getter === "function" ? getter(entry) : undefined;
+        }
+        return out;
+      }
+    }
+  }
+  return _wrapForHost(entry, exports);
+}
+
 function _getSidecar(obj: object): Record<string | symbol, any> {
   if (!_canBeWeakKey(obj)) return Object.create(null) as Record<string | symbol, any>;
   let sc = _wasmStructProps.get(obj);
@@ -14433,7 +14478,22 @@ assert._isSameValue = isSameValue;
           return Object.assign(target as object, ...wrappedSources);
         };
       // Object.fromEntries(iterable) — create object from entries (#965)
-      if (name === "__object_fromEntries") return (iterable: any): any => Object.fromEntries(iterable);
+      // (#5205) The host `Object.fromEntries` needs `@@iterator` on the source
+      // (§7.4.4 GetIterator) and indexed "0"/"1" reads on each entry (§7.1.19
+      // AddEntriesFromIterable). An opaque WasmGC vec answers neither: the
+      // source threw "object is not iterable", and a compiled entry pair would
+      // have read `undefined`. Marshal BOTH levels, then hand the normalised
+      // entries to the native implementation so ToPropertyKey /
+      // CreateDataPropertyOrThrow stay the engine's. `marshalExports` (not
+      // `getExports`) because the failing call is at module init, where the
+      // real exports do not exist yet — #5193's start-export channel.
+      if (name === "__object_fromEntries")
+        return (iterable: any): any => {
+          const src = _materializeIterable(iterable, callbackState);
+          if (!_nativeIsArray(src)) return Object.fromEntries(src);
+          const exports = marshalExports(callbackState);
+          return Object.fromEntries(src.map((entry: any) => _decodeCompiledPair(entry, exports)));
+        };
       // Object.getOwnPropertyDescriptors(obj) — all own descriptors (#965)
       // (#1629 S1) For WasmGC structs, enumerate own keys and read each
       // descriptor through the same canonical path as the single-key

@@ -3644,6 +3644,12 @@ export function compileBuiltinStaticCall(
     }
     const argType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    // (#5205) The host handler must decode the compiled entries vec (and each
+    // compiled pair) through the module's exported `__vec_len` / `__vec_get`.
+    // At module top level those exports do not exist yet — the `start` section
+    // runs inside `WebAssembly.instantiate` — so ask for #5193's funcref
+    // self-registration prologue on `__module_init`.
+    ctx.needsInitMarshalHelpers = true;
     const funcIdx = ensureLateImport(ctx, "__object_fromEntries", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {
