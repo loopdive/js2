@@ -575,6 +575,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ];
     // Pre-check if __box_number is available (don't add late imports)
     const boxNumIdx = ctx.funcMap.get("__box_number");
+    // (#3481) Same pre-check for the symbol box — only a module that already
+    // registered `__box_symbol` can have a `symbol[]` vec here.
+    const boxSymIdx = ctx.funcMap.get("__box_symbol");
     // (#2001 S1 regress) `__vec_get` is the chokepoint the HOST reads a vec
     // element through (`__make_iterable`'s convertToJS, `__array_entries`,
     // `wrapExports`, etc.). An externref slot may hold the `$Hole` sentinel for an
@@ -714,6 +717,14 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         } else {
           boxInstrs = [{ op: "call", funcIdx: boxNumIdx }];
         }
+      } else if (elemKey === "i32_symbol" && boxSymIdx !== undefined) {
+        // (#3481) A `symbol[]` element is a symbol ID, not a number. Boxing it
+        // with `__box_number` would hand the host the integer `101` where a
+        // dynamic read of `(syms as any)[0]` must yield the Symbol itself.
+        // `__box_symbol` resolves the id through the per-instance symbol cache,
+        // which is the same cache `__unbox_symbol` filled on the way in, so the
+        // round trip is identity.
+        boxInstrs = [{ op: "call", funcIdx: boxSymIdx }];
       } else if (elemKey === "i32" && boxNumIdx !== undefined) {
         boxInstrs = [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];
       } else if (
