@@ -206,6 +206,14 @@ loc-budget-allow:
   - src/emit/binary.ts
   - src/emit/object.ts
   - src/emit/wat.ts
+  # R1-B (2026-08-29): `currentCallableSignature` — the read accessor returning
+  # a callable binding's contract rebased by every type-layout remap. A draft's
+  # `intent.signature` is frozen at plan time, so an inherited class alias
+  # (raised during class-body compilation, the only point its prepared scope is
+  # open) and its canonical (raised after dead-type elimination) carry different
+  # `typeIdx` numbering for one contract. The rebased contracts are this
+  # module's private state, so the accessor cannot live anywhere else.
+  - src/codegen/program-abi-session.ts
 # R1 must resolve exact checker declarations to the one authoritative identity
 # inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
 # so these two structural joins remain reviewed raw-checker boundaries until

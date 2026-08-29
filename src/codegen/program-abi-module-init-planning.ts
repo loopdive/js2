@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irSupportFuncRef, irUnitCallableBindingId, irUnitFuncRef } from "../ir/callable-bindings.js";
-import type { IrSourceId, IrUnitId } from "../ir/identity.js";
+import { createIrBindingId, type IrBindingId, type IrSourceId, type IrUnitId } from "../ir/identity.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, WasmFunction } from "../ir/types.js";
@@ -16,6 +16,9 @@ import {
 import type { ProgramAbiSession } from "./program-abi-session.js";
 
 const LEGACY_MODULE_INIT_PASS_ROLE = "legacy-module-init-pass";
+const MODULE_INIT_EXPORT_NAME = "__module_init";
+/** Mirrors `ProgramAbiExportCallableRegistry`'s export-alias binding role. */
+const MODULE_VALUE_EXPORT_ROLE = "module-value-export";
 
 interface ModuleInitCallableObservation {
   readonly ordinal: number;
@@ -80,6 +83,11 @@ export class ProgramAbiModuleInitCallableRegistry {
   private preparedExactUnitId?: IrUnitId;
   private preparedExactFunction?: WasmFunction;
   private preparedExactHandle?: FuncHandle;
+  private graphGlobalPass?: {
+    readonly bindingId: IrBindingId;
+    readonly func: WasmFunction;
+    readonly entrySourceId: IrSourceId;
+  };
 
   constructor(
     readonly ctx: CodegenContext,
@@ -277,30 +285,116 @@ export class ProgramAbiModuleInitCallableRegistry {
     }
     const entrySourceId = canonicalEntrySource(session);
 
+    const isExact = (observation: ModuleInitCallableObservation): boolean =>
+      exactUnitId !== undefined && exactObservation !== undefined && observation === exactObservation;
     for (const { observation, func } of liveObservations) {
-      if (exactUnitId && observation === exactObservation) {
-        this.planExactUnit(exactUnitId, func);
-        continue;
-      }
-      const ref = irSupportFuncRef(entrySourceId, LEGACY_MODULE_INIT_PASS_ROLE, func.name, observation.ordinal);
-      const bindingId =
-        ref.binding.kind === "support"
-          ? planProgramAbiSupportCallable(this.ctx, {
-              ref,
-              anchor: { kind: "source", sourceId: entrySourceId },
-              role: LEGACY_MODULE_INIT_PASS_ROLE,
-              roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.moduleInit,
-              derivedOrdinal: observation.ordinal,
-              signature: functionSignature(this.ctx, func),
-              func,
-            })
-          : undefined;
-      if (ref.binding.kind !== "support" || bindingId !== ref.binding.bindingId) {
-        throw new ProgramAbiInvariantError(
-          "invalid-binding-reference",
-          `legacy module-init pass ${observation.ordinal} was not accepted by Program ABI planning`,
-        );
-      }
+      if (isExact(observation)) this.planExactUnit(exactUnitId!, func);
+    }
+
+    // The graph-global (legacy multi-source) pass is ONE physical initializer
+    // emitted on the final scheduled source, aliased by the public
+    // `__module_init`. The loop this replaced planned one support callable per
+    // surviving observation at that observation's ordinal, so it silently
+    // accepted a graph with no live pass at all, with several passes, and with
+    // a pass published at ordinal 1+ — none of which the public alias can
+    // describe. Bound the population exactly instead: one raw observation, one
+    // live observation, the same observation, ordinal zero.
+    const graphGlobalRaw = this.observations.filter((observation) => !isExact(observation));
+    const graphGlobalLive = liveObservations.filter(({ observation }) => !isExact(observation));
+    // A module with no top-level state emits no initializer at all, so absence
+    // is only a defect when the module actually publishes the entry point. The
+    // public `__module_init` export is that surface: if it exists and no exact
+    // source unit owns it, exactly one graph-global pass must stand behind it.
+    const exactPlanned = liveObservations.some(({ observation }) => isExact(observation));
+    const publicInitExports = this.ctx.mod.exports.filter((entry) => entry.name === MODULE_INIT_EXPORT_NAME).length;
+    const requiresGraphGlobalPass = publicInitExports > 0 && !exactPlanned;
+    if (!requiresGraphGlobalPass && graphGlobalRaw.length === 0 && graphGlobalLive.length === 0) return;
+    const raw = graphGlobalRaw[0];
+    const live = graphGlobalLive[0];
+    if (
+      graphGlobalRaw.length !== 1 ||
+      graphGlobalLive.length !== 1 ||
+      raw === undefined ||
+      live === undefined ||
+      live.observation !== raw ||
+      raw.ordinal !== 0
+    ) {
+      throw new ProgramAbiInvariantError(
+        "duplicate-slot-locator",
+        `graph-global module-init requires exactly one live pass at ordinal 0, found ${graphGlobalRaw.length} raw and ${graphGlobalLive.length} live at ordinals [${graphGlobalRaw.map((observation) => observation.ordinal).join(",")}]`,
+      );
+    }
+    const func = live.func;
+    const ref = irSupportFuncRef(entrySourceId, LEGACY_MODULE_INIT_PASS_ROLE, func.name, raw.ordinal);
+    const bindingId =
+      ref.binding.kind === "support"
+        ? planProgramAbiSupportCallable(this.ctx, {
+            ref,
+            anchor: { kind: "source", sourceId: entrySourceId },
+            role: LEGACY_MODULE_INIT_PASS_ROLE,
+            roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.moduleInit,
+            derivedOrdinal: raw.ordinal,
+            signature: functionSignature(this.ctx, func),
+            func,
+          })
+        : undefined;
+    if (ref.binding.kind !== "support" || bindingId !== ref.binding.bindingId) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `legacy module-init pass ${raw.ordinal} was not accepted by Program ABI planning`,
+      );
+    }
+    if (!session.hasPlan(bindingId) || !session.hasLocator(bindingId, func)) {
+      throw new ProgramAbiInvariantError(
+        "missing-required-locator",
+        `graph-global module-init pass ${raw.ordinal} is not retained on its exact allocator object`,
+      );
+    }
+    this.graphGlobalPass = Object.freeze({ bindingId, func, entrySourceId });
+  }
+
+  /**
+   * Authenticate the public `__module_init` alias of the graph-global pass.
+   *
+   * Export aliases are raised by `ProgramAbiExportCallableRegistry.planRetained`,
+   * which runs AFTER this registry, so the check cannot live in `planRetained`
+   * above — it is called from the finalization driver once exports exist. What
+   * it proves is the half the pass-side invariant cannot: that the ONE public
+   * entry point the host calls resolves to pass zero, by `aliasOf` and by
+   * `intent.targetId`, and not to some other retained initializer.
+   */
+  assertGraphGlobalPublicAlias(): void {
+    const pass = this.graphGlobalPass;
+    const session = this.session;
+    if (!pass || !session) return;
+    const ordinals = this.ctx.mod.exports.flatMap((entry, ordinal) =>
+      entry.name === MODULE_INIT_EXPORT_NAME ? [ordinal] : [],
+    );
+    if (ordinals.length !== 1) {
+      throw new ProgramAbiInvariantError(
+        "invalid-export-target",
+        `graph-global module-init expects exactly one public ${MODULE_INIT_EXPORT_NAME} export, found ${ordinals.length}`,
+      );
+    }
+    const exportBindingId = createIrBindingId({
+      ownerId: pass.entrySourceId,
+      domain: "export",
+      role: MODULE_VALUE_EXPORT_ROLE,
+      ordinal: ordinals[0]!,
+    });
+    const draft = session.getDraft(exportBindingId);
+    if (
+      !draft ||
+      draft.slotPolicy !== "alias" ||
+      draft.aliasOf !== pass.bindingId ||
+      draft.intent.kind !== "export" ||
+      draft.intent.externalName !== MODULE_INIT_EXPORT_NAME ||
+      draft.intent.targetId !== pass.bindingId
+    ) {
+      throw new ProgramAbiInvariantError(
+        "invalid-export-target",
+        `public ${MODULE_INIT_EXPORT_NAME} is not the exact alias of graph-global pass zero ${pass.bindingId}`,
+      );
     }
   }
 

@@ -4,21 +4,24 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeSource } from "../src/checker/index.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "../src/codegen/program-abi-class-callable-planning.js";
+import { pushDefinedFunc } from "../src/codegen/func-space.js";
+import { planProgramAbiUnitCallable } from "../src/codegen/program-abi-planning.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { compileDeclarations, collectDeclarations } from "../src/codegen/declarations.js";
 import { generateModule } from "../src/codegen/index.js";
 import { canonicalProgramAbiCallableTypeContract } from "../src/codegen/program-abi-signatures.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compile } from "../src/index.js";
-import { irSupportFuncRef, irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
+import { irSupportFuncRef, irUnitCallableBindingId, irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import {
   buildIrUnitInventory,
   type IrClassId,
   type IrTerminalUnitRecord,
+  type IrUnitId,
   type IrUnitInventory,
 } from "../src/ir/identity.js";
 import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
-import { createEmptyModule, type WasmFunction } from "../src/ir/types.js";
+import { createEmptyModule, type FuncTypeDef, type WasmFunction } from "../src/ir/types.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
@@ -60,6 +63,55 @@ function inheritedMethodAliasRef(
   const derivedOrdinal = inventory.allUnits.findIndex((candidate) => candidate.id === canonicalMethod.id);
   if (derivedOrdinal < 0) throw new Error(`canonical method ${canonicalMethod.id} is absent from allUnits`);
   return irSupportFuncRef(childClassId, `class-method-adapter:instance:${methodName}`, physicalName, derivedOrdinal);
+}
+
+const INHERITED_ALIAS_SOURCE = `
+  class A {
+    m(value: number): number { return value + 1; }
+  }
+  class B extends A {}
+`;
+
+/**
+ * One freshly compiled `class B extends A {}` planning context.
+ *
+ * `planRetained` is one-shot per registry, so every mutation that must observe
+ * its own rejection needs its own context rather than a shared one.
+ */
+function inheritedAliasFixture() {
+  const ast = analyzeSource(INHERITED_ALIAS_SOURCE, "inherited-alias-authority.ts");
+  const inventory = buildIrUnitInventory([ast.sourceFile], {
+    entrySource: ast.sourceFile,
+    checker: ast.checker,
+  });
+  const identityContext = buildIrPlanningIdentityContext(inventory);
+  const aClassId = classId(inventory, "A");
+  const bClassId = classId(inventory, "B");
+  const methodUnitId = instanceMethod(inventory, aClassId, "A_m").id;
+  const mod = createEmptyModule();
+  const session = new ProgramAbiSession(inventory, mod);
+  const ctx = createCodegenContext(mod, ast.checker, { experimentalIR: true }, session, identityContext);
+  collectDeclarations(ctx, ast.sourceFile);
+  compileDeclarations(ctx, ast.sourceFile);
+  const registry = ctx.programAbiClassCallables;
+  const alias = registry?.inheritedAlias(bClassId, methodUnitId);
+  const canonical = registry?.functionForUnit(methodUnitId);
+  if (!registry || !alias || !canonical) throw new Error("missing inherited alias observation");
+  return {
+    ast,
+    mod,
+    ctx,
+    session,
+    registry,
+    identityContext,
+    aClassId,
+    bClassId,
+    methodUnitId,
+    alias,
+    canonical,
+    /** The registry's private per-unit observation map, for locator mutations. */
+    unitObservations: () => (registry as unknown as { units: Map<IrUnitId, unknown[]> }).units,
+  };
 }
 
 async function runtimeValue(source: string): Promise<unknown> {
@@ -304,6 +356,60 @@ describe("#3520 inherited instance-method Program ABI aliases", () => {
     (mod.functions as Array<WasmFunction | undefined>)[definedIndex] = undefined;
     expect(() => registry.planRetained()).toThrowError(
       expect.objectContaining({ name: "ProgramAbiInvariantError", code: "missing-required-locator" }),
+    );
+  });
+
+  it("reaches canonical locator validation with the allocator kept live", () => {
+    // Non-vacuity, direction 1: the ORIGINAL mutation (deleting the allocator)
+    // never reaches the canonical-locator validation. `planRetained` resolves
+    // `definedFuncAt(observation.funcIdx)` first, so a deleted allocator stops
+    // at the "lost its exact allocator" guard several checks earlier and the
+    // locator block below is never entered. Both guards raise
+    // `missing-required-locator`, so only the message separates them.
+    const deleted = inheritedAliasFixture();
+    const deletedIndex = deleted.mod.functions.indexOf(deleted.canonical);
+    expect(deletedIndex).toBeGreaterThanOrEqual(0);
+    (deleted.mod.functions as Array<WasmFunction | undefined>)[deletedIndex] = undefined;
+    expect(() => deleted.registry.planRetained()).toThrowError(/lost its exact allocator/);
+    expect(() => inheritedAliasFixture().registry.planRetained()).not.toThrow();
+
+    // Direction 2, case A — MISSING locator. The canonical WasmFunction stays
+    // live and reachable through the alias observation's own handle; only the
+    // unit observations that would have planned the required canonical draft
+    // are removed. `getDraft(aliasOf)` is then undefined and the locator block
+    // is what rejects the module.
+    const missing = inheritedAliasFixture();
+    expect(missing.mod.functions).toContain(missing.canonical);
+    missing.unitObservations().delete(missing.methodUnitId);
+    expect(() => missing.registry.planRetained()).toThrowError(/has no exact canonical Program ABI locator/);
+    expect(missing.mod.functions, "allocator stayed live through the guard").toContain(missing.canonical);
+
+    // Direction 2, case B — WRONG-OWNERSHIP locator. The canonical draft is
+    // planned with the identical reference and signature, but its allocator
+    // object is a second, equally live function. Every other predicate in the
+    // block matches, so the only thing that can reject this module is
+    // `locatorObjectForBinding(aliasOf) !== liveFunc`.
+    const retargeted = inheritedAliasFixture();
+    const decoy: WasmFunction = {
+      name: retargeted.canonical.name,
+      typeIdx: retargeted.canonical.typeIdx,
+      locals: [],
+      body: [...retargeted.canonical.body],
+      exported: false,
+    };
+    pushDefinedFunc(retargeted.ctx, mintDefinedFunc(retargeted.ctx), decoy);
+    retargeted.unitObservations().delete(retargeted.methodUnitId);
+    expect(
+      planProgramAbiUnitCallable(retargeted.ctx, {
+        ref: irUnitFuncRef({ unitId: retargeted.methodUnitId, name: retargeted.canonical.name }),
+        signature: retargeted.mod.types[retargeted.canonical.typeIdx] as FuncTypeDef,
+        func: decoy,
+      }),
+      "decoy claims the canonical unit binding",
+    ).toBe(irUnitCallableBindingId(retargeted.methodUnitId));
+    expect(() => retargeted.registry.planRetained()).toThrowError(/has no exact canonical Program ABI locator/);
+    expect(retargeted.mod.functions, "both allocators stayed live").toEqual(
+      expect.arrayContaining([retargeted.canonical, decoy]),
     );
   });
 });

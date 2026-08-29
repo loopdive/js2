@@ -1,14 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { analyzeMultiSource, analyzeSource } from "../src/checker/index.js";
 import { generateModule, generateMultiModule } from "../src/codegen/index.js";
+import { ProgramAbiExportRegistry } from "../src/codegen/program-abi-export-planning.js";
+import { ProgramAbiModuleInitCallableRegistry } from "../src/codegen/program-abi-module-init-planning.js";
 import { canonicalProgramAbiCallableTypeContract } from "../src/codegen/program-abi-signatures.js";
 import { compile, compileMulti, type CompileResult } from "../src/index.js";
 import { irSupportFuncRef, irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory, type IrSourceId, type IrUnitInventory } from "../src/ir/identity.js";
 import type { ProgramAbiPlanEntry } from "../src/ir/program-abi.js";
+import type { WasmExport } from "../src/ir/types.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 
 // Register the codegen expression/statement delegates used by generateModule.
@@ -89,6 +92,84 @@ function graphGlobalModuleInitEntries(
     throw new Error("public __module_init is not the exact alias of graph-global pass zero");
   }
   return { pass, publicInit: exports[0]! };
+}
+
+const GRAPH_GLOBAL_FILES = {
+  "leaf.ts": `
+        export var leafRuns: number = 0;
+        leafRuns += 1;
+      `,
+  "dependency.ts": `
+        import { leafRuns } from "./leaf.ts";
+        export var dependencyRuns: number = 0;
+        dependencyRuns += leafRuns;
+      `,
+  "entry.ts": `
+        import { dependencyRuns } from "./dependency.ts";
+        var entryRuns: number = 0;
+        entryRuns += 1;
+        export function score(): number { return dependencyRuns * 10 + entryRuns; }
+      `,
+};
+
+type GraphGlobalResult = ReturnType<typeof generateMultiModule>;
+type ModuleInitObservation = { readonly ordinal: number; readonly funcIdx: number };
+
+function hardErrors(result: { readonly errors: readonly { readonly severity?: string }[] }) {
+  return result.errors.filter((error) => error.severity !== "warning");
+}
+
+/** The registry's private observation list — the exact production state under test. */
+function moduleInitObservations(registry: ProgramAbiModuleInitCallableRegistry): ModuleInitObservation[] {
+  return (registry as unknown as { observations: ModuleInitObservation[] }).observations;
+}
+
+/**
+ * Point the public `__module_init` export at another ALREADY-OWNED callable.
+ *
+ * A descriptor aimed at an unowned function is rejected by export planning's
+ * own "no Program ABI owner" guard, which would prove nothing here. Reusing
+ * `score`'s target keeps export planning happy and leaves exactly one thing
+ * wrong: the public alias no longer names graph-global pass zero.
+ */
+function retargetModuleInitExport(ctx: { readonly mod: { readonly exports: readonly WasmExport[] } }): void {
+  const init = ctx.mod.exports.find((entry) => entry.name === "__module_init");
+  const other = ctx.mod.exports.find((entry) => entry.name === "score");
+  if (!init || !other || init.desc.kind !== "func" || other.desc.kind !== "func") {
+    throw new Error("missing exact __module_init/score function exports");
+  }
+  init.desc.index = other.desc.index;
+}
+
+/**
+ * One real multi-source compile, optionally mutating production planning state
+ * at the exact seam each invariant guards.
+ */
+function generateGraphGlobal(
+  mutateModuleInit?: (registry: ProgramAbiModuleInitCallableRegistry) => void,
+  mutateBeforeExports?: (ctx: { readonly mod: { readonly exports: readonly WasmExport[] } }) => void,
+): GraphGlobalResult {
+  const ast = analyzeMultiSource(GRAPH_GLOBAL_FILES, "entry.ts");
+  const originalPlan = ProgramAbiModuleInitCallableRegistry.prototype.planRetained;
+  const originalExports = ProgramAbiExportRegistry.prototype.planRetained;
+  const planSpy = vi.spyOn(ProgramAbiModuleInitCallableRegistry.prototype, "planRetained").mockImplementation(function (
+    this: ProgramAbiModuleInitCallableRegistry,
+  ) {
+    mutateModuleInit?.(this);
+    return originalPlan.call(this);
+  });
+  const exportSpy = vi.spyOn(ProgramAbiExportRegistry.prototype, "planRetained").mockImplementation(function (
+    this: ProgramAbiExportRegistry,
+  ) {
+    mutateBeforeExports?.(this.ctx);
+    return originalExports.call(this);
+  });
+  try {
+    return generateMultiModule(ast, { experimentalIR: true, deferTopLevelInit: true });
+  } finally {
+    planSpy.mockRestore();
+    exportSpy.mockRestore();
+  }
 }
 
 async function instantiate(result: CompileResult): Promise<Record<string, WebAssembly.ExportValue>> {
@@ -317,5 +398,61 @@ describe("#3520 module-init callable Program ABI ownership", () => {
     expect((reversedExports.score as () => number)()).toBe(0);
     (reversedExports.__module_init as () => void)();
     expect((reversedExports.score as () => number)()).toBe(11);
+  });
+
+  it("fails closed on zero, duplicate, ordinal-one, and retargeted graph-global module-init", () => {
+    // These mutate PRODUCTION planning state during a real multi-source
+    // compile, not a copy of the published entry list: each one is a shape the
+    // graph-global invariant must reject before publication.
+    const unmutated = generateGraphGlobal();
+    expect(hardErrors(unmutated), unmutated.errors.map((error) => error.message).join("\n")).toEqual([]);
+
+    const cases: readonly {
+      readonly name: string;
+      readonly expected: RegExp;
+      readonly run: () => GraphGlobalResult;
+    }[] = [
+      {
+        name: "zero observations",
+        expected: /exactly one live pass at ordinal 0, found 0 raw and 0 live/,
+        run: () =>
+          generateGraphGlobal((registry) => {
+            moduleInitObservations(registry).length = 0;
+          }),
+      },
+      {
+        name: "two observations",
+        expected: /exactly one live pass at ordinal 0, found 2 raw and 2 live/,
+        run: () =>
+          generateGraphGlobal((registry) => {
+            const observations = moduleInitObservations(registry);
+            const first = observations[0];
+            if (!first) throw new Error("missing graph-global module-init observation");
+            observations.push(Object.freeze({ ...first, ordinal: 1 }));
+          }),
+      },
+      {
+        name: "ordinal one",
+        expected: /exactly one live pass at ordinal 0, found 1 raw and 1 live at ordinals \[1\]/,
+        run: () =>
+          generateGraphGlobal((registry) => {
+            const observations = moduleInitObservations(registry);
+            const first = observations[0];
+            if (!first) throw new Error("missing graph-global module-init observation");
+            observations[0] = Object.freeze({ ...first, ordinal: 1 });
+          }),
+      },
+      {
+        name: "retargeted export",
+        expected: /public __module_init is not the exact alias of graph-global pass zero/,
+        run: () => generateGraphGlobal(undefined, retargetModuleInitExport),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = testCase.run();
+      const messages = hardErrors(result).map((error) => error.message);
+      expect(messages.join("\n"), testCase.name).toMatch(testCase.expected);
+    }
   });
 });
