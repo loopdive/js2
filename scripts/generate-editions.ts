@@ -970,8 +970,9 @@ async function main() {
       proposalBucket[proposalKey]++;
       fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
       // Proposal tests are excluded from every EDITION bucket by design, but a
-      // landing-page row for a proposal feature (Temporal) is scored by its
-      // `testCategories` paths, not by an edition. Withholding these records
+      // landing-page row for a proposal feature (import-defer, source-phase
+      // imports; Temporal until #5173 reclassified it as ES2026) is scored by
+      // its `testCategories` paths, not by an edition. Withholding these records
       // left such a row at 0/0 — rendered "not individually measured" — while
       // thousands of its tests were in the baseline. `pathTests` feeds only
       // patchFeatureExamples' path scorer, so this does not move any edition
