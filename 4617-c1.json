@@ -2,10 +2,11 @@
   "id": "4617",
   "slice": "c1",
   "assignee": "ttraenkler/opus-4617-c1",
-  "requested_by": "ttraenkler/opus-4617-c1",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-4617-c1-declaration-replay",
   "claimed_at": "2026-08-28T22:31:43Z",
-  "updated_at": "2026-08-28T22:31:43Z",
-  "write_id": "13411-skvpq2tp"
+  "updated_at": "2026-08-29T02:26:59Z",
+  "write_id": "17912-1tpzytpi",
+  "released_at": "2026-08-29T02:26:59Z"
 }
