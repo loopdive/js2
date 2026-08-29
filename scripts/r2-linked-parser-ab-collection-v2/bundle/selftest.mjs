@@ -94,7 +94,32 @@ for (const mutation of STRUCTURAL_MUTATIONS) {
   record(ok, `${mutation.id} ${mutation.title}`, `${result.status} [${codes(result).join(", ")}]`);
 }
 
-// --- 3. canonical reorder must not change the digest -----------------------
+// --- 3. multiple accumulated oracle failures --------------------------------
+// The plan requires a semantic failure to publish EVERY oracle failure, not the
+// first one. Compose four independent mutations and require all four codes.
+lines.push("");
+const composed = STRUCTURAL_MUTATIONS.find((m) => m.id === "S11").mutate(
+  DEFECT_MUTATIONS.find((d) => d.id === "D1").mutate(
+    DEFECT_MUTATIONS.find((d) => d.id === "D3").mutate(DEFECT_MUTATIONS.find((d) => d.id === "D4").mutate(canonical)),
+  ),
+);
+const composedResult = validate(composed);
+const composedCodes = codes(composedResult);
+for (const expected of [
+  "declaration/unsanctioned-unitless-row",
+  "outcome/duplicate-key",
+  "wat/abi-mismatch",
+  "pin/mismatch",
+]) {
+  record(composedCodes.includes(expected), `accumulated failures include ${expected}`, composedCodes.join(", "));
+}
+record(
+  composedResult.failures.length >= 4,
+  "accumulated failures are published, not truncated at the first",
+  `${composedResult.failures.length} failures`,
+);
+
+// --- 4. canonical reorder must not change the digest -----------------------
 lines.push("");
 const reordered = reorderReport(canonical);
 const digestA = computeDigests(canonical.children);

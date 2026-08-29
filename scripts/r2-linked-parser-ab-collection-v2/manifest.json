@@ -52,10 +52,10 @@
     }
   },
   "sources": {
-    "contract.mjs": "51ab5665b14e1dd56e20225e40d70d3621e4329aba9ea6c60959b02cbbed64a6",
+    "contract.mjs": "86d12086c2e8b7ed8a8bc0888290b9dd8df545728aa3410ff3367509bde01403",
     "fixtures.mjs": "ad7b2e185de349c27366a94be28080248b4273fee1a39189e803d378efaec607",
     "baseline-naive.mjs": "cd7d19106904460fdc9ca5277266fd104775b9f9a924c3233c03ab7c6e7b7a0d",
-    "selftest.mjs": "0311f37d278f7916dc89a47ce1b795cfecfe215fd6db11145d11f3bc28137d19",
+    "selftest.mjs": "13d1bc24e1915552de1fb2ddac86434403ed1a9d25e0a0db0a40c84d7f4f3c54",
     "relock.mjs": "e166bf6c78f6fe3e6322ea06607539a18c367e61f567b58f437c2704239a1be3"
   },
   "bundleEqual": {
@@ -65,5 +65,5 @@
     "selftest.mjs": "EQUAL",
     "relock.mjs": "EQUAL"
   },
-  "rootHash": "9ffa4a764f5e7169e363e025430857dd70718860a2fa71fa8c85d85d86c45619"
+  "rootHash": "6656ed3fb2d61ac47531c0de998490a79515d8ff51bb9ebef572623877449caa"
 }

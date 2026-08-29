@@ -204,12 +204,16 @@ class Failures {
 // three states can never collapse into one.
 function repairedCensusCheck(report, failures) {
   const census = report.census ?? {};
+  // Scope the bail-out to THIS check's own failures. Testing the shared
+  // accumulator would let an unrelated matrix or pin failure suppress the whole
+  // census, and every oracle failure must be published, not truncated.
+  const before = failures.length;
   for (const state of CENSUS_STATES) {
     if (!Number.isInteger(census[state]) || census[state] < 0) {
       failures.add("census/malformed-state", null, `${state} is not a non-negative integer`);
     }
   }
-  if (failures.length > 0) return;
+  if (failures.length > before) return;
 
   const children = report.children ?? [];
   const derived = {

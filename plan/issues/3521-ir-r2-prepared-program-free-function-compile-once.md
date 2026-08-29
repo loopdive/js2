@@ -2830,9 +2830,10 @@ completed are **derived separately per child** and cross-checked against the
 reported counters, so a throwing spawn cannot collapse them.
 
 Non-vacuity is anchored by the unmutated canonical report passing **both**
-validators. Denominators: 24 scheduled children (16 landed-A/B + 8 live), 33
+validators. Denominators: 24 scheduled children (16 landed-A/B + 8 live), 38
 static assertions — 3 canonical-fixture, 10 defect (5 mutations × 2 sides), 16
-structural, 4 digest/reorder — all green, plus the relock check.
+structural, 5 accumulated-failure, 4 digest/reorder — all green, plus the relock
+check.
 
 ### Also enforced (not in scope of the five defects)
 
@@ -2853,7 +2854,7 @@ read as equal. Three tamper paths were proven to fail closed: a one-line edit to
 a mirrored file reports `bundle/contract.mjs is DIFFERS`; editing the contract's
 expected ABI reports `expectedWatAbi` / `sources` / `rootHash` drift; and a
 hand-edit to `manifest.json`'s `pins.base` alone reports `pins` drift. Adapter root hash at this
-checkpoint: `9ffa4a764f5e7169e363e025430857dd70718860a2fa71fa8c85d85d86c45619`.
+checkpoint: `6656ed3fb2d61ac47531c0de998490a79515d8ff51bb9ebef572623877449caa`.
 
 ### Open items the independent auditor must close before any relock
 
