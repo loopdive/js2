@@ -242,12 +242,22 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
 export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
   if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
-    const shorthand = (
+    const resolveShorthand = (
       ctx.checker as typeof ctx.checker & {
         getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
       }
-    ).getShorthandAssignmentValueSymbol?.(id.parent);
-    if (shorthand !== undefined) return shorthand;
+    ).getShorthandAssignmentValueSymbol;
+    if (typeof resolveShorthand === "function") {
+      const shorthand = resolveShorthand(id.parent);
+      // (#5149 cluster F) An `undefined` answer means the shorthand's VALUE is
+      // unresolvable: `({ notDefined })` reads a binding that does not exist
+      // and must throw a ReferenceError (§13.2.5.5 step 3 forwards the
+      // IdentifierReference GetValue). The old fall-through to
+      // `getSymbolAtLocation` handed back the shorthand's own PROPERTY symbol,
+      // which is ALWAYS present, so the caller's `!sym` undeclared test never
+      // fired and the literal quietly built `{ notDefined: undefined }`.
+      return shorthand;
+    }
   }
   return ctx.checker.getSymbolAtLocation(id);
 }
