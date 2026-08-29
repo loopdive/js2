@@ -14,15 +14,15 @@ relock; nothing here authorises that run.
 
 ## Files
 
-| file | role |
-| --- | --- |
-| `contract.mjs` | the fail-closed oracle: canonical 16+8 matrix, pins, census states, declaration census, outcome joins, exact WAT ABI carriers, digests |
-| `fixtures.mjs` | canonical 24-child report fixture plus every mutation operator |
-| `baseline-naive.mjs` | **reconstructed pre-repair baseline** — see caveat below |
-| `selftest.mjs` | static selftest and the five non-vacuity proofs |
-| `relock.mjs` | manifest relock and `bundle/` byte-equality gate |
-| `manifest.json` | relocked source digests, pins, expected census, root hash |
-| `bundle/` | byte-for-byte mirror of every source above |
+| file                 | role                                                                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `contract.mjs`       | the fail-closed oracle: canonical 16+8 matrix, pins, census states, declaration census, outcome joins, exact WAT ABI carriers, digests |
+| `fixtures.mjs`       | canonical 24-child report fixture plus every mutation operator                                                                         |
+| `baseline-naive.mjs` | **reconstructed pre-repair baseline** — see caveat below                                                                               |
+| `selftest.mjs`       | static selftest and the five non-vacuity proofs                                                                                        |
+| `relock.mjs`         | manifest relock and `bundle/` byte-equality gate                                                                                       |
+| `manifest.json`      | relocked source digests, pins, expected census, root hash                                                                              |
+| `bundle/`            | byte-for-byte mirror of every source above                                                                                             |
 
 Run: `node scripts/r2-linked-parser-ab-collection-v2/selftest.mjs` and
 `node scripts/r2-linked-parser-ab-collection-v2/relock.mjs`.
@@ -32,13 +32,13 @@ Run: `node scripts/r2-linked-parser-ab-collection-v2/selftest.mjs` and
 The 2026-08-28 independent audit proved five FALSE PASSES. Each is now a
 fail-closed check with a runnable two-sided mutation in `selftest.mjs`:
 
-| # | false pass | repair | failure code |
-| --- | --- | --- | --- |
-| D1 | an arbitrary extra unitless `compileDeclarations` call passed | the physical-row census is CLOSED: every row joins an inventory unit or is the one sanctioned unitless exception | `declaration/unsanctioned-unitless-row` |
-| D2 | a wrong-file prepared module-init outcome passed | outcomes join their inventory unit on every field, not by key presence | `outcome/join-mismatch` |
-| D3 | a duplicate outcome key passed | the outcome index detects duplicates instead of `map.set` overwriting | `outcome/duplicate-key` |
-| D4 | the parser's second WAT parameter `i32`→`f32` passed with hashes recomputed | the exact expected ABI is carried structurally, not only as a hash | `wat/abi-mismatch` |
-| D5 | attempted/spawned/completed collapsed when a spawn threw | the three states are derived separately per child and cross-checked against the reported counters | `census/state-collapse` |
+| #   | false pass                                                                  | repair                                                                                                           | failure code                            |
+| --- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| D1  | an arbitrary extra unitless `compileDeclarations` call passed               | the physical-row census is CLOSED: every row joins an inventory unit or is the one sanctioned unitless exception | `declaration/unsanctioned-unitless-row` |
+| D2  | a wrong-file prepared module-init outcome passed                            | outcomes join their inventory unit on every field, not by key presence                                           | `outcome/join-mismatch`                 |
+| D3  | a duplicate outcome key passed                                              | the outcome index detects duplicates instead of `map.set` overwriting                                            | `outcome/duplicate-key`                 |
+| D4  | the parser's second WAT parameter `i32`→`f32` passed with hashes recomputed | the exact expected ABI is carried structurally, not only as a hash                                               | `wat/abi-mismatch`                      |
+| D5  | attempted/spawned/completed collapsed when a spawn threw                    | the three states are derived separately per child and cross-checked against the reported counters                | `census/state-collapse`                 |
 
 ## Caveat: `baseline-naive.mjs` is a RECONSTRUCTION
 
@@ -57,7 +57,7 @@ observation of the original collector**, and must never be reported as one.
 ## Open items for the independent auditor
 
 1. **`EXPECTED_WAT_ABI` values are pinned placeholders.** The repair is that the
-   ABI is carried *exactly* rather than by hash; the specific parameter and
+   ABI is carried _exactly_ rather than by hash; the specific parameter and
    result types must be confirmed against the landed L3 production ABI and
    re-pinned under the approved relock before any collection.
 2. **The sole exception is enforced per child.** The issue says "each side must

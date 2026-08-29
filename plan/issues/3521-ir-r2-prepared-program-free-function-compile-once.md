@@ -2854,7 +2854,7 @@ read as equal. Three tamper paths were proven to fail closed: a one-line edit to
 a mirrored file reports `bundle/contract.mjs is DIFFERS`; editing the contract's
 expected ABI reports `expectedWatAbi` / `sources` / `rootHash` drift; and a
 hand-edit to `manifest.json`'s `pins.base` alone reports `pins` drift. Adapter root hash at this
-checkpoint: `6656ed3fb2d61ac47531c0de998490a79515d8ff51bb9ebef572623877449caa`.
+checkpoint: `d9e2327de0f2a57e3cc612b218f7fa77d940133a8da8a041f14c1312a240958d`.
 
 ### Open items the independent auditor must close before any relock
 

@@ -37,25 +37,40 @@
   "expectedWatAbi": {
     "parser": {
       "name": "$js2_linked_parser_parse",
-      "params": ["i32", "i32"],
-      "results": ["i32"]
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
     },
     "caller": {
       "name": "$js2_linked_parser_call",
-      "params": ["i32", "i32", "i32"],
-      "results": ["i32"]
+      "params": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
     },
     "run": {
       "name": "$js2_linked_parser_run",
-      "params": ["i32"],
-      "results": ["i32"]
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
     }
   },
   "sources": {
     "contract.mjs": "86d12086c2e8b7ed8a8bc0888290b9dd8df545728aa3410ff3367509bde01403",
     "fixtures.mjs": "ad7b2e185de349c27366a94be28080248b4273fee1a39189e803d378efaec607",
     "baseline-naive.mjs": "cd7d19106904460fdc9ca5277266fd104775b9f9a924c3233c03ab7c6e7b7a0d",
-    "selftest.mjs": "13d1bc24e1915552de1fb2ddac86434403ed1a9d25e0a0db0a40c84d7f4f3c54",
+    "selftest.mjs": "23eebaca487a908cd9ce00f9c4b90b145a7584ea5b77a3eaa0e742310a14b31a",
     "relock.mjs": "e166bf6c78f6fe3e6322ea06607539a18c367e61f567b58f437c2704239a1be3"
   },
   "bundleEqual": {
@@ -65,5 +80,5 @@
     "selftest.mjs": "EQUAL",
     "relock.mjs": "EQUAL"
   },
-  "rootHash": "6656ed3fb2d61ac47531c0de998490a79515d8ff51bb9ebef572623877449caa"
+  "rootHash": "d9e2327de0f2a57e3cc612b218f7fa77d940133a8da8a041f14c1312a240958d"
 }
