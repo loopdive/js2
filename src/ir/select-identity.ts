@@ -3,12 +3,21 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import {
+  isIrNestedClassFieldCallProofCurrent,
   isIrNestedClassFieldCallProofSidecarForInventory,
   type IrNestedClassFieldCallProofSidecar,
+  type PlanIrNestedClassFieldCallsInput,
 } from "./class-field-call-planning.js";
 import {
+  createIrNestedClassFieldCallAdmission,
   getIrNestedClassFieldCallInventoryCandidates,
+  irPreparedNestedOrdinaryClass,
+  irPreparedNestedOrdinaryClassBindingName,
+  isIrNestedClassFieldCallAdmissionForInventory,
   type IrClassId,
+  type IrNestedClassFieldCallAdmission,
+  type IrNestedClassFieldCallAdmittedClass,
+  type IrNestedClassFieldCallAdmittedField,
   type IrNestedClassFieldCallInventoryCandidate,
   type IrSourceId,
   type IrTerminalUnitRecord,
@@ -33,10 +42,11 @@ import {
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
 import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
-  boundedPreparedNestedOrdinaryClassBindingName,
   exactPreparedAccessorSyntaxKey,
   isBoundedPreparedAccessorClass,
-  isBoundedPreparedNestedOrdinaryClass,
+  nestedOrdinaryClassBodyHasAccessor,
+  nestedOrdinaryClassBodyHasNestedExecutable,
+  nestedOrdinaryClassLexicalBindingName,
 } from "./class-accessor-safety.js";
 import {
   assessIrImplicitConstructorSubject,
@@ -114,6 +124,8 @@ export interface IrIdentitySelection {
   readonly nestedClassFieldCallCandidates?: readonly IrNestedClassFieldCallInventoryCandidate[];
   /** Optional dormant proof sidecar; its presence never changes claims. */
   readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
+  /** (#3522 F4) The one proof-derived admitted-class marker, carried never rebuilt. */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
   /** Policy needed only while projecting back through the legacy name seam. */
   readonly legacyProjection?: {
@@ -169,7 +181,91 @@ export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveType
   readonly fnctorArgumentProjectionAuthority?: IrFnctorArgumentProjectionAuthority;
   /** Pre-selection dormant field-call evidence over this exact inventory. */
   readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
+  /**
+   * (#3522 F4) The immutable proof-derived admitted-class marker computed once
+   * before local class-expression resolution. The selector consumes it; it
+   * never recomputes admission from syntax.
+   */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
 };
+
+/**
+ * (#3522 F4) Derive the one admitted-class marker from the complete F3 proof.
+ *
+ * Inventory candidacy is not admission. A candidate becomes claimable only when
+ * the sidecar belongs to this exact inventory, EVERY call-bearing field carries
+ * a currently valid proof, each proof's callee is an exact active top-level
+ * function terminal in the same source, and the class resolves one lexical
+ * binding name. Anything else leaves the class unadmitted and therefore
+ * normalized to `class-member-unsupported@select` exactly as in F3.
+ */
+export function computeIrNestedClassFieldCallAdmission(
+  input: PlanIrNestedClassFieldCallsInput & { readonly proofs: IrNestedClassFieldCallProofSidecar },
+): IrNestedClassFieldCallAdmission {
+  const { identityContext, proofs } = input;
+  const { inventory } = identityContext;
+  if (!isIrNestedClassFieldCallProofSidecarForInventory(proofs, inventory) || proofs.inventory !== inventory) {
+    return createIrNestedClassFieldCallAdmission(inventory, []);
+  }
+  const admitted: IrNestedClassFieldCallAdmittedClass[] = [];
+  for (const candidate of getIrNestedClassFieldCallInventoryCandidates(inventory)) {
+    const bindingName = nestedOrdinaryClassLexicalBindingName(candidate.declaration);
+    if (
+      bindingName === undefined ||
+      candidate.fields.length === 0 ||
+      nestedOrdinaryClassBodyHasAccessor(candidate.declaration) ||
+      nestedOrdinaryClassBodyHasNestedExecutable(candidate.declaration)
+    ) {
+      continue;
+    }
+    const fields: IrNestedClassFieldCallAdmittedField[] = [];
+    for (const field of candidate.fields) {
+      const proof = proofs.get(field.call);
+      if (
+        !proof ||
+        proof.candidate !== candidate ||
+        proof.fieldCandidate !== field ||
+        proof.fieldDeclaration !== field.declaration ||
+        proof.fieldSupportUnitId !== field.record.id ||
+        proof.sourceFile !== candidate.sourceFile ||
+        proof.sourceId !== candidate.source.id ||
+        proof.classId !== candidate.classRecord.id ||
+        proof.constructorUnitId !== candidate.constructorRecord.id ||
+        proof.containingTerminalUnitId !== candidate.containingTerminalRecord.id ||
+        proof.target.binding.kind !== "unit" ||
+        proof.target.binding.unitId !== proof.calleeUnitId ||
+        !isIrNestedClassFieldCallProofCurrent(proof, input)
+      ) {
+        fields.length = 0;
+        break;
+      }
+      fields.push(
+        Object.freeze({
+          declaration: field.declaration,
+          call: field.call,
+          fieldSupportUnitId: field.record.id,
+          calleeUnitId: proof.calleeUnitId,
+          calleeName: proof.target.name,
+        }),
+      );
+    }
+    if (fields.length !== candidate.fields.length) continue;
+    admitted.push(
+      Object.freeze({
+        candidate,
+        declaration: candidate.declaration,
+        sourceFile: candidate.sourceFile,
+        sourceId: candidate.source.id,
+        classId: candidate.classRecord.id,
+        constructorUnitId: candidate.constructorRecord.id,
+        containingTerminalUnitId: candidate.containingTerminalRecord.id,
+        bindingName,
+        fields: Object.freeze(fields),
+      }),
+    );
+  }
+  return createIrNestedClassFieldCallAdmission(inventory, admitted);
+}
 
 export interface IrLegacySelectionProjection {
   readonly selection: IrSelection;
@@ -189,6 +285,8 @@ interface IndexedClass {
 interface ImplicitConstructorSelectionContext {
   readonly identityContext: IrPlanningIdentityContext;
   readonly options: IrIdentitySelectionOptions;
+  /** The one validated proof-derived marker; never re-derived from syntax here. */
+  readonly fieldCallAdmission: IrNestedClassFieldCallAdmission | undefined;
   readonly localClasses: ReadonlySet<string>;
   readonly trackFallbacks: boolean;
   readonly classClaims: Map<IrUnitId, IrIdentityClassMemberClaim>;
@@ -217,7 +315,8 @@ function selectImplicitConstructorClaim(
   const parentIsLocal = parentName !== null && context.localClasses.has(parentName);
   const topLevelSourceClass =
     !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === declaration.getSourceFile();
-  const boundedNestedSourceClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
+  const boundedNestedSourceClass =
+    nestedClass && irPreparedNestedOrdinaryClass(declaration, context.fieldCallAdmission);
   if (
     (topLevelSourceClass || boundedNestedSourceClass) &&
     sameNameCandidateCount === 1 &&
@@ -847,6 +946,50 @@ export function planIrCompilationByIdentity(
       "IR field-call proof sidecar belongs to a different inventory",
     );
   }
+  // (#3522 F4) The marker is consumed, never recomputed. It must belong to this
+  // exact inventory, and every class it admits in this source must still be the
+  // exact inventory candidate the proof was minted against.
+  const fieldCallAdmission = options?.nestedClassFieldCallAdmission;
+  if (fieldCallAdmission) {
+    if (!isIrNestedClassFieldCallAdmissionForInventory(fieldCallAdmission, identityContext.inventory)) {
+      return selectorIdentityInvariant(
+        "unit-record-mismatch",
+        "IR field-call admission marker belongs to a different inventory",
+      );
+    }
+    for (const admitted of fieldCallAdmission.classes) {
+      if (admitted.sourceFile !== sourceFile) continue;
+      if (
+        admitted.sourceId !== sourceId ||
+        fieldCallCandidateByClassId.get(admitted.classId) !== admitted.candidate ||
+        admitted.candidate.declaration !== admitted.declaration ||
+        admitted.candidate.constructorRecord.id !== admitted.constructorUnitId ||
+        admitted.candidate.containingTerminalRecord.id !== admitted.containingTerminalUnitId ||
+        admitted.fields.length !== admitted.candidate.fields.length ||
+        admitted.fields.some((field, index) => {
+          const callee = identityContext.terminalByUnitId.get(field.calleeUnitId);
+          const calleeDeclaration = identityContext.declarationByUnitId.get(field.calleeUnitId);
+          return (
+            admitted.candidate.fields[index]?.declaration !== field.declaration ||
+            admitted.candidate.fields[index]?.call !== field.call ||
+            admitted.candidate.fields[index]?.record.id !== field.fieldSupportUnitId ||
+            !callee ||
+            callee.kind !== "top-level-function" ||
+            callee.sourceId !== sourceId ||
+            !calleeDeclaration ||
+            !ts.isFunctionDeclaration(calleeDeclaration) ||
+            calleeDeclaration.parent !== sourceFile ||
+            calleeDeclaration.name?.text !== field.calleeName
+          );
+        })
+      ) {
+        return selectorIdentityInvariant(
+          "class-record-mismatch",
+          `IR field-call admission ${admitted.classId} is detached from its exact inventory candidate`,
+        );
+      }
+    }
+  }
   if (!options?.experimentalIR) {
     return {
       units: new Map(),
@@ -855,6 +998,7 @@ export function planIrCompilationByIdentity(
       ...(options?.nestedClassFieldCallProofs
         ? { nestedClassFieldCallProofs: options.nestedClassFieldCallProofs }
         : {}),
+      ...(fieldCallAdmission ? { nestedClassFieldCallAdmission: fieldCallAdmission } : {}),
     };
   }
   const population = selectionFunctionPopulation(sourceFile, sourceId, identityContext, options);
@@ -877,7 +1021,7 @@ export function planIrCompilationByIdentity(
   const projectedClassCandidates = new Map(classesByName);
   for (const candidate of classes) {
     if (candidate.declaration.parent === sourceFile) continue;
-    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(candidate.declaration);
+    const bindingName = irPreparedNestedOrdinaryClassBindingName(candidate.declaration, fieldCallAdmission);
     if (bindingName === undefined) continue;
     if (options.projectedClassShapesById?.has(candidate.classId) !== true) continue;
     addNameIndex(projectedClassCandidates, bindingName, candidate);
@@ -951,7 +1095,16 @@ export function planIrCompilationByIdentity(
     }
   }
   const classClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
-  const implicitSelection = { identityContext, options, localClasses, trackFallbacks, classClaims, reasons, details };
+  const implicitSelection = {
+    identityContext,
+    options,
+    fieldCallAdmission,
+    localClasses,
+    trackFallbacks,
+    classClaims,
+    reasons,
+    details,
+  };
   const nestedClasses = classes.filter(({ classId }) =>
     identityContext.inventory.terminalUnits.some(
       (terminal) => terminal.lexicalOwnerId === classId && terminal.containingTerminalOwnerId !== undefined,
@@ -972,8 +1125,12 @@ export function planIrCompilationByIdentity(
       const parentName = extendsParentName(declaration);
       const parentIsLocal = parentName !== null && localClasses.has(parentName);
       const boundedAccessorClass = isBoundedPreparedAccessorClass(declaration);
-      const boundedNestedOrdinaryClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
-      const nestedFieldCallCandidate = fieldCallCandidateByClassId.get(classId);
+      const boundedNestedOrdinaryClass = nestedClass && irPreparedNestedOrdinaryClass(declaration, fieldCallAdmission);
+      // Inventory candidacy and selector admission are separate decisions: a
+      // candidate whose exact proof-derived marker admits it leaves this
+      // normalization arm and joins the ordinary bounded family below.
+      const nestedFieldCallCandidate =
+        fieldCallAdmission?.getByClassId(classId) === undefined ? fieldCallCandidateByClassId.get(classId) : undefined;
       const boundedTopLevelAccessorClass =
         !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
       // (#3522) Arms the accessor-only WRITEBACK contract (exact syntax-key
@@ -1244,7 +1401,7 @@ export function planIrCompilationByIdentity(
   // If any body rejects—or the enclosing function itself rejects—withdraw the
   // complete class plus owner before lowering can observe a mixed component.
   for (const { classId, declaration } of classes) {
-    if (!isBoundedPreparedNestedOrdinaryClass(declaration)) continue;
+    if (!irPreparedNestedOrdinaryClass(declaration, fieldCallAdmission)) continue;
     const terminals = identityContext.inventory.terminalUnits.filter(
       (terminal) =>
         terminal.lexicalOwnerId === classId &&
@@ -1345,6 +1502,7 @@ export function planIrCompilationByIdentity(
     ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),
     ...(nestedClassFieldCallCandidates.length ? { nestedClassFieldCallCandidates } : {}),
     ...(options.nestedClassFieldCallProofs ? { nestedClassFieldCallProofs: options.nestedClassFieldCallProofs } : {}),
+    ...(fieldCallAdmission ? { nestedClassFieldCallAdmission: fieldCallAdmission } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },
   };

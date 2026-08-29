@@ -1,6 +1,14 @@
 // The landing page keeps the legacy ES3/Core feature section in the static
-// catalog, while the current edition artifacts publish its old-test residue
-// as `Unclassified (legacy)`. Keep the alias visible in the section header.
+// catalog, while the current edition artifacts publish its old-test residue as
+// `Unclassified (legacy)`. The alias stays visible in the section header — but
+// the header must NOT present that bucket's ratio as a rate.
+//
+// Editions are read from test frontmatter, and ES1–ES3 predate every marker
+// Test262 has (`es5id` is the oldest, and it names the ES5.1 section defining a
+// feature, not the edition that introduced it). So `Unclassified (legacy)` is
+// "frontmatter carries no edition marker", i.e. metadata residue — not "the ES3
+// tests". Rendering 273/273 as "100%" stated an ES3 conformance figure the data
+// cannot support, directly above rows measured at 83%, 87% and 66%.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM, VirtualConsole } from "jsdom";
@@ -70,17 +78,45 @@ function readLegacyPassbar(dom: JSDOM) {
 }
 
 describe("landing ES3/Core edition passbar", () => {
-  it("uses the legacy bucket for the static ES3/Core section", async () => {
+  it("shows the legacy population without stating a rate, in either lane", async () => {
     const dom = await bootPage();
     try {
-      expect(readLegacyPassbar(dom)).toEqual({ count: "271 / 273", pct: "99%" });
+      // Standalone lane: the bucket is 271/273, which would have rendered 99%.
+      expect(readLegacyPassbar(dom)).toEqual({ count: "273 unmarked files", pct: "unclassified" });
 
       const toggle = dom.window.document.getElementById("host-support-toggle") as HTMLInputElement;
       toggle.checked = true;
       toggle.dispatchEvent(new dom.window.Event("change"));
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      expect(readLegacyPassbar(dom)).toEqual({ count: "273 / 273", pct: "100%" });
+      // Host lane: 273/273. A rate here is the specific claim to avoid — it is
+      // the "100%" that reads as "ES3 is done".
+      expect(readLegacyPassbar(dom)).toEqual({ count: "273 unmarked files", pct: "unclassified" });
+    } finally {
+      dom.window.close();
+    }
+  }, 30_000);
+
+  it("marks the bar as not-an-edition and explains why, but leaves real editions alone", async () => {
+    const dom = await bootPage();
+    try {
+      const sectionFor = (label: string) =>
+        [...dom.window.document.querySelectorAll(".feat-section")].find(
+          (candidate) => candidate.querySelector(".feat-edition-label")?.textContent?.trim() === label,
+        );
+
+      const legacyBar = sectionFor("ES3 / Core")?.querySelector(".feat-edition-passbar");
+      expect(legacyBar?.hasAttribute("data-not-an-edition")).toBe(true);
+      expect(legacyBar?.getAttribute("title")).toContain("no edition marker");
+      expect(legacyBar?.getAttribute("title")).toContain("NOT an ES3 conformance rate");
+      // The track is not filled to a ratio that would be read as conformance.
+      expect((legacyBar?.querySelector(".feat-edition-passbar-fill") as HTMLElement)?.style.width).toBe("0%");
+
+      // ES5 is a real edition bucket and keeps its measured rate.
+      const es5Bar = sectionFor("ES5")?.querySelector(".feat-edition-passbar");
+      expect(es5Bar?.hasAttribute("data-not-an-edition")).toBe(false);
+      expect(es5Bar?.querySelector(".feat-edition-passbar-text")?.textContent?.trim()).toBe("94%");
+      expect(es5Bar?.querySelector(".feat-edition-passbar-count")?.textContent?.trim()).toBe("8,454 / 9,029");
     } finally {
       dom.window.close();
     }
