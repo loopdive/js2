@@ -1,10 +1,12 @@
 ---
 id: 5163
 title: "IR: adopt mutating expression statements with property/element LHS (`o.x += 1;`, `o.x++;`, `a = b = 1;`)"
-status: ready
+status: done
+completed: 2026-08-29
+assignee: ttraenkler/opus-5163
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: m
 feasibility: medium
@@ -135,3 +137,48 @@ first, then plain-field property chains; accessor targets stay out.
    `--update-on-decrease`; growth anywhere fails.
 5. Ratchet gates chained bare before every commit; no local test262 (CI
    merge_group diff is the conformance gate).
+
+## Outcome (2026-08-29)
+
+All four sub-slices landed. Probes flip 12/12 (7 top-level in
+`.tmp/stmtmut-probe.ts`, 5 body-buffer in `.tmp/stmtmut-body.ts`), every one
+`kind:emitted` + `irBodyEmitted:true`; the three controls keep claiming and no
+new fallback bucket appears (`check:ir-fallbacks`: unintended (none), post-claim
+(none), module-level (none)).
+
+Three findings worth carrying forward:
+
+- **The plan's UNVERIFIED reordering assumption is VERIFIED.** `effectsConflict`
+  (src/ir/effects.ts) returns true for `a.readsHeap && b.writesHeap`, and
+  `object.get`/`class.get` are `readsHeap` while `object.set`/`class.set` and
+  every call are `writesHeap` — so no pass can hoist the old-value read across
+  the RHS's side effects. The `o.x += f(o)` equivalence test is the empirical
+  backstop and passes.
+- **S3 needed an i32-promotion fix, not just a lowering.** `planI32Slots`
+  promoted `b` in `a = b = 7` (its write `b = 7` is canon-i32-lowerable in
+  isolation), so the chain lowering met a mixed f64/i32 target set and demoted —
+  and because the selector had already claimed, that demote surfaced as a
+  `kind:invariant` **hard error** (`unpatched-slot`), not a clean fallback.
+  Fixed at the source: `writeShapesAreLowerable` now refuses to promote a slot
+  whose write is a link in a `=`-chain (#3741 invariant W forbids reaching an
+  i32 slot by truncating an already-lowered f64). All chain targets are f64 by
+  construction afterwards.
+- **Both walkers and both dispatchers now share ONE gate each** —
+  `phase1MutatingStatementVerdict` (select.ts) and
+  `lowerAdoptedMutatingStatement` (from-ast.ts) — so top-level and body-buffer
+  positions cannot drift. This also kept both budget gates green with no
+  `func-budget-allow:` grant needed (`isPhase1StatementListInScope` went +90 →
+  0 over its ceiling, `lowerStatementList` back under 300).
+
+Deliberately left out, demoting TYPED (asserted as `kind:unsupported`, never
+`invariant`, in the new test file): non-f64 fields/elements (strings), accessor-
+backed properties, extern/DOM receivers, TypedArray views, #3734 narrowed-i32
+vecs, the inferred linear-vector lane, element targets inside a chain, and
+module-binding chain targets. Value-position twins (`const v = (o.x += 1)`)
+remain out of scope as the plan stated.
+
+`tests/issue-4459.test.ts` needed one edit: four of its five negative pins
+(`o.x += 1;`, `a[i] += 1;`, `a = b = 1;`, `o.x++;`) asserted exactly the
+residual this issue closes. They are INVERTED there (now asserting claim +
+emission) rather than deleted, so the boundary stays checked; `new.target;`
+still pins as rejecting.

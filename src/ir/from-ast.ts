@@ -200,6 +200,7 @@ import {
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
+  peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque `TagId`, so a
@@ -1712,6 +1713,11 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         lowerYield(s.expression, cx);
         continue;
       }
+      // (#5163) The mutating shapes this issue adopted — chained assignment,
+      // member compound assignment, and `++`/`--`. Placed BEFORE the
+      // single-target `=` arms because a chain's outer LHS matches those arms
+      // while its RHS is itself an assignment they cannot lower.
+      if (lowerAdoptedMutatingStatement(s.expression, cx)) continue;
       if (
         ts.isBinaryExpression(s.expression) &&
         s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -5720,6 +5726,151 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, val], null);
 }
 
+/**
+ * (#5163 S2) Lower a MUTATING element statement — `a[i] += e;`, `a[i]++;` — in
+ * statement position. The element twin of `lowerPropertyCompound`, and the
+ * read/write composition of `lowerElementAccess`'s vec arm with
+ * `lowerElementStore`'s tail.
+ *
+ * Evaluation order is receiver → index → READ → RHS → binop → WRITE, with the
+ * receiver and the index each lowered EXACTLY ONCE and the resulting SSA ids
+ * reused for both the read and the write. That is what makes `a[g()] += h()`
+ * call `g` once and `h` once, in that order — re-deriving the index for the
+ * store would call `g` twice.
+ *
+ * Bounds behaviour is inherited unchanged from the two paths it composes: with
+ * the counted-loop proof the read is an unchecked `vec.get` and the write a
+ * `vec.set`; without it the read is the bounds-checked `emitSafeVecGet` (which
+ * yields the JS-correct OOB value, NaN for an f64 vec) and the write goes
+ * through the grow-capable `__vec_elem_set` provider — so an out-of-bounds
+ * `a[i] += 1` grows and stores NaN exactly as legacy does.
+ *
+ * Restricted to f64-element vecs. TypedArray views (per-view conversions),
+ * dynamic receivers, externref/native-string element vecs, the inferred linear
+ * vector lane (a different OOB sentinel) and #3734 narrowed-i32 vecs all
+ * demote TYPED: a narrowed vector's read widens to f64 while its store demands
+ * an exact i32, and a round trip through the f64 binop is precisely where
+ * saturate-vs-wrap divergence would appear.
+ */
+function lowerElementCompound(
+  lhs: ts.ElementAccessExpression,
+  compoundOp: ts.SyntaxKind,
+  rhs: ts.Expression | null,
+  cx: LowerCtx,
+): void {
+  if (lhs.questionDotToken) {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: optional-chained compound element write (a?.[i] += v) not in IR scope (${cx.funcName})`,
+    );
+  }
+  const binop = compoundF64Binop(compoundOp);
+  if (binop === null) {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: compound element assign op ${ts.SyntaxKind[compoundOp]} not in IR scope (${cx.funcName})`,
+    );
+  }
+  if (cx.resolver?.isTypedArrayViewExpr?.(lhs.expression)) {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element write on a TypedArray view not in IR scope (${cx.funcName})`,
+    );
+  }
+  // (1) Receiver — ONCE.
+  const recv = lowerExpr(lhs.expression, cx, IR_F64);
+  const recvType = cx.builder.typeOf(recv);
+  const recvVal = asVal(recvType);
+  const scalarVecReceiver =
+    recvVal?.kind === "i32" &&
+    (cx.resolver?.isVecValueExpression?.(lhs.expression) === true ||
+      cx.emptyArrayInference.isResolvedVectorExpression(lhs.expression));
+  if (
+    recvType.kind !== "vec" &&
+    (!recvVal || (recvVal.kind !== "ref" && recvVal.kind !== "ref_null" && !scalarVecReceiver))
+  ) {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element write on ${describeIrType(recvType)} not in IR scope (${cx.funcName})`,
+    );
+  }
+  const resolvedVec = resolveIrVecType(recvType, cx);
+  if (!resolvedVec) {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element write receiver is not a recognisable vec in ${cx.funcName}`,
+    );
+  }
+  const vec = resolvedVec.lowering;
+  if (vec.elementValType.kind !== "f64" || isNarrowedI32Vec(vec, lhs.expression, cx)) {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element write into a non-plain-f64 vec not in IR scope (${cx.funcName})`,
+    );
+  }
+  if (scalarVecReceiver && cx.emptyArrayInference.isResolvedVectorExpression(lhs.expression)) {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element write on an inferred linear vector not in IR scope (${cx.funcName})`,
+    );
+  }
+  // (2) Index — ONCE; the same i32 SSA id feeds the read and the write.
+  const idxRaw = lowerExpr(lhs.argumentExpression, cx, IR_F64);
+  const idxTy = asVal(cx.builder.typeOf(idxRaw));
+  let idxI32: IrValueId;
+  if (idxTy?.kind === "i32") {
+    idxI32 = idxRaw;
+  } else if (idxTy?.kind === "f64") {
+    idxI32 = cx.builder.emitUnary("i32.trunc_sat_f64_s", idxRaw, irVal({ kind: "i32" }));
+  } else {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element index must be number or bool in ${cx.funcName}`,
+    );
+  }
+  // (3) READ — strictly before the RHS.
+  const proven = isProvenInBoundsIr(lhs, cx);
+  const oldValue = proven
+    ? cx.builder.emitVecGet(recv, idxI32, resolvedVec.elementType)
+    : emitSafeVecGet(recv, idxI32, vec.elementValType, cx);
+  if (asVal(cx.builder.typeOf(oldValue))?.kind !== "f64") {
+    throw new IrUnsupportedError(
+      "element-store-unsupported",
+      "build",
+      `ir/from-ast: compound element read yielded ${describeIrType(cx.builder.typeOf(oldValue))} in ${cx.funcName}`,
+    );
+  }
+  // (4) RHS — a synthetic `1` for `++`/`--`.
+  const rhsValue = rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, IR_F64);
+  if (asVal(cx.builder.typeOf(rhsValue))?.kind !== "f64") {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: compound element write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
+    );
+  }
+  // (5) binop, then (6) the store tail — the same fast/provider fork
+  // `lowerElementStore` uses, keyed off the SAME bounds proof as the read.
+  const result = cx.builder.emitBinary(binop, oldValue, rhsValue, IR_F64);
+  if (proven) {
+    cx.builder.emitVecSet(recv, idxI32, result);
+    return;
+  }
+  const provider =
+    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
+      ? IR_HOLEY_ARRAY_ELEM_SET
+      : vecElemSetProviderSymbol(recvType, vec);
+  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, result], null);
+}
+
 function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrValueId {
   // #2713 — `a?.[i]` carries a `questionDotToken`: on a `null`/`undefined`
   // receiver the access must short-circuit to `undefined`, not index it.
@@ -8699,6 +8850,313 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   );
 }
 
+/**
+ * (#5163 S1) Lower a MUTATING property statement — `o.x += e;`, `o.x -= e;`,
+ * `o.x++;`, `--o.x;` — in statement position, where the result is discarded.
+ *
+ * This deliberately does NOT reuse `lowerPropertyAssignment`: plain `=`
+ * evaluates receiver → RHS with **no read of the old value**, while a compound
+ * assignment evaluates receiver → **READ** → RHS → binop → write (ES §13.15.2
+ * evaluates `GetValue(lref)` before the RHS). Reusing the `=` lowerer wholesale
+ * would silently reorder the read after the RHS, so only the *write tail*
+ * (`emitObjectSet` / `emitClassSet`) is shared in spirit.
+ *
+ * Invariants:
+ *  - the receiver is lowered EXACTLY ONCE; the one SSA id feeds both the read
+ *    and the write, so `f().x += 1` calls `f` once;
+ *  - the read is emitted BEFORE the RHS, so `o.x += f(o)` (where `f` mutates
+ *    `o.x`) writes `oldRead + rhs`, matching the spec and legacy;
+ *  - `++`/`--` in statement position is the same lowering with a synthetic
+ *    `1` RHS — the discarded result makes prefix and postfix identical.
+ *
+ * Restricted to PLAIN f64 fields on object / class shapes. Accessor-backed
+ * properties and extern receivers turn the read and the write into CALLS whose
+ * re-entrancy this desugaring does not model, so they demote TYPED (the
+ * function falls back to the legacy body rather than being approximated).
+ */
+function lowerPropertyCompound(
+  lhs: ts.PropertyAccessExpression,
+  compoundOp: ts.SyntaxKind,
+  rhs: ts.Expression | null,
+  cx: LowerCtx,
+): void {
+  if (lhs.questionDotToken !== undefined) {
+    throw new IrUnsupportedError(
+      "property-write-unsupported",
+      "build",
+      `ir/from-ast: optional-chained compound property write (o?.x += v) not in IR scope (${cx.funcName})`,
+    );
+  }
+  const binop = compoundF64Binop(compoundOp);
+  if (binop === null) {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: compound property assign op ${ts.SyntaxKind[compoundOp]} not in IR scope (${cx.funcName})`,
+    );
+  }
+  const fieldName = irPrivateFieldName(lhs.name);
+  // (1) Receiver — ONCE.
+  const recv = lowerExpr(lhs.expression, cx, IR_F64);
+  const recvType = cx.builder.typeOf(recv);
+  if (recvType.kind !== "object" && recvType.kind !== "class") {
+    throw new IrUnsupportedError(
+      "property-write-unsupported",
+      "build",
+      `ir/from-ast: compound property write on ${describeIrType(recvType)} not in IR scope (${cx.funcName})`,
+    );
+  }
+  const field = recvType.shape.fields.find((candidate) => candidate.name === fieldName);
+  if (!field) {
+    // No plain field ⇒ accessor-backed (or absent). Both demote.
+    throw new IrUnsupportedError(
+      "property-write-unsupported",
+      "build",
+      `ir/from-ast: compound write to non-field ".${fieldName}" (accessor or missing) in ${cx.funcName}`,
+    );
+  }
+  const fieldType = field.type;
+  if (asVal(fieldType)?.kind !== "f64") {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: compound property write to non-f64 field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
+    );
+  }
+  // (2) READ — strictly before the RHS.
+  const oldValue =
+    recvType.kind === "class"
+      ? cx.builder.emitClassGet(recv, fieldName, fieldType)
+      : cx.builder.emitObjectGet(recv, fieldName, fieldType);
+  // (3) RHS — a synthetic `1` for `++`/`--`.
+  const rhsValue =
+    rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, fieldType);
+  if (asVal(cx.builder.typeOf(rhsValue))?.kind !== "f64") {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: compound property write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
+    );
+  }
+  // (4) binop, then (5) the write tail.
+  const result = cx.builder.emitBinary(binop, oldValue, rhsValue, IR_F64);
+  if (!irTypeEquals(cx.builder.typeOf(result), fieldType)) {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: compound property result ${describeIrType(cx.builder.typeOf(result))} does not match field ` +
+        `${describeIrType(fieldType)} in ${cx.funcName}`,
+    );
+  }
+  if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
+  else cx.builder.emitObjectSet(recv, fieldName, result);
+}
+
+/**
+ * (#5163) Dispatch the mutating expression-statement shapes this issue adopted:
+ * chained assignment, member compound assignment, and `++`/`--` on any target.
+ * Returns `true` when it handled the statement.
+ *
+ * Shared verbatim by BOTH statement dispatchers (`lowerStatementList` and
+ * `lowerStmt`) so the two positions cannot drift — a shape lowered one way at
+ * top level and another inside a loop body is exactly the class of divergence
+ * the selector's parallel arms are written to prevent.
+ *
+ * MUST be consulted BEFORE the single-target `=` arms: a chain's outer LHS
+ * matches those arms, but its RHS is itself an assignment they cannot lower.
+ */
+function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boolean {
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    // S3 — `a = b = e;`.
+    if (op === ts.SyntaxKind.EqualsToken && peelAssignmentChain(expr) !== null) {
+      lowerChainedAssignment(expr, cx);
+      return true;
+    }
+    // S1/S2 — `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms because
+    // the old value must be READ before the RHS is evaluated (ES §13.15.2).
+    if (compoundF64Binop(op) !== null) {
+      if (ts.isPropertyAccessExpression(expr.left)) {
+        lowerPropertyCompound(expr.left, op, expr.right, cx);
+        return true;
+      }
+      if (ts.isElementAccessExpression(expr.left)) {
+        lowerElementCompound(expr.left, op, expr.right, cx);
+        return true;
+      }
+    }
+    return false;
+  }
+  // S0/S1/S2 — `x++;` / `--x;` / `o.x++;` / `a[i]--;`. The result is discarded,
+  // so prefix and postfix lower identically; a member target routes to the same
+  // compound helper with a synthetic `1`.
+  if (!ts.isPostfixUnaryExpression(expr) && !ts.isPrefixUnaryExpression(expr)) return false;
+  if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return false;
+  const compoundOp =
+    expr.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusEqualsToken : ts.SyntaxKind.MinusEqualsToken;
+  const operand = expr.operand;
+  if (ts.isIdentifier(operand)) {
+    lowerIncrementDecrement(operand, expr.operator, cx);
+    return true;
+  }
+  if (ts.isPropertyAccessExpression(operand)) {
+    lowerPropertyCompound(operand, compoundOp, null, cx);
+    return true;
+  }
+  if (ts.isElementAccessExpression(operand)) {
+    lowerElementCompound(operand, compoundOp, null, cx);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * (#5163 S3) One resolved write destination in a chained assignment. Resolving
+ * every destination BEFORE the RHS is lowered is what pins the evaluation
+ * order: a property destination captures its receiver SSA id here.
+ */
+type IrChainTarget =
+  | { readonly kind: "slot"; readonly name: string; readonly slotIndex: number; readonly type: IrType }
+  | { readonly kind: "refCell"; readonly name: string; readonly cell: IrValueId; readonly type: IrType }
+  | {
+      readonly kind: "object" | "class";
+      readonly recv: IrValueId;
+      readonly field: string;
+      readonly type: IrType;
+    };
+
+/**
+ * (#5163 S3) Lower a chained assignment STATEMENT — `a = b = e;`,
+ * `o.x = o.y = e;` — where the overall result is discarded.
+ *
+ * Evaluation order (ES §13.15.2, applied to the right-nested chain):
+ *   1. every target's REFERENCE, outermost → innermost — for a property target
+ *      that means its receiver is evaluated here, before the RHS;
+ *   2. the innermost RHS, EXACTLY ONCE, yielding one SSA value `v`;
+ *   3. the writes, innermost → outermost, EVERY one of them storing `v`.
+ *
+ * Step 3 is the subtle one: the value of an inner assignment IS the RHS value,
+ * never a re-read of the inner target. Re-reading would diverge the moment a
+ * target normalizes what it stores (a narrowing slot, a setter), and `a = b = e`
+ * would stop meaning "both get `e`". So `v` is stored verbatim into each target
+ * and never read back.
+ *
+ * Scope: f64 destinations only — plain locals (slot or captured ref cell) and
+ * plain f64 fields on object/class shapes, all sharing ONE IrType. A mixed-type
+ * chain, a module binding (TDZ + representation checks this does not perform),
+ * an i32-promoted slot (#3741 invariant W: its RHS must lower directly as an
+ * exact i32) and element targets all demote TYPED to the legacy body.
+ */
+function lowerChainedAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void {
+  const chain = peelAssignmentChain(expr);
+  if (chain === null) {
+    // invariant (producer-promise): the selector admitted a chain here — #4502.
+    throw new Error(`ir/from-ast: chained-assignment lowering called on a non-chain (${cx.funcName})`);
+  }
+  // (1) Destinations, OUTERMOST first — property receivers evaluate now.
+  const targets: IrChainTarget[] = [];
+  for (const target of chain.targets) {
+    if (ts.isIdentifier(target)) {
+      const binding = cx.scope.get(target.text);
+      if (!binding) {
+        throw new IrUnsupportedError(
+          "property-write-unsupported",
+          "build",
+          `ir/from-ast: chained assignment to undeclared identifier "${target.text}" in ${cx.funcName}`,
+        );
+      }
+      if (binding.kind === "slot") {
+        if (binding.i32Storage) {
+          throw new IrUnsupportedError(
+            "compound-assign-unsupported",
+            "build",
+            `ir/from-ast: chained assignment to i32-promoted slot "${target.text}" not in IR scope (${cx.funcName})`,
+          );
+        }
+        targets.push({
+          kind: "slot",
+          name: target.text,
+          slotIndex: binding.slotIndex,
+          type: binding.asType ?? binding.type,
+        });
+        continue;
+      }
+      if (binding.kind === "local" && binding.type.kind === "boxed") {
+        targets.push({ kind: "refCell", name: target.text, cell: binding.value, type: binding.type.inner });
+        continue;
+      }
+      throw new IrUnsupportedError(
+        "property-write-unsupported",
+        "build",
+        `ir/from-ast: chained assignment to a ${binding.kind} binding "${target.text}" not in IR scope (${cx.funcName})`,
+      );
+    }
+    if (!ts.isPropertyAccessExpression(target)) {
+      throw new IrUnsupportedError(
+        "property-write-unsupported",
+        "build",
+        `ir/from-ast: chained assignment target is not an identifier or property access (${cx.funcName})`,
+      );
+    }
+    const fieldName = irPrivateFieldName(target.name);
+    const recv = lowerExpr(target.expression, cx, IR_F64);
+    const recvType = cx.builder.typeOf(recv);
+    if (recvType.kind !== "object" && recvType.kind !== "class") {
+      throw new IrUnsupportedError(
+        "property-write-unsupported",
+        "build",
+        `ir/from-ast: chained assignment to a property of ${describeIrType(recvType)} not in IR scope (${cx.funcName})`,
+      );
+    }
+    const field = recvType.shape.fields.find((candidate) => candidate.name === fieldName);
+    if (!field) {
+      throw new IrUnsupportedError(
+        "property-write-unsupported",
+        "build",
+        `ir/from-ast: chained assignment to non-field ".${fieldName}" (accessor or missing) in ${cx.funcName}`,
+      );
+    }
+    targets.push({ kind: recvType.kind, recv, field: fieldName, type: field.type });
+  }
+  // One shared f64 destination type keeps the single RHS value sound for every
+  // target without any per-target coercion.
+  const destType = targets[0]!.type;
+  if (asVal(destType)?.kind !== "f64" || !targets.every((t) => irTypeEquals(t.type, destType))) {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: chained assignment needs one shared f64 destination type in ${cx.funcName}`,
+    );
+  }
+  // (2) The RHS — ONCE.
+  const value = lowerExpr(chain.rhs, cx, destType);
+  const valueType = cx.builder.typeOf(value);
+  if (!irTypeAssignable(valueType, destType)) {
+    throw new IrUnsupportedError(
+      "compound-assign-unsupported",
+      "build",
+      `ir/from-ast: chained assignment value ${describeIrType(valueType)} is not assignable to ` +
+        `${describeIrType(destType)} in ${cx.funcName}`,
+    );
+  }
+  // (3) Writes, INNERMOST first — every one stores the SAME `value`.
+  const encoding = inferStringEncoding(chain.rhs, cx);
+  for (let i = targets.length - 1; i >= 0; i--) {
+    const target = targets[i]!;
+    if (target.kind === "slot") {
+      cx.builder.emitSlotWrite(target.slotIndex, value);
+      const binding = cx.scope.get(target.name);
+      if (binding && binding.kind === "slot") cx.scope.set(target.name, { ...binding, stringEncoding: encoding });
+    } else if (target.kind === "refCell") {
+      cx.builder.emitRefCellSet(target.cell, value);
+    } else if (target.kind === "class") {
+      cx.builder.emitClassSet(target.recv, target.field, value);
+    } else {
+      cx.builder.emitObjectSet(target.recv, target.field, value);
+    }
+  }
+}
+
 /** Shared typed field write for source assignments and constructor elements. */
 function lowerCheckedClassFieldSet(
   receiver: IrValueId,
@@ -10274,6 +10732,9 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerYield(stmt.expression, cx);
       return;
     }
+    // (#5163) The adopted mutating shapes — the SAME helper the top-level
+    // dispatcher uses, consulted at the same point in the order.
+    if (lowerAdoptedMutatingStatement(stmt.expression, cx)) return;
     if (ts.isBinaryExpression(stmt.expression)) {
       const op = stmt.expression.operatorToken.kind;
       // Plain assignment `<id> = <expr>` — id MUST resolve to a `slot`
@@ -10311,22 +10772,9 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
         }
       }
     }
-    // Slice 12 (#1280): postfix `i++` / `i--` and prefix `++i` / `--i`
-    // as expression statements. Desugar to compound assignment by
-    // synthesizing a `PlusEquals`/`MinusEquals` lowering against
-    // an i32(1)/f64(1) literal — the value semantics for use as an
-    // expression-statement match: the RHS is read, modified, written
-    // back, the result is dropped.
-    if (ts.isPostfixUnaryExpression(stmt.expression) || ts.isPrefixUnaryExpression(stmt.expression)) {
-      const op = stmt.expression.operator;
-      if (
-        (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) &&
-        ts.isIdentifier(stmt.expression.operand)
-      ) {
-        lowerIncrementDecrement(stmt.expression.operand, op, cx);
-        return;
-      }
-    }
+    // Slice 12 (#1280): postfix `i++` / `i--` and prefix `++i` / `--i` as
+    // expression statements are handled by `lowerAdoptedMutatingStatement`
+    // above, alongside the #5163 member targets that share their desugaring.
     // (#4459) Value-discarding statement inside a body buffer — the same
     // `lowerDiscardedExpression` the top-level walker uses. A discarded
     // ternary collects one buffer per arm and emits `if.stmt` (#2952
@@ -10897,6 +11345,28 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
 }
 
 /**
+ * (#5163) The compound-assignment token → f64 binop map, factored out of
+ * `lowerCompoundAssignment` so the property (S1) and element (S2) compound
+ * lowerings share ONE table with the identifier one. `null` = an operator
+ * outside the f64 arithmetic set (`%=`, `**=`, `&&=`, the bitwise compounds),
+ * which every caller demotes on rather than approximating.
+ */
+function compoundF64Binop(compoundOp: ts.SyntaxKind): IrBinop | null {
+  switch (compoundOp) {
+    case ts.SyntaxKind.PlusEqualsToken:
+      return "f64.add";
+    case ts.SyntaxKind.MinusEqualsToken:
+      return "f64.sub";
+    case ts.SyntaxKind.AsteriskEqualsToken:
+      return "f64.mul";
+    case ts.SyntaxKind.SlashEqualsToken:
+      return "f64.div";
+    default:
+      return null;
+  }
+}
+
+/**
  * Lower `<id> <op>= <expr>` by desugaring to `<id> = <id> <binop> <expr>`.
  * The binop is the arithmetic/comparison operator implied by the
  * compound-assignment token (e.g. `+=` → `f64.add` for f64 operands).
@@ -11006,25 +11476,12 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     );
   }
 
-  let binop: IrBinop;
-  switch (compoundOp) {
-    case ts.SyntaxKind.PlusEqualsToken:
-      binop = "f64.add";
-      break;
-    case ts.SyntaxKind.MinusEqualsToken:
-      binop = "f64.sub";
-      break;
-    case ts.SyntaxKind.AsteriskEqualsToken:
-      binop = "f64.mul";
-      break;
-    case ts.SyntaxKind.SlashEqualsToken:
-      binop = "f64.div";
-      break;
-    default:
-      demoteToLegacy(
-        "compound-assign-unsupported",
-        `ir/from-ast: unsupported compound assign op ${ts.SyntaxKind[compoundOp]} in ${cx.funcName}`,
-      );
+  const binop = compoundF64Binop(compoundOp);
+  if (binop === null) {
+    demoteToLegacy(
+      "compound-assign-unsupported",
+      `ir/from-ast: unsupported compound assign op ${ts.SyntaxKind[compoundOp]} in ${cx.funcName}`,
+    );
   }
   const result = cx.builder.emitBinary(binop, lhs, rhsValue, irVal({ kind: "f64" }));
   if (storage.kind === "moduleGlobal") {
