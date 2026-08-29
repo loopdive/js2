@@ -283,10 +283,12 @@ import {
   brandExternMethodResult,
   coerceType,
   compileExpression,
+  resolveEnclosingClassName,
   resolveThisStructName,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
+import { compileSuperCall } from "../class-bodies.js"; // (#5153 F) nested `super(...)`
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
@@ -7490,6 +7492,25 @@ function compileCallExpression(
     expr.expression.expression.kind === ts.SyntaxKind.SuperKeyword
   ) {
     return compileSuperMethodCall(ctx, fctx, expr);
+  }
+
+  // (#5153 F) A NESTED `super(...)` — one that is not a top-level statement of
+  // the constructor body, e.g. inside a `try`. `class-bodies.ts` intercepts
+  // only the statement form (its loop matches `ExpressionStatement` →
+  // `CallExpression` → `SuperKeyword`), so this shape reached the generic
+  // callee dispatch and emitted NOTHING: the parent constructor never ran and
+  // an abrupt completion inside it could not be caught
+  // (`call-construct-error.js`). Route it to the same lowering.
+  //
+  // Own-field initializers are deliberately NOT re-run here — the statement
+  // site owns that sequencing, and this arm only replaces a no-op.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor === true) {
+    const enclosingClass = resolveEnclosingClassName(fctx);
+    const thisLocal = fctx.localMap.get("this");
+    if (enclosingClass !== undefined && thisLocal !== undefined) {
+      compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+      return VOID_RESULT;
+    }
   }
 
   // (#1467) AggregateError(errors, message, options?) — called WITHOUT `new`.

@@ -95,6 +95,8 @@ import {
   tryStaticNewFunction,
 } from "./eval-inline.js";
 import { isRuntimeEvalCallableResultExpression } from "./runtime-eval-callable-result.js";
+import { emitToPropertyKeyOnce } from "./computed-member-reference.js"; // (#5153 D) §12.3.5.1 key evaluation
+import { nullishExternTestInstrs } from "../any-helpers.js"; // (#5153 C.1) RequireObjectCoercible on the super base
 import {
   coerceType,
   compileExpression,
@@ -1073,6 +1075,30 @@ function compileSuperMethodCall(ctx: CodegenContext, fctx: FunctionContext, expr
  * available, or `undefined` without emitting when the narrow gate cannot be
  * satisfied (the caller retains its historical default fallback).
  */
+/**
+ * (#5153 C.1) §12.3.5.3 MakeSuperPropertyReference step 5 —
+ * `RequireObjectCoercible(GetSuperBase())`.
+ *
+ * Consumes the super base (an externref, the result of `__getPrototypeOf` on
+ * the home object) from the stack and leaves it there unchanged, throwing a
+ * TypeError first when it is null or `undefined`. `nullishExternTestInstrs`
+ * recognizes BOTH carriers of "absent" in standalone (a real `ref.null.extern`
+ * and the `$AnyValue` tag-1 `undefined` singleton); when the singleton regime
+ * is inactive a plain `ref.is_null` is the complete test.
+ */
+function emitSuperBaseCoercibleGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const baseLocal = allocLocal(fctx, `__super_base_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: baseLocal });
+  const nullishTest = nullishExternTestInstrs(ctx, baseLocal);
+  if (nullishTest) fctx.body.push(...nullishTest);
+  else fctx.body.push({ op: "local.get", index: baseLocal }, { op: "ref.is_null" });
+  const start = fctx.body.length;
+  emitThrowTypeError(ctx, fctx, "Cannot read properties of null (super base)");
+  const throwInstrs = fctx.body.splice(start);
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+  fctx.body.push({ op: "local.get", index: baseLocal });
+}
+
 function compileStandaloneObjectLiteralSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1098,6 +1124,10 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   if (homeObjectLocal === undefined) return undefined;
   fctx.body.push({ op: "local.get", index: homeObjectLocal });
   fctx.body.push({ op: "call", funcIdx: getPrototypeOfIdx });
+  // (#5153 C.1) §12.3.5.3 step 5: RequireObjectCoercible(GetSuperBase()). With
+  // the home object's [[Prototype]] set to null the read must throw a
+  // TypeError, not quietly answer `undefined`.
+  emitSuperBaseCoercibleGuard(ctx, fctx);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   // The property receiver is the call-time `this`, not [[HomeObject]]. This
   // distinction is observable through inherited accessors on a borrowed
@@ -1293,8 +1323,19 @@ export function compileSuperElementAccess(
   }
 
   if (propName === undefined) {
-    // Dynamic key on super — cannot resolve at compile time
-    // Emit default value for the access type
+    // Dynamic key on super — the VALUE cannot be resolved at compile time, but
+    // §12.3.5.1 still evaluates the key expression and runs ToPropertyKey on
+    // it, so a throwing key expression (or a poisoned `toString`) must
+    // propagate rather than being skipped (#5153 D). Evaluate once, coerce,
+    // discard, then keep the historical type-shaped default for the value.
+    if (argExpr) {
+      const keyType = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
+      if (keyType !== null) {
+        if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
+        emitToPropertyKeyOnce(ctx, fctx);
+        fctx.body.push({ op: "drop" });
+      }
+    }
     const accessType = ctx.checker.getTypeAtLocation(expr);
     const wasmType = resolveWasmType(ctx, accessType);
     if (wasmType.kind === "f64") {
