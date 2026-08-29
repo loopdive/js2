@@ -29,6 +29,8 @@ import { ensureNativeProxyRuntime } from "../object-runtime.js";
 import { ensureSymbolCarrier } from "../symbol-native.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
+import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { isInertNonCallableLiteral } from "../promise-newtarget.js"; // (#5143)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
@@ -564,6 +566,23 @@ export function tryCompileBuiltinGlobalNew(
     // below (byte-unchanged in host/gc mode). Guard the ambient-global binding so
     // a user `class Promise {}` / local shadow keeps the normal ctor path.
     const promiseArgs = expr.arguments ?? [];
+    // (#5143 C3) §27.2.3.1 step 2: `IsCallable(executor)` is false → throw a
+    // TypeError. The native lowerings below only admit a resolvable closure, so
+    // a syntactically non-callable executor (`new Promise(1)`, `new Promise({})`,
+    // `new Promise()`) fell through to the `Promise_new` host import — which in
+    // standalone mode is a host-import LEAK that silently constructs nothing and
+    // throws nothing. Only literal shapes the compiler can prove non-callable are
+    // claimed here; a runtime value stays on the value path below, which does its
+    // own callability check. Standalone-carrier gated, so host/gc is byte-inert.
+    if (
+      isStandalonePromiseActive(ctx) &&
+      !ctx.classSet.has("Promise") &&
+      resolvesToAmbientGlobal(ctx, expr.expression) &&
+      (promiseArgs.length === 0 || isInertNonCallableLiteral(ctx, fctx, promiseArgs[0]!))
+    ) {
+      emitThrowTypeError(ctx, fctx, "Promise resolver is not a function");
+      return { kind: "externref" };
+    }
     if (
       promiseArgs.length >= 1 &&
       !ctx.classSet.has("Promise") &&

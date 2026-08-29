@@ -4,7 +4,7 @@ title: "ES2015 standalone: promise conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: medium
@@ -28,6 +28,22 @@ loc-budget-allow:
   - src/codegen/property-access.ts
   - src/codegen/native-proto.ts
   - src/codegen/class-bodies.ts
+  # (pass 2, 2026-08-29) §27.2.3.1 NewTarget/IsCallable guards. The BULK of the
+  # new code lives in the new subsystem module src/codegen/promise-newtarget.ts,
+  # exactly as the gate asks; what remains in the two god-files is the minimum
+  # that cannot move — the dispatch-ladder entry in calls.ts (+14) and the
+  # non-callable-executor guard that has to sit ahead of the native
+  # `new Promise` arms in new-builtin-globals.ts (+19).
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  # (pass 2, 2026-08-29) Same two insertions seen at function granularity: a
+  # guard arm inside the `new Promise` claim, and one entry on the call-dispatch
+  # ladder. Both are order-sensitive — they must precede the native lowerings /
+  # the generic identifier terminal — so neither can be hoisted out of its
+  # enclosing function.
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/expressions/calls.ts::compileCallExpression
 ---
 
 # #5143 — ES2015 standalone: promise conformance wave 1
@@ -405,6 +421,131 @@ Flipped to PASS (12): `all/reject-deferred`, `all/reject-immed`,
   them compile, they would still need Step 2 to pass, so it was not worth
   landing alone. `undefined-newtarget.js` and the two
   `get-prototype-abrupt*.js` (#3371) residuals are unchanged.
+
+## Results (wave 1, pass 2 — 2026-08-29)
+
+Second implementation pass on top of the commit above, same measurement recipe
+(eval providers built first; `npx tsx .tmp/run-standalone.mts --list …` over the
+164-path list in three 55-line chunks). Both the before and the after column
+were run on this box in this session — the "before" is a real re-run of the
+target list on the pass-1 tree, not the table above restated.
+
+| | before (pass-1 tree) | after |
+|---|---|---|
+| `wp-promise-current-fails.txt` (164) — pass | 12 | **17** |
+| `wp-promise-current-fails.txt` — fail | 149 | **145** |
+| `wp-promise-current-fails.txt` — compile-error | 3 | **2** |
+| `wp-promise-passing-spotcheck.txt` (40) — pass | 40 | **40** |
+
+Path-by-path diff of the two runs: five rows moved, all in the right direction,
+**zero regressions** —
+`executor-not-callable`, `prototype/proto`, `prototype/no-promise-state`,
+`prototype/catch/this-value-non-object` (FAIL → PASS) and
+`undefined-newtarget` (COMPILE_ERROR → PASS).
+
+All five ratchet gates run bare and chained after the change: loc (with the two
+grants added to this file's frontmatter below), func (likewise), coercion-sites,
+oracle-ratchet, dead-exports — all green.
+
+### Clusters fixed in pass 2
+
+**C5b — `Promise` called without `new` (1, was a hard compile error).**
+`Promise(fn)` fell into the generic builtin-identifier terminal and
+`Promise.call(x, fn)` reached the `__get_builtin` dynamic-shape refusal (#1472
+Phase B), which is a CE in standalone — so `undefined-newtarget.js` never built.
+New arm `tryCompilePromiseCallWithoutNew` (`expressions/new-builtin-globals.ts`,
+dispatched from `expressions/calls.ts` beside the #4732 `WeakSet` twin) claims
+both spellings, evaluates every argument for its side effects, then throws the
+§27.2.3.1-step-1 TypeError. `this` is irrelevant to that step, so
+`Promise.call(realPromise, fn)` throws too — which is exactly what the test
+asserts.
+
+**C3 (part) — non-callable executor (1).** `new Promise(1)` / `(null)` / `({})`
+declined both native lowerings and fell through to the `Promise_new` HOST import,
+which in standalone constructs nothing and throws nothing. A guard ahead of the
+native arms now emits the §27.2.3.1-step-2 TypeError for an executor the compiler
+can prove is both non-callable AND side-effect-free (`isInertNonCallableLiteral`:
+primitive literals, `null`, unshadowed `undefined`, EMPTY object/array literal).
+Emptiness is load-bearing — `{ a: f() }` is non-callable too, but discarding it
+would skip `f()`; those keep the existing runtime-value path.
+
+**C4 (part) — `Object.getPrototypeOf(Promise.prototype)` (1).**
+`Promise.prototype` lowers to a `$NativeProto` whose `$parent` field is left null
+("chain walk deferred", `native-proto.ts`), so the query silently answered
+`null`. Rather than populate `$parent` for every builtin brand — most builtin
+prototypes do NOT root at `%Object.prototype%` — the narrow `Function.prototype`
+arm in `expressions/object-get-prototype-of.ts` was generalised to a named
+two-member set `OBJECT_ROOTED_PROTOTYPE_CTORS = {Function, Promise}`, which is
+per-constructor and states the §27.2.3.1 fact for Promise only.
+
+**C1b/C4 (part) — brand checks on `Promise.prototype.{then,catch,finally}` (2).**
+`Promise` is now in `BRANDED_PROTO_METHODS` (`builtin-prototype-brand.ts`) for
+those three methods, and in `NULLISH_THIS_THROWS`, which gives the direct
+spelling and the borrowed nullish spelling their §27.2.5 TypeErrors
+(`prototype/catch/this-value-non-object.js`). Added alongside them:
+`tryBorrowedPrototypeBrandThisThrow`, the missing third case —
+`<Ctor>.prototype.<brandedMethod>.call(<AnyCtor>.prototype, …)`. A builtin
+prototype is an ordinary object with no internal slots, so every branded method
+rejects it; the arm is generic over the existing table (it also covers the
+`Map`/`Set`/`WeakMap`/`WeakSet`/`Date` `does-not-have-*data-internal-slot-*-prototype`
+family) and uses the same lib-identity receiver proof as its siblings, so a user
+`class Promise {}` is declined rather than mis-claimed.
+
+### Clusters still SKIPPED (unchanged from pass 1, re-measured)
+
+The pass-1 skip list below still holds; nothing in this pass unblocked it. The
+two structural blockers are worth restating because they gate ~120 of the
+remaining 145 rows:
+
+- **No patchable `Promise.resolve` slot.** Confirmed again against
+  `builtin-write-keeps.ts`: `EXPANDO_NAMESPACES` is `{Math, JSON, Reflect}` and a
+  `Promise.resolve = fn` write is dropped, because the call site resolves
+  statically through `BUILTIN_STATIC_METHOD_ARITY`. Steps 1b/1c/1d (C1a, ~43
+  rows, every `invoke-resolve*` / `invoke-then*` / `illegal cast` row) cannot be
+  built until that slot exists. That is its own issue, not a sub-step here.
+- **Synthesized promise functions are not function objects.** Re-probed directly:
+  in `new Promise(function (a, b) { resolve = a; argCount = arguments.length; })`
+  the escaped `resolve` reads back as `undefined` and `argCount` as `undefined` —
+  the executor's parameters do not escape at all, so C3's `typeof`/`length`/
+  `name`/`prototype`/`non-constructor` rows (~15) are downstream of building that
+  substrate, not of the metadata tables. Same root cause blocks C1b's
+  `resolve-element-function-*` rows.
+- **C1b custom-constructor capability (~26 rows)** still shows the V8-flavoured
+  `Promise resolve or reject function is not callable` host-leak signature
+  (`Promise.all.call(C, iterable)` with a class/function `C`); untouched.
+- **C5a** — the two `extern.convert_any[0] expected type anyref, found block of
+  type externref` CEs (`prototype/then/capability-executor-{not-callable,
+  called-twice}.js`) reproduce; fixing the double-conversion only makes them
+  compile, and they would still need Step 2 to pass.
+- **Permitted residuals, re-measured and unchanged**: `get-prototype-abrupt.js`
+  and `get-prototype-abrupt-executor-not-callable.js` (#3371, standalone
+  `Reflect.construct` cannot preserve an arbitrary NewTarget — these are the 2
+  remaining compile errors) and `proto-from-ctor-realm.js` (cross-realm, C6).
+
+**Equivalence-suite note (carried forward and re-confirmed):**
+`tests/equivalence.test.ts` does not exist in this tree — the suite is the
+`tests/equivalence/` DIRECTORY, and running it whole OOMs the vitest worker on
+this box, so it was run in chunks.
+
+- The slice that can regress from these changes (promise/async/await/
+  for-await-of, plus the Date/Map/Set/WeakMap/WeakSet/prototype-chain/call-apply
+  files the new borrowed-brand arm reaches) was run as one batch: **15 files,
+  124/124 passing**.
+- **217 of the 218** files were run in total. `multi-file-compilation.test.ts`
+  OOMs even on its own in this container — an environment limit, not a signal;
+  it is the one file left unmeasured.
+- **21 tests fail**, in 8 files (`tdz-reference-error` ×6,
+  `null-dereference-guards` ×5, `logical-conditional-identity` ×3,
+  `optional-direct-closure-call` ×2, `new-non-constructor` ×2,
+  `misc-small-patterns`, `reflect-api`, `yield-as-expression`, plus
+  `arguments-nested-and-loops`, `array-inline-return`, `delete-sentinel` in the
+  first half). **All pre-existing** — verified by an A/B, not by assumption: the
+  four changed files were reverted to their `HEAD` contents (and
+  `promise-newtarget.ts` moved aside) and those same files were re-run, giving
+  the identical 21 failures in the identical tests. `new-non-constructor` is
+  worth naming explicitly because it is the closest file to this change-set and
+  the one a reviewer should suspect first: it fails identically on the base
+  tree.
 
 ## References
 

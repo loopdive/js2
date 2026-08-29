@@ -308,6 +308,26 @@ const COMPOUND_ASSIGN_TOKENS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.QuestionQuestionEqualsToken,
 ]);
 
+/**
+ * (#5163) Is this assignment the RHS of another assignment — i.e. the inner
+ * link of a chain `a = b = e`? Its value is consumed by the outer assignment,
+ * so the two targets must agree on one representation.
+ */
+function isChainedAssignmentLink(node: ts.BinaryExpression): boolean {
+  let candidate: ts.Node = node;
+  let parent = candidate.parent;
+  while (parent && ts.isParenthesizedExpression(parent)) {
+    candidate = parent;
+    parent = candidate.parent;
+  }
+  return (
+    parent !== undefined &&
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === candidate
+  );
+}
+
 /** `x++` whose result value is discarded (statement / for-incrementor). */
 function isDiscardedIncDecPosition(node: ts.Node): boolean {
   const p = node.parent;
@@ -340,7 +360,15 @@ function writeShapesAreLowerable(
     if (!ok) return;
     if (ts.isBinaryExpression(node) && ts.isIdentifier(node.left) && node.left.text === name) {
       const k = node.operatorToken.kind;
-      if (k === ts.SyntaxKind.EqualsToken) {
+      // (#5163 S3) This write is a link in a chained assignment `a = b = e`.
+      // The chain lowering stores ONE shared value into every target, so a
+      // target's storage cannot be narrowed independently of the others — and
+      // #3741 invariant W forbids reaching an i32 slot by truncating an
+      // already-lowered f64. Refuse the promotion instead; the slot stays f64
+      // and the chain lowers exactly.
+      if (isChainedAssignmentLink(node)) {
+        ok = false;
+      } else if (k === ts.SyntaxKind.EqualsToken) {
         // (#3907) `i = i + <int literal>` on a `detectI32LoopVar`-proven counter
         // is the SAME operation as the `i += <int literal>` arm below, just
         // spelled out; it carries the identical bounded-by-the-loop-condition
