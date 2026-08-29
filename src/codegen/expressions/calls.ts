@@ -4926,7 +4926,21 @@ export function tryEmitInlineDynamicCall(
     const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Constructor cannot be invoked without 'new'", {
       flush: fctx,
     });
-    const int8CarrierThrow = buildInt8ArrayCarrierMatch(ctx, anyLocal, throwInstrs);
+    // (#5188) The carrier match nests its `onMatch` under an `empty`-typed
+    // `if`, while the `$__ta_ctor` arm below uses the SAME sequence as the
+    // `then` of a `val externref` `if`. Handing ONE `Instr[]` object to both
+    // makes that array reachable from two incompatible branch contexts, and
+    // the stack-balance repair pass then fails the whole compile closed rather
+    // than mutate a shared body ("reaches an instruction array from
+    // incompatible control-flow ... contexts", #1058). That refusal hit EVERY
+    // test262 file including `testTypedArray.js` — 534 of the 540 on the
+    // #5188 target list were compile errors for this one aliased array — so
+    // give each consumer its own copy.
+    const int8CarrierThrow = buildInt8ArrayCarrierMatch(
+      ctx,
+      anyLocal,
+      throwInstrs.map((instr) => ({ ...instr })),
+    );
     if (ctx.taCtorTypeIdx >= 0) {
       dispatch = [
         { op: "local.get", index: anyLocal },
