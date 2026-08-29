@@ -40,6 +40,7 @@ import {
   emitGuardedRefCast,
   getVecInfo,
   pushDefaultValue,
+  pushParamSentinel,
 } from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
@@ -73,6 +74,7 @@ import {
   planElementAccessMethodReceiverBind,
   planObjectLiteralMethodReceiverBind,
 } from "../object-literal-method-receiver.js";
+import { isDeclaredStructRefSubtypeAssignable } from "../struct-hierarchy-layout.js";
 
 /**
  * (#3205) A single funcref-type dispatch candidate for a callable property /
@@ -261,6 +263,7 @@ function collectPropertyCallArgLocals(
   expr: ts.CallExpression,
   paramTypes: ValType[],
   evaluateOverflow = true,
+  pushMissingArgument: (index: number, type: ValType) => void = (_index, type) => pushDefaultValue(fctx, type, ctx),
 ): number[] {
   const argLocals: number[] = [];
   const paramCount = paramTypes.length;
@@ -282,7 +285,7 @@ function collectPropertyCallArgLocals(
   // Pad missing args with defaults.
   for (let i = expr.arguments.length; i < paramCount; i++) {
     const pt = paramTypes[i]!;
-    pushDefaultValue(fctx, pt, ctx);
+    pushMissingArgument(i, pt);
     const al = allocLocal(fctx, `__cparg_${fctx.locals.length}`, pt);
     fctx.body.push({ op: "local.set", index: al });
     argLocals.push(al);
@@ -349,6 +352,16 @@ function emitRootFuncrefDispatch(
       fcCallBody.push({ op: "drop" });
     } else if (expectedReturn !== null && fc.returnType === null) {
       fcCallBody.push(...defaultValueInstrs(expectedReturn));
+    } else if (
+      matchedDispatch &&
+      !valTypesMatch(fc.returnType!, expectedReturn!) &&
+      isDeclaredStructRefSubtypeAssignable(ctx.mod, fc.returnType!, expectedReturn!)
+    ) {
+      // A covariant declared struct result already has the exact runtime value
+      // the wider result block expects. Preserve its identity; projecting or
+      // defaulting here would turn a SourceFile-returning NodeFactory closure
+      // into null before its caller can narrow the same object back to
+      // SourceFile.
     } else if (
       matchedDispatch &&
       !valTypesMatch(fc.returnType!, expectedReturn!) &&
@@ -1229,6 +1242,24 @@ export function compileCallablePropertyCall(
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
   }
+  const pushMissingCallablePropertyArgument = (index: number, type: ValType): void => {
+    const declaration = sigParameters[index]?.valueDeclaration;
+    const isOptionalScalar =
+      type.kind === "f64" &&
+      declaration !== undefined &&
+      ts.isParameter(declaration) &&
+      (declaration.questionToken !== undefined || declaration.initializer !== undefined);
+    if (isOptionalScalar) {
+      // A callable property is dispatched through the stored closure's native
+      // ABI. An omitted optional number must therefore use the compiler's f64
+      // undefined sentinel; `f64.const 0` makes `x === undefined` false. This
+      // is TypeScript's Scanner.setText(text, start?, length?) witness: padding
+      // length with zero makes every source appear empty.
+      pushParamSentinel(fctx, type, ctx);
+      return;
+    }
+    pushDefaultValue(fctx, type, ctx);
+  };
 
   if (
     !noJsHost(ctx) &&
@@ -1364,7 +1395,7 @@ export function compileCallablePropertyCall(
         }
         // Pad missing arguments
         for (let i = expr.arguments.length; i < closureInfo.paramTypes.length; i++) {
-          pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
+          pushMissingCallablePropertyArgument(i, closureInfo.paramTypes[i]!);
         }
       }
 
@@ -1452,7 +1483,7 @@ export function compileCallablePropertyCall(
         }
         // Pad missing arguments
         for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
-          pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
+          pushMissingCallablePropertyArgument(i, matchedClosureInfo.paramTypes[i]!);
         }
 
         // Get funcref from closure struct and call_ref — null-check → TypeError (#728)
@@ -1500,7 +1531,14 @@ export function compileCallablePropertyCall(
       fctx.body.push({ op: "drop" });
 
       // Save args to locals so each dispatch arm can re-push them.
-      const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, matchedClosureInfo.paramTypes, false);
+      const argLocals = collectPropertyCallArgLocals(
+        ctx,
+        fctx,
+        expr,
+        matchedClosureInfo.paramTypes,
+        false,
+        pushMissingCallablePropertyArgument,
+      );
 
       // (#4373) A property value can be a lower-arity JavaScript closure whose
       // body reads `arguments`. Preserve every overflow value and the exact
@@ -1590,7 +1628,7 @@ export function compileCallablePropertyCall(
         }
       }
       for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
-        pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
+        pushMissingCallablePropertyArgument(i, matchedClosureInfo.paramTypes[i]!);
       }
 
       // Get funcref and call_ref — null-check → TypeError (#728)

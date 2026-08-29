@@ -93,9 +93,23 @@ export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; ou
 }
 
 /** Freeze the leading capture-param slots before body locals can shadow their names. */
-export function recordLiftedCaptureSlots(fctx: FunctionContext, names: Iterable<string>): void {
+export function recordLiftedCaptureSlots(
+  fctx: FunctionContext,
+  names: Iterable<string>,
+  options?: { leadingParamOffset: number },
+): void {
   const captureNames = [...names];
   fctx.liftedCaptureNames = new Set(captureNames);
+  if (options) {
+    // Declaration/fnctor captures are a known contiguous parameter prefix.
+    // Derive their slots from that ABI position rather than localMap: a
+    // same-named user parameter is installed later and legitimately wins the
+    // source binding, but must not overwrite this hidden forwarding slot.
+    fctx.liftedCaptureSlots = new Map(captureNames.map((name, slot) => [name, options.leadingParamOffset + slot]));
+    return;
+  }
+  // Arrow/callback captures are extracted into locals after self/user params;
+  // retain their already-materialized localMap slots.
   fctx.liftedCaptureSlots = new Map(
     captureNames.flatMap((name) => {
       const slot = fctx.localMap.get(name);
