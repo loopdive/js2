@@ -87,6 +87,7 @@ export class ProgramAbiModuleInitCallableRegistry {
     readonly bindingId: IrBindingId;
     readonly func: WasmFunction;
     readonly entrySourceId: IrSourceId;
+    readonly publishesPublicInit: boolean;
   };
 
   constructor(
@@ -302,12 +303,16 @@ export class ProgramAbiModuleInitCallableRegistry {
     const graphGlobalRaw = this.observations.filter((observation) => !isExact(observation));
     const graphGlobalLive = liveObservations.filter(({ observation }) => !isExact(observation));
     // A module with no top-level state emits no initializer at all, so absence
-    // is only a defect when the module actually publishes the entry point. The
-    // public `__module_init` export is that surface: if it exists and no exact
-    // source unit owns it, exactly one graph-global pass must stand behind it.
+    // is only a defect where the initializer is actually reached through a
+    // PUBLIC export. That is an invocation-policy question, not an export-surface
+    // one: `declarations.ts` derives `exportModuleInit = deferTopLevelInit &&
+    // !wasi`, and the other two policies reach the same body without publishing
+    // any name — the Wasm `start` section, or WASI's `_start` adapter. Keying on
+    // the export surface alone made every `--target wasi` build fail with
+    // "found 0" (examples/native-messaging), where zero is the correct shape.
     const exactPlanned = liveObservations.some(({ observation }) => isExact(observation));
-    const publicInitExports = this.ctx.mod.exports.filter((entry) => entry.name === MODULE_INIT_EXPORT_NAME).length;
-    const requiresGraphGlobalPass = publicInitExports > 0 && !exactPlanned;
+    const publishesPublicInit = this.ctx.deferTopLevelInit === true && this.ctx.wasi !== true;
+    const requiresGraphGlobalPass = publishesPublicInit && !exactPlanned;
     if (!requiresGraphGlobalPass && graphGlobalRaw.length === 0 && graphGlobalLive.length === 0) return;
     const raw = graphGlobalRaw[0];
     const live = graphGlobalLive[0];
@@ -350,7 +355,7 @@ export class ProgramAbiModuleInitCallableRegistry {
         `graph-global module-init pass ${raw.ordinal} is not retained on its exact allocator object`,
       );
     }
-    this.graphGlobalPass = Object.freeze({ bindingId, func, entrySourceId });
+    this.graphGlobalPass = Object.freeze({ bindingId, func, entrySourceId, publishesPublicInit });
   }
 
   /**
@@ -362,11 +367,15 @@ export class ProgramAbiModuleInitCallableRegistry {
    * it proves is the half the pass-side invariant cannot: that the ONE public
    * entry point the host calls resolves to pass zero, by `aliasOf` and by
    * `intent.targetId`, and not to some other retained initializer.
+   *
+   * Only the public-export invocation policy has such an entry point. Under the
+   * Wasm `start` section or WASI's `_start` adapter the same body is reached
+   * without publishing any name, so there is nothing here to authenticate.
    */
   assertGraphGlobalPublicAlias(): void {
     const pass = this.graphGlobalPass;
     const session = this.session;
-    if (!pass || !session) return;
+    if (!pass || !session || !pass.publishesPublicInit) return;
     const ordinals = this.ctx.mod.exports.flatMap((entry, ordinal) =>
       entry.name === MODULE_INIT_EXPORT_NAME ? [ordinal] : [],
     );

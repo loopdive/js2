@@ -400,6 +400,48 @@ describe("#3520 module-init callable Program ABI ownership", () => {
     expect((reversedExports.score as () => number)()).toBe(11);
   });
 
+  it("accepts the start-section and WASI invocation policies, which publish no __module_init", async () => {
+    // Regression guard for the graph-global invariant. Keying it on the public
+    // export SURFACE rather than the invocation POLICY rejected every
+    // `--target wasi` build with "expects exactly one public __module_init
+    // export, found 0" — caught by examples/native-messaging/smoke-test.sh.
+    // `declarations.ts` publishes the export only under
+    // `deferTopLevelInit && !wasi`; the Wasm `start` section and WASI's `_start`
+    // adapter reach the same body without publishing any name, so zero public
+    // `__module_init` exports is the CORRECT shape for both.
+    // Must be MULTI-source: a single source has one module-init unit, which the
+    // exact-unit path claims, so the graph-global branch is never entered and a
+    // single-source WASI compile cannot reproduce this at all.
+    const policies = [
+      { name: "wasm start section", options: {} as Record<string, unknown> },
+      { name: "wasi _start adapter", options: { target: "wasi" } as Record<string, unknown> },
+    ];
+    for (const policy of policies) {
+      const result = await compileMulti(GRAPH_GLOBAL_FILES, "entry.ts", {
+        experimentalIR: true,
+        ...policy.options,
+      });
+      expect(result.success, `${policy.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      const module = await WebAssembly.compile(result.binary);
+      expect(
+        WebAssembly.Module.exports(module).filter((entry) => entry.name === "__module_init"),
+        `${policy.name} publishes no __module_init`,
+      ).toEqual([]);
+    }
+
+    // The deferred-export policy is the one that DOES publish it — proving the
+    // two shapes above are a real distinction and not a blanket exemption.
+    const deferred = await compileMulti(GRAPH_GLOBAL_FILES, "entry.ts", {
+      experimentalIR: true,
+      deferTopLevelInit: true,
+    });
+    expect(deferred.success, deferred.errors.map((error) => error.message).join("\n")).toBe(true);
+    const deferredModule = await WebAssembly.compile(deferred.binary);
+    expect(WebAssembly.Module.exports(deferredModule).filter((entry) => entry.name === "__module_init")).toHaveLength(
+      1,
+    );
+  });
+
   it("fails closed on zero, duplicate, ordinal-one, and retargeted graph-global module-init", () => {
     // These mutate PRODUCTION planning state during a real multi-source
     // compile, not a copy of the published entry list: each one is a shape the
