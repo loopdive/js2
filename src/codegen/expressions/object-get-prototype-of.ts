@@ -183,11 +183,12 @@ export function tryCompileEs5GetPrototypeOfEarly(
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
-    // (#4781) The ES2015 WeakMap constructor is itself a built-in function,
-    // so its [[Prototype]] is %Function.prototype%. Keep this query on the
-    // intrinsic path in both lanes; the native collection path below models
-    // WeakMap instances and must not answer for the constructor object.
-    if (arg0.text === "WeakMap") {
+    // (#4781/#5151) The ES2015 keyed-collection constructors are themselves
+    // built-in function objects, so their [[Prototype]] is %Function.prototype%.
+    // Keep these queries on the intrinsic path in both lanes; the native
+    // collection path below models INSTANCES and must not answer for the
+    // constructor object.
+    if (NATIVE_COLLECTION_NAMES.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
     if (ES5_NATIVE_ERROR_CTORS.has(arg0.text)) {
@@ -212,11 +213,17 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // %TypedArray%.prototype, `TypeError.prototype` → `Error.prototype`), and this
   // hook runs BEFORE the typed-array / generator / class getPrototypeOf arms —
   // a blanket branch here would preempt them with a wrong answer.
+  //
+  // (#5151) The four keyed-collection prototypes DO uniformly inherit directly
+  // from %Object.prototype% (§24.1.3/§24.2.3/§24.3.3/§24.4.3), so they join the
+  // arm explicitly rather than through a blanket branch. Without this the
+  // native-collection instance arm answers with the receiver's own brand page
+  // (`getPrototypeOf(Map.prototype)` returned `[object Map]`).
   if (
     ts.isPropertyAccessExpression(arg0) &&
     arg0.name.text === "prototype" &&
     ts.isIdentifier(arg0.expression) &&
-    arg0.expression.text === "Function" &&
+    (arg0.expression.text === "Function" || NATIVE_COLLECTION_NAMES.has(arg0.expression.text)) &&
     isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
   ) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");

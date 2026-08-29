@@ -3856,6 +3856,8 @@ function prepareNativeSetAdderDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
   collTmp: number,
+  // (#5151) `"add"` for Set/WeakSet, `"set"` for Map/WeakMap.
+  adderName: "add" | "set" = "add",
 ): NativeSetAdderDispatch | undefined {
   // Reading a builtin prototype as a value (for example the Test262
   // `Object.getPrototypeOf(s)` assertion) arms the companion store and seeds
@@ -3876,10 +3878,10 @@ function prepareNativeSetAdderDispatch(
   const adderLocal = allocLocal(fctx, `__setctor_adder_${fctx.locals.length}`, { kind: "externref" });
   const argsLocal = allocLocal(fctx, `__setctor_add_args_${fctx.locals.length}`, { kind: "externref" });
 
-  addStringConstantGlobal(ctx, "add");
+  addStringConstantGlobal(ctx, adderName);
   fctx.body.push({ op: "local.get", index: collTmp });
   fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, "add"));
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, adderName));
   fctx.body.push({ op: "call", funcIdx: hasIdx });
   fctx.body.push({ op: "local.tee", index: modeLocal });
   fctx.body.push({
@@ -3888,7 +3890,7 @@ function prepareNativeSetAdderDispatch(
     then: [
       { op: "local.get", index: collTmp },
       { op: "extern.convert_any" },
-      ...stringConstantExternrefInstrs(ctx, "add"),
+      ...stringConstantExternrefInstrs(ctx, adderName),
       { op: "call", funcIdx: getIdx },
       { op: "local.set", index: adderLocal },
     ],
@@ -3904,15 +3906,94 @@ function prepareNativeSetAdderDispatch(
   };
 }
 
-/** Emit one `Call(adder, set, «value»)` through the native closure bridge. */
-function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: number, valueLocal: number): Instr[] {
+/**
+ * (#5151) §24.1.1.1 step 7 — before a keyed-collection constructor touches its
+ * iterable it must `Get(coll, <adder>)` and throw **TypeError** when the result
+ * is not callable. Two observable consequences the fast seeding paths skipped
+ * entirely, because they call `__map_set` / `__set_add` directly:
+ *
+ *   Map.prototype.set = null;  new Map([[1, 1]]);      // must throw TypeError
+ *   Object.defineProperty(Map.prototype, 'set',
+ *     { get() { throw new Test262Error(); } });
+ *   new Map([]);                                        // must throw Test262Error
+ *
+ * The second falls out for free: `__protoidx_get_r` runs the user accessor, so a
+ * throwing getter propagates its OWN error with the right identity.
+ *
+ * Deliberately narrow on the not-callable half — it throws only when the
+ * resolved adder is NULLISH, the shape every test262 row uses
+ * (`X.prototype.<adder> = null`). A general `!IsCallable` needs a positive
+ * callable classifier the runtime does not have, and a false positive here
+ * turns a working constructor into a hard throw (the same argument
+ * `resolved-callee-guard.ts` makes).
+ *
+ * Emits nothing — the fast path stays byte-identical — unless the module
+ * actually wrote a named property on a builtin prototype (`ctx.protoNamedDirty`),
+ * which is the pre-scan bit an observable override sets.
+ *
+ * `collTmp` holds the freshly built collection; the caller must have an iterable
+ * argument in hand (`new Map()` never performs this Get).
+ */
+function emitCollectionAdderGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  collTmp: number,
+  adderName: string,
+): void {
+  if (!ctx.protoNamedDirty) return;
+  const hasIdx = ctx.funcMap.get("__protoidx_has_r");
+  const getIdx = ctx.funcMap.get("__protoidx_get_r");
+  if (hasIdx === undefined || getIdx === undefined) return;
+
+  const adderLocal = allocLocal(fctx, `__colladder_${fctx.locals.length}`, { kind: "externref" });
+  addStringConstantGlobal(ctx, adderName);
+  fctx.body.push({ op: "local.get", index: collTmp });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, adderName));
+  fctx.body.push({ op: "call", funcIdx: hasIdx });
+  const thenArm: Instr[] = [
+    { op: "local.get", index: collTmp },
+    { op: "extern.convert_any" },
+    ...stringConstantExternrefInstrs(ctx, adderName),
+    { op: "call", funcIdx: getIdx },
+    { op: "local.set", index: adderLocal },
+  ];
+  const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+  if (nullishIdx !== undefined) {
+    thenArm.push({ op: "local.get", index: adderLocal }, { op: "call", funcIdx: nullishIdx });
+  } else {
+    thenArm.push({ op: "local.get", index: adderLocal });
+  }
+  const throwArm: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = throwArm;
+  ctx.liveBodies.add(throwArm);
+  try {
+    emitThrowTypeError(ctx, fctx, `${adderName} is not a function`);
+  } finally {
+    fctx.body = savedBody;
+  }
+  thenArm.push({ op: "ref.is_null" }, { op: "if", blockType: { kind: "empty" }, then: throwArm });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm });
+}
+
+/**
+ * Emit one `Call(adder, coll, «…values»)` through the native closure bridge.
+ *
+ * (#5151) Takes a LIST of value locals so the Map/WeakMap constructors can pass
+ * the `«k, v»` pair their `set` adder takes — §24.1.1.1 step 9k. One value is
+ * the Set/WeakSet `add` shape.
+ */
+function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: number, ...valueLocals: number[]): Instr[] {
   return [
     { op: "call", funcIdx: dispatch.objVecNewIdx },
     { op: "local.set", index: dispatch.argsLocal },
-    { op: "local.get", index: dispatch.argsLocal },
-    { op: "local.get", index: valueLocal },
-    { op: "extern.convert_any" },
-    { op: "call", funcIdx: dispatch.objVecPushIdx },
+    ...valueLocals.flatMap((valueLocal): Instr[] => [
+      { op: "local.get", index: dispatch.argsLocal },
+      { op: "local.get", index: valueLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: dispatch.objVecPushIdx },
+    ]),
     { op: "local.get", index: dispatch.adderLocal },
     { op: "local.get", index: collTmp },
     { op: "extern.convert_any" },
@@ -3987,19 +4068,55 @@ function tryCompileNativeWeakCollectionNew(
     value: isWeakMap ? COLLECTION_KIND.WEAKMAP : COLLECTION_KIND.WEAKSET,
   }); // (#3171) brand tag
   fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+  if (wcArgs.length === 1 && !nullishArg) {
+    // §24.3.1.1 / §24.4.1.1 step 7 — Get(coll, "set"/"add") + IsCallable, before
+    // the iterable is consumed. `new WeakMap()` never performs this Get.
+    const gTmp = allocLocal(fctx, `__wcctor_g_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+    fctx.body.push({ op: "local.tee", index: gTmp });
+    emitCollectionAdderGuard(ctx, fctx, gTmp, isWeakMap ? "set" : "add");
+  }
   if (seedableMapPairs && wcArrArg !== undefined && wcArrArg.elements.length > 0 && mapSetIdx !== undefined) {
     const mTmp = allocLocal(fctx, `__wmctor_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
     fctx.body.push({ op: "local.set", index: mTmp });
+    // (#5151) §24.3.1.1 step 8b seeds through `Call(adder, map, «k, v»)` — a
+    // user-patched `WeakMap.prototype.set` must observe every entry.
+    const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "set");
+    const keyLocal =
+      adderDispatch === undefined
+        ? undefined
+        : allocLocal(fctx, `__wmctor_k_${fctx.locals.length}`, { kind: "anyref" });
+    const valLocal =
+      adderDispatch === undefined
+        ? undefined
+        : allocLocal(fctx, `__wmctor_v_${fctx.locals.length}`, { kind: "anyref" });
     for (const el of wcArrArg.elements) {
       // every() above narrowed each element to a 2-element array literal.
       const pair = el as ts.ArrayLiteralExpression;
-      fctx.body.push({ op: "local.get", index: mTmp });
+      if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
       const kt = compileExpression(ctx, fctx, pair.elements[0]!);
       coerceMapKeyToAnyref(ctx, fctx, kt);
+      if (keyLocal !== undefined) fctx.body.push({ op: "local.set", index: keyLocal });
       const vt = compileExpression(ctx, fctx, pair.elements[1]!);
       coerceMapKeyToAnyref(ctx, fctx, vt);
-      fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
-      fctx.body.push({ op: "drop" });
+      if (adderDispatch !== undefined && keyLocal !== undefined && valLocal !== undefined) {
+        fctx.body.push({ op: "local.set", index: valLocal });
+        fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: emitNativeSetAdderCall(adderDispatch, mTmp, keyLocal, valLocal),
+          else: [
+            { op: "local.get", index: mTmp },
+            { op: "local.get", index: keyLocal },
+            { op: "local.get", index: valLocal },
+            { op: "call", funcIdx: mapSetIdx },
+            { op: "drop" },
+          ],
+        });
+      } else {
+        fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
+        fctx.body.push({ op: "drop" });
+      }
     }
     fctx.body.push({ op: "local.get", index: mTmp });
   } else if (
@@ -4010,21 +4127,45 @@ function tryCompileNativeWeakCollectionNew(
   ) {
     const mTmp = allocLocal(fctx, `__wsctor_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
     fctx.body.push({ op: "local.set", index: mTmp });
+    // (#5151) §24.4.1.1 step 8b — a user-patched `WeakSet.prototype.add` must
+    // observe every element, same shape as the Set literal arm.
+    const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "add");
+    const elemLocal =
+      adderDispatch === undefined
+        ? undefined
+        : allocLocal(fctx, `__wsctor_e_${fctx.locals.length}`, { kind: "anyref" });
     for (const el of wcArrArg.elements) {
       if (ts.isOmittedExpression(el)) continue; // hole → undefined element
-      fctx.body.push({ op: "local.get", index: mTmp });
+      if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
       const et = compileExpression(ctx, fctx, el);
       coerceMapKeyToAnyref(ctx, fctx, et);
-      fctx.body.push({ op: "call", funcIdx: weaksetAddIdx }); // returns ref $Map
-      fctx.body.push({ op: "drop" });
+      if (adderDispatch !== undefined && elemLocal !== undefined) {
+        fctx.body.push({ op: "local.set", index: elemLocal });
+        fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: emitNativeSetAdderCall(adderDispatch, mTmp, elemLocal),
+          else: [
+            { op: "local.get", index: mTmp },
+            { op: "local.get", index: elemLocal },
+            { op: "call", funcIdx: weaksetAddIdx },
+            { op: "drop" },
+          ],
+        });
+      } else {
+        fctx.body.push({ op: "call", funcIdx: weaksetAddIdx }); // returns ref $Map
+        fctx.body.push({ op: "drop" });
+      }
     }
     fctx.body.push({ op: "local.get", index: mTmp });
   } else if (wcNonLiteralArrArg !== undefined && weaksetAddIdx !== undefined) {
     const mTmp = allocLocal(fctx, `__wsctor_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
     fctx.body.push({ op: "local.set", index: mTmp });
+    const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "add");
     // On a non-vec / unsupported-element arg the helper leaves the empty
     // collection on the stack (graceful: empty WeakSet, never a host leak).
-    seedNativeSetFromArrayArg(ctx, fctx, wcNonLiteralArrArg, mTmp, weaksetAddIdx);
+    seedNativeSetFromArrayArg(ctx, fctx, wcNonLiteralArrArg, mTmp, weaksetAddIdx, adderDispatch);
   }
   return { kind: "ref", typeIdx: ctx.mapTypeIdx };
 }
@@ -4789,11 +4930,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       arrArg.elements.every(
         (e) => ts.isArrayLiteralExpression(e) && e.elements.length === 2 && !e.elements.some(ts.isSpreadElement),
       );
+    // (#5151) §24.1.1.1 steps 5-6: `new Map(undefined)` / `new Map(null)` are
+    // spec-equivalent to `new Map()` — the iterable is never fetched. Without
+    // this branch the nullish argument matched none of the fast shapes and fell
+    // through to the eval-tier demotion, where it NULL-DEREFERENCED
+    // (`built-ins/Map/map-no-iterable.js`). The WeakMap arm already had it.
+    const nullishArg =
+      args.length === 1 &&
+      (args[0]!.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(args[0]!) && (args[0]! as ts.Identifier).text === "undefined"));
     // (#2162) Map from a NON-literal array-of-pairs variable is a follow-up: the
     // inner `[K,V]` pair lowers to a typed tuple *struct* (not an inner vec), so
     // its extraction differs from the Set element walk. The array-literal-of-pairs
     // form is handled below; a non-literal Map arg falls through to the empty map.
-    if (args.length === 0 || seedablePairs) {
+    if (args.length === 0 || nullishArg || seedablePairs) {
       addUnionImports(ctx);
       ensureMapHelpers(ctx);
       const mapNewIdx = ctx.mapHelpers.get("__map_new");
@@ -4801,22 +4951,62 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.MAP }); // (#3171) brand tag
         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+        if (seedablePairs && arrArg !== undefined) {
+          // §24.1.1.1 step 7 runs for ANY iterable argument, including `[]`.
+          const gTmp = allocLocal(fctx, `__mapctor_g_${fctx.locals.length}`, {
+            kind: "ref",
+            typeIdx: ctx.mapTypeIdx,
+          });
+          fctx.body.push({ op: "local.tee", index: gTmp });
+          emitCollectionAdderGuard(ctx, fctx, gTmp, "set");
+        }
         if (seedablePairs && arrArg !== undefined && arrArg.elements.length > 0 && mapSetIdx !== undefined) {
           const mTmp = allocLocal(fctx, `__mapctor_m_${fctx.locals.length}`, {
             kind: "ref",
             typeIdx: ctx.mapTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: mTmp });
+          // (#5151) §24.1.1.1 step 9k seeds through `Call(adder, map, «k, v»)`,
+          // so a user-patched `Map.prototype.set` must OBSERVE every entry (and
+          // see the map as `this`). Mirrors the Set arm: the direct `__map_set`
+          // fast path stays as the unpatched branch.
+          const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "set");
+          const keyLocal =
+            adderDispatch === undefined
+              ? undefined
+              : allocLocal(fctx, `__mapctor_k_${fctx.locals.length}`, { kind: "anyref" });
+          const valLocal =
+            adderDispatch === undefined
+              ? undefined
+              : allocLocal(fctx, `__mapctor_v_${fctx.locals.length}`, { kind: "anyref" });
           for (const el of arrArg.elements) {
             // every() above narrowed each element to a 2-element array literal.
             const pair = el as ts.ArrayLiteralExpression;
-            fctx.body.push({ op: "local.get", index: mTmp });
+            if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
             const kt = compileExpression(ctx, fctx, pair.elements[0]!);
             coerceMapKeyToAnyref(ctx, fctx, kt);
+            if (keyLocal !== undefined) fctx.body.push({ op: "local.set", index: keyLocal });
             const vt = compileExpression(ctx, fctx, pair.elements[1]!);
             coerceMapKeyToAnyref(ctx, fctx, vt);
-            fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
-            fctx.body.push({ op: "drop" });
+            if (adderDispatch !== undefined && keyLocal !== undefined && valLocal !== undefined) {
+              fctx.body.push({ op: "local.set", index: valLocal });
+              fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+              fctx.body.push({
+                op: "if",
+                blockType: { kind: "empty" },
+                then: emitNativeSetAdderCall(adderDispatch, mTmp, keyLocal, valLocal),
+                else: [
+                  { op: "local.get", index: mTmp },
+                  { op: "local.get", index: keyLocal },
+                  { op: "local.get", index: valLocal },
+                  { op: "call", funcIdx: mapSetIdx },
+                  { op: "drop" },
+                ],
+              });
+            } else {
+              fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
+              fctx.body.push({ op: "drop" });
+            }
           }
           fctx.body.push({ op: "local.get", index: mTmp });
         }
@@ -4838,9 +5028,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // (#2162) A single NON-literal argument whose static type is an array (a
     // variable, a spread that lowered to a vec, `[...set]`, a call result) is the
     // dominant non-literal iterable form — seed it via a runtime vec walk.
+    // (#5151) §24.2.1.1 steps 5-6 — same nullish-is-empty rule as Map above
+    // (`built-ins/Set/set-no-iterable.js`).
+    const nullishArg =
+      args.length === 1 &&
+      (args[0]!.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(args[0]!) && (args[0]! as ts.Identifier).text === "undefined"));
     const nonLiteralArrArg =
-      args.length === 1 && arrArg === undefined && isArrayTypedArg(ctx, args[0]!) ? args[0]! : undefined;
-    if (args.length === 0 || arrArg || nonLiteralArrArg) {
+      args.length === 1 && arrArg === undefined && !nullishArg && isArrayTypedArg(ctx, args[0]!) ? args[0]! : undefined;
+    if (args.length === 0 || nullishArg || arrArg || nonLiteralArrArg) {
       addUnionImports(ctx);
       ensureSetHelpers(ctx);
       const mapNewIdx = ctx.mapHelpers.get("__map_new");
@@ -4848,6 +5044,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.SET }); // (#3171) brand tag
         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+        if (arrArg !== undefined || nonLiteralArrArg !== undefined) {
+          // §24.2.1.1 step 7 — Get(set, "add") + IsCallable, before iteration.
+          const gTmp = allocLocal(fctx, `__setctor_g_${fctx.locals.length}`, {
+            kind: "ref",
+            typeIdx: ctx.mapTypeIdx,
+          });
+          fctx.body.push({ op: "local.tee", index: gTmp });
+          emitCollectionAdderGuard(ctx, fctx, gTmp, "add");
+        }
         if (arrArg && setAddIdx !== undefined && !arrArg.elements.some((e) => ts.isSpreadElement(e))) {
           const mTmp = allocLocal(fctx, `__setctor_m_${fctx.locals.length}`, {
             kind: "ref",

@@ -137,12 +137,27 @@ const STRING_OFF = builtinBrandOffsetOf("String")!;
 const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
 const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
 const SET_OFF = builtinBrandOffsetOf("Set")!;
+const MAP_OFF = builtinBrandOffsetOf("Map")!;
+const WEAKMAP_OFF = builtinBrandOffsetOf("WeakMap")!;
+const WEAKSET_OFF = builtinBrandOffsetOf("WeakSet")!;
 
-/** `$Map.kind` field / `COLLECTION_KIND.SET` values (map-runtime.ts). Kept as
+/** `$Map.kind` field / `COLLECTION_KIND` values (map-runtime.ts). Kept as
  * literals here to avoid an import cycle: map-runtime already consumes the
  * receiver-brand helper. */
 const MAP_KIND_FIELD = 4;
+const MAP_KIND = 0;
 const SET_KIND = 1;
+const WEAKMAP_KIND = 2;
+const WEAKSET_KIND = 3;
+
+/** (#5151) `$Map.kind` → the brand offset whose companion holds that
+ *  collection's prototype overrides. All four share the `$Map` carrier. */
+const COLLECTION_KIND_OFFSETS: readonly (readonly [number, number])[] = [
+  [MAP_KIND, MAP_OFF],
+  [SET_KIND, SET_OFF],
+  [WEAKMAP_KIND, WEAKMAP_OFF],
+  [WEAKSET_KIND, WEAKSET_OFF],
+];
 
 /**
  * (#4176) The boxed-primitive wrapper internal-slot key — MUST equal
@@ -1458,12 +1473,17 @@ function fillBrandOffBody(ctx: CodegenContext): void {
     }
   }
   body.push(...testArm(ctx.vecPropBaseTypeIdx, ARR_OFF));
-  // Native Map-backed Sets are the one non-`$Object` carrier whose implicit
-  // prototype participates in the companion store.  The collection runtime
-  // shares `$Map` for Map/Set/WeakMap/WeakSet, so discriminate by its immutable
-  // kind tag before the generic Object fallback.  This lets a standalone Set
-  // constructor honor a user-installed `Set.prototype.add` without changing
-  // the existing native fast path when the companion has no override.
+  // The native keyed collections are the one non-`$Object` carrier family whose
+  // implicit prototype participates in the companion store. The collection
+  // runtime shares `$Map` for Map/Set/WeakMap/WeakSet, so discriminate by the
+  // immutable kind tag before the generic Object fallback. This lets a
+  // standalone constructor honor a user-installed `X.prototype.<adder>` without
+  // changing the native fast path when the companion has no override.
+  //
+  // (#5151) Only SET was classified until now, so `Map.prototype.set = null`
+  // (and the WeakMap/WeakSet twins) were invisible to every receiver-aware
+  // consult: the Map receiver answered `Object`, whose companion has no `set`.
+  // All four kinds map to their own brand offset here.
   if (ctx.mapTypeIdx >= 0) {
     body.push(
       { op: "local.get", index: 1 },
@@ -1471,14 +1491,14 @@ function fillBrandOffBody(ctx: CodegenContext): void {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [
+        then: COLLECTION_KIND_OFFSETS.flatMap(([kind, off]): Instr[] => [
           { op: "local.get", index: 1 },
           { op: "ref.cast", typeIdx: ctx.mapTypeIdx },
           { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: MAP_KIND_FIELD },
-          { op: "i32.const", value: SET_KIND },
+          { op: "i32.const", value: kind },
           { op: "i32.eq" },
-          { op: "if", blockType: { kind: "empty" }, then: ret(SET_OFF) },
-        ],
+          { op: "if", blockType: { kind: "empty" }, then: ret(off) },
+        ]),
       },
     );
   }

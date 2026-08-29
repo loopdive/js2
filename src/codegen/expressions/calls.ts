@@ -464,7 +464,7 @@ import { resolveStructName } from "./misc.js";
 import {
   tryCompileDateCallWithoutNew,
   tryCompileErrorCtorCallWithoutNew,
-  tryCompileWeakSetCallWithoutNew,
+  tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
@@ -6992,9 +6992,10 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
-  // (#4732) `WeakSet(...)` has no [[Call]] — §23.4.1.1 step 1 requires `new`.
+  // (#4732/#5151) `Map(...)`/`Set(...)`/`WeakMap(...)`/`WeakSet(...)` have no
+  // [[Call]] — §24.1.1.1 step 1 and siblings require `new`.
   {
-    const r = tryCompileWeakSetCallWithoutNew(ctx, fctx, expr);
+    const r = tryCompileCollectionCtorCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
