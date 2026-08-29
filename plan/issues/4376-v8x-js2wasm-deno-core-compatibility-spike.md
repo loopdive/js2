@@ -504,6 +504,11 @@ origin/main — none introduced by the continuation):
   `tests/issue-1719-cpr.test.ts` on origin/main in this container.
 - `#2623` box-depth (3) and `#1312` async recursion (1): pre-existing at the
   merge point.
+- `tests/issue-2928-runtime-link.test.ts` "returns and invokes an interpreted
+  closure across the Wasm module boundary": hangs in an uninterruptible wasm
+  loop until the 20-minute vitest timeout — present since the checkpoint
+  merge (reproduced at the merge point with none of the continuation fixes
+  applied).
 
 ## Handover
 
