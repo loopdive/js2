@@ -1,7 +1,7 @@
 ---
 id: 5122
 title: "ES2015 standalone Proxy rejects Symbol target and handler"
-status: in-progress
+status: in-review
 sprint: current
 created: 2026-08-28
 updated: 2026-08-30
@@ -16,7 +16,7 @@ language_feature: proxy-constructor-validation
 goal: standalone-mode
 assignee: "ttraenkler/codex/5122-proxy-spread-regression-main"
 branch: codex/5122-proxy-spread-regression-main
-pr: 5138
+pr: 5270
 related: [5131]
 files:
   - src/codegen/expressions/new-builtin-globals.ts
@@ -296,18 +296,20 @@ the ordinary/static ordering and sibling matrix in both modes, the canonical
 host dynamic/nested-spread controls, and the standalone fail-closed controls.
 TypeScript 5 and TypeScript 7 no-emit checks passed. Numeric-local parity passed
 **18/18**. Focused Biome and Prettier checks, LOC/function budgets,
-oracle/coercion ratchets, issue integrity, and the full commit-hook changed-root
-suite also passed. The remaining complete pre-push gate and final follow-up PR
-audit must pass before this issue can move to `done`.
+oracle/coercion ratchets, issue integrity, the full commit-hook changed-root
+suite, and the complete pre-push chain also passed.
 
 ## Handoff
 
 Continue only in
 `/private/tmp/js2-es2015-proxy-spread-regression-20260830` on branch
-`codex/5122-proxy-spread-regression-main`. The current synchronized local head
-is `0055e7cf6866e54cc1e3a74cf699eb65c5748364`; the issue update remains
-uncommitted while the full gate runs. Open one new non-draft upstream fix PR
-from `ttraenkler/js2` only when the branch is fully validated and mergeable.
-If a gate exposes an actual blocker, publish that checkpoint as draft and state
-the blocker explicitly. Do not create a GitHub issue; this markdown file remains
-the canonical tracker.
+`codex/5122-proxy-spread-regression-main`. The implementation checkpoint is
+`0055e7cf6866e54cc1e3a74cf699eb65c5748364`; the first published combined head
+is `86494ad1c16d4f38c7c92a4cd9879a670e770eca`, and local/fork heads were
+verified equal before publication. The non-draft upstream follow-up is PR 5270:
+<https://github.com/loopdive/js2/pull/5270>. Its live audit confirms base
+`loopdive/js2:main`, head
+`ttraenkler:codex/5122-proxy-spread-regression-main`, the required
+Description/CLA body, and a checked CLA box. CI and merge-queue validation are
+now the remaining blockers to `done`; freeze the exact head once queued. Do not
+create a GitHub issue; this markdown file remains the canonical tracker.
