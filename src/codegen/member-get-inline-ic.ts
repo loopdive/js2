@@ -139,6 +139,61 @@ interface IcPlan {
   armTail: Instr[];
 }
 
+/** Every nested instruction array owned by one structured instruction. */
+function nestedBodies(instr: Instr): Instr[][] {
+  const a = instr as {
+    body?: Instr[];
+    then?: Instr[];
+    else?: Instr[];
+    catches?: { body?: Instr[] }[];
+    catchAll?: Instr[];
+  };
+  const out: Instr[][] = [];
+  for (const body of [a.body, a.then, a.else, a.catchAll]) if (Array.isArray(body)) out.push(body);
+  if (Array.isArray(a.catches)) for (const c of a.catches) if (Array.isArray(c.body)) out.push(c.body);
+  return out;
+}
+
+/**
+ * Functions that reach a multiply-parented instruction array, either within
+ * one function or from another function root.
+ *
+ * The IC rewrite allocates scratch locals in the enclosing function. Mutating a
+ * physically shared array for either owner would therefore bake a
+ * context-specific expansion into all incoming edges. Across functions that
+ * includes the wrong local index; within a function the incoming dominance
+ * state can differ and the expanded fallback arm itself can become a new site
+ * for a later traversal. The pass is optional, so declining the whole affected
+ * function is the narrow, semantics-preserving answer. The scan is iterative
+ * and expands each (function,array) pair once, keeping a depth-28 shared DAG
+ * linear rather than expanding it by incoming edge.
+ */
+function functionsWithSharedBodies(functions: readonly WasmFunction[]): Set<WasmFunction> {
+  const firstOwner = new WeakMap<Instr[], WasmFunction>();
+  const affected = new Set<WasmFunction>();
+  for (const fn of functions) {
+    const encountered = new WeakSet<Instr[]>();
+    const expanded = new WeakSet<Instr[]>();
+    const pending = [fn.body];
+    while (pending.length > 0) {
+      const body = pending.pop()!;
+      const owner = firstOwner.get(body);
+      if (owner && owner !== fn) {
+        affected.add(owner);
+        affected.add(fn);
+      } else if (!owner) {
+        firstOwner.set(body, fn);
+      }
+      if (encountered.has(body)) affected.add(fn);
+      else encountered.add(body);
+      if (expanded.has(body)) continue;
+      expanded.add(body);
+      for (const instr of body) pending.push(...nestedBodies(instr));
+    }
+  }
+  return affected;
+}
+
 /** The ceiling `JS2WASM_INLINE_PROP_IC` selects when unset — entry (29)'s optimum. */
 const DEFAULT_MAX_CANDIDATES = 8;
 
@@ -300,7 +355,8 @@ function planTypedF64(ctx: CodegenContext, propName: string, max: number): { pla
  * In-place (rather than returning a fresh array) so any reference another pass
  * still holds to a nested `then`/`body` array stays valid.
  */
-function rewriteInstrs(
+/** @internal Exported for focused instruction-DAG regression coverage. */
+export function rewriteInstrs(
   ctx: CodegenContext,
   fn: WasmFunction,
   instrs: Instr[],
@@ -308,7 +364,16 @@ function rewriteInstrs(
   scratch: () => number,
   stats: { patched: number; declinedProducer: number },
   reuse: ReusePlan | undefined,
+  visited: WeakSet<Instr[]>,
 ): void {
+  // Instruction builders intentionally share immutable child arrays between
+  // multiple branch arms. The resulting graph is a DAG, not a tree. Rewriting
+  // a shared array once per incoming edge repeatedly expands the ICs already
+  // inserted by an earlier visit and becomes exponential on deeply shared
+  // finalizer bodies (the TypeScript parser graph is a real example). One
+  // in-place rewrite is both sufficient and required for every reference.
+  if (visited.has(instrs)) return;
+  visited.add(instrs);
   const out: Instr[] = [];
   for (const instr of instrs) {
     const a = instr as { op: string; funcIdx?: number; body?: Instr[]; then?: Instr[]; else?: Instr[] } & {
@@ -319,14 +384,14 @@ function rewriteInstrs(
     // order is what lets a nested site reuse a guard from an ANCESTOR array: by
     // the time a child is rewritten, the parent's `out` already carries
     // everything that dominates it.
-    if (Array.isArray(a.body)) rewriteInstrs(ctx, fn, a.body, plans, scratch, stats, reuse);
-    if (Array.isArray(a.then)) rewriteInstrs(ctx, fn, a.then, plans, scratch, stats, reuse);
-    if (Array.isArray(a.else)) rewriteInstrs(ctx, fn, a.else, plans, scratch, stats, reuse);
+    if (Array.isArray(a.body)) rewriteInstrs(ctx, fn, a.body, plans, scratch, stats, reuse, visited);
+    if (Array.isArray(a.then)) rewriteInstrs(ctx, fn, a.then, plans, scratch, stats, reuse, visited);
+    if (Array.isArray(a.else)) rewriteInstrs(ctx, fn, a.else, plans, scratch, stats, reuse, visited);
     if (Array.isArray(a.catches)) {
       for (const c of a.catches)
-        if (Array.isArray(c.body)) rewriteInstrs(ctx, fn, c.body, plans, scratch, stats, reuse);
+        if (Array.isArray(c.body)) rewriteInstrs(ctx, fn, c.body, plans, scratch, stats, reuse, visited);
     }
-    if (Array.isArray(a.catchAll)) rewriteInstrs(ctx, fn, a.catchAll, plans, scratch, stats, reuse);
+    if (Array.isArray(a.catchAll)) rewriteInstrs(ctx, fn, a.catchAll, plans, scratch, stats, reuse, visited);
 
     const plan = a.op === "call" && a.funcIdx !== undefined ? plans.get(a.funcIdx) : undefined;
     if (!plan) {
@@ -453,11 +518,16 @@ export function inlineMemberGetCallSites(ctx: CodegenContext): void {
   const stats = { patched: 0, declinedProducer: 0 };
   let fnsTouched = 0;
   const touched: string[] = [];
+  const sharedBodies = functionsWithSharedBodies(ctx.mod.functions);
   for (const fn of ctx.mod.functions) {
     // Never patch inside a dispatcher: the typed f64 twin's fallback calls the
     // generic dispatcher on the path where the arm has ALREADY missed, so a
     // guard there is pure tax by construction.
     if (fn.name.startsWith("__get_member_")) continue;
+    // The rewrite is optional, while an aliased body has more than one
+    // incoming context. Leave the entire function byte-identical to its
+    // pre-inline form instead of specializing one edge in place for all edges.
+    if (sharedBodies.has(fn)) continue;
     const before = stats.patched;
     let scratchIdx = -1;
     const scratch = (): number => {
@@ -481,7 +551,7 @@ export function inlineMemberGetCallSites(ctx: CodegenContext): void {
         return c.op === "call" && c.funcIdx !== undefined ? plans.get(c.funcIdx)?.structTypeIdx : undefined;
       },
     );
-    rewriteInstrs(ctx, fn, fn.body, plans, scratch, stats, reuse);
+    rewriteInstrs(ctx, fn, fn.body, plans, scratch, stats, reuse, new WeakSet<Instr[]>());
     if (stats.patched > before) {
       fnsTouched++;
       if (debug && touched.length < 24) touched.push(`${fn.name}×${stats.patched - before}`);

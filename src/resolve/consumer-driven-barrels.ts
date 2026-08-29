@@ -246,6 +246,43 @@ function namespaceMemberNames(statement: ts.Statement): Set<string> {
   return names;
 }
 
+/**
+ * Visit identifiers that can affect emitted runtime code.
+ *
+ * `ts.isTypeNode` covers annotations and type queries, but it also classifies
+ * `ExpressionWithTypeArguments` as a type node. A class `extends` expression
+ * is evaluated at runtime, so preserve that expression while omitting its
+ * type arguments and all other type-only syntax.
+ */
+function forEachRuntimeIdentifier(node: ts.Node, callback: (identifier: ts.Identifier) => void): void {
+  const visit = (current: ts.Node): void => {
+    if (
+      ts.isInterfaceDeclaration(current) ||
+      ts.isTypeAliasDeclaration(current) ||
+      ts.isTypeParameterDeclaration(current)
+    ) {
+      return;
+    }
+    if (ts.isHeritageClause(current)) {
+      if (
+        current.token === ts.SyntaxKind.ExtendsKeyword &&
+        (ts.isClassDeclaration(current.parent) || ts.isClassExpression(current.parent))
+      ) {
+        for (const type of current.types) visit(type.expression);
+      }
+      return;
+    }
+    if (ts.isExpressionWithTypeArguments(current)) {
+      visit(current.expression);
+      return;
+    }
+    if (ts.isTypeNode(current)) return;
+    if (ts.isIdentifier(current)) callback(current);
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+}
+
 function blankPreservingLines(source: string): string {
   return source.replace(/[^\r\n]/g, " ");
 }
@@ -328,14 +365,22 @@ function specializeNamespaceBody(
   sourceFile: ts.SourceFile,
   declaration: ts.ModuleDeclaration,
   roots: ReadonlySet<string>,
-): string {
-  if (!declaration.body || !ts.isModuleBlock(declaration.body)) return source;
-  const ownerByName = new Map<string, ts.Statement>();
+): { content: string; outerReferences: readonly ts.Identifier[] } {
+  if (!declaration.body || !ts.isModuleBlock(declaration.body)) {
+    return { content: source, outerReferences: [] };
+  }
+  const ownerByName = new Map<string, Set<ts.Statement>>();
   const removable = new Set<ts.Statement>();
   for (const statement of declaration.body.statements) {
     const names = namespaceMemberNames(statement);
-    if (names.size === 0) continue;
-    for (const name of names) ownerByName.set(name, statement);
+    for (const name of names) {
+      let owners = ownerByName.get(name);
+      if (!owners) {
+        owners = new Set();
+        ownerByName.set(name, owners);
+      }
+      owners.add(statement);
+    }
     if (
       ts.isFunctionDeclaration(statement) ||
       ts.isInterfaceDeclaration(statement) ||
@@ -347,26 +392,42 @@ function specializeNamespaceBody(
   }
   const live = new Set<ts.Statement>();
   const queue: ts.Statement[] = [];
+  const outerReferences: ts.Identifier[] = [];
   for (const root of roots) {
-    const statement = ownerByName.get(root);
-    if (statement && !live.has(statement)) {
+    for (const statement of ownerByName.get(root) ?? []) {
+      if (!live.has(statement)) {
+        live.add(statement);
+        queue.push(statement);
+      }
+    }
+  }
+  // Namespace specialization only blanks declaration-only statements in
+  // `removable`. Everything else remains physically present and therefore
+  // observable: variable initializers, class static initialization, enums,
+  // and bare side-effect statements all execute during module evaluation.
+  // Make those statements roots of the same dependency closure.
+  for (const statement of declaration.body.statements) {
+    if (!removable.has(statement) && !live.has(statement)) {
       live.add(statement);
       queue.push(statement);
     }
   }
   while (queue.length > 0) {
     const statement = queue.shift()!;
-    const visit = (node: ts.Node): void => {
-      if (ts.isIdentifier(node)) {
-        const dependency = ownerByName.get(node.text);
-        if (dependency && !live.has(dependency)) {
+    forEachRuntimeIdentifier(statement, (identifier) => {
+      const dependencies = ownerByName.get(identifier.text);
+      for (const dependency of dependencies ?? []) {
+        if (!live.has(dependency)) {
           live.add(dependency);
           queue.push(dependency);
         }
       }
-      ts.forEachChild(node, visit);
-    };
-    visit(statement);
+      // A selectively retained namespace member can close over a declaration
+      // in its containing module. The namespace-local closure above cannot
+      // resolve that owner; hand the reference back to the outer pass so it
+      // can keep the exact declaration (and its own dependencies) alive.
+      if (!dependencies) outerReferences.push(identifier);
+    });
   }
   let specialized = source;
   const dead = Array.from(removable).filter((statement) => !live.has(statement));
@@ -376,7 +437,7 @@ function specializeNamespaceBody(
     specialized =
       specialized.slice(0, start) + blankPreservingLines(specialized.slice(start, end)) + specialized.slice(end);
   }
-  return specialized;
+  return { content: specialized, outerReferences };
 }
 
 function baseModuleView(info: ModuleInfo): ModuleInfo {
@@ -436,7 +497,13 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
   const noteNamespaceUse = (statement: ts.Statement, path: string | null): void => {
     if (!ts.isModuleDeclaration(statement)) return;
     if (path === null) {
+      const becameWhole = !wholeNamespaces.has(statement);
       wholeNamespaces.add(statement);
+      // A namespace may first be processed with a narrow member root and only
+      // later escape as a whole value through an outer helper. Its previously
+      // skipped body must then re-enter the outer closure walk so dependencies
+      // of every newly retained member are preserved.
+      if (becameWhole && live.has(statement)) queue.push(statement);
       return;
     }
     let roots = namespaceRoots.get(statement);
@@ -446,6 +513,43 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
     }
     roots.add(path.split(".", 1)[0]);
   };
+  const markIdentifierDependency = (node: ts.Identifier, statement?: ts.Statement): void => {
+    const owners = ownerByName.get(node.text);
+    if (!owners) return;
+    const isDeclarationName =
+      statement !== undefined &&
+      owners.has(statement) &&
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement)) &&
+      statement.name === node;
+    const isPropertyName =
+      (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+      (ts.isPropertyAssignment(node.parent) && node.parent.name === node) ||
+      (ts.isMethodDeclaration(node.parent) && node.parent.name === node);
+    if (isDeclarationName || isPropertyName) return;
+    const mergedNamespaceOwners = owners.size > 1 && Array.from(owners).every((owner) => ts.isModuleDeclaration(owner));
+    for (const owner of owners) {
+      if (ts.isModuleDeclaration(owner)) {
+        // Declaration merging makes the member owner ambiguous without a
+        // checker. Preserve every contribution rather than specializing the
+        // wrong half of a merged namespace.
+        if (mergedNamespaceOwners) {
+          noteNamespaceUse(owner, null);
+        } else if (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) {
+          noteNamespaceUse(owner, node.parent.name.text);
+        } else if (ts.isQualifiedName(node.parent) && node.parent.left === node) {
+          noteNamespaceUse(owner, node.parent.right.text);
+        } else {
+          noteNamespaceUse(owner, null);
+        }
+      }
+      mark(owner);
+    }
+  };
 
   let foundExternalRoot = false;
   for (const requested of demand) {
@@ -453,9 +557,10 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
     const owners = ownerByName.get(topLevelName);
     if (!owners) continue;
     foundExternalRoot = true;
+    const mergedNamespaceOwners = owners.size > 1 && Array.from(owners).every((owner) => ts.isModuleDeclaration(owner));
     for (const owner of owners) {
+      noteNamespaceUse(owner, mergedNamespaceOwners ? null : memberPath.length > 0 ? memberPath.join(".") : null);
       mark(owner);
-      noteNamespaceUse(owner, memberPath.length > 0 ? memberPath.join(".") : null);
     }
   }
   if (!foundExternalRoot) return baseModuleView(info);
@@ -477,57 +582,41 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
     mark(statement);
   }
 
-  while (queue.length > 0) {
-    const statement = queue.shift()!;
-    if (ts.isModuleDeclaration(statement) && namespaceRoots.has(statement) && !wholeNamespaces.has(statement)) {
-      // The namespace member pass below traces only the demanded member roots.
-      // Walking the unspecialized namespace here would make any internal
-      // `Namespace[key]` access look like a dynamic use of the whole namespace
-      // and defeat the specialization before it runs.
-      continue;
-    }
-    const visit = (node: ts.Node): void => {
-      if (ts.isIdentifier(node)) {
-        const owners = ownerByName.get(node.text);
-        if (owners) {
-          const isDeclarationName =
-            owners.has(statement) &&
-            (ts.isFunctionDeclaration(statement) ||
-              ts.isClassDeclaration(statement) ||
-              ts.isInterfaceDeclaration(statement) ||
-              ts.isTypeAliasDeclaration(statement) ||
-              ts.isEnumDeclaration(statement) ||
-              ts.isModuleDeclaration(statement)) &&
-            statement.name === node;
-          const isPropertyName =
-            (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
-            (ts.isPropertyAssignment(node.parent) && node.parent.name === node) ||
-            (ts.isMethodDeclaration(node.parent) && node.parent.name === node);
-          if (!isDeclarationName && !isPropertyName) {
-            for (const owner of owners) {
-              mark(owner);
-              if (ts.isModuleDeclaration(owner)) {
-                if (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) {
-                  noteNamespaceUse(owner, node.parent.name.text);
-                } else if (ts.isQualifiedName(node.parent) && node.parent.left === node) {
-                  noteNamespaceUse(owner, node.parent.right.text);
-                } else {
-                  noteNamespaceUse(owner, null);
-                }
-              }
-            }
-          }
-        }
+  // Closing over an outer declaration from a retained namespace member is a
+  // two-level fixpoint: the member can retain an outer helper, and that helper
+  // can in turn request another member of this or a sibling namespace. Re-run
+  // only when a namespace's exact root set grows.
+  const processedNamespaceRoots = new Map<ts.ModuleDeclaration, string>();
+  for (;;) {
+    while (queue.length > 0) {
+      const statement = queue.shift()!;
+      if (ts.isModuleDeclaration(statement) && namespaceRoots.has(statement) && !wholeNamespaces.has(statement)) {
+        // The namespace member pass below traces only the demanded member roots.
+        // Walking the unspecialized namespace here would make any internal
+        // `Namespace[key]` access look like a dynamic use of the whole namespace
+        // and defeat the specialization before it runs.
+        continue;
       }
-      ts.forEachChild(node, visit);
-    };
-    visit(statement);
+      forEachRuntimeIdentifier(statement, (identifier) => markIdentifierDependency(identifier, statement));
+    }
+
+    let specializedNamespace = false;
+    for (const [namespace, roots] of namespaceRoots) {
+      if (wholeNamespaces.has(namespace) || !live.has(namespace) || roots.size === 0) continue;
+      const rootKey = Array.from(roots).sort().join("\0");
+      if (processedNamespaceRoots.get(namespace) === rootKey) continue;
+      processedNamespaceRoots.set(namespace, rootKey);
+      const specialization = specializeNamespaceBody(info.baseContent, info.baseSourceFile, namespace, roots);
+      for (const reference of specialization.outerReferences) markIdentifierDependency(reference);
+      specializedNamespace = true;
+    }
+    if (queue.length === 0 && !specializedNamespace) break;
   }
 
   let content = info.baseContent;
   for (const [namespace, roots] of namespaceRoots) {
     if (!wholeNamespaces.has(namespace) && live.has(namespace) && roots.size > 0) {
-      content = specializeNamespaceBody(content, info.baseSourceFile, namespace, roots);
+      content = specializeNamespaceBody(content, info.baseSourceFile, namespace, roots).content;
     }
   }
   const dead = Array.from(removable).filter((statement) => !live.has(statement));
