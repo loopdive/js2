@@ -23,7 +23,7 @@ import { emitToString, getExternrefToStringProvider } from "../coercion-engine.j
 import { emitTaViewConstruct, emitTaViewConstructWindowed, nativeBufferBuiltinOf } from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
-import { ensureAnyToStringHelper } from "../native-strings.js";
+import { ensureAnyToStringHelper, ensureNativeStringBoundaryBridge } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureNativeProxyRuntime } from "../object-runtime.js";
 import { ensureSymbolCarrier } from "../symbol-native.js";
@@ -933,6 +933,19 @@ export function tryCompileBuiltinGlobalNew(
       if (emitTest262ErrorWithModuleCtor(ctx, fctx, expr, ctorName)) {
         return { kind: "externref" };
       }
+      // (#5161) In the `nativeStrings` / `fast` lanes the message about to be
+      // handed to the host ctor is a WasmGC `array i16` carrier, not a host
+      // string. `_errorMessageToString` decodes it with the module's own
+      // `__str_is_native` / `__str_to_extern` discriminator — but those exports
+      // are otherwise emitted only when some UNRELATED part of the module needs
+      // the boundary bridge. Measured 2026-08-28: `new Error("m")` threw
+      // "Cannot convert object to primitive value" in a module that merely
+      // constructs the error, and did not in one that also did
+      // `String(e.message)` — the same source, two outcomes, decided by
+      // unrelated content. Request the bridge here so the decode is available
+      // whenever a host Error ctor is emitted. No-op in the default host lane
+      // (`ctx.nativeStrings` false), which keeps that lane byte-identical.
+      if (ctx.nativeStrings) ensureNativeStringBoundaryBridge(ctx);
       // Use host import to create a real Error object with correct .name/.message/.stack
       const funcIdx = ensureLateImport(
         ctx,
@@ -1020,6 +1033,10 @@ export function tryCompileBuiltinGlobalNew(
     } else {
       fctx.body.push({ op: "ref.null.extern" });
     }
+    // (#5161) Same native-string message decode as the plain Error family
+    // above — `__new_AggregateError` reaches the SAME `_errorMessageToString`,
+    // so it needs the same discriminator exports to be present.
+    if (ctx.nativeStrings) ensureNativeStringBoundaryBridge(ctx);
     const funcIdx = ensureLateImport(
       ctx,
       "__new_AggregateError",
@@ -1050,6 +1067,10 @@ export function tryCompileBuiltinGlobalNew(
         fctx.body.push({ op: "ref.null.extern" });
       }
     }
+    // (#5161) Third caller of `_errorMessageToString` — kept consistent with
+    // the Error / AggregateError sites so the three cannot drift. Unverifiable
+    // today: this host has no `SuppressedError` (see the #5159 record).
+    if (ctx.nativeStrings) ensureNativeStringBoundaryBridge(ctx);
     const funcIdx = ensureLateImport(
       ctx,
       "__new_SuppressedError",

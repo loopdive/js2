@@ -33,7 +33,7 @@ import { emitCollectionIteratorVec, ensureMapHelpers, MAP_LAYOUT } from "../map-
 import { elemGetOp, resolveArrayInfo, typedArraySearchSignedness, unpackedElemType } from "../array-methods.js";
 import { flatStringType, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
-import { ensureObjectRuntime } from "../object-runtime.js";
+import { ensureObjVecBuilders, ensureObjectRuntime } from "../object-runtime.js";
 import { coercionInstrs, defaultValueInstrs } from "../type-coercion.js";
 import {
   addForInImports,
@@ -1262,29 +1262,43 @@ function compileForOfNativeMapEntries(
   isSet: boolean,
 ): boolean {
   if (!ctx.nativeStrings) return false;
-  // Only the `const/let [k, v]` binding form (the dominant Map-entries shape).
+  // The `const/let [k, v]` binding form (the dominant Map-entries shape) and
+  // (#5144 cluster Map) the single-identifier form `for (var x of map)`, which
+  // binds the `[key, value]` PAIR. The latter used to fall through to the eager
+  // snapshot vec, which mis-typed the pair element (invalid Wasm in
+  // `__module_init`) and could never see mutations made during iteration.
   if (!ts.isVariableDeclarationList(stmt.initializer)) return false;
   const decl = stmt.initializer.declarations[0]!;
-  if (!ts.isArrayBindingPattern(decl.name)) return false;
-  const elements = decl.name.elements;
-  if (elements.length !== 2) return false;
-  const keyEl = elements[0]!;
-  const valEl = elements[1]!;
-  if (
-    !ts.isBindingElement(keyEl) ||
-    keyEl.dotDotDotToken ||
-    keyEl.initializer ||
-    !ts.isIdentifier(keyEl.name) ||
-    !ts.isBindingElement(valEl) ||
-    valEl.dotDotDotToken ||
-    valEl.initializer ||
-    !ts.isIdentifier(valEl.name)
-  ) {
-    return false;
+  const singleName = ts.isIdentifier(decl.name) ? decl.name : undefined;
+  let keyEl: ts.BindingElement | undefined;
+  let valEl: ts.BindingElement | undefined;
+  if (singleName === undefined) {
+    if (!ts.isArrayBindingPattern(decl.name)) return false;
+    const elements = decl.name.elements;
+    if (elements.length !== 2) return false;
+    const k = elements[0]!;
+    const v = elements[1]!;
+    if (
+      !ts.isBindingElement(k) ||
+      k.dotDotDotToken ||
+      k.initializer ||
+      !ts.isIdentifier(k.name) ||
+      !ts.isBindingElement(v) ||
+      v.dotDotDotToken ||
+      v.initializer ||
+      !ts.isIdentifier(v.name)
+    ) {
+      return false;
+    }
+    keyEl = k;
+    valEl = v;
   }
 
   ensureMapHelpers(ctx);
   if (ctx.mapTypeIdx < 0) return false;
+  // Register the pair builders BEFORE the receiver is compiled so no
+  // function-index shift lands mid-body.
+  const pairBuilders = singleName !== undefined ? ensureObjVecBuilders(ctx) : undefined;
 
   // Confirm the receiver genuinely lowers to the native `$Map` struct without
   // leaving code behind (same probe as compileForOfNativeCollection).
@@ -1298,7 +1312,7 @@ function compileForOfNativeMapEntries(
   const { M_ENTRIES, M_ENTRYCOUNT, F_KEY, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
   const isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
   if (isConst) {
-    collectBindingNames(decl.name).forEach((n) => {
+    (ts.isIdentifier(decl.name) ? [decl.name.text] : collectBindingNames(decl.name)).forEach((n) => {
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(n);
     });
@@ -1315,10 +1329,13 @@ function compileForOfNativeMapEntries(
 
   // Bound key/value locals, typed from the binding-element TS types (a numeric
   // Map key → f64, string → native string ref, etc.).
-  const keyType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(keyEl));
-  const valType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(valEl));
-  const keyLocal = allocLocal(fctx, keyEl.name.text, keyType);
-  const valLocal = allocLocal(fctx, valEl.name.text, valType);
+  const externVT: ValType = { kind: "externref" };
+  const keyType = keyEl ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(keyEl)) : externVT;
+  const valType = valEl ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(valEl)) : externVT;
+  const keyLocal = keyEl ? allocLocal(fctx, (keyEl.name as ts.Identifier).text, keyType) : -1;
+  const valLocal = valEl ? allocLocal(fctx, (valEl.name as ts.Identifier).text, valType) : -1;
+  // (#5144) The single-identifier form binds the `[key, value]` pair itself.
+  const pairLocal = singleName !== undefined ? allocLocal(fctx, singleName.text, externVT) : -1;
 
   const iTmp = allocLocal(fctx, `__mef_i_${fctx.locals.length}`, { kind: "i32" });
   const entryTmp = allocLocal(fctx, `__mef_e_${fctx.locals.length}`, {
@@ -1380,9 +1397,27 @@ function compileForOfNativeMapEntries(
   fctx.body.push({ op: "i32.and" });
   fctx.body.push({ op: "br_if", depth: 0 });
 
-  // Bind k ← entry.key (Set: value === key), v ← entry.value.
-  fctx.body.push(...bindFromEntry(isSet ? F_VALUE : F_KEY, keyType, keyLocal));
-  fctx.body.push(...bindFromEntry(F_VALUE, valType, valLocal));
+  if (pairBuilders !== undefined) {
+    // (#5144) Materialize a fresh `[key, value]` $ObjVec per LIVE entry.
+    const pairTmp = allocLocal(fctx, `__mef_pair_${fctx.locals.length}`, externVT);
+    fctx.body.push({ op: "call", funcIdx: pairBuilders.newIdx });
+    fctx.body.push({ op: "local.tee", index: pairTmp });
+    fctx.body.push({ op: "local.get", index: entryTmp });
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: isSet ? F_VALUE : F_KEY });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "call", funcIdx: pairBuilders.pushIdx });
+    fctx.body.push({ op: "local.get", index: pairTmp });
+    fctx.body.push({ op: "local.get", index: entryTmp });
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_VALUE });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "call", funcIdx: pairBuilders.pushIdx });
+    fctx.body.push({ op: "local.get", index: pairTmp });
+    fctx.body.push({ op: "local.set", index: pairLocal });
+  } else {
+    // Bind k ← entry.key (Set: value === key), v ← entry.value.
+    fctx.body.push(...bindFromEntry(isSet ? F_VALUE : F_KEY, keyType, keyLocal));
+    fctx.body.push(...bindFromEntry(F_VALUE, valType, valLocal));
+  }
 
   // Compile the user body inside its own block so `continue` (br depth 0 from
   // inside the body) exits the body block and falls through to the loop's `br`.

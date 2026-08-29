@@ -71,6 +71,7 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
+import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
 
 /**
  * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
@@ -1402,7 +1403,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       (stmt.declarationList.flags &
         (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) !==
       0;
-    const bindsModuleGlobal = !declarationIsLexical || (stmt.parent !== undefined && ts.isSourceFile(stmt.parent));
+    const bindsModuleGlobal =
+      !declarationIsLexical ||
+      (stmt.parent !== undefined && ts.isSourceFile(stmt.parent)) ||
+      // Runtime namespace lexical declarations are backed by qualified
+      // module globals. `declarations.ts` projects only this ModuleBlock's
+      // exact cell under the bare source name while compiling its initializer.
+      (stmt.parent !== undefined && ts.isModuleBlock(stmt.parent) && ctx.moduleGlobals.has(name));
 
     // Track const bindings for runtime enforcement (assignment throws TypeError)
     if (stmt.declarationList.flags & ts.NodeFlags.Const) {
@@ -1529,15 +1536,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // back to `compileExpression` for a class with no singleton (externref-
       // backed builtin subclass) or an unresolved synthetic name.
       let actualType: ValType | null;
-      const clsSynth = ts.isClassExpression(decl.initializer)
-        ? ctx.anonClassExprNames.get(decl.initializer)
-        : undefined;
+      const classInitializer = ts.isClassExpression(decl.initializer) ? decl.initializer : undefined;
+      const clsSynth = classInitializer ? ctx.anonClassExprNames.get(classInitializer) : undefined;
       if (
+        classInitializer !== undefined &&
         clsSynth !== undefined &&
         ctx.classObjectGlobals?.has(clsSynth) &&
         emitLazyClassObjectGet(ctx, fctx, clsSynth)
       ) {
-        actualType = { kind: "externref" };
+        actualType = emitClassExpressionStaticsBeforeValue(ctx, fctx, classInitializer, { kind: "externref" });
       } else {
         actualType = compileExpression(ctx, fctx, decl.initializer);
       }

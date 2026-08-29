@@ -15,6 +15,12 @@ import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
 import { emitF64HoleToUndef, f64HolesActive, f64HoleTestInstrs, f64HoleToUndefFor } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4491 T11)
+import {
+  arraySpeciesActive,
+  emitArraySpeciesCreate,
+  emitArraySpeciesResultSwap,
+  prepareArraySpeciesDeps,
+} from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
@@ -4870,6 +4876,21 @@ export function compileArraySliceFromVecLocal(
   // represents. So copy only the in-backing prefix (guarded: a start past the
   // backing must skip the copy entirely — array.copy traps on an out-of-backing
   // srcOffset even at count 0).
+  // (#5145) §23.1.3.25 step 8 — `A = ArraySpeciesCreate(O, count)`, emitted
+  // BEFORE the element copy so an abrupt species completion beats it. Null
+  // sentinel ⇒ the `struct.new $vec` below is the result, unchanged.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: vecLocal }, { op: "extern.convert_any" }],
+          [{ op: "local.get", index: sliceLenTmp }, { op: "f64.convert_i32_s" }],
+        );
+
   emitBackingClampedArrayCopy(ctx, fctx, arrTypeIdx, newData, null, dataTmp, startLocal, sliceLenTmp);
 
   // struct.new vec { sliceLen, newData }
@@ -4877,6 +4898,12 @@ export function compileArraySliceFromVecLocal(
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: vecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 
@@ -5085,7 +5112,12 @@ function compileArrayConcat(
   // gate, and the same argument, as `array-join-proto-hole.ts` (#4491 lane J)
   // uses for `join`. Flag clear ⇒ not reached ⇒ bytes unchanged.
   // See array-concat-carrier.ts; the SLOT typers ask that same predicate.
-  if (concatMustConsultPrototypeChain(ctx)) {
+  // (#5145) The same argument applies to `ArraySpeciesCreate`: every path below
+  // mints a raw `struct.new $vec`, so a module that can observe `@@species`
+  // must take the spec loop (which carries the species prologue) — including
+  // the 0-arg shallow-copy shortcut, which `concat/create-species*.js` exercises
+  // with a bare `a.concat()`.
+  if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx)) {
     const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
     if (spec !== undefined) return spec;
   }
@@ -5921,14 +5953,37 @@ function compileArraySplice(
 ): ValType | null {
   // 0-arg splice: no mutation, return empty array
   if (callExpr.arguments.length === 0) {
-    // Still need to evaluate receiver for side effects
-    compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "drop" });
+    // Still need to evaluate receiver for side effects. (#5145) It is also the
+    // ArraySpeciesCreate receiver: `splice/create-species-non-ctor.js` and its
+    // siblings call `a.splice()` with NO arguments and still expect the §23.1.3.29
+    // step-11 `ArraySpeciesCreate(O, 0)` to run (and throw).
+    const recvType = compileExpression(ctx, fctx, propAccess.expression);
+    const zeroArgSpeciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+    let zeroArgSpeciesLocal: number | undefined;
+    if (zeroArgSpeciesDeps !== undefined && (recvType?.kind === "ref" || recvType?.kind === "ref_null")) {
+      const recvTmp = allocLocal(fctx, `__arr_spl0_recv_${fctx.locals.length}`, recvType);
+      fctx.body.push({ op: "local.set", index: recvTmp });
+      zeroArgSpeciesLocal = emitArraySpeciesCreate(
+        ctx,
+        fctx,
+        zeroArgSpeciesDeps,
+        [{ op: "local.get", index: recvTmp }, { op: "extern.convert_any" }],
+        [{ op: "f64.const", value: 0 }],
+      );
+    } else {
+      fctx.body.push({ op: "drop" });
+    }
     // Return empty vec struct: { 0, array.new_default(0) }
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
     fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    if (zeroArgSpeciesDeps !== undefined && zeroArgSpeciesLocal !== undefined) {
+      return emitArraySpeciesResultSwap(ctx, fctx, zeroArgSpeciesDeps, zeroArgSpeciesLocal, {
+        kind: "ref_null",
+        typeIdx: vecTypeIdx,
+      });
+    }
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
@@ -6000,6 +6055,20 @@ function compileArraySplice(
     ],
   });
   emitClampNonNeg(fctx, delCountTmp);
+
+  // (#5145) §23.1.3.29 step 11 — `A = ArraySpeciesCreate(O, actualDeleteCount)`,
+  // before any element is moved.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: vecTmp }, { op: "extern.convert_any" }],
+          [{ op: "local.get", index: delCountTmp }, { op: "f64.convert_i32_s" }],
+        );
 
   // Create deleted elements backing array and copy
   fctx.body.push({ op: "local.get", index: delCountTmp });
@@ -6099,6 +6168,12 @@ function compileArraySplice(
   fctx.body.push({ op: "local.get", index: delData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: vecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 
@@ -7076,6 +7151,19 @@ function compileArrayFilter(
     typeIdx: resultArrTypeIdx,
   });
   const boundTmp = overlay ? loop.logicalLenTmp : loop.lenTmp;
+  // (#5145) §23.1.3.7 step 5 — `A = ArraySpeciesCreate(O, 0)`. Zero, not `len`:
+  // `filter/create-species.js` asserts `args[0] === 0`.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: loop.vecTmp }, { op: "extern.convert_any" }],
+          [{ op: "f64.const", value: 0 }],
+        );
   fctx.body.push({ op: "local.get", index: boundTmp });
   fctx.body.push({ op: "array.new_default", typeIdx: resultArrTypeIdx });
   fctx.body.push({ op: "local.set", index: resData });
@@ -7128,6 +7216,12 @@ function compileArrayFilter(
   fctx.body.push({ op: "local.get", index: resData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: resultVecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
@@ -7234,6 +7328,21 @@ function compileArrayMap(
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "map", receiverIsExternref);
 
+  // (#5145) §23.1.3.19 step 5 — `A = ArraySpeciesCreate(O, len)`, BEFORE the
+  // callback loop: `map/create-species-abrupt.js` and `-non-ctor.js` both
+  // assert `callCount === 0` on an abrupt species completion.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: loop.vecTmp }, { op: "extern.convert_any" }],
+          [{ op: "local.get", index: loop.logicalLenTmp }, { op: "f64.convert_i32_s" }],
+        );
+
   const resData = allocLocal(fctx, `__arr_map_rd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: mapArrTypeIdx });
 
   // Allocate result array with the LOGICAL length (§23.1.3.19 — map's result is
@@ -7295,6 +7404,12 @@ function compileArrayMap(
   fctx.body.push({ op: "local.get", index: resData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: mapVecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: mapVecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: mapVecTypeIdx };
 }
 
@@ -8847,6 +8962,41 @@ function tryCompileComparatorSort(
  * arr.fill(value, start?, end?) -> fill elements with value, return same vec ref.
  * Mutates the array in place.
  */
+/**
+ * (#5145) §7.1.5 ToIntegerOrInfinity → §7.1.4 ToNumber step 3: a **Symbol** in
+ * an index-argument position throws a TypeError. `fill`/`copyWithin` compile
+ * their index args in `{kind: "f64"}` context, where a Symbol (lowered to an
+ * i32 id) coerces SILENTLY — measured: `[1,2,3].fill(0, Symbol())` did not
+ * throw. Mirrors `emitSymbolToNumberThrow` (`expressions/unary.ts`), including
+ * its oracle-only type question.
+ *
+ * Emits the receiver + every argument (each dropped) before the throw so the
+ * observable evaluation order of a normal call is preserved, then the throw.
+ * Returns true when it fired; a dynamic externref Symbol keeps the existing
+ * silent path (the rarer shape — every ES2015 file passes `Symbol()` literally).
+ */
+function emitSymbolIndexArgThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  indexArgPositions: readonly number[],
+): boolean {
+  const hasSymbolIndexArg = indexArgPositions.some((position) => {
+    const arg = callExpr.arguments[position];
+    return arg !== undefined && ctx.oracle.staticJsTypeOf(arg) === "symbol";
+  });
+  if (!hasSymbolIndexArg) return false;
+  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+  if (receiverType !== null) fctx.body.push({ op: "drop" });
+  for (const arg of callExpr.arguments) {
+    const argType = compileExpression(ctx, fctx, arg);
+    if (argType !== null) fctx.body.push({ op: "drop" });
+  }
+  emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+  return true;
+}
+
 function compileArrayFill(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -8859,6 +9009,11 @@ function compileArrayFill(
   if (callExpr.arguments.length < 1) {
     reportError(ctx, callExpr, "fill requires at least 1 argument");
     return null;
+  }
+  // fill(value, start, end) — positions 1 and 2 are the index args.
+  if (emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [1, 2])) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
   const vecTmp = allocLocal(fctx, `__arr_fill_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -9452,6 +9607,11 @@ function compileArrayCopyWithin(
   if (callExpr.arguments.length < 2) {
     reportError(ctx, callExpr, "copyWithin requires at least 2 arguments (target, start)");
     return null;
+  }
+  // copyWithin(target, start, end) — all three are index args.
+  if (emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [0, 1, 2])) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
   const vecTmp = allocLocal(fctx, `__arr_cw_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });

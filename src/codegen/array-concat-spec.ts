@@ -25,6 +25,7 @@ import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitArraySpeciesCreate, emitArraySpeciesResultSwap, prepareArraySpeciesDeps } from "./array-species.js"; // (#5145)
 
 /**
  * (#4446) Well-known `@@isConcatSpreadable` symbol handle — the id the object
@@ -330,6 +331,26 @@ export function compileArrayConcatNativeSpec(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null | undefined {
+  return compileArrayConcatNativeSpecFromExprs(ctx, fctx, propAccess.expression, [...callExpr.arguments]);
+}
+
+/**
+ * (#5145) The receiver/args-EXPRESSION entry to the same §23.1.3.1 loop.
+ *
+ * `Array.prototype.concat.call(obj, …)` reaches the compiler with the receiver
+ * as `arguments[0]`, not as the property-access target, so the AST-driven entry
+ * above cannot express it. Before this, that spelling fell through to the
+ * reflective `.call` lowering, which invokes the concat proto-closure's VARIADIC
+ * `(this, argsVec)` ABI through an arity-shaped `call_ref` and pushes one
+ * operand too few — an INVALID MODULE ("not enough arguments on the stack for
+ * call_ref (need 3, got 2)"), i.e. a compile-time failure, not a wrong answer.
+ */
+export function compileArrayConcatNativeSpecFromExprs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExpr: ts.Expression,
+  argExprs: readonly ts.Expression[],
+): ValType | null | undefined {
   const externref: ValType = { kind: "externref" };
   const deps = prepareConcatSpec(ctx, fctx);
   if (deps === undefined) return undefined;
@@ -337,7 +358,34 @@ export function compileArrayConcatNativeSpec(
   const locals = allocateConcatLocals(fctx);
   emitConcatOutputInit(ctx, fctx, deps, locals);
 
-  for (const sourceExpr of [propAccess.expression, ...callExpr.arguments]) {
+  // §23.1.3.1 step 2 — `A = ArraySpeciesCreate(O, 0)`. The receiver is the FIRST
+  // operand and must be evaluated before the species read, so the prologue is
+  // emitted from the receiver's own stashed value.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  let speciesLocal: number | undefined;
+
+  let first = true;
+  for (const sourceExpr of [receiverExpr, ...argExprs]) {
+    if (first && speciesDeps !== undefined) {
+      const recvTmp = allocLocal(fctx, `__cat_spec_recv_${fctx.locals.length}`, externref);
+      const sourceType = compileExpression(ctx, fctx, sourceExpr, externref);
+      if (sourceType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, externref);
+      fctx.body.push({ op: "local.set", index: recvTmp });
+      speciesLocal = emitArraySpeciesCreate(
+        ctx,
+        fctx,
+        speciesDeps,
+        [{ op: "local.get", index: recvTmp }],
+        [{ op: "f64.const", value: 0 }],
+      );
+      emitConcatSource(ctx, fctx, locals, deps, () => {
+        fctx.body.push({ op: "local.get", index: recvTmp });
+      });
+      first = false;
+      continue;
+    }
+    first = false;
     emitConcatSource(ctx, fctx, locals, deps, () => {
       const sourceType = compileExpression(ctx, fctx, sourceExpr, externref);
       if (sourceType === null) fctx.body.push({ op: "ref.null.extern" });
@@ -346,6 +394,9 @@ export function compileArrayConcatNativeSpec(
   }
 
   fctx.body.push({ op: "local.get", index: locals.out });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, { kind: "externref" });
+  }
   return { kind: "externref" };
 }
 
@@ -366,6 +417,20 @@ export function compileArrayConcatNativeSpecFromReceiverAndArgsVec(
   if (deps === undefined) return undefined;
   const locals = allocateConcatLocals(fctx);
   emitConcatOutputInit(ctx, fctx, deps, locals);
+
+  // (#5145) ArraySpeciesCreate(this, 0) — the receiver is already a parameter
+  // here, so no extra evaluation is needed.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: receiverIdx }],
+          [{ op: "f64.const", value: 0 }],
+        );
 
   emitConcatSource(ctx, fctx, locals, deps, () => {
     fctx.body.push({ op: "local.get", index: receiverIdx });
@@ -451,5 +516,8 @@ export function compileArrayConcatNativeSpecFromReceiverAndArgsVec(
   });
 
   fctx.body.push({ op: "local.get", index: locals.out });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, { kind: "externref" });
+  }
   return { kind: "externref" };
 }

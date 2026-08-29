@@ -756,6 +756,48 @@ function resolveClassAccessorParameterType(
   return nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
 }
 
+/**
+ * (#4618/#4646) Give a class DECLARATION its own per-site identity when its
+ * source name is already owned by a DIFFERENT declaration node.
+ *
+ * All the graph-wide class tables (`structMap`, `classSet`, `structFields`,
+ * `methodTable`, …) are keyed by class NAME. Two `class MySubclass` declarations
+ * in two different scopes are two different classes, but they collide on that
+ * one key: the second collection is a silent no-op and every use of the second
+ * class runs the FIRST one's compiled body — no invalid wasm, no compile error.
+ *
+ * Rather than re-key a map that also holds compiler-synthesised structs
+ * (`__regexp_match_vec`, `DisposableStack`, the native proto) and is read from
+ * ~50 sites, disambiguate at COLLECTION time: mint the same per-site synthetic
+ * identity class EXPRESSIONS already use. Scoping of the source name is then
+ * provided by the local binding the statement-position compiler emits.
+ *
+ * Returns the synthetic identity, or `undefined` when the declaration legitimately
+ * owns its name (nothing to disambiguate).
+ */
+export function mintScopedClassIdentity(ctx: CodegenContext, decl: ts.ClassDeclaration): string | undefined {
+  const existing = ctx.anonClassExprNames.get(decl);
+  if (existing !== undefined) return existing;
+  const sourceName = decl.name?.text;
+  if (sourceName === undefined) return undefined;
+  const owner = ctx.classDeclarationMap.get(sourceName);
+  // No owner yet, or this declaration IS the owner: the plain name is correct.
+  if (owner === undefined || owner === decl) return undefined;
+  const syntheticName = `__anonClass_${sourceName}_${ctx.anonTypeCounter++}`;
+  ctx.anonClassExprNames.set(decl, syntheticName);
+  collectClassDeclaration(ctx, decl, syntheticName);
+  // Bodies are compiled at the statement position — without the deferred flag
+  // the structMap-membership early-return would leave every method a stub.
+  ctx.deferredClassBodies.add(syntheticName);
+  // collectClassDeclaration publishes the source symbol GLOBALLY
+  // (`classExprNameMap`) — right for the one-per-name `const C = class {}`
+  // shape, but for a same-named class in another scope it would hijack every
+  // OTHER scope's reads of that name.
+  if (ctx.classExprNameMap.get(sourceName) === syntheticName) ctx.classExprNameMap.delete(sourceName);
+  ctx.functionNameMap.set(syntheticName, sourceName);
+  return syntheticName;
+}
+
 /** Collect all function declarations and interfaces */
 /** Collect a class declaration or class expression: register struct type, constructor, and methods */
 export function collectClassDeclaration(
@@ -1692,10 +1734,28 @@ export function collectClassDeclaration(
   // Register static properties as module globals, and queue static `{ ... }`
   // blocks for execution. Both field initializers and static blocks must run
   // in source order during class evaluation (§15.7.10), so we iterate members
-  // once and push to the shared `staticInitExprs` queue in declaration order.
+  // once. Class DECLARATIONS join the module source-order queue; class
+  // EXPRESSIONS retain a per-expression queue that is emitted inline by
+  // ClassDefinitionEvaluation. Scheduling expression statics at module scope
+  // moves them past the rest of their containing expression/statement.
+  const classExpressionStaticEntries = ts.isClassExpression(decl)
+    ? (ctx.classExpressionStaticInitExprs.get(decl) ?? [])
+    : undefined;
+  if (ts.isClassExpression(decl) && !ctx.classExpressionStaticInitExprs.has(decl)) {
+    ctx.classExpressionStaticInitExprs.set(decl, classExpressionStaticEntries!);
+  }
   for (const member of decl.members) {
     if (ts.isClassStaticBlockDeclaration(member)) {
-      ctx.staticInitExprs.push({ staticBlock: member, className });
+      if (classExpressionStaticEntries) {
+        // The declaration collector intentionally registers a variable-bound
+        // class expression under both a visible and a synthetic identity.
+        // A static block is source syntax and must nevertheless execute once.
+        if (!classExpressionStaticEntries.some((entry) => entry.staticBlock === member)) {
+          classExpressionStaticEntries.push({ staticBlock: member, className });
+        }
+      } else {
+        ctx.staticInitExprs.push({ staticBlock: member, className });
+      }
       continue;
     }
     if (ts.isPropertyDeclaration(member) && member.name && hasStaticModifier(member)) {
@@ -1748,11 +1808,19 @@ export function collectClassDeclaration(
       // (e.g. `static f = () => this`) resolves to the class-object singleton
       // via `emitLazyClassObjectGet`, NOT to `undefined`.
       if (member.initializer) {
-        ctx.staticInitExprs.push({
-          globalIdx,
-          initializer: member.initializer,
-          className,
-        });
+        if (classExpressionStaticEntries) {
+          classExpressionStaticEntries.push({
+            initializer: member.initializer,
+            className,
+            staticPropKey: fullName,
+          });
+        } else {
+          ctx.staticInitExprs.push({
+            globalIdx,
+            initializer: member.initializer,
+            className,
+          });
+        }
       }
     }
   }
@@ -1815,7 +1883,13 @@ export function buildShapePropFlagsTable(ctx: CodegenContext): void {
  */
 export function collectDeclaredFuncRefs(ctx: CodegenContext, opts?: { additive?: boolean }): void {
   const refs = new Set<number>(opts?.additive ? ctx.mod.declaredFuncRefs : []);
+  const visited = new WeakSet<Instr[]>();
   function scanInstrs(instrs: Instr[]): void {
+    // Late IR is a DAG: helper/finalizer rewrites may share one instruction
+    // array between multiple parents. Its ref.func set is identity-invariant,
+    // so scan each array once rather than once per incoming edge.
+    if (visited.has(instrs)) return;
+    visited.add(instrs);
     for (const instr of instrs) {
       if (instr.op === "ref.func") {
         refs.add((instr as { op: "ref.func"; funcIdx: number }).funcIdx);
@@ -1929,6 +2003,11 @@ export function compileClassBodies(
     reportError(ctx, decl, `Unknown class struct type: ${className}`);
     return;
   }
+  // (#4646) Record by DECLARATION NODE that this class's bodies are emitted.
+  // The nested-class entry point used `structMap.has(className)` — a NAME test
+  // — as its "already compiled" guard; a same-named class in another scope
+  // therefore skipped its own bodies and inherited the first declaration's.
+  ctx.compiledClassBodies.add(decl);
 
   // (#779a) A nested class's enclosing function can remain mid-compilation,
   // with captured-global copies in its `fctx.body`. Compiling members replaces

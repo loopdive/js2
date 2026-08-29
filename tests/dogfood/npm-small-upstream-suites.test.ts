@@ -334,6 +334,8 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.extraction.unavailableInfra).toBe(1750);
     expect(report.compile).toMatchObject({ modules: 3, succeeded: 3, validated: 3 });
-    expect(report.results.scored).toBe(11);
+    expect(report.results).toMatchObject({ scored: 11, passed: 11, failed: 0, runtimeFailed: 0 });
+    expect(report.results.tests).toHaveLength(11);
+    expect(report.results.tests.every((test: { status: string }) => test.status === "passed")).toBe(true);
   });
 });

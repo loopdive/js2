@@ -555,6 +555,232 @@ export function arrowOwnLocals(arrow: ts.ArrowFunction | ts.FunctionExpression):
   return ownLocals;
 }
 
+type DescriptorCaptureReferenceAnalysis = {
+  declarations: Set<ts.Declaration>;
+  firstOuterReference?: ts.Identifier;
+  unresolvedValueReference: boolean;
+};
+
+/** Descriptor-accessor captures that deliberately kept the owning frame local. */
+const preservedDescriptorCaptureBindings = new WeakMap<FunctionContext, Map<string, ts.VariableDeclaration>>();
+
+function nodeIsInside(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
+function isDescriptorCaptureValueReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (!parent) return true;
+  if (
+    (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  if (
+    (ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return false;
+  if (ts.isQualifiedName(parent) && parent.right === id) return false;
+  if (ts.isShorthandPropertyAssignment(parent) && parent.name === id) return true;
+  if (
+    (ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isMethodSignature(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  if (ts.isLabeledStatement(parent) && parent.label === id) return false;
+  if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === id) return false;
+  return true;
+}
+
+/** Resolve the value references of one spelling inside an accessor by exact declaration identity. */
+function analyzeDescriptorCaptureReferences(
+  ctx: CodegenContext,
+  accessor: ts.FunctionLikeDeclaration,
+  name: string,
+): DescriptorCaptureReferenceAnalysis {
+  const result: DescriptorCaptureReferenceAnalysis = {
+    declarations: new Set(),
+    unresolvedValueReference: false,
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === name && isDescriptorCaptureValueReference(node)) {
+      const declaration = ctx.oracle.valueDeclarationOf(node);
+      if (!declaration) {
+        result.unresolvedValueReference = true;
+      } else {
+        result.declarations.add(declaration);
+        if (!nodeIsInside(declaration, accessor) && !result.firstOuterReference) {
+          result.firstOuterReference = node;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(accessor);
+  return result;
+}
+
+function collectAssignmentTargetIdentifiers(target: ts.Node, out: ts.Identifier[]): void {
+  if (ts.isIdentifier(target)) {
+    out.push(target);
+    return;
+  }
+  if (ts.isBindingElement(target)) {
+    collectAssignmentTargetIdentifiers(target.name, out);
+    return;
+  }
+  if (ts.isArrayBindingPattern(target) || ts.isObjectBindingPattern(target)) {
+    for (const element of target.elements) {
+      if (!ts.isOmittedExpression(element)) collectAssignmentTargetIdentifiers(element, out);
+    }
+    return;
+  }
+  if (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isNonNullExpression(target) ||
+    ts.isTypeAssertionExpression(target)
+  ) {
+    collectAssignmentTargetIdentifiers(target.expression, out);
+    return;
+  }
+  if (ts.isArrayLiteralExpression(target)) {
+    for (const element of target.elements) {
+      if (ts.isOmittedExpression(element)) continue;
+      collectAssignmentTargetIdentifiers(ts.isSpreadElement(element) ? element.expression : element, out);
+    }
+    return;
+  }
+  if (ts.isObjectLiteralExpression(target)) {
+    for (const property of target.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) out.push(property.name);
+      else if (ts.isPropertyAssignment(property)) collectAssignmentTargetIdentifiers(property.initializer, out);
+      else if (ts.isSpreadAssignment(property)) collectAssignmentTargetIdentifiers(property.expression, out);
+    }
+  }
+}
+
+function functionBodyMayDynamicallyOrStaticallyWriteBinding(
+  ctx: CodegenContext,
+  body: ts.Block,
+  declaration: ts.Declaration,
+): boolean {
+  let unsafe = false;
+  const targetWritesDeclaration = (target: ts.Node): boolean => {
+    const identifiers: ts.Identifier[] = [];
+    collectAssignmentTargetIdentifiers(target, identifiers);
+    return identifiers.some((identifier) => ctx.oracle.valueDeclarationOf(identifier) === declaration);
+  };
+  const visit = (node: ts.Node): void => {
+    if (unsafe) return;
+    if (ts.isWithStatement(node)) {
+      unsafe = true;
+      return;
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
+      unsafe = true;
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      targetWritesDeclaration(node.left)
+    ) {
+      unsafe = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      targetWritesDeclaration(node.operand)
+    ) {
+      unsafe = true;
+      return;
+    }
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      (ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer.declarations.some((candidate) => targetWritesDeclaration(candidate.name))
+        : targetWritesDeclaration(node.initializer))
+    ) {
+      unsafe = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return unsafe;
+}
+
+/**
+ * Prove the TypeScript scanner shape: a descriptor accessor captures one
+ * directly initialized, never-reassigned local declared before the containing
+ * top-level region. Keeping that local prevents a skipped conditional accessor
+ * from globally changing the enclosing activation's name resolution.
+ */
+function preservableDescriptorCaptureDeclaration(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  accessor: ts.FunctionLikeDeclaration | undefined,
+  name: string,
+  localIdx: number,
+): ts.VariableDeclaration | undefined {
+  if (!accessor || fctx.boxedCaptures?.has(name) || fctx.tdzFlagLocals?.has(name)) return undefined;
+  if (localIdx < fctx.params.length) return undefined;
+  if (fctx.locals[localIdx - fctx.params.length]?.name !== name) return undefined;
+
+  const references = analyzeDescriptorCaptureReferences(ctx, accessor, name);
+  const reference = references.firstOuterReference;
+  if (!reference || references.unresolvedValueReference || references.declarations.size !== 1) return undefined;
+  const declarations = ctx.oracle.declarationsOf(reference);
+  if (declarations.length !== 1) return undefined;
+  const declaration = declarations[0];
+  if (
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== name ||
+    !declaration.initializer
+  ) {
+    return undefined;
+  }
+
+  let owner: ts.Node | undefined = accessor.parent;
+  while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
+  if (!owner || fctx.sourceFunction !== owner) return undefined;
+  const ownerBody = owner.body;
+  if (!ownerBody || !ts.isBlock(ownerBody)) return undefined;
+
+  const declarationList = declaration.parent;
+  const declarationStatement = declarationList.parent;
+  if (!ts.isVariableDeclarationList(declarationList) || !ts.isVariableStatement(declarationStatement)) return undefined;
+  if (declarationStatement.parent !== ownerBody) return undefined;
+
+  let containingRegion: ts.Node = accessor;
+  while (containingRegion.parent && containingRegion.parent !== ownerBody) containingRegion = containingRegion.parent;
+  if (containingRegion.parent !== ownerBody || declarationStatement.getStart() >= containingRegion.getStart()) {
+    return undefined;
+  }
+  if (functionBodyMayDynamicallyOrStaticallyWriteBinding(ctx, ownerBody, declaration)) return undefined;
+  return declaration;
+}
+
 /**
  * Promote captured locals to globals for getter/setter accessor functions.
  *
@@ -581,6 +807,9 @@ export function promoteAccessorCapturesToGlobals(
     string,
     { globalIdx: number; widened: boolean; boxed?: { refCellTypeIdx: number; valType: ValType } }
   >,
+  /** Static Object.defineProperty accessor whose immutable capture may safely
+   * retain the enclosing activation's local binding (#1058). */
+  descriptorAccessor?: ts.FunctionLikeDeclaration,
   /**
    * (#5148 checkpoint) TRANSITIVE-ONLY mode for lifted nested function
    * declarations. When set, the direct-name scan is skipped entirely and the
@@ -626,6 +855,21 @@ export function promoteAccessorCapturesToGlobals(
   // declaring IIFE block of a concatenated multi-module init has ended) but
   // whose recorded slot still names the binding — promote from that slot.
   const slotHints = new Map<string, number>();
+  if (descriptorAccessor) {
+    // The generic body walk starts below the function boundary and therefore
+    // sees binding identifiers and direct body `let`/`const` names as apparent
+    // free references. Filter only names whose value references all resolve to
+    // declarations owned by the accessor. The real TS scanner getter declares
+    // `const text` while createScanner has an outer `var text`.
+    for (const name of [...referencedNames]) {
+      if (name === "this") continue;
+      const references = analyzeDescriptorCaptureReferences(ctx, descriptorAccessor, name);
+      const hasOuterDeclaration = [...references.declarations].some(
+        (declaration) => !nodeIsInside(declaration, descriptorAccessor),
+      );
+      if (!hasOuterDeclaration && !references.unresolvedValueReference) referencedNames.delete(name);
+    }
+  }
   // (#2029 family A) Transitive captures of referenced NESTED FUNCTIONS.
   // When the accessor body references a nested function declaration (e.g.
   // `get() { return next; }` with `function next() { return count; }` in the
@@ -743,6 +987,11 @@ export function promoteAccessorCapturesToGlobals(
   }
 
   for (const name of referencedNames) {
+    const localIdx = fctx.localMap.get(name) ?? slotHints.get(name);
+    const preservableDeclaration =
+      localIdx === undefined
+        ? undefined
+        : preservableDescriptorCaptureDeclaration(ctx, fctx, descriptorAccessor, name, localIdx);
     // Skip if already a captured global or module global.
     // (#4618) `capturedGlobals` is name-keyed and NOT cleared between the
     // sibling callback bodies of one module-init pass, so an entry here can
@@ -755,8 +1004,29 @@ export function promoteAccessorCapturesToGlobals(
     // record in compileNestedClassDeclaration keeps re-compiles coherent).
     if (ctx.capturedGlobals.has(name)) {
       const owner = ctx.capturedGlobalsOwner?.get(name);
-      const foreignOwnerWithLiveLocal = owner !== undefined && owner !== fctx && fctx.localMap.has(name);
-      if (!foreignOwnerWithLiveLocal) continue;
+      const preservedDeclaration = preservedDescriptorCaptureBindings.get(fctx)?.get(name);
+      if (
+        owner === fctx &&
+        preservableDeclaration !== undefined &&
+        preservedDeclaration === preservableDeclaration &&
+        localIdx !== undefined
+      ) {
+        // A second static descriptor site for the same immutable binding must
+        // seed the already-minted accessor global at that site's runtime
+        // position too. The enclosing activation continues reading its local.
+        fctx.body.push({ op: "local.get", index: localIdx });
+        fctx.body.push({ op: "global.set", index: ctx.capturedGlobals.get(name)! });
+        continue;
+      }
+      const liveLocal = localIdx !== undefined;
+      const foreignOwnerWithLiveLocal = owner !== undefined && owner !== fctx && liveLocal;
+      const differentPreservedBindingWithLiveLocal =
+        owner === fctx &&
+        liveLocal &&
+        preservableDeclaration !== undefined &&
+        preservedDeclaration !== undefined &&
+        preservedDeclaration !== preservableDeclaration;
+      if (!foreignOwnerWithLiveLocal && !differentPreservedBindingWithLiveLocal) continue;
     }
     if (ctx.moduleGlobals.has(name)) continue;
     // (#2029 family A) Skip names box-promoted above — their localMap entry
@@ -768,7 +1038,6 @@ export function promoteAccessorCapturesToGlobals(
       if (owner === fctx || !fctx.localMap.has(name)) continue;
     }
 
-    const localIdx = fctx.localMap.get(name) ?? slotHints.get(name);
     if (localIdx === undefined) continue;
 
     // Skip 'this' — it's passed as param 0 to the accessor
@@ -896,18 +1165,33 @@ export function promoteAccessorCapturesToGlobals(
       ctx.tdzGlobals.set(name, tdzGlobalIdx);
     }
 
-    // Remove from localMap so subsequent code in the enclosing function
-    // also uses the global (maintaining shared state with the accessor)
-    fctx.localMap.delete(name);
-    // (#3121) Record the promotion so later closure constructions in this
-    // function do NOT resurrect the orphaned local slot via the #1177
-    // fctx.locals-by-name rescan (which would fork the binding into a second
-    // store — a fresh ref cell over the dead local — invisible to the
-    // method's global-routed writes). With the name recorded, the closure
-    // skips the capture entirely and its lifted body resolves reads/writes
-    // through `ctx.capturedGlobals` — the same store as the method body and
-    // the enclosing function's own post-promotion references.
-    (fctx.promotedCaptureNames ??= new Set()).add(name);
+    if (preservableDeclaration) {
+      // (#1058) The accessor body still resolves through capturedGlobals, but
+      // the enclosing activation keeps its proven immutable local. A skipped
+      // conditional Object.defineProperty can therefore neither return the
+      // global's null initializer nor overwrite an accessor retained from an
+      // earlier activation. The branch-local seed above remains authoritative
+      // whenever this descriptor is actually created.
+      let preserved = preservedDescriptorCaptureBindings.get(fctx);
+      if (!preserved) {
+        preserved = new Map();
+        preservedDescriptorCaptureBindings.set(fctx, preserved);
+      }
+      preserved.set(name, preservableDeclaration);
+    } else {
+      // Remove from localMap so subsequent code in the enclosing function
+      // also uses the global (maintaining shared state with the accessor)
+      fctx.localMap.delete(name);
+      // (#3121) Record the promotion so later closure constructions in this
+      // function do NOT resurrect the orphaned local slot via the #1177
+      // fctx.locals-by-name rescan (which would fork the binding into a second
+      // store — a fresh ref cell over the dead local — invisible to the
+      // method's global-routed writes). With the name recorded, the closure
+      // skips the capture entirely and its lifted body resolves reads/writes
+      // through `ctx.capturedGlobals` — the same store as the method body and
+      // the enclosing function's own post-promotion references.
+      (fctx.promotedCaptureNames ??= new Set()).add(name);
+    }
   }
 }
 

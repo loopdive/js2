@@ -70,7 +70,10 @@ import { ensureNativeArrayHof } from "./hof-native.js";
 import { ensureStrToCharVecHelper, nativeStringLiteralInstrs } from "./native-strings.js";
 // (#3119) The OBJ arm's miss/undefined value matches `__extern_get`'s miss
 // representation (the #2106 S1 `$undefined` singleton when active, else null).
-import { undefinedExternInstrs } from "./any-helpers.js";
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js";
+// (#5147) `__iter_result_obj` string keys + the union-import bootstrap it needs.
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addUnionImportsViaRegistry } from "./shared.js";
 // (#3388) GetIterator §7.4.1: a non-iterable subject must throw a catchable
 // `TypeError`, not trap (`ref.cast $Vec` on a non-vec → `illegal cast`). The
 // error constructor + message global are registered EAGERLY (idempotent) so the
@@ -79,6 +82,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs as throwMsgExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { ensureLateImport } from "./expressions/late-imports.js";
 // (#3164) The GENSTATE step's f64 value read canonicalizes the UNDEF_F64
 // sentinel (a done/valueless yield) to the null externref — the standalone
 // canonical `undefined` — before boxing (same recipe as
@@ -461,6 +465,7 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
   // Must precede the `registerNative("__iterator", …)` below so the throw instrs
   // read a stable, already-registered funcIdx (no #2043 finalize shift).
   ensureNonIterableThrowDeps(ctx);
+  ensureNotAnObjectThrowDeps(ctx);
 
   const types = iterRuntimeTypes(ctx);
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
@@ -571,6 +576,13 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
   // (#2038) Defer the USER arm to finalize (closed-struct dispatchers not yet
   // emitted). The eager bodies above are a valid vec-only carrier.
   ctx.nativeIteratorUserArmPending = true;
+
+  // (#5147) Reserve the §7.4.11 result-object builder alongside the ladder. It
+  // is registered HERE — not from the `.next()` dispatcher reserve — because
+  // its own dependency bootstrap (`ensureObjectRuntime` /
+  // `addUnionImportsViaRegistry`) can add imports, and doing that from inside a
+  // mid-body reserve shifts funcIdxs under the function being compiled.
+  ensureNativeIterResultObject(ctx);
 }
 
 /**
@@ -629,6 +641,275 @@ export function ensureIterStepScratchGlobal(ctx: CodegenContext): number {
  * and patched by `shiftLateImportIndices` like any other defined body if a later
  * import shifts them.
  */
+/**
+ * (#5147) Register `__iter_result_obj(done i32, value externref) -> externref`
+ * — §7.4.11 CreateIterResultObject as a REAL `$Object` with data properties
+ * `value` / `done`.
+ *
+ * Deliberately NOT a closed struct (`$MapIterResult`, `$NativeGeneratorResult`):
+ * source code reads `r.value` / `r.done` dynamically, and `__extern_get` only
+ * sees `$Object` — a closed struct answers `undefined` there (the #25/#2038
+ * trap). `value` for a done result is the canonical `undefined` singleton, not
+ * a null externref (which surfaces as JS `null`).
+ *
+ * RESERVE-then-FILL (#1719/#2043): the body is written by
+ * {@link fillIterResultObject} at finalize, so the funcIdxs it bakes in
+ * (`__new_plain_object` / `__extern_set` / `__box_boolean`) are the FINAL ones.
+ * Baking them at reserve time is what breaks: a later late-import addition
+ * shifts them under an already-emitted body.
+ *
+ * Returns undefined when the object runtime is unavailable (host lane).
+ */
+export function ensureNativeIterResultObject(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get("__iter_result_obj");
+  if (existing !== undefined) return existing;
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  ensureObjectRuntime(ctx);
+  addUnionImportsViaRegistry(ctx);
+  addStringConstantGlobal(ctx, "value");
+  addStringConstantGlobal(ctx, "done");
+  const typeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__iter_result_obj", funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__iter_result_obj",
+    typeIdx,
+    locals: [{ name: "obj", type: { kind: "externref" } }],
+    body: [{ op: "unreachable" }], // placeholder — replaced immediately below
+    exported: false,
+  });
+  ctx.iterResultObjPending = true;
+  // Write the real body NOW: the helper funcIdxs it bakes in must be resolved
+  // in the same pass that registered them (a finalize-time re-read of
+  // `__box_boolean` & co. answers a stale index once the union-import registry
+  // has been rebuilt).
+  fillIterResultObject(ctx);
+
+  // (#5147) `__iter_next_result(recv) -> externref` — ONE step of the ladder,
+  // packaged as a SINGLE-result externref→externref call. Call sites must use
+  // this rather than emitting `call __iterator_next` (multi-result) followed by
+  // `call __iter_result_obj` inline: a two-call sequence whose intermediate is a
+  // multi-value stack is mis-typed by the later argument-coercion repair when
+  // the sequence is cloned into another body (it inserted a ToNumber before the
+  // step call and the module failed to validate).
+  const stepTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  const stepIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__iter_next_result", stepIdx);
+  const iterNextIdx = ctx.funcMap.get("__iterator_next");
+  pushDefinedFunc(ctx, stepIdx, {
+    name: "__iter_next_result",
+    typeIdx: stepTypeIdx,
+    // The two results are SPILLED to locals before the result-object call.
+    // Feeding a multi-result call straight into a two-parameter call is what
+    // `stack-balance`'s call-argument repair mis-reads (it models one pushed
+    // result, under-flows, and "fixes" the receiver by unboxing it to i32).
+    locals: [
+      { name: "done", type: { kind: "i32" } },
+      { name: "val", type: { kind: "externref" } },
+    ],
+    body:
+      iterNextIdx === undefined
+        ? [{ op: "ref.null.extern" }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: iterNextIdx },
+            { op: "local.set", index: 2 },
+            { op: "local.set", index: 1 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx },
+          ],
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** (#5147) FINALIZE fill for {@link ensureNativeIterResultObject}. */
+export function fillIterResultObject(ctx: CodegenContext): void {
+  if (!ctx.iterResultObjPending) return;
+  const selfIdx = ctx.funcMap.get("__iter_result_obj");
+  if (selfIdx === undefined) return;
+  const fn = definedFuncAt(ctx, selfIdx);
+  if (!fn) return;
+  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+  if (newPlainObjectIdx === undefined || externSetIdx === undefined || boxBoolIdx === undefined) {
+    // No object runtime in this module — answer null (the pre-#5147 behaviour of
+    // every call site that routes here) instead of leaving an `unreachable`.
+    fn.body = [{ op: "ref.null.extern" }];
+    return;
+  }
+  // params: 0 = done (i32), 1 = value (externref); locals: 2 = obj.
+  fn.body = [
+    { op: "call", funcIdx: newPlainObjectIdx },
+    { op: "local.set", index: 2 },
+    { op: "local.get", index: 2 },
+    ...stringConstantExternrefInstrs(ctx, "value"),
+    { op: "local.get", index: 1 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: canonicalUndefinedExternInstrs(ctx),
+      else: [{ op: "local.get", index: 1 }],
+    },
+    { op: "call", funcIdx: externSetIdx },
+    { op: "local.get", index: 2 },
+    ...stringConstantExternrefInstrs(ctx, "done"),
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: boxBoolIdx },
+    { op: "call", funcIdx: externSetIdx },
+    { op: "local.get", index: 2 },
+  ];
+}
+
+/**
+ * (#5147) Reserve `__any_iter_next(recv) -> externref` — source-level
+ * `it.next()` on a value that may be a NATIVE iterator carrier rather than a
+ * generator frame.
+ *
+ * Before this, an `any`-typed `.next()` went straight to `__gen_next`, which
+ * does not recognize the `$IterRec` carrier `[1,2][Symbol.iterator]()` produces
+ * nor the `$LazyIterHelper` a lazy helper returns — so `.next()` answered null
+ * and the following `.value`/`.done` read threw. The body is filled at FINALIZE
+ * (the `$LazyIterHelper` type and the ladder's lazy arms only exist by then);
+ * the reserve is append-only so no funcIdx shifts (#1719).
+ *
+ * Returns undefined when the pieces are unavailable — callers then keep their
+ * original `__gen_next` route byte-for-byte.
+ */
+export function reserveAnyIterNext(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get("__any_iter_next");
+  if (existing !== undefined) return existing;
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  ensureNativeIteratorRuntime(ctx);
+  if (ensureNativeIterResultObject(ctx) === undefined) return undefined;
+  if (ctx.funcMap.get("__iterator_next") === undefined) return undefined;
+  const genNextIdxAtReserve = ctx.funcMap.get("__gen_next");
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__any_iter_next", funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__any_iter_next",
+    typeIdx,
+    locals: [
+      { name: "recvAny", type: { kind: "anyref" } },
+      { name: "done", type: { kind: "i32" } },
+      { name: "val", type: { kind: "externref" } },
+    ],
+    // Placeholder — replaced by `fillAnyIterNext`. It is the PRE-#5147
+    // behaviour (plain `__gen_next`), not `unreachable`, so a pipeline that
+    // never reaches the fill (e.g. the multi-source finalize) degrades to the
+    // old answer instead of trapping.
+    body:
+      genNextIdxAtReserve === undefined
+        ? [{ op: "ref.null.extern" }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: genNextIdxAtReserve },
+          ],
+    exported: false,
+  });
+  ctx.anyIterNextPending = true;
+  return funcIdx;
+}
+
+/**
+ * (#5147) §7.4.1 GetIterator on a value that IS already a native iterator
+ * record answers the record itself (`%ArrayIteratorPrototype%[@@iterator]`
+ * returns `this`). Without this arm `Array.from([1,2][Symbol.iterator]())` —
+ * and every other re-iteration of an iterator — threw "value is not iterable"
+ * once `[Symbol.iterator]()` started producing a real `$__IterRec` cursor
+ * instead of a snapshot vec. Prepended, so it precedes the vec/family arms.
+ * Fresh Instr objects (#2169b). Idempotent per module.
+ */
+function prependIterRecIdentityArm(ctx: CodegenContext): void {
+  if (ctx.iterRecIdentityArmDone) return;
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  const iteratorIdx = ctx.funcMap.get("__iterator");
+  if (iterRecTypeIdx === undefined || iteratorIdx === undefined) return;
+  const fn = definedFuncAt(ctx, iteratorIdx);
+  if (!fn) return;
+  ctx.iterRecIdentityArmDone = true;
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: 0 }, { op: "return" }],
+    },
+    ...fn.body,
+  ];
+}
+
+/**
+ * (#5147) FINALIZE fill for {@link reserveAnyIterNext}. Must run AFTER
+ * `fillNativeIteratorLateArms` and `fillLazyIterLadderArms` so `__iterator_next`
+ * already carries every carrier arm this delegates to.
+ */
+export function fillAnyIterNext(ctx: CodegenContext): void {
+  prependIterRecIdentityArm(ctx);
+  if (!ctx.anyIterNextPending) return;
+  const selfIdx = ctx.funcMap.get("__any_iter_next");
+  const iterNextIdx = ctx.funcMap.get("__iterator_next");
+  const resultObjIdx = ctx.funcMap.get("__iter_result_obj");
+  if (selfIdx === undefined || iterNextIdx === undefined || resultObjIdx === undefined) return;
+  const fn = definedFuncAt(ctx, selfIdx);
+  if (!fn) return;
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  const lazyTypeIdx = ctx.structMap.get("$LazyIterHelper");
+  const genNextIdx = ctx.funcMap.get("__gen_next");
+
+  // recognized = ref.test $IterRec ∨ ref.test $LazyIterHelper
+  const recognized: Instr[] = [];
+  for (const t of [iterRecTypeIdx, lazyTypeIdx]) {
+    if (t === undefined) continue;
+    recognized.push({ op: "local.get", index: 1 }, { op: "ref.test", typeIdx: t });
+    if (recognized.length > 2) recognized.push({ op: "i32.or" });
+  }
+  if (recognized.length === 0) {
+    // Nothing native to recognize — behave exactly like the legacy route.
+    fn.body =
+      genNextIdx === undefined
+        ? [{ op: "ref.null.extern" }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: genNextIdx },
+          ];
+    return;
+  }
+
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: 1 },
+    ...recognized,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: iterNextIdx },
+        { op: "local.set", index: 3 },
+        { op: "local.set", index: 2 },
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: resultObjIdx },
+        { op: "return" },
+      ],
+    },
+    ...(genNextIdx === undefined
+      ? ([{ op: "ref.null.extern" }] satisfies Instr[])
+      : ([
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: genNextIdx },
+        ] satisfies Instr[])),
+  ];
+}
+
 export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
   const existing = ctx.funcMap.get("__array_from_iter_n");
   if (existing !== undefined) return existing;
@@ -1507,8 +1788,21 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         { name: "userIter", type: { kind: "externref" } },
         // (#3119) `ret` scratch for the OBJ close arm — harmless when unused.
         ...(objDeps ? [{ name: "ret", type: { kind: "externref" as const } }] : []),
+        // (#5144) `closeres` scratch for the §7.4.9 step 9 result check.
+        ...(objDeps ? [{ name: "closeres", type: { kind: "externref" as const } }] : []),
       ];
-      iteratorReturnFn.body = buildIteratorReturnBody(types, deps?.callReturnIdx, objDeps, hostDeps, sgDeps);
+      const closeScratch = 4; // params(1) + recAny(1) + userIter(1) + ret(1)
+      const closeCheck = objDeps
+        ? () => notAnObjectThrowInstrs(ctx, closeScratch) ?? [{ op: "drop" } as Instr]
+        : undefined;
+      iteratorReturnFn.body = buildIteratorReturnBody(
+        types,
+        deps?.callReturnIdx,
+        objDeps,
+        hostDeps,
+        sgDeps,
+        closeCheck,
+      );
     }
   }
 
@@ -1609,8 +1903,16 @@ function buildIteratorReturnBody(
   objDeps: ObjCarrierDeps | undefined,
   hostDeps?: HostGenDeps,
   sgDeps?: SyncGenCarrierDeps,
+  /**
+   * (#5144 cluster C) §7.4.9 step 9 — the close-result "not an Object ⇒
+   * TypeError" refinement. A factory (never a shared array: the DCE in-place
+   * remap double-applies to an aliased instr object, #2169b). `undefined`
+   * keeps the legacy `drop`.
+   */
+  closeResultCheck?: () => Instr[],
 ): Instr[] {
   const { iterRecTypeIdx } = types;
+  const validateClose: Instr[] = closeResultCheck ? closeResultCheck() : [{ op: "drop" }];
   // (#3164) kind == GENSTATE → IteratorClose marks the sync-generator frame
   // COMPLETED (`state := doneState`): a subsequent `.next()` then answers
   // `{value: undefined, done: true}` (§27.5.3.3 — the generator moves to
@@ -1737,7 +2039,7 @@ function buildIteratorReturnBody(
             { op: "local.get", index: 2 },
             ...emptyArgsVecInstrs(types),
             { op: "call", funcIdx: objDeps.applyClosureIdx },
-            { op: "drop" },
+            ...validateClose,
             { op: "return" },
           ],
           else: [],
@@ -1847,6 +2149,73 @@ function nonIterableThrowInstrs(ctx: CodegenContext): Instr[] | undefined {
   if (ctorIdx === undefined) return undefined;
   const tagIdx = ensureExnTag(ctx);
   return [...throwMsgExternrefInstrs(ctx, NOT_ITERABLE_MSG), { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx }];
+}
+
+/** (#5144 cluster C) The §7.4.9 step 9 / §7.4.4 "not an Object" message. */
+const CLOSE_RESULT_MSG = "iterator result is not an object";
+
+/**
+ * (#5144 cluster C) FRESH instrs that CONSUME the externref on top of the stack
+ * and throw a catchable `TypeError` when it is not an ECMAScript Object —
+ * §7.4.9 step 9 (`IteratorClose`'s `innerResult`) and the same refinement for
+ * `IteratorNext`'s result.
+ *
+ * `scratch` is an externref local the caller guarantees is free. Returns
+ * `undefined` (caller keeps the legacy `drop`) in host mode or when the
+ * classifiers / TypeError constructor are not registered.
+ */
+function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (
+    ctorIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    typeofFunctionIdx === undefined ||
+    isTruthyIdx === undefined
+  ) {
+    return undefined;
+  }
+  const tagIdx = ensureExnTag(ctx);
+  return [
+    { op: "local.set", index: scratch },
+    { op: "local.get", index: scratch },
+    { op: "call", funcIdx: typeofObjectIdx },
+    { op: "local.get", index: scratch },
+    { op: "call", funcIdx: typeofFunctionIdx },
+    { op: "i32.or" },
+    // `typeof null` is "object", and every real Object is truthy — so the
+    // truthiness conjunct is what separates `null` from an ordinary object.
+    { op: "local.get", index: scratch },
+    { op: "call", funcIdx: isTruthyIdx },
+    { op: "i32.and" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...throwMsgExternrefInstrs(ctx, CLOSE_RESULT_MSG),
+        { op: "call", funcIdx: ctorIdx },
+        { op: "throw", tagIdx },
+      ],
+      else: [],
+    },
+  ];
+}
+
+/**
+ * (#5144) Eagerly register everything `notAnObjectThrowInstrs` reads, so both
+ * the eager and the finalize build sites only READ already-present symbols.
+ */
+function ensureNotAnObjectThrowDeps(ctx: CodegenContext): void {
+  if (!(ctx.standalone || ctx.wasi)) return;
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  addStringConstantGlobal(ctx, CLOSE_RESULT_MSG);
+  ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
 }
 
 function buildIteratorBody(

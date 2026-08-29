@@ -196,12 +196,18 @@ import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
+  boundedMixedConditionalPrimitiveFamily,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
+import {
+  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrPrimitiveExpressionClassifier,
+  type IrPrimitiveExpressionFamily,
+} from "./module-bindings.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque `TagId`, so a
 // box-refinement names its partition through the JS producer's tag-domain
 // vocabulary. This file IS the JavaScript producer, so naming ECMAScript
@@ -4876,16 +4882,102 @@ function lowerNumericSubstitutionToString(
   return result;
 }
 
+/** Strip the type-erased assertion wrappers `lowerExpr` already lowers through. */
+function unwrapMixedPrimitiveProjection(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
 /**
- * Lower `typeof <expr>` by static fold (slice 1). Operand IrType must be
- * statically known; union/boxed operands are deferred to a follow-up
- * slice that emits a runtime tag dispatch via `tag.test`.
+ * #5092 — the two arm families `typeof`'s runtime tag dispatch may test.
+ *
+ * (2026-08-28 review repair) These come from the mixed-conditional PROOF, not
+ * from `checker.getTypeAtLocation` at the operand's syntactic location. The
+ * checker reports the ASSERTED type there, so
+ * `typeof ((c ? 7 : "s") as number | boolean)` compiled to a number-vs-BOOLEAN
+ * dispatch and answered `"boolean"` on the string arm — a wrong answer, not a
+ * demote. An assertion is not runtime evidence: this walk strips the erased
+ * wrappers and follows a local `const` to its initializer (the provenance rule
+ * `makeIrPrimitiveExpressionClassifier` already applies), then reads the arms
+ * off the same proof the carrier's box tags were emitted from. `whenTrue` stays
+ * first so the emitted `tag.test` interrogates the then-arm's honest tag. An
+ * operand whose dynamic value is not backed by that proof returns null and
+ * demotes exactly as before.
+ */
+function exactDynamicPrimitiveTypeofFamilies(
+  expression: ts.Expression,
+  cx: LowerCtx,
+  seen: ReadonlySet<ts.VariableDeclaration> = new Set(),
+): readonly [IrPrimitiveExpressionFamily, IrPrimitiveExpressionFamily] | null {
+  if (!cx.checker) return null;
+  try {
+    const candidate = unwrapMixedPrimitiveProjection(expression);
+    if (ts.isConditionalExpression(candidate)) {
+      const proof = proveMixedPrimitiveConditional(candidate, cx);
+      return proof === null ? null : [proof.whenTrue, proof.whenFalse];
+    }
+    if (!ts.isIdentifier(candidate)) return null;
+    const symbol = cx.checker.getSymbolAtLocation(candidate);
+    const declaration = [symbol?.valueDeclaration, ...(symbol?.declarations ?? [])].find(
+      (node): node is ts.VariableDeclaration =>
+        node !== undefined && ts.isVariableDeclaration(node) && node.getSourceFile() === candidate.getSourceFile(),
+    );
+    if (declaration?.initializer === undefined || seen.has(declaration)) return null;
+    return exactDynamicPrimitiveTypeofFamilies(declaration.initializer, cx, new Set(seen).add(declaration));
+  } catch {
+    return null;
+  }
+}
+
+function lowerExactDynamicPrimitiveTypeof(
+  inner: IrValueId,
+  families: readonly [IrPrimitiveExpressionFamily, IrPrimitiveExpressionFamily],
+  cx: LowerCtx,
+): IrValueId {
+  const tagFor = (family: IrPrimitiveExpressionFamily) =>
+    family === "number" ? JS_TAG_IDS.NumberF64 : family === "boolean" ? JS_TAG_IDS.Boolean : JS_TAG_IDS.String;
+  const labelFor = (family: IrPrimitiveExpressionFamily): string => (family === "boolean" ? "boolean" : family);
+  const cond = cx.builder.emitTagTest(inner, tagFor(families[0]));
+  let whenTrue!: IrValueId;
+  const thenBody = cx.builder.collectBodyInstrs(() => {
+    whenTrue = cx.builder.emitStringConst(labelFor(families[0]));
+  });
+  let whenFalse!: IrValueId;
+  const elseBody = cx.builder.collectBodyInstrs(() => {
+    whenFalse = cx.builder.emitStringConst(labelFor(families[1]));
+  });
+  return cx.builder.emitIfElse({
+    cond,
+    then: thenBody,
+    thenValue: whenTrue,
+    else: elseBody,
+    elseValue: whenFalse,
+    resultType: { kind: "string" },
+  });
+}
+
+/**
+ * Lower `typeof <expr>` by static fold (slice 1), plus #5092's exact runtime
+ * tag dispatch for a two-family primitive dynamic carrier.
  */
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
   if (tag === null) {
+    if (innerType.kind === "dynamic") {
+      const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
+      if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
+    }
     demoteToLegacy(
       "operand-coercion-unsupported",
       `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
@@ -6207,6 +6299,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     cx.builder.emitClassSuperInit(parentShape, self, args);
     return null;
   }
+  const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
+  if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -11133,7 +11227,325 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   cx.builder.emitRefCellSet(storage.value, result);
 }
 
+interface MixedPrimitiveConditionalProof {
+  readonly whenTrue: IrPrimitiveExpressionFamily;
+  readonly whenFalse: IrPrimitiveExpressionFamily;
+}
+
+interface ExactMixedPrimitiveWrapperProof {
+  readonly kind: "Number" | "String";
+  readonly conditional: ts.ConditionalExpression;
+  readonly mixed: MixedPrimitiveConditionalProof;
+}
+
+function proveExactMixedPrimitiveWrapperCall(
+  expr: ts.CallExpression,
+  cx: LowerCtx,
+): ExactMixedPrimitiveWrapperProof | null {
+  if (
+    process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0" ||
+    !ts.isIdentifier(expr.expression) ||
+    (expr.expression.text !== "String" && expr.expression.text !== "Number") ||
+    cx.scope.has(expr.expression.text) ||
+    expr.arguments.length !== 1 ||
+    ts.isSpreadElement(expr.arguments[0]!)
+  ) {
+    return null;
+  }
+  const ambient =
+    expr.expression.text === "String"
+      ? cx.resolver?.isAmbientStringBinding?.(expr.expression) === true
+      : cx.resolver?.isAmbientBinding?.(expr.expression) === true;
+  if (!ambient) return null;
+  const argument = unwrapMixedPrimitiveProjection(expr.arguments[0]!);
+  if (!ts.isConditionalExpression(argument)) return null;
+  // (2026-08-28 review repair) Same fail-closed treatment as `lowerConditional`:
+  // an ambient `String`/`Number` over a CLAIMED mixed conditional whose proof
+  // vanished is a desync, so it raises the typed invariant instead of returning
+  // null into the generic call path (which demotes the whole function).
+  const mixed = requireMixedPrimitiveConditionalProof(argument, `${expr.expression.text} wrapper`, cx);
+  return mixed === null ? null : { kind: expr.expression.text, conditional: argument, mixed };
+}
+
+function convertMixedPrimitiveArm(
+  expression: ts.Expression,
+  family: IrPrimitiveExpressionFamily,
+  kind: "Number" | "String",
+  arm: "then" | "else",
+  cx: LowerCtx,
+): IrValueId {
+  const expected = family === "string" ? ({ kind: "string" } as const) : irVal({ kind: "f64" });
+  const value = lowerExpr(expression, cx, expected);
+  const type = cx.builder.typeOf(value);
+  const representationMatches =
+    family === "number"
+      ? asVal(type)?.kind === "f64"
+      : family === "boolean"
+        ? irTypeIsBoolean(type)
+        : type.kind === "string";
+  if (!representationMatches) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #5092 ${kind} ${arm} arm proved ${family} but lowered as ${describeIrType(type)} in ${cx.funcName}`,
+    );
+  }
+
+  if (kind === "String") {
+    if (family === "string") return value;
+    if (family === "boolean") return lowerBooleanToString(cx.builder, value);
+    return lowerNumericSubstitutionToString(value, type, expression, cx);
+  }
+  if (family === "number") return value;
+  if (family === "boolean") {
+    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+  }
+  const number = emitUnaryToNumber(value, type, cx);
+  if (number === null) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #5092 Number ${arm} string arm lost its ToNumber route in ${cx.funcName}`,
+    );
+  }
+  return number;
+}
+
+function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  const proof = proveExactMixedPrimitiveWrapperCall(expr, cx);
+  if (proof === null) return null;
+  try {
+    const rawCond = lowerExpr(proof.conditional.condition, cx, irVal({ kind: "i32" }));
+    const cond = lowerToBooleanForCondition(rawCond, proof.conditional.condition, cx);
+    if (cond === null) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: #5092 ${proof.kind} condition lost its primitive truthiness in ${cx.funcName}`,
+      );
+    }
+
+    const branchScope = new Map(cx.scope);
+    const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+    let whenTrue!: IrValueId;
+    const thenBody = cx.builder.collectBodyInstrs(() => {
+      whenTrue = convertMixedPrimitiveArm(proof.conditional.whenTrue, proof.mixed.whenTrue, proof.kind, "then", thenCx);
+    });
+    const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+    let whenFalse!: IrValueId;
+    const elseBody = cx.builder.collectBodyInstrs(() => {
+      whenFalse = convertMixedPrimitiveArm(
+        proof.conditional.whenFalse,
+        proof.mixed.whenFalse,
+        proof.kind,
+        "else",
+        elseCx,
+      );
+    });
+    joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
+    return cx.builder.emitIfElse({
+      cond,
+      then: thenBody,
+      thenValue: whenTrue,
+      else: elseBody,
+      elseValue: whenFalse,
+      resultType: proof.kind === "String" ? { kind: "string" } : irVal({ kind: "f64" }),
+    });
+  } catch (error) {
+    if (error instanceof IrInvariantError) throw error;
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #5092 ${proof.kind} consumer demoted after exact claim in ${cx.funcName}: ${error instanceof Error ? error.message : String(error)}`,
+      error,
+    );
+  }
+}
+
+/**
+ * #5092 — the selector's `expr-mixed-conditional-proof` gate, restated at
+ * build. This is the CLAIM predicate: when it holds, selection has already
+ * committed the enclosing function to the IR route, so no consumer of this
+ * shape may quietly step off it.
+ */
+function mixedPrimitiveConditionalClaim(
+  expr: ts.ConditionalExpression,
+  cx: LowerCtx,
+): MixedPrimitiveConditionalProof | null {
+  if (!cx.checker) return null;
+  const classifyPrimitive = makeIrPrimitiveExpressionClassifier(cx.checker);
+  const classifyDeclared = makeIrDeclaredPrimitiveExpressionClassifier(cx.checker);
+  const whenTrue = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive, classifyDeclared);
+  const whenFalse = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive, classifyDeclared);
+  if (
+    whenTrue === undefined ||
+    whenFalse === undefined ||
+    whenTrue === whenFalse ||
+    boundedMixedConditionalPrimitiveFamily(expr.condition, classifyPrimitive, classifyDeclared) === undefined
+  ) {
+    return null;
+  }
+  return { whenTrue, whenFalse };
+}
+
+/**
+ * The PREPARED proof the mixed-conditional lowering consumes. Production
+ * returns the claim verbatim; `JS2WASM_TEST_TAMPER_…=proof` models the
+ * prepared proof going MISSING between selection and lowering, which is the
+ * fault `requireMixedPrimitiveConditionalProof` must fail closed on.
+ */
+function proveMixedPrimitiveConditional(
+  expr: ts.ConditionalExpression,
+  cx: LowerCtx,
+): MixedPrimitiveConditionalProof | null {
+  const claim = mixedPrimitiveConditionalClaim(expr, cx);
+  if (claim === null) return null;
+  return process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL === "proof" ? null : claim;
+}
+
+/**
+ * (2026-08-28 review repair) Consume the proof for a shape whose CLAIM still
+ * holds, and fail closed when the proof is gone.
+ *
+ * A selector-claimed shape whose proof vanished before lowering is a
+ * selector⇄builder desync, not a capability gap — the STRICT_IR_POSTCLAIM_CODES
+ * doctrine (src/codegen/index.ts) says such a post-claim failure must be a
+ * typed invariant, never a silent demote to legacy. Returning null here (as the
+ * first cut did) let a claimed function fall back to the legacy compiler with
+ * no diagnostic, hiding exactly the drift this route's other guards exist to
+ * catch. A conditional whose claim does NOT hold is an ordinary non-#5092
+ * expression and returns null for its caller's normal path.
+ */
+function requireMixedPrimitiveConditionalProof(
+  expr: ts.ConditionalExpression,
+  site: string,
+  cx: LowerCtx,
+): MixedPrimitiveConditionalProof | null {
+  const proof = proveMixedPrimitiveConditional(expr, cx);
+  if (proof !== null) return proof;
+  if (mixedPrimitiveConditionalClaim(expr, cx) === null) return null;
+  throw new IrInvariantError(
+    "selection-preparation-mismatch",
+    "build",
+    `ir/from-ast: #5092 ${site} lost its prepared mixed-conditional proof between selection and lowering in ${cx.funcName}`,
+  );
+}
+
+function boxMixedConditionalArm(
+  value: IrValueId,
+  family: IrPrimitiveExpressionFamily,
+  arm: "then" | "else",
+  cx: LowerCtx,
+): IrValueId {
+  const actual = cx.builder.typeOf(value);
+  const validRepresentation =
+    family === "number"
+      ? asVal(actual)?.kind === "f64"
+      : family === "boolean"
+        ? irTypeIsBoolean(actual)
+        : actual.kind === "string";
+  if (!validRepresentation) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #5092 ${arm} arm proved ${family} but lowered as ${describeIrType(actual)} in ${cx.funcName}`,
+    );
+  }
+
+  const expectedTag =
+    family === "number" ? JS_TAG_IDS.NumberF64 : family === "boolean" ? JS_TAG_IDS.Boolean : JS_TAG_IDS.String;
+  const tamper = process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL;
+  const emittedTag = (tamper === "1" || tamper === "tag") && arm === "then" ? JS_TAG_IDS.String : expectedTag;
+  if (emittedTag !== expectedTag) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #5092 injected ${arm}-arm tag drift (${emittedTag} vs ${expectedTag}) in ${cx.funcName}`,
+    );
+  }
+  const boxed = cx.builder.emitBox(value, irDynamic(emittedTag));
+  const boxedType = cx.builder.typeOf(boxed);
+  if (boxedType.kind !== "dynamic" || boxedType.tag !== expectedTag) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #5092 ${arm} arm did not produce its ${family} dynamic refinement in ${cx.funcName}`,
+    );
+  }
+  return boxed;
+}
+
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
+  const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
+  if (mixedProof !== null) {
+    try {
+      const carrier = cx.resolver?.resolveDynamic?.();
+      if (carrier?.kind !== "externref" && carrier?.kind !== "ref_null") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: #5092 dynamic carrier is unavailable or incompatible in ${cx.funcName}`,
+        );
+      }
+
+      const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
+      const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
+      if (cond === null) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: #5092 condition lost its selector-proven primitive truthiness in ${cx.funcName}`,
+        );
+      }
+
+      const branchScope = new Map(cx.scope);
+      const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+      let whenTrue!: IrValueId;
+      let trueConcreteType!: IrType;
+      const thenBody = cx.builder.collectBodyInstrs(() => {
+        const concrete = lowerExpr(expr.whenTrue, thenCx, irVal({ kind: "f64" }));
+        trueConcreteType = cx.builder.typeOf(concrete);
+        whenTrue = boxMixedConditionalArm(concrete, mixedProof.whenTrue, "then", cx);
+      });
+
+      const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+      let whenFalse!: IrValueId;
+      const elseBody = cx.builder.collectBodyInstrs(() => {
+        const concrete = lowerExpr(expr.whenFalse, elseCx, trueConcreteType);
+        whenFalse = boxMixedConditionalArm(concrete, mixedProof.whenFalse, "else", cx);
+      });
+
+      joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
+      const tamper = process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL;
+      const resultType = tamper === "result" ? trueConcreteType : irDynamic();
+      const result = cx.builder.emitIfElse({
+        cond,
+        then: thenBody,
+        thenValue: whenTrue,
+        else: elseBody,
+        elseValue: whenFalse,
+        resultType,
+      });
+      const actualResult = cx.builder.typeOf(result);
+      if (actualResult.kind !== "dynamic" || actualResult.tag !== undefined) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: #5092 mixed conditional joined as ${describeIrType(actualResult)}, not bare dynamic, in ${cx.funcName}`,
+        );
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof IrInvariantError) throw error;
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: #5092 mixed conditional demoted after exact claim in ${cx.funcName}: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+      );
+    }
+  }
+
   const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
   // (#4512) §7.1.2 ToBoolean — dynamic lowers via `dyn.truthy`, object/string/ref
   // via the shared coercion, a raw host externref returns null → demote. The

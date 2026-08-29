@@ -438,29 +438,41 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       // alone can therefore select the wrong logical shape and write another
       // field's slot. Mirror the exported __sset_* guards: verify the hidden
       // per-instance shape id and continue dispatching on a mismatch.
-      const shapeGuardedSetFieldInstrs: Instr[] =
-        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
-          ? [
+      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
+        return [
+          { op: "local.get", index: 2 }, // __any
+          { op: "ref.test", typeIdx: cand.structTypeIdx },
+          {
+            // Keep the stamp read behind the successful ref.test: evaluating a
+            // cast eagerly and combining with i32.and would trap on a receiver
+            // outside this structural family. The result is the complete arm
+            // predicate, so the continuation occurs exactly once below.
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
               { op: "local.get", index: 2 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },
               { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
               { op: "i32.const", value: cand.shapeId },
               { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: presenceAwareSetFieldInstrs,
-                else: next,
-              },
-            ]
-          : presenceAwareSetFieldInstrs;
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: presenceAwareSetFieldInstrs,
+            else: next,
+          },
+        ];
+      }
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: shapeGuardedSetFieldInstrs,
+          then: presenceAwareSetFieldInstrs,
           else: next,
         },
       ];

@@ -12092,6 +12092,11 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   // proto-dropping stub. (GC/host keeps the stub — see the calls.ts dual-mode
   // gate.)
   "__object_setPrototypeOf",
+  // #5148 cluster 2b — the BOOLEAN OrdinarySetPrototypeOf answer without the
+  // write, so `Object.setPrototypeOf` / `__proto__`'s setter can satisfy
+  // §20.1.2.21 step 4 (throw a TypeError on a `false` status) while the writer
+  // above keeps its lenient internal-caller posture.
+  "__object_setPrototypeOf_status",
   // #1888 Slice 2 — open-`any` method dispatch `recv.m(args)`. Native arm
   // (__extern_method_call → __extern_get + __apply_closure arity bridge). The
   // closure round-trips through __extern_set/__extern_get as a ref.test-able

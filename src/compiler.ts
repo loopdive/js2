@@ -1219,7 +1219,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   let sourceMapJson: string | undefined;
   try {
     if (emitSourceMap) {
-      const emitResult = emitBinaryWithSourceMap(mod);
+      const emitResult = profilePhase("emit-binary-source-map", () => emitBinaryWithSourceMap(mod));
       const sourceMap = generateSourceMap(emitResult.sourceMapEntries, input.sourcesContent);
       sourceMapJson = JSON.stringify(sourceMap);
       // Append sourceMappingURL custom section to the binary.
@@ -1232,7 +1232,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       combined.set(urlSectionBytes, emitResult.binary.length);
       binary = combined;
     } else {
-      binary = emitBinary(mod);
+      binary = profilePhase("emit-binary", () => emitBinary(mod));
     }
   } catch (e) {
     if (isWasmException(e)) throw e;
@@ -1279,9 +1279,11 @@ function runPipeline(input: PipelineInput): CompileResult {
   let wat = "";
   if (emitWatOutput) {
     try {
-      wat = emitWat(
-        mod,
-        options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+      wat = profilePhase("emit-wat", () =>
+        emitWat(
+          mod,
+          options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+        ),
       );
     } catch (e) {
       pushSourceAnchoredDiagnostic(
@@ -1294,7 +1296,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   }
 
   // Step 5: Generate .d.ts.
-  const dts = generateDts(entryAst, mod);
+  const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
   const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);

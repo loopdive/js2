@@ -28,7 +28,9 @@
 import { coercionPlan } from "./coercion-plan.js";
 import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { STABLE_FUNC_BASE, absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
-import { walkInstructions } from "./walk-instructions.js";
+import { walkInstructionDag } from "./walk-instructions.js";
+import type { CodegenError } from "./context/types.js";
+import { profileCount, profilePhase } from "../compile-profile.js";
 
 /**
  * (#2934) Widen a packed i8/i16 STORAGE type to the i32 that actually lives on
@@ -156,8 +158,8 @@ export interface StrictBalanceDiagnostic {
  *
  * Returns the diagnostics to surface. The caller (`src/codegen/index.ts`,
  * which holds `ctx`) pushes them onto `ctx.errors` — strict errors then fail
- * the WasmGC compile through the existing `severity === "error"` gate, which
- * `mod.codegenErrors` does NOT reach on the WasmGC path (see #2090).
+ * the WasmGC compile through the existing `severity === "error"` gate. Hard
+ * pass refusals are written to that same sink directly by `stackBalance`.
  */
 export function strictBalanceDiagnostics(events: readonly FixupEvent[]): StrictBalanceDiagnostic[] {
   const mode = (process.env.JS2WASM_STRICT_BALANCE ?? "").toLowerCase();
@@ -203,18 +205,20 @@ function isTerminator(op: string): boolean {
  * Mutates the body array in place.
  * Returns the number of instructions removed.
  */
-function eliminateDeadCode(body: Instr[]): number {
+function eliminateDeadCode(body: Instr[], visited = new WeakSet<Instr[]>()): number {
+  if (visited.has(body)) return 0;
+  visited.add(body);
   let removed = 0;
 
   // First, recurse into structured blocks
   for (const instr of body) {
     if (instr.op === "if") {
       const ifInstr = instr as { op: "if"; then: Instr[]; else?: Instr[] };
-      removed += eliminateDeadCode(ifInstr.then);
-      if (ifInstr.else) removed += eliminateDeadCode(ifInstr.else);
+      removed += eliminateDeadCode(ifInstr.then, visited);
+      if (ifInstr.else) removed += eliminateDeadCode(ifInstr.else, visited);
     } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as { op: string; body: Instr[] };
-      removed += eliminateDeadCode(blockInstr.body);
+      removed += eliminateDeadCode(blockInstr.body, visited);
     } else if (instr.op === "try") {
       const tryInstr = instr as {
         op: "try";
@@ -222,11 +226,11 @@ function eliminateDeadCode(body: Instr[]): number {
         catches: Array<{ body: Instr[] }>;
         catchAll?: Instr[];
       };
-      removed += eliminateDeadCode(tryInstr.body);
+      removed += eliminateDeadCode(tryInstr.body, visited);
       for (const c of tryInstr.catches || []) {
-        removed += eliminateDeadCode(c.body);
+        removed += eliminateDeadCode(c.body, visited);
       }
-      if (tryInstr.catchAll) removed += eliminateDeadCode(tryInstr.catchAll);
+      if (tryInstr.catchAll) removed += eliminateDeadCode(tryInstr.catchAll, visited);
     }
   }
 
@@ -269,7 +273,7 @@ export function resolveFuncType(types: TypeDef[], typeIdx: number): FuncTypeDef 
 
 function assertLocalRefsInRange(func: WasmFunction, ft: FuncTypeDef | null, stage: string): void {
   const limit = (ft?.params.length ?? 0) + func.locals.length;
-  walkInstructions(func.body, (instr) => {
+  walkInstructionDag(func.body, (instr) => {
     if ((instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") && instr.index >= limit) {
       throw new Error(
         `stack-balance invariant (${stage}): '${func.name}' references local ${instr.index}, ` +
@@ -607,8 +611,26 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
   return 0;
 }
 
+interface FuncSig {
+  readonly params: number;
+  readonly results: number;
+  readonly paramTypes: readonly ValType[];
+  readonly resultTypes: readonly ValType[];
+  readonly resultType?: string;
+}
+
 interface FuncSigInfo {
-  get(funcIdx: number): { params: number; results: number; resultType?: string } | undefined;
+  get(funcIdx: number): FuncSig | undefined;
+}
+
+/** Fast signature lookup that retains stable-handle validation on cache miss. */
+function resolvedFuncSig(mod: WasmModule, numImports: number, sigs: FuncSigInfo, funcIdx: number): FuncSig | undefined {
+  const direct = sigs.get(funcIdx);
+  if (direct !== undefined) return direct;
+  // Valid stable handles are registered as aliases by buildFuncSigs. A miss can
+  // still be an unminted/unpushed handle, for which the pre-cache path threw a
+  // producer error via absoluteFuncIndexCached; preserve that fail-loud edge.
+  return sigs.get(absoluteFuncIndexCached(mod, numImports, funcIdx));
 }
 
 /**
@@ -1004,64 +1026,76 @@ function fixBranch(
   } else if (actual < expected) {
     // Not enough values -- add default pushes (then unreachable if we can't determine the type)
     // For valued blocks, push a zero/default value for each missing slot
+    if (blockType.kind === "empty") {
+      // An empty block has no result slots. A negative delta therefore means
+      // its body consumed operands that were never produced; describing this
+      // as a type-indexed/multi-value result failure sends the producer audit
+      // down the wrong path. This cannot be repaired at the end of the body:
+      // an appended value comes too late for the instruction that underflowed.
+      inventedValueSites.push({
+        func: currentDiagFunc,
+        detail:
+          `operand stack underflow by ${expected - actual} in an empty-typed block ` +
+          `(body delta ${actual}, expected ${expected}); this is not a missing block result`,
+      });
+      return 0;
+    }
+
+    if (blockType.kind === "type") {
+      // Type-indexed blocks can carry multiple results, but this lightweight
+      // pass does not retain their individual result types at this point. Fail
+      // closed without appending a guessed placeholder: the public compile
+      // path receives the hard diagnostic below and emits no binary.
+      inventedValueSites.push({
+        func: currentDiagFunc,
+        detail:
+          `missing ${expected - actual} result value(s) in a type-indexed (multi-value) block ` +
+          `whose element types are not recoverable`,
+      });
+      return 0;
+    }
+
     for (let i = 0; i < expected - actual; i++) {
-      if (blockType.kind === "val") {
-        const t = blockType.type;
-        switch (t.kind) {
-          case "i32":
-            body.push({ op: "i32.const", value: 0 });
-            // #1918 — LOSSY: a missing branch value is filled with a typed
-            // const default. If the producer was *supposed* to push a value,
-            // this silently substitutes 0 at runtime. AC #3: warning-visible.
-            recordFixup("default-value-lossy", "i32.const 0 default for a missing branch value", true);
-            break;
-          case "i64":
-            body.push({ op: "i64.const", value: 0n });
-            recordFixup("default-value-lossy", "i64.const 0 default for a missing branch value", true);
-            break;
-          case "f64":
-            body.push({ op: "f64.const", value: 0 });
-            recordFixup("default-value-lossy", "f64.const 0 default for a missing branch value", true);
-            break;
-          case "f32":
-            body.push({ op: "f32.const", value: 0 });
-            recordFixup("default-value-lossy", "f32.const 0 default for a missing branch value", true);
-            break;
-          case "externref":
-            body.push({ op: "ref.null.extern" });
-            recordFixup("default-value-lossy", "ref.null.extern default for a missing branch value", true);
-            break;
-          case "ref":
-          case "ref_null":
-            body.push({ op: "ref.null", typeIdx: t.typeIdx });
-            recordFixup(
-              "default-value-lossy",
-              `ref.null (type #${t.typeIdx}) default for a missing branch value`,
-              true,
-            );
-            break;
-          default:
-            // #2090 — unknown value type: we cannot pick a correct default, so
-            // inventing one would mask a real producer bug. Record the site;
-            // stackBalance turns it into a hard compile error. Still push a
-            // placeholder so the rest of the pass can finish walking (the
-            // compile fails via the recorded error regardless).
-            inventedValueSites.push({
-              func: currentDiagFunc,
-              detail: `missing value of unknown valtype kind "${(t as { kind?: string }).kind ?? "?"}" in a val-typed block`,
-            });
-            body.push({ op: "ref.null.extern" });
-            break;
-        }
-      } else {
-        // #2090 — type-indexed block type: individual value types aren't
-        // recoverable here, so a default is necessarily a guess. Record it as a
-        // hard error rather than inventing a ref.null.extern (see above).
-        inventedValueSites.push({
-          func: currentDiagFunc,
-          detail: "missing value in a type-indexed (multi-value) block whose element types are not recoverable",
-        });
-        body.push({ op: "ref.null.extern" });
+      const t = blockType.type;
+      switch (t.kind) {
+        case "i32":
+          body.push({ op: "i32.const", value: 0 });
+          // #1918 — LOSSY: a missing branch value is filled with a typed
+          // const default. If the producer was *supposed* to push a value,
+          // this silently substitutes 0 at runtime. AC #3: warning-visible.
+          recordFixup("default-value-lossy", "i32.const 0 default for a missing branch value", true);
+          break;
+        case "i64":
+          body.push({ op: "i64.const", value: 0n });
+          recordFixup("default-value-lossy", "i64.const 0 default for a missing branch value", true);
+          break;
+        case "f64":
+          body.push({ op: "f64.const", value: 0 });
+          recordFixup("default-value-lossy", "f64.const 0 default for a missing branch value", true);
+          break;
+        case "f32":
+          body.push({ op: "f32.const", value: 0 });
+          recordFixup("default-value-lossy", "f32.const 0 default for a missing branch value", true);
+          break;
+        case "externref":
+          body.push({ op: "ref.null.extern" });
+          recordFixup("default-value-lossy", "ref.null.extern default for a missing branch value", true);
+          break;
+        case "ref":
+        case "ref_null":
+          body.push({ op: "ref.null", typeIdx: t.typeIdx });
+          recordFixup("default-value-lossy", `ref.null (type #${t.typeIdx}) default for a missing branch value`, true);
+          break;
+        default:
+          // #2090 — unknown value type: we cannot pick a correct default, so
+          // inventing one would mask a real producer bug. Record the site;
+          // stackBalance turns it into a hard compile error without mutating
+          // this invalid branch.
+          inventedValueSites.push({
+            func: currentDiagFunc,
+            detail: `missing value of unknown valtype kind "${(t as { kind?: string }).kind ?? "?"}" in a val-typed block`,
+          });
+          return fixups;
       }
       fixups++;
     }
@@ -1102,7 +1136,10 @@ function fixBody(
   tags: Array<{ typeIdx: number }>,
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
+  visited = new WeakSet<Instr[]>(),
 ): number {
+  if (visited.has(body)) return 0;
+  visited.add(body);
   let fixups = 0;
 
   for (const instr of body) {
@@ -1111,9 +1148,9 @@ function fixBody(
       const expected = blockTypeExpected(ifInstr.blockType, types);
 
       // Recurse into branches first
-      fixups += fixBody(ifInstr.then, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+      fixups += fixBody(ifInstr.then, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
       if (ifInstr.else) {
-        fixups += fixBody(ifInstr.else, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+        fixups += fixBody(ifInstr.else, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
       }
 
       // Fix then branch
@@ -1129,7 +1166,7 @@ function fixBody(
       }
     } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as { op: string; blockType: BlockType; body: Instr[] };
-      fixups += fixBody(blockInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+      fixups += fixBody(blockInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
 
       const expected = blockTypeExpected(blockInstr.blockType, types);
       fixups += fixBranch(blockInstr.body, expected, types, sigs, blockInstr.blockType, boxNumberIdx, unboxNumberIdx);
@@ -1144,12 +1181,12 @@ function fixBody(
       const expected = blockTypeExpected(tryInstr.blockType, types);
 
       // Recurse into all branches
-      fixups += fixBody(tryInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+      fixups += fixBody(tryInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
       for (const c of tryInstr.catches || []) {
-        fixups += fixBody(c.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+        fixups += fixBody(c.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
       }
       if (tryInstr.catchAll) {
-        fixups += fixBody(tryInstr.catchAll, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+        fixups += fixBody(tryInstr.catchAll, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
       }
 
       // Fix the do body
@@ -1207,7 +1244,7 @@ function valTypeCategory(vt: ValType): string | undefined {
 }
 
 function buildFuncSigs(mod: WasmModule): FuncSigInfo {
-  const map = new Map<number, { params: number; results: number; resultType?: string }>();
+  const map = new Map<number, FuncSig>();
 
   // Imported functions come first
   let idx = 0;
@@ -1216,7 +1253,13 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
       const ft = resolveFuncType(mod.types, imp.desc.typeIdx);
       if (ft) {
         const resultType = ft.results.length === 1 ? valTypeCategory(ft.results[0]!) : undefined;
-        map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
+        map.set(idx, {
+          params: ft.params.length,
+          results: ft.results.length,
+          paramTypes: ft.params,
+          resultTypes: ft.results,
+          resultType,
+        });
       }
       idx++;
     }
@@ -1226,10 +1269,15 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
   const numImports = idx;
   for (const func of mod.functions) {
     const ft = resolveFuncType(mod.types, func.typeIdx);
-    assertLocalRefsInRange(func, ft, "entry");
     if (ft) {
       const resultType = ft.results.length === 1 ? valTypeCategory(ft.results[0]!) : undefined;
-      map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
+      map.set(idx, {
+        params: ft.params.length,
+        results: ft.results.length,
+        paramTypes: ft.params,
+        resultTypes: ft.results,
+        resultType,
+      });
     }
     idx++;
   }
@@ -1415,7 +1463,6 @@ export function inferInstrType(
 
   if (op === "call") {
     const funcIdx = absoluteFuncIndexCached(mod, numImports, (instr as any).funcIdx as number); // (#1916 S3)
-    const pt = getFullParamTypes(mod, funcIdx, numImports);
     // Need result types, not params
     if (funcIdx < numImports) {
       let importFuncCount = 0;
@@ -1442,15 +1489,39 @@ export function inferInstrType(
 }
 
 /**
+ * Stack-balance already builds an exact function-signature table once per
+ * module. Reuse it for direct-call result inference instead of rescanning the
+ * import prefix for every call producer. The exported fallback remains useful
+ * to callers that run before the module-wide pass has built this table.
+ */
+function inferInstrTypeWithSigs(
+  instr: Instr,
+  localTypes: ValType[],
+  globalTypes: ValType[],
+  types: TypeDef[],
+  mod: WasmModule,
+  numImports: number,
+  sigs: FuncSigInfo,
+): ValType | null {
+  if (instr.op === "call") {
+    const resultTypes = resolvedFuncSig(mod, numImports, sigs, (instr as any).funcIdx as number)?.resultTypes;
+    return resultTypes?.length === 1 ? resultTypes[0]! : null;
+  }
+  return inferInstrType(instr, localTypes, globalTypes, types, mod, numImports);
+}
+
+/**
  * Check if a coercion is needed and generate the coercion instruction(s).
  * Returns an array of instructions to insert, or empty if no coercion needed.
  */
-export function callArgCoercionInstrs(
+const NO_COERCION_INSTRS: readonly Instr[] = [];
+
+function plannedCallArgCoercionInstrs(
   actual: ValType,
   expected: ValType,
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
-): Instr[] {
+): readonly Instr[] {
   // Same type — no coercion
   if (actual.kind === expected.kind) {
     if (
@@ -1459,7 +1530,7 @@ export function callArgCoercionInstrs(
     ) {
       const actualIdx = (actual as any).typeIdx;
       const expectedIdx = (expected as any).typeIdx;
-      if (actualIdx === expectedIdx) return [];
+      if (actualIdx === expectedIdx) return NO_COERCION_INSTRS;
       // Different typeIdx (e.g. closure struct type shifted by addUnionImports) —
       // insert ref.cast_null to coerce to the expected ref type.
       // This is safe in call-argument context (callArgCoercionInstrs is only used there).
@@ -1467,7 +1538,7 @@ export function callArgCoercionInstrs(
         return [{ op: "ref.cast_null", typeIdx: expectedIdx }];
       }
     } else {
-      return [];
+      return NO_COERCION_INSTRS;
     }
   }
 
@@ -1480,7 +1551,7 @@ export function callArgCoercionInstrs(
   ) {
     const actualIdx = (actual as any).typeIdx;
     const expectedIdx = (expected as any).typeIdx;
-    if (actualIdx === expectedIdx) return []; // subtyping handles nullability
+    if (actualIdx === expectedIdx) return NO_COERCION_INSTRS; // subtyping handles nullability
     if (expectedIdx !== undefined) {
       return [{ op: "ref.cast_null", typeIdx: expectedIdx }];
     }
@@ -1489,7 +1560,7 @@ export function callArgCoercionInstrs(
   // Both externref (possibly different kind strings: "externref" vs "ref_extern") — no coercion
   const actualIsExternref = actual.kind === "externref" || actual.kind === "ref_extern";
   const expectedIsExternref = expected.kind === "externref" || expected.kind === "ref_extern";
-  if (actualIsExternref && expectedIsExternref) return [];
+  if (actualIsExternref && expectedIsExternref) return NO_COERCION_INSTRS;
 
   // #1917 Step 0: scalar / numeric / box-unbox rows come from the single
   // coercion table so call-arg, branch, and local.set contexts agree exactly.
@@ -1505,7 +1576,18 @@ export function callArgCoercionInstrs(
     }
   }
 
-  return [];
+  return NO_COERCION_INSTRS;
+}
+
+/** Public compatibility wrapper: callers may treat the returned array as owned. */
+export function callArgCoercionInstrs(
+  actual: ValType,
+  expected: ValType,
+  boxNumberIdx: number | null,
+  unboxNumberIdx: number | null,
+): Instr[] {
+  const planned = plannedCallArgCoercionInstrs(actual, expected, boxNumberIdx, unboxNumberIdx);
+  return planned === NO_COERCION_INSTRS ? [] : (planned as Instr[]);
 }
 
 /**
@@ -1655,7 +1737,10 @@ function fixCallArgTypesInBody(
   sigs: FuncSigInfo,
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
+  visited = new WeakSet<Instr[]>(),
 ): number {
+  if (visited.has(body)) return 0;
+  visited.add(body);
   let fixups = 0;
 
   // Process nested blocks recursively first
@@ -1673,6 +1758,7 @@ function fixCallArgTypesInBody(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
       if (ifInstr.else)
         fixups += fixCallArgTypesInBody(
@@ -1685,6 +1771,7 @@ function fixCallArgTypesInBody(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
     } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as any;
@@ -1699,6 +1786,7 @@ function fixCallArgTypesInBody(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
     } else if (instr.op === "try") {
       const tryInstr = instr as any;
@@ -1713,6 +1801,7 @@ function fixCallArgTypesInBody(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
       if (tryInstr.catches) {
         for (const c of tryInstr.catches) {
@@ -1727,6 +1816,7 @@ function fixCallArgTypesInBody(
               sigs,
               boxNumberIdx,
               unboxNumberIdx,
+              visited,
             );
         }
       }
@@ -1741,6 +1831,7 @@ function fixCallArgTypesInBody(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
     }
   }
@@ -1760,7 +1851,7 @@ function fixCallArgTypesInBody(
     const isCallRef = callInstr.op === "call_ref";
     if (!isCall && !isCallRef) continue;
 
-    let expectedParams: ValType[] | null;
+    let expectedParams: readonly ValType[] | null;
     if (isCallRef) {
       // call_ref uses a type index to determine the signature
       const typeIdx = (callInstr as any).typeIdx as number;
@@ -1768,7 +1859,7 @@ function fixCallArgTypesInBody(
       expectedParams = ft ? ft.params : null;
     } else {
       const funcIdx = (callInstr as any).funcIdx as number;
-      expectedParams = getFullParamTypes(mod, funcIdx, numImports);
+      expectedParams = resolvedFuncSig(mod, numImports, sigs, funcIdx)?.paramTypes ?? null;
     }
     if (!expectedParams || expectedParams.length === 0) continue;
 
@@ -1776,21 +1867,26 @@ function fixCallArgTypesInBody(
     // For call_ref, the funcref is on top of the params stack — skip it
     let argOffset = isCallRef ? -1 : 0;
     let pos = ci - 1;
-    const insertions: Array<{ afterPos: number; instrs: Instr[] }> = [];
+    let insertions: Array<{ afterPos: number; instrs: readonly Instr[] }> | undefined;
     // Track insert positions already queued, so a chain of delta-0 producers
     // feeding a single call argument (e.g. `local.get; any.convert_extern;
     // ref.cast; struct.get` for a native-Error `.name` read) does not queue
     // the SAME externref→GC-ref coercion once per link. Without this, the
     // backward walk re-coerces the one value 4× and the 2nd `any.convert_extern`
     // receives an already-cast `(ref null $AnyString)` operand → invalid Wasm
-    // (#1797). The forward pass-through scan (below) collapses each chain to a
-    // single `insertPos`, so deduping by that position is exact.
-    const queuedInsertPositions = new Set<number>();
+    // (#1797). The reverse pass-through suffix summary (below) collapses each
+    // chain to a single `insertPos`, so deduping by that position is exact.
+    let queuedInsertPositions: Set<number> | undefined;
     // Track whether we've traversed through a sub-expression consumer.
     // When this is true, the backward walk's argOffset may conflate
     // sub-expression inputs with call arguments, so we restrict coercions
     // to only the proven-safe ref→externref pattern.
     let inSubExpr = false;
+    // Summary of the contiguous delta-0 suffix immediately after the current
+    // reverse-scan position. This replaces the old forward rescan from every
+    // producer to the call (quadratic for long cast/conversion chains).
+    let passThroughEnd: number | undefined;
+    let passThroughType: ValType | null = null;
 
     while (pos >= 0 && argOffset < paramCount) {
       const instr = body[pos]!;
@@ -1824,29 +1920,25 @@ function fixCallArgTypesInBody(
       // "simple producers" with delta >= 1 are the straightforward case.
       // But ops like i32.xor (pop 2, push 1, net -1) also produce a value
       // that becomes a call argument — we handle those too.
-      const producesValue =
-        SIMPLE_PRODUCERS.has(op) && inferInstrType(instr, localTypes, globalTypes, types, mod, numImports) !== null;
+      const simpleProducer = SIMPLE_PRODUCERS.has(op);
+      const inferredType =
+        simpleProducer || delta === 0
+          ? inferInstrTypeWithSigs(instr, localTypes, globalTypes, types, mod, numImports, sigs)
+          : null;
+      const producedType = simpleProducer ? inferredType : null;
+      const producesValue = producedType !== null;
 
       if (producesValue && argOffset >= 0) {
         // Check if there are pass-through transformers between this
         // instruction and the call/next producer.
-        let effectiveType = inferInstrType(instr, localTypes, globalTypes, types, mod, numImports);
-        let insertPos = pos;
-
-        for (let t = pos + 1; t < ci; t++) {
-          const tInstr = body[t]!;
-          const tDelta = instrDelta(tInstr, types, sigs);
-          if (tDelta !== 0) break;
-          const tType = inferInstrType(tInstr, localTypes, globalTypes, types, mod, numImports);
-          if (tType) effectiveType = tType;
-          insertPos = t;
-        }
+        const effectiveType = passThroughType ?? producedType;
+        const insertPos = passThroughEnd ?? pos;
 
         const paramIdx = paramCount - 1 - argOffset;
         const expectedType = expectedParams[paramIdx]!;
 
-        if (effectiveType && expectedType) {
-          const coercion = callArgCoercionInstrs(effectiveType, expectedType, boxNumberIdx, unboxNumberIdx);
+        if (!inSubExpr && effectiveType && expectedType) {
+          const coercion = plannedCallArgCoercionInstrs(effectiveType, expectedType, boxNumberIdx, unboxNumberIdx);
           if (coercion.length > 0) {
             // When inSubExpr is true, the backward walk has traversed past
             // an intermediate call — the producer is an argument to that
@@ -1855,12 +1947,20 @@ function fixCallArgTypesInBody(
             // Previously, ref→externref (extern.convert_any) was exempted as
             // "safe", but this is wrong when the intermediate call expects a
             // GC ref type, not externref (#963).
-            if (!inSubExpr && !queuedInsertPositions.has(insertPos)) {
-              queuedInsertPositions.add(insertPos);
-              insertions.push({ afterPos: insertPos, instrs: coercion });
+            if (!queuedInsertPositions?.has(insertPos)) {
+              (queuedInsertPositions ??= new Set()).add(insertPos);
+              (insertions ??= []).push({ afterPos: insertPos, instrs: coercion });
             }
           }
         }
+      }
+
+      if (delta === 0) {
+        passThroughEnd ??= pos;
+        passThroughType ??= inferredType;
+      } else {
+        passThroughEnd = undefined;
+        passThroughType = null;
       }
 
       // Update argOffset and sub-expression tracking
@@ -1911,7 +2011,7 @@ function fixCallArgTypesInBody(
     // the producer scan above walks BACKWARD, so back-to-front WAS ascending and
     // every call with 2+ mismatched args stacked its 2nd coercion on the 1st arg.
     // Trace: plan/issues/3910-regex-plus-string-constants-global-get.md.
-    if (insertions.length > 0) {
+    if (insertions !== undefined) {
       insertions.sort((a, b) => b.afterPos - a.afterPos);
       for (const { afterPos, instrs } of insertions) {
         body.splice(afterPos + 1, 0, ...instrs);
@@ -1951,8 +2051,12 @@ function fixStructNewFieldCoercion(
   unboxNumberIdx: number | null,
 ): number {
   let fixups = 0;
+  const visitedBodies = new WeakSet<Instr[]>();
+  const paramCount = resolveFuncType(types, func.typeIdx)?.params.length ?? 0;
 
   function processBody(body: Instr[]): void {
+    if (visitedBodies.has(body)) return;
+    visitedBodies.add(body);
     // First recurse into nested blocks
     for (const instr of body) {
       if (instr.op === "if") {
@@ -1996,12 +2100,12 @@ function fixStructNewFieldCoercion(
             }
 
             let needsCoercion = false;
-            const coercions: Instr[][] = [];
+            const coercions: (readonly Instr[])[] = [];
             for (let fi = 0; fi < numFields; fi++) {
               const actual = fieldTypes[fi];
               const expected = fields[fi]!.type;
               if (actual) {
-                const c = callArgCoercionInstrs(actual, expected, boxNumberIdx, unboxNumberIdx);
+                const c = plannedCallArgCoercionInstrs(actual, expected, boxNumberIdx, unboxNumberIdx);
                 coercions.push(c);
                 if (c.length > 0) needsCoercion = true;
               } else {
@@ -2013,7 +2117,6 @@ function fixStructNewFieldCoercion(
               // Save all N field values to temp locals, coerce, re-push.
               // Allocate temp locals with actual types from the stack.
               const tempLocals: number[] = [];
-              const paramCount = resolveFuncType(types, func.typeIdx)?.params.length ?? 0;
               for (let fi = 0; fi < numFields; fi++) {
                 // Widen defensively: the declared-field-type fallback can be a
                 // packed i8/i16, which is invalid as a local type (#2934).
@@ -2418,39 +2521,10 @@ function updateTypeStack(
 
   // call: pop params, push results
   if (op === "call") {
-    const funcIdx = absoluteFuncIndexCached(mod, numImports, (instr as any).funcIdx as number); // (#1916 S3)
-    const sig = sigs.get(funcIdx);
+    const sig = resolvedFuncSig(mod, numImports, sigs, (instr as any).funcIdx as number);
     if (sig) {
       for (let i = 0; i < sig.params; i++) stack.pop();
-      if (sig.results > 0) {
-        // Try to get actual result type from function signature
-        const fIdx = funcIdx - numImports;
-        const fn = fIdx >= 0 ? mod.functions[fIdx] : undefined;
-        const ft = fn ? resolveFuncType(types, fn.typeIdx) : null;
-        if (ft && ft.results.length > 0) {
-          for (const r of ft.results) stack.push(r);
-        } else {
-          // Check import function signatures
-          let importFuncIdx = 0;
-          let foundImport = false;
-          for (const imp of mod.imports) {
-            if (imp.desc.kind === "func") {
-              if (importFuncIdx === funcIdx) {
-                const impFt = resolveFuncType(types, imp.desc.typeIdx);
-                if (impFt && impFt.results.length > 0) {
-                  for (const r of impFt.results) stack.push(r);
-                  foundImport = true;
-                }
-                break;
-              }
-              importFuncIdx++;
-            }
-          }
-          if (!foundImport) {
-            for (let i = 0; i < sig.results; i++) stack.push(null);
-          }
-        }
-      }
+      for (const result of sig.resultTypes) stack.push(result);
     } else {
       stack.push(null); // unknown
     }
@@ -2514,9 +2588,189 @@ function updateTypeStack(
   // delta === 0: pass-through, no stack change
 }
 
-export function stackBalance(mod: WasmModule): number {
-  const sigs = buildFuncSigs(mod);
+function branchContextKey(expected: number, blockType: BlockType): string {
+  return `${expected}:${JSON.stringify(blockType)}`;
+}
+
+/**
+ * Find functions for which an in-place stack repair has no single valid
+ * context. A physical body may be multiply parented when immutable IR is
+ * shared, but `fixBranch` appends instructions according to its incoming block
+ * result and every other stack repair resolves local indices in the owning
+ * function. Distinct expectations or function roots therefore require
+ * distinct physical bodies; choosing whichever edge is visited first is a
+ * silent miscompile.
+ *
+ * This is a conservative refusal, not a tree expansion. Each array is expanded
+ * once per function and each incoming edge only contributes a compact context
+ * key, so a depth-28 binary DAG remains linear.
+ */
+interface StackBalanceFeatures {
+  deadTail: boolean;
+  localWrite: boolean;
+  call: boolean;
+  structNew: boolean;
+  structured: boolean;
+}
+
+/**
+ * A FLAT instruction array that unconditionally ends in `throw`/`unreachable`
+ * never falls through, so the surrounding context's result expectation never
+ * materializes — sharing it by reference across differently-typed `then:`
+ * positions is sound (Deno checkpoint: one memoized 4-op TypeError throw
+ * snippet reused inside a method under both empty and externref `if` arms).
+ * Anything with structure or branches keeps the conservative refusal.
+ */
+function terminalFlatBody(body: Instr[]): boolean {
+  const last = body[body.length - 1];
+  if (!last || (last.op !== "throw" && last.op !== "unreachable")) return false;
+  for (const ins of body) {
+    if (
+      ins.op === "if" ||
+      ins.op === "block" ||
+      ins.op === "loop" ||
+      ins.op === "br" ||
+      ins.op === "br_if" ||
+      ins.op === "br_table" ||
+      ins.op === "return" ||
+      "body" in ins ||
+      "then" in ins
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function contextAmbiguousFunctions(
+  mod: WasmModule,
+  tags: Array<{ typeIdx: number }>,
+): { blocked: Set<WasmFunction>; features: Map<WasmFunction, StackBalanceFeatures> } {
+  const firstOwner = new WeakMap<Instr[], WasmFunction>();
+  const blocked = new Set<WasmFunction>();
+  const invalidLocalRefFunctions = new Set<WasmFunction>();
+  const features = new Map<WasmFunction, StackBalanceFeatures>();
+
+  for (const func of mod.functions) {
+    const functionFeatures: StackBalanceFeatures = {
+      deadTail: false,
+      localWrite: false,
+      call: false,
+      structNew: false,
+      structured: false,
+    };
+    features.set(func, functionFeatures);
+    const contexts = new WeakMap<Instr[], string>();
+    const expanded = new WeakSet<Instr[]>();
+    const ft = resolveFuncType(mod.types, func.typeIdx);
+    const localLimit = (ft?.params.length ?? 0) + func.locals.length;
+    const rootType: BlockType =
+      !ft || ft.results.length === 0
+        ? { kind: "empty" }
+        : ft.results.length === 1
+          ? { kind: "val", type: ft.results[0]! }
+          : { kind: "type", typeIdx: func.typeIdx };
+    const pending: Array<{ body: Instr[]; context: string }> = [
+      { body: func.body, context: branchContextKey(ft?.results.length ?? 0, rootType) },
+    ];
+
+    while (pending.length > 0) {
+      const { body, context } = pending.pop()!;
+      const owner = firstOwner.get(body);
+      if (owner && owner !== func) {
+        blocked.add(owner);
+        blocked.add(func);
+      } else if (!owner) {
+        firstOwner.set(body, func);
+      }
+
+      const prior = contexts.get(body);
+      if (prior !== undefined && prior !== context && !terminalFlatBody(body)) blocked.add(func);
+      else if (prior === undefined) contexts.set(body, context);
+      if (expanded.has(body)) continue;
+      expanded.add(body);
+
+      for (let index = 0; index < body.length; index++) {
+        const instr = body[index]!;
+        if (
+          (instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") &&
+          instr.index >= localLimit
+        ) {
+          invalidLocalRefFunctions.add(func);
+        }
+        if (isTerminator(instr.op) && index + 1 < body.length) functionFeatures.deadTail = true;
+        if (instr.op === "local.set" || instr.op === "local.tee") functionFeatures.localWrite = true;
+        if (instr.op === "call" || instr.op === "return_call" || instr.op === "call_ref") {
+          functionFeatures.call = true;
+        }
+        if (instr.op === "struct.new") functionFeatures.structNew = true;
+        if (instr.op === "if") {
+          functionFeatures.structured = true;
+          const expected = blockTypeExpected(instr.blockType, mod.types);
+          const key = branchContextKey(expected, instr.blockType);
+          pending.push({ body: instr.then, context: key });
+          if (instr.else) pending.push({ body: instr.else, context: key });
+        } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
+          functionFeatures.structured = true;
+          const expected = blockTypeExpected(instr.blockType, mod.types);
+          pending.push({ body: instr.body, context: branchContextKey(expected, instr.blockType) });
+        } else if (instr.op === "try") {
+          functionFeatures.structured = true;
+          const expected = blockTypeExpected(instr.blockType, mod.types);
+          const key = branchContextKey(expected, instr.blockType);
+          pending.push({ body: instr.body, context: key });
+          for (const c of instr.catches || []) {
+            pending.push({
+              body: c.body,
+              context: branchContextKey(expected - getTagArity(c.tagIdx, tags, mod.types), instr.blockType),
+            });
+          }
+          if (instr.catchAll) pending.push({ body: instr.catchAll, context: key });
+        }
+      }
+    }
+  }
+
+  // The preflight has already visited each physical instruction array once.
+  // Rewalk only the exceptional invalid function to retain the detailed entry
+  // diagnostic; context-blocked functions keep the existing fail-closed owner
+  // diagnostic and were historically excluded from this assertion.
+  for (const func of invalidLocalRefFunctions) {
+    if (!blocked.has(func)) assertLocalRefsInRange(func, resolveFuncType(mod.types, func.typeIdx), "entry");
+  }
+
+  return { blocked, features };
+}
+
+function recordHardStackBalanceError(mod: WasmModule, diagnostics: CodegenError[] | undefined, message: string): void {
+  const diagnostic = { message, line: 0, column: 0, severity: "error" as const };
+  if (!mod.codegenErrors) mod.codegenErrors = [];
+  mod.codegenErrors.push(diagnostic);
+  diagnostics?.push(diagnostic);
+}
+
+export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): number {
   const tags = mod.tags || [];
+  const preflight = profilePhase("preflight", () => contextAmbiguousFunctions(mod, tags));
+  const contextBlocked = preflight.blocked;
+  const sigs = profilePhase("signatures", () => buildFuncSigs(mod));
+  let deadTailFunctions = 0;
+  let localWriteFunctions = 0;
+  let callFunctions = 0;
+  let structNewFunctions = 0;
+  let structuredFunctions = 0;
+  for (const features of preflight.features.values()) {
+    if (features.deadTail) deadTailFunctions++;
+    if (features.localWrite) localWriteFunctions++;
+    if (features.call) callFunctions++;
+    if (features.structNew) structNewFunctions++;
+    if (features.structured) structuredFunctions++;
+  }
+  profileCount("stack-balance-dead-tail-functions", deadTailFunctions);
+  profileCount("stack-balance-local-write-functions", localWriteFunctions);
+  profileCount("stack-balance-call-functions", callFunctions);
+  profileCount("stack-balance-struct-new-functions", structNewFunctions);
+  profileCount("stack-balance-structured-functions", structuredFunctions);
   let totalFixups = 0;
 
   // #2090 — reset the invented-value collector for this run.
@@ -2567,62 +2821,88 @@ export function stackBalance(mod: WasmModule): number {
 
   for (let fi = 0; fi < mod.functions.length; fi++) {
     const func = mod.functions[fi]!;
+    const features = preflight.features.get(func)!;
     // #2090 — attribute any invented-value site to this function in diagnostics.
     currentDiagFunc = func.name || `func#${numImports + fi}`;
-    // Build local types array (params + locals)
-    const ft = resolveFuncType(mod.types, func.typeIdx);
-    const localTypes: ValType[] = [];
-    if (ft) {
-      for (const p of ft.params) localTypes.push(p);
+    if (contextBlocked.has(func)) {
+      recordHardStackBalanceError(
+        mod,
+        diagnostics,
+        `stack-balance (#1058): function "${currentDiagFunc}" reaches an instruction array from ` +
+          `incompatible control-flow or function-local contexts. The repair pass refuses to mutate ` +
+          `one shared body for all owners; emit distinct instruction arrays at the producer.`,
+      );
+      continue;
     }
-    for (const l of func.locals) localTypes.push(l.type);
+    // Only the local/call/struct repair passes need indexed local types. The
+    // common branch-only/no-fixup function avoids allocating and filling a
+    // throwaway params+locals array.
+    const ft = resolveFuncType(mod.types, func.typeIdx);
+    let localTypes: ValType[] | undefined;
+    if (features.localWrite || features.call || features.structNew) {
+      localTypes = [];
+      if (ft) {
+        for (const p of ft.params) localTypes.push(p);
+      }
+      for (const l of func.locals) localTypes.push(l.type);
+    }
 
     // Eliminate dead code after terminators (throw/return/br/unreachable)
     // V8 tracks stack values even in unreachable code, so dead code that pushes
     // values causes "expected N elements on the stack for fallthru" errors.
-    eliminateDeadCode(func.body);
+    if (features.deadTail) eliminateDeadCode(func.body);
 
     // Fix local.set type mismatches (e.g., f64 → externref, ref → externref)
-    totalFixups += fixLocalSetCoercion(
-      func.body,
-      localTypes,
-      globalTypes,
-      mod.types,
-      mod,
-      numImports,
-      sigs,
-      boxNumberIdx,
-      unboxNumberIdx,
-    );
+    if (features.localWrite) {
+      totalFixups += fixLocalSetCoercion(
+        func.body,
+        localTypes!,
+        globalTypes,
+        mod.types,
+        mod,
+        numImports,
+        sigs,
+        boxNumberIdx,
+        unboxNumberIdx,
+      );
+    }
 
     // Fix call argument type mismatches before other fixups
-    totalFixups += fixCallArgTypesInBody(
-      func.body,
-      localTypes,
-      globalTypes,
-      mod.types,
-      mod,
-      numImports,
-      sigs,
-      boxNumberIdx,
-      unboxNumberIdx,
-    );
+    if (features.call) {
+      totalFixups += fixCallArgTypesInBody(
+        func.body,
+        localTypes!,
+        globalTypes,
+        mod.types,
+        mod,
+        numImports,
+        sigs,
+        boxNumberIdx,
+        unboxNumberIdx,
+      );
+    }
 
     // Fix struct.new field type mismatches (forward type-stack simulation)
-    totalFixups += fixStructNewFieldCoercion(
-      func,
-      mod.types,
-      mod,
-      numImports,
-      sigs,
-      localTypes,
-      globalTypes,
-      boxNumberIdx,
-      unboxNumberIdx,
-    );
+    let structNewFixups = 0;
+    if (features.structNew) {
+      structNewFixups = fixStructNewFieldCoercion(
+        func,
+        mod.types,
+        mod,
+        numImports,
+        sigs,
+        localTypes!,
+        globalTypes,
+        boxNumberIdx,
+        unboxNumberIdx,
+      );
+      totalFixups += structNewFixups;
+    }
 
     // Fix nested structured blocks
-    totalFixups += fixBody(func.body, mod.types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+    if (features.structured) {
+      totalFixups += fixBody(func.body, mod.types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+    }
 
     // Fix function-level body: the body must produce exactly as many values
     // as the function's result type declares.
@@ -2645,7 +2925,10 @@ export function stackBalance(mod: WasmModule): number {
         unboxNumberIdx,
       );
     }
-    assertLocalRefsInRange(func, ft, "exit");
+    // Only struct.new repair allocates locals or emits local.get/local.set.
+    // Every original local reference was checked during preflight, so a second
+    // full DAG walk is needed only after that repair actually changed the body.
+    if (structNewFixups > 0) assertLocalRefsInRange(func, ft, "exit");
   }
 
   // #2090 — drain the invented-value collector into structured compile errors.
@@ -2655,17 +2938,15 @@ export function stackBalance(mod: WasmModule): number {
   // legitimate trigger, so in practice this list is empty for every module the
   // equivalence suite + playground examples compile.
   if (inventedValueSites.length > 0) {
-    if (!mod.codegenErrors) mod.codegenErrors = [];
     for (const site of inventedValueSites) {
-      mod.codegenErrors.push({
-        message:
-          `stack-balance (#2090): cannot supply a missing stack value in function "${site.func}" — ` +
+      recordHardStackBalanceError(
+        mod,
+        diagnostics,
+        `stack-balance (#2090): cannot supply a missing stack value in function "${site.func}" — ` +
           `${site.detail}. The repair pass refuses to invent a value here because doing so would ` +
           `mask a producing codegen bug as a silent null. This is a compiler defect at the value ` +
           `producer; report the failing input.`,
-        line: 0,
-        column: 0,
-      });
+      );
     }
     inventedValueSites = [];
   }
@@ -2722,7 +3003,10 @@ function fixLocalSetCoercion(
   sigs: FuncSigInfo,
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
+  visited = new WeakSet<Instr[]>(),
 ): number {
+  if (visited.has(body)) return 0;
+  visited.add(body);
   let fixups = 0;
 
   // Recurse into nested blocks first
@@ -2740,6 +3024,7 @@ function fixLocalSetCoercion(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
       if (ifInstr.else)
         fixups += fixLocalSetCoercion(
@@ -2752,6 +3037,7 @@ function fixLocalSetCoercion(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
     } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as any;
@@ -2766,6 +3052,7 @@ function fixLocalSetCoercion(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
     } else if (instr.op === "try") {
       const tryInstr = instr as any;
@@ -2780,6 +3067,7 @@ function fixLocalSetCoercion(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
       if (tryInstr.catches) {
         for (const c of tryInstr.catches) {
@@ -2794,6 +3082,7 @@ function fixLocalSetCoercion(
               sigs,
               boxNumberIdx,
               unboxNumberIdx,
+              visited,
             );
         }
       }
@@ -2808,6 +3097,7 @@ function fixLocalSetCoercion(
           sigs,
           boxNumberIdx,
           unboxNumberIdx,
+          visited,
         );
     }
   }
@@ -2824,7 +3114,7 @@ function fixLocalSetCoercion(
     // Infer the type of the value on the stack by looking at the preceding instruction
     if (i === 0) continue;
     const prev = body[i - 1]!;
-    const stackType = inferInstrType(prev, localTypes, globalTypes, types, mod, numImports);
+    const stackType = inferInstrTypeWithSigs(prev, localTypes, globalTypes, types, mod, numImports, sigs);
     if (!stackType) continue;
 
     // A declared struct subtype is already valid in a wider ref local. In
@@ -2833,7 +3123,7 @@ function fixLocalSetCoercion(
     if (isDeclaredRefSubtypeAssignable(stackType, localType, types)) continue;
 
     // Check if coercion is needed
-    const coercion = callArgCoercionInstrs(stackType, localType, boxNumberIdx, unboxNumberIdx);
+    const coercion = plannedCallArgCoercionInstrs(stackType, localType, boxNumberIdx, unboxNumberIdx);
     if (coercion.length > 0) {
       // Insert coercion instructions before the local.set
       body.splice(i, 0, ...coercion);
