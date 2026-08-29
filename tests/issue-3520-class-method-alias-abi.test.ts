@@ -3,8 +3,12 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeSource } from "../src/checker/index.js";
+import { mintDefinedFunc, pushProgramAbiClassCallable } from "../src/codegen/program-abi-class-callable-planning.js";
+import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import { compileDeclarations, collectDeclarations } from "../src/codegen/declarations.js";
 import { generateModule } from "../src/codegen/index.js";
 import { canonicalProgramAbiCallableTypeContract } from "../src/codegen/program-abi-signatures.js";
+import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compile } from "../src/index.js";
 import { irSupportFuncRef, irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
 import {
@@ -13,7 +17,10 @@ import {
   type IrTerminalUnitRecord,
   type IrUnitInventory,
 } from "../src/ir/identity.js";
+import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
+import { createEmptyModule, type WasmFunction } from "../src/ir/types.js";
 import { buildImports } from "../src/runtime.js";
+import { ts } from "../src/ts-api.js";
 
 // Register the codegen expression/statement delegates used by generateModule.
 import "../src/codegen/expressions.js";
@@ -239,5 +246,64 @@ describe("#3520 inherited instance-method Program ABI aliases", () => {
     expect(userSlot).not.toEqual(aliasSlots.n);
 
     expect(Number(await runtimeValue(source))).toBe(11_222_034);
+  });
+
+  it("rejects a conflicting repeat and a missing exact canonical allocator", () => {
+    const ast = analyzeSource(
+      `
+        class A {
+          m(value: number): number { return value + 1; }
+        }
+        class B extends A {}
+      `,
+      "inherited-alias-authority.ts",
+    );
+    const inventory = buildIrUnitInventory([ast.sourceFile], {
+      entrySource: ast.sourceFile,
+      checker: ast.checker,
+    });
+    const identityContext = buildIrPlanningIdentityContext(inventory);
+    const aClassId = classId(inventory, "A");
+    const bClassId = classId(inventory, "B");
+    const method = instanceMethod(inventory, aClassId, "A_m");
+    const child = ast.sourceFile.statements.find(
+      (statement): statement is ts.ClassDeclaration => ts.isClassDeclaration(statement) && statement.name?.text === "B",
+    );
+    if (!child) throw new Error("missing exact child declaration");
+
+    const mod = createEmptyModule();
+    const session = new ProgramAbiSession(inventory, mod);
+    const ctx = createCodegenContext(mod, ast.checker, { experimentalIR: true }, session, identityContext);
+    collectDeclarations(ctx, ast.sourceFile);
+    compileDeclarations(ctx, ast.sourceFile);
+    const registry = ctx.programAbiClassCallables;
+    const alias = registry?.inheritedAlias(bClassId, method.id);
+    const canonical = registry?.functionForUnit(method.id);
+    if (!registry || !alias || !canonical) throw new Error("missing inherited alias observation");
+
+    // An exact repeat is idempotent; changing only its physical key must fail
+    // instead of replacing the previously authenticated observation.
+    expect(registry.observeInheritedAlias(child, "B_m", alias.handle)).toBe(method.id);
+    expect(() => registry.observeInheritedAlias(child, "B_m_changed", alias.handle)).toThrowError(
+      expect.objectContaining({ name: "ProgramAbiInvariantError", code: "binding-reference-mismatch" }),
+    );
+
+    // A second exact-unit observation can deliberately reuse the same
+    // allocator object under another stable handle. The resulting inherited
+    // record differs in exactly that handle and must not supersede the first.
+    const secondHandle = mintDefinedFunc(ctx);
+    const declaration = identityContext.declarationByUnitId.get(method.id);
+    if (!declaration) throw new Error("missing exact canonical method declaration");
+    pushProgramAbiClassCallable(ctx, declaration, "unit", secondHandle, canonical);
+    expect(() => registry.observeInheritedAlias(child, "B_m", secondHandle)).toThrowError(
+      expect.objectContaining({ name: "ProgramAbiInvariantError", code: "session-draft-mismatch" }),
+    );
+
+    const definedIndex = mod.functions.indexOf(canonical);
+    expect(definedIndex).toBeGreaterThanOrEqual(0);
+    (mod.functions as Array<WasmFunction | undefined>)[definedIndex] = undefined;
+    expect(() => registry.planRetained()).toThrowError(
+      expect.objectContaining({ name: "ProgramAbiInvariantError", code: "missing-required-locator" }),
+    );
   });
 });

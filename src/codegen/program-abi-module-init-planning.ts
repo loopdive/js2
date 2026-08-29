@@ -68,11 +68,11 @@ function functionSignature(ctx: CodegenContext, func: WasmFunction): FuncTypeDef
  *
  * The sidecar exists even without a Program ABI session so startup wiring and
  * the compatibility overlay never rediscover an initializer by display name.
- * With an identity inventory, a single semantic module-init unit owns the final
- * allocator object. The legacy multi-source pipeline emits progressively
- * cumulative initializer functions; those temporary physical passes receive
- * explicit source support identities until R5 replaces them with one prepared
- * whole-program unit.
+ * With an identity inventory, every source retains its semantic module-init
+ * unit. The legacy multi-source scheduler nevertheless emits one physical,
+ * graph-global initializer on the final scheduled source. Until R5 gives that
+ * whole-program body its own prepared unit, the physical function is retained
+ * as the single unitless `legacy-module-init-pass` compatibility callable.
  */
 export class ProgramAbiModuleInitCallableRegistry {
   private readonly observations: ModuleInitCallableObservation[] = [];

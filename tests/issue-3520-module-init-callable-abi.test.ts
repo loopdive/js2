@@ -7,7 +7,7 @@ import { generateModule, generateMultiModule } from "../src/codegen/index.js";
 import { canonicalProgramAbiCallableTypeContract } from "../src/codegen/program-abi-signatures.js";
 import { compile, compileMulti, type CompileResult } from "../src/index.js";
 import { irSupportFuncRef, irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
-import { buildIrUnitInventory, type IrUnitInventory } from "../src/ir/identity.js";
+import { buildIrUnitInventory, type IrSourceId, type IrUnitInventory } from "../src/ir/identity.js";
 import type { ProgramAbiPlanEntry } from "../src/ir/program-abi.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 
@@ -48,6 +48,47 @@ function requiredCallable(entries: readonly ProgramAbiPlanEntry[], bindingId: st
     intent: { kind: "callable" },
   });
   return entry;
+}
+
+function graphGlobalModuleInitEntries(
+  entries: readonly ProgramAbiPlanEntry[],
+  entrySourceId: IrSourceId,
+): { readonly pass: ProgramAbiPlanEntry; readonly publicInit: ProgramAbiPlanEntry } {
+  const refs = [0, 1].map((ordinal) =>
+    irSupportFuncRef(entrySourceId, "legacy-module-init-pass", "__module_init", ordinal),
+  );
+  if (refs.some((ref) => ref.binding.kind !== "support")) throw new Error("expected module-init support references");
+  const passIds = refs.map((ref) => (ref.binding.kind === "support" ? ref.binding.bindingId : ""));
+  const physical = entries.filter((entry) => entry.id === passIds[0] || entry.id === passIds[1]);
+  if (physical.length !== 1 || physical[0]!.id !== passIds[0]) {
+    throw new Error(
+      `expected exactly legacy module-init pass zero, found ${physical.map((entry) => entry.id).join(",")}`,
+    );
+  }
+  const pass = physical[0]!;
+  if (
+    pass.slotPolicy !== "required" ||
+    pass.slotSpace !== "function" ||
+    pass.displayName !== "__module_init" ||
+    pass.intent.kind !== "callable" ||
+    pass.intent.origin !== "support" ||
+    pass.intent.sourceId !== entrySourceId
+  ) {
+    throw new Error("legacy module-init pass zero has the wrong exact callable contract");
+  }
+  const exports = entries.filter(
+    (entry) => entry.intent.kind === "export" && entry.intent.externalName === "__module_init",
+  );
+  if (
+    exports.length !== 1 ||
+    exports[0]!.slotPolicy !== "alias" ||
+    exports[0]!.aliasOf !== pass.id ||
+    exports[0]!.intent.kind !== "export" ||
+    exports[0]!.intent.targetId !== pass.id
+  ) {
+    throw new Error("public __module_init is not the exact alias of graph-global pass zero");
+  }
+  return { pass, publicInit: exports[0]! };
 }
 
 async function instantiate(result: CompileResult): Promise<Record<string, WebAssembly.ExportValue>> {
@@ -185,11 +226,16 @@ describe("#3520 module-init callable Program ABI ownership", () => {
     expect((exports.callUserInitializer as () => number)()).toBe(41);
   });
 
-  it("classifies cumulative multi-source initializer passes without inventing one source owner", async () => {
+  it("owns one graph-global initializer while retaining every source module-init identity", async () => {
     const files = {
+      "leaf.ts": `
+        export var leafRuns: number = 0;
+        leafRuns += 1;
+      `,
       "dependency.ts": `
+        import { leafRuns } from "./leaf.ts";
         export var dependencyRuns: number = 0;
-        dependencyRuns += 1;
+        dependencyRuns += leafRuns;
       `,
       "entry.ts": `
         import { dependencyRuns } from "./dependency.ts";
@@ -198,12 +244,22 @@ describe("#3520 module-init callable Program ABI ownership", () => {
         export function score(): number { return dependencyRuns * 10 + entryRuns; }
       `,
     };
+    const reversedFiles = {
+      "entry.ts": files["entry.ts"],
+      "dependency.ts": files["dependency.ts"],
+      "leaf.ts": files["leaf.ts"],
+    };
     const ast = analyzeMultiSource(files, "entry.ts");
     const inventory = buildIrUnitInventory(ast.sourceFiles, {
       entrySource: ast.entryFile,
       checker: ast.checker,
     });
-    expect([...inventory.terminalUnits].filter((unit) => unit.kind === "module-init")).toHaveLength(2);
+    const moduleInitUnits = inventory.terminalUnits.filter((unit) => unit.kind === "module-init");
+    expect(moduleInitUnits).toHaveLength(3);
+    expect(new Set(moduleInitUnits.map((unit) => unit.sourceId))).toEqual(
+      new Set(inventory.sources.map((source) => source.id)),
+    );
+    expect(moduleInitUnits.every((unit) => unit.terminalOwnerId === unit.id)).toBe(true);
     const entrySourceId = inventory.sources.find((source) => source.kind === "entry")!.id;
     const generated = generateMultiModule(ast, {
       experimentalIR: true,
@@ -214,40 +270,52 @@ describe("#3520 module-init callable Program ABI ownership", () => {
     expect(hardErrors, hardErrors.map((error) => error.message).join("\n")).toEqual([]);
 
     const entries = generated.programAbi!.abi.entries();
-    const passEntries = [0, 1].map((ordinal) => {
-      const ref = irSupportFuncRef(entrySourceId, "legacy-module-init-pass", "__module_init", ordinal);
-      if (ref.binding.kind !== "support") throw new Error("expected module-init support reference");
-      return requiredCallable(entries, ref.binding.bindingId);
-    });
-    expect(passEntries).toEqual([
-      expect.objectContaining({
-        displayName: "__module_init",
-        intent: expect.objectContaining({ kind: "callable", origin: "support", sourceId: entrySourceId }),
-      }),
-      expect.objectContaining({
-        displayName: "__module_init",
-        intent: expect.objectContaining({ kind: "callable", origin: "support", sourceId: entrySourceId }),
-      }),
-    ]);
-    expect(passEntries.map((entry) => generated.programAbi!.abi.resolveFinalIndex(entry.id))).toEqual([
+    const { pass, publicInit } = graphGlobalModuleInitEntries(entries, entrySourceId);
+    expect(generated.programAbi!.abi.resolveFinalIndex(pass.id)).toEqual(
       expect.objectContaining({ space: "function" }),
-      expect.objectContaining({ space: "function" }),
-    ]);
+    );
+    expect(generated.programAbi!.abi.resolveFinalIndex(publicInit.id)).toEqual(
+      generated.programAbi!.abi.resolveFinalIndex(pass.id),
+    );
 
-    const publicInit = entries.find(
-      (entry) => entry.intent.kind === "export" && entry.intent.externalName === "__module_init",
-    );
-    expect(generated.programAbi!.abi.resolveFinalIndex(publicInit!.id)).toEqual(
-      generated.programAbi!.abi.resolveFinalIndex(passEntries[1]!.id),
-    );
+    const ordinalOne = irSupportFuncRef(entrySourceId, "legacy-module-init-pass", "__module_init", 1);
+    if (ordinalOne.binding.kind !== "support") throw new Error("expected ordinal-one support mutation");
+    const missing = entries.filter((entry) => entry.id !== pass.id);
+    const duplicated = [...entries, pass];
+    const withOrdinalOne = [
+      ...entries,
+      { ...pass, id: ordinalOne.binding.bindingId },
+    ] as readonly ProgramAbiPlanEntry[];
+    const wrongAlias = entries.map((entry) =>
+      entry.id === publicInit.id && entry.slotPolicy === "alias" && entry.intent.kind === "export"
+        ? {
+            ...entry,
+            aliasOf: ordinalOne.binding.bindingId,
+            intent: { ...entry.intent, targetId: ordinalOne.binding.bindingId },
+          }
+        : entry,
+    ) as readonly ProgramAbiPlanEntry[];
+    for (const mutation of [missing, duplicated, withOrdinalOne, wrongAlias]) {
+      expect(() => graphGlobalModuleInitEntries(mutation, entrySourceId)).toThrow();
+    }
 
     const runtime = await compileMulti(files, "entry.ts", {
       experimentalIR: true,
       deferTopLevelInit: true,
     });
+    const reversedRuntime = await compileMulti(reversedFiles, "entry.ts", {
+      experimentalIR: true,
+      deferTopLevelInit: true,
+    });
+    expect(reversedRuntime.success, reversedRuntime.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(reversedRuntime.binary).toEqual(runtime.binary);
     const exports = await instantiate(runtime);
     expect((exports.score as () => number)()).toBe(0);
     (exports.__module_init as () => void)();
     expect((exports.score as () => number)()).toBe(11);
+    const reversedExports = await instantiate(reversedRuntime);
+    expect((reversedExports.score as () => number)()).toBe(0);
+    (reversedExports.__module_init as () => void)();
+    expect((reversedExports.score as () => number)()).toBe(11);
   });
 });
