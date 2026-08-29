@@ -14,6 +14,7 @@ import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
+import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; // native standalone Promise-subclass super(executor)
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
 // `arguments` methods route through the same native producer as fn
 // declarations/expressions (the drive gate self-limits to standalone/wasi).
@@ -1195,9 +1196,9 @@ export function collectClassDeclaration(
   // (#1395) Register a class-object singleton global (externref, lazily
   // initialized). The bare class identifier `C` resolves to this global,
   // giving `Object.getOwnPropertyDescriptor(C, "m")` a real receiver to
-  // inspect. Skip for externref-backed builtin subclasses (#1366a) — those
-  // don't have a `$ClassName` WasmGC struct.
-  if (!ctx.classBuiltinParentMap.has(className)) {
+  // inspect. (#5191) NOT skipped for externref-backed builtin subclasses any
+  // more — that #1366a guard left them null-valued; see emitLazyClassObjectGet.
+  {
     const classObjectGlobalIdx = nextModuleGlobalIdx(ctx);
     ctx.mod.globals.push({
       name: `__class_${className}`,
@@ -3750,6 +3751,34 @@ export function compileSuperCall(
       for (const arg of args) {
         evaluateArgumentForSideEffects(ctx, fctx, arg);
       }
+      return;
+    }
+    // Deno's `SafePromise` is a direct subclass whose constructor is the pure
+    // forwarder `constructor(executor) { super(executor); }`.  The generic
+    // standalone builtin-subclass ladder represents Promise with an
+    // identity-only plain object, so routing this call through that ladder
+    // silently drops the executor and produces a value that native `.then`
+    // cannot consume.  Construct the real `$Promise` carrier through the same
+    // runtime-value executor bridge used by `new Promise(executor)` instead.
+    //
+    // Keep this before `resolveStandaloneBuiltinSuperCtorIdx`: once that
+    // resolver registers `__new_Promise@N`, the call is already committed to
+    // the placeholder carrier.  Arguments after the executor are still
+    // evaluated left-to-right for their side effects even though Promise
+    // ignores their values.
+    if (
+      builtinParent === "Promise" &&
+      isStandalonePromiseActive(ctx) &&
+      args.length > 0 &&
+      !ts.isSpreadElement(args[0]!) &&
+      emitStandalonePromiseFromExecutorValue(ctx, fctx, () => compileExternrefArgument(ctx, fctx, args[0]!))
+    ) {
+      for (let i = 1; i < args.length; i++) {
+        evaluateArgumentForSideEffects(ctx, fctx, args[i]!);
+      }
+      fctx.body.push({ op: "local.set", index: selfLocal });
+      emitSetSubclassProto(ctx, fctx, selfLocal, childClassName, builtinParent);
+      emitSetSubclassUserBrand(ctx, fctx, selfLocal, childClassName);
       return;
     }
     const hasSpread = args.some((a) => ts.isSpreadElement(a));

@@ -406,7 +406,7 @@ export function isSubviewTypeIdx(ctx: CodegenContext, typeIdx: number): boolean 
 /**
  * (#3054 B1) Get or register the `$__ta_view_<name>` struct — a byte-backed
  * TypedArray view over an ArrayBuffer that SHARES the buffer's backing store:
- *   `{length: i32, buf: (ref null $__vec_i32_byte), byteOffset: i32}`.
+ *   `{length: i32, buf: (ref null $__vec_i32_byte), byteOffset: i32, kind: i32}`.
  *
  * Unlike `$__subview` (which pins the parent's raw *element* array), a
  * `$__ta_view` holds a ref to the ArrayBuffer's `$__vec_i32_byte` **vec struct**
@@ -421,10 +421,12 @@ export function isSubviewTypeIdx(ctx: CodegenContext, typeIdx: number): boolean 
  * access — observes it, so length-tracking falls out for free.
  *
  * `length` is field 0 (subtypes `$__vec_base`) so uniform `.length` reads and the
- * externref-length helper keep working. Keyed per TS view NAME (each view kind
- * needs a distinct typeIdx so element access can recover its byte width /
- * signedness / float / clamp behaviour purely from the receiver's static
- * ValType.typeIdx — no runtime tag). Idempotent.
+ * externref-length helper keep working. The immutable `kind` field is appended
+ * so a view that crosses an `any`/externref slot retains its exact TypedArray
+ * brand. WasmGC canonicalizes the otherwise-identical per-kind structs, so RTT
+ * alone cannot distinguish `Uint8Array` from `Int16Array`; the tag is the
+ * runtime source of truth while statically typed element access keeps using the
+ * receiver's ValType/typeIdx. Keyed per TS view name. Idempotent.
  */
 export function getOrRegisterTaViewType(ctx: CodegenContext, viewName: string): number {
   const existing = ctx.taViewTypeMap.get(viewName);
@@ -444,6 +446,7 @@ export function getOrRegisterTaViewType(ctx: CodegenContext, viewName: string): 
       { name: "length", type: { kind: "i32" }, mutable: true },
       { name: "buf", type: { kind: "ref_null", typeIdx: bufVecTypeIdx }, mutable: false },
       { name: "byteOffset", type: { kind: "i32" }, mutable: false },
+      { name: "kind", type: { kind: "i32" }, mutable: false },
     ],
   });
   ctx.taViewTypeMap.set(viewName, idx);
@@ -453,6 +456,7 @@ export function getOrRegisterTaViewType(ctx: CodegenContext, viewName: string): 
     { name: "length", type: { kind: "i32" as const }, mutable: true },
     { name: "buf", type: { kind: "ref_null" as const, typeIdx: bufVecTypeIdx }, mutable: false },
     { name: "byteOffset", type: { kind: "i32" as const }, mutable: false },
+    { name: "kind", type: { kind: "i32" as const }, mutable: false },
   ]);
   return idx;
 }

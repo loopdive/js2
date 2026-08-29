@@ -27,7 +27,7 @@ import {
   emitTypedArrayIntrinsicCtorObject,
   isWiredTypedArrayViewName,
 } from "../array-object-proto.js";
-import { undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
+import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import {
   ensureFunctionPrototypeCallHelper,
@@ -673,6 +673,8 @@ export function compileBuiltinStaticCall(
   ) {
     const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!); // compile-time arg type
     const argWasmType = resolveWasmType(ctx, argTsType);
+    const isErasedTsType = (argTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    const isErasedCarrier = isAnyValue(argWasmType, ctx);
     // externref args carry values whose array-ness can't be decided
     // statically. Two runtime cases must both be handled:
     //   (#1678) a compiled native array materialised into the externref slot
@@ -684,7 +686,7 @@ export function compileBuiltinStaticCall(
     //     `__extern_is_array` when a JS host is present.
     // We OR the two checks so neither case regresses; in standalone mode the
     // host predicate is simply absent and only the `ref.test` path runs.
-    if (argWasmType.kind === "externref") {
+    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!retainArrayIsArrayExternrefCandidate(fctx, argType)) return { kind: "i32" };
       emitArrayIsArrayExternrefPredicate(ctx, fctx);

@@ -125,7 +125,7 @@
  *   objects (faithful for acorn nodes; documented otherwise).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import { buildBagMarkerTestInstrs } from "./carrier-bag-visibility.js";
+import { buildBagGopdFallback, buildBagMarkerTestInstrs } from "./carrier-bag-visibility.js";
 import type { CodegenContext } from "./context/types.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { exposedClosedStructFieldName } from "./fnctor-identity-fields.js";
@@ -382,6 +382,12 @@ export function fillInstanceProps(ctx: CodegenContext): void {
     const gopdFn = gopdIdx === undefined ? undefined : definedFuncAt(ctx, gopdIdx);
     if (gopdFn) {
       gopdFn.body.unshift(
+        // `__hasOwnProperty` is intentionally bag-aware. Ask the bag for its
+        // real descriptor first, otherwise the physical-field arm below would
+        // mistake an expando hit for a declared slot and fabricate W/E/C=all
+        // true. Deno's makeSafe exposes this when it copies non-enumerable Map
+        // methods onto a builtin-subclass prototype.
+        ...buildBagGopdFallback(ctx, 6),
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: carrierIdx },
         {

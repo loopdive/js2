@@ -2097,6 +2097,35 @@ function compileIdentifierCore(
     // module's top-level binding, not a candidate runtime global — the
     // runtime-eval binding pool is graph-wide and would hand that foreign
     // binding back. Skip the dynamic read and throw.
+    // A context-linked standalone module shares its GlobalEnvironmentRecord's
+    // object half with the owning realm. Static source cannot see names that a
+    // prior classic Script introduced (for example Deno tests commonly install
+    // a global `assert` before evaluating an ES module), so resolve otherwise
+    // unbound identifiers through that linked global object at runtime.
+    // (#5148 checkpoint) `moduleGoalIdentifierIsUndeclared` answers true for
+    // BOTH a foreign module's top-level binding (sym defined, declared in
+    // another module-goal file — the #3505 leak this gate exists for) and a
+    // name with NO symbol at all. Only the former must skip the linked read: a
+    // symbol-less name has no foreign binding to leak, and it is exactly the
+    // script-installed-global shape the linked realm serves (`dynamicAnswer`
+    // written by the owning realm before this module evaluates).
+    if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const globalType = emitNativeGlobalThisObject(ctx, fctx);
+      if (getIdx !== undefined && globalType !== null) {
+        addStringConstantGlobal(ctx, name);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
+      if (globalType !== null) fctx.body.push({ op: "drop" });
+    }
     if (!unresolvedInModuleGoal && (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
         ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)

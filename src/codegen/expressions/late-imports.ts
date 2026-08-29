@@ -166,12 +166,23 @@ export function shiftLateImportIndices(
   // that is also reachable from a savedBody via recursive walk, we must
   // ensure it is only shifted once (#1109).
   const shifted = new Set<Instr[]>();
+  // (#1302 class, at THIS sink) The array-level guard cannot see an instr
+  // OBJECT aliased into two DIFFERENT arrays: a detached side buffer whose
+  // instrs a helper pushes into `fctx.body` while the buffer itself is still
+  // registered in `ctx.liveBodies` (emitStandalonePromiseResolve's
+  // `valueInstrs`, with the Deno promise-hook ensure minting a late import in
+  // between) walks the same `call` twice and applies the shift twice — the
+  // observed __async_resume_frun `call __box_number` landing 30 slots high on
+  // number_toString_radix. One flush is one `+added` per instruction, however
+  // many arrays alias it.
+  const shiftedInstrObjects = new WeakSet<object>();
   function shiftInstrs(instrs: Instr[]): void {
     if (shifted.has(instrs)) return;
     shifted.add(instrs);
     for (const instr of instrs) {
       if ("funcIdx" in instr && typeof (instr as any).funcIdx === "number") {
-        if (inLiveShiftRange((instr as any).funcIdx, importsBefore)) {
+        if (inLiveShiftRange((instr as any).funcIdx, importsBefore) && !shiftedInstrObjects.has(instr)) {
+          shiftedInstrObjects.add(instr);
           (instr as any).funcIdx += added;
         }
       }

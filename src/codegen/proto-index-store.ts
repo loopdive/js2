@@ -133,6 +133,7 @@ const FUN_OFF = builtinBrandOffsetOf("Function")!;
 const REGEXP_OFF = builtinBrandOffsetOf("RegExp")!;
 const DATE_OFF = builtinBrandOffsetOf("Date")!;
 const ERROR_OFF = builtinBrandOffsetOf("Error")!;
+const PROMISE_OFF = builtinBrandOffsetOf("Promise")!;
 const STRING_OFF = builtinBrandOffsetOf("String")!;
 const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
 const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
@@ -1504,6 +1505,11 @@ function fillBrandOffBody(ctx: CodegenContext): void {
   }
   body.push(...testArm(ctx.structMap.get("__StandaloneRegExp"), REGEXP_OFF));
   body.push(...testArm(ctx.structMap.get("__Date"), DATE_OFF));
+  // `$Promise` participates in the generic carrier-bag predicate so promise
+  // expandos work, but its implicit prototype is Promise.prototype rather
+  // than Function.prototype. Classify it before the widened closure-carrier
+  // fallback or a dynamic `promise.then` read consults the wrong companion.
+  body.push(...testArm(ctx.structMap.get("$Promise"), PROMISE_OFF));
   // (#4207) BARE primitive receiver — a native string / boxed number / boxed
   // boolean that never went through `ToObject`. The wrapper arm above only
   // classifies a `$Object` carrying [[PrimitiveValue]]; a primitive reaching a

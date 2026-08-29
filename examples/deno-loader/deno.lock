@@ -1,0 +1,24 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:@loopdive/js2@*": "0.70.0"
+  },
+  "npm": {
+    "@loopdive/js2@0.70.0": {
+      "integrity": "sha512-5b1q4B7CnfRGnbVRgdjJv+2FN9FuOe5uQvTaXWmT8tkBkJ2cK49OkAXG8PH9I3tmu03q+v4fd5H7+eqRfhf0vg==",
+      "dependencies": [
+        "typescript"
+      ],
+      "bin": true
+    },
+    "typescript@5.9.3": {
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "bin": true
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:@loopdive/js2@*"
+    ]
+  }
+}
