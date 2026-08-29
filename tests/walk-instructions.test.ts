@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { walkInstructions, walkChildren } from "../src/codegen/walk-instructions.js";
-import type { Instr } from "../src/ir/types.js";
+import {
+  allocatedStructTypeIndices,
+  walkChildren,
+  walkInstructionDag,
+  walkInstructions,
+} from "../src/codegen/walk-instructions.js";
+import type { Instr, WasmModule } from "../src/ir/types.js";
 
 describe("walkInstructions", () => {
   it("visits flat instruction list", () => {
@@ -93,6 +98,44 @@ describe("walkInstructions", () => {
     expect((instrs[0] as any).funcIdx).toBe(8);
     expect(((instrs[1] as any).body[0] as any).funcIdx).toBe(13);
   });
+
+  it("can visit a shared instruction DAG once by array identity", () => {
+    const leaf: Instr[] = [{ op: "nop" } as Instr];
+    let shared = leaf;
+    for (let depth = 0; depth < 28; depth++) {
+      shared = [
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: shared,
+          else: shared,
+        } as Instr,
+      ];
+    }
+
+    const visited: string[] = [];
+    walkInstructionDag(shared, (instr) => visited.push(instr.op));
+
+    expect(visited).toHaveLength(29);
+    expect(visited.filter((op) => op === "nop")).toHaveLength(1);
+  });
+});
+
+it("collects allocated struct types once across shared module roots", () => {
+  const leaf: Instr[] = [{ op: "struct.new", typeIdx: 7 }];
+  let shared = leaf;
+  for (let depth = 0; depth < 28; depth++) {
+    shared = [{ op: "if", blockType: { kind: "empty" }, then: shared, else: shared }];
+  }
+  const mod = {
+    functions: [
+      { name: "first", typeIdx: 0, locals: [], body: shared },
+      { name: "second", typeIdx: 0, locals: [], body: shared },
+    ],
+    globals: [],
+  } as unknown as WasmModule;
+
+  expect([...allocatedStructTypeIndices(mod)]).toEqual([7]);
 });
 
 describe("walkChildren", () => {
