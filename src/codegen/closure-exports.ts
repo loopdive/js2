@@ -22,7 +22,8 @@ import {
   resolveClosureBaseWrapperTypeIdx,
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
-import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
+import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "./any-helpers.js";
+import { ensureObjVecBuilders } from "./object-runtime.js";
 import { buildVecFromExternMaterializer } from "./type-coercion.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
@@ -604,6 +605,47 @@ function materializeClosureDispatchRest(
 }
 
 /**
+ * Build the terminal fallback for a callable owned by the linked standalone
+ * realm. Local closure shapes are tested first; only a dispatch miss crosses
+ * this ABI. The argument vector is an externref on the link boundary so the
+ * provider can consume the structurally canonical `$ObjVec` with its own
+ * object runtime.
+ */
+function buildLinkedGlobalCallFallback(
+  ctx: CodegenContext,
+  arity: number,
+  callableLocal: number,
+  receiver: Instr[],
+  firstArgLocal: number,
+  argsLocal: number,
+): Instr[] {
+  const linkedGlobal = ctx.standaloneGlobalThisImport;
+  const callName = linkedGlobal?.call;
+  if (linkedGlobal === undefined || callName === undefined) return [{ op: "ref.null.extern" }];
+  const callIdx = ctx.funcMap.get(callName);
+  if (callIdx === undefined) return [{ op: "ref.null.extern" }];
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const body: Instr[] = [
+    { op: "call", funcIdx: newIdx },
+    { op: "local.set", index: argsLocal },
+  ];
+  for (let i = 0; i < arity; i++) {
+    body.push(
+      { op: "local.get", index: argsLocal },
+      { op: "local.get", index: firstArgLocal + i },
+      { op: "call", funcIdx: pushIdx },
+    );
+  }
+  body.push(
+    { op: "local.get", index: callableLocal },
+    ...receiver,
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: callIdx },
+  );
+  return body;
+}
+
+/**
  * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
  * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
  * and returns externref. Used by `__array_from`, `__proto_method_call`, and
@@ -761,7 +803,18 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
 
-  let funcrefDispatch: Instr[] = directHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }];
+  const linkedArgsLocal = funcLocal + 1;
+  let funcrefDispatch: Instr[] =
+    ctx.standaloneGlobalThisImport?.call !== undefined
+      ? buildLinkedGlobalCallFallback(
+          ctx,
+          arity,
+          0,
+          undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+          1,
+          linkedArgsLocal,
+        )
+      : (directHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }]);
 
   // `funcrefDispatch` is built by prepending each arm, so reverse the
   // priority order returned by `orderClosureDispatchEntries` to keep the
@@ -954,7 +1007,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         { name: "__any", type: { kind: "anyref" } },
         { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
         { name: "__funcref", type: { kind: "funcref" } },
-        { name: "__host_args", type: { kind: "externref" } },
+        { name: "__fallback_args", type: { kind: "externref" } },
       ],
       body,
       exported: true,
@@ -1297,7 +1350,11 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   };
   body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));
 
-  let funcrefDispatch: Instr[] = methodHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }];
+  const linkedArgsLocal = prevThisLocal + 3;
+  let funcrefDispatch: Instr[] =
+    ctx.standaloneGlobalThisImport?.call !== undefined
+      ? buildLinkedGlobalCallFallback(ctx, arity, 1, [{ op: "local.get", index: 0 }], 2, linkedArgsLocal)
+      : (methodHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }]);
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed
   // dispatch built after the loop.
   const callBodyByEntry: { entry: (typeof entries)[number]; callBody: Instr[] }[] = [];
@@ -1601,7 +1658,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         // (#3673 round 10) declared arity read off the root wrapper for the
         // arity-bucketed signature dispatch (-1 = not root-readable).
         { name: "__declared_arity", type: { kind: "i32" } },
-        { name: "__host_args", type: { kind: "externref" } },
+        { name: "__fallback_args", type: { kind: "externref" } },
       ],
       body,
       exported: true,

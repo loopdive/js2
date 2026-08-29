@@ -58,6 +58,8 @@ export function pushProgramAbiTopLevelCallable(
   func: WasmFunction,
 ): void {
   pushDefinedFunc(ctx, funcIdx, func);
+  ctx.sourceFunctionDeclarationByHandle.set(funcIdx, declaration);
+  ctx.sourceFunctionHandleByDeclaration.set(declaration, funcIdx);
   const registry = ctx.programAbiSourceCallables;
   if (!registry) {
     throw new ProgramAbiInvariantError(
@@ -126,6 +128,8 @@ export function pushProgramAbiNestedFunctionDeclaration(
   func: WasmFunction,
 ): void {
   pushDefinedFunc(ctx, funcIdx, func);
+  ctx.sourceFunctionDeclarationByHandle.set(funcIdx, declaration);
+  ctx.sourceFunctionHandleByDeclaration.set(declaration, funcIdx);
   const registry = ctx.programAbiSourceCallables;
   if (!registry) {
     throw new ProgramAbiInvariantError(
@@ -140,6 +144,22 @@ export function pushProgramAbiNestedFunctionDeclaration(
     return;
   }
   registry.observeNestedFunctionDeclaration(declaration, funcIdx);
+}
+
+/** Resolve declaration-only ABI metadata from one exact source function. */
+export function sourceFunctionDeclarationForHandle(
+  ctx: CodegenContext,
+  funcIdx: FuncHandle,
+): ts.FunctionDeclaration | undefined {
+  return ctx.sourceFunctionDeclarationByHandle.get(funcIdx);
+}
+
+/** Resolve the defined-function handle owned by one exact source declaration. */
+export function sourceFunctionHandleForDeclaration(
+  ctx: CodegenContext,
+  declaration: ts.FunctionDeclaration,
+): FuncHandle | undefined {
+  return ctx.sourceFunctionHandleByDeclaration.get(declaration);
 }
 
 /**

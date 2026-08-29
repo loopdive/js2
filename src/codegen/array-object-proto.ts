@@ -34,14 +34,19 @@ import {
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./expressions/helpers.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS, NATIVE_HOF_REDUCE } from "./hof-native.js"; // (#4394)
-import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody } from "./dataview-native.js";
+import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody, emitTaCtorValue } from "./dataview-native.js";
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
 import { allocLocal } from "./context/locals.js";
 import { emitBoxedProtoValueOfBody } from "./boxed-proto-valueof.js"; // (#4582)
 import { emitThisReceiverGuardConvert } from "./property-access.js";
 import { compileArraySliceFromVecLocal } from "./array-methods.js";
-import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import {
+  getArrTypeIdxFromVec,
+  getOrRegisterTaDynViewType,
+  getOrRegisterVecType,
+  taCtorKindOf,
+} from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
@@ -95,11 +100,21 @@ import {
   appendStandaloneGlobalObjectCarrierSeeds,
   standaloneGlobalEvalSeedInstrs,
 } from "./standalone-global-object-carriers.js";
-import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
+import {
+  emitBuiltinConstructorIdentity,
+  emitBuiltinNamespaceObject,
+  isBuiltinConstructorIdentityName,
+  isSupportedBuiltinNamespace,
+} from "./builtin-static-globals.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import {
+  emitStandalonePromiseFinally,
+  emitStandalonePromiseThen,
+  type StandalonePromiseThenCallback,
+} from "./async-scheduler.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -542,6 +557,11 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     // (#4479 slice 2) Annex B §B.2.2, declared beside the bodies that read the
     // arg slots this arity sizes.
     ...ANNEX_B_ACCESSOR_ARITY,
+    // Promise.prototype.then(onFulfilled, onRejected) is the only Promise
+    // prototype method with two counted parameters.  This also sizes the
+    // reflective native closure's argument slots; without it local 3 aliases
+    // the first declared local instead of carrying onRejected.
+    then: 2,
     // Map.prototype.set(key, value) is arity 2 (ES2024 §24.1.3); add/get/has/delete
     // default to 1.
     set: 2,
@@ -1997,6 +2017,37 @@ function emitErrorProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext):
   return { kind: "externref" };
 }
 
+function dynamicPromiseHandler(localIndex: number): StandalonePromiseThenCallback {
+  return {
+    instrs: [{ op: "local.get", index: localIndex }],
+    dynamic: true,
+  };
+}
+
+/** Emit a callable reflected Promise.prototype method body.
+ *
+ * Native-prototype closure ABI: local 0 is the wrapper, local 1 is `this`, and
+ * user arguments begin at local 2.  Reflected methods cannot carry static
+ * ClosureInfo for their runtime handler arguments, so route them through the
+ * scheduler's dynamic callback bridge.
+ */
+function emitPromiseProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  const receiver: Instr[] = [{ op: "local.get", index: 1 }];
+  switch (member) {
+    case "then":
+      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3));
+      return { kind: "externref" };
+    case "catch":
+      emitStandalonePromiseThen(ctx, fctx, receiver, null, dynamicPromiseHandler(2));
+      return { kind: "externref" };
+    case "finally":
+      emitStandalonePromiseFinally(ctx, fctx, receiver, dynamicPromiseHandler(2));
+      return { kind: "externref" };
+    default:
+      return null;
+  }
+}
+
 function makeGlue(
   ctx: CodegenContext,
   brand: number,
@@ -2094,29 +2145,31 @@ function makeGlue(
         : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
-        : name === "String"
-          ? emitStringProtoMemberBody(c, fctx, member)
-          : // (#3219) Date reflective getter bodies; (#3174) setter/toISOString
-            // bodies (brand check + native set arithmetic). Remaining formatters
-            // return null → fall through to the legacy path.
-            name === "Date"
-            ? (emitDateProtoMemberBody(c, fctx, member) ?? emitDateReflectiveSetterBody(c, fctx, member))
-            : // (#4582) `thisNumberValue` / `thisBooleanValue`; see the String twin above.
-              member === "valueOf" && (name === "Number" || name === "Boolean")
-              ? (emitBoxedProtoValueOfBody(c, fctx, name === "Number" ? "Number" : "Boolean") ??
-                emitProtoMemberBodyRefusal(c, fctx, name, member))
-              : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
-                // §20.1.3.3 chain walk. (#4479 slice 2) So do Annex B §B.2.2's
-                // four legacy accessor methods. Every other Object member still
-                // degrades to the catchable refusal (`toString`'s classifier
-                // lives inside it).
-                ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
-                (name === "Object" ? emitObjectProtoAnnexBAccessorBody(c, fctx, member) : null) ??
-                // (#4492 wave-5) §20.1.3.7 — the inherited `valueOf` every
-                // OrdinaryToPrimitive walk reaches; refusing it made ToPrimitive
-                // throw where the spec just falls through to `toString`.
-                (name === "Object" ? emitObjectProtoValueOfBody(c, fctx, member) : null) ??
-                emitProtoMemberBodyRefusal(c, fctx, name, member))),
+        : name === "Promise"
+          ? emitPromiseProtoMemberBody(c, fctx, member)
+          : name === "String"
+            ? emitStringProtoMemberBody(c, fctx, member)
+            : // (#3219) Date reflective getter bodies; (#3174) setter/toISOString
+              // bodies (brand check + native set arithmetic). Remaining formatters
+              // return null → fall through to the legacy path.
+              name === "Date"
+              ? (emitDateProtoMemberBody(c, fctx, member) ?? emitDateReflectiveSetterBody(c, fctx, member))
+              : // (#4582) `thisNumberValue` / `thisBooleanValue`; see the String twin above.
+                member === "valueOf" && (name === "Number" || name === "Boolean")
+                ? (emitBoxedProtoValueOfBody(c, fctx, name === "Number" ? "Number" : "Boolean") ??
+                  emitProtoMemberBodyRefusal(c, fctx, name, member))
+                : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
+                  // §20.1.3.3 chain walk. (#4479 slice 2) So do Annex B §B.2.2's
+                  // four legacy accessor methods. Every other Object member still
+                  // degrades to the catchable refusal (`toString`'s classifier
+                  // lives inside it).
+                  ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
+                  (name === "Object" ? emitObjectProtoAnnexBAccessorBody(c, fctx, member) : null) ??
+                  // (#4492 wave-5) §20.1.3.7 — the inherited `valueOf` every
+                  // OrdinaryToPrimitive walk reaches; refusing it made ToPrimitive
+                  // throw where the spec just falls through to `toString`.
+                  (name === "Object" ? emitObjectProtoValueOfBody(c, fctx, member) : null) ??
+                  emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }
 
@@ -3041,6 +3094,23 @@ export function emitAsyncGeneratorFunctionPrototypeSingleton(
  */
 export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   ensureObjectRuntime(ctx);
+  const linkedGlobal = ctx.standaloneGlobalThisImport;
+  if (linkedGlobal !== undefined) {
+    const getterIdx = ensureLateImport(ctx, linkedGlobal.name, [], [{ kind: "externref" }], linkedGlobal.module);
+    if (linkedGlobal.call !== undefined) {
+      ensureLateImport(
+        ctx,
+        linkedGlobal.call,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+        linkedGlobal.module,
+      );
+    }
+    flushLateImportShifts(ctx, fctx);
+    if (getterIdx === undefined) return null;
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(linkedGlobal.name) ?? getterIdx });
+    return { kind: "externref" };
+  }
   const globalName = "__native_globalThis";
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
   if (globalIdx === undefined) {
@@ -3069,19 +3139,152 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   flushLateImportShifts(ctx, fctx);
   const objLocal = allocLocal(fctx, `__native_globalThis_obj_${fctx.locals.length}`, { kind: "externref" });
 
-  // Deno's primordials bootstrap deliberately discovers namespace objects via
-  // a computed realm-global read (`globalThis[name]`) before copying their own
-  // descriptors. The namespace carrier and the realm property must therefore
-  // be the same object; an empty or second carrier loses function identity.
-  // Build these demand-driven seeds through the canonical namespace emitter.
+  // Deno's primordials bootstrap deliberately discovers intrinsic objects via
+  // computed realm-global reads (`globalThis[name]`) before copying their own
+  // descriptors. The realm property and a static identifier read must therefore
+  // use the SAME canonical carrier: namespace objects, generic constructor
+  // objects, `%Function%`, and concrete TypedArray constructors each have a
+  // different native representation. A second generic object would preserve
+  // truthiness while silently breaking identity and invocation behavior.
+  //
+  // Keep this list aligned with the globals Deno snapshots in
+  // `libs/core/00_primordials.js`. The namespace-only values are included too
+  // because the same bootstrap discovers them through the computed path.
   // Keep the detached body live while later seed construction can still add
   // imports and shift defined-function indices.
+  const primordialGlobalNames = [
+    "JSON",
+    "Math",
+    "Proxy",
+    "Reflect",
+    "AggregateError",
+    "Array",
+    "ArrayBuffer",
+    "BigInt",
+    "BigInt64Array",
+    "BigUint64Array",
+    "Boolean",
+    "DataView",
+    "Date",
+    "Error",
+    "EvalError",
+    "FinalizationRegistry",
+    "Float32Array",
+    "Float64Array",
+    "Function",
+    "Int16Array",
+    "Int32Array",
+    "Int8Array",
+    "Map",
+    "Number",
+    "Object",
+    "Promise",
+    "RangeError",
+    "ReferenceError",
+    "RegExp",
+    "Set",
+    "String",
+    "Symbol",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "Uint16Array",
+    "Uint32Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "WeakMap",
+    "WeakRef",
+    "WeakSet",
+  ] as const;
   const savedBody = fctx.body;
   fctx.body = [];
   ctx.liveBodies.add(savedBody);
   const evalSeeds = standaloneGlobalEvalSeedInstrs(ctx, fctx, objLocal);
   appendStandaloneGlobalNamespaceSeeds(ctx, fctx, objLocal);
   appendStandaloneGlobalObjectCarrierSeeds(ctx, fctx, objLocal);
+  const namespaceHelperNames = new Set(["Array", "Object", "JSON", "Math", "Proxy", "Reflect"]);
+  const constructorHelperNames = new Set([
+    "Function",
+    "String",
+    "Boolean",
+    "Number",
+    "Date",
+    "RegExp",
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+  ]);
+  const constructorHelpersActive = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) === 0;
+  for (const name of primordialGlobalNames) {
+    // The upstream realm helpers own these bindings (including Function's
+    // specialized intrinsic carrier). Fill only the Deno primordials they do
+    // not cover. Runtime-eval modules deliberately skip the constructor helper,
+    // so seed their constructor names through the non-recursive carrier path.
+    if (namespaceHelperNames.has(name) || (constructorHelpersActive && constructorHelperNames.has(name))) continue;
+    // (#5148 checkpoint) `Function` is NEVER seeded from this loop. When the
+    // constructor helpers are active (no runtime-eval sites) they own the
+    // binding and the generic skip above already fired. When the module LINKS
+    // the runtime-eval provider, `%Function%` must be the provider's intrinsic
+    // (the one-emitter rule in function-intrinsic-carrier.ts): seeding the
+    // self-contained `__builtin_ctor_Function` carrier here split that
+    // identity — measured on the QuickJS provider canary, `made.constructor
+    // === Function` read false and `made.apply(...)` threw, which failed the
+    // adapter build (functionParityProbe -11) and with it every
+    // provider-linked lane (#4442, #2928). The provider's global-environment
+    // seeding owns the realm `Function` binding in that mode.
+    if (name === "Function" && !constructorHelpersActive) continue;
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, name);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+    let valueType: ValType | null | undefined;
+    if (isSupportedBuiltinNamespace(name)) {
+      valueType = emitBuiltinNamespaceObject(ctx, fctx, name);
+    } else if (name === "Function") {
+      // Deno's Function.prototype-only bootstrap use takes the self-contained
+      // arm of emitStandaloneFunctionIntrinsicValue. Emit that canonical
+      // carrier directly here to keep this low-level module out of the
+      // eval-inline -> global-environment -> array-object-proto import cycle.
+      valueType = emitBuiltinConstructorIdentity(ctx, fctx, name);
+    } else if (taCtorKindOf(name) >= 0) {
+      // The `$__ta_ctor` singleton stores only its runtime kind. Its dynamic
+      // `prototype` MOP arm is finalized from the per-kind native-prototype
+      // registry, so materialize that canonical prototype alongside the ctor.
+      // A static `Uint8Array.prototype` read already does this; Deno reaches
+      // the same property through `globalThis[name]`, where no static read exists.
+      ensureTypedArrayViewNativeProtoGlue(ctx, name);
+      // The constructor's dynamic `prototype`/construct dispatch is finalized
+      // with the shared dynamic-view MOP. Registering its carrier here keeps a
+      // realm-exposed TypedArray constructor fully usable even when the source
+      // never contains a syntactic dynamic-new site.
+      getOrRegisterTaDynViewType(ctx);
+      // (#5148 checkpoint) A TypedArray constructor migrated to the #4490
+      // identity carrier (Int8Array today) must seed THAT carrier: the bare
+      // identifier read resolves to `__builtin_ctor_<Name>`, so seeding the
+      // `$__ta_ctor` singleton here made `globalThis[name] !== <Name>` —
+      // exactly the identity Deno's primordials snapshot compares. The view
+      // glue above still registers so the realm-exposed constructor stays
+      // usable either way.
+      valueType = isBuiltinConstructorIdentityName(name)
+        ? emitBuiltinConstructorIdentity(ctx, fctx, name)
+        : emitTaCtorValue(ctx, fctx, name);
+    } else if (isBuiltinConstructorIdentityName(name)) {
+      valueType = emitBuiltinConstructorIdentity(ctx, fctx, name);
+    }
+    if (valueType == null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const defineIdx = ctx.funcMap.get("__defineProperty_value");
+    if (defineIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" });
+      continue;
+    }
+    // Global builtin bindings: writable, non-enumerable, configurable.
+    fctx.body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
+  }
   const namespaceSeeds = fctx.body;
   fctx.body = savedBody;
   ctx.liveBodies.delete(savedBody);

@@ -52,6 +52,7 @@ import {
   emitTaViewConstruct,
   emitTaViewConstructWindowed,
   getOrRegisterDvWindowType,
+  nativeBufferBuiltinOf,
 } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper; (#3054 B1/B2) shared-backing TA views + windowing; (#3054 D) dynamic ctor construct
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
@@ -815,7 +816,7 @@ export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Ex
   // evaluation has already reduced it to a primitive. It cannot be the dynamic
   // ArrayBuffer/array-like carrier this host-constructor escape is for.
   if (typedArrayCtorArgIsArithmeticPrimitive(args[0]!)) return undefined;
-  const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
+  const argSymName = nativeBufferBuiltinOf(ctx, args[0]!);
   if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return argSymName;
   // An unannotated JavaScript parameter can carry either a numeric element
   // count, an ArrayBuffer, or an array-like value at runtime.  The native host
@@ -6440,8 +6441,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // not treat the buffer as a numeric length. The ArrayBuffer is backed
         // by an `i32_byte` vec (one i32 per byte). Detect that case and copy the
         // bytes into this TypedArray's backing vec.
-        const argTsType = ctx.checker.getTypeAtLocation(args[0]!);
-        const argSymName = argTsType.getSymbol?.()?.name;
+        // Preserve the constructor's native ArrayBuffer provenance across an
+        // `any` binding.  The checker symbol is absent after widening, but the
+        // oracle follows the initializer (matching `inferTaViewType`).
+        const argSymName = nativeBufferBuiltinOf(ctx, args[0]!);
         // (#3054 B1) Shared-backing `$__ta_view` (see the matching guard above).
         // Standalone/WASI only — host-mode buffers are host objects, not native
         // vecs, so the recover cast would trap (#1670).

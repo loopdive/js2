@@ -83,6 +83,7 @@ import {
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
+import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -1000,6 +1001,33 @@ function compileNestedFunctionDeclarationInScope(
   }
   const writtenAfterDeclaration = collectOwnerBindingsWrittenAfterDeclaration(stmt);
 
+  // (#5148 checkpoint) Resolve the VariableDeclaration a captured NAME refers
+  // to, scanning outward from the nested declaration through its enclosing
+  // function-like scopes (stopping at the first hit — inner shadows win).
+  // Purely syntactic on purpose: this runs during hoisting, when the checker
+  // symbol for the not-yet-compiled binding is the only alternative and the
+  // oracle has no identifier NODE to resolve from.
+  const findScopedVariableDeclaration = (from: ts.Node, name: string): ts.VariableDeclaration | undefined => {
+    let scope: ts.Node | undefined = from.parent;
+    while (scope !== undefined) {
+      let found: ts.VariableDeclaration | undefined;
+      const scan = (node: ts.Node): void => {
+        if (found) return;
+        if (node !== scope && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+          found = node;
+          return;
+        }
+        ts.forEachChild(node, scan);
+      };
+      scan(scope);
+      if (found) return found;
+      if (ts.isFunctionLike(scope) || ts.isSourceFile(scope)) return undefined;
+      scope = scope.parent;
+    }
+    return undefined;
+  };
+
   const captures: {
     name: string;
     type: ValType;
@@ -1062,10 +1090,37 @@ function compileNestedFunctionDeclarationInScope(
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
-    const type =
+    let type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
+    // (#5148 checkpoint) Function declarations hoist, so captures are
+    // collected BEFORE the captured binding's declaration statement compiles —
+    // and the pre-allocated local can still carry the closed anonymous-shape
+    // struct for an object literal that the declaration will PROMOTE to the
+    // open `$Object` (externref) representation (`{ __proto__: null }`,
+    // accessor literals, runtime-computed keys …). Freezing the stale struct
+    // type into the lifted signature makes the reify site `ref.cast` the
+    // widened externref value to that struct — an illegal-cast trap (Deno's
+    // primordials `state = { __proto__: null }` + nested `write`). Apply the
+    // same literal checks the declaration path applies and capture as
+    // externref when the promotion will happen.
+    if (
+      (type.kind === "ref" || type.kind === "ref_null") &&
+      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx)
+    ) {
+      const capturedDecl = findScopedVariableDeclaration(stmt, name);
+      const capturedInit = capturedDecl?.initializer;
+      if (
+        capturedInit !== undefined &&
+        ts.isObjectLiteralExpression(capturedInit) &&
+        (ctx.dynamicProtoLiteralNodes.has(capturedInit) ||
+          objectLiteralForcesHostPath(ctx, capturedInit) ||
+          objectLiteralSpreadTakesHostPath(ctx, capturedInit))
+      ) {
+        type = { kind: "externref" };
+      }
+    }
     // #1205 Stage 3: detect TDZ flag in outer scope (mirrors closures.ts:1326-1336
     // for the arrow path). The `__tdz_<name>` slot scan is the fallback for the
     // case where a block-scope shadow cleared `tdzFlagLocals` but the underlying
@@ -1195,6 +1250,35 @@ function compileNestedFunctionDeclarationInScope(
     ctx.funcUsesArguments.add(funcName);
   }
 
+  // (#5148 checkpoint) Classify referenced sibling registry functions for the
+  // lift-time transitive-capture promotion both branches below perform. The
+  // capture registry is NAME-keyed across frames, so a same-named local can
+  // shadow a foreign frame's function (Deno's 01_core destructures 00_infra's
+  // `__resolvePromise` from `window.__infra`). Discriminate by whether the
+  // registry entry's recorded captures are actually sourceable from THIS
+  // frame: if any capture's recorded slot neither names the captured binding
+  // here nor has a same-named local, the registry entry is foreign — the only
+  // sound call target is the local VALUE, so value-promote it instead of
+  // chasing unresolvable captures.
+  const referencedSiblingFns = new Set<string>();
+  const shadowedSiblingFnValues = new Set<string>();
+  for (const name of referencedNames) {
+    if (name === funcName || !ctx.funcMap.has(name) || !ctx.nestedFuncCaptures.has(name)) continue;
+    const sibCaps = ctx.nestedFuncCaptures.get(name)!;
+    const capsForeign =
+      fctx.localMap.has(name) &&
+      sibCaps.some((cap) => {
+        if (fctx.localMap.has(cap.name)) return false;
+        const def =
+          cap.outerLocalIdx < fctx.params.length
+            ? fctx.params[cap.outerLocalIdx]
+            : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+        return def?.name !== cap.name;
+      });
+    if (capsForeign) shadowedSiblingFnValues.add(name);
+    else referencedSiblingFns.add(name);
+  }
+
   if (captures.length === 0) {
     // No captures — compile as a regular module-level function
     const funcTypeIdx = addFuncType(ctx, paramTypes, results, `${funcName}_type`);
@@ -1270,6 +1354,20 @@ function compileNestedFunctionDeclarationInScope(
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
       ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
+    }
+
+    // (#5148 checkpoint) Same lift-time transitive-capture promotion as the
+    // has-captures branch below: a ZERO-capture lifted body can still call a
+    // sibling registered with foreign-frame capture indices (Deno's
+    // `__eventLoopTick` → `__resolvePromise`, whose caps live in the infra
+    // frame). Promote those transitive captures from the DECLARING frame,
+    // where their slots are still valid, before the body bakes them in.
+    if (referencedSiblingFns.size > 0 || shadowedSiblingFnValues.size > 0) {
+      promoteAccessorCapturesToGlobals(ctx, fctx, undefined, undefined, undefined, undefined, {
+        fnNames: referencedSiblingFns,
+        excludeNames: new Set(),
+        forceValueNames: shadowedSiblingFnValues,
+      });
     }
 
     // Emit default-value initialization for parameters with initializers
@@ -1712,6 +1810,23 @@ function compileNestedFunctionDeclarationInScope(
       if (savedFunc) ctx.parentBodiesStack.pop();
       ctx.currentFunc = savedFunc;
       return;
+    }
+
+    // (#5148 checkpoint) Promote — from the DECLARING frame, where
+    // `cap.outerLocalIdx` is still a valid slot — the TRANSITIVE captures of
+    // sibling nested functions this body references but does not itself
+    // capture-carry. Without this, a sibling call/reify inside the lifted body
+    // bakes a declaring-frame local index into this function ("references
+    // local N … out of range" — Deno's createTimer → __isLeakTracingEnabled).
+    // The lifted function's own captures arrive as leading params and are
+    // excluded. Idempotent: already-promoted names are skipped inside.
+    if (referencedSiblingFns.size > 0 || shadowedSiblingFnValues.size > 0) {
+      const ownCaptureNames = new Set(captures.map((c) => c.name));
+      promoteAccessorCapturesToGlobals(ctx, fctx, undefined, undefined, undefined, undefined, {
+        fnNames: referencedSiblingFns,
+        excludeNames: ownCaptureNames,
+        forceValueNames: shadowedSiblingFnValues,
+      });
     }
 
     // (#2758) Pre-box any by-value capture that a sibling this function CALLS
