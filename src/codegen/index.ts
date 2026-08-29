@@ -117,10 +117,12 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  type IrNestedClassFieldCallAdmission,
   type IrSourceId,
   type IrUnitKind,
   type IrUnitId,
 } from "../ir/identity.js";
+import { planIrNestedClassFieldCalls } from "../ir/class-field-call-planning.js";
 import {
   buildIrPlanningIdentityContext,
   requireIrPlanningSourceId,
@@ -1457,6 +1459,8 @@ function buildIrClassShapes(
   topLevelAccessorEvidence:
     | { readonly kind: "selection-candidate" }
     | { readonly kind: "selected"; readonly unitIds: ReadonlySet<IrUnitId> },
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed here. */
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrClassShapeSidecar {
   const out = new Map<IrClassId, IrClassShapeEntry>();
   const lookup: IrClassShapeLookup = { identityContext, byClassId: out };
@@ -1946,7 +1950,7 @@ function buildIrClassShapes(
     const entry = out.get(classId);
     if (entry) published.set(classId, entry);
   }
-  return createIrClassShapeSidecar(published, identityContext);
+  return createIrClassShapeSidecar(published, identityContext, fieldCallAdmission);
 }
 
 /**
@@ -2658,6 +2662,20 @@ function planIrOverlay(
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  // (#3522 F2/F4) ONE exact resolver per source, constructed before identity
+  // selection and reused by direct-call projection and the field-call proof.
+  const identityResolver = makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions);
+  // (#3522 F4) Validate the complete dormant F3 proof and derive the single
+  // immutable admitted-class marker BEFORE local class-expression resolution
+  // and identity selection. Every downstream consumer carries this object; none
+  // recomputes it.
+  const nestedClassFieldCallProofs = planIrNestedClassFieldCalls({ identityContext, resolver: identityResolver });
+  const nestedClassFieldCallAdmission: IrNestedClassFieldCallAdmission =
+    irOverlayIdentity.computeIrNestedClassFieldCallAdmission({
+      identityContext,
+      resolver: identityResolver,
+      proofs: nestedClassFieldCallProofs,
+    });
   const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
@@ -2770,9 +2788,13 @@ function planIrOverlay(
       : undefined;
   const timerShim = irTimerShim.timerShimResolver(ast.checker, ctx, options.resolveModuleBindings);
   // Selection gets a provisional descriptor population; lowering rebuilds it from exact selected UnitIds.
-  const selectionClassShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
-    kind: "selection-candidate",
-  });
+  const selectionClassShapeSidecar = buildIrClassShapes(
+    ctx,
+    ast.sourceFile,
+    identityContext,
+    { kind: "selection-candidate" },
+    nestedClassFieldCallAdmission,
+  );
   const selectionClassShapes = selectionClassShapeSidecar.legacyProjection;
   const selectionClassShapesById = new Map(
     [...selectionClassShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
@@ -2782,6 +2804,7 @@ function planIrOverlay(
     ast.sourceFile,
     selectionClassShapes,
     identityContext,
+    nestedClassFieldCallAdmission,
   );
   // (#3053 U2) Fast host-js-string (`fast && !standalone && !wasi`) has the carrier in
   // the gc `$AnyValue` but strings are host js-string externrefs, so the native
@@ -2903,6 +2926,8 @@ function planIrOverlay(
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
+      nestedClassFieldCallProofs,
+      nestedClassFieldCallAdmission,
       ...(options.enableCountedStringAppendProof || options.countedStringAppendProof
         ? {
             planCountedStringAppend: (loop: ts.ForStatement) => {
@@ -3004,10 +3029,13 @@ function planIrOverlay(
   const recordPreparationFailure = (legacyName: string, failure: IrPreparationFailure): void =>
     recordIrOverlayPreparationFailure({ identityPlan, preparationFailuresByUnitId }, legacyName, failure);
   const selection = identityPlan.selectionProjection.selection;
-  const classShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
-    kind: "selected",
-    unitIds: selection.classMemberUnitIds ?? new Set(),
-  });
+  const classShapeSidecar = buildIrClassShapes(
+    ctx,
+    ast.sourceFile,
+    identityContext,
+    { kind: "selected", unitIds: selection.classMemberUnitIds ?? new Set() },
+    nestedClassFieldCallAdmission,
+  );
   const classShapes = classShapeSidecar.legacyProjection;
   const classShapesById = new Map(
     [...classShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
@@ -3265,7 +3293,7 @@ function planIrOverlay(
     ...calendarLoweringPlans,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
-    directCallResolver: makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
+    directCallResolver: identityResolver,
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
     ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
     ...(fnctorParameterPreselection?.nativeStringBoundaries
@@ -4571,6 +4599,8 @@ function compileIrRoutedDeclarations(input: {
   readonly sourceFile: ts.SourceFile;
   readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed. */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly preparedModuleInit?: PreparedIrModuleInitBody;
   readonly irSkipBodies?: ReadonlySet<string>;
   readonly irPreserveBodies?: ReadonlySet<string>;
@@ -4595,6 +4625,9 @@ function compileIrRoutedDeclarations(input: {
           skippedUnitIds: classMemberUnitIds,
           skipImplicitConstructorUnitIds: input.preparedImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
           skippedImplicitConstructorUnitIds: implicitConstructorUnitIds,
+          ...(input.nestedClassFieldCallAdmission
+            ? { nestedClassFieldCallAdmission: input.nestedClassFieldCallAdmission }
+            : {}),
         }
       : undefined;
   const moduleInitBodyRouting = input.preparedModuleInit
@@ -5366,6 +5399,9 @@ export function generateModule(
       sourceFile: ast.sourceFile,
       preparedClassMembers,
       preparedImplicitConstructorUnitIds,
+      ...(irPlan?.identityPlan.nestedClassFieldCallAdmission
+        ? { nestedClassFieldCallAdmission: irPlan.identityPlan.nestedClassFieldCallAdmission }
+        : {}),
       preparedModuleInit,
       irSkipBodies,
       irPreserveBodies,

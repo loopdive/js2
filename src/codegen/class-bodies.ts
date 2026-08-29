@@ -10,8 +10,8 @@ import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-a
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
-import type { IrUnitId } from "../ir/identity.js";
-import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js"; // (#3522) nested implicit-ctor family
+// (#3522) nested implicit-ctor family
+import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -1867,6 +1867,11 @@ export interface ClassBodyCompileRouting {
   /** Exact non-terminal implicit-constructor support units installed during preparation. */
   readonly skipImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
+  /**
+   * (#3522 F4) The one proof-derived admitted-class marker computed before
+   * selection. This routing consumes it; it never re-runs a syntax predicate.
+   */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
 }
 
 export function skipExactPreparedClassBody(
@@ -1976,7 +1981,9 @@ export function skipPreparedClassConstructorBody(
       // bounded ordinary-class family — which excludes heritage, statics,
       // computed keys, and initialized fields, and therefore cannot reach the
       // shadow-identity inheritance surface (#4448).
-      const nestedFamilyOk = unit?.terminalOwnerId === null || isBoundedPreparedNestedOrdinaryClass(classDeclaration);
+      const nestedFamilyOk =
+        unit?.terminalOwnerId === null ||
+        irPreparedNestedOrdinaryClass(classDeclaration, routing.nestedClassFieldCallAdmission);
       if (
         unit?.kind !== "class-implicit-constructor" ||
         !nestedFamilyOk ||

@@ -7,7 +7,8 @@ import {
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
-import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
+import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
+import { irPreparedNestedOrdinaryClass } from "../ir/identity.js";
 import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
@@ -215,7 +216,7 @@ export function selectPreparedClassMemberUnitIds(
       terminal?.containingTerminalOwnerId !== undefined &&
       owner !== undefined &&
       (ts.isClassDeclaration(owner) || ts.isClassExpression(owner)) &&
-      isBoundedPreparedNestedOrdinaryClass(owner);
+      irPreparedNestedOrdinaryClass(owner, identityPlan.nestedClassFieldCallAdmission);
     const selectedTopLevelStaticAccessorBody = staticAccessorBody && terminal?.containingTerminalOwnerId === undefined;
     if (
       (selectedUnitIds ? selectedUnitIds.has(claim.unitId) : selectedNames.has(claim.legacyMatchName)) &&
@@ -1194,7 +1195,13 @@ export function selectR2PreparedOwnerComponents(input: {
       input.ctx.fast ||
       isAsync ||
       (isGenerator && !generatorsPreparable(input.ctx)) ||
-      containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
+      containsUnplannedNestedExecutableSyntax(
+        claim.declaration,
+        unitId,
+        claim.legacyName,
+        input.hostVoidCallbacks,
+        input.identityPlan.nestedClassFieldCallAdmission,
+      ) ||
       containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
       directCallerActivationTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
@@ -1288,6 +1295,24 @@ export function selectR2PreparedOwnerComponents(input: {
       if (!crossesOwnership) continue;
       candidates.delete(unitId);
       changed = true;
+    }
+    // (#3522 F4) An admitted field-call class is ONE atom. The preselection
+    // marker is evidence, never a bypass around this final reconciliation: the
+    // constructor, every promoted body member, the containing terminal owner
+    // and every proved callee survive together, or the whole class withdraws.
+    for (const admitted of input.identityPlan.nestedClassFieldCallAdmission?.classes ?? []) {
+      if (admitted.sourceFile !== input.sourceFile) continue;
+      const atom = [
+        ...admitted.candidate.terminalMembers.map(({ record }) => record.id),
+        admitted.containingTerminalUnitId,
+        ...admitted.fields.map((field) => field.calleeUnitId),
+      ];
+      if (atom.every((unitId) => candidates.has(unitId)) || atom.every((unitId) => !candidates.has(unitId))) {
+        continue;
+      }
+      for (const unitId of atom) {
+        if (candidates.delete(unitId)) changed = true;
+      }
     }
   }
 

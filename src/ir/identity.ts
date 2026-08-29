@@ -3,6 +3,7 @@
 import { ts } from "../ts-api.js";
 import type { CompilerSourceOrigin, CompilerSourceProducer } from "../position-map.js";
 import {
+  boundedPreparedNestedOrdinaryClassBindingName,
   isBoundedPreparedNestedFieldCallInitializer,
   isBoundedPreparedNestedOrdinaryClass,
   isNestedOrdinaryClassFieldCallInventoryCandidate,
@@ -669,6 +670,125 @@ export function getIrNestedClassFieldCallInventoryCandidates(
   inventory: IrUnitInventory,
 ): readonly IrNestedClassFieldCallInventoryCandidate[] {
   return scannerMetadataByInventory.get(inventory)?.fieldCallCandidates ?? Object.freeze([]);
+}
+
+/** One admitted call-bearing field of an F4 admitted class. */
+export interface IrNestedClassFieldCallAdmittedField {
+  readonly declaration: ts.PropertyDeclaration;
+  readonly call: ts.CallExpression;
+  readonly fieldSupportUnitId: IrUnitId;
+  readonly calleeUnitId: IrUnitId;
+  readonly calleeName: string;
+}
+
+/** One class the F4 proof admitted for selection and preparation. */
+export interface IrNestedClassFieldCallAdmittedClass {
+  readonly candidate: IrNestedClassFieldCallInventoryCandidate;
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+  readonly sourceFile: ts.SourceFile;
+  readonly sourceId: IrSourceId;
+  readonly classId: IrClassId;
+  readonly constructorUnitId: IrUnitId;
+  readonly containingTerminalUnitId: IrUnitId;
+  readonly bindingName: string;
+  readonly fields: readonly IrNestedClassFieldCallAdmittedField[];
+}
+
+const admissionAuthority = Object.freeze({});
+const authenticAdmissions = new WeakSet<IrNestedClassFieldCallAdmission>();
+
+/**
+ * (#3522 F4) Immutable proof-derived admitted-class marker.
+ *
+ * Computed exactly once, before local class-expression resolution and identity
+ * selection, from the complete F3 proof set. Every downstream consumer —
+ * class shapes, module bindings, the selector, prepared free functions, class
+ * bodies, and nested executable syntax — reads this marker instead of
+ * re-running any syntax predicate. A consumer that cannot find the exact class
+ * here fails closed onto the unchanged strict bounded-class predicate.
+ */
+export class IrNestedClassFieldCallAdmission {
+  readonly inventory: IrUnitInventory;
+  readonly classes: readonly IrNestedClassFieldCallAdmittedClass[];
+  readonly #byDeclaration: ReadonlyMap<ts.ClassDeclaration | ts.ClassExpression, IrNestedClassFieldCallAdmittedClass>;
+  readonly #byClassId: ReadonlyMap<IrClassId, IrNestedClassFieldCallAdmittedClass>;
+
+  /** @internal Construct through {@link createIrNestedClassFieldCallAdmission}. */
+  constructor(
+    inventory: IrUnitInventory,
+    classes: readonly IrNestedClassFieldCallAdmittedClass[],
+    authority: typeof admissionAuthority,
+  ) {
+    if (authority !== admissionAuthority) {
+      throw new TypeError("nested class field-call admission requires planner authority");
+    }
+    const byDeclaration = new Map<ts.ClassDeclaration | ts.ClassExpression, IrNestedClassFieldCallAdmittedClass>();
+    const byClassId = new Map<IrClassId, IrNestedClassFieldCallAdmittedClass>();
+    for (const admitted of classes) {
+      if (byDeclaration.has(admitted.declaration) || byClassId.has(admitted.classId)) {
+        throw new Error("one nested class field-call class produced more than one admission");
+      }
+      byDeclaration.set(admitted.declaration, admitted);
+      byClassId.set(admitted.classId, admitted);
+    }
+    this.inventory = inventory;
+    this.classes = Object.freeze([...classes]);
+    this.#byDeclaration = byDeclaration;
+    this.#byClassId = byClassId;
+    authenticAdmissions.add(this);
+    Object.freeze(this);
+  }
+
+  get(declaration: ts.ClassDeclaration | ts.ClassExpression): IrNestedClassFieldCallAdmittedClass | undefined {
+    return this.#byDeclaration.get(declaration);
+  }
+
+  getByClassId(classId: IrClassId): IrNestedClassFieldCallAdmittedClass | undefined {
+    return this.#byClassId.get(classId);
+  }
+
+  admits(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
+    return this.#byDeclaration.has(declaration);
+  }
+}
+
+/** @internal Mint the marker after every proof/candidate join has revalidated. */
+export function createIrNestedClassFieldCallAdmission(
+  inventory: IrUnitInventory,
+  classes: readonly IrNestedClassFieldCallAdmittedClass[],
+): IrNestedClassFieldCallAdmission {
+  return new IrNestedClassFieldCallAdmission(inventory, classes, admissionAuthority);
+}
+
+/** Fail-closed authenticity check for every marker consumer. */
+export function isIrNestedClassFieldCallAdmissionForInventory(
+  admission: IrNestedClassFieldCallAdmission,
+  inventory: IrUnitInventory,
+): boolean {
+  return authenticAdmissions.has(admission) && admission.inventory === inventory;
+}
+
+/**
+ * Selector/preparation admission for one nested ordinary class.
+ *
+ * The strict syntax predicate is unchanged and still owns the call-free
+ * family; the field-call family is admitted only through the exact
+ * proof-derived marker for this same declaration.
+ */
+export function irPreparedNestedOrdinaryClass(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  admission: IrNestedClassFieldCallAdmission | undefined,
+): boolean {
+  return admission?.admits(declaration) === true || isBoundedPreparedNestedOrdinaryClass(declaration);
+}
+
+/** Marker-aware binding identity; never an independent admission decision. */
+export function irPreparedNestedOrdinaryClassBindingName(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  admission: IrNestedClassFieldCallAdmission | undefined,
+): string | undefined {
+  const admitted = admission?.get(declaration);
+  return admitted ? admitted.bindingName : boundedPreparedNestedOrdinaryClassBindingName(declaration);
 }
 
 class SourceInventoryBuilder {

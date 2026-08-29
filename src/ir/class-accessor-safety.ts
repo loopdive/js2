@@ -303,34 +303,78 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
 export function isNestedOrdinaryClassFieldCallInventoryCandidate(
   declaration: ts.ClassDeclaration | ts.ClassExpression,
 ): boolean {
-  if (!isPreparedNestedOrdinaryClassShape(declaration, true)) return false;
-  if (ts.isClassDeclaration(declaration)) return declaration.name !== undefined;
-  const variable = declaration.parent;
-  if (
-    !ts.isVariableDeclaration(variable) ||
-    variable.initializer !== declaration ||
-    !ts.isIdentifier(variable.name) ||
-    !ts.isVariableDeclarationList(variable.parent) ||
-    (variable.parent.flags & ts.NodeFlags.Const) === 0
-  ) {
-    return false;
-  }
-  return declaration.name === undefined || declaration.name.text === variable.name.text;
+  return (
+    isPreparedNestedOrdinaryClassShape(declaration, true) &&
+    nestedOrdinaryClassLexicalBindingName(declaration) !== undefined
+  );
 }
 
 /**
- * Stable lexical name for the bounded ordinary-class transaction.
+ * (#3522 F4) Does any member body or field initializer carry a nested
+ * executable?
  *
- * Class declarations own their source name. Class expressions are admitted
- * only in the exact `const C = class { ... }` / `const C = class C { ... }`
- * form: the binding is immutable, ClassDefinitionEvaluation is inert under
- * the ordinary-class gate above, and a differently named inner class cannot
- * be confused with the outer constructor binding.
+ * The first admitted field-call family excludes them deliberately. This is not
+ * a lowering limit invented here: measured on `origin/main` 81e54a98e, a
+ * CALL-FREE bounded nested class whose method contains
+ * `const f = (): number => this.p` is ALREADY a hard compile failure
+ * (`ir/from-ast: 'this' reference outside an instance method body`, owner
+ * outcome `invariant`). Admitting the field-call variant of that shape would
+ * add new instances of a known-broken family rather than new compile-once
+ * coverage, so the admission requires the class body to be free of them.
+ *
+ * Syntax-only, and never an admission decision on its own.
  */
-export function boundedPreparedNestedOrdinaryClassBindingName(
+export function nestedOrdinaryClassBodyHasNestedExecutable(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isClassStaticBlockDeclaration(node)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const member of declaration.members) {
+    if (ts.isPropertyDeclaration(member)) {
+      if (member.initializer) visit(member.initializer);
+      continue;
+    }
+    const body =
+      ts.isConstructorDeclaration(member) ||
+      ts.isMethodDeclaration(member) ||
+      ts.isGetAccessorDeclaration(member) ||
+      ts.isSetAccessorDeclaration(member)
+        ? member.body
+        : undefined;
+    if (body) ts.forEachChild(body, visit);
+    if (found) return true;
+  }
+  return found;
+}
+
+/**
+ * Stable lexical name of a nested ordinary class, with NO admission decision.
+ *
+ * Class declarations own their source name. Class expressions resolve a name
+ * only in the exact `const C = class { ... }` / `const C = class C { ... }`
+ * form: the binding is immutable and a differently named inner class cannot be
+ * confused with the outer constructor binding.
+ *
+ * (#3522 F4) This is deliberately syntax-only. Inventory candidacy and
+ * selector admission both need the lexical name, but neither may be derived
+ * from the other, so the name resolution is shared while the two decisions
+ * stay separate.
+ */
+export function nestedOrdinaryClassLexicalBindingName(
   declaration: ts.ClassDeclaration | ts.ClassExpression,
 ): string | undefined {
-  if (!isBoundedPreparedNestedOrdinaryClass(declaration)) return undefined;
   if (ts.isClassDeclaration(declaration)) return declaration.name?.text;
   const variable = declaration.parent;
   if (
@@ -344,6 +388,21 @@ export function boundedPreparedNestedOrdinaryClassBindingName(
   }
   const bindingName = variable.name.text;
   return declaration.name === undefined || declaration.name.text === bindingName ? bindingName : undefined;
+}
+
+/**
+ * Stable lexical name for the bounded ordinary-class transaction.
+ *
+ * Never widen this to the field-call family: an admitted field-call class
+ * resolves its binding name through the proof-derived admission marker
+ * (`irPreparedNestedOrdinaryClassBindingName`), never through this predicate.
+ */
+export function boundedPreparedNestedOrdinaryClassBindingName(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): string | undefined {
+  return isBoundedPreparedNestedOrdinaryClass(declaration)
+    ? nestedOrdinaryClassLexicalBindingName(declaration)
+    : undefined;
 }
 
 type LiteralComputedKeyValue = string | number;
