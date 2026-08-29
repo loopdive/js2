@@ -788,6 +788,33 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     match: (_record, text) => hasAny(text, ["fail after retry"]),
   },
   {
+    // #5181 — the #1058 stack-balance repair pass refuses to mutate ONE shared
+    // instruction array reached from incompatible control-flow / function-local
+    // contexts, and reports that as a hard compile error (src/codegen/
+    // stack-balance.ts, `contextBlocked`). The selfhost commit 8f161cbf15
+    // ("compile TypeScript 5 parser graph to Wasm", landed by PR #5204 — a PR
+    // number, so deliberately NOT in the `issues` list) grew the shared-body
+    // population sharply: 2,580 standalone rows now carry this signature.
+    // The overwhelming majority of them are ALREADY claimed by a feature-path
+    // bucket above (Temporal, RegExp, TypedArray, …), which is why this bucket
+    // sits DOWN HERE with the other residual catches instead of at the top: a
+    // signature match here must not poach a row a feature bucket already owns.
+    // It exists for the residual that no feature path claims (Error.prototype.
+    // stack, harness/deepEqual-*, harness/testTypedArray*, instanceof) — 24
+    // rows that fell through every bucket and tripped the merge_group's
+    // `--max-unclassified-root-causes 0` gate, blocking the queue. The two
+    // patterns are alternates of one signature: the raw `error` keeps the
+    // literal "(#1058)", while `error_signature` digit-normalises it to "(##)".
+    // Whether this error-mode shift MASKS pre-8f161cbf15 passes is the open
+    // question tracked by #5181, not something this classification answers.
+    id: "stack-balance-shared-body",
+    issues: ["#5181", "#1058"],
+    label:
+      "Stack-balance shared-body refusal (#1058): the repair pass reached one instruction array from incompatible control-flow/function-local contexts and refused to mutate it for all owners — hard compile error; residual not matched by a feature-path bucket",
+    match: (_record, text) =>
+      hasAny(text, ["stack-balance (#1058)", "reaches an instruction array from incompatible control-flow"]),
+  },
+  {
     id: "misc-spec-tail",
     issues: ["#1577", "#779"],
     label: "Miscellaneous low-volume spec-completeness tail",
