@@ -1,11 +1,10 @@
 {
   "id": "5187",
-  "assignee": "",
-  "requested_by": "ttraenkler/opus-dev-5178",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-29T06:15:37Z",
-  "updated_at": "2026-08-29T06:15:37Z",
-  "write_id": "16243-0ajiwj23",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/opus-dev-5180",
+  "requested_by": "ttraenkler/opus-dev-5180",
+  "status": "in-progress",
+  "branch": "issue-5187-regexp-exec-index",
+  "claimed_at": "2026-08-29T06:26:24Z",
+  "updated_at": "2026-08-29T06:26:24Z",
+  "write_id": "19034-dnlmrujz"
 }
