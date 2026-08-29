@@ -1,10 +1,11 @@
 ---
 id: 5191
 title: "A class extending a builtin has NO class-object singleton, so its own name evaluates to null (C == null is true; blocks the Temporal polyfill's module init)"
-status: ready
+status: done
 sprint: current
 created: 2026-08-29
 updated: 2026-08-29
+completed: 2026-08-29
 priority: high
 horizon: m
 feasibility: hard
@@ -172,3 +173,132 @@ presumably been wrong for every builtin-derived class since — the reason it
 went unnoticed is the masking described above (`typeof`, `.name` and `new C()`
 all answer correctly). Expect the blast radius of a fix to be wider than the
 Temporal bucket, in both directions.
+
+## Fix — carrier decision and evidence
+
+**Carrier chosen: the existing `$ClassName` struct singleton. No new carrier
+was added, and no code was written for one.** The change is that
+`class-bodies.ts` now registers the `__class_<Name>` global for
+`classBuiltinParentMap` members too, instead of skipping them.
+
+### Why the #1366a guard could simply go
+
+The guard's stated ground — externref-backed builtin subclasses "don't have a
+`$ClassName` WasmGC struct" — is **factually false**, and that is the whole
+finding. `ctx.structMap.set(className, structTypeIdx)` runs at
+`src/codegen/class-bodies.ts:982`, ~200 lines *above* the registration site and
+**unconditionally**: the type index is allocated and `commitClassStructLayout`
+commits the layout before any builtin-parent branch is consulted. So
+`emitLazyClassObjectGet`'s `structMap` / `structFields` lookups have always
+succeeded for these classes; nothing was ever going to emit a `struct.new` for
+a type that does not exist.
+
+What an externref-backed subclass actually lacks is struct **instances** — its
+objects are host-created externrefs (`isExternrefBackedClass` makes the
+constructor return `externref`). That makes the `$ClassName` struct *dead* for
+these classes, which is exactly what makes it a **safe** singleton carrier
+here: no instance can ever be confused with the class object, so the identity
+question the carrier exists to answer stays unambiguous.
+
+### Why not a `__new_plain_object` carrier
+
+`src/codegen/builtin-static-globals.ts:144` (`emitBuiltinConstructorIdentity`,
+#3006) was the named precedent — a plain `$Object` carrier for reified builtin
+constructors. It was rejected here for two reasons:
+
+1. **It would create a second class-object SHAPE.** Everything
+   `emitLazyClassObjectGet` does after `global.set` —
+   `__register_class_object` (the gOPD own-key allowlist),
+   the #4616 `.name` stamp, `__register_class_static_method` (#4371) and
+   `__register_class_ctor` (#4618, the host `[[Construct]]` bridge) — is
+   written against the class object's **closed-struct identity**; #4371's own
+   comment says so explicitly. A plain `$Object` carrier would need every one
+   of those consumers taught a second case, on a lane with no test coverage
+   for them.
+2. **It buys nothing.** The struct carrier already produces correct behaviour
+   on all 16 measured shapes, on both lanes. A second mechanism would be
+   strictly more code for the same result.
+
+### Measurements (base = `origin/main` @ `279ce9a4f2`, A/B by file copy)
+
+Deltas below are from probe runs executed in both directions, not inferred.
+Every builtin-derived row changed; **no row regressed**, on either lane.
+
+| Shape (`class C extends Array` unless noted) | base | fix |
+| --- | --- | --- |
+| `C == null` | true | **false** |
+| `Boolean(C)` | false | **true** |
+| `C.zzz === undefined` | **throws** | true |
+| `class A/B extends Array; A === B` | true (both null) | **false** |
+| `C.a=1; C.b=2; C.b` | **throws** | 2 |
+| jsbi comma sequence `J.__kMaxLengthBits` | **throws** (host) / NaN (standalone) | 1073741824 |
+| `Object.getOwnPropertyNames(C).length > 0` | **throws** | true |
+| `class C extends Int8Array` non-null | false | **true** |
+| `class D extends C` (C builtin-derived) non-null | false | **true** |
+| `typeof C`, `C.name`, `new C()`, `C.prototype`, `instanceof`, `Array.isArray(new C())`, static methods (direct / via variable / inherited), `extends Error` throw+catch, `extends Map` get/set | correct | correct (unchanged) |
+
+Two residuals are **pre-existing and NOT builtin-specific** — a plain `class C
+{}` control behaves identically before and after, so they are out of scope
+here: `(C as any).name` reads `undefined`, and a write spelled through a cast
+(`(C as any).a = 1`) reads back `NaN` where the uncast `C.a = 1` reads `1`.
+The fix improved both from *throwing* to *wrong value*; neither is a
+regression. The uncast spelling — which is what jsbi actually is, since jsbi is
+JavaScript — is correct.
+
+### Temporal harness — the blocker MOVED (acceptance criterion 5)
+
+`node --import tsx tests/dogfood/temporal-polyfill-harness.mjs`, run with the
+instrumented harness from PR #5239's branch (this PR does not modify the
+harness), esm linked lane:
+
+| | `moduleInitRuns` | `moduleInitError` |
+| --- | --- | --- |
+| base | false | `WebAssembly.Exception thrown from module init (payload unreadable: no instance, so no __exn_tag)` |
+| fix | false | `TypeError: cannot marshal opaque compiled value to host Float64Array constructor` |
+
+The opaque Wasm exception was the null-receiver `TypeError` at jsbi's statement
+2. It is gone; module init now advances into the polyfill proper and stops at a
+**new, later, and legible** blocker: a compiled value being handed to the host
+`Float64Array` constructor without a marshalling path. That is a distinct
+defect in the compiled-value → host-constructor boundary and needs its own
+issue (it was **not** filed here — `claim-issue.mjs --allocate` refused with
+exit 6 because the open-PR id scan could not reach `gh` from this container,
+and reserving an unverifiable id would burn a hole in the sequence).
+
+`moduleInitRuns` is still `false`, so #4628 Option A remains gated — on the new
+blocker, not on this one. The umd/ES5 lane is unchanged and still fails
+`WebAssembly.compile()` on `__closure_35` (`expected externref, got i32`),
+which predates this change.
+
+### Validation run
+
+- `tests/issue-5191-builtin-derived-class-value.test.ts` (new): **29 passed**
+  with the fix; **21 failed / 8 passed** on base. The 8 that pass on base are
+  the deliberately-included masking arms (`typeof`, `.name`, `new C()`,
+  `instanceof`, static methods) — they are there so a fix that made `C == null`
+  false by breaking construction could not pass.
+- Scoped class suites, all green:
+  `issue-661`, `classes`, `inheritance`, `class-expression`,
+  `class-expressions`, `class-methods`, `class-method-calls`,
+  `class-method-struct-new`, `abstract-classes`, `class-elements-619`,
+  `class-static-private-this` (71 tests); plus
+  `issue-2029-error-subclass-get-undefined-standalone`,
+  `issue-2029-primitive-wrapper-subclass-standalone`,
+  `issue-2029-subclass-builtin-standalone-emit`,
+  `issue-2101a-externref-subclass-ownfield`,
+  `issue-2158-class-identity-standalone`,
+  `issue-2620-extends-set-standalone-refusal`,
+  `issue-2620-gc-host-inherited-collection-methods`,
+  `issue-2623-promise-subclass-identity`,
+  `issue-2917-standalone-extends-builtin`,
+  `issue-3239-standalone-subclass-typedarray-native-ctor`,
+  `issue-3201-inherited-length` (116 tests).
+- `tests/issue-2726-inherited-delete-noop.test.ts` fails — **also on base**,
+  verified by re-running it against the reverted files. Pre-existing.
+- `scripts/equivalence-gate.mjs` shards 1–8: no new regressions.
+- Ratchet gates all exit 0: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`. The
+  comment block was written to fit under the `class-bodies.ts` LOC and
+  `collectClassDeclaration` func ceilings rather than take an allowance, which
+  is why the long rationale lives on `emitLazyClassObjectGet` in
+  `src/codegen/expressions/extern.ts`.
