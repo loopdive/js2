@@ -31,6 +31,13 @@ checks:
 #5209 additionally carried the auto-park `hold` label at merge time — the
 label neither prevented re-queueing nor merging.
 
+**Fourth instance (added 2026-08-29 07:06):** #5216 merged at 06:57 while
+carrying the `hold` label AND with auto-merge explicitly disabled (the
+coordinator had disabled it at ~06:45 to release the branch; `auto_merge:
+null` was confirmed before the merge). Its earlier group (run 33236737382)
+had failed the same two verdict checks. Whatever merged it did so from a
+queue entry that survived both the park and the auto-merge removal.
+
 Verified from the runs themselves (not inferred): the failing step in each is
 the VERDICT step ("Standalone root-cause map has 24 unclassified failures;
 threshold is 0" / "Fail on regressions"), not setup. The regression they
