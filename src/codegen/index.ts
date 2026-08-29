@@ -10834,10 +10834,33 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       ) {
         elemWasm = { kind: "externref" };
       }
+      // (#3481) A `symbol[]` element carries the SYMBOL BRAND, and the branded
+      // vec is registered under its own key.
+      //
+      // A symbol VALUE lowers to an i32 id, so `symbol[]` shared the unbranded
+      // `$__arr_i32` element type with `boolean[]` and the i32 typed-array
+      // views. `buildElemCoerce` then materialised a HOST symbol array
+      // (`Object.getOwnPropertySymbols(o)`) by `__unbox_number`-ing each
+      // element — literally `Number(Symbol())` — which throws §7.1.4
+      // "Cannot convert a Symbol value to a number" at the declaration, before
+      // the array is ever read. The brand is what lets that coercion pick
+      // `__unbox_symbol` (host) / the `$Symbol` carrier read (standalone)
+      // instead; both already exist in `symbolBoundaryCoercionInstrs`, which is
+      // the same seam struct FIELDS have used since #2847.
+      //
+      // The separate KEY is what keeps the blast radius provable: a module
+      // with no `symbol[]` never registers `__vec_i32_symbol`, so its type
+      // section — and therefore every index baked off it — is untouched.
+      // `symbolBrand` requires EVERY non-null/undefined constituent to be a
+      // symbol, so `(symbol | number)[]` is not branded and keeps the plain
+      // i32 vec.
+      if (elemTsType) elemWasm = symbolBrand(elemTsType, elemWasm);
       const elemKey =
         elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
           ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
-          : elemWasm.kind;
+          : elemWasm.kind === "i32" && elemWasm.symbol === true
+            ? "i32_symbol"
+            : elemWasm.kind;
       const vecIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
       // Use ref_null so locals can default-initialize to null
       return { kind: "ref_null", typeIdx: vecIdx };

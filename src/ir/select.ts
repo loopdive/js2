@@ -6459,6 +6459,126 @@ function exactNumericExponentiationContextReady(): boolean {
   );
 }
 
+/**
+ * #5092 — exact primitive expression grammar shared by selection and build.
+ *
+ * The checker callbacks establish runtime-value provenance (assertions cannot
+ * forge it); this walk then keeps the first mixed-conditional checkpoint free
+ * of calls, property reads, allocation, mutation, nullish values, and nested
+ * executable owners. Ordinary Phase-1 validation still runs afterwards and
+ * remains authoritative for scope/capability details.
+ */
+export function boundedMixedConditionalPrimitiveFamily(
+  expression: ts.Expression,
+  classifyPrimitiveExpression: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined,
+  classifyDeclaredPrimitiveExpression: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined,
+): IrPrimitiveExpressionFamily | undefined {
+  const visit = (node: ts.Expression): IrPrimitiveExpressionFamily | undefined => {
+    const family = classifyPrimitiveExpression(node);
+    if (family === undefined || classifyDeclaredPrimitiveExpression(node) !== family) return undefined;
+
+    const candidate = unwrapProjectionExpression(node);
+    if (candidate !== node) return visit(candidate) === family ? family : undefined;
+    if (
+      ts.isNumericLiteral(candidate) ||
+      ts.isStringLiteral(candidate) ||
+      ts.isNoSubstitutionTemplateLiteral(candidate) ||
+      candidate.kind === ts.SyntaxKind.TrueKeyword ||
+      candidate.kind === ts.SyntaxKind.FalseKeyword ||
+      ts.isIdentifier(candidate)
+    ) {
+      return family;
+    }
+    if (ts.isTypeOfExpression(candidate)) {
+      return family === "string" && visit(candidate.expression) !== undefined ? family : undefined;
+    }
+    if (ts.isPrefixUnaryExpression(candidate)) {
+      const operand = visit(candidate.operand);
+      if (candidate.operator === ts.SyntaxKind.ExclamationToken) {
+        return family === "boolean" && operand !== undefined ? family : undefined;
+      }
+      if (
+        candidate.operator === ts.SyntaxKind.PlusToken ||
+        candidate.operator === ts.SyntaxKind.MinusToken ||
+        candidate.operator === ts.SyntaxKind.TildeToken
+      ) {
+        return family === "number" && operand === "number" ? family : undefined;
+      }
+      return undefined;
+    }
+    if (ts.isBinaryExpression(candidate)) {
+      const left = visit(candidate.left);
+      const right = visit(candidate.right);
+      switch (candidate.operatorToken.kind) {
+        case ts.SyntaxKind.PlusToken:
+          return (family === "number" || family === "string") && left === family && right === family
+            ? family
+            : undefined;
+        case ts.SyntaxKind.MinusToken:
+        case ts.SyntaxKind.AsteriskToken:
+        case ts.SyntaxKind.SlashToken:
+        case ts.SyntaxKind.PercentToken:
+        case ts.SyntaxKind.AsteriskAsteriskToken:
+          return family === "number" && left === "number" && right === "number" ? family : undefined;
+        case ts.SyntaxKind.LessThanToken:
+        case ts.SyntaxKind.LessThanEqualsToken:
+        case ts.SyntaxKind.GreaterThanToken:
+        case ts.SyntaxKind.GreaterThanEqualsToken:
+        case ts.SyntaxKind.EqualsEqualsToken:
+        case ts.SyntaxKind.ExclamationEqualsToken:
+        case ts.SyntaxKind.EqualsEqualsEqualsToken:
+        case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+          return family === "boolean" && left !== undefined && left === right ? family : undefined;
+        case ts.SyntaxKind.AmpersandAmpersandToken:
+        case ts.SyntaxKind.BarBarToken:
+          return family === "boolean" && left === "boolean" && right === "boolean" ? family : undefined;
+        default:
+          return undefined;
+      }
+    }
+    if (ts.isConditionalExpression(candidate)) {
+      const condition = visit(candidate.condition);
+      const whenTrue = visit(candidate.whenTrue);
+      const whenFalse = visit(candidate.whenFalse);
+      return condition !== undefined && whenTrue === family && whenFalse === family ? family : undefined;
+    }
+    return undefined;
+  };
+
+  return visit(expression);
+}
+
+function exactMixedPrimitiveConditionalContextReady(node: ts.Node): boolean {
+  if (process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0") return false;
+  if (
+    currentSubjectIsModuleInit ||
+    currentSelectionSubject === null ||
+    !ts.isFunctionDeclaration(currentSelectionSubject) ||
+    currentSelectionSubject.body === undefined ||
+    currentModuleBindingResolver === null ||
+    currentSelectionOptions?.classifyPrimitiveExpression === undefined ||
+    currentSelectionOptions.classifyDeclaredPrimitiveExpression === undefined
+  ) {
+    return false;
+  }
+  let owner: ts.Node | undefined = node;
+  while (owner) {
+    if (
+      ts.isFunctionDeclaration(owner) ||
+      ts.isFunctionExpression(owner) ||
+      ts.isArrowFunction(owner) ||
+      ts.isMethodDeclaration(owner) ||
+      ts.isConstructorDeclaration(owner) ||
+      ts.isGetAccessorDeclaration(owner) ||
+      ts.isSetAccessorDeclaration(owner)
+    ) {
+      return owner === currentSelectionSubject;
+    }
+    owner = owner.parent;
+  }
+  return false;
+}
+
 function exactNumericExponentiationOwner(node: ts.Node): boolean {
   let parent = node.parent;
   while (parent) {
@@ -6581,6 +6701,51 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
 function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
   if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
   return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
+}
+
+interface ExactMixedPrimitiveWrapperCall {
+  readonly kind: "Number" | "String";
+  readonly conditional: ts.ConditionalExpression;
+}
+
+/**
+ * #5092 — the first coercive consumer checkpoint stays deliberately smaller
+ * than ambient `String` / `Number` in general. It accepts only a direct mixed
+ * primitive conditional argument, so build can convert each concrete arm
+ * inside the already-lazy `if` instead of inventing a general dynamic
+ * ToString operation. Checker identity keeps same-text source bindings out.
+ */
+function exactMixedPrimitiveWrapperCall(
+  expr: ts.CallExpression,
+  requireCurrentSubject = true,
+): ExactMixedPrimitiveWrapperCall | null {
+  if (
+    process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0" ||
+    !ts.isIdentifier(expr.expression) ||
+    (expr.expression.text !== "String" && expr.expression.text !== "Number") ||
+    !selectorSeesAmbientWrapperConstructor(expr.expression) ||
+    expr.arguments.length !== 1 ||
+    ts.isSpreadElement(expr.arguments[0]!) ||
+    (requireCurrentSubject && !exactMixedPrimitiveConditionalContextReady(expr))
+  ) {
+    return null;
+  }
+  const argument = unwrapProjectionExpression(expr.arguments[0]!);
+  if (!ts.isConditionalExpression(argument)) return null;
+  const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
+  const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
+  if (!classifyPrimitive || !classifyDeclared) return null;
+  const whenTrue = boundedMixedConditionalPrimitiveFamily(argument.whenTrue, classifyPrimitive, classifyDeclared);
+  const whenFalse = boundedMixedConditionalPrimitiveFamily(argument.whenFalse, classifyPrimitive, classifyDeclared);
+  if (
+    whenTrue === undefined ||
+    whenFalse === undefined ||
+    whenTrue === whenFalse ||
+    boundedMixedConditionalPrimitiveFamily(argument.condition, classifyPrimitive, classifyDeclared) === undefined
+  ) {
+    return null;
+  }
+  return { kind: expr.expression.text, conditional: argument };
 }
 
 function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boolean {
@@ -8766,6 +8931,71 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }
   if (ts.isConditionalExpression(expr)) {
+    const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
+    const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
+    const truePrimitive = classifyPrimitive?.(expr.whenTrue);
+    const falsePrimitive = classifyPrimitive?.(expr.whenFalse);
+    const trueDeclared = classifyDeclared?.(expr.whenTrue);
+    const falseDeclared = classifyDeclared?.(expr.whenFalse);
+    const trueObvious = obviousSelectorValueFamily(expr.whenTrue, scope);
+    const falseObvious = obviousSelectorValueFamily(expr.whenFalse, scope);
+    const exactSamePrimitive =
+      truePrimitive !== undefined &&
+      truePrimitive === falsePrimitive &&
+      trueDeclared === truePrimitive &&
+      falseDeclared === falsePrimitive;
+    const hasPrimitiveSignal = [
+      truePrimitive,
+      falsePrimitive,
+      trueDeclared,
+      falseDeclared,
+      trueObvious,
+      falseObvious,
+    ].some((family) => family === "number" || family === "boolean" || family === "string");
+    // (2026-08-28) This route reasons from CHECKER-backed primitive provenance.
+    // Without both classifiers `truePrimitive` is always undefined, so
+    // `exactSamePrimitive` is false for EVERY conditional while
+    // `obviousSelectorValueFamily` still reports "number" for arms like `1 : 0`
+    // — which handed this block authority over `(box && true) ? 1 : 0` and
+    // `value instanceof Bad ? 1 : 0` in checker-free selection, masking
+    // `logical-value-unsupported` / `class-projection-unsupported` with a
+    // generic `operand-coercion-unsupported` (#3529 preclaim parity).
+    const primitiveEvidence = classifyPrimitive !== undefined && classifyDeclared !== undefined;
+
+    // #5092 — mixed primitive values acquire one exact ownership route. An
+    // unresolved/non-primitive opposite arm is still part of this boundary
+    // (nullable, bigint, any/unknown, object/property/call, etc.) and declines
+    // with a typed Unsupported outcome before AST -> IR construction. Exact
+    // same-family conditionals bypass this block, preserving their old path.
+    if (primitiveEvidence && !exactSamePrimitive && hasPrimitiveSignal) {
+      // Ordering: a more specific arm owns any operand this route cannot
+      // classify, so the ordinary Phase-1 walk runs FIRST and records its own
+      // reason. Only shapes no other arm rejects reach the coercion verdicts
+      // below — otherwise a mixed-arm conditional over, say, a local-class
+      // logical operand reported `operand-coercion-unsupported` and the
+      // precise bucket was lost.
+      if (
+        !isPhase1ConditionExpr(expr.condition, scope, localClasses) ||
+        !isPhase1Expr(expr.whenTrue, scope, localClasses) ||
+        !isPhase1Expr(expr.whenFalse, scope, localClasses)
+      ) {
+        return false;
+      }
+      if (!exactMixedPrimitiveConditionalContextReady(expr)) {
+        return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
+      }
+      const trueFamily = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive, classifyDeclared);
+      const falseFamily = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive, classifyDeclared);
+      const conditionFamily = boundedMixedConditionalPrimitiveFamily(
+        expr.condition,
+        classifyPrimitive,
+        classifyDeclared,
+      );
+      if (trueFamily === undefined || falseFamily === undefined || trueFamily === falseFamily || !conditionFamily) {
+        return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-proof", expr);
+      }
+      return true;
+    }
     if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
       const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
       const whenFalseFamily = obviousModuleValueFamily(expr.whenFalse);
@@ -9188,6 +9418,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       return true;
     }
     if (!ts.isIdentifier(expr.expression)) return false;
+    const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(expr);
+    if (mixedPrimitiveWrapper) {
+      return isPhase1Expr(mixedPrimitiveWrapper.conditional, scope, localClasses);
+    }
     // Only the await arm admits local async callees; other uses stay direct.
     if (isUnpreparedAsyncCallee(expr, scope, currentAsyncDeclNames, currentSelectionOptions)) {
       return shapeNo("expr-async-callee-not-awaited", expr);
@@ -10002,6 +10236,11 @@ export function buildLocalCallGraph(
           return;
         }
         if (ts.isIdentifier(node.expression)) {
+          const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(node, false);
+          if (mixedPrimitiveWrapper) {
+            visit(mixedPrimitiveWrapper.conditional);
+            return;
+          }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
           if (imported) {
             // Imported direct calls are neither local graph edges nor external

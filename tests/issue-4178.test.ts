@@ -24,11 +24,10 @@
 // eval boundary is irrelevant (verified across 30 probes, both with and without
 // a `var __F = Function;` line).
 //
-// NOT fixed here, deliberately: the same mixed-type ternary inside an
-// IR-ELIGIBLE function still hard-errors at `lowerConditional`
-// (`ir/from-ast: ternary branches have different types`). That is the IR bail
-// #4178 names, it is a separate slice, and the `stillDemotes` block at the
-// bottom pins its CURRENT behaviour so the next owner sees the boundary.
+// #5092 retires the separate IR bail for the exact primitive slice. A
+// Prepared top-level function now boxes each number/string/boolean arm with
+// its honest tag and joins them lazily through `IrInstrIf`; broader mixed
+// values remain direct-owned.
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -50,8 +49,8 @@ async function run(src: string): Promise<number> {
  *
  * Module scope is deliberate: it is the shape the bug was reported in (test262
  * top-level statements) and the one the legacy path actually owns — an
- * `export function` body containing a mixed-type ternary is IR-eligible and
- * still hits the unrelated `lowerConditional` bail (see `stillDemotes`).
+ * `export function` body containing a mixed-type ternary is IR-eligible and is
+ * now owned by the bounded #5092 route.
  * Comparison is by TEXT, not by length: `"42"` and any other 2-character
  * string are not the same claim.
  */
@@ -137,15 +136,18 @@ describe("#4178 — concat of a boxed-any value (standalone)", () => {
   });
 });
 
-// The boundary of this change, pinned rather than described. When the
-// `lowerConditional` bail is retired, this block flips and should be deleted.
-describe("#4178 — NOT fixed here: mixed-type ternary in an IR-eligible function", () => {
-  it("still demotes with a hard IR-FALLBACK error", async () => {
+describe("#4178 — exact mixed primitive ternary in an IR-eligible function", () => {
+  it("compiles through the bounded #5092 IR owner", async () => {
     const r = await compile(
       `export function test(c: boolean): string { const n: number = 42; const v = c ? n : "s"; return "" + v; }`,
-      { fileName: "t.ts", target: "standalone" } as never,
+      { fileName: "t.ts", target: "standalone", experimentalIR: true, trackIrOutcomes: true } as never,
     );
-    expect(r.success).toBe(false);
-    expect(r.errors.map((e) => e.message).join("\n")).toContain("ternary branches have different types");
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(r.irPostClaimErrors ?? []).toEqual([]);
+    expect(r.irOutcomes?.find((candidate) => candidate.displayName === "test")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
   });
 });
