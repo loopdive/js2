@@ -162,6 +162,44 @@ return; the nativeStrings `-1` string-pool sentinel is also refused).
 - Byte-identity: 13/13 `website/playground/examples` binaries hash-identical
   base vs fix (sha1 of `result.binary`, measured 2026-08-29 on this branch).
 
+### Harness result — advanced, still gated
+
+`node --import tsx tests/dogfood/temporal-polyfill-harness.mjs` on a probe tree
+of #5252 + #5256 + this (2026-08-29):
+
+```
+esm (linked, modern): compile() success=true — 0 errors, binary 1,569,833 bytes
+esm (linked, modern): WebAssembly.compile() OK
+esm (linked, modern): WebAssembly.instantiate() FAILED — TypeError: __clz30 is not a function
+"moduleInitRuns": false
+```
+
+The blocker moved from `__clzmsd` to `__clz30`, so criterion 2 is met.
+**`moduleInitRuns` is still `false`** — #4628's integration step stays gated.
+
+**NEW BLOCKER, fifth in the chain — dynamic STATIC-method dispatch during the
+same init window.** `jsbi.mjs` calls `JSBI.__clz30(t)`, a static on the
+builtin-derived class. Reduced repro, measured with an after-init control:
+
+```ts
+class D extends Array {
+  constructor(n: number) { super(n); }
+  static clz(): number { return 9; }
+}
+function g(c: any): number { return c.clz(); }
+const A: number = g(D);                              // THROWS: clz is not a function
+export function test(): number { return g(D); }      // 9 — the control
+```
+
+Same family (works after init, throws during it), different surface: a static
+reaches the host as a raw closure struct in the `__register_class_static_method`
+sidecar, and `_wrapForHost` needs `exports` to turn it into a callable — so it
+is the CLOSURE facet, not the dispatch-export facet this issue closes. Not
+folded in here: `_wrapForHost`'s export argument feeds a great deal of unrelated
+behaviour, so widening it deserves its own measurement and its own issue.
+Statically-resolved static calls (`D.clz()` written directly) already work at
+init and are unaffected.
+
 ### Deliberately NOT fixed here (pre-existing, NOT timing)
 
 Measured with an after-init-only control on the base branch — these fail
