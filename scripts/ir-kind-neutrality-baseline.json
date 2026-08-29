@@ -599,7 +599,7 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1741",
       "why": "Builds a dense vector from statically-known elements. Sparse literals are explicitly out of scope and fall back to legacy, so no hole can reach this node.",
-      "evidence": ["src/ir/from-ast.ts:4532"]
+      "evidence": ["src/ir/from-ast.ts:4556"]
     },
     "vec.set": {
       "verdict": "neutral",
