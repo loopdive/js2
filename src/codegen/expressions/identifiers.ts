@@ -638,7 +638,11 @@ export function computeElidableTopLevelTdzNames(
       if (!isDeclName) {
         // Verify this identifier resolves to OUR top-level declaration
         // (and not a shadowed local with the same name).
-        const symbol = ctx.checker.getSymbolAtLocation(node);
+        // (#5144 cluster S) Use the VALUE symbol — a shorthand assignment
+        // target (`for ({ x } of …)`) resolves through `getSymbolAtLocation`
+        // to the property, so the write was invisible here and the whole TDZ
+        // flag got elided (`obj-id-put-let` threw nothing).
+        const symbol = identifierValueSymbol(ctx, node);
         const decl = symbol?.valueDeclaration;
         if (decl === declByName.get(node.text)) {
           const result = analyzeTdzAccess(ctx, node);
@@ -814,7 +818,7 @@ function compileCapturedGlobalRead(
 ): ValType {
   const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
   if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name);
+    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
   } else if (tdzResult === "throw") {
     emitStaticTdzThrow(ctx, fctx, id.text);
   }
@@ -1343,7 +1347,7 @@ function compileIdentifierCore(
   if (capturedBox !== undefined) {
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -1373,7 +1377,7 @@ function compileIdentifierCore(
     // Apply static analysis for module-level globals
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }

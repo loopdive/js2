@@ -310,6 +310,7 @@ import {
   emitClassifierSelect,
   ensureObjectProtoToStringClassifierFn,
 } from "../object-proto-tostring-native.js";
+import { emitObjectProtoToStringWithSymbolTag } from "../object-proto-symbol-tag.js";
 import {
   emitBrandCheckTypeError,
   ensureStandaloneNativeMethodClosure,
@@ -985,7 +986,7 @@ function identAssignRhsInFile(
     }
     forEachChild(n, visit);
   };
-  visit(sf);
+  for (const sourceFile of ctx.callableSourceFiles ?? [sf]) visit(sourceFile);
   cache.set(sf, map);
   return map;
 }
@@ -3912,15 +3913,21 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
         const p = node.parent;
         const isCallArg = p && ts.isCallExpression(p) && p.arguments.some((a) => a === node);
         const isVarInit = p && ts.isVariableDeclaration(p) && p.initializer === node;
+        // A reassigned mutable callable is another dynamic-dispatch value
+        // producer. Its call site may compile before the assignment RHS's
+        // wrapper is materialized, so pre-register the same conservative
+        // all-reference wrapper shape used for callback values.
+        const isAssignmentValue =
+          p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.right === node;
         // A generator function-expression's value is a Generator object, not a
         // plain closure the inline dispatcher marshals; skip (its wrapper type
         // is externref-returning and harmless, but leave it to the value site).
         const isGen = ts.isFunctionExpression(node) && node.asteriskToken !== undefined;
-        if ((isCallArg || isVarInit) && !isGen) usedAsValueFn(node);
+        if ((isCallArg || isVarInit || isAssignmentValue) && !isGen) usedAsValueFn(node);
       }
       ts.forEachChild(node, visitFns);
     };
-    visitFns(sf);
+    for (const sourceFile of ctx.callableSourceFiles ?? [sf]) visitFns(sourceFile);
   }
 }
 
@@ -8494,6 +8501,13 @@ function compileCallExpression(
               // fallback (object-proto-tostring-native.ts explains why the
               // composition has to be this way round and not the reverse).
               const receiverExpr = expr.arguments[0];
+              // (#5148 cluster 3a) §20.1.3.6 steps 14-15 — a `@@toStringTag`
+              // STRING on the receiver overrides builtinTag. Owned by
+              // object-proto-symbol-tag.ts; `null` there means "reported a
+              // compile error, operands already emitted", `undefined` means
+              // "declined, keep the existing arms below".
+              const symbolTagged = emitObjectProtoToStringWithSymbolTag(ctx, fctx, receiverExpr, tag, proof);
+              if (symbolTagged !== undefined) return symbolTagged;
               if (ctx.standalone && proof.unprovenDefault && receiverExpr !== undefined) {
                 // Flush against the CALLER's fctx before minting: the classifier
                 // adds late imports, and only this body needs its own funcIdx

@@ -1374,6 +1374,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Exact prepared class-body routing retained while nested bodies compile in scope. */
   irClassBodyRouting?: import("../class-bodies.js").ClassBodyCompileRouting;
   checker: ts.TypeChecker;
+  /** Source set available to cross-module callable wrapper pre-registration. */
+  callableSourceFiles?: readonly ts.SourceFile[];
   /** True when the single-file input is an ECMAScript Module goal. Script-goal
    * module init uses the host global object for top-level `this`; module goal
    * keeps top-level `this` undefined (#3365). */
@@ -1758,6 +1760,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * emission, no runtime guard.
    */
   vecIndexDeleteDirty: boolean;
+  /**
+   * (#5145) The module may observe `ArraySpeciesCreate` — it mentions
+   * `Symbol.species` or assigns to a `.constructor` property. Consumer:
+   * `array-species.ts` and the `slice`/`splice`/`map`/`filter` producers, which
+   * only then emit the §10.4.2.3 species prologue + result swap. Clear ⇒ the
+   * producers keep their raw `struct.new $vec` result and their static
+   * `(ref null $vec)` result type, so emission is byte-identical.
+   */
+  arraySpeciesDirty: boolean;
   /**
    * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
    * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a

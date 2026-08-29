@@ -101,3 +101,40 @@ closure; R10 is the ~59.7k-line deletion. Full table:
   the real arbiter.
 - Plan-file ids and PR numbers are one sequence apart — overlapping numbers
   (e.g. PR #5161 vs issue #5161) are coincidence, not linkage.
+
+## Addendum — 22:30Z (wave-7 partial completion)
+
+State moved after the main handover above was written; this section is the
+live truth, superseding the wave-7 table where they differ.
+
+- **#5162 DONE and MERGED (PR #5182, 22:17Z)** — structural verdict, no src
+  change. The filed compile-order hypothesis was REFUTED by measurement: the
+  deciding axes are lane (gc always correct) and syntax (`class` always
+  correct); standalone fnctor instances are closed WasmGC structs with no
+  runtime prototype, so a constructor's `this.m()` — which always declines
+  typed-`this` resolution (`resolveTypedThisField`, `not-in-twin` bucket) —
+  falls to a dynamic lookup that finds nothing. 18 pins shipped, XFAIL pins
+  on the broken shapes. Issue stays `ready`, `blocked_by: [4405]`; claim
+  opus-5162 RELEASED (not completed) on the ledger.
+  - **#4405 is actively claimed** by `ttraenkler/senior-dev` on
+    `impl-4405-receiver-spec` since 2026-08-14 (`origin/issue-assignments`,
+    record 4405.json). This AMENDS the "#4405 plan-first, ready next" note
+    above: #4405 is OFF this lane's dispatch list; the #5162 fix routes there.
+  - Bonus finding pinned in `tests/issue-5162-ctor-own-prototype-method.test.ts`:
+    `this.twice.call(this, x)` inside a ctor throws in BOTH lanes (gc via a
+    null receiver in `__extern_method_call`) — an independent hole, not yet
+    filed as its own issue.
+- **#5160 (PR #5181, draft)** — implementation + full evidence in the PR body
+  (132-cell sweep, 12 expected gc-lane moves, standalone 66/66 identical,
+  non-vacuity 15/48 red on base, gates green incl. LOC_GATE_BASE, #5155
+  grant restated). CI green on head f0806d64. The agent is finishing its
+  base-tree equivalence run for the name-set diff; RELEASE once it reports
+  clean (update branch — it is BEHIND — then un-draft, auto-merge). After
+  merge: `claim-issue.mjs --complete 5160 ttraenkler/opus-5160`.
+- **#5161 agent still running** (boundary-throw measurement per config, then
+  fix). Claim opus-5161 held. Same release protocol when its draft PR lands.
+- **#3481 Symbol sub-families dispatch still pending** — deferred twice on
+  the load gate (box at ~8 while the #5160 base shards run). A check-in is
+  armed at 22:55Z (`trig_01JYrcPXGySXAfNZpJh21Rnu`) to dispatch when load
+  clears, sweep #5181/#5161 to merged, and reconcile claims.
+- Handover PR #5180 merged 21:56Z (this file + diary entry).
