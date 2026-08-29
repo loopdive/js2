@@ -1,11 +1,10 @@
 {
   "id": "3526",
   "assignee": "ttraenkler/codex",
-  "requested_by": "noreply@anthropic.com",
-  "status": "released",
-  "branch": "codex/3526-a1-async-capability-catalog",
-  "claimed_at": "2026-08-28T13:01:10Z",
-  "updated_at": "2026-08-28T22:03:05Z",
-  "write_id": "24310-3vw19q37",
-  "released_at": "2026-08-28T22:03:05Z"
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/3526-f1-s1-number-boundary",
+  "claimed_at": "2026-08-29T23:10:13Z",
+  "updated_at": "2026-08-29T23:10:13Z",
+  "write_id": "72638-92c5d2j2"
 }
