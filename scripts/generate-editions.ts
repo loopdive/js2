@@ -642,7 +642,7 @@ export interface ClassifiedTest {
 }
 
 /**
- * (#5201) Per-edition breakdown of the tests that score ONE landing-page row.
+ * Per-edition breakdown of the tests that score ONE landing-page row.
  *
  * A row's SECTION is hand-authored per feature ("Comma operator" sits under
  * ES3 / Core because the operator is ES3), while its NUMBER is computed from

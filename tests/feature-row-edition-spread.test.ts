@@ -1,5 +1,5 @@
-// #5201 — a landing-page feature row discloses which editions its tests
-// actually belong to.
+// A landing-page feature row discloses which editions its tests actually
+// belong to.
 //
 // The row's SECTION is hand-authored per feature: "Comma operator" sits under
 // ES3 / Core because the operator is ES3. The row's NUMBER comes from the
@@ -21,7 +21,7 @@ import { patchFeatureExamples, type ClassifiedTest, type StatusKey } from "../sc
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "js2-5201-"));
+  dir = mkdtempSync(join(tmpdir(), "js2-edition-spread-"));
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -69,7 +69,7 @@ function readRow(path: string) {
   return JSON.parse(readFileSync(path, "utf8")).features[0];
 }
 
-describe("#5201 per-row edition spread", () => {
+describe("per-row edition spread", () => {
   it("reports the editions of the tests that actually score the row", () => {
     const src = join(dir, "feature-examples.json");
     writeCatalog(src);
