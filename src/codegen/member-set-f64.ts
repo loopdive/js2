@@ -51,6 +51,7 @@ import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 
 /** Flag gate. Default ON; `=0` ⇒ nothing below runs ⇒ byte-identical output. */
 export function setMemberF64Enabled(): boolean {
@@ -256,30 +257,8 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
       // Structurally canonicalized shapes share one heap type, so `ref.test`
       // alone can select the wrong logical shape — verify the `$shape` stamp
       // and keep dispatching on a mismatch, exactly as the generic arm does.
-      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
-        return [
-          { op: "local.get", index: 2 }, // __any
-          { op: "ref.test", typeIdx: cand.structTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
-              { op: "i32.const", value: cand.shapeId },
-              { op: "i32.eq" },
-            ],
-            else: [{ op: "i32.const", value: 0 }],
-          },
-          { op: "if", blockType: { kind: "empty" }, then: direct, else: next },
-        ];
-      }
-      return [
-        { op: "local.get", index: 2 }, // __any
-        { op: "ref.test", typeIdx: cand.structTypeIdx },
-        { op: "if", blockType: { kind: "empty" }, then: direct, else: next },
-      ];
+      // (#4645) single-`next` arm — see `buildShapeGuardedArm`.
+      return buildShapeGuardedArm(2 /* __any */, cand.structTypeIdx, cand, { kind: "empty" }, direct, next);
     };
 
     dispFn.locals = [{ name: "__any", type: { kind: "anyref" } }];

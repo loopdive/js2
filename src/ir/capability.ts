@@ -112,7 +112,24 @@ const BINARY_OP_CAPABILITY: ReadonlyMap<ts.SyntaxKind, IrOpCapability> = new Map
   // semantic `math.pow` intrinsic. The selector owns the bounded shape and
   // provider gates; non-exact forms remain pre-claim Unsupported.
   [ts.SyntaxKind.AsteriskAsteriskToken, "claim"],
-  [ts.SyntaxKind.InKeyword, "defer"], // needs property/prototype-chain probe
+  // #5164 S1 — the comma operator is `evaluate left, discard, evaluate right`
+  // (§13.16.1), which is exactly `lowerDiscardedExpression(left)` followed by
+  // `lowerExpr(right)` — no new producer. It is claim-PARTIAL, not claim,
+  // because the selector inherits #4459's discard purity line: a MUTATING left
+  // operand (`(a = 1, b)`, `(i++, j)`) still needs the statement-arm assignment
+  // bookkeeping in value position and stays legacy-owned.
+  [ts.SyntaxKind.CommaToken, "claim-partial"],
+  // #5164 S3 — `in` owns ONE bounded lane: a receiver the resolver certifies
+  // as the non-fast DYNAMIC externref carrier, probed at runtime through the
+  // dual-mode `__extern_has` (host import / standalone object-runtime native)
+  // that legacy's own `in` calls, so the prototype-chain answer is literally
+  // the same helper's. Every static-fold route legacy owns — checker property
+  // folds, #3920 presence bits, the #4222/#4491 overlay+hole index routes,
+  // #4765 escaped receivers, #2617 Proxy slot overrides, and the `#x in o`
+  // private brand — has no IR producer and keeps the function on the legacy
+  // path (rejected pre-claim, never claimed-then-demoted). That residual is
+  // this issue's deferred S4.
+  [ts.SyntaxKind.InKeyword, "claim-partial"],
   [ts.SyntaxKind.InstanceOfKeyword, "defer"], // needs class-shape / brand check
 ]);
 

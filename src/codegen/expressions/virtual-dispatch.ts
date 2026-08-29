@@ -20,6 +20,143 @@ import { resolveWasmType } from "../index.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 
 /**
+ * (#5178) How an arm's own result type reaches a cascade widened to `externref`.
+ *
+ * `extern.convert_any` is the whole conversion for anything on the internal
+ * (`any`) side of the GC type hierarchy — a struct ref, `eqref`, `anyref`.
+ * Values that are already external need nothing. Everything else (`funcref`,
+ * `i32`/`f64`/`v128`, …) is NOT an `anyref` subtype, so no widening exists that
+ * does not box, and the caller must bail to the static path instead.
+ */
+function armWideningKind(t: ValType): "convert" | "none" | "unrepresentable" {
+  switch (t.kind) {
+    case "ref":
+    case "ref_null":
+    case "eqref":
+    case "anyref":
+      return "convert";
+    case "externref":
+    case "ref_extern":
+      return "none";
+    default:
+      return "unrepresentable";
+  }
+}
+
+/**
+ * (#5178) Pick one block type for a tag cascade whose arms may not agree.
+ *
+ * Overrides do NOT have to share a Wasm RESULT type — the exact mirror of the
+ * arity divergence #4644 fixed one signature field over. The cascade used to be
+ * typed from the FIRST candidate alone while each arm calls its own body, so a
+ * subclass whose method returns a differently-shaped object literal pushed the
+ * wrong struct into a block declared for another one. Measured on
+ * `@js-temporal/polyfill`: `estimateIsoDate` has SEVEN implementations across
+ * the `HelperBase` hierarchy returning FIVE distinct structs, which V8 rejects
+ * as `type error in fallthru[0] (expected (ref null 109), got (ref null 142))`
+ * — on a module `compile()` reports clean.
+ *
+ * Unification, in the only two directions that are sound here:
+ *   * all arms already agree             → keep that type (the common case);
+ *   * all arms return GC/`any`-side refs → widen to `externref` and
+ *     `extern.convert_any` each arm's value. That is the compiler's own
+ *     universal object representation, and the consumer of a heterogeneous
+ *     dispatch coerces to it anyway.
+ *
+ * Anything else — mixed void/value, mixed numeric-and-ref, `funcref` — has no
+ * representation every arm can produce without boxing, and boxing would have to
+ * emit a `call` INSIDE an arm array, exactly the late-import index-shift hazard
+ * the padding comment in the caller rules out. Those return `undefined`, i.e.
+ * "decline, use the static path", which replaces an invalid module rather than
+ * a working one.
+ *
+ * @param proposed the caller's first-candidate/TS-signature guess
+ * @param candRets each arm's own Wasm result, `undefined` for a void arm
+ * @returns the unified block type, or `undefined` to decline
+ */
+function unifyCascadeResultType(
+  proposed: ValType | typeof VOID_RESULT,
+  candRets: readonly (ValType | undefined)[],
+): { resultType: ValType | typeof VOID_RESULT; widenArms: boolean } | undefined {
+  const voidArms = candRets.filter((r) => r === undefined).length;
+  // An `empty` block obliges every arm to leave the stack untouched; one
+  // value-returning arm among void ones (or the reverse) is unvalidatable.
+  if (proposed === VOID_RESULT) {
+    return voidArms === candRets.length ? { resultType: VOID_RESULT, widenArms: false } : undefined;
+  }
+  if (voidArms !== 0) return undefined;
+  const rets = candRets as readonly ValType[];
+  const matchesProposed = (t: ValType): boolean =>
+    t.kind === proposed.kind && (t as { typeIdx?: number }).typeIdx === (proposed as { typeIdx?: number }).typeIdx;
+  if (rets.every(matchesProposed)) return { resultType: proposed, widenArms: false };
+  if (!rets.every((t) => armWideningKind(t) !== "unrepresentable")) return undefined;
+  return { resultType: { kind: "externref" }, widenArms: true };
+}
+
+/** Everything one cascade arm needs from the enclosing emission. */
+interface DispatchArmEnv {
+  readonly recvLocal: number;
+  readonly candParamTypes: ReadonlyMap<number, ValType[]>;
+  readonly candFinalIdx: ReadonlyMap<number, number>;
+  readonly argLocals: readonly { idx: number; type: ValType }[];
+  readonly padLocals: ReadonlyMap<string, number>;
+  readonly padKey: (t: ValType) => string;
+  readonly widenArmsToExternref: boolean;
+}
+
+/**
+ * Build the call body for one candidate: `ref.cast` the receiver to this
+ * candidate's struct type (so the function-type signature matches), push
+ * exactly its declared operands, call it, and bring its result up to the
+ * cascade's block type.
+ *
+ * Returns `[]` when the arm cannot be built — the caller must treat that as a
+ * decline, NOT as an empty arm (#5178): an empty `then` under a block type that
+ * declares a value leaves the cascade one operand short.
+ */
+function buildDispatchArmCall(
+  ctx: CodegenContext,
+  cand: { className: string; funcIdx: number; classTag: number },
+  env: DispatchArmEnv,
+): Instr[] {
+  const candParams = env.candParamTypes.get(cand.funcIdx);
+  if (!candParams || candParams.length === 0) return [];
+  const selfType = candParams[0]!;
+  if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return [];
+  const body: Instr[] = [{ op: "local.get", index: env.recvLocal }];
+  // ref.cast_null preserves nullability if the receiver might be null;
+  // ref.cast (non-null) traps on null. Use ref.cast_null since the receiver
+  // could be null at the static type level.
+  body.push({ op: "ref.cast_null", typeIdx: (selfType as { typeIdx: number }).typeIdx });
+  // (#4644) Exactly `candParams.length - 1` operands, no more and no fewer:
+  // reuse the shared temps for the arguments this arm declares, pad the rest
+  // with this arm's own default values, and drop temps the arm cannot receive
+  // (a narrower override — the extra operand would be a stack leak just as
+  // surely as a missing one is a shortfall).
+  for (let i = 0; i < candParams.length - 1; i++) {
+    const shared = env.argLocals[i];
+    if (shared !== undefined) {
+      body.push({ op: "local.get", index: shared.idx });
+      continue;
+    }
+    const padIdx = env.padLocals.get(env.padKey(candParams[i + 1]!));
+    if (padIdx === undefined) return [];
+    body.push({ op: "local.get", index: padIdx });
+  }
+  const finalIdx = env.candFinalIdx.get(cand.funcIdx) ?? cand.funcIdx;
+  body.push({ op: "call", funcIdx: finalIdx });
+  // (#5178) Bring this arm's own result up to a widened cascade's block type.
+  // `extern.convert_any` is a pure representation change with no import behind
+  // it, so it is safe to emit inside an arm array — boxing would not be.
+  if (env.widenArmsToExternref) {
+    const ret = getWasmFuncReturnType(ctx, finalIdx);
+    if (ret === undefined) return [];
+    if (armWideningKind(ret) === "convert") body.push({ op: "extern.convert_any" });
+  }
+  return body;
+}
+
+/**
  * (#1299) Emit a tag-based virtual method dispatch for a base-typed
  * receiver where multiple subclasses provide overriding implementations.
  * Mirrors the `instanceof` codegen: load the receiver's `__tag` field
@@ -98,6 +235,10 @@ export function emitVirtualMethodDispatchByTag(
   //     identical to hoisting it — and it is the only way one temp list can
   //     serve arms of different arity.
   const candParamTypes = new Map<number, ValType[]>();
+  // (#5178) The index we will ACTUALLY `call`, resolved once. Both the
+  // parameter list and the RESULT type have to be read off this index — see
+  // the return-type unification below.
+  const candFinalIdx = new Map<number, number>();
   let widestParamTypes = firstParamTypes;
   for (const cand of candidates) {
     const finalIdx = ctx.funcMap.get(`${cand.className}_${propAccess.name.text}`) ?? cand.funcIdx;
@@ -111,6 +252,7 @@ export function emitVirtualMethodDispatchByTag(
       return undefined;
     }
     candParamTypes.set(cand.funcIdx, params);
+    candFinalIdx.set(cand.funcIdx, finalIdx);
     if (params.length > widestParamTypes.length) widestParamTypes = params;
   }
 
@@ -157,19 +299,32 @@ export function emitVirtualMethodDispatchByTag(
   }
 
   // Determine return type from the first candidate's signature.
+  const firstFinalIdx = candFinalIdx.get(firstCand.funcIdx)!;
   const sig = ctx.checker.getResolvedSignature(expr);
   let resultType: ValType | typeof VOID_RESULT = VOID_RESULT;
   if (sig) {
     const retType = ctx.checker.getReturnTypeOfSignature(sig);
     const fullName0 = `${firstCand.className}_${propAccess.name.text}`;
     if (!isEffectivelyVoidReturn(ctx, retType, fullName0)) {
-      const wasmRet = getWasmFuncReturnType(ctx, firstCand.funcIdx);
+      const wasmRet = getWasmFuncReturnType(ctx, firstFinalIdx);
       resultType = wasmRet ?? resolveWasmType(ctx, retType);
     }
   }
-  if (resultType !== VOID_RESULT && wasmFuncReturnsVoid(ctx, firstCand.funcIdx)) {
+  if (resultType !== VOID_RESULT && wasmFuncReturnsVoid(ctx, firstFinalIdx)) {
     resultType = VOID_RESULT;
   }
+
+  // (#5178) The cascade's block type has to describe EVERY arm, not the first.
+  const unified = unifyCascadeResultType(
+    resultType,
+    candidates.map((cand) => getWasmFuncReturnType(ctx, candFinalIdx.get(cand.funcIdx)!)),
+  );
+  if (unified === undefined) {
+    rollbackSpeculative(ctx, fctx, snap);
+    return undefined;
+  }
+  resultType = unified.resultType;
+  const widenArmsToExternref = unified.widenArms;
 
   const resultIsRef = resultType !== VOID_RESULT && (resultType.kind === "ref" || resultType.kind === "ref_null");
 
@@ -191,41 +346,16 @@ export function emitVirtualMethodDispatchByTag(
       ? { kind: "empty" }
       : { kind: "val", type: resultIsRef ? { ...(resultType as ValType) } : (resultType as ValType) };
 
-  // Build the call body for one candidate. We need to ref.cast the
-  // receiver to the candidate's struct type before calling, so the
-  // function-type signature matches.
-  function callBody(cand: { className: string; funcIdx: number; classTag: number }): Instr[] {
-    const candParams = candParamTypes.get(cand.funcIdx);
-    if (!candParams || candParams.length === 0) return [];
-    const selfType = candParams[0]!;
-    if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return [];
-    const selfTypeIdx = (selfType as { typeIdx: number }).typeIdx;
-    const body: Instr[] = [];
-    body.push({ op: "local.get", index: recvLocal });
-    // ref.cast_null preserves nullability if the receiver might be null;
-    // ref.cast (non-null) traps on null. Use ref.cast_null since the
-    // receiver could be null at the static type level.
-    body.push({ op: "ref.cast_null", typeIdx: selfTypeIdx });
-    // (#4644) Exactly `candParams.length - 1` operands, no more and no fewer:
-    // reuse the shared temps for the arguments this arm declares, pad the rest
-    // with this arm's own default values, and drop temps the arm cannot
-    // receive (a narrower override — the extra operand would be a stack leak
-    // just as surely as a missing one is a shortfall).
-    const candArgCount = candParams.length - 1;
-    for (let i = 0; i < candArgCount; i++) {
-      const shared = argLocals[i];
-      if (shared !== undefined) {
-        body.push({ op: "local.get", index: shared.idx });
-        continue;
-      }
-      const padIdx = padLocals.get(padKey(candParams[i + 1]!));
-      if (padIdx === undefined) return [];
-      body.push({ op: "local.get", index: padIdx });
-    }
-    const finalIdx = ctx.funcMap.get(`${cand.className}_${propAccess.name.text}`) ?? cand.funcIdx;
-    body.push({ op: "call", funcIdx: finalIdx });
-    return body;
-  }
+  const callBody = (cand: { className: string; funcIdx: number; classTag: number }): Instr[] =>
+    buildDispatchArmCall(ctx, cand, {
+      recvLocal,
+      candParamTypes,
+      candFinalIdx,
+      argLocals,
+      padLocals,
+      padKey,
+      widenArmsToExternref,
+    });
 
   // Load `__tag` through the RECEIVER's own struct type, not the base's.
   //
@@ -294,6 +424,14 @@ export function emitVirtualMethodDispatchByTag(
   let elseInstrs: Instr[] = [{ op: "unreachable" }];
   for (let i = candidates.length - 1; i >= 0; i--) {
     const cand = candidates[i]!;
+    // (#5178) An arm that could not be built is EMPTY, not absent: dropping it
+    // into a `then` whose block type declares a value leaves the cascade one
+    // operand short. Bail transactionally instead of emitting that.
+    const hit = callBody(cand);
+    if (hit.length === 0) {
+      rollbackSpeculative(ctx, fctx, snap);
+      return undefined;
+    }
     const branch: Instr[] = [
       { op: "local.get", index: recvLocal },
       { op: "struct.get", typeIdx: tagStructIdx, fieldIdx: 0 },
@@ -302,7 +440,7 @@ export function emitVirtualMethodDispatchByTag(
       {
         op: "if",
         blockType: freshBlockType(),
-        then: callBody(cand),
+        then: hit,
         else: elseInstrs,
       },
     ];

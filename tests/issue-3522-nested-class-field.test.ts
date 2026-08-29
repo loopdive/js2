@@ -324,17 +324,16 @@ describe("#3522 nested class initialized-field ownership", () => {
 });
 
 describe("#3522 nested class initialized-field negative boundaries", () => {
-  it("keeps a class whose field initializer CALLS a local function direct", async () => {
-    // THE residual of this slice. The field's support unit is attributed to
-    // `run` while the constructor terminal that runs it is attributed to `Box`,
-    // so the call is planned under two owners. Without the call-edge gate this
-    // is a hard `selection-preparation-mismatch` compile failure, not a
-    // demotion — so the boundary must stay verified, not assumed.
+  it("keeps a class whose field initializer calls a MEMBER expression direct", async () => {
+    // The residual of this slice was every call edge. #3522 F4 admitted exactly
+    // one family — a bare call to a unique non-reassigned same-source top-level
+    // function (proved in `issue-3522-nested-class-field-call-admission`) — and
+    // nothing wider. A member call has no such source-unit target, so no proof
+    // can be minted and the whole owner stays direct.
     const result = await compile(
       `
-      function seed(): number { return 40; }
       export function run(): number {
-        class Box { p: number = seed(); get(): number { return this.p + 2; } }
+        class Box { p: number = Math.floor(40.5); get(): number { return this.p + 2; } }
         return new Box().get();
       }
       `,
@@ -469,9 +468,8 @@ describe("#3522 nested class initialized-field negative boundaries", () => {
       process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Box_new";
       const result = await compile(
         `
-        function seed(): number { return 40; }
         export function run(): number {
-          class Box { p: number = seed(); get(): number { return this.p + 2; } }
+          class Box { p: number = Math.floor(40.5); get(): number { return this.p + 2; } }
           return new Box().get();
         }
         `,
