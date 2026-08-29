@@ -568,14 +568,24 @@ lines:
 
 ```js
 class C extends Array {}
+C == null;             // spec: false. js2wasm: TRUE
 C.zzz === undefined;   // spec: true.  js2wasm: throws
 ```
 
-Reading an **absent** property off the constructor object of a class that
-extends a **builtin** throws instead of yielding `undefined`. `class C {}`,
+**A class extending a builtin evaluates to `null` as a value.** The property
+access throws only because the receiver it loaded is null. `class C {}`,
 `class C extends B {}` (user base), `function C(){}` and `const C = {}` are all
-correct; `Array`, `Error` and `Map` bases all throw. Filed with the full
-receiver table and two adjacent symptoms as
+correct; `Array`, `Error` and `Map` bases are all null. It stays hidden because
+`typeof C`, `C.name` and `new C()` are served by static arms that never
+materialise the constructor object.
+
+Located to one line: `src/codegen/class-bodies.ts` (~L1188) skips registering
+the class-object singleton when `ctx.classBuiltinParentMap.has(className)`
+(#1366a), because `emitLazyClassObjectGet`
+(`src/codegen/expressions/extern.ts:362`) builds that object as a `struct.new`
+of the `$ClassName` WasmGC struct, which an externref-backed subclass does not
+have. So the guard is not gratuitous and the fix is not deleting it — the lane
+needs a different carrier. Filed with the full receiver table as
 [#5191](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5191-builtin-derived-ctor-property-miss-throws),
 recorded in `depends_on` above.
 
