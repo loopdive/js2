@@ -89,3 +89,28 @@ regression got in and STAYED in through three consecutive red groups.
 Found during the #5173/#5209 park post-mortem (see that issue's §7 for the
 full evidence chain). The regression itself is owned separately (dev lane on
 the stack-balance family + #5180); do not fold that fix in here.
+
+## Additional instances (2026-08-29 morning)
+
+- **#5220** merged out of a failed group (its `Test262 Sharded` group run
+  33238916982 concluded `failure` at 06:57; the PR merged anyway).
+- **#5223** merged at ~10:21 out of a failed group (group run 33245241857,
+  `failure` at 09:38) **while carrying the auto-park `hold` label** — the
+  same hold-does-not-gate shape as #5216's instance.
+
+## Process rules from the #5229/#5237 collision post-mortem (2026-08-29)
+
+1. **The window to edit a green PR closes the moment `auto-enqueue` picks it
+   up** — about one workflow-startup after the last required check goes
+   green. A frontmatter edit that might collide with another open PR has to
+   come out *before* the PR goes clean; after enqueue, GH006 blocks the
+   branch until ejection.
+2. **Queue membership is not observable from refs.** A
+   `gh-readonly-queue/main/pr-N-…` ref marks only the entry *currently
+   building*; queued-but-waiting entries have no ref and are push-blocked
+   identically. The reliable membership signals are the GH006 rejection
+   itself and the queue API — never infer "not queued" from a missing build
+   ref.
+3. **`enable_pr_auto_merge`-style API calls are silent no-ops on a PR that is
+   already `CLEAN`** in this merge-queue repo — verify a queue entry exists
+   (sweep log or queue API) instead of trusting the call's success message.
