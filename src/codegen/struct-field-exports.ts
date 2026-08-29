@@ -20,6 +20,7 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (#3520 C34) structural ownership
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import { walkChildren } from "./walk-instructions.js";
 import { profileCount } from "../compile-profile.js";
 
@@ -1275,36 +1276,17 @@ function buildNestedIfElse(
       boxSymbolIdx,
       sentinelArms,
     );
-    const ifInstr: Instr = {
-      op: "if",
-      blockType: { kind: "val", type: blockRetType },
-      then: extractBranch,
-      else: current,
-    };
-
-    current =
-      entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined
-        ? [
-            { op: "local.get", index: anyLocal },
-            { op: "ref.test", typeIdx: entry.typeIdx },
-            {
-              // Compute one safe, complete predicate. This keeps the cast
-              // behind ref.test and gives the continuation a single parent;
-              // the former nested-if form attached `current` to both else arms.
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [
-                { op: "local.get", index: anyLocal },
-                { op: "ref.cast", typeIdx: entry.typeIdx },
-                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-                { op: "i32.const", value: entry.shapeId },
-                { op: "i32.eq" },
-              ],
-              else: [{ op: "i32.const", value: 0 }],
-            },
-            ifInstr,
-          ]
-        : [{ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx: entry.typeIdx }, ifInstr];
+    // (#4645) single-`current` arm — see `buildShapeGuardedArm`. The nested
+    // form this replaced referenced `current` twice per stamped entry, so a
+    // k-arm chain cost 2^k walk steps and emitted 2^k copies of its own tail.
+    current = buildShapeGuardedArm(
+      anyLocal,
+      entry.typeIdx,
+      entry,
+      { kind: "val", type: blockRetType },
+      extractBranch,
+      current,
+    );
   }
 
   body.push(...current);
