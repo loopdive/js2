@@ -158,7 +158,7 @@ const SECTIONS = [
       [
         "`BinaryExpression`",
         "mixed",
-        'Arithmetic / comparison / `&& \\|\\|` / bitwise lowered. CORRECTED (measured 2026-08-15, #3583): `%` AND `instanceof` are both LOWERED — the old "`%`, `**`, `in`, `instanceof` throw" note was stale on two of four. Still rejecting: `**` and `in` at `expr-binary-op-**` / `expr-binary-op-in`, and the comma operator at `expr-binary-op-,`. `??` is gated by the union-typed operand (see `NullKeyword`), not by `??` itself.',
+        "Arithmetic / comparison / `&& \\|\\|` / bitwise lowered, as are `%` and `instanceof` (measured 2026-08-15, #3583). CORRECTED AGAIN (measured 2026-08-28/29, #5164): `**` is NOT rejecting — #4787 landed its bounded exact-numeric gate and `math.pow` lowering, so the note above it was stale for a second time. The COMMA operator now claims in value position for a PURE left operand and in a `for` incrementor (#5164 S1/S2); a MUTATING value-position operand (`(a = 1, b)`) still rejects at `expr-binary-op-,`, needing the statement-arm assignment bookkeeping in value position. `in` claims ONLY the bounded dynamic lane — a non-fast dynamic externref receiver on a host-string carrier, probed through `__extern_has` (#5164 S3); every static-fold route (checker property folds, #3920 presence bits, the #4222/#4491 overlay+hole index routes, #4765 escaped receivers, #2617 Proxy slot overrides, the `#x in o` private brand) still rejects at `expr-binary-op-in`. `??` is gated by the union-typed operand (see `NullKeyword`), not by `??` itself.",
         "#2949",
       ],
       [
