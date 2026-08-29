@@ -350,26 +350,28 @@ describe("#4459 — mutating statements keep their dedicated arms", () => {
   // documented rather than asserted because SHAPE_DIAG is read once at module
   // load, which a vitest file cannot toggle after importing the selector.
   it.each([
-    [
-      "`o.x += 1;` (nontail-compound-or-binary-stmt)",
-      `class C { v = 0; }\nexport function test(): number { const c = new C(); c.v += 1; return c.v; }`,
-    ],
-    [
-      "`a[i] += 1;` (nontail-compound-or-binary-stmt)",
-      `export function test(): number { const a = [1, 2]; a[0] += 1; return a[0]; }`,
-    ],
-    [
-      "chained `a = b = 1;` (nontail-assign-nonprop-lhs)",
-      `export function test(): number { let a = 0; let b = 0; a = b = 1; return a; }`,
-    ],
-    [
-      "`o.x++;` (nontail-incdec-stmt)",
-      `class C { v = 0; }\nexport function test(): number { const c = new C(); c.v++; return c.v; }`,
-    ],
     ["`new.target;` (nontail-exprstmt-other)", `export function test(x: number): number { new.target; return x; }`],
   ])("%s still rejects", async (_label, src) => {
     expect(claims(src, "test")).toBe(false);
     expect(await irEmitted(src, "test")).toBe(false);
+  });
+
+  // ADOPTED BY #5163 (2026-08-29). Four entries above pinned `o.x += 1;`,
+  // `a[i] += 1;`, `a = b = 1;` and `o.x++;` as rejecting — correct as of the
+  // #4459 slice, which adopted only the value-DISCARDING statement shapes and
+  // deliberately left every mutating one alone. #5163 added the dedicated
+  // selector + lowering arms for exactly these four, so the pins are inverted
+  // here rather than deleted: the boundary this file guards is still checked,
+  // just on the other side. Full ordering / equivalence coverage for the new
+  // lowering lives in tests/issue-5163-mutating-statements.test.ts.
+  it.each([
+    ["`o.x += 1;`", `class C { v = 0; }\nexport function test(): number { const c = new C(); c.v += 1; return c.v; }`],
+    ["`a[i] += 1;`", `export function test(): number { const a = [1, 2]; a[0] += 1; return a[0]; }`],
+    ["chained `a = b = 1;`", `export function test(): number { let a = 0; let b = 0; a = b = 1; return a; }`],
+    ["`o.x++;`", `class C { v = 0; }\nexport function test(): number { const c = new C(); c.v++; return c.v; }`],
+  ])("%s now claims and emits (adopted by #5163)", async (_label, src) => {
+    expect(claims(src, "test")).toBe(true);
+    expect(await irEmitted(src, "test")).toBe(true);
   });
 });
 
