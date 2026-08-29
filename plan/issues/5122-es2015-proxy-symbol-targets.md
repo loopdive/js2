@@ -4,7 +4,7 @@ title: "ES2015 standalone Proxy rejects Symbol target and handler"
 status: in-progress
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-30
 priority: high
 horizon: s
 feasibility: medium
@@ -14,8 +14,8 @@ area: codegen
 es_edition: ES2015
 language_feature: proxy-constructor-validation
 goal: standalone-mode
-assignee: "ttraenkler/codex/5122-es2015-proxy-symbol-targets"
-branch: codex/5122-es2015-proxy-symbol-targets
+assignee: "ttraenkler/codex/5122-proxy-spread-regression-main"
+branch: codex/5122-proxy-spread-regression-main
 pr: 5138
 related: [5131]
 files:
@@ -261,15 +261,53 @@ external remote-head verification.
   files was changed by this fix, and no host import is emitted by standalone
   controls.
 
+## Current-main regression repair (2026-08-30)
+
+Upstream PR 5138 merged its initial implementation at published head
+`772dd0a24ffd30cff0a2cc8995632416b28e3c22`. The later independent review found
+that its Proxy-specific dynamic-spread loop exposed the permissive internal
+iterator bridge as ECMAScript spread. That is a landed correctness regression,
+so the bounded fail-closed repair is a separate follow-up fix rather than a
+continuation of the already-merged PR.
+
+The shared upstream reference was force-refreshed from `loopdive/js2` on
+2026-08-30 to `4881206ab3001505fcfca875589aff8daf375ff9`. A Git patch-equivalence
+audit (`git cherry -v upstream/main HEAD`) identified
+`d37893746de821ec9363d5fcdea31aa038040b4f` as the sole reviewed repair not
+already represented on main. Replaying that commit onto a fresh branch from
+the exact upstream head was conflict-free and produced synchronized checkpoint
+`0055e7cf6866e54cc1e3a74cf699eb65c5748364`. The replayed commit now carries
+the repository-required `Model: Codex GPT-5.6 Luna Max` attribution in addition
+to the Thomas author identity and real Codex co-author trailer.
+
+The repair removes the permissive `__iterator`/`__iterator_next` route from
+Proxy ArgumentListEvaluation. Host-mode dynamic and nested spreads use the
+canonical strict materializer; standalone reports a sticky compile error for
+those still-unsupported shapes before emitting a partial body. Ordinary and
+statically flattenable array-literal spreads retain complete source-order
+evaluation, Symbol validation, trap suppression, and zero-import native
+behavior.
+
+Focused validation on the synchronized checkpoint used the pinned QuickJS
+artifact and at most two workers: `vitest run
+tests/issue-5122-es2015-proxy-symbol-targets.test.ts --maxWorkers=2` passed
+**10/10**. That includes both exact Test262 rows in host and standalone modes,
+the ordinary/static ordering and sibling matrix in both modes, the canonical
+host dynamic/nested-spread controls, and the standalone fail-closed controls.
+TypeScript 5 and TypeScript 7 no-emit checks passed. Numeric-local parity passed
+**18/18**. Focused Biome and Prettier checks, LOC/function budgets,
+oracle/coercion ratchets, issue integrity, and the full commit-hook changed-root
+suite also passed. The remaining complete pre-push gate and final follow-up PR
+audit must pass before this issue can move to `done`.
+
 ## Handoff
 
-Work only in `/private/tmp/js2-es2015-proxy-symbol-targets-20260828` on branch
-`codex/5122-es2015-proxy-symbol-targets`. PR 5138 is draft, its current
-published head is `e75f7311aee6ebcec493737fcac5c0cd0de9b845`, and it is
-explicitly outside the merge queue. The uncommitted focused-test additions in
-this worktree are review evidence for the strict matrix; their cases have been
-preserved in markdown issue 5131. Remove those uncommitted strict-only additions
-with `apply_patch`, retain bounded fail-closed controls owned here, and implement
-the scope decision above. Do not publish a source checkpoint or change PR state
-until the focused current-main matrix and independent review pass. Do not create
-a GitHub issue; this markdown file remains the canonical tracker.
+Continue only in
+`/private/tmp/js2-es2015-proxy-spread-regression-20260830` on branch
+`codex/5122-proxy-spread-regression-main`. The current synchronized local head
+is `0055e7cf6866e54cc1e3a74cf699eb65c5748364`; the issue update remains
+uncommitted while the full gate runs. Open one new non-draft upstream fix PR
+from `ttraenkler/js2` only when the branch is fully validated and mergeable.
+If a gate exposes an actual blocker, publish that checkpoint as draft and state
+the blocker explicitly. Do not create a GitHub issue; this markdown file remains
+the canonical tracker.
