@@ -3360,15 +3360,34 @@ export function tryEmitConstructorViaTag(
     const arm: Instr[] = [];
     const savedBody = fctx.body;
     fctx.body = arm;
-    if (emitLazyClassObjectGet(ctx, fctx, className)) {
-      fctx.body.push({ op: "local.set", index: resLocal });
-    } else {
-      // No singleton emitted (shouldn't happen — classObjectGlobals has it):
-      // leave resLocal null. This clears the DETACHED `arm` buffer (fctx.body is
-      // `arm` here via the manual swap above), not a speculative-compile probe.
-      fctx.body.length = 0; // not-a-probe-rollback (#1919): detached arm buffer
+    // (#5169) The swap DETACHES the enclosing body — `ctx.currentFunc.body` IS
+    // `arm`, and this function is not in `ctx.mod.functions` yet — so nothing
+    // `fixupModuleGlobalIndices` walks can reach `savedBody`. Each arm interns
+    // string constants (`emitLazyClassObjectGet`'s CSV / class name / static
+    // names, and `emitLazyProtoGet`'s method CSV), and every intern inserts an
+    // IMPORTED global that slides the module-global range up by one. So the
+    // PREVIOUS arm, already spliced into `savedBody`, kept its pre-shift
+    // `global.set` on the class-object singleton — and one missed shift puts it
+    // below the next fixup's threshold, freezing it there while the range keeps
+    // moving (848 slots of drift on the @js-temporal/polyfill + jsbi bundle,
+    // landing on string-constant import #988: a module that compiles clean and
+    // fails `WebAssembly.compile`). Registering `savedBody` in `ctx.liveBodies`
+    // for the swap window is what `emitLazyClassObjectGet` already does for its
+    // own swaps.
+    ctx.liveBodies.add(savedBody);
+    try {
+      if (emitLazyClassObjectGet(ctx, fctx, className)) {
+        fctx.body.push({ op: "local.set", index: resLocal });
+      } else {
+        // No singleton emitted (shouldn't happen — classObjectGlobals has it):
+        // leave resLocal null. This clears the DETACHED `arm` buffer (fctx.body is
+        // `arm` here via the manual swap above), not a speculative-compile probe.
+        fctx.body.length = 0; // not-a-probe-rollback (#1919): detached arm buffer
+      }
+    } finally {
+      fctx.body = savedBody;
+      ctx.liveBodies.delete(savedBody);
     }
-    fctx.body = savedBody;
     if (arm.length === 0) continue;
     fctx.body.push({ op: "local.get", index: tagLocal });
     fctx.body.push({ op: "i32.const", value: classTag });

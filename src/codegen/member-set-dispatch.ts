@@ -47,6 +47,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import {
   ARGUMENTS_LENGTH_ABSENT_FIELD,
   ARGUMENTS_LENGTH_OVERRIDE_FIELD,
@@ -438,44 +439,15 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       // alone can therefore select the wrong logical shape and write another
       // field's slot. Mirror the exported __sset_* guards: verify the hidden
       // per-instance shape id and continue dispatching on a mismatch.
-      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
-        return [
-          { op: "local.get", index: 2 }, // __any
-          { op: "ref.test", typeIdx: cand.structTypeIdx },
-          {
-            // Keep the stamp read behind the successful ref.test: evaluating a
-            // cast eagerly and combining with i32.and would trap on a receiver
-            // outside this structural family. The result is the complete arm
-            // predicate, so the continuation occurs exactly once below.
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
-              { op: "i32.const", value: cand.shapeId },
-              { op: "i32.eq" },
-            ],
-            else: [{ op: "i32.const", value: 0 }],
-          },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: presenceAwareSetFieldInstrs,
-            else: next,
-          },
-        ];
-      }
-      return [
-        { op: "local.get", index: 2 }, // __any
-        { op: "ref.test", typeIdx: cand.structTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: presenceAwareSetFieldInstrs,
-          else: next,
-        },
-      ];
+      // (#4645) single-`next` arm — see `buildShapeGuardedArm`.
+      return buildShapeGuardedArm(
+        2, // __any
+        cand.structTypeIdx,
+        cand,
+        { kind: "empty" },
+        presenceAwareSetFieldInstrs,
+        next,
+      );
     };
 
     dispFn.locals =
