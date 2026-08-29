@@ -349,6 +349,7 @@ import {
   emitBoolToString,
   emitBorrowedStringReceiverToString,
   isStaticUndefinedArg,
+  tryThrowOnBigIntOrSymbolArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
@@ -5876,6 +5877,13 @@ export function compileFromCharCodeFamily(
     const savedBody = fctx.body;
     fctx.body = buf;
     try {
+      // (#5152) §22.1.2.2 step 2a / §22.1.2.1 step 2a apply ToNumber to every
+      // argument, and §7.1.4 ToNumber(Symbol) throws a TypeError. Without this
+      // a statically Symbol-typed arg silently coerced its internal id.
+      if (noJsHost(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
+        parts.push(buf);
+        continue;
+      }
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
       // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
       // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
