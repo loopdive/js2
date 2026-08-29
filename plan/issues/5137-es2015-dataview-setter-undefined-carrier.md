@@ -1,10 +1,11 @@
 ---
 id: 5137
 title: "ES2015 standalone DataView setter undefined result carrier"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-30
+completed: 2026-08-30
 priority: high
 horizon: s
 feasibility: easy
@@ -23,8 +24,9 @@ files:
   - tests/issue-5137-es2015-dataview-setter-undefined-carrier.test.ts
   - plan/issues/5137-es2015-dataview-setter-undefined-carrier.md
 # Both legacy producers live in established DataView dispatch functions. The
-# intended growth is limited to the lane-correct import and invariant comments;
-# no new dispatch path or coercion vocabulary is introduced.
+# implementation also closes the exposed integer-setter edge: ToIntN/ToUintN
+# must normalize ±Infinity to zero before the existing modular byte codec.
+# No new dispatch path or runner/fixture exemption is introduced.
 loc-budget-allow:
   - src/codegen/dataview-native.ts
   - src/codegen/expressions/call-receiver-method.ts
@@ -151,8 +153,9 @@ result that is unconditionally `undefined`.
 1. Replace both semantic setter-result producers—the expression-position arm
    in `call-receiver-method.ts` and the result in `ensureDvAccessorHelper`—with
    `canonicalUndefinedExternInstrs(ctx)`, updating the adjacent invariant
-   comments. Keep statement-position setters void. Do not alter byte codecs,
-   coercion order, error order, bounds checks, or getter boxing.
+   comments. Keep statement-position setters void. In the shared integer byte
+   codec, normalize ±Infinity to zero before the existing modular conversion;
+   preserve coercion order, error order, bounds checks, and getter boxing.
 2. Add a focused regression suite that runs all fourteen exact rows in host and
    standalone modes through the maintained runner. Add direct controls that
    force the runtime-receiver/helper path and prove the returned value is
@@ -182,24 +185,76 @@ result that is unconditionally `undefined`.
 - The setter still stores the expected value, and DataView getters, direct
   typed calls, coercion/error ordering, and sibling runtime helpers regress
   neither host nor standalone behavior.
-- The implementation remains bounded to the shared result producer, focused
-  tests, and this tracker. Excluded `setUint8`, BigInt, and Float16 blockers are
-  reported as collateral only and are not silently claimed.
+- The implementation remains bounded to the two shared result producers, the
+  required integer ToIntN/ToUintN Infinity normalization exposed by the exact
+  rows, focused tests, and this tracker. Excluded `setUint8`, BigInt, and
+  Float16 blockers are reported as collateral only and are not silently
+  claimed.
 - The final non-draft PR targets `loopdive/js2:main`, originates from
   `ttraenkler/js2`, follows the repository Description/CLA body template, and
   cites this markdown issue rather than a GitHub issue.
+
+## Implementation and handoff evidence (2026-08-30)
+
+The implementation was replayed on the freshly fetched `upstream/main`
+`4881206ab3001505fcfca875589aff8daf375ff9` with a normal fast-forward merge.
+The only merge conflict was the `dataview-native.ts` import block; it was
+resolved manually by retaining upstream's `funcSignatureOf` import and the
+implementation's `canonicalUndefinedExternInstrs` import. No upstream source
+change was discarded.
+
+The two semantic setter-result producers now use
+`canonicalUndefinedExternInstrs(ctx)`: the direct expression-position arm in
+`compileReceiverMethodCall` and the runtime/reflective
+`ensureDvAccessorHelper`. Statement-position setters remain `VOID_RESULT`.
+Once that correction exposed the next assertion in the exact standalone rows,
+the shared integer setter codec also received the spec-required
+ToIntegerOrInfinity normalization: ±Infinity maps to zero before the existing
+modular `i64.trunc_sat_f64_s`/wrap path, while NaN and finite values retain their
+established behavior. This is a real codec correction required by the owned
+rows, not a test or runner exception.
+
+The focused regression suite is
+`tests/issue-5137-es2015-dataview-setter-undefined-carrier.test.ts`. It pins
+both producer routes, direct typed and widened receivers, statement position,
+missing-value NaN/zero writes, value-conversion ordering, bounds ordering,
+reflective prototype dispatch, and the full exact fourteen-row corpus. The
+value-order control uses an object `valueOf` side effect so it distinguishes
+ToIndex-before-ToNumber without incorrectly treating JavaScript argument
+expression evaluation as deferred.
+
+Fresh bounded runs used `COMPILER_POOL_SIZE=2`, Vitest's one-file/no-file
+parallelism controls, and the pinned QuickJS artifact directory
+`/private/tmp/js2-4760-promise-then/.test262-cache/quickjs-artifact-2e2d7736713beeda`
+(`libquickjs.wasm` SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`):
+
+| run | exact scope | result |
+| --- | --- | --- |
+| host exact | fourteen owned rows | **14/14 pass**, 0 compile errors, 0 timeouts, 0 skips |
+| standalone exact | fourteen owned rows | **14/14 pass**, 0 compile errors, 0 timeouts, 0 skips |
+| focused full file | 7 controls + 14 host rows + 14 standalone rows + standalone repeat | **36/36 pass** in 118.73s |
+
+The focused standalone controls verified an empty Wasm import manifest. The
+exact tests reached their bodies and passed; no timeout, filter, fixture,
+oracle, or skip workaround is involved. TypeScript 5 and TypeScript 7
+typechecks, targeted Biome lint, targeted Prettier check, and `git diff
+--check` are also clean at this checkpoint. The final commit SHA and complete
+pre-push evidence will be appended after the documentation and graph updates.
+
+The adjacent regression controls for #3173, #3183, and #2872 ran with the same
+two-worker bound: **66/67 pass**. The sole failure is the pre-existing
+`#2872.test.ts` dynamic non-typed-array callee control (`expected 7, received
+NaN`); it does not execute the DataView setter producers or touch this change.
 
 ## Handoff
 
 Worktree: `/private/tmp/js2-es2015-dataview-setter-undefined-20260828`.
 Branch: `codex/5137-es2015-dataview-setter-undefined`.
-Draft upstream PR: <https://github.com/loopdive/js2/pull/5152>.
-
-The plan checkpoint is `c808092cb828e9b2abef4ef6af27d95e1d822ee1`.
-It was pushed without force after the full pre-push hook passed. The PR is
-intentionally draft because this checkpoint contains the plan and baseline,
-not the implementation.
-
-The implementation commit, exact post-fix A/B, quality evidence, upstream PR
-URL/head, and final queue state will be appended here as the work progresses.
+The plan-only upstream PR #5152 is merged in `upstream/main`; it is not the
+implementation PR. The implementation branch is ready for root to open as a
+new non-draft PR targeting `loopdive/js2:main`, and no PR was opened by this
+worker. The plan checkpoint remains `c808092cb828e9b2abef4ef6af27d95e1d822ee1`;
+the final implementation commit, push head, and pre-push result will be
+recorded here before handoff.
 No GitHub issue was created.
