@@ -2160,23 +2160,30 @@ export function tryCompileErrorCtorCallWithoutNew(
  * The ambient-global and class checks are important: a user binding named
  * `WeakSet` must retain ordinary call semantics, just like the Error and Date
  * guards above.
+ *
+ * (#5151) The same clause governs the other three keyed collections
+ * (§24.1.1.1 / §24.2.1.1 / §24.3.1.1 step 1), which were never added here — so
+ * `Map()`, `Set()` and `WeakMap()` each returned an object instead of throwing.
+ * They are table-driven off the one set below rather than three copies.
  */
-export function tryCompileWeakSetCallWithoutNew(
+const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
+
+export function tryCompileCollectionCtorCallWithoutNew(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (expr.questionDotToken) return undefined;
   const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || callee.text !== "WeakSet") return undefined;
-  if (ctx.classSet.has("WeakSet")) return undefined;
+  if (!ts.isIdentifier(callee) || !CALL_WITHOUT_NEW_COLLECTION_CTORS.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
   if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
 
   for (const arg of expr.arguments ?? []) {
     const argResult = compileExpression(ctx, fctx, arg);
     if (argResult) fctx.body.push({ op: "drop" });
   }
-  emitThrowTypeError(ctx, fctx, "Constructor WeakSet requires 'new'");
+  emitThrowTypeError(ctx, fctx, `Constructor ${callee.text} requires 'new'`);
   return { kind: "externref" };
 }
 

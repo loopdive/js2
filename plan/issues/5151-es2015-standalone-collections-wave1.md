@@ -1,7 +1,7 @@
 ---
 id: 5151
 title: "ES2015 standalone: collections conformance wave 1"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -28,6 +28,10 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/property-access.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/proto-index-store.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/calls.ts::compileCallExpression
 ---
 
 # #5151 — ES2015 standalone: collections conformance wave 1
@@ -290,3 +294,58 @@ cross-cutting rows here.
   limitation cited in Step H.
 - #2162 / #1103 (done) — the native `$Map` runtime this wave completes;
   #3171 — collection brand tags + `size` accessor glue.
+
+## Results
+
+**25 of the 76 target rows now pass (0 before).** Measured with
+`npx tsx .tmp/run-standalone.mts --list .tmp/es2015/wp-collections-current-fails.txt`
+on this branch; the 76-fail before-count was re-measured on this worktree's HEAD
+with the same command (the plan's day-old baseline still held). The 40-row
+`wp-collections-passing-spotcheck.txt` stayed 40/40.
+
+Note on the environment: four rows (`prototype-of-*`, `proto-from-ctor-realm`)
+first reported "quickjs provider is not built" rather than their real failure.
+That was a missing `.test262-cache` in the fresh worktree, not a code state —
+the before-count above was taken with the cache linked in.
+
+### Landed
+
+| Cluster | Rows fixed | Change |
+| ------- | ---------- | ------ |
+| C — ctor/prototype reflection | 11 | Map/Set/WeakMap/WeakSet added to `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES` (own property on the realm object); all four added to the `Object.getPrototypeOf(<Ctor>) === Function.prototype` arm (was WeakMap-only); `getPrototypeOf(<Ctor>.prototype) === Object.prototype` arm widened from `Function.prototype` to the four collection prototypes, which all inherit directly from %Object.prototype%. |
+| E — call without `new` | 3 | `tryCompileWeakSetCallWithoutNew` made table-driven over all four ctors (it was WeakSet-only). |
+| A — ctor iterable protocol, partial | 11 | (1) `new Map(undefined)`/`new Map(null)`/`new Set(null)` are spec-empty — the nullish branch the WeakMap arm already had. (2) `Get(coll, "set"/"add")` + not-callable TypeError before the iterable is touched, for all four ctors, including the throwing-getter row (the companion `[[Get]]` runs the user accessor, so `Test262Error` keeps its identity). (3) Map/WeakMap/WeakSet literal seeding now routes through the user-patched adder with the real `«k, v»` / `«v»` arguments and the collection as `this`, mirroring the Set arm. |
+
+The **root cause behind (2) and (3)** was outside the constructors:
+`__protoidx_brand_off` (`proto-index-store.ts`) classified a `$Map` carrier as
+`Set` and nothing else, so `Map.prototype.set = …` and the two weak twins were
+invisible to every receiver-aware prototype consult — the Map receiver answered
+`Object`, whose companion has no `set`. All four `COLLECTION_KIND` values now
+map to their own brand offset. Nothing outside the collections uses that arm.
+
+### Not done — follow-ups
+
+- **Cluster B (live `keys/values/entries` iterators, 13 rows) — attempted and
+  reverted.** A live `$__IterRec` carrier of kind `ITER_KIND_MAPSET` was built
+  and it works (`iterator.next().value/.done` read correctly under direct
+  comparisons), plus a `__map_iter_step` wrapper that packs the `entries`
+  `[k, v]` pair. It flipped **zero** test262 rows because of a SEPARATE blocker:
+  in a module that drives a native iterator, `assert.sameValue(result.done, …)`
+  throws `TypeError: called value is not a function` whenever the argument is a
+  property read on the iterator result. Hoisting the read into a variable first
+  (`var d = result.done; assert.sameValue(d, …)`) passes, so the value is
+  correct and the CALL is what breaks. The same failure reproduces on unmodified
+  HEAD with an ARRAY iterator (`arr[Symbol.iterator]().next()`) in a
+  Map-containing module, so it is pre-existing and belongs to #5147's surface,
+  not to the collections. Three candidate late-import-shift sites were patched
+  speculatively and all produced a byte-identical module, so the shift theory is
+  disproved — the next step is to find which arm actually emits that call.
+  Repro files: `.tmp/es2015/probes5151b/t3.js` (fails) vs `t6.js` (passes).
+- **Cluster A residue (27 rows)** — the general iterator drive
+  (`iterator-*-failure`, `iterator-items-are-not-object*`,
+  `iterable-calls-set` with a non-literal iterable) still needs
+  `emitNativeCollectionCtorIterableDrive` per Step A2.
+- **Clusters D, F, G, H (9 rows)** — untouched.
+- **Symbol keys** (`iterable-with-symbol-*`, 2 rows) — the adder now fires but
+  the key arrives as its internal numeric id, so Step G's
+  `coerceMapKeyToAnyref` symbol arm is still the blocker.

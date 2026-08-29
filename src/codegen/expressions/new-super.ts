@@ -74,7 +74,12 @@ import {
   resolveComputedKeyExpression,
 } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
-import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
+import {
+  MAX_NATIVE_CONSTRUCT_ARITY,
+  reserveNativeConstructDriver,
+  reserveTypedNativeConstructDriver,
+} from "../native-construct.js"; // (#3981 / #1058)
+import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -108,7 +113,7 @@ import {
 } from "../statements/nested-declarations.js";
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "../nested-function-name-scope.js"; // (#4456/#2071)
 import { compileStringLiteral } from "../string-ops.js";
-import { coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
+import { canStructurallyProjectRef, coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
 import { compileSpreadCallArgs, emitLazyClassObjectGet, emitRegisterDynamicClassParent } from "./extern.js";
@@ -124,7 +129,8 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { localGlobalIdx } from "../registry/imports.js";
-import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { holeToUndefinedInstrs } from "../array-holes.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { SUPER_HOME_OBJECT_CAPTURE_NAME } from "../closures.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
@@ -149,6 +155,10 @@ import {
 } from "../fnctor-constructor-identity.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { observeApprovedIrFnctor } from "../program-abi-fnctor-producer.js";
+import {
+  emitClassExpressionStaticInitialization,
+  emitClassExpressionStaticsBeforeValue,
+} from "../class-expression-static-init.js";
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -471,6 +481,88 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
     if (!ts.isFunctionDeclaration(sigDecl) && !ts.isFunctionExpression(sigDecl)) return false;
   }
   return true;
+}
+
+/**
+ * (#1058) Does `new <id>(...)` target a late-assigned constructor VALUE whose
+ * binding is declared only by a construct signature?
+ *
+ * TypeScript's parser keeps constructors in namespace-local slots such as
+ * `var TokenConstructor: new (...) => Token;`, assigns the concrete class
+ * during parser initialization, and constructs through the slot from factory
+ * closures. The type of the `new` expression names the RESULT (`Token`), not
+ * the runtime constructor value, so static class-name dispatch cannot own this
+ * shape. Route it through the existing value-based class/closure dispatcher.
+ *
+ * Keep the gate deliberately narrow: an uninitialized, explicitly typed local
+ * variable declaration; construct signatures present, call signatures absent;
+ * and no known class/fnctor/extern-class binding. Initialized aliases and
+ * callable function values retain their established static/fnctor paths.
+ */
+function resolvesToLateAssignedConstructSignatureValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  if (!ts.isIdentifier(calleeExpr)) return false;
+  if (
+    ctx.classSet.has(calleeExpr.text) ||
+    ctx.externClasses.has(calleeExpr.text) ||
+    ctx.funcConstructorMap.has(calleeExpr.text)
+  ) {
+    return false;
+  }
+  if (ctx.oracle.isUnresolvableIdentifier(calleeExpr)) return false;
+  if (resolvesToNonConstructableValue(ctx, calleeExpr)) return false;
+
+  const declaration = ctx.checker.getSymbolAtLocation(calleeExpr)?.valueDeclaration;
+  if (
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== undefined ||
+    declaration.type === undefined ||
+    declaration.getSourceFile().isDeclarationFile
+  ) {
+    return false;
+  }
+
+  const type = ctx.checker.getTypeAtLocation(calleeExpr);
+  return type.getCallSignatures().length === 0 && type.getConstructSignatures().length > 0;
+}
+
+/**
+ * A typed late-bound constructor allocates the construct signature's declared
+ * result before invoking the runtime function value. The concrete function may
+ * declare a wider explicit `this` type: TypeScript's SourceFile slot contains
+ * the ordinary `Node(this: Mutable<Node>, ...)` function. Wasm must therefore
+ * be able to pass the allocated SourceFile to code compiled against Node.
+ *
+ * Single-inheritance interfaces already receive nominal edges during
+ * declaration collection. Merged or multiply-inherited results stay flat, so
+ * install one exact-prefix edge to a real transitive base only for this ABI.
+ * Other bases retain the existing structural-projection behavior.
+ */
+function linkLateAssignedConstructResultAncestor(
+  ctx: CodegenContext,
+  resultType: ts.Type,
+  resultTypeIdx: number,
+): void {
+  if (!(resultType.flags & ts.TypeFlags.Object)) return;
+  const objectType = resultType as ts.InterfaceType;
+  if (!(objectType.objectFlags & ts.ObjectFlags.Interface)) return;
+
+  const candidateTypeIdxs: number[] = [];
+  const seen = new Set<ts.Type>();
+  const visit = (current: ts.Type): void => {
+    if (seen.has(current) || !(current.flags & ts.TypeFlags.Object)) return;
+    seen.add(current);
+    const currentObject = current as ts.InterfaceType;
+    if (!(currentObject.objectFlags & ts.ObjectFlags.Interface)) return;
+    for (const base of ctx.checker.getBaseTypes(currentObject) ?? []) {
+      const baseName = base.getSymbol()?.name;
+      const baseTypeIdx = baseName === undefined ? undefined : ctx.structMap.get(baseName);
+      if (baseTypeIdx !== undefined) candidateTypeIdxs.push(baseTypeIdx);
+      visit(base);
+    }
+  };
+  visit(resultType);
+  linkCompatibleDeclaredStructAncestor(ctx, resultTypeIdx, candidateTypeIdxs);
 }
 
 /**
@@ -2723,7 +2815,9 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     // dynamic parents lazy, so registering it here remains valid even when a
     // mirror was cached while initializing the singleton.
     if (!needsInScopeBody) emitRegisterDynamicClassParent(ctx, fctx, expr, syntheticName);
-    if (emitLazyClassObjectGet(ctx, fctx, syntheticName)) return { kind: "externref" };
+    if (emitLazyClassObjectGet(ctx, fctx, syntheticName)) {
+      return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, { kind: "externref" });
+    }
   }
 
   if (syntheticName) {
@@ -2735,7 +2829,7 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       // a NAMED class expression routinely lands here under its synthetic
       // collection name, but its display name is the SOURCE name.
       stampClassExprName(ctx, fctx, vt, expr.name?.text);
-      return vt;
+      return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, vt);
     }
   }
 
@@ -2748,14 +2842,14 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       if (funcIdx !== undefined) {
         const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
         stampClassExprName(ctx, fctx, vt, className);
-        return vt;
+        return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, vt);
       }
     }
   }
 
   // Fallback: produce externref null (class was not collected)
   fctx.body.push({ op: "ref.null.extern" });
-  return { kind: "externref" };
+  return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, { kind: "externref" });
 }
 
 /**
@@ -2856,7 +2950,8 @@ function tryCompileNativeConstructFromValue(
     !runtimeFunctionAlias &&
     !runtimeEvalCallableResult &&
     !proxyValue &&
-    !resolvesToConstructableFunctionValue(ctx, calleeExpr)
+    !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
+    !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
   )
     return undefined;
 
@@ -3007,6 +3102,21 @@ function emitDynamicNewFallback(
   calleeExpr: ts.Expression,
   ctorName: string,
 ): boolean {
+  // (#1058) A construct-signature-only binding exposes its declared RESULT
+  // type at the NewExpression. When that result is a structural interface,
+  // project a matched concrete class instance into that interface before
+  // boxing it; the caller's later externref→interface coercion can then retain
+  // the value instead of turning a nominal cast miss into null. Concrete class
+  // result types retain their identity-bearing class struct unchanged.
+  const lateAssignedResultType = resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
+    ? ctx.checker.getTypeAtLocation(expr)
+    : undefined;
+  const lateAssignedResultSymbolName = lateAssignedResultType?.getSymbol()?.name;
+  const lateAssignedResultWasmType =
+    lateAssignedResultType && (!lateAssignedResultSymbolName || !ctx.classSet.has(lateAssignedResultSymbolName))
+      ? resolveWasmType(ctx, lateAssignedResultType)
+      : undefined;
+
   // Candidate classes: those with a class-object descriptor singleton and a
   // WasmGC struct (externref-backed builtin subclasses are excluded — they have
   // no `$ClassName` struct and no `<Class>_new` returning a ref).
@@ -3028,14 +3138,6 @@ function emitDynamicNewFallback(
     if (ctorResult?.kind === "externref") continue;
     candidates.push(className);
   }
-  // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
-  // meaningful even with ZERO candidate classes: a class-free module (jest-util
-  // deepCyclicCopy) constructing a dynamic ctor value skips the tag dispatch
-  // entirely (the tag stays -1) and lands directly on the bridge. Computed
-  // up-front so the zero-candidate refusal below can consult it.
-  const useConstructClosureBase = usesHostConstructClosureBase(ctx, calleeExpr);
-  if (candidates.length === 0 && !useConstructClosureBase) return false;
-
   const rawArgs = expr.arguments ?? [];
 
   // (#2026 PR-3a) Spread arguments. A `SpreadElement` compiles to the array/
@@ -3063,6 +3165,27 @@ function emitDynamicNewFallback(
       useRuntimeArgv = true; // a non-literal spread is present — runtime argv
     }
   }
+
+  // (#1058) A late-bound ordinary function constructor with a typed `this`
+  // cannot use the host bridge: Reflect.construct creates a JS object, then the
+  // compiled body traps while casting it to the declared result struct. Reserve
+  // a finalize-time driver that allocates that struct first and invokes the
+  // runtime closure against the exact typed receiver. Compiled class descriptor
+  // values still take the tag arms below; this is only their no-match base.
+  let typedConstructDriver: ReturnType<typeof reserveTypedNativeConstructDriver>;
+  if (
+    !useRuntimeArgv &&
+    (lateAssignedResultWasmType?.kind === "ref" || lateAssignedResultWasmType?.kind === "ref_null")
+  ) {
+    linkLateAssignedConstructResultAncestor(ctx, lateAssignedResultType!, lateAssignedResultWasmType.typeIdx);
+    typedConstructDriver = reserveTypedNativeConstructDriver(ctx, args.length, lateAssignedResultWasmType.typeIdx);
+  }
+
+  // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
+  // meaningful even with ZERO candidate classes. A typed #1058 driver owns the
+  // same no-candidate shape when the declared construct result is a Wasm struct.
+  const useConstructClosureBase = typedConstructDriver === undefined && usesHostConstructClosureBase(ctx, calleeExpr);
+  if (candidates.length === 0 && !useConstructClosureBase && typedConstructDriver === undefined) return false;
 
   // (#53) The runtime-argv path needs the `$ObjVecArr` `(array (mut externref))`
   // type. It is RESERVED up-front for class-bearing sources (`reserveObjVecArrType`
@@ -3448,7 +3571,16 @@ function emitDynamicNewFallback(
     // a TypedArray constructor passed as `TA`) reached this fallback (#2026).
     // Read the ctor's real result type and only box when it is NOT externref.
     const ctorResult = getFuncResultType(ctx, ctorFuncIdx);
-    if (!ctorResult || ctorResult.kind !== "externref") {
+    let boxedResult = ctorResult;
+    if (
+      ctorResult &&
+      lateAssignedResultWasmType &&
+      canStructurallyProjectRef(ctx, ctorResult, lateAssignedResultWasmType)
+    ) {
+      coerceType(ctx, fctx, ctorResult, lateAssignedResultWasmType);
+      boxedResult = lateAssignedResultWasmType;
+    }
+    if (!boxedResult || boxedResult.kind !== "externref") {
       fctx.body.push({ op: "extern.convert_any" });
     }
     fctx.body = savedBody;
@@ -3467,7 +3599,18 @@ function emitDynamicNewFallback(
   const hostImportName = `__new_${ctorName}`;
   const hostFuncIdx = noJsHost(ctx) ? undefined : ctx.funcMap.get(hostImportName);
   let noMatchBase: Instr[];
-  if (useConstructClosureBase) {
+  if (typedConstructDriver !== undefined) {
+    const base: Instr[] = [
+      { op: "local.get", index: descLocal },
+      { op: "extern.convert_any" },
+      ...argLocals.map((index): Instr => ({ op: "local.get", index })),
+      {
+        op: "call",
+        funcIdx: ctx.funcMap.get(typedConstructDriver.name) ?? typedConstructDriver.funcIdx,
+      },
+    ];
+    noMatchBase = base;
+  } else if (useConstructClosureBase) {
     // (#3087) The runtime value isn't a compiled class (tag == -1) but is an
     // `any`-typed dynamic ctor — construct it via the host `__construct_closure`
     // bridge: build a JS argv from the pre-evaluated externref args, then call
@@ -3729,6 +3872,8 @@ function prepareNativeSetAdderDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
   collTmp: number,
+  // (#5151) `"add"` for Set/WeakSet, `"set"` for Map/WeakMap.
+  adderName: "add" | "set" = "add",
 ): NativeSetAdderDispatch | undefined {
   // Reading a builtin prototype as a value (for example the Test262
   // `Object.getPrototypeOf(s)` assertion) arms the companion store and seeds
@@ -3749,10 +3894,10 @@ function prepareNativeSetAdderDispatch(
   const adderLocal = allocLocal(fctx, `__setctor_adder_${fctx.locals.length}`, { kind: "externref" });
   const argsLocal = allocLocal(fctx, `__setctor_add_args_${fctx.locals.length}`, { kind: "externref" });
 
-  addStringConstantGlobal(ctx, "add");
+  addStringConstantGlobal(ctx, adderName);
   fctx.body.push({ op: "local.get", index: collTmp });
   fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, "add"));
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, adderName));
   fctx.body.push({ op: "call", funcIdx: hasIdx });
   fctx.body.push({ op: "local.tee", index: modeLocal });
   fctx.body.push({
@@ -3761,7 +3906,7 @@ function prepareNativeSetAdderDispatch(
     then: [
       { op: "local.get", index: collTmp },
       { op: "extern.convert_any" },
-      ...stringConstantExternrefInstrs(ctx, "add"),
+      ...stringConstantExternrefInstrs(ctx, adderName),
       { op: "call", funcIdx: getIdx },
       { op: "local.set", index: adderLocal },
     ],
@@ -3777,15 +3922,94 @@ function prepareNativeSetAdderDispatch(
   };
 }
 
-/** Emit one `Call(adder, set, «value»)` through the native closure bridge. */
-function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: number, valueLocal: number): Instr[] {
+/**
+ * (#5151) §24.1.1.1 step 7 — before a keyed-collection constructor touches its
+ * iterable it must `Get(coll, <adder>)` and throw **TypeError** when the result
+ * is not callable. Two observable consequences the fast seeding paths skipped
+ * entirely, because they call `__map_set` / `__set_add` directly:
+ *
+ *   Map.prototype.set = null;  new Map([[1, 1]]);      // must throw TypeError
+ *   Object.defineProperty(Map.prototype, 'set',
+ *     { get() { throw new Test262Error(); } });
+ *   new Map([]);                                        // must throw Test262Error
+ *
+ * The second falls out for free: `__protoidx_get_r` runs the user accessor, so a
+ * throwing getter propagates its OWN error with the right identity.
+ *
+ * Deliberately narrow on the not-callable half — it throws only when the
+ * resolved adder is NULLISH, the shape every test262 row uses
+ * (`X.prototype.<adder> = null`). A general `!IsCallable` needs a positive
+ * callable classifier the runtime does not have, and a false positive here
+ * turns a working constructor into a hard throw (the same argument
+ * `resolved-callee-guard.ts` makes).
+ *
+ * Emits nothing — the fast path stays byte-identical — unless the module
+ * actually wrote a named property on a builtin prototype (`ctx.protoNamedDirty`),
+ * which is the pre-scan bit an observable override sets.
+ *
+ * `collTmp` holds the freshly built collection; the caller must have an iterable
+ * argument in hand (`new Map()` never performs this Get).
+ */
+function emitCollectionAdderGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  collTmp: number,
+  adderName: string,
+): void {
+  if (!ctx.protoNamedDirty) return;
+  const hasIdx = ctx.funcMap.get("__protoidx_has_r");
+  const getIdx = ctx.funcMap.get("__protoidx_get_r");
+  if (hasIdx === undefined || getIdx === undefined) return;
+
+  const adderLocal = allocLocal(fctx, `__colladder_${fctx.locals.length}`, { kind: "externref" });
+  addStringConstantGlobal(ctx, adderName);
+  fctx.body.push({ op: "local.get", index: collTmp });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, adderName));
+  fctx.body.push({ op: "call", funcIdx: hasIdx });
+  const thenArm: Instr[] = [
+    { op: "local.get", index: collTmp },
+    { op: "extern.convert_any" },
+    ...stringConstantExternrefInstrs(ctx, adderName),
+    { op: "call", funcIdx: getIdx },
+    { op: "local.set", index: adderLocal },
+  ];
+  const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+  if (nullishIdx !== undefined) {
+    thenArm.push({ op: "local.get", index: adderLocal }, { op: "call", funcIdx: nullishIdx });
+  } else {
+    thenArm.push({ op: "local.get", index: adderLocal });
+  }
+  const throwArm: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = throwArm;
+  ctx.liveBodies.add(throwArm);
+  try {
+    emitThrowTypeError(ctx, fctx, `${adderName} is not a function`);
+  } finally {
+    fctx.body = savedBody;
+  }
+  thenArm.push({ op: "ref.is_null" }, { op: "if", blockType: { kind: "empty" }, then: throwArm });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm });
+}
+
+/**
+ * Emit one `Call(adder, coll, «…values»)` through the native closure bridge.
+ *
+ * (#5151) Takes a LIST of value locals so the Map/WeakMap constructors can pass
+ * the `«k, v»` pair their `set` adder takes — §24.1.1.1 step 9k. One value is
+ * the Set/WeakSet `add` shape.
+ */
+function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: number, ...valueLocals: number[]): Instr[] {
   return [
     { op: "call", funcIdx: dispatch.objVecNewIdx },
     { op: "local.set", index: dispatch.argsLocal },
-    { op: "local.get", index: dispatch.argsLocal },
-    { op: "local.get", index: valueLocal },
-    { op: "extern.convert_any" },
-    { op: "call", funcIdx: dispatch.objVecPushIdx },
+    ...valueLocals.flatMap((valueLocal): Instr[] => [
+      { op: "local.get", index: dispatch.argsLocal },
+      { op: "local.get", index: valueLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: dispatch.objVecPushIdx },
+    ]),
     { op: "local.get", index: dispatch.adderLocal },
     { op: "local.get", index: collTmp },
     { op: "extern.convert_any" },
@@ -3860,19 +4084,55 @@ function tryCompileNativeWeakCollectionNew(
     value: isWeakMap ? COLLECTION_KIND.WEAKMAP : COLLECTION_KIND.WEAKSET,
   }); // (#3171) brand tag
   fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+  if (wcArgs.length === 1 && !nullishArg) {
+    // §24.3.1.1 / §24.4.1.1 step 7 — Get(coll, "set"/"add") + IsCallable, before
+    // the iterable is consumed. `new WeakMap()` never performs this Get.
+    const gTmp = allocLocal(fctx, `__wcctor_g_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+    fctx.body.push({ op: "local.tee", index: gTmp });
+    emitCollectionAdderGuard(ctx, fctx, gTmp, isWeakMap ? "set" : "add");
+  }
   if (seedableMapPairs && wcArrArg !== undefined && wcArrArg.elements.length > 0 && mapSetIdx !== undefined) {
     const mTmp = allocLocal(fctx, `__wmctor_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
     fctx.body.push({ op: "local.set", index: mTmp });
+    // (#5151) §24.3.1.1 step 8b seeds through `Call(adder, map, «k, v»)` — a
+    // user-patched `WeakMap.prototype.set` must observe every entry.
+    const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "set");
+    const keyLocal =
+      adderDispatch === undefined
+        ? undefined
+        : allocLocal(fctx, `__wmctor_k_${fctx.locals.length}`, { kind: "anyref" });
+    const valLocal =
+      adderDispatch === undefined
+        ? undefined
+        : allocLocal(fctx, `__wmctor_v_${fctx.locals.length}`, { kind: "anyref" });
     for (const el of wcArrArg.elements) {
       // every() above narrowed each element to a 2-element array literal.
       const pair = el as ts.ArrayLiteralExpression;
-      fctx.body.push({ op: "local.get", index: mTmp });
+      if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
       const kt = compileExpression(ctx, fctx, pair.elements[0]!);
       coerceMapKeyToAnyref(ctx, fctx, kt);
+      if (keyLocal !== undefined) fctx.body.push({ op: "local.set", index: keyLocal });
       const vt = compileExpression(ctx, fctx, pair.elements[1]!);
       coerceMapKeyToAnyref(ctx, fctx, vt);
-      fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
-      fctx.body.push({ op: "drop" });
+      if (adderDispatch !== undefined && keyLocal !== undefined && valLocal !== undefined) {
+        fctx.body.push({ op: "local.set", index: valLocal });
+        fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: emitNativeSetAdderCall(adderDispatch, mTmp, keyLocal, valLocal),
+          else: [
+            { op: "local.get", index: mTmp },
+            { op: "local.get", index: keyLocal },
+            { op: "local.get", index: valLocal },
+            { op: "call", funcIdx: mapSetIdx },
+            { op: "drop" },
+          ],
+        });
+      } else {
+        fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
+        fctx.body.push({ op: "drop" });
+      }
     }
     fctx.body.push({ op: "local.get", index: mTmp });
   } else if (
@@ -3883,21 +4143,45 @@ function tryCompileNativeWeakCollectionNew(
   ) {
     const mTmp = allocLocal(fctx, `__wsctor_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
     fctx.body.push({ op: "local.set", index: mTmp });
+    // (#5151) §24.4.1.1 step 8b — a user-patched `WeakSet.prototype.add` must
+    // observe every element, same shape as the Set literal arm.
+    const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "add");
+    const elemLocal =
+      adderDispatch === undefined
+        ? undefined
+        : allocLocal(fctx, `__wsctor_e_${fctx.locals.length}`, { kind: "anyref" });
     for (const el of wcArrArg.elements) {
       if (ts.isOmittedExpression(el)) continue; // hole → undefined element
-      fctx.body.push({ op: "local.get", index: mTmp });
+      if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
       const et = compileExpression(ctx, fctx, el);
       coerceMapKeyToAnyref(ctx, fctx, et);
-      fctx.body.push({ op: "call", funcIdx: weaksetAddIdx }); // returns ref $Map
-      fctx.body.push({ op: "drop" });
+      if (adderDispatch !== undefined && elemLocal !== undefined) {
+        fctx.body.push({ op: "local.set", index: elemLocal });
+        fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: emitNativeSetAdderCall(adderDispatch, mTmp, elemLocal),
+          else: [
+            { op: "local.get", index: mTmp },
+            { op: "local.get", index: elemLocal },
+            { op: "call", funcIdx: weaksetAddIdx },
+            { op: "drop" },
+          ],
+        });
+      } else {
+        fctx.body.push({ op: "call", funcIdx: weaksetAddIdx }); // returns ref $Map
+        fctx.body.push({ op: "drop" });
+      }
     }
     fctx.body.push({ op: "local.get", index: mTmp });
   } else if (wcNonLiteralArrArg !== undefined && weaksetAddIdx !== undefined) {
     const mTmp = allocLocal(fctx, `__wsctor_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
     fctx.body.push({ op: "local.set", index: mTmp });
+    const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "add");
     // On a non-vec / unsupported-element arg the helper leaves the empty
     // collection on the stack (graceful: empty WeakSet, never a host leak).
-    seedNativeSetFromArrayArg(ctx, fctx, wcNonLiteralArrArg, mTmp, weaksetAddIdx);
+    seedNativeSetFromArrayArg(ctx, fctx, wcNonLiteralArrArg, mTmp, weaksetAddIdx, adderDispatch);
   }
   return { kind: "ref", typeIdx: ctx.mapTypeIdx };
 }
@@ -3936,6 +4220,182 @@ function emitArrayGetForElem(arrTypeIdx: number, elemType: ValType): Instr {
   return { op, typeIdx: arrTypeIdx };
 }
 
+function soleTopLevelCollectionInitializer(arg: ts.Expression): ts.VariableDeclaration | undefined {
+  const newExpression = arg.parent;
+  if (
+    !ts.isNewExpression(newExpression) ||
+    newExpression.arguments?.length !== 1 ||
+    newExpression.arguments[0] !== arg
+  ) {
+    return undefined;
+  }
+
+  let initializer: ts.Expression = newExpression;
+  while (
+    (ts.isParenthesizedExpression(initializer.parent) ||
+      ts.isAsExpression(initializer.parent) ||
+      ts.isNonNullExpression(initializer.parent) ||
+      ts.isTypeAssertionExpression(initializer.parent) ||
+      ts.isSatisfiesExpression(initializer.parent)) &&
+    initializer.parent.expression === initializer
+  ) {
+    initializer = initializer.parent;
+  }
+  const declaration = initializer.parent;
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== initializer ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    declaration.parent.declarations.length !== 1 ||
+    !ts.isVariableStatement(declaration.parent.parent) ||
+    !ts.isSourceFile(declaration.parent.parent.parent)
+  ) {
+    return undefined;
+  }
+  return declaration;
+}
+
+/**
+ * Prove the narrow non-literal Set seed used by TypeScript's module tables:
+ *
+ *   const values = ["a", "b"];
+ *   const set = new Set(values);
+ *
+ * Requiring a primitive-only const literal in the immediately preceding
+ * top-level statement means the vec cannot have been aliased, mutated, or made
+ * sparse before the constructor snapshots it. This is intentionally much
+ * narrower than accepting every array-typed identifier: a raw backing-store
+ * walk must not bypass observable iterator/prototype/overlay behavior.
+ */
+function isImmediatelySeededPrimitiveArray(ctx: CodegenContext, arg: ts.Expression): boolean {
+  if (!ts.isIdentifier(arg)) return false;
+  const consumerDeclaration = soleTopLevelCollectionInitializer(arg);
+  if (!consumerDeclaration) return false;
+  const symbol = ctx.checker.getSymbolAtLocation(arg);
+  const declaration = symbol?.valueDeclaration;
+  if (
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    !declaration.initializer ||
+    !ts.isArrayLiteralExpression(declaration.initializer) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    declaration.parent.declarations.length !== 1 ||
+    !ts.isVariableStatement(declaration.parent.parent)
+  ) {
+    return false;
+  }
+
+  const elements = declaration.initializer.elements;
+  if (!elements.every((element) => ts.isStringLiteralLike(element) || ts.isNumericLiteral(element))) {
+    return false;
+  }
+
+  const sourceFile = arg.getSourceFile();
+  if (declaration.getSourceFile() !== sourceFile || declaration.parent.parent.parent !== sourceFile) return false;
+
+  const declarationIndex = sourceFile.statements.indexOf(declaration.parent.parent);
+  const consumerIndex = sourceFile.statements.indexOf(consumerDeclaration.parent.parent);
+  return declarationIndex >= 0 && consumerIndex === declarationIndex + 1;
+}
+
+/**
+ * Prove the pair-table form used by TypeScript's `libEntries` module data. The
+ * const array may be read through an inline `.map(...)` projection before the
+ * Map snapshots it, but every other intervening reference is rejected. Because
+ * the current vec (rather than the initializer syntax) is materialized, ordinary
+ * value-preserving reads do not duplicate initializer evaluation.
+ */
+function isReadOnlyProjectedPrimitivePairArray(ctx: CodegenContext, arg: ts.Expression): boolean {
+  if (!ts.isIdentifier(arg) || ctx.protoNamedDirty || ctx.protoIndexDirty) return false;
+  const consumerDeclaration = soleTopLevelCollectionInitializer(arg);
+  if (!consumerDeclaration) return false;
+  const symbol = ctx.checker.getSymbolAtLocation(arg);
+  const declaration = symbol?.valueDeclaration;
+  if (
+    !symbol ||
+    !declaration ||
+    !ts.isVariableDeclaration(declaration) ||
+    !declaration.initializer ||
+    !ts.isArrayLiteralExpression(declaration.initializer) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    declaration.parent.declarations.length !== 1 ||
+    !ts.isVariableStatement(declaration.parent.parent)
+  ) {
+    return false;
+  }
+
+  const primitivePair = (element: ts.Expression): boolean =>
+    ts.isArrayLiteralExpression(element) &&
+    element.elements.length === 2 &&
+    element.elements.every((field) => ts.isStringLiteralLike(field) || ts.isNumericLiteral(field));
+  if (!declaration.initializer.elements.every(primitivePair)) return false;
+
+  const sourceFile = arg.getSourceFile();
+  if (declaration.getSourceFile() !== sourceFile || declaration.parent.parent.parent !== sourceFile) return false;
+
+  const declarationIndex = sourceFile.statements.indexOf(declaration.parent.parent);
+  const consumerIndex = sourceFile.statements.indexOf(consumerDeclaration.parent.parent);
+  if (declarationIndex < 0 || consumerIndex <= declarationIndex) return false;
+
+  const safeProjectionReceiver = (identifier: ts.Identifier): boolean => {
+    const access = identifier.parent;
+    if (
+      !ts.isPropertyAccessExpression(access) ||
+      access.expression !== identifier ||
+      access.name.text !== "map" ||
+      !ts.isCallExpression(access.parent) ||
+      access.parent.expression !== access ||
+      access.parent.arguments.length !== 1
+    ) {
+      return false;
+    }
+    const callback = access.parent.arguments[0]!;
+    if (
+      !ts.isArrowFunction(callback) ||
+      callback.parameters.length !== 1 ||
+      !ts.isIdentifier(callback.parameters[0]!.name) ||
+      ts.isBlock(callback.body)
+    ) {
+      return false;
+    }
+    let body: ts.Expression = callback.body;
+    while (
+      ts.isParenthesizedExpression(body) ||
+      ts.isAsExpression(body) ||
+      ts.isNonNullExpression(body) ||
+      ts.isTypeAssertionExpression(body) ||
+      ts.isSatisfiesExpression(body)
+    ) {
+      body = body.expression;
+    }
+    const parameterName = callback.parameters[0]!.name;
+    return (
+      ts.isElementAccessExpression(body) &&
+      ts.isIdentifier(body.expression) &&
+      ctx.checker.getSymbolAtLocation(body.expression) === ctx.checker.getSymbolAtLocation(parameterName) &&
+      body.argumentExpression !== undefined &&
+      ts.isNumericLiteral(body.argumentExpression) &&
+      body.argumentExpression.text === "0"
+    );
+  };
+
+  let safe = true;
+  const inspect = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol && !safeProjectionReceiver(node)) {
+      safe = false;
+      return;
+    }
+    forEachChild(node, inspect);
+  };
+  for (let index = declarationIndex + 1; index < consumerIndex && safe; index++) {
+    inspect(sourceFile.statements[index]!);
+  }
+  return safe;
+}
+
 /**
  * Coerce a vec element (already on the stack, type `elemType`) to anyref for a
  * collection key/value, appending into `out`. Mirrors `coerceMapKeyToAnyref` but
@@ -3953,6 +4413,359 @@ function emitCoerceElemToAnyrefInto(ctx: CodegenContext, fctx: FunctionContext, 
     fctx.body = saved;
   }
   for (const instr of scratch) out.push(instr);
+}
+
+/**
+ * Resolve a direct call whose runtime result is the JS-host legacy generator
+ * carrier and whose instantiated yield type is a two-element tuple. This is a
+ * deliberately narrow start-time bridge for `new Map(exportedGen(...))`:
+ * native generator state structs must stay on the Wasm side, while an eager
+ * generator is a real JS iterator that the host iterator imports can drive
+ * before `WebAssembly.instantiate` has returned the instance.
+ */
+function legacyPairGeneratorYield(
+  ctx: CodegenContext,
+  arg: ts.Expression,
+): { tupleTypeIdx: number; fields: FieldDef[] } | undefined {
+  if (!ts.isCallExpression(arg) || !ts.isIdentifier(arg.expression)) return undefined;
+
+  let symbol = ctx.checker.getSymbolAtLocation(arg.expression);
+  if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+    symbol = ctx.checker.getAliasedSymbol(symbol);
+  }
+  const declaration = symbol?.declarations?.find(
+    (candidate): candidate is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(candidate) &&
+      candidate.body !== undefined &&
+      candidate.asteriskToken !== undefined &&
+      !ts.getModifiers(candidate)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword),
+  );
+  if (!declaration) return undefined;
+
+  // An exact declaration entry means this call returns a Wasm-native generator
+  // state, not the JS Generator object this helper is allowed to drive. The
+  // absence of one after declaration collection proves the legacy/eager lane.
+  for (const info of ctx.nativeGenerators.values()) {
+    if (info.decl === declaration) return undefined;
+  }
+
+  const signature = ctx.checker.getResolvedSignature(arg);
+  if (!signature) return undefined;
+  const returnType = ctx.checker.getReturnTypeOfSignature(signature);
+  const returnSymbol = returnType.getSymbol();
+  if (
+    !returnSymbol ||
+    (returnSymbol.name !== "Generator" && returnSymbol.name !== "Iterator" && returnSymbol.name !== "IterableIterator")
+  ) {
+    return undefined;
+  }
+  const yieldType = ctx.checker.getTypeArguments(returnType as ts.TypeReference)[0];
+  if (!yieldType) return undefined;
+  const checker = ctx.checker as unknown as { isTupleType?: (type: ts.Type) => boolean };
+  if (checker.isTupleType?.(yieldType) !== true) return undefined;
+
+  const tupleType = resolveWasmType(ctx, yieldType);
+  if (tupleType.kind !== "ref" && tupleType.kind !== "ref_null") return undefined;
+  const tupleDef = ctx.mod.types[tupleType.typeIdx];
+  const tupleStruct =
+    tupleDef?.kind === "struct"
+      ? tupleDef
+      : tupleDef?.kind === "sub" && tupleDef.type.kind === "struct"
+        ? tupleDef.type
+        : undefined;
+  if (
+    !tupleStruct ||
+    tupleStruct.fields.length < 2 ||
+    tupleStruct.fields[0]?.name !== "_0" ||
+    tupleStruct.fields[1]?.name !== "_1"
+  ) {
+    return undefined;
+  }
+  return { tupleTypeIdx: tupleType.typeIdx, fields: tupleStruct.fields };
+}
+
+/**
+ * Compile and drain a checker-proven eager pair generator into a real host
+ * `[[key, value], ...]` array. The runtime's general iterable conversion uses
+ * instance exports to reflect Wasm tuples, which are unavailable during the
+ * start function. Here the tuple type is known statically, so fields can be
+ * read and boxed directly before invoking the native Map constructor.
+ */
+function compileHostLegacyPairGeneratorArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+): { materialized: boolean; actual: ValType | null } | undefined {
+  const pair = legacyPairGeneratorYield(ctx, arg);
+  if (!pair) return undefined;
+
+  const actual = compileExpression(ctx, fctx, arg);
+  if (actual === null) return { materialized: false, actual };
+  if (actual.kind !== "externref") coerceType(ctx, fctx, actual, { kind: "externref" });
+
+  // Reserve every import before emitting the drain. Boxing field primitives is
+  // then index-stable while the detached loop body is assembled.
+  addUnionImports(ctx);
+  const iteratorIdx = ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+  const nextIdx = ensureLateImport(
+    ctx,
+    "__iterator_next",
+    [{ kind: "externref" }],
+    [{ kind: "i32" }, { kind: "externref" }],
+  );
+  const arrayNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  const arrayPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  if (iteratorIdx === undefined || nextIdx === undefined || arrayNewIdx === undefined || arrayPushIdx === undefined) {
+    return { materialized: false, actual: { kind: "externref" } };
+  }
+
+  const finalIteratorIdx = ctx.funcMap.get("__iterator") ?? iteratorIdx;
+  const finalNextIdx = ctx.funcMap.get("__iterator_next") ?? nextIdx;
+  const finalArrayNewIdx = ctx.funcMap.get("__js_array_new") ?? arrayNewIdx;
+  const finalArrayPushIdx = ctx.funcMap.get("__js_array_push") ?? arrayPushIdx;
+  const generatorLocal = allocLocal(fctx, `__host_ctor_gen_${fctx.locals.length}`, { kind: "externref" });
+  const iteratorLocal = allocLocal(fctx, `__host_ctor_gen_iter_${fctx.locals.length}`, { kind: "externref" });
+  const doneLocal = allocLocal(fctx, `__host_ctor_gen_done_${fctx.locals.length}`, { kind: "i32" });
+  const valueLocal = allocLocal(fctx, `__host_ctor_gen_value_${fctx.locals.length}`, { kind: "externref" });
+  const tupleLocal = allocLocal(fctx, `__host_ctor_gen_tuple_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: pair.tupleTypeIdx,
+  });
+  const outerLocal = allocLocal(fctx, `__host_ctor_gen_outer_${fctx.locals.length}`, { kind: "externref" });
+  const entryLocal = allocLocal(fctx, `__host_ctor_gen_entry_${fctx.locals.length}`, { kind: "externref" });
+
+  // The compiled call result is already on the stack.
+  fctx.body.push({ op: "local.set", index: generatorLocal });
+  fctx.body.push({ op: "local.get", index: generatorLocal });
+  fctx.body.push({ op: "call", funcIdx: finalIteratorIdx });
+  fctx.body.push({ op: "local.set", index: iteratorLocal });
+  fctx.body.push({ op: "call", funcIdx: finalArrayNewIdx });
+  fctx.body.push({ op: "local.set", index: outerLocal });
+
+  const loopBody: Instr[] = [
+    { op: "local.get", index: iteratorLocal },
+    { op: "call", funcIdx: finalNextIdx },
+    { op: "local.set", index: valueLocal },
+    { op: "local.set", index: doneLocal },
+    { op: "local.get", index: doneLocal },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: valueLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: pair.tupleTypeIdx },
+    { op: "local.set", index: tupleLocal },
+    { op: "call", funcIdx: finalArrayNewIdx },
+    { op: "local.set", index: entryLocal },
+  ];
+  for (let fieldIdx = 0; fieldIdx < 2; fieldIdx++) {
+    loopBody.push({ op: "local.get", index: entryLocal });
+    loopBody.push({ op: "local.get", index: tupleLocal });
+    loopBody.push({ op: "struct.get", typeIdx: pair.tupleTypeIdx, fieldIdx });
+    emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, pair.fields[fieldIdx]!.type);
+    loopBody.push({ op: "extern.convert_any" });
+    loopBody.push({ op: "call", funcIdx: finalArrayPushIdx });
+  }
+  loopBody.push({ op: "local.get", index: outerLocal });
+  loopBody.push({ op: "local.get", index: entryLocal });
+  loopBody.push({ op: "call", funcIdx: finalArrayPushIdx });
+  loopBody.push({ op: "br", depth: 0 });
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+  fctx.body.push({ op: "local.get", index: outerLocal });
+  return { materialized: true, actual: { kind: "externref" } };
+}
+
+/**
+ * Materialize a WasmGC vec as a real host iterable before invoking a native
+ * Map/Set-family constructor. During WebAssembly start the runtime cannot use
+ * exported `__vec_*` accessors yet because instantiation has not returned the
+ * instance, so handing the opaque vec to JS would make the native constructor
+ * reject it as non-iterable.
+ *
+ * The argument is compiled exactly once. A checker-resolved vec of tuple
+ * structs becomes a host `[[k, v], ...]` array for Map/WeakMap; a flat vec
+ * becomes a host `[value, ...]` array for Set/WeakSet. Returns the compiled
+ * value type when the value was not a supported vec so the caller can continue
+ * through the ordinary externref coercion path.
+ */
+function compileHostVecIterableArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  pairIterable: boolean,
+): { materialized: boolean; actual: ValType | null } {
+  const actual = compileExpression(ctx, fctx, arg);
+  if (actual === null || (actual.kind !== "ref" && actual.kind !== "ref_null")) {
+    return { materialized: false, actual };
+  }
+
+  const vecTypeIdx = actual.typeIdx;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  const arrDef = arrTypeIdx >= 0 ? ctx.mod.types[arrTypeIdx] : undefined;
+  if (!arrDef || arrDef.kind !== "array") return { materialized: false, actual };
+
+  const elemType = arrDef.element;
+  if (!pairIterable && ctx.usesArrayHoles && elemType.kind === "f64") {
+    // A sparse f64 vec uses a NaN payload as its private hole marker. Until the
+    // materializer can consult the per-index presence carrier, fail closed to
+    // the ordinary iterable path instead of boxing that marker as a real NaN.
+    return { materialized: false, actual };
+  }
+  let pairTypeIdx = -1;
+  let pairFields: FieldDef[] | undefined;
+  if (pairIterable) {
+    if (elemType.kind !== "ref" && elemType.kind !== "ref_null") {
+      return { materialized: false, actual };
+    }
+    pairTypeIdx = elemType.typeIdx;
+    const pairDef = ctx.mod.types[pairTypeIdx];
+    const pairStruct =
+      pairDef?.kind === "struct"
+        ? pairDef
+        : pairDef?.kind === "sub" && pairDef.type.kind === "struct"
+          ? pairDef.type
+          : undefined;
+    const isTuplePair =
+      pairStruct !== undefined &&
+      pairStruct.fields.length >= 2 &&
+      pairStruct.fields[0]?.name === "_0" &&
+      pairStruct.fields[1]?.name === "_1";
+    if (!isTuplePair) return { materialized: false, actual };
+    pairFields = pairStruct.fields;
+  }
+
+  let flatHoleMap: Instr[] = [];
+  if (!pairIterable && ctx.usesArrayHoles && elemType.kind === "externref") {
+    // A spread can carry sparse-array holes into an otherwise dense temporary.
+    // Set iteration observes those positions as `undefined`, never as the
+    // compiler's private `$Hole` sentinel. Reserve the undefined provider while
+    // `fctx.body` is still the real body so any late-import shift is patched in
+    // the right instruction buffer before the detached loop is assembled.
+    ensureGetUndefined(ctx);
+    flushLateImportShifts(ctx, fctx);
+    flatHoleMap = holeToUndefinedInstrs(ctx, fctx);
+  }
+
+  // Boxing primitive elements/fields must be reserved before the two array
+  // imports are finalized. This also keeps their indices stable while the loop
+  // body is assembled below.
+  addUnionImports(ctx);
+  ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+
+  const vecLocal = allocLocal(fctx, `__host_ctor_vec_${fctx.locals.length}`, actual);
+  const dataLocal = allocLocal(fctx, `__host_ctor_data_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: arrTypeIdx,
+  });
+  const idxLocal = allocLocal(fctx, `__host_ctor_i_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__host_ctor_len_${fctx.locals.length}`, { kind: "i32" });
+  const outerLocal = allocLocal(fctx, `__host_ctor_outer_${fctx.locals.length}`, { kind: "externref" });
+  const elemLocal = pairIterable
+    ? allocLocal(fctx, `__host_ctor_pair_value_${fctx.locals.length}`, elemType)
+    : undefined;
+  const pairLocal = pairIterable
+    ? allocLocal(fctx, `__host_ctor_pair_${fctx.locals.length}`, { kind: "externref" })
+    : undefined;
+
+  // Remove the compiled vec from the operand stack while retaining it for the
+  // counted walk. Nullable vecs preserve native constructor behavior: null is
+  // passed through as null rather than being dereferenced or changed to [].
+  fctx.body.push({ op: "local.set", index: vecLocal });
+
+  const emitMaterializedArray = (): Instr[] => {
+    const savedBody = fctx.body;
+    const body: Instr[] = [];
+    fctx.body = body;
+    try {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new")! });
+      fctx.body.push({ op: "local.set", index: outerLocal });
+
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      fctx.body.push({ op: "ref.as_non_null" });
+      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+      fctx.body.push({ op: "local.set", index: dataLocal });
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      fctx.body.push({ op: "ref.as_non_null" });
+      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+      fctx.body.push({ op: "local.set", index: lenLocal });
+      fctx.body.push({ op: "i32.const", value: 0 });
+      fctx.body.push({ op: "local.set", index: idxLocal });
+
+      const loopBody: Instr[] = [
+        { op: "local.get", index: idxLocal },
+        { op: "local.get", index: lenLocal },
+        { op: "i32.ge_s" },
+        { op: "br_if", depth: 1 },
+      ];
+
+      if (pairIterable && elemLocal !== undefined && pairLocal !== undefined && pairFields !== undefined) {
+        loopBody.push({ op: "local.get", index: dataLocal });
+        loopBody.push({ op: "local.get", index: idxLocal });
+        loopBody.push(emitArrayGetForElem(arrTypeIdx, elemType));
+        loopBody.push({ op: "local.set", index: elemLocal });
+        loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new")! });
+        loopBody.push({ op: "local.set", index: pairLocal });
+
+        for (let fieldIdx = 0; fieldIdx < 2; fieldIdx++) {
+          loopBody.push({ op: "local.get", index: pairLocal });
+          loopBody.push({ op: "local.get", index: elemLocal });
+          loopBody.push({ op: "ref.as_non_null" });
+          loopBody.push({ op: "struct.get", typeIdx: pairTypeIdx, fieldIdx });
+          emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, pairFields[fieldIdx]!.type);
+          loopBody.push({ op: "extern.convert_any" });
+          loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
+        }
+
+        loopBody.push({ op: "local.get", index: outerLocal });
+        loopBody.push({ op: "local.get", index: pairLocal });
+        loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
+      } else {
+        loopBody.push({ op: "local.get", index: outerLocal });
+        loopBody.push({ op: "local.get", index: dataLocal });
+        loopBody.push({ op: "local.get", index: idxLocal });
+        loopBody.push(emitArrayGetForElem(arrTypeIdx, elemType));
+        loopBody.push(...flatHoleMap);
+        emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, elemType);
+        loopBody.push({ op: "extern.convert_any" });
+        loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
+      }
+
+      loopBody.push({ op: "local.get", index: idxLocal });
+      loopBody.push({ op: "i32.const", value: 1 });
+      loopBody.push({ op: "i32.add" });
+      loopBody.push({ op: "local.set", index: idxLocal });
+      loopBody.push({ op: "br", depth: 0 });
+      fctx.body.push({
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+      });
+      fctx.body.push({ op: "local.get", index: outerLocal });
+    } finally {
+      fctx.body = savedBody;
+    }
+    return body;
+  };
+
+  const materializedBody = emitMaterializedArray();
+  if (actual.kind === "ref_null") {
+    fctx.body.push({ op: "local.get", index: vecLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "ref.null.extern" }],
+      else: materializedBody,
+    });
+  } else {
+    fctx.body.push(...materializedBody);
+  }
+  return { materialized: true, actual: { kind: "externref" } };
 }
 
 function isDefaultExpressionImport(ctx: CodegenContext, expression: ts.Expression): expression is ts.Identifier {
@@ -4142,11 +4955,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       arrArg.elements.every(
         (e) => ts.isArrayLiteralExpression(e) && e.elements.length === 2 && !e.elements.some(ts.isSpreadElement),
       );
+    // (#5151) §24.1.1.1 steps 5-6: `new Map(undefined)` / `new Map(null)` are
+    // spec-equivalent to `new Map()` — the iterable is never fetched. Without
+    // this branch the nullish argument matched none of the fast shapes and fell
+    // through to the eval-tier demotion, where it NULL-DEREFERENCED
+    // (`built-ins/Map/map-no-iterable.js`). The WeakMap arm already had it.
+    const nullishArg =
+      args.length === 1 &&
+      (args[0]!.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(args[0]!) && (args[0]! as ts.Identifier).text === "undefined"));
     // (#2162) Map from a NON-literal array-of-pairs variable is a follow-up: the
     // inner `[K,V]` pair lowers to a typed tuple *struct* (not an inner vec), so
     // its extraction differs from the Set element walk. The array-literal-of-pairs
     // form is handled below; a non-literal Map arg falls through to the empty map.
-    if (args.length === 0 || seedablePairs) {
+    if (args.length === 0 || nullishArg || seedablePairs) {
       addUnionImports(ctx);
       ensureMapHelpers(ctx);
       const mapNewIdx = ctx.mapHelpers.get("__map_new");
@@ -4154,22 +4976,62 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.MAP }); // (#3171) brand tag
         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+        if (seedablePairs && arrArg !== undefined) {
+          // §24.1.1.1 step 7 runs for ANY iterable argument, including `[]`.
+          const gTmp = allocLocal(fctx, `__mapctor_g_${fctx.locals.length}`, {
+            kind: "ref",
+            typeIdx: ctx.mapTypeIdx,
+          });
+          fctx.body.push({ op: "local.tee", index: gTmp });
+          emitCollectionAdderGuard(ctx, fctx, gTmp, "set");
+        }
         if (seedablePairs && arrArg !== undefined && arrArg.elements.length > 0 && mapSetIdx !== undefined) {
           const mTmp = allocLocal(fctx, `__mapctor_m_${fctx.locals.length}`, {
             kind: "ref",
             typeIdx: ctx.mapTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: mTmp });
+          // (#5151) §24.1.1.1 step 9k seeds through `Call(adder, map, «k, v»)`,
+          // so a user-patched `Map.prototype.set` must OBSERVE every entry (and
+          // see the map as `this`). Mirrors the Set arm: the direct `__map_set`
+          // fast path stays as the unpatched branch.
+          const adderDispatch = prepareNativeSetAdderDispatch(ctx, fctx, mTmp, "set");
+          const keyLocal =
+            adderDispatch === undefined
+              ? undefined
+              : allocLocal(fctx, `__mapctor_k_${fctx.locals.length}`, { kind: "anyref" });
+          const valLocal =
+            adderDispatch === undefined
+              ? undefined
+              : allocLocal(fctx, `__mapctor_v_${fctx.locals.length}`, { kind: "anyref" });
           for (const el of arrArg.elements) {
             // every() above narrowed each element to a 2-element array literal.
             const pair = el as ts.ArrayLiteralExpression;
-            fctx.body.push({ op: "local.get", index: mTmp });
+            if (adderDispatch === undefined) fctx.body.push({ op: "local.get", index: mTmp });
             const kt = compileExpression(ctx, fctx, pair.elements[0]!);
             coerceMapKeyToAnyref(ctx, fctx, kt);
+            if (keyLocal !== undefined) fctx.body.push({ op: "local.set", index: keyLocal });
             const vt = compileExpression(ctx, fctx, pair.elements[1]!);
             coerceMapKeyToAnyref(ctx, fctx, vt);
-            fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
-            fctx.body.push({ op: "drop" });
+            if (adderDispatch !== undefined && keyLocal !== undefined && valLocal !== undefined) {
+              fctx.body.push({ op: "local.set", index: valLocal });
+              fctx.body.push({ op: "local.get", index: adderDispatch.modeLocal });
+              fctx.body.push({
+                op: "if",
+                blockType: { kind: "empty" },
+                then: emitNativeSetAdderCall(adderDispatch, mTmp, keyLocal, valLocal),
+                else: [
+                  { op: "local.get", index: mTmp },
+                  { op: "local.get", index: keyLocal },
+                  { op: "local.get", index: valLocal },
+                  { op: "call", funcIdx: mapSetIdx },
+                  { op: "drop" },
+                ],
+              });
+            } else {
+              fctx.body.push({ op: "call", funcIdx: mapSetIdx }); // returns ref $Map
+              fctx.body.push({ op: "drop" });
+            }
           }
           fctx.body.push({ op: "local.get", index: mTmp });
         }
@@ -4191,9 +5053,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // (#2162) A single NON-literal argument whose static type is an array (a
     // variable, a spread that lowered to a vec, `[...set]`, a call result) is the
     // dominant non-literal iterable form — seed it via a runtime vec walk.
+    // (#5151) §24.2.1.1 steps 5-6 — same nullish-is-empty rule as Map above
+    // (`built-ins/Set/set-no-iterable.js`).
+    const nullishArg =
+      args.length === 1 &&
+      (args[0]!.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(args[0]!) && (args[0]! as ts.Identifier).text === "undefined"));
     const nonLiteralArrArg =
-      args.length === 1 && arrArg === undefined && isArrayTypedArg(ctx, args[0]!) ? args[0]! : undefined;
-    if (args.length === 0 || arrArg || nonLiteralArrArg) {
+      args.length === 1 && arrArg === undefined && !nullishArg && isArrayTypedArg(ctx, args[0]!) ? args[0]! : undefined;
+    if (args.length === 0 || nullishArg || arrArg || nonLiteralArrArg) {
       addUnionImports(ctx);
       ensureSetHelpers(ctx);
       const mapNewIdx = ctx.mapHelpers.get("__map_new");
@@ -4201,6 +5069,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.SET }); // (#3171) brand tag
         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+        if (arrArg !== undefined || nonLiteralArrArg !== undefined) {
+          // §24.2.1.1 step 7 — Get(set, "add") + IsCallable, before iteration.
+          const gTmp = allocLocal(fctx, `__setctor_g_${fctx.locals.length}`, {
+            kind: "ref",
+            typeIdx: ctx.mapTypeIdx,
+          });
+          fctx.body.push({ op: "local.tee", index: gTmp });
+          emitCollectionAdderGuard(ctx, fctx, gTmp, "add");
+        }
         if (arrArg && setAddIdx !== undefined && !arrArg.elements.some((e) => ts.isSpreadElement(e))) {
           const mTmp = allocLocal(fctx, `__setctor_m_${fctx.locals.length}`, {
             kind: "ref",
@@ -4331,6 +5208,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           reportError(ctx, expr, `Missing constructor for anonymous class`);
           return null;
         }
+
+        // ClassDefinitionEvaluation (including static fields/blocks) precedes
+        // ArgumentListEvaluation. This direct `new (class {})()` route bypasses
+        // compileClassExpression, so emit the expression-owned queue here.
+        emitClassExpressionStaticInitialization(ctx, fctx, unwrappedExpr);
 
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
         const args = expr.arguments ?? [];
@@ -4843,6 +5725,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         }
       }
     }
+  }
+
+  // (#1058) `var C: new (...) => Result; C = Concrete; new C(...)` is a
+  // constructor VALUE dispatch even when the checker gives the NewExpression
+  // the result symbol `Result`. The class-object dispatcher handles compiled
+  // class descriptors in both lanes; its host no-match base handles genuine
+  // JS constructors. In a host-free classless module it declines, leaving the
+  // native construct driver immediately below to own ordinary callable values.
+  if (
+    calleeIdent &&
+    resolvesToLateAssignedConstructSignatureValue(ctx, calleeIdent) &&
+    emitDynamicNewFallback(ctx, fctx, expr, calleeIdent, calleeIdent.text)
+  ) {
+    return { kind: "externref" };
   }
 
   // (#3981) Native construct fallback for standalone/WASI function values,
@@ -5591,7 +6487,44 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
         const expected = externInfo.constructorParams[i];
-        const actual = compileExpression(ctx, fctx, arg);
+        const legacyPairGenerator =
+          args.length === 1 && i === 0 && pairIterableCtor
+            ? compileHostLegacyPairGeneratorArgument(ctx, fctx, arg)
+            : undefined;
+        // This start-time bridge covers the dense pair vec produced by the
+        // compiler's direct Object.entries lowering, plus the deliberately
+        // narrow immediately-seeded primitive array form above. Walking an
+        // arbitrary vec backing store would bypass observable iterator,
+        // prototype, sparse-hole, and overlay behavior.
+        const directObjectEntries =
+          pairIterableCtor &&
+          !ctx.arrayIteratorMaybeOverridden &&
+          ts.isCallExpression(arg) &&
+          ts.isPropertyAccessExpression(arg.expression) &&
+          ts.isIdentifier(arg.expression.expression) &&
+          arg.expression.expression.text === "Object" &&
+          arg.expression.name.text === "entries";
+        const declaredPairIterable =
+          pairIterableCtor && !ctx.arrayIteratorMaybeOverridden && isReadOnlyProjectedPrimitivePairArray(ctx, arg);
+        const denseFlatIterable =
+          flatIterableCtor &&
+          !ctx.arrayIteratorMaybeOverridden &&
+          (isImmediatelySeededPrimitiveArray(ctx, arg) ||
+            (ts.isArrayLiteralExpression(arg) && !arg.elements.some(ts.isOmittedExpression)));
+        const vecIterable =
+          legacyPairGenerator === undefined &&
+          args.length === 1 &&
+          i === 0 &&
+          (directObjectEntries || declaredPairIterable || denseFlatIterable)
+            ? compileHostVecIterableArgument(ctx, fctx, arg, pairIterableCtor)
+            : undefined;
+        const actual = legacyPairGenerator
+          ? legacyPairGenerator.actual
+          : vecIterable
+            ? vecIterable.actual
+            : compileExpression(ctx, fctx, arg);
+        if (legacyPairGenerator?.materialized) continue;
+        if (vecIterable?.materialized) continue;
         if (actual === null) {
           if (expected) pushDefaultValue(fctx, expected, ctx);
           continue;

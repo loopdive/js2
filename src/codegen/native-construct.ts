@@ -62,7 +62,7 @@
  * Nothing here is reachable unless a standalone/WASI call site reserved a driver.
  * The JS-host lane never reserves one, so its output is byte-identical.
  */
-import type { Instr, ValType } from "../ir/types.js";
+import type { Instr, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -70,6 +70,59 @@ import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAN
 
 const EXTERNREF: ValType = { kind: "externref" };
 const DRIVER_PREFIX = "__native_construct_";
+const TYPED_DRIVER_PREFIX = "__native_typed_construct_";
+
+interface TypedNativeConstructDriver {
+  readonly name: string;
+  readonly arity: number;
+  readonly func: WasmFunction;
+}
+
+const typedDriversByContext = new WeakMap<CodegenContext, TypedNativeConstructDriver[]>();
+const typedDriverDedupByContext = new WeakMap<CodegenContext, WeakMap<TypeDef, Map<number, string>>>();
+
+function typedDrivers(ctx: CodegenContext): TypedNativeConstructDriver[] {
+  let drivers = typedDriversByContext.get(ctx);
+  if (!drivers) {
+    drivers = [];
+    typedDriversByContext.set(ctx, drivers);
+  }
+  return drivers;
+}
+
+function structFields(definition: TypeDef | undefined) {
+  if (definition?.kind === "struct") return definition.fields;
+  if (definition?.kind === "sub" && definition.type.kind === "struct") return definition.type.fields;
+  return undefined;
+}
+
+function defaultFieldInstrs(type: ValType): Instr[] {
+  switch (type.kind) {
+    case "f64":
+      return [{ op: "f64.const", value: 0 }];
+    case "f32":
+      return [{ op: "f32.const", value: 0 }];
+    case "i32":
+    case "i8":
+    case "i16":
+      return [{ op: "i32.const", value: 0 }];
+    case "i64":
+      return [{ op: "i64.const", value: 0n }];
+    case "externref":
+    case "ref_extern":
+      return [{ op: "ref.null.extern" }];
+    case "ref":
+    case "ref_null":
+      return [{ op: "ref.null", typeIdx: type.typeIdx }];
+    case "eqref":
+    case "anyref":
+      return [{ op: "ref.null.eq" }];
+    case "funcref":
+      return [{ op: "ref.null.func" }];
+    default:
+      return [{ op: "i32.const", value: 0 }];
+  }
+}
 
 /** Highest call-site arity a driver is minted for; above it the caller declines. */
 export const MAX_NATIVE_CONSTRUCT_ARITY = 8;
@@ -107,12 +160,80 @@ export function reserveNativeConstructDriver(ctx: CodegenContext, arity: number,
   return funcIdx;
 }
 
+/**
+ * Reserve a constructor-value driver whose fresh `this` has a checker-declared
+ * structural result type.
+ *
+ * TypeScript's parser stores constructors behind namespace-local bindings such
+ * as `var TokenConstructor: new (...) => Node`. The runtime value is an ordinary
+ * compiled function, but its body declares `this: Mutable<Node>` and therefore
+ * cannot run against the generic `$Object` (or a host-created JS object) used by
+ * the ordinary dynamic-construct bridges. This driver allocates `$Node` first,
+ * invokes the late-bound closure with that exact receiver, and returns either an
+ * explicit object result or the initialized receiver per OrdinaryConstruct.
+ *
+ * The TypeDef object is the deduplication identity. It survives type-index
+ * remapping, while the placeholder function's typed local is remapped by the
+ * normal module walkers and becomes the authoritative final type at fill time.
+ */
+export function reserveTypedNativeConstructDriver(
+  ctx: CodegenContext,
+  arity: number,
+  resultTypeIdx: number,
+): { name: string; funcIdx: number } | undefined {
+  // The typed path prepends the allocated receiver for a source-level explicit
+  // `this` pseudo-parameter, so it needs the N+1 method dispatcher.
+  if (arity < 0 || arity + 1 > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+  const definition = ctx.mod.types[resultTypeIdx];
+  if (!definition || !structFields(definition)) return undefined;
+
+  let dedup = typedDriverDedupByContext.get(ctx);
+  if (!dedup) {
+    dedup = new WeakMap();
+    typedDriverDedupByContext.set(ctx, dedup);
+  }
+  let byArity = dedup.get(definition);
+  if (!byArity) {
+    byArity = new Map();
+    dedup.set(definition, byArity);
+  }
+  const existingName = byArity.get(arity);
+  if (existingName) {
+    const existingIdx = ctx.funcMap.get(existingName);
+    if (existingIdx !== undefined) return { name: existingName, funcIdx: existingIdx };
+  }
+
+  const drivers = typedDrivers(ctx);
+  let ordinal = drivers.length;
+  let name = `${TYPED_DRIVER_PREFIX}${arity}_${ordinal}`;
+  while (ctx.funcMap.has(name)) name = `${TYPED_DRIVER_PREFIX}${arity}_${++ordinal}`;
+  const params = Array.from({ length: arity + 1 }, () => EXTERNREF);
+  const typeIdx = addFuncType(ctx, params, [EXTERNREF], `$${name}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  const func: WasmFunction = {
+    name,
+    typeIdx,
+    // The first local intentionally carries the requested result heap type.
+    // Fill reads it back after every type-index remap has completed.
+    locals: [{ name: "__typed_ctor_self", type: { kind: "ref", typeIdx: resultTypeIdx } }],
+    body: [{ op: "unreachable" }],
+    exported: false,
+  };
+  pushDefinedFunc(ctx, funcIdx, func);
+  ctx.funcMap.set(name, funcIdx);
+  drivers.push({ name, arity, func });
+  byArity.set(arity, name);
+  return { name, funcIdx };
+}
+
 /** Highest reserved driver arity, or -1 when no site reserved one. */
 export function maxReservedNativeConstructArity(ctx: CodegenContext): number {
+  let maxTyped = -1;
+  for (const driver of typedDriversByContext.get(ctx) ?? []) maxTyped = Math.max(maxTyped, driver.arity + 1);
   for (let arity = MAX_NATIVE_CONSTRUCT_ARITY; arity >= 0; arity--) {
-    if (ctx.funcMap.has(driverName(arity))) return arity;
+    if (ctx.funcMap.has(driverName(arity))) return Math.max(arity, maxTyped);
   }
-  return -1;
+  return maxTyped;
 }
 
 /**
@@ -397,6 +518,80 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct
         ? [{ name: "__ctor_args", type: EXTERNREF }]
         : []),
+    ];
+    driver.body = body;
+  }
+
+  for (const { arity, func: driver } of typedDriversByContext.get(ctx) ?? []) {
+    const selfType = driver.locals[0]?.type;
+    const selfTypeIdx = selfType?.kind === "ref" || selfType?.kind === "ref_null" ? selfType.typeIdx : undefined;
+    const fields = selfTypeIdx === undefined ? undefined : structFields(ctx.mod.types[selfTypeIdx]);
+    const closureArityIdx = ctx.funcMap.get("__closure_arity");
+    const methodCallIdx = ctx.funcMap.get(`__call_fn_method_${arity + 1}`);
+    if (
+      selfTypeIdx === undefined ||
+      fields === undefined ||
+      closureArityIdx === undefined ||
+      methodCallIdx === undefined
+    ) {
+      driver.locals = [];
+      driver.body = [{ op: "ref.null.extern" }];
+      continue;
+    }
+
+    // params: callee=0, args=1..arity. Locals begin after those params.
+    const selfLocal = arity + 1;
+    const resultLocal = arity + 2;
+    const body: Instr[] = [
+      // Only closures whose declared arity contains one extra formal can own
+      // this path. That extra slot is TypeScript's explicit `this` parameter;
+      // an ordinary N-arg closure keeps the historical null fallthrough rather
+      // than receiving the typed self as a shifted user argument.
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: closureArityIdx },
+      { op: "i32.const", value: arity + 1 },
+      { op: "i32.ne" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "ref.null.extern" }, { op: "return" }],
+      },
+    ];
+    for (const field of fields) body.push(...defaultFieldInstrs(field.type));
+    body.push(
+      { op: "struct.new", typeIdx: selfTypeIdx },
+      { op: "local.set", index: selfLocal },
+      { op: "local.get", index: selfLocal },
+      { op: "extern.convert_any" },
+      { op: "local.get", index: 0 },
+      // The explicit `this` pseudo-parameter remains a real leading Wasm
+      // formal in current closure lowering, in addition to the method
+      // dispatcher's receiver channel.
+      { op: "local.get", index: selfLocal },
+      { op: "extern.convert_any" },
+    );
+    for (let arg = 0; arg < arity; arg++) body.push({ op: "local.get", index: arg + 1 });
+    body.push({ op: "call", funcIdx: methodCallIdx }, { op: "local.set", index: resultLocal });
+
+    const boxedSelf: Instr[] = [{ op: "local.get", index: selfLocal }, { op: "extern.convert_any" }];
+    body.push(
+      { op: "local.get", index: resultLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: selfTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: EXTERNREF },
+        // A constructor may explicitly return another instance of the declared
+        // result family. Other object/primitive completions cannot satisfy this
+        // typed ABI, so retain the initialized receiver.
+        then: [{ op: "local.get", index: resultLocal }],
+        else: boxedSelf,
+      },
+    );
+
+    driver.locals = [
+      { name: "__typed_ctor_self", type: { kind: "ref", typeIdx: selfTypeIdx } },
+      { name: "__typed_ctor_result", type: EXTERNREF },
     ];
     driver.body = body;
   }
