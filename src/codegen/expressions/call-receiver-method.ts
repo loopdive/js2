@@ -3322,15 +3322,28 @@ export function compileReceiverMethodCall(
         // when `args[0]` exists — a zero-argument call never reached it.)
         // Also covers indexOf's boxed fromIndex slot, which is spec-equivalent:
         // ToIntegerOrInfinity of `null` and of `undefined` are both +0.
-        // Deliberately NOT widened to `includes`/`startsWith`/`search`, which
-        // have the identical defect from this list — see the follow-up section
-        // in `plan/issues/5155-string-indexof-no-argument-gc.md`.
+        // #5160 — the three siblings #5155 deliberately left out join the list.
+        // Same one-cell defect, same lane: the absent search slot reached the
+        // host as `ref.null.extern`, so `"aundefinedb".includes()` searched for
+        // "null" (false, spec true), `"undefinedb".startsWith()` likewise
+        // (false, spec true), and `"aundefinedb".search()` built `RegExp(null)`
+        // = /null/ (-1, spec 0). `search` is NOT a ToString case: §22.1.3.19
+        // routes an absent/undefined argument through `RegExp(undefined)` = the
+        // empty regexp `/(?:)/`, which matches at 0 — measured on the base, the
+        // gc lane's `search()` and `search(null)` compiled to ONE binary while
+        // `search(undefined)` already answered 0, so passing `undefined` is all
+        // that is needed here too. The f64 position slot of
+        // includes/startsWith is untouched by this set — it keeps the #2002 NaN
+        // sentinel below.
         const padsUndefined =
           method === "endsWith" ||
+          method === "includes" ||
           method === "indexOf" ||
           method === "lastIndexOf" ||
           method === "padStart" ||
-          method === "padEnd";
+          method === "padEnd" ||
+          method === "search" ||
+          method === "startsWith";
         let undefIdx: number | undefined;
         if (padsUndefined) {
           undefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);

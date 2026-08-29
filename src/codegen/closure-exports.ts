@@ -12,7 +12,7 @@ import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
-import { flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { ensureHostCallFallbackImports, planHostCallFallback } from "./expressions/host-call-fallback.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
@@ -716,9 +716,31 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
 
+  // A callback may receive a compiled GC value through a host-side facade.
+  // Keep the generic closure bridge on the open externref carrier until the
+  // last responsible moment: recovering the original Wasm value before a
+  // concrete reference cast preserves identity across dynamic callback
+  // results (for example a reducer state read back from a combined object).
+  // Host-free targets have no facade and must not acquire a host import.
+  const needsHostFacadeUnwrap =
+    !ctx.standalone &&
+    !ctx.wasi &&
+    entries.some((entry) => {
+      const funcTypeDef = mod.types[entry.funcTypeIdx];
+      return (
+        funcTypeDef?.kind === "func" &&
+        funcTypeDef.params.slice(1).some((param) => param.kind === "ref" || param.kind === "ref_null")
+      );
+    });
+  if (needsHostFacadeUnwrap) {
+    ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
+  }
+
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const unwrapForWasmIdx = needsHostFacadeUnwrap ? ctx.funcMap.get("__unwrap_for_wasm") : undefined;
 
   // #820l — globals for argc + extras-argv plumbing into the callee's
   // `arguments` object. Both globals are mode-agnostic; ensureExtrasArgvGlobal
@@ -776,6 +798,23 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
           // ref domain so the subsequent `call_ref` typechecks. In
           // `wasm:js-string` (gc) mode string params ARE externref, so this
           // branch is skipped and the arg passes raw.
+          if (paramType.kind === "ref_null" && isUndefinedIdx !== undefined) {
+            return [
+              { op: "local.get", index: argLocalIdx },
+              { op: "call", funcIdx: isUndefinedIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: paramType },
+                then: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
+                else: [
+                  { op: "local.get", index: argLocalIdx },
+                  ...(unwrapForWasmIdx === undefined ? [] : [{ op: "call", funcIdx: unwrapForWasmIdx } as Instr]),
+                  ...externToClosureParamRef(ctx, paramType),
+                ],
+              },
+            ];
+          }
+          if (unwrapForWasmIdx !== undefined) ops.push({ op: "call", funcIdx: unwrapForWasmIdx });
           ops.push(...externToClosureParamRef(ctx, paramType));
         }
         // externref param: no conversion

@@ -35,6 +35,7 @@ import {
 } from "./shared.js";
 import { ARRAY_METHODS, compileArrayMethodCall, guardedFuncRefCastInstrs, resolveArrayInfo } from "./array-methods.js";
 import { emitArrayLikeHofArm } from "./array-like-hof-arms.js";
+import { compileArrayConcatNativeSpecFromExprs } from "./array-concat-spec.js"; // (#5145)
 
 /** Methods supported by the array-like (externref receiver) path.
  * NOTE: map/filter/reduce/reduceRight are excluded because:
@@ -1296,6 +1297,19 @@ export function compileArrayPrototypeCall(
 
   // Check if the method is a known array method
   if (!ARRAY_METHODS.has(methodName)) return undefined;
+
+  // (#5145) `Array.prototype.concat.call(recv, …)` — route straight to the
+  // §23.1.3.1 native spec loop. Everything below either builds a synthetic
+  // `recv.concat(…)` (which re-enters the vec fast paths the borrow shape
+  // cannot satisfy) or falls into the reflective `.call` lowering, whose
+  // arity-shaped `call_ref` against concat's VARIADIC `(this, argsVec)` proto
+  // closure emits an INVALID module ("need 3, got 2"). The spec loop is
+  // receiver-agnostic — it reads through `__extern_length` / `__extern_get_idx`
+  // — so the array-like receivers this spelling exists for work directly.
+  if ((ctx.standalone || ctx.wasi) && methodName === "concat") {
+    const nativeConcat = compileArrayConcatNativeSpecFromExprs(ctx, fctx, receiverArg, callExpr.arguments.slice(1));
+    if (nativeConcat !== undefined) return nativeConcat;
+  }
   // The mutating generic receiver contract for push is not native yet. The
   // typed synthetic-call route can compile this spelling but then traps when
   // the borrowed receiver is dynamically represented. Keep the direct

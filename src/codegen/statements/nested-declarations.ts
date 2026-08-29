@@ -220,8 +220,21 @@ export function compileNestedClassDeclaration(
   emitRegisterDynamicClassParent(ctx, fctx, decl, className);
 
   const isDeferred = ctx.deferredClassBodies.has(className);
+  // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a
+  // NAME test standing in for a DECLARATION test. `structMap` is name-keyed, so
+  // a class declaration whose name is already registered by a class in another
+  // scope took this early return and never emitted its own bodies; its members
+  // then answered with the first declaration's code (silently wrong results, no
+  // invalid wasm). `collectClassesFromStatements` marks the duplicates it can
+  // see as deferred, but it does not reach every scope — a class inside a
+  // sibling BLOCK, or inside a class/object-literal METHOD body, is invisible to
+  // it. Ask the node-keyed ledger instead: a class DECLARATION only short-
+  // circuits once `compileClassBodies` has actually run for THIS node.
+  // Class EXPRESSIONS keep the name-only rule — `compileClassExpression` owns
+  // their body emission and this path must not duplicate it.
+  const bodiesAlreadyEmitted = !ts.isClassDeclaration(decl) || ctx.compiledClassBodies.has(decl);
   // Skip if already collected AND not deferred (already fully compiled)
-  if (ctx.structMap.has(className) && !isDeferred) {
+  if (ctx.structMap.has(className) && !isDeferred && bodiesAlreadyEmitted) {
     // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
     if (ctx.classThrowsOnEval.has(className)) {
       emitThrowTypeError(ctx, fctx, "Classes may not have a static property named 'prototype'");

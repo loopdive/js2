@@ -2770,6 +2770,55 @@ function emitDynamicMemberSet(
   if (setIdx !== undefined) fctx.body.push({ op: "call", funcIdx: setIdx });
 }
 
+/**
+ * (#5144 cluster M) Generic computed-member PutValue for a destructuring
+ * target: `__extern_set_strict(recv, ToPropertyKey(key), value)`.
+ *
+ * The receiver value is ALREADY on the stack (`recvType` describes it, or is
+ * undefined when the receiver did not compile to a value).
+ */
+function emitDynamicElementSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.ElementAccessExpression,
+  recvType: ValType | null | undefined,
+  valueLocal: number,
+  valueType: ValType,
+): void {
+  const objLocal = allocLocal(fctx, `__dstr_eset_obj_${fctx.locals.length}`, { kind: "externref" });
+  if (!recvType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: objLocal });
+
+  const keyLocal = allocLocal(fctx, `__dstr_eset_key_${fctx.locals.length}`, { kind: "externref" });
+  const keyType = compileExpression(ctx, fctx, target.argumentExpression, { kind: "externref" });
+  if (!keyType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (keyType.kind !== "externref") {
+    coerceType(ctx, fctx, keyType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: keyLocal });
+
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set_strict",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined) return;
+  fctx.body.push({ op: "local.get", index: objLocal });
+  fctx.body.push({ op: "local.get", index: keyLocal });
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  if (valueType.kind !== "externref") {
+    coerceType(ctx, fctx, valueType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "call", funcIdx: setIdx });
+}
+
 export function emitAssignToTarget(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2834,7 +2883,14 @@ export function emitAssignToTarget(
     return;
   } else if (ts.isElementAccessExpression(target)) {
     const arrType = compileExpression(ctx, fctx, target.expression);
-    if (!arrType || (arrType.kind !== "ref" && arrType.kind !== "ref_null")) return;
+    if (!arrType || (arrType.kind !== "ref" && arrType.kind !== "ref_null")) {
+      // (#5144 cluster M) A computed member target whose receiver is NOT a
+      // WasmGC vec — a plain object / host value / `any` (`for ([ x[key] ] of
+      // [[33]])` with `var x = {}`). The write used to be dropped silently.
+      // §13.15.5.5 PutValue routes it through the generic property set.
+      emitDynamicElementSet(ctx, fctx, target, arrType, valueLocal, valueType);
+      return;
+    }
     const tIdx = (arrType as { typeIdx: number }).typeIdx;
     const tDef = ctx.mod.types[tIdx];
     // Handle vec struct

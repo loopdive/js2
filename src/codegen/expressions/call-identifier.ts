@@ -1569,7 +1569,15 @@ export function compileIdentifierCall(
     // Temporal suite. Reaching the wrong same-named function is a wrong answer;
     // turning a resolvable call into an uncatchable trap is worse, and neither
     // is a licence for the other, so this only ever PREFERS a better binding.
-    if (closureInfo) {
+    // A mutable captured callable is different: its ref cell is live and may
+    // hold a closure with a different ABI after a reassignment. The closure
+    // map records the initializer's signature, so using it here would cast a
+    // valid replacement to the stale funcref type and turn a normal call into
+    // a null-deref. Let the dynamic candidate ladder inspect the live cell
+    // value instead. Immutable captures and ordinary locals retain the typed
+    // call_ref path.
+    const heterogeneousCallableCapture = fctx.boxedCaptures?.get(funcName)?.valType.kind === "externref";
+    if (closureInfo && !heterogeneousCallableCapture) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
 
@@ -1597,7 +1605,10 @@ export function compileIdentifierCall(
       const calleeCapturedGlobal =
         calleeLocalIdx === undefined && calleeModGlobal === undefined ? ctx.capturedGlobals.get(funcName) : undefined;
       const isKnownVariable =
-        calleeLocalIdx !== undefined || calleeModGlobal !== undefined || calleeCapturedGlobal !== undefined;
+        calleeLocalIdx !== undefined ||
+        calleeModGlobal !== undefined ||
+        calleeCapturedGlobal !== undefined ||
+        (fctx.boxedCaptures?.has(funcName) ?? false);
       const hasSpreadArg = expr.arguments.some((argument) => ts.isSpreadElement(argument));
       const calleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
       let callSigs = isKnownVariable ? calleeTsType.getCallSignatures?.() : undefined;
@@ -1668,7 +1679,7 @@ export function compileIdentifierCall(
         const spreadCall = emitDynamicSpreadCall(ctx, fctx, expr, expectedType);
         if (spreadCall !== null) return spreadCall;
       }
-      if (callSigs && callSigs.length > 0) {
+      if (callSigs && callSigs.length > 0 && !heterogeneousCallableCapture) {
         // Populate runtime callback candidates before compiling this HOF body.
         // Without the pre-scan, Test262's one-formal function expression is
         // compiled only after its two-formal JSDoc callback consumer, leaving

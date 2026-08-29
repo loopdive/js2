@@ -45,6 +45,10 @@ loc-budget-allow:
   - src/codegen/statements/variables.ts
   - src/compiler.ts
   - src/codegen/expressions/call-receiver-method.ts
+  # 2026-08-29: the main merge composes this branch's runtime-namespace capture
+  # guard with main's funcMap identity guard, crossing the 1500-line god-file
+  # threshold in the closure capture-analysis phase file.
+  - src/codegen/closures/arrow-phases.ts
 func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall

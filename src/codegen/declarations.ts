@@ -4492,6 +4492,16 @@ export function compileDeclarations(
       // files. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
+        // (#4646) Compile this declaration under its OWN identity. Control-flow
+        // recursion below deliberately clears `insideFunction` (#2818), so a
+        // class inside a sibling block of a function body is compiled eagerly
+        // here — under `stmt.name.text`. Two same-named classes in two sibling
+        // blocks therefore wrote the same name-keyed method-table entries, and
+        // the second overwrote the first: both scopes ran the SECOND body.
+        // `collectClassesFromStatements` has already minted the disambiguating
+        // identity for every duplicate it saw; use it.
+        const scopedIdentity = ctx.anonClassExprNames.get(stmt);
+        const bodyIdentity = scopedIdentity ?? stmt.name.text;
         if (insideFunction) {
           const preparedBodyUnits = stmt.members
             .filter(
@@ -4519,12 +4529,12 @@ export function compileDeclarations(
             // statement. Visit the exact class here so the declaration pass
             // correlates every skipped slot while preserving the bodies that
             // the prepared transaction already installed.
-            compileClassBodies(ctx, stmt, funcByName, undefined, classBodyRouting);
+            compileClassBodies(ctx, stmt, funcByName, scopedIdentity, classBodyRouting);
             continue;
           }
           // Defer body compilation — will be compiled in compileNestedClassDeclaration
           // when the enclosing function is compiled (so captured locals are available)
-          ctx.deferredClassBodies.add(stmt.name.text);
+          ctx.deferredClassBodies.add(bodyIdentity);
         } else if (scopeLocals && classDeclCapturesNames(stmt, scopeLocals)) {
           // (#2818) A control-flow-nested class *declaration* (block / if /
           // loop / switch / try / labeled body inside a function) that captures
@@ -4536,10 +4546,10 @@ export function compileDeclarations(
           // position), where the local is live and promotion succeeds. Only
           // genuine capturers are deferred — class expressions and
           // non-capturing classes stay eager (the −471 PR #2335 shapes).
-          ctx.deferredClassBodies.add(stmt.name.text);
+          ctx.deferredClassBodies.add(bodyIdentity);
         } else {
           try {
-            routeTopLevelClassBodies(ctx, stmt, funcByName, classBodyRouting);
+            routeTopLevelClassBodies(ctx, stmt, funcByName, classBodyRouting, scopedIdentity);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);
