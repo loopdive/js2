@@ -1,11 +1,10 @@
 {
   "id": "5178",
-  "assignee": "",
-  "requested_by": "ttraenkler/claude",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-29T02:38:39Z",
-  "updated_at": "2026-08-29T02:38:39Z",
-  "write_id": "26479-1kd2zm15",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/opus-dev-5178",
+  "requested_by": "ttraenkler/opus-dev-5178",
+  "status": "in-progress",
+  "branch": "issue-5178-method-return-struct-type",
+  "claimed_at": "2026-08-29T02:38:53Z",
+  "updated_at": "2026-08-29T02:38:53Z",
+  "write_id": "26964-4a26e4b7"
 }
