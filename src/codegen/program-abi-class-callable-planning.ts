@@ -416,6 +416,17 @@ export class ProgramAbiClassCallableRegistry {
     return canonicalUnitId;
   }
 
+  /**
+   * Plan one slotless inherited alias while its prepared scope is still open.
+   *
+   * This has to happen at OBSERVATION time: class-body compilation is the only
+   * point at which the alias's prepared component scope is still unsealed, and
+   * a new draft raised later is rejected outright ("would mutate sealed prepared
+   * scope"). The consequence is that the alias's stored `intent.signature` is a
+   * pre-dead-type-elimination snapshot, while its canonical is planned in
+   * `planRetained` after the remap — see the exact-signature check there, which
+   * must therefore compare rebased contracts and not these snapshots.
+   */
   private planInheritedAliasDraft(
     observation: ProgramAbiInheritedClassCallableObservation,
     signature: FuncTypeDef,
@@ -742,7 +753,6 @@ export class ProgramAbiClassCallableRegistry {
             `inherited class callable ${childClassId} / ${role} drifted after observation`,
           );
         }
-        functionSignature(this.ctx, liveFunc);
         const aliasOf = irUnitCallableBindingId(observation.canonicalUnitId);
         const canonicalDraft = this.session.getDraft(aliasOf);
         const canonicalRef = irUnitFuncRef({ unitId: observation.canonicalUnitId, name: liveFunc.name });
@@ -785,7 +795,25 @@ export class ProgramAbiClassCallableRegistry {
             `inherited class callable ${childClassId} / ${observation.canonicalUnitId} lost its exact slotless alias plan`,
           );
         }
-        if (!programAbiCallableSignaturesEqual(canonicalDraft.intent.signature, aliasDraft.intent.signature)) {
+        // Compare CURRENT contracts, not the drafts' frozen `intent.signature`.
+        // The alias is raised during class-body compilation (the only point its
+        // prepared scope is still open) and the canonical is raised in this pass,
+        // after `eliminateDeadImports` has applied the type layout remap. The
+        // session rebases `callableTypeContracts` across that remap but never
+        // rewrites a draft's stored signature, so the two snapshots describe one
+        // function with two type-index numberings (`ref 14` vs `ref 1` for a
+        // `super.value` getter receiver) and comparing them rejects a correct
+        // module. Both contracts must exist: a missing one is an unrebased or
+        // unregistered alias, which this invariant must not silently accept.
+        const canonicalSignature = this.session.currentCallableSignature(aliasOf);
+        const aliasSignature = this.session.currentCallableSignature(aliasDraft.id);
+        const liveSignature = canonicalProgramAbiCallableTypeContract(functionSignature(this.ctx, liveFunc));
+        if (
+          !canonicalSignature ||
+          !aliasSignature ||
+          !programAbiCallableSignaturesEqual(canonicalSignature, aliasSignature) ||
+          !programAbiCallableSignaturesEqual(canonicalSignature, liveSignature)
+        ) {
           throw new ProgramAbiInvariantError(
             "alias-signature-mismatch",
             `inherited class callable ${childClassId} / ${observation.canonicalUnitId} disagrees with its exact canonical signature`,
