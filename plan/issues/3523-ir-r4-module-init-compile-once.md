@@ -4,9 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-26
-assignee: ttraenkler/codex-ir-lead
-branch: codex/3523-r4-statement-module-init
+updated: 2026-08-28
 priority: critical
 horizon: xl
 complexity: XL
@@ -1075,3 +1073,39 @@ fresh 6.110 replay supplied the accepted result. The semantic checkpoint is
 not publication acceptance until it is reconciled append-only with current
 main, independently audited at the exact final head, and passes the full
 unskipped pre-push hook.
+
+## 2026-08-28 landed-record note — the scalar-assignment checkpoint is ON MAIN
+
+The 2026-08-26 signed semantic checkpoint (`81244c1558…`, branch
+`codex/3523-r4-statement-module-init`) was believed orphaned after its branch
+disappeared from origin unpushed. A clean-room re-implementation attempt on
+2026-08-28 found **the content is already on current main** and stopped without
+duplicating:
+
+- `isPreparedExactScalarModuleAssignment` (src/codegen/index.ts ~3954-4018) and
+  `preparedExactLexicalModuleInit` (~4020-4148) implement the contract verbatim
+  (declarationOrdinal-keyed intents, population-exhaustive evaluations,
+  `sawAssignment` ordering guard).
+- The focused root suite `tests/issue-3523-ir-module-init-compile-once.test.ts`
+  passes **19/19** on main — the exact count the publication record claims —
+  including the 16 near-miss fail-closed controls.
+- Five-lane probe on main: host/standalone × start/deferred all compile the
+  scalar-assignment module with `legacy=false, IR=true` and a live prepared
+  terminal; runtime witness `read() = 1`; the
+  `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` poison run proves the four
+  admitted lanes bypass the direct route while WASI (control) still fails on
+  the injected poison.
+- Landing provenance: the content is present at the shallow-clone graft base
+  dated 2026-08-26 18:09 UTC, so it reached main the same day the checkpoint
+  was signed; the exact carrying PR is below the shallow horizon.
+
+The closing sentence of the 2026-08-26 publication record ("not publication
+acceptance until it is reconciled append-only with current main…") is
+therefore SUPERSEDED — the reconciliation happened.
+
+**R4 remains open.** Per the 2026-08-22 census only gap 2 (this slice) is
+closed. The natural next slice is **gap 1: every typed-Unsupported module-init
+still compiles the direct body twice (pass1 + pass2)** — the largest remaining
+item; then gap 3 (WASI prepared adapter), gap 4 (empty/function-only modules
+record no terminal outcome row), gap 5 (class declarations in the module-init
+population — R3/#3522 territory).
