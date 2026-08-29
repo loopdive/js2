@@ -1,8 +1,32 @@
 ---
 id: 5204
 title: Builtin-derived methods with arguments, rest params, and getters never bridge to the host — supportsHostClassBridgeParam rejects f64
-status: ready
+status: done
+assignee: ttraenkler/opus-dev-5203
+completed: 2026-08-29
 sprint: current
+# (#5204, 2026-08-29) The externref-backed class bridge gained three shapes —
+# f64 parameter coercion, a class-qualified vararg bridge, and a
+# class-qualified getter bridge — plus the accessor receiver-type fix that made
+# a getter bridgeable at all. Restated here (not only in the #5193/#5202 issue
+# files this branch stacks on) so the grant is not stranded when CI diffs the
+# merge preview.
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/index.ts
+  - src/runtime.ts
+# The +1 is ONE `ctx.funcMap.get("__unbox_number")` lookup in
+# `hostClassBridgeParamCoercion`, passed straight into `callArgCoercionInstrs`
+# — the single coercion engine (#1917/#2108). No new ToNumber matrix is
+# hand-rolled; the helper index is what the engine needs as an argument, and
+# the two sibling bridge sites in the same file already do exactly this.
+coercion-sites-allow:
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/index.ts::emitIteratorMethodExport
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/index.ts::generateModule
+  - src/runtime.ts::resolveImport
 priority: high
 horizon: m
 goal: standalone-gap

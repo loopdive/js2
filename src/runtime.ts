@@ -5492,6 +5492,25 @@ function _safeGet(
   // Check sidecar for properties set via __extern_set on non-WasmGC objects
   const sc = _sidecarGet(obj, key);
   if (sc !== undefined) return sc;
+  // (#5204) A compiled member of an EXTERNREF-BACKED class. Its instance is a
+  // real host object, so the `_isWasmStruct(obj)` block above — which is where
+  // `_resolveClassMember` was consulted — never runs for it, and a plain
+  // property READ of a `get g()` on `class D extends Array` answered
+  // `undefined` (→ NaN through the reader's `__unbox_number`). A METHOD call
+  // never hit this because `__extern_method_call`'s not-a-function tail
+  // consults the same resolver on its own.
+  //
+  // Placed AFTER the native read and the sidecar so nothing that already
+  // resolved changes precedence; the resolver itself answers only for
+  // registered compiled instances, so every other host object is untouched.
+  //
+  // Reads the #5193/#5202/#5203 start-export channel rather than bare
+  // `getExports()`, so the same read works DURING module init — `__call_get_*`
+  // and `__class_call_*` are both registered there.
+  {
+    const member = _resolveClassMember(obj, key, marshalExports(callbackState));
+    if (member !== _MISS) return member;
+  }
   // For JS Symbols, also check the Wasm "@@name" equivalent
   if (typeof key === "symbol") {
     const wasmKey = _symbolToWasm.get(key);
