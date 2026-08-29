@@ -1,10 +1,11 @@
 {
   "id": "5164",
   "assignee": "ttraenkler/opus-5164",
-  "requested_by": "ttraenkler/opus-5164",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5164-comma-and-in",
   "claimed_at": "2026-08-29T01:14:55Z",
-  "updated_at": "2026-08-29T01:14:55Z",
-  "write_id": "1257-25hnkzbc"
+  "updated_at": "2026-08-29T05:11:31Z",
+  "write_id": "17301-h3pkgt5j",
+  "released_at": "2026-08-29T05:11:31Z"
 }
