@@ -469,6 +469,42 @@ source-compile and compiler-free AOT integrations passed 1/1 each. The smaller
 1,434,192-byte precompiled fixture belongs to that earlier `cwd` proof, not the
 current Deno-core artifact.
 
+## PR #5148 checkpoint continuation (2026-08-29, branch claude/deno-integration-map52s)
+
+The draft checkpoint PR #5148 (codex/deno-runtime-integration-checkpoint) was
+merged onto `claude/deno-integration-map52s`, reconciled with current main,
+and its declared test gaps driven down. Fixed on that branch:
+
+- Promise expandos on the native `$Promise` (`$bag` slot was added but
+  `$Promise` never joined `BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES`) — 3 tests.
+- Reflected Symbol/Promise constructor statics + runtime-eval slot peel: the
+  nullish-callee arm's non-nullish half now dispatches through
+  `__apply_closure` instead of answering `undefined` — 3 tests.
+- Linked-realm bare identifier reads (symbol-less names no longer classified
+  as #3505 cross-module leaks) — fixed shared-globalThis bareRead/bareCall
+  and both v8x graph-compiler failures — 3 tests.
+- Detached-buffer `.byteLength` (dyn-view arm gated to dynamic receivers;
+  bare-vec fallback clamps the -1 marker) — 1 test.
+- Realm `Int8Array` identity (seed the #4490 identity carrier, not
+  `$__ta_ctor`) and hoisted-capture types for literals the declaration
+  promotes to the open `$Object` representation (`{ __proto__: null }`) —
+  2 tests.
+
+Remaining known gaps (all reproduce at the checkpoint merge point or on
+origin/main — none introduced by the continuation):
+
+- `uncurryThis`: a bare `Function.prototype` VALUE read
+  (`const fp = Function.prototype`) throws a raw wasm exception during
+  module init (pre-existing; direct `Function.prototype.bind` reads work).
+- deno-core bootstrap `createTimer`: lifted-body local-index remapping
+  (`references local 2413, but only 35 params + 350 locals`) — the
+  PR-documented remapping gap.
+- compile-multi finalizer parity's Array-proto-iterator case: sits on the
+  host-lane CPR override machinery, which fails 6/7 of
+  `tests/issue-1719-cpr.test.ts` on origin/main in this container.
+- `#2623` box-depth (3) and `#1312` async recursion (1): pre-existing at the
+  merge point.
+
 ## Handover
 
 The exact pins, stop point, reproduction steps, rejected shortcuts, and safest
