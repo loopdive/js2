@@ -1,10 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import { boundedPreparedNestedOrdinaryClassBindingName } from "../ir/class-accessor-safety.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
-import type { IrClassId, IrSourceId, IrUnitKind } from "../ir/identity.js";
+import {
+  irPreparedNestedOrdinaryClassBindingName,
+  type IrClassId,
+  type IrNestedClassFieldCallAdmission,
+  type IrSourceId,
+  type IrUnitKind,
+} from "../ir/identity.js";
 import type { IrClassShape, IrFuncRef } from "../ir/nodes.js";
 import {
   IrPlanningIdentityInvariantError,
@@ -433,6 +438,8 @@ export function orderIrClassShapeDeclarationsForProjection(
 export function createIrClassShapeSidecar(
   entries: ReadonlyMap<IrClassId, IrClassShapeEntry>,
   context: IrPlanningIdentityContext,
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed here. */
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrClassShapeSidecar {
   const byClassId = new Map<IrClassId, IrClassShapeEntry>();
   const occurrences = new Map<string, number>();
@@ -460,7 +467,7 @@ export function createIrClassShapeSidecar(
   const boundedExpressionAliases = new Map<string, IrClassShapeEntry[]>();
   for (const entry of byClassId.values()) {
     if (!ts.isClassExpression(entry.declaration)) continue;
-    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(entry.declaration);
+    const bindingName = irPreparedNestedOrdinaryClassBindingName(entry.declaration, fieldCallAdmission);
     if (bindingName === undefined) continue;
     const candidates = boundedExpressionAliases.get(bindingName) ?? [];
     candidates.push(entry);

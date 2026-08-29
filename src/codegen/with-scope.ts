@@ -846,8 +846,8 @@ function compileClosedObjectLiteralTarget(
   if (!typeName) {
     typeName = registerClosedLiteralStruct(ctx, expr);
   }
-  ensureComputedPropertyFields(ctx, fctx, expr, tsType);
-  return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
+  const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, tsType);
+  return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? typeName);
 }
 
 function registerClosedLiteralStruct(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): string {

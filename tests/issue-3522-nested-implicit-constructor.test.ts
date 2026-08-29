@@ -299,12 +299,14 @@ describe("#3522 nested implicit-constructor negative boundaries", () => {
   // support unit belongs to the containing executable while the constructor
   // terminal that runs it belongs to the class, so a call is planned under two
   // owners. It must stay direct rather than reach that disagreement.
-  it("keeps a nested class whose field initializer CALLS a local function direct", async () => {
+  it("keeps a nested class whose field initializer calls a MEMBER expression direct", async () => {
+    // #3522 F4 admitted only the exact bare same-source top-level call family.
+    // A member call has no source-unit target to prove, so the whole owner
+    // stays direct exactly as every call edge did before F4.
     const result = await compile(
       `
-      function seed(): number { return 42; }
       export function run(): number {
-        class Box { v: number = seed(); get(): number { return this.v; } }
+        class Box { v: number = Math.floor(42.5); get(): number { return this.v; } }
         return new Box().get();
       }
       `,

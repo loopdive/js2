@@ -10,8 +10,8 @@ import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-a
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
-import type { IrUnitId } from "../ir/identity.js";
-import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js"; // (#3522) nested implicit-ctor family
+// (#3522) nested implicit-ctor family
+import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -1733,10 +1733,28 @@ export function collectClassDeclaration(
   // Register static properties as module globals, and queue static `{ ... }`
   // blocks for execution. Both field initializers and static blocks must run
   // in source order during class evaluation (§15.7.10), so we iterate members
-  // once and push to the shared `staticInitExprs` queue in declaration order.
+  // once. Class DECLARATIONS join the module source-order queue; class
+  // EXPRESSIONS retain a per-expression queue that is emitted inline by
+  // ClassDefinitionEvaluation. Scheduling expression statics at module scope
+  // moves them past the rest of their containing expression/statement.
+  const classExpressionStaticEntries = ts.isClassExpression(decl)
+    ? (ctx.classExpressionStaticInitExprs.get(decl) ?? [])
+    : undefined;
+  if (ts.isClassExpression(decl) && !ctx.classExpressionStaticInitExprs.has(decl)) {
+    ctx.classExpressionStaticInitExprs.set(decl, classExpressionStaticEntries!);
+  }
   for (const member of decl.members) {
     if (ts.isClassStaticBlockDeclaration(member)) {
-      ctx.staticInitExprs.push({ staticBlock: member, className });
+      if (classExpressionStaticEntries) {
+        // The declaration collector intentionally registers a variable-bound
+        // class expression under both a visible and a synthetic identity.
+        // A static block is source syntax and must nevertheless execute once.
+        if (!classExpressionStaticEntries.some((entry) => entry.staticBlock === member)) {
+          classExpressionStaticEntries.push({ staticBlock: member, className });
+        }
+      } else {
+        ctx.staticInitExprs.push({ staticBlock: member, className });
+      }
       continue;
     }
     if (ts.isPropertyDeclaration(member) && member.name && hasStaticModifier(member)) {
@@ -1789,11 +1807,19 @@ export function collectClassDeclaration(
       // (e.g. `static f = () => this`) resolves to the class-object singleton
       // via `emitLazyClassObjectGet`, NOT to `undefined`.
       if (member.initializer) {
-        ctx.staticInitExprs.push({
-          globalIdx,
-          initializer: member.initializer,
-          className,
-        });
+        if (classExpressionStaticEntries) {
+          classExpressionStaticEntries.push({
+            initializer: member.initializer,
+            className,
+            staticPropKey: fullName,
+          });
+        } else {
+          ctx.staticInitExprs.push({
+            globalIdx,
+            initializer: member.initializer,
+            className,
+          });
+        }
       }
     }
   }
@@ -1856,7 +1882,13 @@ export function buildShapePropFlagsTable(ctx: CodegenContext): void {
  */
 export function collectDeclaredFuncRefs(ctx: CodegenContext, opts?: { additive?: boolean }): void {
   const refs = new Set<number>(opts?.additive ? ctx.mod.declaredFuncRefs : []);
+  const visited = new WeakSet<Instr[]>();
   function scanInstrs(instrs: Instr[]): void {
+    // Late IR is a DAG: helper/finalizer rewrites may share one instruction
+    // array between multiple parents. Its ref.func set is identity-invariant,
+    // so scan each array once rather than once per incoming edge.
+    if (visited.has(instrs)) return;
+    visited.add(instrs);
     for (const instr of instrs) {
       if (instr.op === "ref.func") {
         refs.add((instr as { op: "ref.func"; funcIdx: number }).funcIdx);
@@ -1909,6 +1941,11 @@ export interface ClassBodyCompileRouting {
   /** Exact non-terminal implicit-constructor support units installed during preparation. */
   readonly skipImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
+  /**
+   * (#3522 F4) The one proof-derived admitted-class marker computed before
+   * selection. This routing consumes it; it never re-runs a syntax predicate.
+   */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
 }
 
 export function skipExactPreparedClassBody(
@@ -2023,7 +2060,9 @@ export function skipPreparedClassConstructorBody(
       // bounded ordinary-class family — which excludes heritage, statics,
       // computed keys, and initialized fields, and therefore cannot reach the
       // shadow-identity inheritance surface (#4448).
-      const nestedFamilyOk = unit?.terminalOwnerId === null || isBoundedPreparedNestedOrdinaryClass(classDeclaration);
+      const nestedFamilyOk =
+        unit?.terminalOwnerId === null ||
+        irPreparedNestedOrdinaryClass(classDeclaration, routing.nestedClassFieldCallAdmission);
       if (
         unit?.kind !== "class-implicit-constructor" ||
         !nestedFamilyOk ||

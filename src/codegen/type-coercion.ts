@@ -10,6 +10,7 @@ import { coercionPlan } from "./coercion-plan.js";
 import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
@@ -37,6 +38,7 @@ import {
 } from "./shared.js";
 import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
+import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -128,6 +130,16 @@ function guardedRefCastInstrs(
   if (opts.nonNull) instrs.push({ op: "ref.as_non_null" });
   releaseTempLocal(fctx, tmp);
   return instrs;
+}
+
+function captureBody(fctx: FunctionContext, emit: () => void): Instr[] {
+  const savedBody = pushBody(fctx);
+  try {
+    emit();
+    return fctx.body;
+  } finally {
+    popBody(fctx, savedBody);
+  }
 }
 
 /**
@@ -1710,11 +1722,26 @@ function getStructNarrowInfo(
   };
 }
 
+/**
+ * Whether the existing typed-ref coercion can materialize `to` from `from`
+ * with a field-preserving structural projection. Callers that synthesize
+ * detached dispatch arms use this pure probe before asking `coercionInstrs`
+ * to emit the conversion (and its temporary locals).
+ */
+export function canStructurallyProjectRef(ctx: CodegenContext, from: ValType, to: ValType): boolean {
+  if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
+    return false;
+  }
+  return getStructNarrowInfo(ctx, from.typeIdx, to.typeIdx) !== null;
+}
+
 function emitSafeStructConversion(
   ctx: CodegenContext,
   fctx: FunctionContext,
   fromTypeIdx: number,
   toTypeIdx: number,
+  fromNullable: boolean,
+  toNullable: boolean,
 ): boolean {
   // Case 1: vec -> tuple
   const srcVec = getVecInfo(ctx, fromTypeIdx);
@@ -1791,7 +1818,7 @@ function emitSafeStructConversion(
   // Case 3: struct narrowing — destination fields are a subset of source fields
   const narrowInfo = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx);
   if (narrowInfo) {
-    return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo);
+    return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
   }
 
   return false;
@@ -2043,7 +2070,34 @@ function emitStructNarrowBody(
     srcFields: { name: string; type: ValType; fieldIdx: number }[];
     dstFields: { name: string; type: ValType }[];
   },
+  fromNullable: boolean,
+  toNullable: boolean,
 ): boolean {
+  if (fromNullable) {
+    const sourceLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: fromTypeIdx });
+    fctx.body.push({ op: "local.set", index: sourceLocal });
+
+    if (toNullable) {
+      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.is_null" });
+      const projection = captureBody(fctx, () => {
+        fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+        emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, info, false, false);
+      });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toTypeIdx } },
+        then: [{ op: "ref.null", typeIdx: toTypeIdx }],
+        else: projection,
+      });
+    } else {
+      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+      emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, info, false, false);
+    }
+
+    releaseTempLocal(fctx, sourceLocal);
+    return true;
+  }
+
   // Save the source struct ref to a temp local
   const srcRefType: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
   const tmpLocal = allocTempLocal(fctx, srcRefType);
@@ -2202,7 +2256,7 @@ export function coerceType(
       // Vec structs have layout: { $length: i32, $data: ref $arr }
       // Tuple structs have layout: { $_0: T0, $_1: T1, ... }
       // A blind ref.cast would trap since they are unrelated types.
-      if (emitSafeStructConversion(ctx, fctx, fromIdx, toIdx)) {
+      if (emitSafeStructConversion(ctx, fctx, fromIdx, toIdx, from.kind === "ref_null", to.kind === "ref_null")) {
         return;
       }
       // For related struct types (subtypes), use guarded ref.cast to avoid
@@ -2273,7 +2327,7 @@ export function coerceType(
     const fromRefIdx = (from as { typeIdx: number }).typeIdx;
     const toRefNullIdx = (to as { typeIdx: number }).typeIdx;
     if (fromRefIdx !== toRefNullIdx) {
-      if (!emitSafeStructConversion(ctx, fctx, fromRefIdx, toRefNullIdx)) {
+      if (!emitSafeStructConversion(ctx, fctx, fromRefIdx, toRefNullIdx, false, true)) {
         // (#2853 park fix) same-layout sibling shapes → exclude from branding.
         markNoBrandSiblingShapes(ctx.mod.types, ctx.noBrandShapeTypes, fromRefIdx, toRefNullIdx);
         // Guarded cast: ref $X → ref_null $Y — avoid illegal cast trap. Original
@@ -2317,7 +2371,7 @@ export function coerceType(
     const fromNullIdx = (from as { typeIdx: number }).typeIdx;
     const toNonNullIdx = (to as { typeIdx: number }).typeIdx;
     if (fromNullIdx !== toNonNullIdx) {
-      if (!emitSafeStructConversion(ctx, fctx, fromNullIdx, toNonNullIdx)) {
+      if (!emitSafeStructConversion(ctx, fctx, fromNullIdx, toNonNullIdx, true, false)) {
         // (#2853 park fix) same-layout sibling shapes → exclude from branding.
         markNoBrandSiblingShapes(ctx.mod.types, ctx.noBrandShapeTypes, fromNullIdx, toNonNullIdx);
         // Guarded cast: ref_null $X → ref $Y
@@ -2936,8 +2990,14 @@ export function coerceType(
       ) {
         return;
       }
-      const toStringFuncIdx = ctx.funcMap.get(`${name}_toString`);
-      if (toStringFuncIdx !== undefined) {
+      let toStringFuncIdx = ctx.funcMap.get(`${name}_toString`);
+      // (#4644) `toString` may DECLARE params even though ToPrimitive passes
+      // none (`toString(e = void 0)`); pad to its Wasm arity or the module is
+      // clean at compile() and rejected by WebAssembly.compile().
+      if (toStringFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, toStringFuncIdx)) {
+        // Re-read: the pad may have registered `__get_undefined` and shifted
+        // every defined-function index (#4644).
+        toStringFuncIdx = ctx.funcMap.get(`${name}_toString`)!;
         // Call ClassName_toString(self) — self is already on stack.
         // Only fire when ToPrimitive("string") was explicitly requested.
         fctx.body.push({ op: "call", funcIdx: toStringFuncIdx });
@@ -3296,8 +3356,12 @@ export function coerceType(
         const fieldIdx = fields.findIndex((f) => f.name === "valueOf");
         if (fieldIdx < 0) {
           // No valueOf field — check for a class method valueOf (ClassName_valueOf)
-          const valueOfFuncIdx = ctx.funcMap.get(`${name}_valueOf`);
-          if (valueOfFuncIdx !== undefined) {
+          let valueOfFuncIdx = ctx.funcMap.get(`${name}_valueOf`);
+          // (#4644) pad declared-but-unpassed params before the call, then
+          // re-read the index (the pad may have registered an import and
+          // shifted every defined-function index).
+          if (valueOfFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, valueOfFuncIdx)) {
+            valueOfFuncIdx = ctx.funcMap.get(`${name}_valueOf`)!;
             // Call ClassName_valueOf(self) — self is already on stack
             fctx.body.push({ op: "call", funcIdx: valueOfFuncIdx });
             // Check return type — if not f64, convert to f64
@@ -3619,7 +3683,7 @@ export function coerceType(
           // No closure types found — check for a standalone ClassName_valueOf function (#433)
           // Method shorthand syntax (e.g. { valueOf() { ... } }) compiles as a standalone
           // function rather than a closure stored in the struct field.
-          const standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`);
+          let standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`);
           if (standaloneValueOf !== undefined) {
             const funcType = ctx.mod.types[definedFuncAt(ctx, standaloneValueOf)?.typeIdx ?? -1];
             const retKind = funcType?.kind === "func" ? funcType.results?.[0]?.kind : undefined;
@@ -3635,6 +3699,11 @@ export function coerceType(
               // restore via local.get so the call sees the same value.
               fctx.body.push({ op: "local.tee", index: savedStructLocal });
             }
+            // (#4644) pad declared-but-unpassed params (after the tee, which
+            // must observe the receiver on top of the stack), then re-read the
+            // index — the pad may have registered an import and shifted it.
+            pushZeroArgCallPad(ctx, fctx, standaloneValueOf);
+            standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`)!;
             fctx.body.push({ op: "call", funcIdx: standaloneValueOf });
             if (retKind === "i32") {
               fctx.body.push({ op: "f64.convert_i32_s" });
@@ -3836,8 +3905,11 @@ function tryToStringFallback(
   }
 
   // 2. Check for standalone ClassName_toString method
-  const toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`);
-  if (toStrFuncIdx !== undefined) {
+  let toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`);
+  // (#4644) pad declared-but-unpassed params before the call, then re-read the
+  // index — the pad may have registered an import and shifted it.
+  if (toStrFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, toStrFuncIdx)) {
+    toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`)!;
     fctx.body.push({ op: "call", funcIdx: toStrFuncIdx });
     const funcType = ctx.mod.types[definedFuncAt(ctx, toStrFuncIdx)?.typeIdx ?? -1];
     const retKind = funcType?.kind === "func" ? funcType.results?.[0]?.kind : undefined;
@@ -4133,8 +4205,11 @@ export function tryStructToString(ctx: CodegenContext, fctx: FunctionContext, fr
   }
 
   // 2. Named `${name}_toString` method.
-  const toStrFuncIdx = ctx.funcMap.get(`${name}_toString`);
-  if (toStrFuncIdx !== undefined) {
+  let toStrFuncIdx = ctx.funcMap.get(`${name}_toString`);
+  // (#4644) pad declared-but-unpassed params before the call, then re-read the
+  // index — the pad may have registered an import and shifted it.
+  if (toStrFuncIdx !== undefined && pushZeroArgCallPad(ctx, fctx, toStrFuncIdx)) {
+    toStrFuncIdx = ctx.funcMap.get(`${name}_toString`)!;
     fctx.body.push({ op: "call", funcIdx: toStrFuncIdx });
     normaliseToString(funcResultKind(toStrFuncIdx));
     return true;
@@ -4430,6 +4505,39 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     if (fromKind === toKind) return [];
     if (fromKind === "i32" && toKind === "f64") return [{ op: "f64.convert_i32_s" }];
     if (fromKind === "f64" && toKind === "i32") return [{ op: "i32.trunc_sat_f64_s" }];
+  }
+
+  const fromTypedRef = from.kind === "ref" || from.kind === "ref_null";
+  const toTypedRef = to.kind === "ref" || to.kind === "ref_null";
+  if (fromTypedRef && toTypedRef) {
+    const fromIdx = from.typeIdx;
+    const toIdx = to.typeIdx;
+    if (fromIdx === toIdx) {
+      if (from.kind === "ref_null" && to.kind === "ref") return [{ op: "ref.as_non_null" }];
+      return [];
+    }
+
+    if (fctx) {
+      // Keep the push-style coercion engine authoritative for typed refs. It
+      // already handles declared subtyping, structural projection, AnyValue,
+      // shape-brand exclusions, and target nullability. `pushBody` parks the
+      // outer body in `savedBodies`, so late-import index shifting can still
+      // reach both the caller and the captured instruction array.
+      return captureBody(fctx, () => coerceType(ctx, fctx, from, to));
+    }
+
+    // Instruction-only sites cannot synthesize a structural projection
+    // without locals. A declared upcast needs no representation change; for a
+    // nullable-to-non-null sink, retain the runtime assertion.
+    if (isDeclaredStructSubtype(ctx, fromIdx, toIdx)) {
+      return from.kind === "ref_null" && to.kind === "ref" ? [{ op: "ref.as_non_null" }] : [];
+    }
+
+    // Preserve null for nullable targets and trap rather than silently feed a
+    // value of the wrong heap type to the consumer. Sites needing structural
+    // projection must pass their FunctionContext and take the path above.
+    markNoBrandSiblingShapes(ctx.mod.types, ctx.noBrandShapeTypes, fromIdx, toIdx);
+    return to.kind === "ref_null" ? [{ op: "ref.cast_null", typeIdx: toIdx }] : [{ op: "ref.cast", typeIdx: toIdx }];
   }
   if (from.kind === to.kind) return [];
 

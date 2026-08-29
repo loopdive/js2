@@ -38,6 +38,7 @@ import {
   emitFuncRefAsClosure,
   getOrCreateFuncRefWrapperTypes,
 } from "./closures.js";
+import { withRuntimeModuleCallableBindings } from "./runtime-module-callable-metadata.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
   ensureBuiltinFnMetaType,
@@ -78,6 +79,7 @@ import { emitSymbolDescLoad } from "./symbol-native.js";
 import {
   addUnionImports,
   classifyTypedArrayType,
+  hostMapCarrierClassName,
   reserveVecMethodHelper,
   resolveWasmType,
   undefinedTypedMemberReadProducesExternref,
@@ -204,6 +206,7 @@ import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
+import { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
@@ -399,6 +402,7 @@ import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) p
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
 import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
 import { isForeignEvalNode } from "./expressions/eval-source.js";
+import { identityPreservingStructuralParamCarrier } from "./identity-preserving-structural-param.js";
 import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
   finalizeStructAndDynamicMemberGet,
@@ -617,6 +621,36 @@ const LOGICAL_ASSIGNMENT_TOKENS = new Set<ts.SyntaxKind>([
  * Returns the inferred `.name` string, or undefined when no qualifying
  * logical-assignment is found.
  */
+/**
+ * (#5146 cluster E) True when the only simple assignments to `sym` install a
+ * COVERED function value — `xCover = (0, function () {})`. A comma expression
+ * is not an AnonymousFunctionDefinition, so §13.15.2 NamedEvaluation does NOT
+ * run and `.name` stays `""`. Without this, the `.name` fold fell back to the
+ * receiver identifier's own text and published `"xCover"`.
+ */
+export function assignsCoveredFunctionValue(ctx: CodegenContext, id: ts.Identifier, binding: ts.Declaration): boolean {
+  const sourceFile = id.getSourceFile();
+  let sawAssignment = false;
+  let allCovered = true;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === id.text &&
+      ctx.oracle.declarationsOf(node.left).includes(binding)
+    ) {
+      let rhs: ts.Expression = node.right;
+      while (ts.isParenthesizedExpression(rhs)) rhs = rhs.expression;
+      sawAssignment = true;
+      if (isAnonymousFunctionDefinition(rhs)) allCovered = false;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return sawAssignment && allCovered;
+}
+
 export function resolveLogicalAssignmentName(
   ctx: CodegenContext,
   id: ts.Identifier,
@@ -1030,6 +1064,22 @@ export function resolveStructNameForExpr(
     bareIdent = (bareIdent as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
   }
   if (ts.isIdentifier(bareIdent) && ctx.externrefAccessorVars.has(bareIdent.text)) {
+    return undefined;
+  }
+  const assertedCarrier = identityPreservingStructuralParamCarrier(ctx, bareIdent);
+  if (assertedCarrier !== undefined) {
+    return undefined;
+  }
+  // A host Map-refining interface (`PragmaMap extends Map`, for example) is a
+  // checker-only name over an externref runtime carrier. Suppress only that
+  // known representation-erased family here. A generic `T extends Node` can
+  // also resolve conservatively to externref, but its concrete expression may
+  // still have a valid struct carrier; globally trusting externref here makes
+  // generic clone/write code emit mismatched struct.set operands.
+  if (
+    resolvedCarrier?.kind === "externref" &&
+    hostMapCarrierClassName(ctx, ctx.checker.getTypeAtLocation(expression)) !== undefined
+  ) {
     return undefined;
   }
   // (#2838 L5) `this`-receiver: override the TS type with the runtime truth ONLY
@@ -2404,7 +2454,7 @@ export function compileOptionalPropertyAccess(
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
   let elseResultType: ValType | null = null;
-  if (isExternalDeclaredClass(tsObjType, ctx.checker)) {
+  if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
     compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName);
     elseResultType = { kind: "externref" };
   } else if (isStringType(tsObjType) && propName === "length") {
@@ -2459,8 +2509,16 @@ export function compileOptionalPropertyAccess(
           if (fieldIdx >= 0) {
             // Cast to the concrete struct type if needed, using ref.test guard to avoid illegal cast traps
             if (objType.kind !== "ref" || (objType as any).typeIdx !== structTypeIdx) {
-              // Use ref.test to guard against illegal casts at runtime
-              const castTmp = allocLocal(fctx, `__optcast_tmp_${fctx.locals.length}`, objType);
+              // Use ref.test to guard against illegal casts at runtime. A
+              // preceding dynamic read can carry this statically-typed struct
+              // as externref (notably a derived-only field read through a
+              // sealed nominal parent). ref.test only accepts the internal
+              // any/eq hierarchy, so cross that boundary before teeing the
+              // guard scratch; otherwise V8 rejects `local.tee externref;
+              // ref.test $Struct` during module validation.
+              const castInputType: ValType = objType.kind === "externref" ? { kind: "anyref" } : objType;
+              if (objType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
+              const castTmp = allocLocal(fctx, `__optcast_tmp_${fctx.locals.length}`, castInputType);
               fctx.body.push({ op: "local.tee", index: castTmp });
               fctx.body.push({ op: "ref.test", typeIdx: structTypeIdx });
               fctx.body.push({
@@ -2545,7 +2603,7 @@ export function compileExternPropertyGetFromStack(
   objType: ts.Type,
   propName: string,
 ): void {
-  const className = objType.getSymbol()?.name;
+  const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
   if (!className) return;
   // Walk inheritance chain to find the property
   let current: string | undefined = className;
@@ -3303,15 +3361,34 @@ export function tryEmitConstructorViaTag(
     const arm: Instr[] = [];
     const savedBody = fctx.body;
     fctx.body = arm;
-    if (emitLazyClassObjectGet(ctx, fctx, className)) {
-      fctx.body.push({ op: "local.set", index: resLocal });
-    } else {
-      // No singleton emitted (shouldn't happen — classObjectGlobals has it):
-      // leave resLocal null. This clears the DETACHED `arm` buffer (fctx.body is
-      // `arm` here via the manual swap above), not a speculative-compile probe.
-      fctx.body.length = 0; // not-a-probe-rollback (#1919): detached arm buffer
+    // (#5169) The swap DETACHES the enclosing body — `ctx.currentFunc.body` IS
+    // `arm`, and this function is not in `ctx.mod.functions` yet — so nothing
+    // `fixupModuleGlobalIndices` walks can reach `savedBody`. Each arm interns
+    // string constants (`emitLazyClassObjectGet`'s CSV / class name / static
+    // names, and `emitLazyProtoGet`'s method CSV), and every intern inserts an
+    // IMPORTED global that slides the module-global range up by one. So the
+    // PREVIOUS arm, already spliced into `savedBody`, kept its pre-shift
+    // `global.set` on the class-object singleton — and one missed shift puts it
+    // below the next fixup's threshold, freezing it there while the range keeps
+    // moving (848 slots of drift on the @js-temporal/polyfill + jsbi bundle,
+    // landing on string-constant import #988: a module that compiles clean and
+    // fails `WebAssembly.compile`). Registering `savedBody` in `ctx.liveBodies`
+    // for the swap window is what `emitLazyClassObjectGet` already does for its
+    // own swaps.
+    ctx.liveBodies.add(savedBody);
+    try {
+      if (emitLazyClassObjectGet(ctx, fctx, className)) {
+        fctx.body.push({ op: "local.set", index: resLocal });
+      } else {
+        // No singleton emitted (shouldn't happen — classObjectGlobals has it):
+        // leave resLocal null. This clears the DETACHED `arm` buffer (fctx.body is
+        // `arm` here via the manual swap above), not a speculative-compile probe.
+        fctx.body.length = 0; // not-a-probe-rollback (#1919): detached arm buffer
+      }
+    } finally {
+      fctx.body = savedBody;
+      ctx.liveBodies.delete(savedBody);
     }
-    fctx.body = savedBody;
     if (arm.length === 0) continue;
     fctx.body.push({ op: "local.get", index: tagLocal });
     fctx.body.push({ op: "i32.const", value: classTag });
@@ -3625,30 +3702,95 @@ function tryEmitRealmGlobalModuleGlobalElementRead(
 }
 
 /**
- * Materialize a function exported through a compiled sibling namespace import.
+ * Materialize a function exported through a compiled runtime namespace.
  *
  * Direct `ns.fn()` calls already resolve statically in calls.ts, but reading the
  * same member as a value (`createStore(ns.reducer)`) used to compile the
  * namespace identifier as null and then perform a runtime property read on it.
- * Keep this exact and fail-closed: only immutable, top-level function exports
- * with a Program-ABI-owned body qualify. Namespace objects and mutable exports
- * continue through the ordinary runtime lane.
+ * This includes local `namespace tracingEnabled { ... }` declarations: upstream
+ * TypeScript aliases `tracingEnabled.startTracing` during module initialization,
+ * before any materialized namespace object exists.
+ *
+ * Keep this exact and fail-closed: namespace imports accept only top-level
+ * function exports, while a local or named-imported runtime namespace accepts
+ * only functions whose direct parent is one of that namespace symbol's merged
+ * ModuleBlocks. In both cases the declaration and handle must be owned by the
+ * exact Program ABI source unit. Namespace objects, ambient/external modules,
+ * nested re-export chains, and mutable exports continue through the ordinary
+ * runtime lane.
  */
-function tryEmitNamespaceImportFunctionValue(
+function isAmbientDeclarationContext(node: ts.Node): boolean {
+  if (node.getSourceFile().isDeclarationFile) return true;
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    const modifiers = ts.canHaveModifiers(current) ? ts.getModifiers(current) : undefined;
+    if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
+  }
+  return false;
+}
+
+interface RuntimeNamespaceFunctionValueReceiver {
+  /** `import * as ns` projects the source file's direct function exports. */
+  readonly sourceModule: boolean;
+  /** Every runtime block belonging to one merged `namespace N` symbol. */
+  readonly moduleBlocks: ReadonlySet<ts.ModuleBlock>;
+}
+
+function runtimeNamespaceFunctionValueReceiver(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+): RuntimeNamespaceFunctionValueReceiver | undefined {
+  const directDeclaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (directDeclaration !== undefined && ts.isNamespaceImport(directDeclaration)) {
+    return { sourceModule: true, moduleBlocks: new Set() };
+  }
+
+  // A local merged namespace can have several ModuleDeclarations, while a
+  // named import binds an ImportSpecifier whose checker alias points at those
+  // declarations. Resolve the symbol once and retain every executable block;
+  // choosing only valueDeclaration would make `N.second` depend on which
+  // declaration TypeScript happened to nominate for the merged symbol.
+  let symbol = ctx.checker.getSymbolAtLocation(identifier);
+  if (symbol === undefined) return undefined;
+  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+    try {
+      symbol = ctx.checker.getAliasedSymbol(symbol);
+    } catch {
+      return undefined;
+    }
+  }
+  const moduleBlocks = new Set<ts.ModuleBlock>();
+  for (const declaration of [symbol.valueDeclaration, ...(symbol.declarations ?? [])]) {
+    if (
+      declaration !== undefined &&
+      ts.isModuleDeclaration(declaration) &&
+      ts.isIdentifier(declaration.name) &&
+      declaration.body !== undefined &&
+      ts.isModuleBlock(declaration.body) &&
+      !isAmbientDeclarationContext(declaration)
+    ) {
+      moduleBlocks.add(declaration.body);
+    }
+  }
+  return moduleBlocks.size > 0 ? { sourceModule: false, moduleBlocks } : undefined;
+}
+
+function tryEmitRuntimeNamespaceFunctionValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
   if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
-  const namespaceDeclaration = ctx.oracle.valueDeclarationOf(expr.expression);
-  if (namespaceDeclaration === undefined || !ts.isNamespaceImport(namespaceDeclaration)) return undefined;
+  const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
+  if (receiver === undefined) return undefined;
   const declaration = ctx.oracle.valueDeclarationOf(expr.name);
   if (
     declaration === undefined ||
     !ts.isFunctionDeclaration(declaration) ||
     declaration.name === undefined ||
     declaration.body === undefined ||
-    declaration.parent !== declaration.getSourceFile() ||
+    (receiver.sourceModule
+      ? declaration.parent !== declaration.getSourceFile()
+      : !ts.isModuleBlock(declaration.parent) || !receiver.moduleBlocks.has(declaration.parent)) ||
     ctx.reassignedFunctionDeclarations?.has(declaration)
   ) {
     return undefined;
@@ -3668,7 +3810,62 @@ function tryEmitNamespaceImportFunctionValue(
   const constructible =
     declaration.asteriskToken === undefined &&
     !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
-  return emitCachedFuncClosureAccess(ctx, fctx, declaration.name.text, funcIdx, constructible) ?? undefined;
+  return (
+    withRuntimeModuleCallableBindings(ctx, [{ declaration, handle: funcIdx }], () =>
+      emitCachedFuncClosureAccess(ctx, fctx, declaration.name!.text, funcIdx, constructible),
+    ) ?? undefined
+  );
+}
+
+/**
+ * Read an exact mutable value exported from a compiled runtime namespace.
+ *
+ * Runtime namespaces are not materialized as JS objects: their functions and
+ * values live in the program ABI. Calls and function-value reads already
+ * resolve through that ABI, but a data read such as `Debug.isDebugging` used to
+ * compile the namespace identifier as null and then attempt a property read on
+ * it. Resolve only named/local runtime namespaces here. A source-module
+ * namespace (`import * as ns`) has different export ownership and keeps using
+ * the ordinary module-namespace path.
+ *
+ * Declaration and allocator identity make this fail closed for merged
+ * namespaces and same-named exports. The TDZ check is deliberately dynamic:
+ * namespace reads can cross source files and execute during module
+ * initialization, where source-position analysis cannot prove ordering.
+ */
+function tryEmitRuntimeNamespaceVariableValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
+  if (receiver === undefined || receiver.sourceModule) return undefined;
+
+  const declaration = ctx.oracle.valueDeclarationOf(expr.name);
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return undefined;
+
+  let namespaceBlock: ts.ModuleBlock | undefined;
+  for (let current: ts.Node | undefined = declaration.parent; current; current = current.parent) {
+    if (ts.isModuleBlock(current)) {
+      namespaceBlock = current;
+      break;
+    }
+  }
+  if (namespaceBlock === undefined || !receiver.moduleBlocks.has(namespaceBlock)) return undefined;
+
+  const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
+  if (binding === undefined) return undefined;
+  const valueLocalIdx = ctx.mod.globals.indexOf(binding.value);
+  if (valueLocalIdx < 0) return undefined;
+
+  if (binding.tdz !== undefined) {
+    const tdzLocalIdx = ctx.mod.globals.indexOf(binding.tdz);
+    if (tdzLocalIdx < 0) return undefined;
+    emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, expr.name.text);
+  }
+  fctx.body.push({ op: "global.get", index: ctx.numImportGlobals + valueLocalIdx });
+  return binding.value.type;
 }
 
 export function compilePropertyAccess(
@@ -3735,8 +3932,11 @@ export function compilePropertyAccess(
     return { kind: "externref" };
   }
 
-  const namespaceFunctionValue = tryEmitNamespaceImportFunctionValue(ctx, fctx, expr);
+  const namespaceFunctionValue = tryEmitRuntimeNamespaceFunctionValue(ctx, fctx, expr);
   if (namespaceFunctionValue !== undefined) return namespaceFunctionValue;
+
+  const namespaceVariableValue = tryEmitRuntimeNamespaceVariableValue(ctx, fctx, expr);
+  if (namespaceVariableValue !== undefined) return namespaceVariableValue;
 
   // #1886 Slice B: linear-backed Uint8Array `buf.length` → the len i32 local
   // (widened to f64). Only fires for a registered linear-safe buffer; any other
@@ -4017,7 +4217,7 @@ export function compileExternPropertyGet(
   objType: ts.Type,
   propName: string,
 ): ValType | null {
-  const className = objType.getSymbol()?.name;
+  const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
   if (!className) return null;
 
   // (#1103a) Native Map `.size` accessor in standalone / nativeStrings mode →
