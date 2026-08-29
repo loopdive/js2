@@ -144,3 +144,15 @@ signed commit, with LOC/function ratchets and both hooks unchanged.
   both direct-body poisons.
 - `tests/issue-4590-bench-loop-prepared-cutover.test.ts`: 21/21 passed.
 - `tests/issue-4589-multi-prepared-scalar-leaf.test.ts`: 15/15 passed.
+
+## 2026-08-28 pin remeasurement carried by the #4617 C1 checkpoint
+
+One physical pin in `tests/issue-4591-fib-pair-prepared-cutover.test.ts` was
+obsolete on current `main` `f6c8e2ceaaa6dbaf0004596eb32dbe0a6d09310f`: the exact
+direct `bench_fib` cache global slot moved 136 to **139**. The suite fails
+26/27 on that clean tree before the #4617 C1 branch exists, with exactly this
+assertion red; it returns to 27/27 with the remeasured value. Source callables
+remain 76 / 77 and the direct trampoline remains 291. Every singleton-object,
+binding, signature, body, surface, binary, and runtime check is unchanged, and
+the C1 branch leaves the Fibonacci route on its pre-C1 live-oracle declaration
+authority.

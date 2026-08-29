@@ -252,3 +252,26 @@ review (not draft) and re-enqueue it only through the protected merge queue.
   Vitest fork heap raised above its default 512 MB ceiling).
 - Typecheck, Prettier, LOC/function/oracle/fallback/format/diff gates: passed
   without allowances.
+
+## 2026-08-28 pin remeasurement carried by the #4617 C1 checkpoint
+
+Three physical pins in `tests/issue-4590-bench-loop-prepared-cutover.test.ts`
+were obsolete on current `main` `f6c8e2ceaaa6dbaf0004596eb32dbe0a6d09310f` and
+failed there before the #4617 C1 branch existed (18/21, exactly these three).
+Remeasured on that clean tree and updated:
+
+- raw Prepared bytes 131,207 to **133,067**;
+- raw direct bytes 131,235 to **133,096**;
+- the exact Prepared reduction 28 to **29** bytes;
+- the direct cache global slot 136 to **139**.
+
+Prepared and direct byte counts are identical with and without the C1 branch, so
+this is unrelated allocator growth on `main`, not a route change. Source /
+trampoline / cache slots 76 / 78 / 10 (Prepared) and the direct 76 / 290
+source and trampoline slots are unchanged, as are every body, binding, surface,
+and runtime authority. The suite grew from 21 to 26 tests: the five added cases
+are the #4617 C1 positive replay, anti-vacuity poison control, armed-but-
+unmatched injection, live-lane versus replay-lane parity, and post-certification
+snapshot tamper. The 16-case one-fact mutation matrix lives in
+`tests/issue-4617-declaration-replay-mutations.test.ts` so one CI fork's 512 MB
+heap is not asked to hold ~40 compilations of the real benchmark graph.

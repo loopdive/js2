@@ -26,6 +26,12 @@ const DIRECT_POISON = "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY";
 const REQUIRE_ROUTE = "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP";
 const SEAL_FAILURE = "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE";
 const TAMPER = "JS2WASM_TEST_TAMPER_MULTI_PREPARED_FUNCTION_VALUE_LEAF";
+// #4617 C1 — declaration-fact record/replay fault injection (test-only).
+const POISON_ORACLE = "JS2WASM_TEST_POISON_DECLARATION_ORACLE";
+const LIVE_ORACLE = "JS2WASM_TEST_DECLARATION_REPLAY_LIVE_ORACLE";
+const MUTATE_SNAPSHOT = "JS2WASM_TEST_MUTATE_DECLARATION_SNAPSHOT";
+const TAMPER_REPLAY = "JS2WASM_TEST_TAMPER_DECLARATION_REPLAY";
+const POISON_MESSAGE = "live declaration oracle poisoned after semantic-snapshot finalization";
 const TRAMPOLINE = "__fn_tramp_bench_loop_cached";
 const CACHE = "__fn_closure_bench_loop";
 const EXPECTED_RUNTIME = 1_783_293_664;
@@ -177,6 +183,17 @@ function expectDirectPoison(result: CompileResult): void {
   ).toContain("compileFunctionBody");
 }
 
+/** In-memory twin of `compileBench(true, ...)`; cheaper per test than compileProject. */
+async function compileBenchSources(options: CompileOptions = {}): Promise<CompileResult> {
+  vi.stubEnv(CUTOVER, "1");
+  return compileMulti({ "helpers.ts": HELPERS_SOURCE, "loop.ts": LOOP_SOURCE }, "loop.ts", {
+    experimentalIR: true,
+    target: "standalone",
+    trackIrOutcomes: true,
+    ...options,
+  });
+}
+
 async function compileMutatedLoop(source: string): Promise<CompileResult> {
   vi.stubEnv(CUTOVER, "1");
   vi.stubEnv(DIRECT_POISON, "bench_loop");
@@ -275,7 +292,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     expect(preparedTrampoline).toContain("i32.const 125000");
 
     // Early support allocation is the one intentional raw artifact delta.
-    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 28);
+    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 29);
     expect(prepared.dts).toBe(direct.dts);
     expect(prepared.importsHelper).toBe(direct.importsHelper);
     expect(prepared.imports).toEqual(direct.imports);
@@ -358,9 +375,9 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     } else {
       expect(prepared.binary).toEqual(rawPrepared.binary);
       expect(direct.binary).toEqual(rawDirect.binary);
-      expect(prepared.binary.byteLength).toBe(131_207);
-      expect(direct.binary.byteLength).toBe(131_235);
-      expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 28);
+      expect(prepared.binary.byteLength).toBe(133_067);
+      expect(direct.binary.byteLength).toBe(133_096);
+      expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 29);
       expect(normalizedRawTrampoline(preparedTrampoline)).toBe(normalizedRawTrampoline(directTrampoline));
     }
     expect(preparedBody).toContain("i32.const 125000");
@@ -398,7 +415,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     const ids = [sourceId, trampolineId, cacheId] as const;
     const slotExpectations = [
       { result: prepared, source: 76, trampoline: 78, cache: 10 },
-      { result: direct, source: 76, trampoline: 290, cache: 136 },
+      { result: direct, source: 76, trampoline: 290, cache: 139 },
     ] as const;
 
     for (const { result, source, trampoline, cache } of slotExpectations) {
@@ -543,6 +560,81 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     },
   ])("withdraws before skip for $label", async ({ source }) => {
     expectDirectPoison(await compileMutatedLoop(source));
+  });
+
+  // ── #4617 C1: declaration-fact record/replay ────────────────────────────
+  //
+  // The route's declaration authority is now a captured, canonicalized,
+  // serialized, re-parsed snapshot replayed through an oracle with NO delegate.
+  // These cases prove the replay is load-bearing (not a spy that never throws),
+  // that a poisoned live path would have been observed, and that one corrupted
+  // fact withdraws BEFORE any support allocation or direct-body skip.
+
+  it("routes the exact reduction from replayed facts with both live declaration methods poisoned", async () => {
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    vi.stubEnv(POISON_ORACLE, "bench_loop");
+    vi.stubEnv(DIRECT_POISON, "bench_loop");
+    const result = await compileBenchSources();
+    expectSuccess(result, "replayed Prepared compile under a poisoned live oracle");
+    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
+    expect(result.irOutcomes?.find((outcome) => outcome.displayName === "bench_loop")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    await expect(benchRuntime(result)).resolves.toBe(EXPECTED_RUNTIME);
+  });
+
+  it("observes the poison when the pre-C1 live-query path runs after finalization", async () => {
+    vi.stubEnv(POISON_ORACLE, "bench_loop");
+    vi.stubEnv(LIVE_ORACLE, "bench_loop");
+    const result = await compileBenchSources();
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(POISON_MESSAGE);
+  });
+
+  it("fails an armed-but-unmatched declaration fault injection instead of passing silently", async () => {
+    vi.stubEnv(POISON_ORACLE, "not_the_certified_route");
+    const result = await compileBenchSources();
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(
+      "is armed for not_the_certified_route but the certified route is bench_loop",
+    );
+  });
+
+  it("keeps the live-oracle lane and the replay lane identical in route, surface, and runtime", async () => {
+    vi.stubEnv(LIVE_ORACLE, "bench_loop");
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const live = await compileBenchSources({ emitWat: true, emitWatOnlyFunctions: ["bench_loop", TRAMPOLINE] });
+    vi.unstubAllEnvs();
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const replayed = await compileBenchSources({ emitWat: true, emitWatOnlyFunctions: ["bench_loop", TRAMPOLINE] });
+    expectSuccess(live, "live-oracle declaration lane");
+    expectSuccess(replayed, "replayed declaration lane");
+
+    expect(replayed.irBodyRouteAudit?.legacyEntries).toEqual(live.irBodyRouteAudit?.legacyEntries);
+    expect(replayed.irBodyRouteAudit?.dispositions).toEqual(live.irBodyRouteAudit?.dispositions);
+    expect(replayed.irOutcomes).toEqual(live.irOutcomes);
+    expect(replayed.dts).toBe(live.dts);
+    expect(replayed.importsHelper).toBe(live.importsHelper);
+    expect(replayed.imports).toEqual(live.imports);
+    expect(replayed.stringPool).toEqual(live.stringPool);
+    expect(replayed.binary.byteLength).toBe(live.binary.byteLength);
+    expect(Buffer.from(replayed.binary).equals(Buffer.from(live.binary))).toBe(true);
+    expect(watFunction(replayed.wat, "bench_loop")).toBe(watFunction(live.wat, "bench_loop"));
+    expect(watFunction(replayed.wat, TRAMPOLINE)).toBe(watFunction(live.wat, TRAMPOLINE));
+    expect(wasmSurface(replayed.binary)).toEqual(wasmSurface(live.binary));
+    await expect(benchRuntime(replayed)).resolves.toBe(EXPECTED_RUNTIME);
+    await expect(benchRuntime(live)).resolves.toBe(EXPECTED_RUNTIME);
+  });
+
+  it("fails closed when the retained declaration snapshot is tampered after certification", async () => {
+    vi.stubEnv(TAMPER_REPLAY, "bench_loop");
+    const result = await compileBenchSources();
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain("drifted after direct-body certification");
+    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
   });
 
   it.each([

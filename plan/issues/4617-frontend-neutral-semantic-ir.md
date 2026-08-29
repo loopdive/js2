@@ -33,6 +33,9 @@ files:
   - src/codegen/multi-prepared-function-value-import-target.ts
   - src/codegen/program-abi-session.ts
   - tests/issue-4590-bench-loop-prepared-cutover.test.ts
+  - tests/issue-4591-fib-pair-prepared-cutover.test.ts
+  - tests/issue-4617-declaration-replay-mutations.test.ts
+  - tests/issue-4617-semantic-declaration-snapshot.test.ts
   - tests/dogfood/acorn-harness.mjs
 ---
 
@@ -858,3 +861,186 @@ inside the temporary TypeScript adapter, so Phase D's neutral consumer and
 Phase E's TypeScript/Acorn-unloaded end-to-end replay remain open. Do not claim
 TS7 or Acorn support, a general semantic snapshot, direct-codegen deletion, or
 repository-wide frontend neutrality from this checkpoint.
+
+## 2026-08-28 C1 implementation checkpoint (clean-room re-derivation)
+
+This is a **clean-room re-implementation from the approved plan above**. A prior
+lane implemented and validated the same checkpoint, but its 13-file diff was
+staged and never committed on a host that is no longer reachable, so nothing of
+it survives. Only the committed plan was available; every number below was
+measured on this branch, against current `main`
+`f6c8e2ceaaa6dbaf0004596eb32dbe0a6d09310f`.
+
+### What landed
+
+Three new modules with the prescribed import boundaries:
+
+| Module | LOC | Imports |
+| --- | --- | --- |
+| `src/ir/semantic-declaration-snapshot.ts` | 291 | none at all — no TypeScript, Acorn, checker, codegen, Wasm, or Node hashing |
+| `src/checker/oracle-declaration-snapshot.ts` | 251 | `ts`, the neutral schema, and `IrPlanningIdentityContext`/`IrSourceId` types |
+| `src/codegen/multi-prepared-function-value-declaration-replay.ts` | 484 | the adapter, the neutral schema, `ts` predicates, `IrInvariantError`, and `multi-prepared-function-value-import-target.ts` — **not** `multi-prepared-scalar-leaf.ts` |
+
+Production consumption is confined to
+`multi-prepared-function-value-import-target.ts` (its `oracle` parameter is now
+supplied by the replayer) and the exact function-value leaf of
+`multi-prepared-scalar-leaf.ts`, which moved its reduction declaration proof
+into the new helper and shrank **1,530 to 1,468 lines (-62, non-positive net)**.
+No LOC allowance was added. `src/codegen/index.ts` was not touched: the route
+owns capture and replay locally, and the late
+`assertMultiPreparedFunctionValueLeafRouteCurrent` seam already receives the
+frozen route.
+
+The v1 record vocabulary is closed: one source-qualified query-site reference,
+zero-or-one value-declaration reference, the complete ordered declaration
+population, and three roles (`named-import-specifier`, `top-level-function`,
+`reduction-local-variable`). Canonical keys join `sourceId`, `start`, `end` and
+(for declarations) `role` with a NUL separator, which no source key or role can
+contain. The serializer emits schema-ordered keys, so parse-then-reserialize
+reproduces the same bytes. On the `bench_loop` graph the certified snapshot has
+**9 query sites**: six reduction-body locals (`s` three times, `i` three times),
+the `bench_loop` function-value use, the `addBenchCard` import specifier in
+`loop.ts`, and the `addBenchCard` top-level function in `helpers.ts`.
+
+### Deviations from the plan (all minimal, all measured)
+
+1. **`MultiPreparedFibonacciPairRoute` is now
+   `Omit<MultiPreparedFunctionValueLeafRoute, "routeKind" | "declarationReplay">`.**
+   Adding the replay receipt to the leaf route otherwise breaks the Fibonacci
+   route's structural derivation. This is a type-level edit only; the Fibonacci
+   pair keeps its pre-C1 live-oracle declaration authority, as the plan requires.
+2. **The graph-wide reduction-candidate uniqueness scan
+   (`collectMultiPreparedReductionLeafCandidates`) still runs on the live
+   oracle.** It is *discovery*, not authorization: it decides only which single
+   declaration is offered for certification. Every fact that authorizes support
+   allocation, preparation, the direct-body skip, and each post-certification
+   recheck comes from the replayed snapshot.
+3. **The one-fact mutation matrix lives in its own test file**
+   (`tests/issue-4617-declaration-replay-mutations.test.ts`) rather than inside
+   the #4590 file. Measured reason, not preference: with all 21 new cases in one
+   file, CI's `issue-tests` job (single fork, vitest's default 512 MB fork heap)
+   OOM'd — `Reached heap limit ... 510.4 MB` — while the same set passed in 106 s
+   at a 1 GB heap. Split across two files the whole set passes at the CI default.
+   The plan explicitly permits "a focused schema/adapter test file if keeping
+   pure mutations separate improves clarity"; this extends that to the route
+   mutations for a memory reason.
+4. **Three obsolete physical pins in #4590 and one in #4591 were remeasured**
+   (see below). All four fail on clean `origin/main` before this branch exists.
+
+### Obsolete-pin remeasurement (verified on clean `origin/main` first)
+
+The A/B was run by deleting the three new files and restoring the three edited
+ones, so both sides are one `cp` apart:
+
+| Pin | Was | Measured on clean `f6c8e2c` | Now |
+| --- | --- | --- | --- |
+| #4590 raw Prepared bytes | 131,207 | **133,067** | 133,067 |
+| #4590 raw direct bytes | 131,235 | **133,096** | 133,096 |
+| #4590 exact Prepared reduction | 28 | **29** | 29 |
+| #4590 direct cache global slot | 136 | **139** | 139 |
+| #4591 direct `bench_fib` cache global slot | 136 | **139** | 139 |
+
+Clean-main evidence: `tests/issue-4590-...` 18/21 with exactly those three
+assertions red; `tests/issue-4591-...` 26/27 with exactly that one red. The
+Prepared and direct byte counts are **identical with and without this branch**,
+so C1 is artifact-neutral: the drift is unrelated allocator growth on `main`
+since the pins were written — exactly the class #4590's own "current-main pin
+maintenance" section describes. Slots 76 / 78 / 10 (Prepared) and 76 / 290
+(direct source and trampoline) are unchanged.
+
+### Validation (every command run bare; real exit statuses)
+
+| Check | Result | Exit |
+| --- | --- | --- |
+| `tests/issue-4590-bench-loop-prepared-cutover.test.ts` | 26/26 | 0 |
+| `tests/issue-4617-declaration-replay-mutations.test.ts` | 18/18 | 0 |
+| `tests/issue-4617-semantic-declaration-snapshot.test.ts` | 6/6 | 0 |
+| all three together, CI flags, CI default 512 MB heap | 50/50 | 0 |
+| `tests/issue-4591-fib-pair-prepared-cutover.test.ts` | 27/27 | 0 |
+| `tests/issue-4589-multi-prepared-scalar-leaf.test.ts` | 15/15 | 0 |
+| `tests/issue-3518-bench-array-prepared-cutover.test.ts` | 5/5 | 0 |
+| `tests/issue-3518-bench-string-prepared-cutover.test.ts` | 3/3 | 0 |
+| `tests/issue-3518-multi-prepared-string-leaf-planner.test.ts` | 71/71 | 1 (vitest RPC timeout, see below) |
+| `tests/issue-3525-multi-prepared-program-census.test.ts` | 17/17 | 0 |
+| `tests/issue-3525-multi-prepared-callable-bindings.test.ts` + `-module-init` | 13/13 | 0 |
+| `tests/issue-2138-multi-module-ir-overlay.test.ts` | 6/6 | 0 |
+| `tests/issue-4584-standalone-prepared-class-cutover.test.ts` | 4/4 | 0 |
+| `tests/issue-3521-prepared-free-function-routing.test.ts` | 34/37 | 1 — **identical 3 failures on clean `origin/main`** |
+| `pnpm run typecheck` (TypeScript 7) | clean | 0 |
+| `pnpm run typecheck:ts5` (TypeScript 5) | clean | 0 |
+| `pnpm run format:check` (Prettier) | clean | 0 |
+| `pnpm run lint` (Biome, error level) | clean | 0 |
+| `pnpm run check:ir-fallbacks` | no increases | 0 |
+| `node scripts/check-ir-layering.mjs` | 86 import lines / 15 files, baseline 86 | 0 |
+| `node scripts/check-ir-dialect.mjs` | 27 re-exports, no leaks | 0 |
+| `node scripts/check-ir-optimization-retirement.mjs` | 50 rows | 0 |
+| `pnpm run check:test-vacuity-shapes` | 0 gate-defeating callees | 0 |
+| `node scripts/check-loc-budget.mjs` | no unallowed growth, 6 changed files | 0 |
+| `node scripts/check-func-budget.mjs` | no unallowed growth | 0 |
+| `node scripts/check-coercion-sites.mjs` | no net vocabulary growth | 0 |
+| `npm run -s check:oracle-ratchet` | `getTypeAtLocation +0, ctx.checker +0` | 0 |
+| `npm run -s check:dead-exports` | 23 known, 0 new | 0 |
+| `LOC_GATE_BASE=f6c8e2c` LOC and function ratchets | both OK | 0 |
+
+Changed-root denominator: **50/50** across the three files this branch owns
+(26 + 18 + 6); adjacent controls **195/198**, where the three are the
+pre-existing `issue-3521-prepared-free-function-routing` failures reproduced
+identically without this branch.
+
+Two environment artifacts, both reproduced on clean `main` and neither a product
+signal: (a) `[vitest-worker]: Timeout calling "onTaskUpdate"` on long
+single-fork runs on this loaded 4-core box — it also fires for #4591 and the
+string-leaf planner without this branch, and clears at a 1 GB fork heap; (b) the
+512 MB OOM described in deviation 3, which the file split resolves.
+
+### Non-vacuity evidence
+
+The replay is load-bearing, not a spy that never throws:
+
+- With `JS2WASM_TEST_POISON_DECLARATION_ORACLE=bench_loop` the two live
+  declaration methods throw after finalization and the route still reaches
+  `terminal-ir`, zero `bench_loop` legacy rows, and runtime `1_783_293_664`.
+- The **anti-vacuity control** arms the same poison *and* forces the pre-C1
+  live-query path (`JS2WASM_TEST_DECLARATION_REPLAY_LIVE_ORACLE=bench_loop`):
+  compilation fails with `live declaration oracle poisoned after
+  semantic-snapshot finalization`. The old path would have been observed.
+- The live lane and the replay lane are compared directly and agree on route
+  audit rows, dispositions, IR outcomes, DTS, imports helper, import
+  descriptors, string pool, byte-for-byte binary, `bench_loop` and trampoline
+  WAT, Wasm import/export surface, and runtime.
+- A fault injection that is armed but does not match the certified route fails
+  the compile instead of passing silently, and an unknown mutation name is an
+  invariant.
+- 16 one-fact-at-a-time mutations each withdraw **before** support allocation
+  and before the skip — proven by the direct body then running into its own
+  poison: `drop-query`, `answer-to-null`, `duplicate-query`, `unknown-query`,
+  `wrong-version`, `extra-field`, `wrong-source`, `wrong-range`, `wrong-role`,
+  `empty-population`, `duplicate-population`, `value-not-in-population`,
+  `foreign-import` (same-spelled foreign declaration), `foreign-target`
+  (same-spelled foreign target, which is also the imported-target UnitId
+  mismatch), `copied-source`, `stale-inventory`.
+- Post-certification, tampering the retained snapshot
+  (`JS2WASM_TEST_TAMPER_DECLARATION_REPLAY=bench_loop`) yields the existing
+  `drifted after direct-body certification` invariant with zero `bench_loop`
+  legacy rows.
+- The non-canonical-order proof uses a real two-declaration fixture (one binding
+  with two `var` declarations in the reduction body): its forward population
+  replays to both nodes, and reversing it is rejected as `non-canonical-order`.
+  Calling a singleton "reordered" is not evidence, so no singleton is used.
+- Capture-order independence is proven by capturing the same four sites in
+  forward and reverse order and comparing canonical bytes and their SHA-256; a
+  capture over a different site population is shown to differ, so the equality
+  is not the trivial one.
+- All test-only fault injection is `JS2WASM_TEST_*`, parsed, exact, and fails
+  when armed but unmatched. No new shipping environment switch was introduced.
+
+### Honest claims
+
+Acceptance proves **Phase C for one declaration-query family
+(`valueDeclarationOf` / `declarationsOf`) and one bounded standalone route** —
+the exact `bench_loop` Prepared function-value leaf — and nothing more. The
+snapshot still reattaches compiler-owned AST declarations inside the temporary
+TypeScript adapter, so Phase D's neutral consumer and Phase E's
+TypeScript/Acorn-unloaded end-to-end replay remain open. This checkpoint claims
+no TypeScript 7 support, no Acorn support, no general semantic snapshot, no
+direct-codegen handler deletion, and no repository-wide frontend neutrality.
