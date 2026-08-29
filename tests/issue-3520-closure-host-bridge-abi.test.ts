@@ -15,6 +15,7 @@ import {
   resolveProgramAbiSupportCallableHandle,
 } from "../src/codegen/program-abi-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
+import { emitBinary } from "../src/emit/binary.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
 import { createEmptyModule, type FuncTypeDef, type Import, type WasmFunction } from "../src/ir/types.js";
 import { compile } from "../src/index.js";
@@ -40,6 +41,12 @@ const REQUIRED_BRIDGES = Object.freeze([
   { name: "__call_fn_method_5", ordinal: 10 },
   { name: "__closure_arity", ordinal: 11 },
   { name: "__is_closure", ordinal: 12 },
+] as const);
+
+const CLOSURE_BRIDGES = Object.freeze([
+  ...REQUIRED_BRIDGES,
+  { name: "__closure_has_rest", ordinal: 13 },
+  { name: "__is_ctor_closure", ordinal: 14 },
 ] as const);
 
 const CLOSURE_PHYSICAL_BASES = [
@@ -257,61 +264,103 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(tracked.binary).toEqual(untracked.binary);
   });
 
-  it("moves exactly 26 five-entry census rows without changing functions or routing", () => {
-    let definedFunctions = 0;
-    let genericRows = 0;
-    let closureRows = 0;
-    let vecRows = 0;
-    let dateRows = 0;
-    let dataRows = 0;
-    let terminalUnits = 0;
-    let emitted = 0;
-    let unsupported = 0;
-    let invariants = 0;
-    let legacyBodies = 0;
-    let irBodies = 0;
+  it("derives the exact five-entry census from terminal and allocator ownership", () => {
+    expect([...SINGLE_HOST_ENTRIES]).toEqual([
+      "website/playground/examples/dom/calendar.ts",
+      "website/playground/examples/js/algorithms.ts",
+      "website/playground/examples/js/async.ts",
+      "website/playground/examples/js/builtins.ts",
+      "website/playground/examples/js/classes.ts",
+    ]);
 
+    let corpusOwnedFunctions = 0;
+    let corpusRetainedFallbacks = 0;
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
-      const ast = analyzeSource(source, entry);
-      const result = generateModule(ast, {
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      const errors = hardErrors(result);
-      expect(errors, `${entry}\n${errors.map((error) => error.message).join("\n")}`).toEqual([]);
-      definedFunctions += result.module.functions.length;
-      const entries = result.programAbi!.abi.entries();
-      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
-      closureRows += entries.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
-      vecRows += entries.filter((candidate) => candidate.id.includes(":vec-host-bridge:")).length;
-      dateRows += entries.filter((candidate) => candidate.id.includes(":date-civil-support:")).length;
-      dataRows += entries.filter((candidate) => candidate.id.includes(":data-struct-host-bridge:")).length;
-      for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
-        if (outcome.kind === "emitted") emitted++;
-        if (outcome.kind === "unsupported") unsupported++;
-        if (outcome.kind === "invariant") invariants++;
-        if (outcome.legacyBodyEmitted) legacyBodies++;
-        if (outcome.irBodyEmitted) irBodies++;
-      }
-    }
+      const trackedAst = analyzeSource(source, entry);
+      const untrackedAst = analyzeSource(source, entry);
+      const tracked = generateModule(trackedAst, { experimentalIR: true, trackIrOutcomes: true });
+      const untracked = generateModule(untrackedAst, { experimentalIR: true, trackIrOutcomes: false });
+      const trackedErrors = hardErrors(tracked);
+      const untrackedErrors = hardErrors(untracked);
+      expect(trackedErrors, `${entry}\n${trackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(untrackedErrors, `${entry}\n${untrackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(emitBinary(tracked.module), `${entry} binary`).toEqual(emitBinary(untracked.module));
+      expect(tracked.module.functions.length, `${entry} function population`).toBe(untracked.module.functions.length);
+      expect(tracked.irCompiledFuncs, `${entry} routing`).toEqual(untracked.irCompiledFuncs);
+      expect(
+        tracked.module.exports.map(({ name, desc }) => ({ name, kind: desc.kind, index: desc.index })),
+        `${entry} public exports`,
+      ).toEqual(untracked.module.exports.map(({ name, desc }) => ({ name, kind: desc.kind, index: desc.index })));
+      expect(untracked.irOutcomes, `${entry} untracked outcomes`).toBeUndefined();
 
-    expect({ definedFunctions, closureRows }).toEqual({ definedFunctions: 166, closureRows: 26 });
-    // C30, C32, and C33 are independent structural-ownership slices. Each
-    // moves its rows one-for-one out of the generic retained-function bucket.
-    expect([0, 24]).toContain(vecRows);
-    expect([0, 1]).toContain(dateRows);
-    expect(dataRows).toBe(5);
-    expect(genericRows).toBe(75 - vecRows - dateRows - dataRows);
-    expect({ terminalUnits, emitted, unsupported, invariants, legacyBodies, irBodies }).toEqual({
-      terminalUnits: 37,
-      emitted: 30,
-      unsupported: 7,
-      invariants: 0,
-      legacyBodies: 37,
-      irBodies: 30,
-    });
+      const inventory = buildIrUnitInventory([trackedAst.sourceFile], {
+        entrySource: trackedAst.sourceFile,
+        checker: trackedAst.checker,
+      });
+      const outcomes = tracked.irOutcomes ?? [];
+      const outcomeIds = outcomes.map((outcome) => outcome.unitId);
+      expect(
+        outcomeIds.every((id) => id !== undefined),
+        `${entry} structural outcome ids`,
+      ).toBe(true);
+      expect(new Set(outcomeIds).size, `${entry} unique outcome ids`).toBe(outcomes.length);
+      expect([...outcomeIds].sort(), `${entry} terminal outcome closure`).toEqual(
+        inventory.terminalUnits.map((unit) => unit.id).sort(),
+      );
+      for (const outcome of outcomes) {
+        expect(outcome.kind === "emitted" ? outcome.irBodyEmitted : !outcome.irBodyEmitted, outcome.key).toBe(true);
+        if (outcome.kind === "unsupported") expect(outcome.legacyBodyEmitted, outcome.key).toBe(true);
+        expect(outcome.kind, outcome.key).not.toBe("invariant");
+      }
+
+      const entrySource = inventory.sources.find((candidate) => candidate.kind === "entry");
+      if (!entrySource) throw new Error(`missing entry source for ${entry}`);
+      const abiEntries = tracked.programAbi!.abi.entries();
+      const familyEntries = abiEntries.filter(
+        (candidate) => candidate.intent.kind === "callable" && candidate.id.includes(`:${CLOSURE_HOST_BRIDGE_ROLE}:`),
+      );
+      const retainedFallbacks = abiEntries.filter(
+        (candidate) =>
+          candidate.intent.kind === "callable" &&
+          candidate.id.includes(":retained-module-function:") &&
+          CLOSURE_BRIDGES.some((bridge) => bridge.name === candidate.displayName),
+      );
+      expect(retainedFallbacks, `${entry} closure retained-module-function fallbacks`).toEqual([]);
+      corpusRetainedFallbacks += retainedFallbacks.length;
+      const ownedFunctions = new Set<WasmFunction>();
+      for (const bridge of CLOSURE_BRIDGES) {
+        const id = createIrBindingId({
+          ownerId: entrySource.id,
+          domain: "support",
+          role: CLOSURE_HOST_BRIDGE_ROLE,
+          ordinal: bridge.ordinal,
+        });
+        const matchingEntries = familyEntries.filter((candidate) => candidate.id === id);
+        const helperFunctions = tracked.module.functions.filter((candidate) => candidate.name === bridge.name);
+        expect(matchingEntries.length, `${entry} ${bridge.name} owner count`).toBe(helperFunctions.length);
+        if (matchingEntries.length === 0) continue;
+        expect(matchingEntries).toHaveLength(1);
+        const row = matchingEntries[0]!;
+        expect(row).toMatchObject({
+          slotPolicy: "required",
+          slotSpace: "function",
+          intent: { kind: "callable", origin: "support", sourceId: entrySource.id },
+        });
+        const slot = tracked.programAbi!.abi.resolveFinalIndex(row.id);
+        if (!slot || slot.space !== "function") throw new Error(`missing ${entry} ${bridge.name} final locator`);
+        const importCount = tracked.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+        const helper = tracked.module.functions[slot.index - importCount];
+        expect(helper, `${entry} ${bridge.name} exact helper`).toBe(helperFunctions[0]);
+        if (!helper) throw new Error(`missing ${entry} ${bridge.name} helper allocation`);
+        expect(ownedFunctions.has(helper), `${entry} duplicate closure helper owner`).toBe(false);
+        ownedFunctions.add(helper);
+      }
+      expect(familyEntries, `${entry} unbounded closure family rows`).toHaveLength(ownedFunctions.size);
+      corpusOwnedFunctions += ownedFunctions.size;
+    }
+    expect(corpusOwnedFunctions, "five-entry closure ownership anti-vacuity").toBeGreaterThan(0);
+    expect(corpusRetainedFallbacks, "five-entry closure retained-module-function fallback census").toBe(0);
   });
 
   it("preserves public labels, closure identity, direct calls, and method receivers", async () => {
@@ -399,6 +448,8 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
 
     expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(801);
     expect((exports.$v0 as (value: unknown) => number)(null)).toBe(802);
+    expect((exports.__vec_get as (value: unknown, index: number) => number)(null, 0)).toBe(803);
+    expect((exports.$v1 as (value: unknown, index: number) => number)(null, 0)).toBe(804);
     expect((exports.__call_fn_1 as (fn: unknown, value: unknown) => number)(null, null)).toBe(805);
     expect((exports.$c1 as () => number)()).toBe(806);
     expect((exports.__is_closure as (value: unknown) => number)(null)).toBe(1);
