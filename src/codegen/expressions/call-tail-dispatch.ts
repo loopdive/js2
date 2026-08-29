@@ -775,6 +775,12 @@ export function compileTailDispatch(
         // keeps the existing `__iterator` bridge (byte-inert). Async iterator and
         // non-array receivers fall through unchanged.
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+          // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
+          // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
+          // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
+          // and is NOT a drop-in — the array-iterator prototype/metadata rows
+          // key off the vec carrier — so the carrier migration is left to the
+          // follow-up that also moves `%ArrayIteratorPrototype%`.
           const nativeResult = compileArrayMethodCall(ctx, fctx, elemAccess, expr, receiverType, "values");
           if (nativeResult !== undefined && nativeResult !== null) return nativeResult as ValType;
           // Fall through to the host bridge if the native path declined.
