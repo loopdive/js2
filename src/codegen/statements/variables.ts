@@ -37,10 +37,16 @@ import {
   getOrRegisterSubviewType,
   getOrRegisterTaViewType,
   getOrRegisterVecType,
+  isTaViewTypeIdx,
 } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
+import {
+  inferNativeTaViewCallResultType,
+  inferNativeTaViewConstructType,
+  nativeBufferBuiltinOf,
+} from "../dataview-native.js";
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
@@ -65,6 +71,36 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
+import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
+
+/**
+ * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
+ * that SHADOWS a boxed capture of the same name (Deno's `const queue = …`
+ * inside `runImmediates`, while the lifted frame carries a boxed capture
+ * `queue` from the module frame's FixedQueue) finds the stale entry and would
+ * route its init through a ref cell the live local does not hold — an invalid
+ * `struct.set $__ref_cell_T` on a raw value local. The live storage local's
+ * DECLARED type is ground truth: when it is not this entry's cell type, the
+ * entry belongs to a different binding. Drop it so this declaration and every
+ * later read/write in the shadowing scope uses the plain local.
+ * Returns true when the entry was stale (and removed).
+ */
+function dropStaleBindingBox(
+  fctx: FunctionContext,
+  name: string,
+  entry: { refCellTypeIdx: number },
+  storageIdx: number | undefined,
+): boolean {
+  if (storageIdx === undefined) return false;
+  const t = getLocalType(fctx, storageIdx);
+  const isCell =
+    t !== undefined &&
+    (t.kind === "ref" || t.kind === "ref_null") &&
+    (t as { typeIdx?: number }).typeIdx === entry.refCellTypeIdx;
+  if (isCell) return false;
+  fctx.boxedCaptures?.delete(name);
+  return true;
+}
 
 /**
  * A transferred generic Array reverse returns its ORIGINAL receiver, which is
@@ -1062,6 +1098,13 @@ function inferSubarraySubviewType(
   }
   receiverType ??= resolveWasmType(ctx, ctx.checker.getTypeAtLocation(receiver));
   if (receiverType.kind !== "ref" && receiverType.kind !== "ref_null") return null;
+  // A subarray of an ArrayBuffer-backed `$__ta_view` remains the SAME carrier
+  // family: it keeps the shared buffer ref and accumulates a BYTE offset. Do not
+  // allocate the ordinary element-array `$__subview` slot here — that would
+  // coerce the emitted `$__ta_view` result to null at the declaration store.
+  if (isTaViewTypeIdx(ctx, receiverType.typeIdx)) {
+    return { kind: "ref_null", typeIdx: receiverType.typeIdx };
+  }
   const recvName = ctx.typeIdxToStructName.get(receiverType.typeIdx);
   const elemKind = recvName?.replace(/^__vec_/, "").replace(/^__subview_/, "");
   if (elemKind === undefined || elemKind === recvName) return null;
@@ -1096,6 +1139,8 @@ const TA_VIEW_CTOR_NAMES = new Set([
  * byteOffset field populated), so 1..3 args are accepted here.
  */
 export function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undefined): ValType | null {
+  const nativeViewType = inferNativeTaViewConstructType(ctx, initializer);
+  if (nativeViewType) return nativeViewType;
   if (!initializer) return null;
   const unwrapped = stripInferenceWrapper(initializer);
   if (!ts.isNewExpression(unwrapped) || !ts.isIdentifier(unwrapped.expression)) return null;
@@ -1358,7 +1403,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       (stmt.declarationList.flags &
         (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) !==
       0;
-    const bindsModuleGlobal = !declarationIsLexical || (stmt.parent !== undefined && ts.isSourceFile(stmt.parent));
+    const bindsModuleGlobal =
+      !declarationIsLexical ||
+      (stmt.parent !== undefined && ts.isSourceFile(stmt.parent)) ||
+      // Runtime namespace lexical declarations are backed by qualified
+      // module globals. `declarations.ts` projects only this ModuleBlock's
+      // exact cell under the bare source name while compiling its initializer.
+      (stmt.parent !== undefined && ts.isModuleBlock(stmt.parent) && ctx.moduleGlobals.has(name));
 
     // Track const bindings for runtime enforcement (assignment throws TypeError)
     if (stmt.declarationList.flags & ts.NodeFlags.Const) {
@@ -1485,15 +1536,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // back to `compileExpression` for a class with no singleton (externref-
       // backed builtin subclass) or an unresolved synthetic name.
       let actualType: ValType | null;
-      const clsSynth = ts.isClassExpression(decl.initializer)
-        ? ctx.anonClassExprNames.get(decl.initializer)
-        : undefined;
+      const classInitializer = ts.isClassExpression(decl.initializer) ? decl.initializer : undefined;
+      const clsSynth = classInitializer ? ctx.anonClassExprNames.get(classInitializer) : undefined;
       if (
+        classInitializer !== undefined &&
         clsSynth !== undefined &&
         ctx.classObjectGlobals?.has(clsSynth) &&
         emitLazyClassObjectGet(ctx, fctx, clsSynth)
       ) {
-        actualType = { kind: "externref" };
+        actualType = emitClassExpressionStaticsBeforeValue(ctx, fctx, classInitializer, { kind: "externref" });
       } else {
         actualType = compileExpression(ctx, fctx, decl.initializer);
       }
@@ -1596,7 +1647,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // untouched.
         const boxedClosureCell = fctx.boxedCaptures?.get(name);
         const boxedCellLocalIdx = boxedClosureCell !== undefined ? fctx.localMap.get(name) : undefined;
-        if (boxedClosureCell !== undefined && boxedCellLocalIdx !== undefined) {
+        if (
+          boxedClosureCell !== undefined &&
+          boxedCellLocalIdx !== undefined &&
+          !dropStaleBindingBox(fctx, name, boxedClosureCell, boxedCellLocalIdx)
+        ) {
           if (!valTypesMatch(closureType, boxedClosureCell.valType)) {
             // Precise closure struct → externref cell field: extern.convert_any.
             coerceType(ctx, fctx, closureType, boxedClosureCell.valType);
@@ -1850,6 +1905,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const subarraySubviewType = inferSubarraySubviewType(ctx, fctx, decl.initializer);
     // (#3054 B1) `new <TA>(buffer)` → shared-backing `$__ta_view` local type.
     const taViewType = inferTaViewType(ctx, decl.initializer);
+    const taViewCallResultType = inferNativeTaViewCallResultType(ctx, decl.initializer);
     // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
     // slots so dynamic MOP/result-object reads do not become struct.get on the
     // checker-inferred target/revocable shapes.
@@ -1962,6 +2018,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                               ? { kind: "externref" as const }
                               : (escapeWidenedVecType ??
                                 taViewType ??
+                                taViewCallResultType ??
                                 subarraySubviewType ??
                                 inferredVecType ??
                                 standaloneRegExpMatchArrayType ??
@@ -2439,7 +2496,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // closure that captured the same cell. (The inner-scope `boxedForInit`
       // above made the initializer value/coerce box-aware; re-resolve here for
       // this outer scope.)
-      const boxedForInitStore = fctx.boxedCaptures?.get(name);
+      let boxedForInitStore = fctx.boxedCaptures?.get(name);
+      if (
+        boxedForInitStore &&
+        dropStaleBindingBox(fctx, name, boxedForInitStore, fctx.localMap.get(name) ?? localIdx)
+      ) {
+        boxedForInitStore = undefined;
+      }
       if (boxedForInitStore) {
         const boxedForInit = boxedForInitStore;
         // (#4368) The initializer itself may be what first captures `name`.
@@ -2500,7 +2563,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // ref.cast null (ref __ref_cell_T)` that traps at runtime ("illegal cast"),
         // because JS undefined is not a struct ref.
         const boxedNoInit = fctx.boxedCaptures?.get(name);
-        if (boxedNoInit) {
+        if (boxedNoInit && !dropStaleBindingBox(fctx, name, boxedNoInit, localIdx)) {
           const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedNoInit.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
           fctx.body.push({ op: "local.get", index: localIdx });

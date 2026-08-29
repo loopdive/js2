@@ -286,7 +286,7 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
   }
 
   /** `if (!__is_class_instance_carrier(obj)) return 0;` */
-  const requireCarrier: Instr[] = [
+  const requireCarrier = (): Instr[] => [
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: carrierIdx },
     { op: "i32.eqz" },
@@ -301,7 +301,7 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
     INSTANCE_FIELD_TOMBSTONE,
     [{ name: "__bag", type: EXT }],
     [
-      ...requireCarrier,
+      ...requireCarrier(),
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: ensureIdx },
       { op: "local.tee", index: 2 },
@@ -328,7 +328,7 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
       { name: "__v", type: EXT },
     ],
     [
-      ...requireCarrier,
+      ...requireCarrier(),
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: lookupIdx },
       { op: "local.tee", index: 2 },

@@ -46,7 +46,7 @@ import {
   valTypesMatch,
 } from "../shared.js";
 import { collectInstrs } from "./shared.js";
-import { emitLocalTdzInit } from "./tdz.js";
+import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
@@ -197,7 +197,6 @@ export function tryEmitArrayProtoIteratorReadDrive(
           localIdx = allocLocal(fctx, name, declType);
         }
       }
-      console.error("DBG drain elem", name, localIdx, JSON.stringify(getLocalType(fctx, localIdx)));
       const localType = getLocalType(fctx, localIdx) ?? ({ kind: "externref" } as ValType);
 
       // value-present arm: coerce `value` externref → the binding's local type.
@@ -341,6 +340,11 @@ export function syncDestructuredLocalsToGlobals(
             coerceType(ctx, fctx, localType, globalType);
           }
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+          // Module-level destructuring initializes both the local shadow used
+          // by the init body and the persistent lexical cell. Keep its exact
+          // projected TDZ flag in sync as well; otherwise namespace functions
+          // observe the initialized value through a still-zero flag and throw.
+          emitTdzInit(ctx, fctx, name);
         }
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         syncDestructuredLocalsToGlobals(ctx, fctx, element.name);

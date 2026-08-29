@@ -10,7 +10,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, ExternClassInfo, FunctionContext, RestParamInfo } from "../context/types.js";
 import { compileCollectionGetOrInsert } from "../collections-es2025.js";
-import { addUnionImports, getArrTypeIdxFromVec } from "../index.js";
+import { addUnionImports, getArrTypeIdxFromVec, hostMapCarrierClassName } from "../index.js";
 import { tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { tryCompileNativeDisposableStackMethodCall } from "../disposable-runtime.js";
 import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
@@ -65,7 +65,7 @@ function compileExternMethodCall(
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
   const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  const className = receiverType.getSymbol()?.name;
+  const className = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
   const methodName = propAccess.name.text;
 
   // (#1103a) Native Map method dispatch in standalone / nativeStrings mode.
@@ -356,8 +356,35 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
  * `C === C`.
  *
  * Returns `true` if a class-object global was emitted, `false` if no global
- * was registered for this class (e.g. externref-backed builtin subclasses
- * from #1366a).
+ * was registered for this class, or if the class has no `$ClassName` struct
+ * layout to build the singleton from.
+ *
+ * (#5191) Externref-backed builtin subclasses (`class C extends Array/Error/
+ * Map`) DO reach this path now. class-bodies.ts skipped registering their
+ * class-object global from #1366a until 2026-08-29, on the stated ground that
+ * "those don't have a `$ClassName` WasmGC struct". That premise was false —
+ * `ctx.structMap.set(className, …)` runs unconditionally, long before any
+ * builtin-parent branch. What such a subclass lacks is struct *instances*
+ * (its objects are host-created externrefs), and that is precisely what makes
+ * the otherwise-unused `$ClassName` struct a SAFE carrier for the class
+ * object: no instance can ever be confused with the singleton.
+ *
+ * With no global, the identifier read in expressions/identifiers.ts fell
+ * through every registry to `ref.null.extern`, so the class evaluated to
+ * `null` as a VALUE — `C == null` true, `Boolean(C)` false, and any property
+ * read on it threw "Cannot access property on null or undefined". `typeof C`,
+ * `C.name` and `new C()` masked it: those are served by statically resolved
+ * arms that never materialize the constructor object. That null is what
+ * killed the compiled `@js-temporal/polyfill` bundle at its second top-level
+ * statement (`class JSBI extends Array` plus a comma sequence of static-table
+ * writes) — #4628 Option A.
+ *
+ * The carrier choice was deliberate: reuse this one rather than add a second,
+ * `__new_plain_object`-backed shape for the builtin-derived lane. The
+ * static-method / `.name` / gOPD / `__register_class_ctor` registrations below
+ * already depend on the class object's closed-struct identity, and the two
+ * `undefined` bails immediately above remain the real guard — a class with no
+ * struct layout still returns `false` here.
  */
 export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContext, className: string): boolean {
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
@@ -866,7 +893,7 @@ function compileSpreadCallArgs(
     let argIdx = 0;
     for (let i = 0; i < restInfo.restIndex; i++) {
       if (argIdx < expr.arguments.length) {
-        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[i]);
+        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[paramOffset + i]);
         argIdx++;
       }
     }

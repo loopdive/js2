@@ -4,6 +4,7 @@
  * property method calls, IIFEs, and conditional callees.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -22,7 +23,8 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
-import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
@@ -88,7 +90,11 @@ import {
 } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { tryBorrowedPrototypeNullishThisThrow } from "../builtin-prototype-brand.js"; // (#4076)
+import {
+  tryBorrowedPrototypeBrandThisThrow,
+  tryBorrowedPrototypeNullishThisThrow,
+} from "../builtin-prototype-brand.js"; // (#4076, #5143)
+import { tryCompilePromiseCallWithoutNew } from "../promise-newtarget.js"; // (#5143)
 import {
   appendDynamicCandidateArgcSetup,
   appendExternResultArgcReset,
@@ -277,10 +283,12 @@ import {
   brandExternMethodResult,
   coerceType,
   compileExpression,
+  resolveEnclosingClassName,
   resolveThisStructName,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
+import { compileSuperCall } from "../class-bodies.js"; // (#5153 F) nested `super(...)`
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
@@ -304,7 +312,7 @@ import {
 // (#4119) The §20.1.3.6 classifiers — the #2501 COMPILE-TIME tag fold and the
 // runtime reflective one — now live together in their own subsystem module
 // rather than in this driver.
-import { resolveObjectToStringTag } from "../object-proto-tostring.js";
+import { ensureObjectProtoToStringRuntimeHelper, resolveObjectToStringTag } from "../object-proto-tostring.js";
 import {
   OBJECT_PROTO_TOSTRING_CLASSIFY_FN,
   emitClassifierSelect,
@@ -343,6 +351,7 @@ import {
   emitBoolToString,
   emitBorrowedStringReceiverToString,
   isStaticUndefinedArg,
+  tryThrowOnBigIntOrSymbolArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
@@ -462,7 +471,7 @@ import { resolveStructName } from "./misc.js";
 import {
   tryCompileDateCallWithoutNew,
   tryCompileErrorCtorCallWithoutNew,
-  tryCompileWeakSetCallWithoutNew,
+  tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
@@ -512,6 +521,8 @@ import {
   planClosureReceiverInstall,
 } from "../closure-receiver-install.js";
 import { directEvalRunsAtScriptGlobal } from "../direct-eval-environment.js";
+import { variableMayProduceHostCallable } from "../analysis/host-callable-initializer.js";
+import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -1282,7 +1293,10 @@ function tryEmitNativeProtoReflectiveCall(
   // `arr.getClass = Object.prototype.toString; arr.getClass()` never reaches a
   // `.call` at all. Neither gives the fold a receiver to read.
   if (ifaceName === "Object" && member === "toString" && ts.isPropertyAccessExpression(unwrapTransparent(receiver))) {
-    if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
+    // The lower direct-call path now owns BOTH statically-known tags and the
+    // runtime any/externref classifier. Never divert this syntactic form through
+    // the generic reflective Function#call adapter, which erases native view RTT.
+    return undefined;
   }
 
   let brand = nativeProtoBrandForInterface(ctx, ifaceName);
@@ -2607,6 +2621,8 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
       }
     }
   }
+  if (variableMayProduceHostCallable(ctx, expr)) return true;
+  if (decl && ts.isVariableDeclaration(decl) && bindingMayReceiveHostCallable(ctx, decl)) return true;
   if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
 
   // (#3432 follow-up) A declaration that SKIPPED the closure match-and-recast
@@ -2622,80 +2638,7 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // guarantee for pure local-closure programs is preserved.
   if (ctx.skippedClosureRecastDecls?.has(decl)) return true;
 
-  // Does an identifier denote a host builtin namespace either directly or
-  // through a local alias (`var $Object = Object`)? The latter is the standard
-  // shape in small CommonJS intrinsic helpers such as dunder-proto.
-  const isHostBuiltinNamespace = (node: ts.Expression, seen = new Set<ts.Declaration>()): boolean => {
-    const inner = unparen(node);
-    if (!ts.isIdentifier(inner)) return false;
-    if (BUILTIN_CLASS_NAMES.has(inner.text) || ctx.declaredGlobals.has(inner.text)) return true;
-    const aliasDecl = ctx.oracle.valueDeclarationOf(inner);
-    if (!aliasDecl || !ts.isVariableDeclaration(aliasDecl) || !aliasDecl.initializer || seen.has(aliasDecl)) {
-      return false;
-    }
-    seen.add(aliasDecl);
-    return isHostBuiltinNamespace(aliasDecl.initializer, seen);
-  };
-
-  // Does `node` reference a host-builtin member (Object.hasOwn, Math.max, …)?
-  const isHostBuiltinMember = (node: ts.Expression): boolean => {
-    const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
-    if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
-      return isHostBuiltinNamespace(inner.expression);
-    }
-    return false;
-  };
-
-  // Ambient callable globals (`queueMicrotask`, `requestAnimationFrame`, and
-  // the standard global parsing/URI helpers) arrive as host externrefs when a
-  // function value is copied into a local.  That local must retain the
-  // host-call fallback; otherwise the closure-shaped dispatch path casts the
-  // externref to a null Wasm closure and traps on an indirect call.
-  const isDeclaredHostGlobal = (node: ts.Expression): boolean => {
-    const inner = unparen(node);
-    return ts.isIdentifier(inner) && ctx.declaredGlobals.has(inner.text);
-  };
-
-  // (#3488) `Object.getOwnPropertyDescriptor(o, k).get`/`.set` extracts a HOST
-  // accessor function (not a wasm closure), e.g. a builtin-proto getter like
-  // `%TypedArray%.prototype.length`. Invoked as a bare `getter()` it must reach
-  // the `__call_function` host arm, else the closure-struct dispatch nulls the
-  // cast and `struct.get`-traps on it (the `*/invoked-as-func.js` trap-gap #3441
-  // unmasked: `getter()` with undefined `this` must throw a CATCHABLE TypeError,
-  // not null-deref). Syntactic (no checker query → ratchet-safe); narrow — pure
-  // local-closure programs stay host-import-free (#1941 dual-mode).
-  const isReflectiveAccessorExtraction = (node: ts.Expression): boolean => {
-    const inner = unparen(node);
-    if (!ts.isPropertyAccessExpression(inner) || (inner.name.text !== "get" && inner.name.text !== "set")) return false;
-    const recv = unparen(inner.expression);
-    if (!ts.isCallExpression(recv)) return false;
-    const callee = unparen(recv.expression);
-    return ts.isPropertyAccessExpression(callee) && callee.name.text === "getOwnPropertyDescriptor";
-  };
-
-  // Unwrap `<host> || fn` / `<host> ?? fn` short-circuit fallbacks (and nested
-  // chains), checking whether any reachable left operand is a host builtin.
-  const initMayBeHost = (node: ts.Expression): boolean => {
-    const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
-    if (ts.isNewExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "Proxy") {
-      return !ctx.standalone && !ctx.wasi;
-    }
-    if (isHostBuiltinMember(inner) || isDeclaredHostGlobal(inner)) return true;
-    if (isReflectiveAccessorExtraction(inner)) return true;
-    if (ts.isConditionalExpression(inner)) {
-      return initMayBeHost(inner.whenTrue) || initMayBeHost(inner.whenFalse);
-    }
-    if (
-      ts.isBinaryExpression(inner) &&
-      (inner.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-        inner.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
-    ) {
-      return initMayBeHost(inner.left) || initMayBeHost(inner.right);
-    }
-    return false;
-  };
-
-  return initMayBeHost(decl.initializer);
+  return false;
 }
 
 /**
@@ -3486,13 +3429,39 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
   return found;
 }
 
+function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (declaration !== undefined && (ts.isNamespaceImport(declaration) || ts.isModuleDeclaration(declaration))) {
+    return true;
+  }
+
+  // A named import of an `export namespace` binds an ImportSpecifier at the
+  // use site. Follow that one checker alias to the provider's runtime
+  // ModuleDeclaration; the namespace object itself is not materialized by the
+  // Wasm backend, so member functions must use the same static call path as an
+  // `import * as ns` receiver.
+  let symbol = ctx.checker.getSymbolAtLocation(identifier);
+  if (symbol === undefined) return false;
+  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+    try {
+      symbol = ctx.checker.getAliasedSymbol(symbol);
+    } catch {
+      return false;
+    }
+  }
+  return [symbol.valueDeclaration, ...(symbol.declarations ?? [])].some(
+    (candidate) => candidate !== undefined && ts.isModuleDeclaration(candidate),
+  );
+}
+
 /**
- * (#4614) Statically resolve `ns.member(...)` through a NamespaceImport of a
- * compiled sibling module to the equivalent named call. Returns undefined to
- * decline (not a namespace-import receiver, external/ambient module, or a
- * non-function export) — the caller falls through to the legacy lanes.
+ * (#4614/#1058) Statically resolve a runtime namespace member call to the
+ * equivalent named call. This covers both `import * as ns` and TypeScript's
+ * `export namespace Debug` consumed locally or through a named import. Returns
+ * undefined for ambient/external namespaces and non-function members so the
+ * caller can fall through to the legacy lanes.
  */
-function tryNamespaceImportMemberCall(
+function tryRuntimeNamespaceMemberCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
@@ -3500,8 +3469,7 @@ function tryNamespaceImportMemberCall(
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const access = expr.expression;
   if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
-  const nsDecl = ctx.oracle.valueDeclarationOf(access.expression);
-  if (nsDecl === undefined || !ts.isNamespaceImport(nsDecl)) return undefined;
+  if (!isRuntimeNamespaceReceiver(ctx, access.expression)) return undefined;
   // The export symbol of `export function f` carries the FunctionDeclaration
   // directly; deeper re-export chains resolve to the intermediate specifier
   // and decline here (fail-closed to the legacy lane).
@@ -3515,16 +3483,45 @@ function tryNamespaceImportMemberCall(
     return undefined;
   }
   const targetName = memberDecl.name;
-  // The target must be a function this program actually compiled — an
-  // unmapped name means the module was consumed externally (host require,
-  // deferred entry) and the legacy lane's answer stands.
-  if (!ctx.funcMap.has(targetName.text)) return undefined;
+  // A bare name is graph-global legacy state and may belong to an unrelated
+  // declaration. Require the exact Program ABI source unit and allocator
+  // handle, then project that handle only for the duration of the established
+  // identifier-call lowering. Missing or inconsistent identity fails closed.
+  const registry = ctx.programAbiSourceCallables;
+  const identity = registry?.identityContext;
+  const unitId = identity?.unitIdByDeclaration.get(memberDecl);
+  if (!registry || !identity || unitId === undefined || identity.declarationByUnitId.get(unitId) !== memberDecl) {
+    return undefined;
+  }
+  const targetHandle = registry.handleForUnit(unitId);
+  const targetFunc = registry.functionForUnit(unitId);
+  if (targetHandle === undefined || targetFunc === undefined || definedFuncAt(ctx, targetHandle) !== targetFunc) {
+    return undefined;
+  }
   const synthetic = ts.factory.createCallExpression(targetName, expr.typeArguments, expr.arguments);
   ts.setTextRange(synthetic, expr);
   // A factory node has no parent chain, so `getSourceFile()` on it (position
   // maps, diagnostics) crashes — anchor it where the original call sits.
   (synthetic as { parent?: ts.Node }).parent = expr.parent;
-  return compileCallExpression(ctx, fctx, synthetic as ts.CallExpression);
+  // The factory reuses the original argument nodes. Callback classification
+  // consults an arrow/function expression's parent call to decide whether it
+  // crosses a host/dynamic method boundary; leaving `Parser.f(callback)` as
+  // that parent would build a host callback for this exact static direct call.
+  // Temporarily make the reused arguments lexical children of the synthetic
+  // identifier call, then restore the source AST exactly after lowering.
+  const argumentParents = expr.arguments.map((argument) => argument.parent);
+  for (const argument of expr.arguments) {
+    (argument as { parent?: ts.Node }).parent = synthetic;
+  }
+  try {
+    return withRuntimeModuleCallableBindings(ctx, [{ declaration: memberDecl, handle: targetHandle }], () =>
+      compileCallExpression(ctx, fctx, synthetic as ts.CallExpression),
+    );
+  } finally {
+    for (let i = 0; i < expr.arguments.length; i++) {
+      (expr.arguments[i] as { parent?: ts.Node }).parent = argumentParents[i];
+    }
+  }
 }
 
 function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
@@ -3801,11 +3798,14 @@ export function isGlobalBuiltinIdentifier(ctx: CodegenContext, fctx: FunctionCon
  * function-valued declarations.
  */
 export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.SourceFile): void {
-  const flag = ctx as unknown as { __funcValueWrappersRegistered?: boolean };
-  if (flag.__funcValueWrappersRegistered) return;
-  flag.__funcValueWrappersRegistered = true;
+  const registrationState = ctx as unknown as { __funcValueWrapperSourcesRegistered?: Set<string> };
+  const registeredSources =
+    registrationState.__funcValueWrapperSourcesRegistered ??
+    (registrationState.__funcValueWrapperSourcesRegistered = new Set<string>());
+  if (registeredSources.has(sf.fileName)) return;
+  registeredSources.add(sf.fileName);
 
-  const usedAsValue = new Set<string>();
+  const usedAsValue = new Set<ts.FunctionDeclaration>();
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
       const p = node.parent;
@@ -3819,7 +3819,7 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
         const sym = ctx.checker.getSymbolAtLocation(node);
         const decl = sym?.valueDeclaration;
         if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
-          usedAsValue.add(decl.name.text);
+          usedAsValue.add(decl);
         }
       }
     }
@@ -3827,18 +3827,49 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   };
   visit(sf);
 
-  for (const name of usedAsValue) {
-    const funcIdx = ctx.funcMap.get(name);
-    if (funcIdx === undefined) continue;
-    // Captured functions register a CUSTOM capture-struct subtype at their value
-    // site (emitFuncRefAsClosure's capture path); the runtime value is that
-    // struct, not the bare base wrapper, so pre-registering only the base wrapper
-    // here would not match. Leave those to the lazy value-site path.
-    const caps = ctx.nestedFuncCaptures.get(name);
-    if (caps && caps.length > 0) continue;
-    const sig = getFuncSignature(ctx, funcIdx);
-    if (!sig) continue;
-    getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
+  for (const declaration of usedAsValue) {
+    const name = declaration.name!.text;
+    const ownsMappedFunction =
+      ctx.funcMapOwnerDecl.get(name) === declaration || ctx.topLevelFunctionDeclarations.get(name) === declaration;
+    const captures = ownsMappedFunction ? ctx.nestedFuncCaptures.get(name) : undefined;
+    const funcIdx = ownsMappedFunction ? ctx.funcMap.get(name) : undefined;
+
+    // Preserve the value site's exact lowered ABI whenever this declaration
+    // already owns a no-capture funcMap entry. In particular, rest/arguments
+    // and generator lowering can add parameters that are not visible in the
+    // source-level signature.
+    if ((captures?.length ?? 0) === 0 && funcIdx !== undefined) {
+      const sig = getFuncSignature(ctx, funcIdx);
+      if (sig) {
+        getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
+        continue;
+      }
+    }
+
+    // Captured or not-yet-registered nested declarations have no safe funcMap
+    // signature to consult. Their lifted funcref still shares the root wrapper
+    // signature computed from the declaration, but only pre-register the same
+    // conservative all-externref shape used for function expressions below.
+    // Numeric/mixed speculative candidates can make an over-arity dispatch arm
+    // invalid even when that arm never matches at runtime.
+    const { params, returnType } = computeClosureWrapperSig(ctx, declaration);
+    const allExternref = params.every((p) => p.kind === "externref");
+    const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
+    // A zero-argument callback cannot trigger the speculative
+    // over-arity numeric-parameter hazard described below.  Register it early
+    // so generic helpers such as TypeScript's `speculationHelper<T>(() => T)`
+    // and `parseListElement<T>(() => T)` can discover later-compiled boolean
+    // predicates and GC-reference parsers. The dynamic-call bridge preserves
+    // the boolean brand or losslessly exports the GC ref when the generic
+    // result carrier is externref.
+    const safeZeroArgErasedReturn =
+      params.length === 0 &&
+      returnType !== null &&
+      ((returnType.kind === "i32" && returnType.boolean === true) ||
+        returnType.kind === "ref" ||
+        returnType.kind === "ref_null");
+    if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) continue;
+    getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
   }
 
   // (#2939) Nested-scope function-expression / arrow callbacks. A callback like
@@ -3905,7 +3936,13 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
       // via the array-method path, never this inline dispatcher.)
       const allExternref = params.every((p) => p.kind === "externref");
       const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-      if (!allExternref || !externrefOrVoidReturn) return;
+      const safeZeroArgErasedReturn =
+        params.length === 0 &&
+        returnType !== null &&
+        ((returnType.kind === "i32" && returnType.boolean === true) ||
+          returnType.kind === "ref" ||
+          returnType.kind === "ref_null");
+      if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) return;
       getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
     };
     const visitFns = (node: ts.Node): void => {
@@ -4894,7 +4931,21 @@ export function tryEmitInlineDynamicCall(
     const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Constructor cannot be invoked without 'new'", {
       flush: fctx,
     });
-    const int8CarrierThrow = buildInt8ArrayCarrierMatch(ctx, anyLocal, throwInstrs);
+    // (#5188) The carrier match nests its `onMatch` under an `empty`-typed
+    // `if`, while the `$__ta_ctor` arm below uses the SAME sequence as the
+    // `then` of a `val externref` `if`. Handing ONE `Instr[]` object to both
+    // makes that array reachable from two incompatible branch contexts, and
+    // the stack-balance repair pass then fails the whole compile closed rather
+    // than mutate a shared body ("reaches an instruction array from
+    // incompatible control-flow ... contexts", #1058). That refusal hit EVERY
+    // test262 file including `testTypedArray.js` — 534 of the 540 on the
+    // #5188 target list were compile errors for this one aliased array — so
+    // give each consumer its own copy.
+    const int8CarrierThrow = buildInt8ArrayCarrierMatch(
+      ctx,
+      anyLocal,
+      throwInstrs.map((instr) => ({ ...instr })),
+    );
     if (ctx.taCtorTypeIdx >= 0) {
       dispatch = [
         { op: "local.get", index: anyLocal },
@@ -5085,8 +5136,8 @@ export function compileStandalonePromiseThenCallback(
   // function value with no compile-time ClosureInfo — captured promise
   // resolvers, reassigned `$DONE`): the compiled externref rides the caps and
   // the shared `__then_dyn_*` wrapper applies it at settle time. Left off for
-  // `.finally` (no dynamic wrapper there yet), which keeps its old
-  // treated-as-absent behaviour.
+  // `.finally` opts in as well; its dedicated dynamic wrapper invokes the
+  // handler with zero arguments and preserves the original settlement.
   opts?: { allowDynamic?: boolean },
 ): StandalonePromiseThenCallback | null {
   if (arg === undefined || isNullishPromiseThenCallbackArg(arg)) return null;
@@ -5643,7 +5694,9 @@ export function emitStandaloneFinallyWithNativeFallback(
     }
     fctx.body.push({ op: "local.set", index: recvLocal });
 
-    const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, onFinallyArg, liveBuffers);
+    const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, onFinallyArg, liveBuffers, {
+      allowDynamic: true,
+    });
 
     const outerBody = fctx.body;
     const nativeArm: Instr[] = [];
@@ -5845,6 +5898,13 @@ export function compileFromCharCodeFamily(
     const savedBody = fctx.body;
     fctx.body = buf;
     try {
+      // (#5152) §22.1.2.2 step 2a / §22.1.2.1 step 2a apply ToNumber to every
+      // argument, and §7.1.4 ToNumber(Symbol) throws a TypeError. Without this
+      // a statically Symbol-typed arg silently coerced its internal id.
+      if (noJsHost(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
+        parts.push(buf);
+        continue;
+      }
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
       // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
       // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
@@ -6279,6 +6339,39 @@ function tryIteratorStaticsIntrinsicCall(
  */
 function canDeferStandaloneDynamicImport(fctx: FunctionContext): boolean {
   return fctx.deferredDynamicImportTrap === true;
+}
+
+/** Private, opt-in proxy brand probe used by the Deno app bridge. Ordinary
+ * source never sees this name; the JavaScript fallback returns false, while a
+ * standalone build can test the concrete `$Proxy` RTT without invoking any
+ * user-visible proxy trap. */
+function tryRuntimeIsProxyIntrinsic(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (
+    (!ctx.standalone && !ctx.wasi) ||
+    !ts.isIdentifier(expr.expression) ||
+    expr.expression.text !== "__runtime_is_proxy" ||
+    expr.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  const value = allocLocal(fctx, `__runtime_is_proxy_value_${fctx.locals.length}`, externref);
+  const type = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
+  if (type && type.kind !== "externref") coerceType(ctx, fctx, type, externref);
+  fctx.body.push({ op: "local.set", index: value });
+  emitRuntimeEvalBoundaryCarrierPeel(ctx, fctx, value, externref);
+  const runtime = ensureObjectRuntime(ctx);
+  fctx.body.push(
+    { op: "local.get", index: value },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
+  );
+  return { kind: "i32" };
 }
 
 /**
@@ -6827,7 +6920,11 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
             else: [{ op: "local.get", index: valueLocal }],
           },
         ],
-        else: [{ op: "local.get", index: valueLocal }],
+        // A non-marker reference may still have crossed an erased `any` slot
+        // in a `$AnyValue` tag-6 carrier. Return the peeled candidate so the
+        // interpreter can recognize a freshly-created raw closure before it
+        // wraps that callback for a native HOF.
+        else: [{ op: "local.get", index: candidateLocal }],
       },
     );
     return externref;
@@ -6913,6 +7010,10 @@ function compileCallExpression(
   }
 
   {
+    const r = tryRuntimeIsProxyIntrinsic(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+  {
     const r = tryRuntimeEvalApplyCallableIntrinsic(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
@@ -6965,9 +7066,17 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
-  // (#4732) `WeakSet(...)` has no [[Call]] — §23.4.1.1 step 1 requires `new`.
+  // (#4732/#5151) `Map(...)`/`Set(...)`/`WeakMap(...)`/`WeakSet(...)` have no
+  // [[Call]] — §24.1.1.1 step 1 and siblings require `new`.
   {
-    const r = tryCompileWeakSetCallWithoutNew(ctx, fctx, expr);
+    const r = tryCompileCollectionCtorCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#5143) `Promise(...)` / `Promise.call(...)` — §27.2.3.1 step 1 requires
+  // `new`. Standalone-carrier gated inside the helper.
+  {
+    const r = tryCompilePromiseCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -6989,7 +7098,7 @@ function compileCallExpression(
   // dispatch). Ambient/external declarations (no body) and non-function
   // exports decline to the legacy lane.
   {
-    const r = tryNamespaceImportMemberCall(ctx, fctx, expr);
+    const r = tryRuntimeNamespaceMemberCall(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -7431,6 +7540,25 @@ function compileCallExpression(
     return compileSuperMethodCall(ctx, fctx, expr);
   }
 
+  // (#5153 F) A NESTED `super(...)` — one that is not a top-level statement of
+  // the constructor body, e.g. inside a `try`. `class-bodies.ts` intercepts
+  // only the statement form (its loop matches `ExpressionStatement` →
+  // `CallExpression` → `SuperKeyword`), so this shape reached the generic
+  // callee dispatch and emitted NOTHING: the parent constructor never ran and
+  // an abrupt completion inside it could not be caught
+  // (`call-construct-error.js`). Route it to the same lowering.
+  //
+  // Own-field initializers are deliberately NOT re-run here — the statement
+  // site owns that sequencing, and this arm only replaces a no-op.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor === true) {
+    const enclosingClass = resolveEnclosingClassName(fctx);
+    const thisLocal = fctx.localMap.get("this");
+    if (enclosingClass !== undefined && thisLocal !== undefined) {
+      compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+      return VOID_RESULT;
+    }
+  }
+
   // (#1467) AggregateError(errors, message, options?) — called WITHOUT `new`.
   // Per ES §20.5.7.1, AggregateError called as a function must construct
   // normally (same effective semantics as `new`). Mirror the codegen in
@@ -7676,6 +7804,12 @@ function compileCallExpression(
       const compileOneArg = (a: ts.Expression) => compileExpression(ctx, fctx, a);
       const invalidThis = tryBorrowedPrototypeNullishThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
       if (invalidThis !== undefined) return invalidThis;
+
+      // (#5143) …and the other statically-decidable bad receiver: a builtin
+      // PROTOTYPE object handed to a brand-checked method
+      // (`Promise.prototype.then.call(Promise.prototype, …)`).
+      const brandThis = tryBorrowedPrototypeBrandThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
+      if (brandThis !== undefined) return brandThis;
 
       // (#4483) `Function.call(thisArg, …body)` / `Function.apply(thisArg, [body])`
       // are reflective spellings of the Function CONSTRUCTOR, whose [[Call]]
@@ -8541,6 +8675,26 @@ function compileCallExpression(
               // in non-nativeStrings mode, so use the shared helper).
               for (const instr of stringConstantExternrefInstrs(ctx, tagStr)) fctx.body.push(instr);
               return { kind: "externref" };
+            }
+            // An `any`-typed receiver has no static tag to fold. Route it through
+            // the same WasmGC runtime classifier as the reflective member body,
+            // but call the classifier directly: the generic Function#call
+            // adapter boxes the native ArrayBuffer/DataView/TA carrier and loses
+            // the RTT needed to distinguish it from an ordinary Array/Object.
+            if (ctx.standalone || ctx.wasi) {
+              const helperReady = ensureObjectProtoToStringRuntimeHelper(ctx);
+              if (helperReady !== undefined) {
+                fctx.body.push({ op: "ref.null.extern" }); // unused closure-self slot
+                const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+                if (valueType && valueType.kind !== "externref") {
+                  coerceType(ctx, fctx, valueType, { kind: "externref" });
+                }
+                const helperIdx = ensureObjectProtoToStringRuntimeHelper(ctx);
+                if (helperIdx !== undefined) {
+                  fctx.body.push({ op: "call", funcIdx: helperIdx });
+                  return { kind: "externref" };
+                }
+              }
             }
           }
 
@@ -9806,12 +9960,23 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   emitDefaultParamInit(ctx, liftedFctx, funcExpr, paramTypes, captures.length);
 
   if (ts.isBlock(body)) {
-    // Hoist var declarations and let/const with TDZ flags (#790)
-    hoistVarDeclarations(ctx, liftedFctx, body.statements);
-    hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
-    hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
-    for (const stmt of body.statements) {
-      compileStatement(ctx, liftedFctx, stmt);
+    // A published package may be one enormous bundler IIFE. Attribute its
+    // pre-body analyses separately so a bounded worker distinguishes a scope
+    // hoist from statement emission. Small ordinary IIFEs keep the original
+    // straight-line calls and allocate no profiling closures.
+    if (body.statements.length >= 1_000) {
+      profilePhase("large-iife-hoist-vars", () => hoistVarDeclarations(ctx, liftedFctx, body.statements));
+      profilePhase("large-iife-hoist-let-const", () => hoistLetConstWithTdz(ctx, liftedFctx, body.statements));
+      profilePhase("large-iife-hoist-functions", () => hoistFunctionDeclarations(ctx, liftedFctx, body.statements));
+      profilePhase("large-iife-compile-statements", () => {
+        for (const stmt of body.statements) compileStatement(ctx, liftedFctx, stmt);
+      });
+    } else {
+      // Hoist var declarations and let/const with TDZ flags (#790)
+      hoistVarDeclarations(ctx, liftedFctx, body.statements);
+      hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
+      hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
+      for (const stmt of body.statements) compileStatement(ctx, liftedFctx, stmt);
     }
   } else {
     // Concise arrow body — expression is the return value

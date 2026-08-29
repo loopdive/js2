@@ -23,7 +23,7 @@ import { reconcileNativeStrFinalizeShift } from "../expressions/late-imports.js"
 import { emitWasiErrorConstructor } from "./error-types.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
 import { boxBooleanBody } from "../interned-boolean-boxes.js"; // (#3780) interned true/false carriers
-import { isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
+import { hostMapCarrierClassName, isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
 import { planProgramAbiStringConstantImport } from "../program-abi-import-planning.js";
 import { shiftModuleGlobalExportIndices } from "../global-export-fixup.js";
 
@@ -128,41 +128,68 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
  * externref-typed throw payload) instead of `global.get`. (#1174)
  */
 export function addStringConstantGlobal(ctx: CodegenContext, value: string): void {
-  if (ctx.stringGlobalMap.has(value)) return;
+  addStringConstantGlobals(ctx, [value]);
+}
+
+/**
+ * Register several late string globals with one module-global index repair.
+ *
+ * Adding an imported global shifts every already-emitted reference to a
+ * module-defined global. Rewalking the complete instruction graph once per
+ * string is equivalent to one repair by the total import count, but becomes
+ * prohibitively expensive for finalize-time producers such as
+ * `__struct_field_names` (one CSV per visible struct shape).
+ */
+export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<string>): void {
+  const pending: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (!ctx.stringGlobalMap.has(value) && !seen.has(value)) {
+      seen.add(value);
+      pending.push(value);
+    }
+  }
+  if (pending.length === 0) return;
+
   if (ctx.nativeStrings) {
-    // Sentinel: no host import, materialize inline at use sites.
-    ctx.stringGlobalMap.set(value, -1);
+    for (const value of pending) {
+      // Sentinel: no host import, materialize inline at use sites.
+      ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
+      ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
+      ctx.stringLiteralCounter++;
+      ctx.mod.stringPool.push(value);
+    }
+    return;
+  }
+
+  const hasModuleGlobals = ctx.mod.globals.length > 0 || ctx.mod.functions.length > 0;
+  const oldNumImportGlobals = ctx.numImportGlobals;
+  for (const value of pending) {
+    const globalIdx = ctx.numImportGlobals;
+    // (#2880) A wasm import field name must be valid UTF-8. A literal containing a
+    // lone surrogate cannot be its own field name (TextEncoder makes it lossy,
+    // V8 rejects WTF-8), so route it through the `string_constants16` namespace
+    // keyed by the hex of its UTF-16 code units (ASCII). The runtime mirrors this
+    // key in `buildStringConstants16`. Surrogate-free literals are unchanged.
+    const useSurrogateNs = hasLoneSurrogate(value);
+    const importModule = useSurrogateNs ? STRING_CONSTANTS16_NS : "string_constants";
+    const importName = useSurrogateNs ? hexCodeUnits(value) : value;
+    const stableOrdinal = ctx.stringLiteralCounter;
+    const importValue = addImport(ctx, importModule, importName, {
+      kind: "global",
+      type: { kind: "externref" },
+      mutable: false,
+    });
+    if (importValue) planProgramAbiStringConstantImport(ctx, importValue, stableOrdinal);
+    ctx.stringGlobalMap.set(value, globalIdx);
     ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
     ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
     ctx.stringLiteralCounter++;
     ctx.mod.stringPool.push(value);
-    return;
   }
-  const hasModuleGlobals = ctx.mod.globals.length > 0 || ctx.mod.functions.length > 0;
-  const oldNumImportGlobals = ctx.numImportGlobals;
-  const globalIdx = ctx.numImportGlobals;
-  // (#2880) A wasm import field name must be valid UTF-8. A literal containing a
-  // lone surrogate cannot be its own field name (TextEncoder makes it lossy,
-  // V8 rejects WTF-8), so route it through the `string_constants16` namespace
-  // keyed by the hex of its UTF-16 code units (ASCII). The runtime mirrors this
-  // key in `buildStringConstants16`. Surrogate-free literals are unchanged.
-  const useSurrogateNs = hasLoneSurrogate(value);
-  const importModule = useSurrogateNs ? STRING_CONSTANTS16_NS : "string_constants";
-  const importName = useSurrogateNs ? hexCodeUnits(value) : value;
-  const stableOrdinal = ctx.stringLiteralCounter;
-  const importValue = addImport(ctx, importModule, importName, {
-    kind: "global",
-    type: { kind: "externref" },
-    mutable: false,
-  });
-  if (importValue) planProgramAbiStringConstantImport(ctx, importValue, stableOrdinal);
-  ctx.stringGlobalMap.set(value, globalIdx);
-  ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
-  ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
-  ctx.stringLiteralCounter++;
-  ctx.mod.stringPool.push(value);
-  if (hasModuleGlobals) {
-    fixupModuleGlobalIndices(ctx, oldNumImportGlobals, 1);
+  const addedImportGlobals = ctx.numImportGlobals - oldNumImportGlobals;
+  if (hasModuleGlobals && addedImportGlobals > 0) {
+    fixupModuleGlobalIndices(ctx, oldNumImportGlobals, addedImportGlobals);
   }
 }
 
@@ -1983,9 +2010,34 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       { op: "call", funcIdx: tagIdx },
       { op: "i32.and" },
     ];
-    // Reference-identity arm (else): both refs convert to anyref (locals 2/3);
-    // if both are eq heap refs, ref.eq; otherwise unequal.
-    const refIdentityArm: Instr[] = [
+    // String VALUE equality is NOT inlined here. A boxed-any STRING element
+    // compares by content (`["x"].indexOf("x")` must match), which needs a
+    // `__str_flatten`+`__str_equals` call. But those helpers live in the
+    // native-string regime BELOW the union-helper base, and any call to them
+    // baked into THIS union-helper body drifts under the late-import finalize
+    // shift (`reconcileNativeStrFinalizeShift` re-bases every `call funcIdx >=
+    // base`), landing on the wrong function — the encoder then patches the stack
+    // with `extern.convert_any; …; drop`, which the GC validator accepts but
+    // wasm-opt rejects ("popping from empty stack", surfaced as the
+    // native-messaging-smoke CI failure). Rather than fight the cross-regime
+    // index shift, the string arm falls back to `eq`-heap ref identity here:
+    // VALID Wasm, correct for interned/same-ref strings. String-element `any[]`
+    // search-by-VALUE is a tracked #2508 follow-up that belongs in a
+    // `__any_str_value_eq` helper registered in the native-string regime.
+    // Build this entire nested arm for each owner. Stack-balance and the other
+    // finalization passes mutate instruction arrays in their owning function's
+    // local/control-flow context, so sharing even a nested then/else array
+    // between __host_eq and __same_value_zero is ambiguous. A shallow spread
+    // would still share the ref.eq conditional's child arrays.
+    const identityArm = (): Instr[] => [
+      // Materialise the anyref temps (locals 2/3) once, then dispatch ref
+      // identity. This is also the current string fallback described above.
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 2 },
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 3 },
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx: EQ_HEAP },
       { op: "local.get", index: 3 },
@@ -2003,31 +2055,6 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
         ],
         else: [{ op: "i32.const", value: 0 }],
       },
-    ];
-    // String VALUE equality is NOT inlined here. A boxed-any STRING element
-    // compares by content (`["x"].indexOf("x")` must match), which needs a
-    // `__str_flatten`+`__str_equals` call. But those helpers live in the
-    // native-string regime BELOW the union-helper base, and any call to them
-    // baked into THIS union-helper body drifts under the late-import finalize
-    // shift (`reconcileNativeStrFinalizeShift` re-bases every `call funcIdx >=
-    // base`), landing on the wrong function — the encoder then patches the stack
-    // with `extern.convert_any; …; drop`, which the GC validator accepts but
-    // wasm-opt rejects ("popping from empty stack", surfaced as the
-    // native-messaging-smoke CI failure). Rather than fight the cross-regime
-    // index shift, the string arm falls back to `eq`-heap ref identity here:
-    // VALID Wasm, correct for interned/same-ref strings. String-element `any[]`
-    // search-by-VALUE is a tracked #2508 follow-up that belongs in a
-    // `__any_str_value_eq` helper registered in the native-string regime.
-    const stringOrIdentityArm: Instr[] = refIdentityArm;
-    // Materialise the anyref temps (locals 2/3) once, then dispatch string/ref.
-    const identityArm: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 2 },
-      { op: "local.get", index: 1 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 3 },
-      ...stringOrIdentityArm,
     ];
     const bigintArm = (elseArm: Instr[]): Instr[] => [
       ...bothTag(typeofBigIdx),
@@ -2130,11 +2157,16 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       { name: "fb", type: { kind: "f64" } as ValType },
     ];
 
-    registerNative("__host_eq", externref2ToI32, nullArm(numberArm(false, boolArm(bigintArm(identityArm)))), eqLocals);
+    registerNative(
+      "__host_eq",
+      externref2ToI32,
+      nullArm(numberArm(false, boolArm(bigintArm(identityArm())))),
+      eqLocals,
+    );
     registerNative(
       "__same_value_zero",
       externref2ToI32,
-      nullArm(numberArm(true, boolArm(bigintArm(identityArm)))),
+      nullArm(numberArm(true, boolArm(bigintArm(identityArm())))),
       eqLocals,
     );
   }
@@ -2440,7 +2472,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
 
       if (!isAssignTarget) {
         const objType = ctx.checker.getTypeAtLocation(node.expression);
-        const className = objType.getSymbol()?.name;
+        const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
         const memberName = node.name.text;
         if (className && !isNativeEncodingClass(className)) {
           const isCall = node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node;
@@ -2477,7 +2509,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       ts.isPropertyAccessExpression(node.left)
     ) {
       const objType = ctx.checker.getTypeAtLocation(node.left.expression);
-      const className = objType.getSymbol()?.name;
+      const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
       const propName = node.left.name.text;
       // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
       // not pre-register env.RegExp_set_lastIndex.

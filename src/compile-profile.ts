@@ -14,7 +14,7 @@
 // allocation, no `Map` writes. Compiles that don't opt in are unaffected.
 //
 //   JS2WASM_COMPILE_PROFILE=1        summary table on process exit
-//   JS2WASM_COMPILE_PROFILE=stream   also print each phase as it closes
+//   JS2WASM_COMPILE_PROFILE=stream   print each phase as it opens and closes
 //
 // Nested phases are tracked as a stack so `codegen > bodies > file:foo.js`
 // reads as a tree. Self time is wall time minus the time attributed to direct
@@ -148,6 +148,13 @@ export function profilePhase<T>(name: string, fn: () => T): T {
     childMs: 0,
   };
   stack.push(open);
+  if (streaming) {
+    const indent = "  ".repeat(stack.length - 1);
+    // A bounded worker may be terminated before its active phase closes. Emit
+    // the opening edge immediately so the final streamed record still names
+    // the phase that owned the timeout instead of only its last predecessor.
+    process.stderr.write(`[js2:profile] ${indent}START ${open.path}\n`);
+  }
   try {
     return fn();
   } finally {
@@ -163,6 +170,24 @@ export function profilePhase<T>(name: string, fn: () => T): T {
 export function profileCount(name: string, value: number): void {
   if (!enabled) return;
   process.stderr.write(`[js2:profile] count ${name}=${value}\n`);
+}
+
+/**
+ * (#4645) Record the SCALE of the module being compiled — function count,
+ * import count, type count and total instruction count — at a named checkpoint.
+ *
+ * Phase timings alone cannot distinguish "this pass is quadratic in module
+ * size" from "this pass is linear but the module itself grew superlinearly".
+ * On the #4645 repro every whole-module finalize pass grew 50–300x for a 2.8x
+ * source growth, which only these counts explain. `countInstrs` is called
+ * lazily so a non-profiling compile never walks the module.
+ */
+export function profileModuleScale(label: string, counts: () => Record<string, number>): void {
+  if (!enabled) return;
+  const parts = Object.entries(counts())
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  process.stderr.write(`[js2:profile] scale ${label} ${parts}\n`);
 }
 
 /** Snapshot of everything measured so far, sorted by self time descending. */

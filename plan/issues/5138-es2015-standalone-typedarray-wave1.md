@@ -4,7 +4,7 @@ title: "ES2015 standalone: typedarray conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: medium
@@ -14,6 +14,7 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
+  - src/codegen/tonumber-fast-paths.ts
   - src/runtime.ts
   - src/codegen/dataview-native.ts
   - src/codegen/ta-dyn-mop.ts
@@ -30,11 +31,14 @@ func-budget-allow:
 
 # ES2015 standalone: typedarray conformance wave 1
 
-LOC-growth allowance rationale (2026-08-28): the clusters below add new
-codegen arms (iterable-protocol construct arm, dyn-view length-sentinel
-resolution, ValidateTypedArray guards, descriptor arms) to the files listed
-in `loc-budget-allow` — measured growth is expected and granted for this
-change-set.
+LOC-growth allowance rationale (2026-08-28, extended 2026-08-29): the clusters
+below add new codegen arms (iterable-protocol construct arm, dyn-view
+length-sentinel resolution, ValidateTypedArray guards, descriptor arms) to the
+files listed in `loc-budget-allow` — measured growth is expected and granted
+for this change-set. The 2026-08-29 pass adds
+`src/codegen/tonumber-fast-paths.ts` for the §7.1.4 `ToNumber(Symbol)` throw
+arm (cluster D) and grows `src/codegen/ta-ctor-meta.ts` for the cluster-E
+constructor descriptor arms.
 
 ## Problem
 
@@ -294,82 +298,139 @@ Test262Error) before reaching the refusal.
   dead-exports).
 - Equivalence tests pass (`npm test -- tests/equivalence.test.ts`).
 
-## Results (wave 1, 2026-08-28)
+## Results
 
-**Counts** (`npx tsx .tmp/run-standalone.mts --list`, standalone target, this
-worktree):
+### Wave 1 recon (2026-08-28) — superseded numbers, kept for the findings
+
+The first pass landed an A1 iterable-construct arm and an A2 length-sentinel
+arm and measured **2** of the 540 green. Its two durable findings — the
+`makeIterable` delegation shape is broken UPSTREAM of the TypedArray
+constructor, and the harness's own failure formatting is unreliable in
+standalone — are restated under "Findings for wave 2" below. That pass's code
+is not in this change-set; the numbers below are a fresh base-and-after
+measurement taken on 2026-08-29 from this worktree's own runs.
+
+### Wave 1 (2026-08-29)
+
+**Counts** — `npx tsx .tmp/run-standalone.mts --list <chunk>`, standalone
+target, both rows measured in THIS worktree (base run first, on unmodified
+HEAD `8270bbba`; after run on the committed tree):
 
 | List | Before | After |
 |---|---|---|
-| `.tmp/es2015/wp-typedarray-current-fails.txt` (540) | 540 failing (528 FAIL + 12 CE) | **538 failing** (526 FAIL + 12 CE), 2 pass |
+| `.tmp/es2015/wp-typedarray-current-fails.txt` (540) | 0 pass · 528 FAIL · 12 CE | **33 pass** · 494 FAIL · 13 CE |
 | `.tmp/es2015/wp-typedarray-passing-spotcheck.txt` (40) | 37 pass | **37 pass** (no regression) |
 
 The 3 spotcheck non-passes are the documented local quickjs-artifact gap
 (`slice/detached-buffer.js`, `Symbol.toStringTag/detached-buffer.js`,
-`ctors/buffer-arg/length-to-number-detachbuffer.js`), not regressions.
-Newly green: `TypedArray/prototype/every/returns-true-if-every-cb-returns-true.js`,
-`TypedArray/prototype/filter/result-full-callbackfn-returns-true.js`.
+`ctors/buffer-arg/length-to-number-detachbuffer.js`), unchanged before and
+after. The 13th CE is `fill/detached-buffer.js` reporting `compilation timeout
+(31 s)` — a load artifact of running three probe chunks concurrently on a
+4-core box, not a code change: it is one of the quickjs-gap tests and it fails
+either way.
 
 **Landed**
 
-- **A1 — iterable-protocol construct arm** (`dataview-native.ts:
-  emitTaDynCtorConstructFromLocals`). §23.2.5.1 step 6 now probes
-  `GetMethod(O, @@iterator)` BEFORE the array-like path; a callable one
-  materializes through `__array_from_iter_n` (no host import), a non-callable
-  non-nullish one throws TypeError, a null/undefined one keeps the array-like
-  arm. Probe-verified: `new TA(objWithSymbolIterator)` went length 0 → 3 with
-  correct element values.
-- **A1b — detached-arm live-body tracking** (same function). Every dispatch arm
-  is built detached and spliced at the end, so a late import minted by a later
-  arm shifted funcIdxs already baked into earlier arms. Each chain link is now
-  registered in `ctx.liveBodies` while detached. Latent-correctness fix; found
-  while debugging A3.
-- **A2 — auto-length sentinel resolution in `__extern_length`**
-  (`ta-dyn-mop.ts: fillTaDynViewMopArms`). A `.length` read on an externref
-  lowers to `__extern_length`, not to `__extern_get`'s string-key ladder, and
-  its `$__vec_base` arm returned the stored field 0 verbatim — the `-1`
-  length-tracking sentinel for a view over a resizable buffer. A
-  `$__ta_dyn_view` arm ahead of it now computes the live in-bounds count via
-  the same `pushTaDynViewInBoundsLen` the MOP and the element engine use.
-  Probe-verified: `new TA(resizableAb).length` −1 → 3.
+- **Cluster E — TypedArray constructor own-property descriptors** (24 tests),
+  `src/codegen/ta-ctor-meta.ts`.
+  - `TA.BYTES_PER_ELEMENT` (§23.2.6.2) now answers from the `$__ta_ctor`
+    `__builtinfn_get_meta` arm, which buys the value, `hasOwnProperty`, and the
+    `writable: false` write refusal in one arm. Its descriptor needs
+    `configurable: false`, so a dedicated `__builtinfn_gopd` arm is spliced
+    ahead of the generic `get_meta` → `FLAG_CONFIGURABLE` prologue. Before:
+    `Float64Array.BYTES_PER_ELEMENT` threw "Cannot access property on null or
+    undefined". (8 tests — Int8Array already worked through its `$Object`
+    carrier, #4490 D7.)
+  - `TA.name` / `TA.length` were VISIBLE but not DELETABLE, and
+    `propertyHelper`'s `isConfigurable` is `delete obj[k]; return
+    !hasOwnProperty(obj, k)` — so every `verifyProperty(..., {configurable:
+    true})` failed with "descriptor should be configurable" despite the
+    descriptor already reading correctly. A `$__ta_ctor` arm in
+    `__builtinfn_delete` tombstones through the same `__fninst_*` bag the
+    closure arms use (identity-keyed on the receiver's eqref — a plain struct
+    needs no per-carrier slot), and `get_meta` now consults that bag before
+    claiming the key. (16 tests.)
+- **Cluster D — §7.1.4 `ToNumber(Symbol)` throws** (9 tests),
+  `src/codegen/tonumber-fast-paths.ts`. The standalone `__unbox_number` answers
+  NaN for every shape it does not recognise, Symbols included, so
+  `sample.fill(Symbol())` filled with NaN instead of throwing TypeError. A
+  brand test now sits between `__to_primitive` and `__unbox_number` in the
+  fused `__to_number` helper — the spec's own position, so a bare Symbol and a
+  `{valueOf(){return sym}}` throw at the same step.
+  - The guard is deliberately NOT inside `__unbox_number`: that native is also
+    the numeric-key probe for `__extern_set` on a vec receiver
+    (`object-runtime.ts` ~L11001, "NaN = non-numeric key"), and `arr[sym] = v`
+    is an ordinary property write that must not throw. Verified by probe:
+    `o[sym] = 7; o[sym] === 7` still holds.
+  - The static-oracle Symbol guards (`unary.ts` and friends) already covered
+    `+sym` / `Number(sym)`; this is the DYNAMIC path, which is the one the
+    test262 harness exercises (`sample` is `any`).
 
-**Not landed / findings for wave 2** — each is a measured blocker, in the order
-that would unlock the most:
+**Not landed / findings for wave 2**, in the order that would unlock the most:
 
-1. **The @@iterator delegation shape is broken UPSTREAM of the ctor, and it is
-   what pins cluster A at ~0 flips.** The harness `makeIterable` returns
+1. **Cluster A is still pinned on one defect, now localised further.** The
+   harness's `makeIterable` builds
    `obj[Symbol.iterator] = function () { return src[Symbol.iterator](); }`, and
-   even `Array.from(that)` yields length 0 in standalone — so A1's arm is
-   correct but starved. In standalone `arr[Symbol.iterator]()` evaluates to an
-   externref-wrapped `$IterRec`, which `__iterator`'s tail then classifies as
-   an OBJ/USER iterator and looks for a `next` PROPERTY it does not have. An
-   "adopt the record" arm in `buildIteratorBody`'s two tails
-   (`iterator-native.ts`) was written and did NOT fix it, so the real break is
-   elsewhere in that path — diagnose `Array.from(makeIterable(TA,3))` first,
-   before any further TypedArray-ctor work. **Every cluster-A test needs all 8
-   factories to pass, so nothing in the list can go green until this does.**
-2. **A3 — ref-element vec copy arm.** Admitting `ref_<n>` carriers in the
-   plain-vec copy loop (so `new TA(["0","0","0"])` copies instead of falling to
-   the ToIndex count arm) made `s.length` wrong in a way the live-body fix
-   above did not explain; reverted rather than shipped half-diagnosed. Note the
-   STATIC path has its own bug here: `new Float64Array(["0","5","0"])` is a
-   hard CompileError (`f64.convert_i32_u expected i32, found array.get of
-   (ref null N)`).
-3. **Cluster E is already served.** `TA.BYTES_PER_ELEMENT` and `TA.length` read
-   correctly today through the dyn-view/MOP path — a `fillTaCtorGetMetaArm`
-   BYTES_PER_ELEMENT arm was written, measured as a no-op against base, and
-   dropped. Re-measure before spending on E again.
-4. Clusters B (%TypedArray% intrinsic), C (ValidateTypedArray guards), D
-   (Symbol/abrupt coercion) and F (Reflect residuals) were not started.
+   `for…of obj` / `Array.from(obj)` / `new TA(obj)` all yield ZERO elements.
+   Measured this pass (probes `.tmp/probes/piter*.js`):
+   - `src[Symbol.iterator]()` on an array DOES produce the right value — the
+     `@@iterator` element-call arm in `call-tail-dispatch.ts` (#3013) routes a
+     standalone array receiver to the native `.values()`, an `$IterRec`. Good.
+   - `Array.from(f())` where `f` returns that record **passes**.
+   - `Array.from(obj)` with a hand-written `{ next(){…} }` iterator **passes** —
+     so `__iterator`'s OBJ arm and the `__array_from_iter_n` `objGuard` drain
+     are both working.
+   - Only the DELEGATING shape fails. An "adopt the record" arm was added to
+     both `buildIteratorBody` tails (`ref.test $__IterRec` on the `@@iterator`
+     call result → return it unchanged) and did NOT move the probe, so the
+     record the delegating closure returns is not reaching that test. **Next
+     step: dump `__iterator`'s WAT for `.tmp/probes/deleg.ts` and find what the
+     `__apply_closure` result actually is.** The arm was reverted rather than
+     shipped unmeasured; it is a two-block diff worth re-trying once that is
+     known. Every cluster-A test needs all 8 factories to pass, so nothing in
+     that 224 can go green until this does.
+   - A separate, real gap found on the way: `var f = arr[Symbol.iterator]` (the
+     property READ, not the call) is an `illegal cast` in standalone — the
+     `%Array.prototype.values%` interception in `property-access.ts` is
+     `!noJsHost`-gated and standalone has no callable value to hand back.
+2. **The remaining ToInteger-index Symbol sites** (`slice` end, `subarray`
+   begin, `indexOf`/`lastIndexOf`/`includes` fromIndex — ~6 tests) do not route
+   through the fused ToNumber; they call `__unbox_number` directly from the
+   native method arms (`ta-hof-map-filter.ts`, `call-receiver-method.ts`).
+   Routing those through `__to_number` extends this pass's fix at low cost.
+3. **`TA.prototype.BYTES_PER_ELEMENT` and `TA.prototype` identity** (~17 tests)
+   need an own DATA property on the per-kind `$NativeProto` companion, which
+   today seeds only methods plus the #4491 `constructor`. That is a new
+   mechanism in `native-proto.ts` (`pushCompanionConstructorSeed` is the
+   precedent), not a descriptor arm.
+4. **Clusters B (%TypedArray% intrinsic), C (ValidateTypedArray guards) and F
+   (Reflect residuals) were not started.** Note that most of cluster C's and
+   the "callbackfn-returns-abrupt" family's failures are DOWNSTREAM of cluster
+   A: they read "no exception was thrown at all" because the loop body never
+   ran over a zero-length view, not because the guard is missing.
+5. **Cluster E is NOT already served**, contrary to the wave-1 recon note. The
+   VALUES read correctly; it is the DESCRIPTOR and DELETE surfaces that failed,
+   and those are what this pass fixed. Re-measure before trusting a "already
+   works" note about a property.
 
-**Measurement note.** The harness's own failure formatting is unreliable in
-standalone: `String(value)` throws for several value shapes and
-`assert._toString` then falls back to the unimplemented
+**Measurement note** (carried forward, re-confirmed). The harness's own failure
+formatting is unreliable in standalone: `String(value)` throws for several value
+shapes and `assert._toString` then falls back to the unimplemented
 `Object.prototype.toString`, so an assertion failure can surface as
 `TypeError: Object.prototype.toString is not yet implemented` and the rendered
-«…» values can be garbage (`function () { [native code] }` for a boolean).
-Write probes with boolean asserts (`assert.sameValue(x === 3, true, "…")`) and
-read WHICH assert failed, never the printed values.
+«…» values can be garbage. Write probes with boolean asserts
+(`assert.sameValue(x === 3, true, "…")`) and read WHICH assert failed, never the
+printed values. Also: `typeof null === "object"`, so a probe that checks
+`typeof it === "object"` to prove an iterator exists proves nothing — check
+`it === null` explicitly (this cost a diagnosis cycle here).
+
+**Equivalence.** `tests/equivalence/**` (218 files) runs in 30-file batches —
+the whole directory OOMs a vitest worker in this container. Three failures are
+PRE-EXISTING on unmodified HEAD, verified by reverting both changed files and
+re-running the same three files: `arguments-nested-and-loops.test.ts`
+("for-loop with function declaration in body"), `array-inline-return.test.ts`
+("find does not hijack return"), `delete-sentinel.test.ts` ("delete string
+property makes it undefined").
 
 ## References
 

@@ -158,7 +158,11 @@ export function buildRegExpLiteral(pattern: JSValue, flags: JSValue): JSValue {
 
 /** Build `[ e0, e1, … ]` from the element window. */
 export function buildArrayLiteral(elems: JSValue[]): JSValue {
-  const arr: JSValue = [];
+  // Keep the concrete vec carrier until the return boundary. Declaring this
+  // local as erased `JSValue` makes a self-compiled provider allocate a generic
+  // object-shaped carrier, which has no Array-prototype companion and therefore
+  // turns `[1].every` into an undefined property read.
+  const arr: JSValue[] = [];
   let i = 0;
   const n = elems.length;
   for (;;) {

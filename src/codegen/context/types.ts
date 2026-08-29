@@ -12,6 +12,7 @@ import type { UsageInference } from "../../checker/usage-inference.js";
 import type { IrUnitId } from "../../ir/identity.js";
 import type {
   FieldDef,
+  FuncHandle,
   GlobalDef,
   Instr,
   LocalDef,
@@ -144,6 +145,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    *  `__unbox_string` JS-host string imports. Used so the compiled module is
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
+  /** Linked zero-argument getter for a canonical standalone realm-global object. */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   /**
@@ -2336,6 +2339,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   nativeIteratorUserArmPending?: boolean;
   /**
+   * (#5147) Set by `reserveAnyIterNext` — `__any_iter_next` was minted with a
+   * placeholder body that `fillAnyIterNext` must replace at finalize (it needs
+   * the `$LazyIterHelper` type and the ladder's late arms, which only exist by
+   * then). Same reserve-then-fill discipline as `nativeIteratorUserArmPending`.
+   */
+  anyIterNextPending?: boolean;
+  /** (#5147) `__iter_result_obj` reserved with a placeholder body; filled at finalize. */
+  iterResultObjPending?: boolean;
+  /** (#5147) the `$__IterRec` identity arm was already prepended to `__iterator`. */
+  iterRecIdentityArmDone?: boolean;
+  /**
    * Static property initializer expressions to compile into __module_init.
    * `className` (#1395) is the owning class name — used to set
    * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
@@ -2348,6 +2362,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     staticBlock?: ts.ClassStaticBlockDeclaration;
     className?: string;
   }[];
+  /**
+   * Static initializers owned by a class expression. Unlike class-declaration
+   * statics, these execute as part of ClassDefinitionEvaluation at the exact
+   * expression site, so they cannot share the module-level static queue.
+   *
+   * A variable-bound class expression is registered under both its source
+   * binding and a synthetic identity. `staticPropKey` retains each internal
+   * storage alias while the emitter evaluates the source initializer once.
+   */
+  classExpressionStaticInitExprs: Map<
+    ts.ClassExpression,
+    {
+      initializer?: ts.Expression;
+      staticBlock?: ts.ClassStaticBlockDeclaration;
+      className: string;
+      staticPropKey?: string;
+    }[]
+  >;
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**
@@ -2360,6 +2392,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Canonical branded carrier for an interpreted callback crossing modules. */
   runtimeEvalInterpretedCallbackTypeIdx?: number;
   runtimeEvalValueTypeIdx?: number;
+  /** Canonical `(value, ok)` envelope returned by cross-module AOT callables. */
+  runtimeEvalCallResultTypeIdx?: number;
+  /** `(externref envelope) -> externref`, rethrowing through this module's tag. */
+  runtimeEvalCallResultUnwrapFuncIdx?: number;
   /**
    * #2928 — this unit consumes or provides the linked runtime-eval ABI.
    * Callable writes to its native global object use the cross-module carrier.
@@ -2896,6 +2932,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * synthesized runtime helper — never to a nested declaration.
    */
   funcMapOwnerDecl: Map<string, ts.FunctionDeclaration>;
+  /**
+   * Exact source declaration owned by a defined-function handle.
+   *
+   * Unlike the legacy bare-name declaration maps, this remains unambiguous
+   * when multiple source modules declare the same function name or an import
+   * gives the selected declaration a different local spelling. Source
+   * function-value wrappers use it to recover declaration-only ABI facts such
+   * as TypeScript's pseudo-`this` parameter without changing the direct ABI.
+   */
+  sourceFunctionDeclarationByHandle: Map<FuncHandle, ts.FunctionDeclaration>;
+  /** Reverse index for checker-selected declarations such as import aliases. */
+  sourceFunctionHandleByDeclaration: WeakMap<ts.FunctionDeclaration, FuncHandle>;
   /** Map from child className → parent className (for local class inheritance) */
   classParentMap: Map<string, string>;
   /**
@@ -3286,6 +3334,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * codec arm and never register the type.
    */
   moduleUsesDynTaView: boolean;
+  /**
+   * Set by a module pre-scan when a statically named TypedArray constructor is
+   * used with an ArrayBuffer backing. This lets an earlier helper that writes
+   * through an `any` receiver reserve the runtime-kind `$__ta_view` dispatch
+   * before the concrete view type is registered by the later constructor.
+   */
+  moduleUsesStaticTaView: boolean;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /**
@@ -3454,6 +3509,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
      * `this`-drop behaviour.
      */
     noThisParam?: boolean;
+    /**
+     * A plain named FunctionDeclaration whose first source parameter is the
+     * TypeScript-only `this` pseudo-parameter. Its underlying direct-call ABI
+     * still carries that slot, but the first-class wrapper must source it from
+     * `__current_this` and exclude it from the callable's visible arity.
+     */
+    explicitThisParam?: boolean;
     /**
      * (#1809) True when `methodFuncIdx` already pointed at a host IMPORT at
      * registration time — e.g. a DOM/host global (`resizeTo`, `scrollBy`) or
@@ -3662,6 +3724,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
+  /** Linked zero-argument getter for the canonical standalone realm-global object. */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */

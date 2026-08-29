@@ -1,9 +1,9 @@
 ---
 id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
-status: ready
+status: in_progress
 created: 2026-04-11
-updated: 2026-08-09
+updated: 2026-08-29
 priority: high
 feasibility: hard
 model: fable
@@ -13,10 +13,103 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
-  # The stacked TypeScript-source validation branch includes #4267/#4268's
-  # overload-owner fixes in the declaration driver. The pruning subsystem
-  # itself lives in src/resolve/consumer-driven-barrels.ts.
+  # 2026-08-29: the deferred object-literal method install (the Tier-3
+  # createIdentifier null-deref fix) adds the patch-up block to
+  # compileObjectLiteralForStruct.
+  - src/codegen/literals.ts
+  # This is a consolidated TypeScript-parser stress harvest. The branch predates
+  # the change-scoped file/function ratchets and intentionally spans the
+  # compiler frontiers documented in the implementation handoff below.
   - src/codegen/declarations.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/closures.ts
+  - src/codegen/stack-balance.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/property-access.ts
+  - src/emit/binary.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/type-coercion.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/literals.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/expressions/eval-inline.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/context/types.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/typeof-delete.ts
+  - src/codegen/statements/variables.ts
+  - src/compiler.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  # 2026-08-29: the main merge composes this branch's runtime-namespace capture
+  # guard with main's funcMap identity guard, crossing the 1500-line god-file
+  # threshold in the closure capture-analysis phase file.
+  - src/codegen/closures/arrow-phases.ts
+func-budget-allow:
+  # 2026-08-29: same change — the deferred install lives at the end of this
+  # function, where the literal's method funcIdxs are finally resolvable.
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/codegen/ir-inline.ts::inlineUserFunctions
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/eval-inline.ts::tryStaticEvalInline
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/statements.ts::compileStatementInner
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/member-set-dispatch.ts::fillMemberSetDispatch
+  - src/codegen/expressions/calls.ts::compileIIFE
+  - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/codegen/index.ts::ensureStructForType
+  - src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs
+  - src/codegen/expressions/operator-assignment.ts::compilePropertyCompoundAssignmentExternref
+  - src/codegen/index.ts::generateModule
+  - src/compiler.ts::runPipeline
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/native-construct.ts::fillNativeConstructDrivers
+  - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
+oracle-ratchet-allow:
+  # The parser stress harvest predates the ctx.oracle migration and exposes
+  # TypeScript checker queries across these existing codegen paths.
+  - src/codegen/declarations.ts
+  - src/codegen/declarations/struct-type-registration.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/identifier-module-storage.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/property-access.ts
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
 
@@ -334,6 +427,84 @@ peak memory, but the remaining returned-method table and finalization work
 still prevent a binary. Raising the timeout or heap alone does not close the
 gap; both the 4 GiB / 30-minute full-source run and the 31-file dynamic run
 prove that.
+
+## Codex implementation handoff (2026-08-28)
+
+Branch: `codex/1058-typescript5-selfhost`.
+
+The pinned TypeScript 5.9.3 parser graph now compiles to a valid WasmGC module.
+The latest authoritative run produced an 81,241,283-byte binary in 298,177 ms
+(3,638.8 MiB peak RSS); compilation succeeded and `WebAssembly.validate`
+returned true. This closes the former no-binary/finalization frontier, but Tier
+3 is not complete because runtime AST fingerprints do not yet return.
+
+```bash
+JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC=1 \
+JS2WASM_TYPESCRIPT_PROBE_SOURCE_MAP=1 \
+pnpm run dogfood:typescript-parser-source
+```
+
+Diagnostic artifacts are written to
+`/private/tmp/ts2wasm-typescript-parser-latest.wasm` and the adjacent `.map`.
+
+### Completed in this branch
+
+- Pins/prepares the exact upstream source and adds a three-file AST fingerprint
+  harness; consumer-driven barrel pruning and post-body DAG finalizers now
+  complete within the five-minute worker budget.
+- Repairs recursive layouts, mapped readonly erasure, constructor/factory
+  identity, late fixups, nested captures, module initialization, enum aliases,
+  and the large instruction graphs reached by the parser build.
+- Preserves omitted optional numeric arguments as `undefined` at callable
+  property boundaries (`scanner.setText(sourceText)` previously received zero
+  and produced an empty AST).
+- Widens mixed-`undefined` nested returns so `getDirectiveFromComment` no longer
+  boxes the undefined f64 sentinel as a Number.
+- Pre-registers safe zero-argument boolean/GC-reference callbacks and bridges
+  erased generic results, clearing `scanner.speculationHelper<T>` and
+  `parser.parseListElement<T>` without admitting unsafe argument-bearing ABIs.
+
+The latest focused checkpoint passed 14/14 optional-padding, generic-callback,
+and scalar-callable safety tests. `pnpm run typecheck` also passed.
+
+### Remaining Tier-3 blocker
+
+All three required inputs now converge on one runtime frontier:
+
+```text
+RuntimeError: dereferencing a null pointer
+  at createIdentifier
+  at parseIdentifier
+  at parsePrimaryExpression
+source: src/compiler/parser.ts:2649:9
+wasm offset: 2106116 (source-map anchor 2098406)
+```
+
+`builderStatePublic.ts`, `corePublic.ts`, and `performanceCore.ts` therefore do
+not yet return their expected fingerprints. Resume by extracting
+`createIdentifier` (function index 927 in the latest diagnostic module) and
+tracing the null receiver/argument at parser line 2649. Do not revisit the
+resolved empty-AST, comment-directive, or generic callback paths unless their
+focused regressions fail. After this frontier, rerun the three fingerprints,
+then the strict 11-callback upstream suite and final TS5/TS7 typechecks/oracle
+ratchet.
+
+### PR refresh against current main (2026-08-29)
+
+PR #5183 was refreshed onto `main` through
+`81e54a98ebf95285e22bd2a82ff339cfd06a3fc8`. The merge keeps the parser
+branch's nested-capture offset for spread calls while honoring main's newer
+`arguments`-based spread path, uses the prepared multi-source module-init
+finalizer, profiles both return- and parameter-unboxing statistics, and
+combines inherited-array carriers with builtin-shadow protection. The latter
+also guards recursive base-type discovery so a user-defined `Array` cannot be
+reclassified as the intrinsic.
+
+After the refresh, both TS5 and TS7 typechecks pass, repository lint reports no
+errors, all 45 issue-1058 test files pass (151 tests), and the merge-sensitive
+main regressions pass (8 files, 94 tests). The runtime `createIdentifier` null
+deref above remains the only known Tier-3 fingerprint blocker; this refresh
+does not claim it is resolved.
 
 ## Acceptance criteria
 
