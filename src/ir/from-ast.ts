@@ -53,7 +53,10 @@ import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
-import { boundedPreparedNestedOrdinaryClassBindingName } from "./class-accessor-safety.js";
+import {
+  boundedPreparedNestedOrdinaryClassBindingName,
+  nestedOrdinaryClassLexicalBindingName,
+} from "./class-accessor-safety.js";
 import { remainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
@@ -3305,6 +3308,28 @@ function tryLowerFusedI32Binary(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx
   return null;
 }
 
+/**
+ * (#3522 F4) The final lowering boundary for an immutable local class binding.
+ *
+ * Admission is decided once before selection, projected into the class-shape
+ * sidecar as one exact binding alias, and carried through local-class
+ * resolution. Here it is REQUIRED again, by identity rather than by re-running
+ * a syntax predicate: the shape published under the binding name must be the
+ * shape of exactly this class expression. A shadowed outer class, a differently
+ * named inner class, or an unadmitted candidate therefore fails closed and
+ * keeps its ordinary binding lowering.
+ */
+function preparedLocalClassExpressionBinding(initializer: ts.ClassExpression, name: string, cx: LowerCtx): boolean {
+  const shape = cx.classShapes?.get(name);
+  if (!shape || nestedOrdinaryClassLexicalBindingName(initializer) !== name) return false;
+  const exactClassId = cx.identityContext?.classIdByDeclaration.get(initializer);
+  if (exactClassId === undefined) {
+    // Resolver-less legacy callers keep the pre-identity strict predicate.
+    return boundedPreparedNestedOrdinaryClassBindingName(initializer) === name;
+  }
+  return shape.classId === exactClassId && cx.identityContext?.declarationByClassId.get(exactClassId) === initializer;
+}
+
 function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
   const isConst = !!(stmt.declarationList.flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
@@ -3369,8 +3394,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     if (
       ts.isClassExpression(d.initializer) &&
       isConst &&
-      boundedPreparedNestedOrdinaryClassBindingName(d.initializer) === name &&
-      cx.classShapes?.has(name)
+      preparedLocalClassExpressionBinding(d.initializer, name, cx)
     ) {
       // Selection proved the class definition inert and the exact Program ABI
       // component already installed every constructor/method body. The class

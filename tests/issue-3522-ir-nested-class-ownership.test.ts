@@ -32,7 +32,7 @@ export function run(): number {
 }
 `;
 
-const CLOSED_FIELD_CALL_SOURCE = `
+const ADMITTED_FIELD_CALL_SOURCE = `
 function seed(value: number): number { return value + 2; }
 export function run(): number {
   class Box {
@@ -178,56 +178,52 @@ describe("#3522 nested ordinary class ownership", () => {
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it.each(TARGETS)(
-    "keeps the call-bearing nested field family closed and behavior-neutral in the %s lane",
-    async (target) => {
-      const fileName = `nested-field-call-${target}.ts`;
-      const direct = await compile(CLOSED_FIELD_CALL_SOURCE, {
-        fileName,
-        experimentalIR: false,
-        target,
-      });
-      const preparedControl = await compile(CLOSED_FIELD_CALL_SOURCE, {
-        fileName,
-        experimentalIR: true,
-        target,
-      });
-      const preparedObserved = await compile(CLOSED_FIELD_CALL_SOURCE, {
-        fileName,
-        experimentalIR: true,
-        trackIrOutcomes: true,
-        target,
-      });
+  it.each(TARGETS)("prepares the call-bearing nested field family once in the %s lane (#3522 F4)", async (target) => {
+    // Pinned CLOSED until #3522 F4. Measured on `origin/main` 81e54a98e this
+    // shape reported `run`/`Box_new`/`Box_read` as
+    // `class-member-unsupported@select`; F4 validates the F3 proof, derives
+    // the one admitted-class marker before selection, and the whole family
+    // now compiles once. `seed` keeps its own single-unit component.
+    const fileName = `nested-field-call-${target}.ts`;
+    const direct = await compile(ADMITTED_FIELD_CALL_SOURCE, {
+      fileName,
+      experimentalIR: false,
+      target,
+    });
+    const preparedControl = await compile(ADMITTED_FIELD_CALL_SOURCE, {
+      fileName,
+      experimentalIR: true,
+      target,
+    });
+    const preparedObserved = await compile(ADMITTED_FIELD_CALL_SOURCE, {
+      fileName,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      target,
+    });
 
-      for (const compiled of [direct, preparedControl, preparedObserved]) {
-        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
-        expect(WebAssembly.validate(compiled.binary)).toBe(true);
-        expect((await instantiate(compiled)).run!()).toBe(42);
-      }
-      expect(Array.from(preparedObserved.binary)).toEqual(Array.from(preparedControl.binary));
-      expect(preparedObserved.irPostClaimErrors ?? []).toEqual([]);
-      expect(preparedObserved.irOutcomes ?? []).toHaveLength(4);
-      expect(outcome(preparedObserved, "seed")).toMatchObject({
+    for (const compiled of [direct, preparedControl, preparedObserved]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!()).toBe(42);
+    }
+    // Outcome TRACKING must still be observation-only.
+    expect(Array.from(preparedObserved.binary)).toEqual(Array.from(preparedControl.binary));
+    expect(preparedObserved.irPostClaimErrors ?? []).toEqual([]);
+    expect(preparedObserved.irOutcomes ?? []).toHaveLength(4);
+    for (const name of ["seed", "run", "Box_new", "Box_read"]) {
+      expect(outcome(preparedObserved, name), name).toMatchObject({
         kind: "emitted",
         legacyBodyEmitted: false,
         irBodyEmitted: true,
       });
-      expect(outcome(preparedObserved, "run")).toMatchObject({
-        kind: "unsupported",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      for (const name of ["Box_new", "Box_read"]) {
-        expect(outcome(preparedObserved, name)).toMatchObject({
-          kind: "unsupported",
-          code: "class-member-unsupported",
-          stage: "select",
-          legacyBodyEmitted: true,
-          irBodyEmitted: false,
-        });
-      }
-    },
-  );
+    }
+    const ownerComponents = new Set(
+      ["run", "Box_new", "Box_read"].map((name) => outcome(preparedObserved, name).preparedComponentId),
+    );
+    expect(ownerComponents.size).toBe(1);
+    expect(outcome(preparedObserved, "seed").preparedComponentId).not.toBe([...ownerComponents][0]);
+  });
 
   it("withdraws the complete nested class component when one body captures its enclosing frame", async () => {
     const result = await compile(
