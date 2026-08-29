@@ -1112,10 +1112,12 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
 
   // ── __map_iter_next(it) -> ref $MapIterResult ───────────────────────────
   // Walks the entries vector from it.index, skipping tombstones. Produces a
-  // {value, done} result. For entry-kind iteration, returns the value field
-  // (key/value handled by callers; entries() packing deferred — returns value).
+  // {value, done} result. Entry-kind iteration must return a FRESH [key,value]
+  // pair on every poll (§24.1.5.2); the pair is an open `$ObjVec` so the
+  // dynamic spread reader can consume it without importing a JS array.
   {
-    // locals: m(1), idx(2), entries(3), entry(4)
+    // locals: m(1), idx(2), entries(3), entry(4), pair(5)
+    const objVecBuilders = ensureObjVecBuilders(ctx);
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       {
@@ -1182,7 +1184,7 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
               { op: "i32.const", value: TOMBSTONE_BIT },
               { op: "i32.and" },
               { op: "br_if", depth: 0 },
-              // result: kind 0=key,1=value (entries→value for now)
+              // result: kind 0=key,1=value,2=entries
               { op: "local.get", index: 0 },
               {
                 op: "struct.get",
@@ -1202,11 +1204,51 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                   },
                 ],
                 else: [
-                  { op: "local.get", index: 4 },
+                  { op: "local.get", index: 0 },
                   {
                     op: "struct.get",
-                    typeIdx: ctx.mapEntryTypeIdx,
-                    fieldIdx: F_VALUE,
+                    typeIdx: ctx.mapIterTypeIdx,
+                    fieldIdx: IT_KIND,
+                  },
+                  { op: "i32.const", value: 2 },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: anyref },
+                    then: [
+                      // pair = __objvec_new(); append key and value as
+                      // externrefs, then return pair as anyref.
+                      { op: "call", funcIdx: objVecBuilders.newIdx },
+                      { op: "local.set", index: 5 },
+                      { op: "local.get", index: 5 },
+                      { op: "local.get", index: 4 },
+                      {
+                        op: "struct.get",
+                        typeIdx: ctx.mapEntryTypeIdx,
+                        fieldIdx: F_KEY,
+                      },
+                      { op: "extern.convert_any" },
+                      { op: "call", funcIdx: objVecBuilders.pushIdx },
+                      { op: "local.get", index: 5 },
+                      { op: "local.get", index: 4 },
+                      {
+                        op: "struct.get",
+                        typeIdx: ctx.mapEntryTypeIdx,
+                        fieldIdx: F_VALUE,
+                      },
+                      { op: "extern.convert_any" },
+                      { op: "call", funcIdx: objVecBuilders.pushIdx },
+                      { op: "local.get", index: 5 },
+                      { op: "any.convert_extern" },
+                    ],
+                    else: [
+                      { op: "local.get", index: 4 },
+                      {
+                        op: "struct.get",
+                        typeIdx: ctx.mapEntryTypeIdx,
+                        fieldIdx: F_VALUE,
+                      },
+                    ],
                   },
                 ],
               },
@@ -1232,6 +1274,7 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
         { name: "idx", type: i32 },
         { name: "entries", type: entriesRef },
         { name: "entry", type: entryRef },
+        { name: "pair", type: { kind: "externref" } },
       ],
       body,
     );

@@ -4,7 +4,7 @@ title: "ES2015 strict native spread iterator materializer"
 status: in-progress
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-30
 priority: high
 horizon: l
 feasibility: hard
@@ -33,6 +33,10 @@ loc-budget-allow:
   - src/runtime.ts
 func-budget-allow:
   - src/codegen/iterator-native.ts::finalizeNativeIteratorRuntime
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
+  - src/codegen/iterator-native.ts::buildIteratorBody
+  - src/codegen/iterator-native.ts::buildIteratorNextBody
+  - src/codegen/map-runtime.ts::ensureMapHelpers
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/runtime.ts::resolveImport
 ---
@@ -218,14 +222,48 @@ a standalone-only approximation.
 - Final evidence, exact commit, PR URL, and handoff are recorded in this file;
   the PR body cites this markdown path and no GitHub issue is created.
 
+## Interrupted implementation checkpoint (2026-08-30)
+
+Upstream PR 5147 has already merged the plan-only head
+`2a354ba8944dbe260dd03f5211aff893e0ece1ad`; it cannot carry the later
+implementation. The first Luna-max implementation pass was interrupted by the
+agent-usage ceiling after producing an uncommitted prototype in
+`src/codegen/iterator-native.ts` and `src/codegen/map-runtime.ts`: **936 added / 42
+removed lines** across those two files. The prototype registers separate
+`__iterator_strict`, `__iterator_next_strict`, and native strict materializer
+entry points, adds strict object/callability checks, hole normalization, Map
+entry projection, native-family admission, and keeps the compatibility iterator
+as a distinct path.
+
+This is deliberately an **unfinished, non-mergeable checkpoint**:
+
+- TypeScript 7 no-emit passes and `git diff --check` is clean, but the source
+  has not been synchronized from its old base to current
+  `upstream/main` `4881206ab3001505fcfca875589aff8daf375ff9` (the branch is 476
+  main commits behind).
+- No focused `issue-5131` test file exists yet, no exact ES2015 cohort has been
+  frozen, and neither host/standalone behavioral matrix nor zero-import proof
+  has run.
+- The provider is not yet wired into
+  `src/codegen/expressions/new-builtin-globals.ts` or the host runtime, so it
+  cannot satisfy the dependent dynamic Proxy-spread behavior.
+- The prototype grows three already-large iterator functions and
+  `ensureMapHelpers`. The temporary function-budget allowances above exist only
+  so the interrupted checkpoint can be preserved and reviewed; a mergeable
+  implementation must extract those additions into bounded helpers and remove
+  allowances that are no longer necessary.
+
+Next implementation work must first preserve this checkpoint, then replay it
+onto a fresh worktree from current main, resolve the provider/finalization seams,
+add the complete mandatory matrix, wire both targets and the Proxy consumer,
+and run every acceptance gate before changing the PR out of draft.
+
 ## Handoff
 
 Use only `/private/tmp/js2-es2015-strict-spread-iterator-20260828` on branch
-`codex/5131-es2015-strict-spread-iterator`. The branch starts from
-`upstream/main` `b02345bc590dffc76e914f58731ad783834e868b`. The validated plan
-checkpoint is published in upstream draft PR 5147 from fork branch
-`ttraenkler:codex/5131-es2015-strict-spread-iterator`; its pre-PR head is
-`cfd9d3d1ccbbf42254096f02c1a3f267042a5ee8`. Keep the PR draft while the strict
-provider or its dependent dynamic consumer is incomplete; mark it ready only
-when the complete acceptance matrix is mergeable. Push every checkpoint
-without force, preserve unrelated work, and never create a GitHub issue.
+`codex/5131-es2015-strict-spread-iterator` for the interrupted prototype. Commit
+and push it as a truthful WIP checkpoint without force, then open a **new draft
+PR** because PR 5147 is already merged and this branch is not mergeable. The
+draft body must name the missing consumer/tests/current-main integration and
+cite this markdown path. Never mark it ready until the complete acceptance
+matrix is implemented and green. Do not create a GitHub issue.
