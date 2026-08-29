@@ -70,7 +70,7 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
-import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped } from "../iterator-native.js";
+import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import {
@@ -79,6 +79,7 @@ import {
   addUnionImports,
   ensureExnTag,
   getOrRegisterVecType,
+  hostMapCarrierClassName,
   nativeStringType,
   reserveVecMethodHelper,
   resolveWasmType,
@@ -934,7 +935,7 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker)) {
+  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
@@ -983,8 +984,14 @@ export function compileReceiverMethodCall(
     );
     if (nativeResult !== undefined) return nativeResult;
     if (methodName === "next") {
+      // (#5147) `Iterator`/`IterableIterator`-typed receivers include the
+      // NATIVE carriers (`[1,2][Symbol.iterator]()` → `$IterRec`), which
+      // `__gen_next` does not recognize. `__any_iter_next` tests for them and
+      // falls back to `__gen_next` on a miss.
+      const anyIterNextIdx = reserveAnyIterNext(ctx);
+      if (anyIterNextIdx !== undefined) flushLateImportShifts(ctx, fctx);
       compileExpression(ctx, fctx, propAccess.expression);
-      const funcIdx = ctx.funcMap.get("__gen_next");
+      const funcIdx = anyIterNextIdx ?? ctx.funcMap.get("__gen_next");
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" }; // Returns IteratorResult as externref
@@ -2013,7 +2020,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: receiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+            then: receiverWasCast ? [] : typeErrorThrowInstrs(ctx, expr.expression),
             else: elseInstrs,
           });
           return VOID_RESULT;
@@ -2026,7 +2033,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val" as const, type: resultType },
-            then: receiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+            then: receiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx, expr.expression),
             else: elseInstrs,
           });
           return resultType;
@@ -2236,7 +2243,7 @@ export function compileReceiverMethodCall(
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: smReceiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+              then: smReceiverWasCast ? [] : typeErrorThrowInstrs(ctx, expr.expression),
               else: elseInstrs,
             });
             return VOID_RESULT;
@@ -2252,7 +2259,7 @@ export function compileReceiverMethodCall(
             fctx.body.push({
               op: "if",
               blockType: { kind: "val" as const, type: resultType },
-              then: smReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+              then: smReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx, expr.expression),
               else: elseInstrs,
             });
             return resultType;
@@ -3624,6 +3631,14 @@ export function compileReceiverMethodCall(
         }
         const genNextIdx = ctx.funcMap.get("__gen_next");
         if (genNextIdx !== undefined) {
+          // (#5147) An `any`-typed receiver may hold a NATIVE iterator carrier
+          // (`$IterRec` from `[1,2][Symbol.iterator]()`, or a `$LazyIterHelper`
+          // from `.chunks(2)`), which `__gen_next` does not recognize — it
+          // answered null and the following `.value` read threw. Route through
+          // `__any_iter_next`, whose miss arm IS `__gen_next`.
+          const anyIterNextIdx = reserveAnyIterNext(ctx);
+          const nextTargetIdx = anyIterNextIdx ?? genNextIdx;
+          flushLateImportShifts(ctx, fctx);
           compileExpression(ctx, fctx, propAccess.expression, {
             kind: "externref",
           });
@@ -3634,7 +3649,7 @@ export function compileReceiverMethodCall(
               fctx.body.push({ op: "drop" });
             }
           }
-          fctx.body.push({ op: "call", funcIdx: genNextIdx });
+          fctx.body.push({ op: "call", funcIdx: nextTargetIdx });
           return { kind: "externref" };
         }
       }

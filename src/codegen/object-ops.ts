@@ -1706,9 +1706,9 @@ export function compileObjectDefineProperty(
     ): void => {
       if (!node) return;
       if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
-        promoteAccessorCapturesToGlobals(ctx, fctx, undefined, [node.body]);
+        promoteAccessorCapturesToGlobals(ctx, fctx, undefined, [node.body], undefined, node);
       } else if (node.body) {
-        promoteAccessorCapturesToGlobals(ctx, fctx, node.body as ts.Block);
+        promoteAccessorCapturesToGlobals(ctx, fctx, node.body as ts.Block, undefined, undefined, node);
       }
     };
     promoteDescriptorAccessorBody(getNode);
