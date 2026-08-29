@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-29
 priority: critical
 horizon: xl
 complexity: XL
@@ -29,6 +29,7 @@ files:
   - src/ir/async-plan.ts
   - src/ir/nodes.ts
   - src/ir/intrinsic-support.ts
+  - src/ir/extern-support.ts
   - src/ir/math-runtime-providers.ts
   - src/ir/types.ts
   - src/ir/effects.ts
@@ -475,6 +476,239 @@ audit of the exact signed head before push, open the implementation PR ready
 for review, and keep production R6 routing blocked until its upstream
 transactions and typed permission/mode contract are separately approved.
 
+#### A1 implementation evidence — 2026-08-28
+
+The bounded A1 checkpoint is implemented without opening production R6
+routing. `async-runtime-providers.ts` now owns one exact, deeply frozen
+seven-record catalog. Manifest freeze validates that complete catalog, resolves
+each selected provider capability ID once, and publishes the corresponding
+canonical record identities beside the compatibility ID projection. Prepared
+host attachments retain those exact records, and codegen authenticates their
+identity, capability, and symbolic binding before any type/import allocation.
+ABI materialization reads only the attached records; the semantic provider
+graph supplies only the expected capability-ID census, including a focused
+control proving that a valid two-capability plan is not widened to all six
+imports.
+
+The three owned suites pass 26 focused tests covering reversed provider,
+feature, catalog, function, and attachment traversal; full and partial provider
+closure; the optional seventh record; exact record/target joins; Program-ABI
+dependencies; deep freeze; and malformed, missing, duplicated, cloned,
+substituted, or cross-wired catalogs and attachments. TypeScript 7 and 5,
+Prettier, IR layering, IR/codegen fallback, IR dialect, and oracle ratchets pass.
+The unchanged #4106 and #4167 affected controls each retain one
+standalone-native `WebAssembly.validate` failure that reproduces identically on
+clean `fb4c01e6ad4f00c116897d7686d5c96c31426465`; their other 13 assertions pass.
+That preserved baseline is not A1 acceptance evidence, was not weakened, and
+A1 makes no standalone-native runtime acceptance claim.
+
+The checkpoint changes no provider choice, public compile result, semantic
+async plan, concrete import spelling/signature/order, lowering, or Wasm policy.
+The issue remains `blocked`: public import-intent projection, provider
+transactions, lazy-registration deletion, and typed permission/mode authority
+still require their separately approved upstream checkpoints.
+
+### A2 implementation plan — per-owner provider and backend-requirement attachment (2026-08-28)
+
+A1 freezes exact host capability records, but it does not yet preserve the
+complete provider decision consumed by each async function. During
+`prepareIrRuntimeManifest`, the implementation resolves each plan's
+`runtimeIntents` to exact provider records, derives a temporary host/native
+projection, and then discards those records. The global manifest is a union
+across functions. Backend code consequently re-filters the global
+`ASYNC_RUNTIME_PROVIDERS` catalog from `fn.asyncPlan.runtimeIntents`, and both
+the adapter materializer and frame lowerer reread `runtimeIntents` to decide
+whether native `undefined` support is required. A multi-function manifest can
+therefore describe a strict superset of one owner's needs, while the backend
+is again responsible for reconstructing the per-owner semantic choice.
+
+A2 is a behavior-neutral authority transfer. It retains the exact selected
+provider records and a closed backend-requirement projection on each prepared
+async runtime, then makes both codegen consumers use only that attachment. It
+does not change async selection, runtime semantics, target policy, public
+`ImportIntent`, provider choice, import spelling/order/signature, Wasm output,
+or runtime results. It also does not delete the existing scheduler, native
+Promise, number-boundary, or canonical-undefined provider implementations;
+turning those mutable registries into a fully staged transaction is a later
+#4260/R6 checkpoint.
+
+#### Closed attachment contract
+
+Add the canonical backend requirement vocabulary:
+
+```ts
+type RuntimeBackendRequirement =
+  | "async.native.drive"
+  | "async.native.number-boundary"
+  | "async.native.undefined";
+```
+
+The order above is canonical. Host providers project no backend requirements.
+Every standalone-native async owner projects `async.native.drive` and
+`async.native.number-boundary`; only an owner whose exact selected provider set
+contains `native.value.undefined` also projects `async.native.undefined`.
+Unknown, duplicate, missing, extra, or reordered requirements are invariants.
+
+`FrozenRuntimeManifest` publishes `backendRequirements` as the deeply frozen,
+canonical union selected by all manifest providers. `PreparedIrAsyncRuntime`
+retains, for one exact owner:
+
+- the exact frozen manifest object used for selection;
+- the exact frozen `IrAsyncPlan` object it authenticates;
+- the exact provider objects selected for that plan, in their canonical
+  manifest order;
+- the exact per-owner backend requirements; and
+- the existing attached state bodies, type layouts, and host adapters.
+
+Do not clone provider definitions into a new async catalog. Each attached
+provider must be the exact object in `manifest.providers`, and each host
+adapter record must remain the exact object in
+`manifest.hostCapabilityRecords`. A shared IR-side validator must prove, before
+any backend allocation, that the plan and manifest objects are current; the
+provider feature set is exactly the plan's canonical intent set; every
+provider ID, feature, dependency, implementation, target, backend, and host
+capability belongs to the frozen manifest record; the per-owner requirements
+are exactly the projection of those providers; and the runtime kind, adapter
+set, and target policy agree. This validator owns the semantic join. Codegen
+may call it but may not inspect `runtimeIntents` or a global provider catalog.
+The attachment envelope, state array and state records, and every attached
+state-body instruction tree must remain frozen; trusted copy-on-write passes
+re-seal only the exact body they rewrote, while final consumers reject mutable
+post-authentication evidence.
+
+The global union is evidence and a freeze-time late-request guard, not
+permission to widen an owner. In a two-function standalone manifest where only
+one function returns `void`, the global manifest contains
+`async.native.undefined`, the void owner contains it, and the non-void owner
+does not.
+
+#### Exact production ownership
+
+The A2 implementation owns only:
+
+- `src/ir/runtime-manifest.ts`: define and canonicalize the closed backend
+  requirements; derive the frozen global union from the selected provider
+  objects; and expose one shared exact projection helper.
+- `src/ir/async-plan.ts`: extend the prepared runtime attachment and own its
+  fail-closed plan/manifest/provider/requirement currentness validator. The
+  target-neutral `IrAsyncPlan` schema and `runtimeIntents` remain unchanged.
+- `src/ir/intrinsic-support.ts`: retain each owner's selected manifest provider
+  objects, attach the exact plan/manifest references, and derive the per-owner
+  requirement vector through the shared helper.
+- `src/ir/extern-support.ts`: preserve the attachment's frozen-container
+  contract when its trusted copy-on-write pass adds extern provider references
+  to prepared async state bodies. This is the only post-manifest pass in A2's
+  production order that otherwise returns mutable runtime/state containers;
+  the final frame consumer remains fail-closed and never repairs evidence.
+- `src/codegen/ir-async-runtime-adapters.ts`: delete
+  `expectedHostCapabilities`, the `ASYNC_RUNTIME_PROVIDERS` import, and the
+  `IrAsyncRuntimeIntent` import. Validate every function and build a complete
+  allocation-free request census first; only then materialize attached host
+  records or reserve the three attached native requirements. One malformed
+  later function must leave imports, types, scheduler state, Promise boundary,
+  and canonical-undefined state untouched.
+- `src/codegen/ir-async-frame.ts`: remove the semantic-intent read. Derive
+  canonical-undefined frame behavior only from the authenticated
+  `async.native.undefined` attachment. The existing idempotent drive-runtime
+  lookup may remain to resolve its already-reserved Promise type; it cannot
+  become a fallback semantic selector.
+- `tests/issue-3526-ir-runtime-manifest.test.ts` and
+  `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts`: own all A2
+  attachment, mutation, allocation-boundary, and two-owner controls.
+
+Do not edit `src/ir/async-runtime-providers.ts`, `src/ir/verify.ts`,
+`tests/issue-4103-ir-async-runtime-providers.test.ts`,
+`src/codegen/async-frame.ts`, `src/codegen/async-scheduler.ts`,
+`src/ir/integration.ts`, `src/codegen/index.ts`, context files, public compiler
+APIs, or backend emitters. The in-flight Deno integration branch owns several
+of those adjacent files. Recheck open PRs and dirty Claude worktrees before
+every mutation; stop rather than expanding this slice into a live owner.
+
+#### Anti-vacuity and mutation matrix
+
+Positive controls must cover full host, partial host, standalone non-void, and
+standalone void provider projections. Reverse input function, feature, and
+provider traversal and require identical frozen manifestations, per-owner
+attachments, concrete imports, Program ABI dependencies, and runtime output.
+Repeating structurally identical manifest preparation must publish another
+current authenticated attachment rather than fail on stale object identity.
+Use a two-function host control to prove each owner receives only its selected
+capability records, and a two-function standalone control to prove optional
+undefined support does not leak from the broader owner through the global
+union. Host keeps the exact current imports; standalone keeps zero host
+imports. Add a static source assertion that both codegen consumers contain
+neither `runtimeIntents` nor `ASYNC_RUNTIME_PROVIDERS`.
+
+Reject before the first allocation:
+
+1. a dropped, duplicated, reordered, cloned, substituted, or cross-wired
+   provider object;
+2. provider ID, feature, dependency, implementation, supported-target,
+   supported-backend, or host-capability drift;
+3. a dropped, duplicated, unknown, reordered, or extra backend requirement;
+4. `native.value.undefined` without `async.native.undefined`, or the
+   requirement without that exact provider;
+5. a host provider with native requirements, a native provider with host
+   adapters, a mixed host/native owner, or a host attachment presented to a
+   strict-no-host or linear-backend context;
+6. a cloned/cross-wired plan or manifest, plan-intent drift, a dropped whole
+   runtime attachment, a runtime without a plan, both plan and runtime authority
+   dropped from an async owner, and one owner receiving another owner's broader
+   provider set;
+7. the existing malformed host record/target/ABI cases; and
+8. a valid first function followed by a malformed second function, proving the
+   materializer validates the full request census before mutating any registry.
+
+Provider and requirement arrays, their nested provider fields, the manifest,
+every prepared runtime attachment, and attached state-body instruction trees
+must be frozen. Canonical reordering of input traversal may not change digests
+or output; reordering an already prepared attachment is corruption and must
+fail.
+
+#### Validation and landing boundary
+
+The signed A1 baseline is 26/26 across the runtime-manifest, async-provider,
+and async-consumer suites (7 + 9 + 10). Retain those and run unchanged controls:
+#2864 terminal undefined (5), #2895 async frame (8), #4574 standalone native
+async family (14), #4106 async fetch user (7), and #4167 async rejection
+identity (5). The last two each retain one known standalone
+`WebAssembly.validate` failure from A1; compare exact current-main signatures
+instead of relabelling them as A2 fixes or weakening their assertions.
+
+Refreshed `main` at `48abcb949c9d1b539cb58472256e4545cacd9dc8` under Node
+24.4.1 has a broader environment/runtime baseline than A1. In a clean detached
+control with exnref disabled by Node's default, these five unchanged files total
+18 passing and 24 failing tests: all five #2864 cases stop at Node compile with
+`Invalid opcode 0x1f (enable --experimental-wasm-exnref)`; #2895 has three
+standalone `WebAssembly.validate(...) === false` controls; #4106 and #4167 each
+retain one; and all fourteen #4574 standalone-native cases retain the same
+false validation result. The A2 branch must reproduce that exact membership and
+failure signature with zero net drift; it may not mark those rows green, delete
+them, weaken assertions, or claim them as A2 defects. The extra #4110
+vector/async diagnostic likewise remains exactly 18/19 on both current main and
+the A2 branch, with only its existing standalone validation row false.
+The final A2 refresh to `f727d529abb40cdb63803a802b1502f91e4e9016`
+changes only documentation and benchmark data, so this source/test control
+membership remains the applicable final-main baseline.
+
+The A2-owned authority tests remain independently green: require the refreshed
+runtime-manifest, async-provider, and async-consumer set to pass 34/34, plus the
+trusted extern-support controls 9/9. Full repository hooks and CI remain the
+landing authority in their configured environment; current-main equivalence is
+diagnostic evidence, not permission to bypass a hook or accept a new branch-only
+failure.
+
+No LOC or function-budget allowance is authorized. Keep every touched source
+file below 1,500 lines and every function below 300 lines by extracting bounded
+helpers inside the owned files. Before the signed commit and push, take a fresh
+finite, non-negative one-minute load sample strictly below
+`logical cores - 2`; run focused and affected tests, TypeScript 7 and 5,
+formatting, IR layering/dialect/fallback/oracle/optimization gates, then LOC and
+function ratchets immediately before committing. Run complete precommit and
+prepush hooks without bypass. Obtain an independent read-only audit of the
+signed head, and open the PR ready only when its scoped diff and required gates
+are mergeable; otherwise keep it draft with the exact blocker.
+
 ### Later measured family slices
 
 Land each as an independently ratcheted child/slice, in dependency order:
@@ -625,3 +859,169 @@ frontend deletion remains #3090/R10.
 - **Math slice widening:** `Math.random`, dynamic coercion, or variadic calls can
   make M1 impure. Define M1 by the exact deterministic table entries and reject
   unlisted shapes until their later family slice.
+
+## 2026-08-29 F1-S1 implementation plan — number-boundary intrinsics (family 1, slice 1)
+
+**Fable lane.** Grounded on `origin/main` merged at `fe3fe11e52`. This is the
+first slice of "Later measured family slices" item 1 (scalar/coercion/value
+carriers). It follows the A1/A2 shape: a behavior-neutral authority transfer
+with an exact ownership list, no provider-choice change, no Wasm delta on any
+clean lane. Opus implements against this plan; every cited line number must be
+re-located by symbol before editing.
+
+### Measured facts (verified on the grounded tree)
+
+- The family-1 beachhead already exists and is wired end-to-end:
+  `NUMERIC_COERCION_INTRINSIC_IDS = ["js.to_uint32"]`
+  (`src/ir/intrinsics.ts:51`), feature (`:98`), signature row (`:194`,
+  `F64_TO_U32_INTRINSIC_SIGNATURE`), provider `backend.js.to_uint32`
+  (`src/ir/runtime-manifest.ts:105`, `:324`), backend composite `"to-uint32"`
+  (`src/ir/intrinsic-support.ts:37` — the composite table also carries
+  `math.clz32/imul/max/min`). Copy this pattern, do not invent a parallel one.
+- The number boundary is the widest un-migrated coercion carrier, and its IR
+  authority is currently split across name-symbolic emission and resolver mode
+  proxies:
+  - **Box arm** — `coerceToExpectedExtern` (`src/ir/from-ast.ts:6929-6947`):
+    f64→externref emits `emitCall(irImportFuncRef("env", "__box_number"))`
+    gated on `cx.resolver?.hasHostNumberBox?.()`. Standalone has NO
+    `__box_number` (its boxing is the `$AnyValue` family) so the predicate is
+    false there and the arm falls through to the demote throw.
+  - **Unbox arm** — the declared-f64 return coercion
+    (`src/ir/from-ast.ts:8936-8948`): both lanes own `__unbox_number`
+    `(externref) -> f64`; the PROVIDER choice is inlined in from-ast —
+    `hasHostNumberBox()` → `irImportFuncRef("env","__unbox_number")`, else
+    `hasNativeNumberUnbox()` → `irRuntimeFuncRef("__unbox_number")` (the
+    native function `addUnionImports` registers under
+    `semanticProviders: "native-first"`, #4461), else return unconverted.
+  - The predicate implementations are one-line mode reads on the
+    integration resolver: `hasHostNumberBox(): !ctx.nativeStrings`
+    (`src/ir/integration.ts:4722`), `hasNativeNumberUnbox():
+    ctx.targetProfile.semanticProviders === "native-first"` (`:4749`). #2955
+    moved these OUT of from-ast precisely so the front-end reads no mode
+    flags; F1-S1 finishes the move by making the answer a frozen-manifest
+    fact instead of a live mode read.
+  - These two arms are the ONLY from-ast consumers of the two predicates
+    (measured: `from-ast.ts:6939`, `:8936-8938`; every other hit is doc
+    text). `hasHostBooleanBox` (boolean boxing) is a separate consumer family
+    and stays untouched.
+  - Name-symbolic joins elsewhere in IR:
+    `src/ir/compiler-timer-shim-preparation.ts:42,244-278` resolves
+    `__box_number`/`__unbox_number` by `ctx.funcMap.get(name)`;
+    `src/ir/async-prepare.ts:805-808` authenticates a carrier unbox by target
+    NAME `"__unbox_number"`. Both are in-scope consumers of the new records
+    (join by attached record, keep the name as diagnostic), IF the join is a
+    mechanical substitution; otherwise record them as follow-up rows — do not
+    widen.
+- `prepareIrRuntimeManifest` runs at `src/ir/integration.ts:752`, after
+  lowering and before prepared-component sealing (the M1 ordering), so
+  provider choice at freeze-time and intrinsic emission at lowering-time is
+  the established order. `IrInstrIntrinsic` (`src/ir/nodes.ts:867`) is the
+  node to reuse.
+- A2 already publishes `RuntimeBackendRequirement` including
+  `async.native.number-boundary` for async owners — the number boundary is
+  already a named backend concept; F1-S1 gives it a family-owned intrinsic
+  identity for the two synchronous coercion arms.
+
+### Contract
+
+Add to the closed vocabularies (canonical order, versioned signatures):
+
+- `js.number.box` — `(f64) -> externref`. Target policy: HOST-ONLY for this
+  slice. A native-first/standalone request is a preparation-time typed
+  `Unsupported` naming the intrinsic — exactly the population that demotes at
+  the box arm today, moved to a typed reason. The `$AnyValue` standalone
+  boxing family is explicitly NOT this intrinsic and NOT this slice.
+- `js.number.unbox` — `(externref) -> f64`. Target policy: host AND
+  native-first. Two providers, chosen at freeze exactly as the from-ast
+  inline pick does today:
+  - `host.js.number.unbox` → host capability record `env.__unbox_number`
+    `(externref) -> f64`;
+  - `native.js.number.unbox` → the union-native `__unbox_number` function
+    (symbolic runtime funcref; NO host capability).
+- `host.js.number.box` → host capability record `env.__box_number`
+  `(f64) -> externref`.
+
+The two host records are the FIRST non-async `HostCapability` records. Reuse
+A1's record machinery (`AsyncHostAdapter`-style exact frozen records,
+`hostCapabilityRecords` projection, canonical-record guards) — generalize the
+record type's name if needed, but do NOT create a second record table or a
+second resolver. Feature rows mirror 1:1 (the `js.to_uint32` pattern); the
+callable-backed provider attachment follows the seven self-host Math
+methods, not the five native-opcode ones.
+
+### Production changes (exact ownership)
+
+1. `src/ir/intrinsics.ts` — the two IDs, signatures, features.
+2. `src/ir/runtime-manifest.ts` — the three providers, target policies, host
+   capability records, freeze/verification rows.
+3. `src/ir/from-ast.ts` — the two arms emit `intrinsic` nodes (id, args, f64/
+   externref result, source location) with NO provider and NO predicate read.
+   Delete `hasHostNumberBox`/`hasNativeNumberUnbox` from the from-ast
+   resolver contract ONLY if the final trace confirms no other consumer;
+   otherwise leave the contract entries and delete just these two reads.
+4. `src/ir/intrinsic-support.ts` — provider attachment for the two IDs
+   (callable-backed pattern); the host arm attaches its exact capability
+   record, the native arm its runtime funcref.
+5. `src/ir/integration.ts` — provider selection at manifest preparation from
+   the target profile (the SAME `!ctx.nativeStrings` /
+   `semanticProviders === "native-first"` facts, now consulted exactly once,
+   at freeze); the resolver predicate implementations are deleted with their
+   contract entries or left for non-from-ast callers per the trace.
+6. Timer-shim and async-prepare joins per the measured-facts caveat.
+
+Do NOT touch: legacy codegen emission of `__box_number`/`__unbox_number`
+(`coerceType`, deno-api, generators-native-consumer, builtin-value-read — the
+direct-route substrate stays until R9/R10), `addUnionImports` registration,
+`__box_boolean`/`__box_symbol`, `__any_to_f64`/`__to_primitive`/equality
+(later F1 rows), the #2108 coercion-sites gate baseline, and the public
+`ImportIntent` projection.
+
+### Behavior-neutrality obligations (each is a test)
+
+1. **Host lane byte-parity**: fixtures whose IR bodies box (f64→externref
+   argument/return) and unbox (the #4461 `Map.get` return-hit shape) compile
+   byte-identically before/after — same `env` imports, same call sites.
+2. **Native-first unbox parity**: the standalone `Map.get` shape still
+   IR-emits and calls the union-native `__unbox_number`; runtime parity.
+3. **Standalone box parity**: every shape that demotes at the box arm today
+   still demotes — now as preparation-time typed `Unsupported` naming
+   `js.number.box`. The strict fixed-corpus census
+   (`pnpm run check:ir-fallbacks`) must be unchanged in every unintended
+   bucket; a reason-string migration inside the same bucket is acceptable,
+   a bucket count change is not.
+4. **Freeze discipline**: a post-freeze request for either intrinsic is an
+   invariant; provider substitution/duplication/cross-wiring on the
+   attachment rejects before materialization (A2's mutation matrix shape).
+5. **Canonicalization**: reversed traversal publishes byte-equivalent
+   manifest projections; the two new records appear in
+   `hostCapabilityRecords` only when a provider edge requests them —
+   async-only and Math-only manifests keep their current record sets.
+6. **Non-vacuity**: reverting only the from-ast arm changes (keeping the
+   schema) must fail the new tests (the intrinsic path, not the old inline
+   path, carries the fixtures).
+
+### Required pre-implementation verifications (record answers in the checkpoint note)
+
+- Full-repo trace of `hasHostNumberBox`/`hasNativeNumberUnbox` consumers
+  (expected: the two from-ast arms + integration implementations only).
+- The `gen.setReturn` boxing path (`from-ast.ts` ~2010, throws to legacy when
+  the box helper is unresolvable): confirm whether it routes through
+  `coerceToExpectedExtern` (then it is covered) or emits its own
+  `__box_number` join (then it is an explicit follow-up row, not silent
+  scope).
+- Who guarantees the union-native `__unbox_number` exists when a prepared
+  body calls it (materialization trigger for `irRuntimeFuncRef` resolution)
+  — the manifest records the choice; materialization must keep its current
+  owner.
+- Whether `IrInstrIntrinsic` lowering for callable-backed providers already
+  handles externref args/results (the Math seven are all-f64).
+
+### Validation
+
+Focused suite (`tests/issue-3526-ir-runtime-manifest.test.ts` ownership +
+a new `tests/issue-3526-number-boundary-intrinsics.test.ts`), the M1/A1/A2
+suites unchanged, `tests/issue-4106-ir-async-fetch-user.test.ts` and
+`tests/issue-4167-async-rejection-identity.test.ts` as controls; typecheck;
+`pnpm run check:ir-fallbacks` bare; ratchet chain bare + `LOC_GATE_BASE`
+CI-base simulation; hooks without bypass. Acceptance: all six neutrality
+obligations green, census unchanged, the two arms free of predicate reads.

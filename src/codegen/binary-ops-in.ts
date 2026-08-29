@@ -229,6 +229,22 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     }
   }
 
+  // (#5140) Same reasoning for a MODULE-LEVEL binding. `var p = new Proxy(…)`
+  // at script top level lives in `ctx.moduleGlobals`, not `fctx.localMap`, so
+  // the local-only check above missed it and `"attr" in p;` still constant-
+  // folded against the target struct — the `has` trap never ran.
+  if (
+    (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") &&
+    ts.isIdentifier(expr.right) &&
+    !fctx.localMap.has(expr.right.text)
+  ) {
+    const globalIdx = ctx.moduleGlobals.get(expr.right.text);
+    const globalType = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx]?.type;
+    if (globalType?.kind === "externref" || globalType?.kind === "anyref") {
+      rightWasm = globalType;
+    }
+  }
+
   // Get struct field names if available; detect vec (array) types
   let structFieldNames: string[] | null = null;
   let isVecType = false;

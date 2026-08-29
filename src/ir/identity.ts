@@ -2,7 +2,12 @@
 
 import { ts } from "../ts-api.js";
 import type { CompilerSourceOrigin, CompilerSourceProducer } from "../position-map.js";
-import { isBoundedPreparedNestedOrdinaryClass } from "./class-accessor-safety.js";
+import {
+  boundedPreparedNestedOrdinaryClassBindingName,
+  isBoundedPreparedNestedFieldCallInitializer,
+  isBoundedPreparedNestedOrdinaryClass,
+  isNestedOrdinaryClassFieldCallInventoryCandidate,
+} from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
@@ -185,6 +190,50 @@ export interface IrUnitInventory {
   /** Exact R0 attempt-root population; no support unit manufactures a row. */
   readonly terminalUnits: readonly IrTerminalUnitRecord[];
 }
+
+export type IrNestedClassFieldCallConstructorDeclaration =
+  | ts.ConstructorDeclaration
+  | ts.ClassDeclaration
+  | ts.ClassExpression;
+
+/** Exact constructor/member row retained for one still-dormant F3 candidate. */
+export interface IrNestedClassFieldCallTerminalCandidate {
+  readonly declaration:
+    | IrNestedClassFieldCallConstructorDeclaration
+    | ts.MethodDeclaration
+    | ts.GetAccessorDeclaration
+    | ts.SetAccessorDeclaration;
+  readonly record: IrTerminalUnitRecord;
+}
+
+/** Exact constructor-owned field support and its one syntax-only call edge. */
+export interface IrNestedClassFieldCallFieldCandidate {
+  readonly declaration: ts.PropertyDeclaration;
+  readonly record: IrOwnedSupportUnitRecord;
+  readonly call: ts.CallExpression;
+}
+
+/**
+ * Immutable proof-independent marker for the narrow F3 inventory population.
+ *
+ * The marker is keyed to one exact inventory object and retains AST object
+ * identity. It is evidence that IDs exist, never evidence that the class is
+ * selectable or lowerable.
+ */
+export interface IrNestedClassFieldCallInventoryCandidate {
+  readonly inventory: IrUnitInventory;
+  readonly sourceFile: ts.SourceFile;
+  readonly source: IrSourceRecord;
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+  readonly classRecord: IrClassRecord;
+  readonly constructorDeclaration: IrNestedClassFieldCallConstructorDeclaration;
+  readonly constructorRecord: IrTerminalUnitRecord;
+  readonly containingTerminalRecord: IrTerminalUnitRecord;
+  readonly terminalMembers: readonly IrNestedClassFieldCallTerminalCandidate[];
+  readonly fields: readonly IrNestedClassFieldCallFieldCandidate[];
+}
+
+type PendingIrNestedClassFieldCallInventoryCandidate = Omit<IrNestedClassFieldCallInventoryCandidate, "inventory">;
 
 export interface BuildIrUnitInventoryOptions {
   /** Marks the entry explicitly without deriving it from caller insertion order. */
@@ -605,6 +654,7 @@ export interface IrInventoryScannerMetadata {
     readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
     readonly record: IrClassRecord;
   }[];
+  readonly fieldCallCandidates: readonly IrNestedClassFieldCallInventoryCandidate[];
 }
 
 /** AST nodes stay outside the serializable identity records. */
@@ -615,12 +665,139 @@ export function getIrInventoryScannerMetadata(inventory: IrUnitInventory): IrInv
   return scannerMetadataByInventory.get(inventory);
 }
 
+/** Exact proof-independent F3 markers for this inventory object. */
+export function getIrNestedClassFieldCallInventoryCandidates(
+  inventory: IrUnitInventory,
+): readonly IrNestedClassFieldCallInventoryCandidate[] {
+  return scannerMetadataByInventory.get(inventory)?.fieldCallCandidates ?? Object.freeze([]);
+}
+
+/** One admitted call-bearing field of an F4 admitted class. */
+export interface IrNestedClassFieldCallAdmittedField {
+  readonly declaration: ts.PropertyDeclaration;
+  readonly call: ts.CallExpression;
+  readonly fieldSupportUnitId: IrUnitId;
+  readonly calleeUnitId: IrUnitId;
+  readonly calleeName: string;
+}
+
+/** One class the F4 proof admitted for selection and preparation. */
+export interface IrNestedClassFieldCallAdmittedClass {
+  readonly candidate: IrNestedClassFieldCallInventoryCandidate;
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+  readonly sourceFile: ts.SourceFile;
+  readonly sourceId: IrSourceId;
+  readonly classId: IrClassId;
+  readonly constructorUnitId: IrUnitId;
+  readonly containingTerminalUnitId: IrUnitId;
+  readonly bindingName: string;
+  readonly fields: readonly IrNestedClassFieldCallAdmittedField[];
+}
+
+const admissionAuthority = Object.freeze({});
+const authenticAdmissions = new WeakSet<IrNestedClassFieldCallAdmission>();
+
+/**
+ * (#3522 F4) Immutable proof-derived admitted-class marker.
+ *
+ * Computed exactly once, before local class-expression resolution and identity
+ * selection, from the complete F3 proof set. Every downstream consumer —
+ * class shapes, module bindings, the selector, prepared free functions, class
+ * bodies, and nested executable syntax — reads this marker instead of
+ * re-running any syntax predicate. A consumer that cannot find the exact class
+ * here fails closed onto the unchanged strict bounded-class predicate.
+ */
+export class IrNestedClassFieldCallAdmission {
+  readonly inventory: IrUnitInventory;
+  readonly classes: readonly IrNestedClassFieldCallAdmittedClass[];
+  readonly #byDeclaration: ReadonlyMap<ts.ClassDeclaration | ts.ClassExpression, IrNestedClassFieldCallAdmittedClass>;
+  readonly #byClassId: ReadonlyMap<IrClassId, IrNestedClassFieldCallAdmittedClass>;
+
+  /** @internal Construct through {@link createIrNestedClassFieldCallAdmission}. */
+  constructor(
+    inventory: IrUnitInventory,
+    classes: readonly IrNestedClassFieldCallAdmittedClass[],
+    authority: typeof admissionAuthority,
+  ) {
+    if (authority !== admissionAuthority) {
+      throw new TypeError("nested class field-call admission requires planner authority");
+    }
+    const byDeclaration = new Map<ts.ClassDeclaration | ts.ClassExpression, IrNestedClassFieldCallAdmittedClass>();
+    const byClassId = new Map<IrClassId, IrNestedClassFieldCallAdmittedClass>();
+    for (const admitted of classes) {
+      if (byDeclaration.has(admitted.declaration) || byClassId.has(admitted.classId)) {
+        throw new Error("one nested class field-call class produced more than one admission");
+      }
+      byDeclaration.set(admitted.declaration, admitted);
+      byClassId.set(admitted.classId, admitted);
+    }
+    this.inventory = inventory;
+    this.classes = Object.freeze([...classes]);
+    this.#byDeclaration = byDeclaration;
+    this.#byClassId = byClassId;
+    authenticAdmissions.add(this);
+    Object.freeze(this);
+  }
+
+  get(declaration: ts.ClassDeclaration | ts.ClassExpression): IrNestedClassFieldCallAdmittedClass | undefined {
+    return this.#byDeclaration.get(declaration);
+  }
+
+  getByClassId(classId: IrClassId): IrNestedClassFieldCallAdmittedClass | undefined {
+    return this.#byClassId.get(classId);
+  }
+
+  admits(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
+    return this.#byDeclaration.has(declaration);
+  }
+}
+
+/** @internal Mint the marker after every proof/candidate join has revalidated. */
+export function createIrNestedClassFieldCallAdmission(
+  inventory: IrUnitInventory,
+  classes: readonly IrNestedClassFieldCallAdmittedClass[],
+): IrNestedClassFieldCallAdmission {
+  return new IrNestedClassFieldCallAdmission(inventory, classes, admissionAuthority);
+}
+
+/** Fail-closed authenticity check for every marker consumer. */
+export function isIrNestedClassFieldCallAdmissionForInventory(
+  admission: IrNestedClassFieldCallAdmission,
+  inventory: IrUnitInventory,
+): boolean {
+  return authenticAdmissions.has(admission) && admission.inventory === inventory;
+}
+
+/**
+ * Selector/preparation admission for one nested ordinary class.
+ *
+ * The strict syntax predicate is unchanged and still owns the call-free
+ * family; the field-call family is admitted only through the exact
+ * proof-derived marker for this same declaration.
+ */
+export function irPreparedNestedOrdinaryClass(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  admission: IrNestedClassFieldCallAdmission | undefined,
+): boolean {
+  return admission?.admits(declaration) === true || isBoundedPreparedNestedOrdinaryClass(declaration);
+}
+
+/** Marker-aware binding identity; never an independent admission decision. */
+export function irPreparedNestedOrdinaryClassBindingName(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  admission: IrNestedClassFieldCallAdmission | undefined,
+): string | undefined {
+  const admitted = admission?.get(declaration);
+  return admitted ? admitted.bindingName : boundedPreparedNestedOrdinaryClassBindingName(declaration);
+}
+
 class SourceInventoryBuilder {
   readonly classes: IrClassRecord[] = [];
   readonly allUnits: IrUnitRecord[] = [];
   readonly terminalUnits: IrTerminalUnitRecord[] = [];
   readonly unitDeclarations: IrInventoryScannerMetadata["units"][number][] = [];
   readonly classDeclarations: IrInventoryScannerMetadata["classes"][number][] = [];
+  readonly fieldCallCandidates: PendingIrNestedClassFieldCallInventoryCandidate[] = [];
 
   private readonly unitOrdinals = new Map<string, number>();
   private readonly classOrdinals = new Map<string, number>();
@@ -965,6 +1142,8 @@ class SourceInventoryBuilder {
     );
     const directNestedClass =
       !topLevelDeclaration && inheritedTerminalOwnerId !== null && lexicalOwnerId === inheritedTerminalOwnerId;
+    const fieldCallInventoryCandidate = directNestedClass && isNestedOrdinaryClassFieldCallInventoryCandidate(node);
+    const fieldCallTerminalMembers: IrNestedClassFieldCallTerminalCandidate[] = [];
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
     const definitionExpressions: ts.Expression[] = [...decoratorExpressions(node)];
     for (const clause of node.heritageClauses ?? []) {
@@ -996,6 +1175,7 @@ class SourceInventoryBuilder {
         }
       : undefined;
     let explicitConstructor: IrUnitRecord | undefined;
+    let explicitConstructorDeclaration: IrNestedClassFieldCallConstructorDeclaration | undefined;
     let hasExecutableConstructor = false;
     let firstInstanceInitializer: ts.PropertyDeclaration | undefined;
     let firstStaticInitialization: ts.Node | undefined;
@@ -1059,7 +1239,7 @@ class SourceInventoryBuilder {
         (ts.isGetAccessorDeclaration(functionalMember) || ts.isSetAccessorDeclaration(functionalMember));
       const promoteNestedOrdinary =
         directNestedClass &&
-        isBoundedPreparedNestedOrdinaryClass(node) &&
+        (isBoundedPreparedNestedOrdinaryClass(node) || fieldCallInventoryCandidate) &&
         (ts.isConstructorDeclaration(functionalMember) || ts.isMethodDeclaration(functionalMember));
       const promoteNestedMember = promoteNestedAccessor || promoteNestedOrdinary;
 
@@ -1091,7 +1271,13 @@ class SourceInventoryBuilder {
               legacyName,
               memberSyntheticRole,
             );
-      if (ts.isConstructorDeclaration(functionalMember)) explicitConstructor = unit;
+      if (ts.isConstructorDeclaration(functionalMember)) {
+        explicitConstructor = unit;
+        explicitConstructorDeclaration = functionalMember;
+      }
+      if (fieldCallInventoryCandidate && unit.terminal) {
+        fieldCallTerminalMembers.push({ declaration: functionalMember, record: unit });
+      }
       this.scanCallable(
         functionalMember,
         unit.id,
@@ -1100,7 +1286,9 @@ class SourceInventoryBuilder {
     }
 
     const promoteNestedImplicitInitializer =
-      directNestedClass && !hasExecutableConstructor && isBoundedPreparedNestedOrdinaryClass(node);
+      directNestedClass &&
+      !hasExecutableConstructor &&
+      (isBoundedPreparedNestedOrdinaryClass(node) || fieldCallInventoryCandidate);
     if (!hasExecutableConstructor && firstInstanceInitializer) {
       explicitConstructor =
         topLevelDeclaration || promoteNestedImplicitInitializer
@@ -1126,6 +1314,10 @@ class SourceInventoryBuilder {
               `${displayName}_new`,
               compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
             );
+      explicitConstructorDeclaration = node;
+      if (fieldCallInventoryCandidate && explicitConstructor.terminal) {
+        fieldCallTerminalMembers.push({ declaration: node, record: explicitConstructor });
+      }
     } else if (!hasExecutableConstructor && !hasDeclareModifier(node)) {
       explicitConstructor = this.addSupportUnit(
         "class-implicit-constructor",
@@ -1138,6 +1330,7 @@ class SourceInventoryBuilder {
     }
 
     const instanceTerminalOwner = explicitConstructor?.terminal ? explicitConstructor.id : inheritedTerminalOwnerId;
+    const fieldCallFields: IrNestedClassFieldCallFieldCandidate[] = [];
     for (const field of instanceInitializers) {
       const fieldCompilerOrigin = this.compilerOrigin(field) ?? compilerOrigin;
       const unit = this.addSupportUnit(
@@ -1148,7 +1341,45 @@ class SourceInventoryBuilder {
         `${displayName}.${memberBaseName(field.name)}`,
         fieldCompilerOrigin ? compilerUnitRole(fieldCompilerOrigin) : undefined,
       );
+      if (
+        fieldCallInventoryCandidate &&
+        isBoundedPreparedNestedFieldCallInitializer(field.initializer!) &&
+        unit.terminalOwnerId !== null
+      ) {
+        fieldCallFields.push({ declaration: field, record: unit, call: field.initializer });
+      }
       this.scanNode(field.initializer!, unit.id, instanceTerminalOwner);
+    }
+
+    if (fieldCallInventoryCandidate) {
+      const constructorRecord = explicitConstructor?.terminal ? explicitConstructor : undefined;
+      const containingTerminalRecord = this.terminalUnits.find((record) => record.id === inheritedTerminalOwnerId);
+      if (
+        !constructorRecord ||
+        !explicitConstructorDeclaration ||
+        constructorRecord.containingTerminalOwnerId !== inheritedTerminalOwnerId ||
+        !containingTerminalRecord ||
+        fieldCallFields.length === 0 ||
+        fieldCallFields.some((field) => field.record.terminalOwnerId !== constructorRecord.id) ||
+        fieldCallTerminalMembers.some(
+          (member) =>
+            member.record.lexicalOwnerId !== classRecord.id ||
+            member.record.containingTerminalOwnerId !== inheritedTerminalOwnerId,
+        )
+      ) {
+        throw new Error(`invalid dormant field-call identity population for class ${classRecord.id}`);
+      }
+      this.fieldCallCandidates.push({
+        sourceFile: this.sourceFile,
+        source: this.source,
+        declaration: node,
+        classRecord,
+        constructorDeclaration: explicitConstructorDeclaration,
+        constructorRecord,
+        containingTerminalRecord,
+        terminalMembers: fieldCallTerminalMembers,
+        fields: fieldCallFields,
+      });
     }
 
     return {
@@ -1262,6 +1493,7 @@ export function buildIrUnitInventory(
   const terminalUnits: IrTerminalUnitRecord[] = [];
   const scannedUnits: IrInventoryScannerMetadata["units"][number][] = [];
   const scannedClasses: IrInventoryScannerMetadata["classes"][number][] = [];
+  const pendingFieldCallCandidates: PendingIrNestedClassFieldCallInventoryCandidate[] = [];
   for (let index = 0; index < keyed.length; index++) {
     const builder = new SourceInventoryBuilder(keyed[index]!.sourceFile, sources[index]!, options);
     builder.build();
@@ -1270,6 +1502,7 @@ export function buildIrUnitInventory(
     terminalUnits.push(...builder.terminalUnits);
     scannedUnits.push(...builder.unitDeclarations);
     scannedClasses.push(...builder.classDeclarations);
+    pendingFieldCallCandidates.push(...builder.fieldCallCandidates);
   }
   const inventory: IrUnitInventory = Object.freeze({
     sources: Object.freeze(sources),
@@ -1277,6 +1510,16 @@ export function buildIrUnitInventory(
     allUnits: Object.freeze(allUnits),
     terminalUnits: Object.freeze(terminalUnits),
   });
+  const fieldCallCandidates = Object.freeze(
+    pendingFieldCallCandidates.map((candidate) =>
+      Object.freeze({
+        inventory,
+        ...candidate,
+        terminalMembers: Object.freeze(candidate.terminalMembers.map((member) => Object.freeze({ ...member }))),
+        fields: Object.freeze(candidate.fields.map((field) => Object.freeze({ ...field }))),
+      }),
+    ),
+  );
   scannerMetadataByInventory.set(
     inventory,
     Object.freeze({
@@ -1285,6 +1528,7 @@ export function buildIrUnitInventory(
       ),
       units: Object.freeze(scannedUnits.map((entry) => Object.freeze(entry))),
       classes: Object.freeze(scannedClasses.map((entry) => Object.freeze(entry))),
+      fieldCallCandidates,
     }),
   );
   return inventory;

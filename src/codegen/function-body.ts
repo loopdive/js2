@@ -85,61 +85,7 @@ import {
 /** Maximum number of instructions for a function body to be considered inlinable */
 export const INLINE_MAX_INSTRS = 10;
 
-/**
- * (#2121) Per §10.2.11 FunctionDeclarationInstantiation, parameter bindings are
- * initialized left-to-right, so a default value that reads its own parameter or
- * a *later* one observes that binding in the TDZ and must throw ReferenceError.
- * Scan the default initializer of the parameter at `paramIndex` for an
- * identifier naming a parameter at index ≥ `paramIndex`. Returns that name when
- * found (the default would throw if it fired), else undefined. References to
- * strictly-earlier params (e.g. `f(a, b = a)`) are valid and ignored.
- */
-function findTdzViolatingParamRef(decl: ts.FunctionLikeDeclarationBase, paramIndex: number): string | undefined {
-  // Names of params bound at or after this one (the TDZ window). Skip binding
-  // patterns and the `this` pseudo-param — only plain identifier params can be
-  // referenced by name and observed in the TDZ here.
-  const poisoned = new Set<string>();
-  for (let j = paramIndex; j < decl.parameters.length; j++) {
-    const p = decl.parameters[j]!;
-    if (ts.isIdentifier(p.name) && p.name.text !== "this") poisoned.add(p.name.text);
-  }
-  if (poisoned.size === 0) return undefined;
-
-  const init = decl.parameters[paramIndex]!.initializer;
-  if (!init) return undefined;
-  let found: string | undefined;
-  const walk = (node: ts.Node): void => {
-    if (found) return;
-    // Do not descend into nested functions/arrows: a reference to the param
-    // there is a closure capture resolved after instantiation, not a TDZ read.
-    if (
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isClassExpression(node)
-    ) {
-      return;
-    }
-    if (ts.isIdentifier(node) && poisoned.has(node.text)) {
-      // Exclude identifiers in non-reference positions (property names, etc.).
-      const parent = node.parent;
-      if (
-        parent &&
-        ((ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-          (ts.isPropertyAssignment(parent) && parent.name === node) ||
-          (ts.isBindingElement(parent) && parent.propertyName === node))
-      ) {
-        return;
-      }
-      found = node.text;
-      return;
-    }
-    forEachChild(node, walk);
-  };
-  walk(init);
-  return found;
-}
+import { findTdzViolatingParamRef } from "./param-tdz.js";
 
 /**
  * (#1042) Re-point a function to a func type with the same params but a new
@@ -316,8 +262,10 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   assertDirectFunctionBodyAllowed(func.name);
   const effectiveRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
 
-  // Use call-site resolved types for generic functions
-  const resolved = ctx.genericResolved.get(func.name);
+  // Use call-site resolved types only for the generic declaration that could
+  // have populated this cache. The registry is name-keyed, so a non-generic
+  // declaration must never inherit a same-named function's specialization.
+  const resolved = decl.typeParameters?.length ? ctx.genericResolved.get(func.name) : undefined;
 
   const restInfo = ctx.funcRestParams.get(func.name);
   const params: { name: string; type: ValType }[] = [];
@@ -357,8 +305,14 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // Prefer the type already established in the function signature (which
       // may have been inferred from call sites for untyped params).
       const sigParamType = sigParamTypes?.[wasmParamCursor];
+      // The registered function type is the ABI this body must satisfy. The
+      // generic-resolution cache is name-keyed and can be overwritten by a
+      // same-named declaration in another module after this function's type
+      // has already been allocated (TypeScript's parser and visitor modules
+      // both declare `visitNode`). Use the cache only as a fallback when no
+      // registered parameter exists.
       const paramType =
-        resolved?.params[i] ?? sigParamType ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+        sigParamType ?? resolved?.params[i] ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
       params.push({ name: paramName, type: paramType });
       wasmParamCursor++;
     }
@@ -368,6 +322,13 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   if (isGenerator) {
     // Generator functions return externref (JS Generator object)
     returnType = { kind: "externref" };
+  } else if (funcType?.kind === "func") {
+    // The allocated signature is authoritative for body lowering. In a linked
+    // graph, `genericResolved` is keyed by the bare function name; a later
+    // same-named generic can therefore replace the cached specialization while
+    // this function keeps its already-allocated type. Compiling returns from
+    // that stale cache leaves an externref on the stack for a ref-typed ABI.
+    returnType = funcType.results[0] ?? null;
   } else if (resolved) {
     returnType = resolved.results.length > 0 ? (resolved.results[0] ?? null) : null;
   } else {
@@ -375,13 +336,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     // signature — collectDeclarations may have promoted an implicit-any return
     // to f64 via #1121's numericReturnTypes inference, and the body must
     // match that signature exactly to keep recursive call sites consistent.
-    const funcType = ctx.mod.types[func.typeIdx];
-    const sigResultType = funcType?.kind === "func" && funcType.results.length > 0 ? funcType.results[0] : undefined;
-    if (sigResultType) {
-      returnType = sigResultType;
-    } else {
-      returnType = isVoidType(effectiveRetType) ? null : resolveWasmType(ctx, effectiveRetType);
-    }
+    returnType = isVoidType(effectiveRetType) ? null : resolveWasmType(ctx, effectiveRetType);
   }
 
   // #1120: detect locals that should be promoted to i32 because every

@@ -124,16 +124,23 @@ function shimTailAfterTwinCall(wat: string): string[] {
 const runExport = async (r: { binary: Uint8Array }) =>
   ((await WebAssembly.instantiate(r.binary, {})).instance.exports as { run(): number }).run();
 
+/**
+ * (#4406 Phase 4) `JS2WASM_RET_UNBOX_ABI` is now DEFAULT-ON, so a bare build is
+ * the ON lane. Every OFF lane below therefore spells the token out. The
+ * differentials are unchanged — only which side needed naming moved.
+ */
+const OFF = { JS2WASM_RET_UNBOX_ABI: "0" } as const;
+
 describe("#4406 — boolean-return twins", () => {
   const AXIS = predicateAxis('var p = new P(5); return ("" + p.pred(5)).length;');
 
   it('the value differential: OFF stringifies to "1", ON to "true" (node\'s answer)', async () => {
-    expect(await runExport(await build(AXIS))).toBe(1); // "1" — the defect
+    expect(await runExport(await build(AXIS, OFF))).toBe(1); // "1" — the defect
     expect(await runExport(await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "1" }))).toBe(4); // "true"
   });
 
   it("ON the shim re-boxes with __box_boolean; OFF it takes the f64 box", async () => {
-    const off = shimTailAfterTwinCall((await build(AXIS)).wat!);
+    const off = shimTailAfterTwinCall((await build(AXIS, OFF)).wat!);
     const on = shimTailAfterTwinCall((await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "1" })).wat!);
     expect(
       on.some((tail) => tail.startsWith("call $__box_boolean")),
@@ -179,24 +186,30 @@ describe("#4406 — boolean-return twins", () => {
     `;
     const on = await build(src, { JS2WASM_RET_UNBOX_ABI: "1" });
     expect(shimTailAfterTwinCall(on.wat!).some((tail) => tail.includes("__box_boolean"))).toBe(false);
-    expect(await runExport(on)).toBe(await runExport(await build(src)));
+    expect(await runExport(on)).toBe(await runExport(await build(src, OFF)));
     expect(await runExport(on)).toBe(8);
   });
 
-  it("the flag is OFF by default and every off-token disables it", async () => {
-    const base = await build(AXIS);
+  it("every off-token disables it, and the DEFAULT is now ON (#4406 Phase 4)", async () => {
+    const base = await build(AXIS, OFF);
     for (const token of ["0", "off", "false", "no", ""]) {
       const { binary } = await build(AXIS, { JS2WASM_RET_UNBOX_ABI: token });
       expect(Buffer.from(binary).equals(Buffer.from(base.binary)), `token ${JSON.stringify(token)}`).toBe(true);
     }
+    // The flip itself, pinned: unset must NOT reproduce the off lane, and a
+    // typo must land on the new default rather than half-disabling anything.
+    const unset = await build(AXIS);
+    expect(Buffer.from(unset.binary).equals(Buffer.from(base.binary)), "unset must be ON").toBe(false);
+    const typo = await build(AXIS, { JS2WASM_RET_UNBOX_ABI: "yes" });
+    expect(Buffer.from(typo.binary).equals(Buffer.from(unset.binary)), "a typo is the default").toBe(true);
   });
 
   it("POISON alone (main flag off) is inert", async () => {
     // The poison switch inverts every refined boolean result at the trampoline
     // edge, which is how a null result is told apart from a path that never ran
     // (#4157 entry 22). It must never fire on its own.
-    const base = await build(AXIS);
-    const poisonOnly = await build(AXIS, { JS2WASM_RET_UNBOX_ABI_POISON: "1" });
+    const base = await build(AXIS, OFF);
+    const poisonOnly = await build(AXIS, { ...OFF, JS2WASM_RET_UNBOX_ABI_POISON: "1" });
     expect(Buffer.from(poisonOnly.binary).equals(Buffer.from(base.binary))).toBe(true);
   });
 
@@ -257,7 +270,7 @@ describe("#4406 Phase 2 — the merge sink", () => {
     // The before-state, asserted rather than assumed: without the merge half the
     // site is stranded, so the next test's `fused-sink=1` cannot be a shape that
     // was already fusing.
-    await build(MERGE_AXIS, FUSE);
+    await build(MERGE_AXIS, { ...FUSE, ...OFF });
     expect(fuseTally()).toMatch(/fused-sink=0\b/);
     expect(fuseTally()).toMatch(/arm-tail-call=1\b/);
   });
@@ -274,8 +287,8 @@ describe("#4406 Phase 2 — the merge sink", () => {
   it("the merged VALUE is identical with and without the sink", async () => {
     // 11 (both true) · 22 (a !== b) · 22 (box(o) is the falsy "") — node's answer
     // for the same source, and the invariant the rewrite must not disturb.
-    const plain = await runExport(await build(MERGE_AXIS));
-    const fused = await runExport(await build(MERGE_AXIS, FUSE));
+    const plain = await runExport(await build(MERGE_AXIS, OFF));
+    const fused = await runExport(await build(MERGE_AXIS, { ...FUSE, ...OFF }));
     const sunk = await runExport(await build(MERGE_AXIS, { ...FUSE, JS2WASM_RET_UNBOX_ABI: "1" }));
     expect(plain).toBe(112222);
     expect(fused).toBe(112222);
@@ -298,7 +311,7 @@ describe("#4406 Phase 2 — the merge sink", () => {
   it("the sink needs BOTH gates — the ABI flag alone changes nothing", async () => {
     // Lever 4 is the vehicle, so with it off the merge half cannot fire and the
     // shipping default stays byte-for-byte where it was.
-    const base = await build(MERGE_AXIS);
+    const base = await build(MERGE_AXIS, OFF);
     const abiOnly = await build(MERGE_AXIS, { JS2WASM_RET_UNBOX_ABI: "1" });
     expect(Buffer.from(abiOnly.binary).equals(Buffer.from(base.binary))).toBe(true);
   });

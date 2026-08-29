@@ -27,7 +27,7 @@ import {
   emitTypedArrayIntrinsicCtorObject,
   isWiredTypedArrayViewName,
 } from "../array-object-proto.js";
-import { undefinedExternInstrs } from "../any-helpers.js";
+import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import {
   ensureFunctionPrototypeCallHelper,
@@ -673,6 +673,8 @@ export function compileBuiltinStaticCall(
   ) {
     const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!); // compile-time arg type
     const argWasmType = resolveWasmType(ctx, argTsType);
+    const isErasedTsType = (argTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    const isErasedCarrier = isAnyValue(argWasmType, ctx);
     // externref args carry values whose array-ness can't be decided
     // statically. Two runtime cases must both be handled:
     //   (#1678) a compiled native array materialised into the externref slot
@@ -684,14 +686,19 @@ export function compileBuiltinStaticCall(
     //     `__extern_is_array` when a JS host is present.
     // We OR the two checks so neither case regresses; in standalone mode the
     // host predicate is simply absent and only the `ref.test` path runs.
-    if (argWasmType.kind === "externref") {
+    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!retainArrayIsArrayExternrefCandidate(fctx, argType)) return { kind: "i32" };
       emitArrayIsArrayExternrefPredicate(ctx, fctx);
       return { kind: "i32" };
     }
     // (#4556) A ref to a real array CARRIER — ref-ness alone is NOT array-ness.
-    const isArr = isArrayCarrierValType(ctx, argWasmType);
+    // (#5154 cluster A) A TUPLE-typed operand is a JS Array — `let [, ...x] =
+    // [1, 2]` gives `x` the checker type `[number]`, which lowers to a tuple
+    // STRUCT, and tuple structs are (correctly) not `__vec_*` carriers. §7.2.2
+    // asks about the VALUE, and every tuple-typed value is an Array, so answer
+    // from the checker type when the carrier test declines.
+    const isArr = isArrayCarrierValType(ctx, argWasmType) || ctx.oracle.typeFactOf(expr.arguments[0]!).kind === "tuple";
     // Still compile the argument for side effects, then drop it
     const argSideType = compileExpression(ctx, fctx, expr.arguments[0]!);
     if (argSideType) fctx.body.push({ op: "drop" });
@@ -1885,9 +1892,61 @@ export function compileBuiltinStaticCall(
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Object" &&
     propAccess.name.text === "setPrototypeOf" &&
-    expr.arguments.length >= 2
+    // (#5148 cluster 2c) One argument is enough to REACH the spec — §20.1.2.21
+    // steps 1-3 (RequireObjectCoercible(O), then "proto must be Object or
+    // null") both throw before the missing second argument matters. Requiring
+    // two here sent `Object.setPrototypeOf({})` down the generic member path
+    // into `__get_builtin`'s #1472 Phase-B refusal (a COMPILE ERROR, not a
+    // TypeError). The GC/host arm below still needs both operands and keeps
+    // its own guard.
+    (expr.arguments.length >= 2 ||
+      (ctx.targetProfile.semanticProviders === "native-first" && expr.arguments.length === 1))
   ) {
     if (ctx.targetProfile.semanticProviders === "native-first") {
+      // Resolve every helper BEFORE emitting operands — a late import shifts
+      // defined-function indices, and a half-emitted body cannot be rolled back.
+      const spoIdx = ensureLateImport(
+        ctx,
+        "__object_setPrototypeOf",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      ensureLateImport(
+        ctx,
+        "__object_setPrototypeOf_status",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+      ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+      const throwNotCoercible = buildThrowJsErrorInstrs(
+        ctx,
+        "TypeError",
+        "Object.setPrototypeOf called on null or undefined",
+        { flush: fctx },
+      );
+      const throwProtoNotObject = buildThrowJsErrorInstrs(
+        ctx,
+        "TypeError",
+        "Object prototype may only be an Object or null",
+        { flush: fctx },
+      );
+      const throwRefused = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot set prototype of this object", {
+        flush: fctx,
+      });
+      flushLateImportShifts(ctx, fctx);
+      const statusIdx = ctx.funcMap.get("__object_setPrototypeOf_status");
+      const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+      const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+      const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+      const resolvedSpoIdx = ctx.funcMap.get("__object_setPrototypeOf") ?? spoIdx;
+      const specChecksAvailable =
+        statusIdx !== undefined &&
+        isUndefIdx !== undefined &&
+        typeofObjectIdx !== undefined &&
+        typeofFunctionIdx !== undefined;
+
       // obj (externref)
       const objType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!objType) {
@@ -1898,22 +1957,57 @@ export function compileBuiltinStaticCall(
       if (objType.kind !== "externref") {
         coerceType(ctx, fctx, objType, { kind: "externref" });
       }
+      const objLocal = allocLocal(fctx, `__spo_obj_${fctx.locals.length}`, { kind: "externref" });
+      const protoLocal = allocLocal(fctx, `__spo_proto_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: objLocal });
+      if (specChecksAvailable) {
+        // §20.1.2.21 step 1: RequireObjectCoercible(O).
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({ op: "local.get", index: objLocal });
+        fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+        fctx.body.push({ op: "i32.or" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwNotCoercible });
+        fctx.body.push({ op: "local.get", index: objLocal });
+      } else {
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "local.get", index: objLocal });
+      }
       // proto (externref)
       // #2580 M3 Stage A — build an INLINE-LITERAL proto as a native `$Object`
       // (compileProtoArg) so __object_setPrototypeOf's `ref.test $Object`
       // succeeds and writes $Object.$proto; a closed-shape literal struct fails
       // that test → null proto → inherited reads return 0. compileProtoArg keeps
       // the ordinary externref path for non-literal protos (incl. `null`).
-      compileProtoArg(ctx, fctx, expr.arguments[1]!);
-      const spoIdx = ensureLateImport(
-        ctx,
-        "__object_setPrototypeOf",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (spoIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: spoIdx });
+      const protoArg = expr.arguments[1];
+      if (protoArg === undefined) emitUndefined(ctx, fctx);
+      else compileProtoArg(ctx, fctx, protoArg);
+      if (specChecksAvailable) {
+        // §20.1.2.21 step 2: Type(proto) must be Object or Null. `null` is the
+        // only nullish value that passes; `undefined` and every primitive
+        // throw. The Object test is the §10.2.1.3-step-13 probe
+        // (`__typeof_object` answers 1 for `null` by design, so the explicit
+        // null arm must come first).
+        fctx.body.push({ op: "local.tee", index: protoLocal });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({ op: "local.get", index: protoLocal });
+        fctx.body.push({ op: "call", funcIdx: typeofObjectIdx });
+        fctx.body.push({ op: "local.get", index: protoLocal });
+        fctx.body.push({ op: "call", funcIdx: typeofFunctionIdx });
+        fctx.body.push({ op: "i32.or" });
+        fctx.body.push({ op: "i32.or" });
+        fctx.body.push({ op: "i32.eqz" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwProtoNotObject });
+        // §20.1.2.21 step 4: a `false` [[SetPrototypeOf]] status is a TypeError,
+        // where the writer native is deliberately a silent no-op.
+        fctx.body.push({ op: "local.get", index: objLocal });
+        fctx.body.push({ op: "local.get", index: protoLocal });
+        fctx.body.push({ op: "call", funcIdx: statusIdx });
+        fctx.body.push({ op: "i32.eqz" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwRefused });
+        fctx.body.push({ op: "local.get", index: protoLocal });
+      }
+      if (resolvedSpoIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: resolvedSpoIdx });
       } else {
         // Helper unavailable (should not happen in standalone) — fall back to
         // the stub: drop proto, leave obj on the stack.
@@ -3272,6 +3366,44 @@ export function compileBuiltinStaticCall(
       return { kind: "i32" };
     }
     fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
+  // (#5148 cluster 5) `Object.is()` / `Object.is(x)` — the arity-2 arm below
+  // requires two arguments, so a short call fell through to the generic member
+  // path (`__get_builtin`) and CE'd in --target standalone (#1472 Phase B).
+  // Missing arguments are `undefined`, so SameValue(x, undefined) is true iff
+  // `x` is `undefined`; with zero arguments both sides are `undefined` → true.
+  if (
+    ts.isIdentifier(propAccess.expression) &&
+    propAccess.expression.text === "Object" &&
+    propAccess.name.text === "is" &&
+    expr.arguments.length < 2
+  ) {
+    if (expr.arguments.length === 0) {
+      fctx.body.push({ op: "i32.const", value: 1 });
+      return { kind: "i32" };
+    }
+    const onlyArg = expr.arguments[0]!;
+    const argType = compileExpression(ctx, fctx, onlyArg);
+    if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    // In the #2106 undefined-singleton regime (standalone / native strings)
+    // `undefined` is a DISTINCT non-null sentinel externref, so the native
+    // `__extern_is_undefined` predicate is the authoritative test. Outside that
+    // regime `undefined` lowers to `ref.null.extern` (indistinguishable from
+    // `null` at the boundary — the same conflation the arity-2 host path has),
+    // so a bare `ref.is_null` is the matching answer.
+    if (undefinedSingletonActive(ctx)) {
+      ensureObjectRuntime(ctx);
+      const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      flushLateImportShifts(ctx, fctx);
+      const resolved = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;
+      if (resolved !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: resolved });
+        return { kind: "i32" };
+      }
+    }
+    fctx.body.push({ op: "ref.is_null" });
     return { kind: "i32" };
   }
 

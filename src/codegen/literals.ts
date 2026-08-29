@@ -45,9 +45,11 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.j
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
+import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
@@ -375,17 +377,21 @@ function isCommonClassCarrier(ctx: CodegenContext, elemWasm: ValType, classNames
  * computed property names that TypeScript cannot statically resolve.
  * When TS returns 0 properties (e.g. { [1+1]: 2 }), we resolve the computed
  * keys at compile time and create proper struct fields.
+ *
+ * Returns a replacement struct name only when the resolved type is a sealed
+ * nominal parent. Such a parent cannot grow, so the one literal gets a fresh
+ * valid subtype carrying the extra fields instead.
  */
 export function ensureComputedPropertyFields(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
   tsType: ts.Type,
-): void {
+): string | undefined {
   const existingName = resolveStructName(ctx, tsType);
-  if (!existingName) return;
+  if (!existingName) return undefined;
   const existingFields = ctx.structFields.get(existingName);
-  if (!existingFields) return;
+  if (!existingFields) return undefined;
 
   // Collect all property assignments with their resolved names
   const resolvedProps: { name: string; valueExpr: ts.Expression }[] = [];
@@ -398,7 +404,40 @@ export function ensureComputedPropertyFields(
     resolvedProps.push({ name: propName, valueExpr: prop.initializer });
   }
 
-  if (resolvedProps.length === 0) return;
+  if (resolvedProps.length === 0) return undefined;
+
+  const structTypeIdx = ctx.structMap.get(existingName)!;
+  if (isSealedNominalStructParent(ctx, structTypeIdx)) {
+    const parent = ctx.mod.types[structTypeIdx];
+    if (!parent || parent.kind !== "struct") return undefined;
+
+    // The parent may currently have no visible children because multi-source
+    // declaration reconciliation detached an edge it will rebuild later. The
+    // persistent seal is authoritative: reopen the parent and add this exact
+    // literal as a new valid leaf subtype rather than changing its prefix.
+    if (parent.superTypeIdx === undefined) parent.superTypeIdx = -1;
+    const replacementName = `__sealed_literal_${ctx.anonTypeCounter++}`;
+    const replacementFields = existingFields.map((field) => ({ ...field, type: { ...field.type } }));
+    for (const rp of resolvedProps) {
+      const propType = ctx.checker.getTypeAtLocation(rp.valueExpr);
+      replacementFields.push({
+        name: rp.name,
+        type: resolveWasmType(ctx, propType),
+        mutable: true,
+      });
+    }
+    const replacementTypeIdx = ctx.mod.types.length;
+    ctx.mod.types.push({
+      kind: "struct",
+      name: replacementName,
+      fields: replacementFields,
+      superTypeIdx: structTypeIdx,
+    });
+    ctx.structMap.set(replacementName, replacementTypeIdx);
+    ctx.typeIdxToStructName.set(replacementTypeIdx, replacementName);
+    ctx.structFields.set(replacementName, replacementFields);
+    return replacementName;
+  }
 
   // Need to add new fields. Create a replacement struct with the combined fields.
   const fields = [...existingFields];
@@ -409,7 +448,6 @@ export function ensureComputedPropertyFields(
   }
 
   // Update the existing struct in-place
-  const structTypeIdx = ctx.structMap.get(existingName)!;
   const typeDef = ctx.mod.types[structTypeIdx] as any;
   typeDef.fields = fields;
   ctx.structFields.set(existingName, fields);
@@ -420,6 +458,7 @@ export function ensureComputedPropertyFields(
     const wasmType = resolveWasmType(ctx, propType);
     patchStructNewForAddedField(ctx, fctx, structTypeIdx, wasmType);
   }
+  return undefined;
 }
 
 /**
@@ -1640,17 +1679,19 @@ function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr
   if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
   for (const prop of expr.properties) {
     if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
-    if (!ts.isBinaryExpression(prop.name.expression)) return false;
-    const operator = prop.name.expression.operatorToken.kind;
-    if (
-      operator !== ts.SyntaxKind.PlusToken &&
-      operator !== ts.SyntaxKind.MinusToken &&
-      operator !== ts.SyntaxKind.AsteriskToken &&
-      operator !== ts.SyntaxKind.SlashToken
-    ) {
-      return false;
-    }
-    if (resolveComputedKeyExpression(ctx, prop.name.expression) === undefined) return false;
+    // (#5149 cluster F) The #5108 arm required a `+ - * /` binary key. The
+    // defect it describes is not about arithmetic: `let x = 1; ({ [x]: '2' })`
+    // and `({ [null]: null })` fold to the same statically-known key through
+    // the same index-signature-only type, and the same dynamic read
+    // (`o[x]`, `o[String(x)]`) missed the closed struct and answered
+    // `undefined`. Any statically resolvable computed key gets the open
+    // carrier now.
+    const resolved = resolveComputedKeyExpression(ctx, prop.name.expression);
+    if (resolved === undefined) return false;
+    // A well-known-Symbol key resolves to the reserved `@@name` spelling, whose
+    // carriers (`__box_symbol` + the host/accessor route) are chosen elsewhere.
+    // Leave that representation exactly as it was.
+    if (resolved.startsWith("@@")) return false;
   }
   return true;
 }
@@ -1946,8 +1987,8 @@ function tryCompileObjectLiteralAsExpectedStruct(
     return undefined;
   }
 
-  ensureComputedPropertyFields(ctx, fctx, expr, litType);
-  return compileObjectLiteralForStruct(ctx, fctx, expr, expectedName);
+  const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, litType);
+  return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? expectedName);
 }
 
 export function compileObjectLiteral(
@@ -2181,8 +2222,8 @@ export function compileObjectLiteral(
         litStructName = resolveStructName(ctx, litType);
       }
       if (litStructName !== undefined && ctx.structMap.get(litStructName) === expectedType.typeIdx) {
-        ensureComputedPropertyFields(ctx, fctx, expr, litType);
-        return compileObjectLiteralForStruct(ctx, fctx, expr, litStructName);
+        const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, litType);
+        return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? litStructName);
       }
     }
   }
@@ -2253,8 +2294,8 @@ export function compileObjectLiteral(
       typeName = resolveStructName(ctx, type);
     }
     if (typeName) {
-      ensureComputedPropertyFields(ctx, fctx, expr, type);
-      return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
+      const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, type);
+      return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? typeName);
     }
     // Fall back to externref plain object for unmappable types (e.g. {...null})
     const fallback = compileObjectLiteralAsExternref(ctx, fctx, expr);
@@ -2270,8 +2311,8 @@ export function compileObjectLiteral(
     typeName = resolveStructName(ctx, contextType);
   }
   if (typeName) {
-    ensureComputedPropertyFields(ctx, fctx, expr, contextType);
-    return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
+    const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, contextType);
+    return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? typeName);
   }
 
   // Contextual type couldn't be mapped; fall back to inferred type-at-location
@@ -2282,8 +2323,8 @@ export function compileObjectLiteral(
     inferredName = resolveStructName(ctx, inferredType);
   }
   if (inferredName) {
-    ensureComputedPropertyFields(ctx, fctx, expr, inferredType);
-    return compileObjectLiteralForStruct(ctx, fctx, expr, inferredName);
+    const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, inferredType);
+    return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? inferredName);
   }
 
   // Fall back to externref plain object for unmappable types
@@ -2537,6 +2578,21 @@ export function resolveWellKnownSymbol(name: string): string | undefined {
  */
 export function getWellKnownSymbolId(name: string): number | undefined {
   return WELL_KNOWN_SYMBOLS[name];
+}
+
+/**
+ * (#5142) Reverse of {@link getWellKnownSymbolId}: the JavaScript spelling of a
+ * well-known symbol id, e.g. `7` → `"match"`. The `@@<id>` member keys used by
+ * the native-proto glue are physical compiler keys; §10.2.9 SetFunctionName
+ * spells the exposed `.name` of a symbol-keyed method `"[Symbol.match]"`, and
+ * that display name is derived from this table so a new well-known symbol does
+ * not need a second hand-maintained mapping.
+ */
+export function wellKnownSymbolName(id: number): string | undefined {
+  for (const [name, value] of Object.entries(WELL_KNOWN_SYMBOLS)) {
+    if (value === id) return name;
+  }
+  return undefined;
 }
 
 /**
@@ -3313,7 +3369,31 @@ export function compileObjectLiteralForStruct(
     }
   }
 
+  // (#1058) Object-literal method fields whose callable could not be installed
+  // during construction because the method's function had not been registered
+  // yet. `compileObjectLiteralForStruct` compiles method bodies AFTER the field
+  // loop (they run past the `struct.new` below), so a literal whose methods are
+  // seen for the first time here — the common shape for a literal built inside a
+  // function body, e.g. `function make(): F { return { ci(t) {...} }; }` — found
+  // `ctx.funcMap` empty and fell through to the undefined default. A direct
+  // `obj.ci(x)` call still worked (it dispatches statically), but EXTRACTING the
+  // method as a value (`const f = obj.ci; f(x)`) read undefined and trapped with
+  // "dereferencing a null pointer" at the call. That is the TypeScript-parser
+  // Tier-3 blocker: parser.ts destructures `factory.createIdentifier` (and ~25
+  // siblings) out of the object `createNodeFactory` returns.
+  //
+  // Record the field here, keep emitting the undefined default so the
+  // `struct.new` stays balanced, and patch the real closure in after the method
+  // bodies are registered (see the deferred-install block before the return).
+  const deferredMethodFields: {
+    fieldIdx: number;
+    fieldName: string;
+    fieldType: ValType;
+    methodProp: ts.MethodDeclaration;
+  }[] = [];
+  let fieldOrdinal = -1;
   for (const field of fields) {
+    fieldOrdinal++;
     // (#2129) Collect EVERY property that defines this field, in source
     // order. Per §13.2.5.5 PropertyDefinitionEvaluation, each duplicate runs
     // (its initializer's side effects are observable) and the LAST definition
@@ -3415,6 +3495,16 @@ export function compileObjectLiteralForStruct(
       // above. The trampoline must reference the funcIdx whose body will
       // actually be compiled for THIS literal, not a sibling literal's body.
       const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
+      if (methodFuncIdx === undefined) {
+        // (#1058) Not registered yet — install the callable after the method
+        // bodies below instead of leaving the field permanently undefined.
+        deferredMethodFields.push({
+          fieldIdx: fieldOrdinal,
+          fieldName: field.name,
+          fieldType: field.type,
+          methodProp,
+        });
+      }
       if (methodFuncIdx !== undefined) {
         // (#4440) `methodProp` is the object-literal member itself — pass it so
         // the closure carries §15.1.5 `length` / §10.2.9 `name` metadata.
@@ -4186,6 +4276,56 @@ export function compileObjectLiteralForStruct(
     }
   }
 
+  // (#1058) Deferred object-literal method install. Everything above has now
+  // registered and compiled the literal's method bodies, so `ctx.funcMap` can
+  // answer the lookups that came back undefined during the field loop. The
+  // constructed struct is still the only value on the stack; park it in a temp,
+  // store the real callable into each deferred field, and hand the same value
+  // back. Object-literal struct fields are emitted mutable, so `struct.set` is
+  // the whole patch — no second `struct.new`, and field order is untouched.
+  if (deferredMethodFields.length > 0) {
+    const objTmp = allocTempLocal(fctx, { kind: "ref_null", typeIdx: structTypeIdx });
+    fctx.body.push({ op: "local.set", index: objTmp });
+    for (const deferred of deferredMethodFields) {
+      const methodFullName = `${typeName}_${deferred.fieldName}`;
+      const methodFuncIdx = literalMethodFuncIdx.get(deferred.fieldName) ?? ctx.funcMap.get(methodFullName);
+      if (methodFuncIdx === undefined) continue;
+      fctx.body.push({ op: "local.get", index: objTmp });
+      const closureType = emitObjectMethodAsClosure(
+        ctx,
+        fctx,
+        methodFullName,
+        methodFuncIdx,
+        structTypeIdx,
+        deferred.methodProp,
+      );
+      if (!closureType) {
+        // Closure emission declined (unsupported signature). Drop the receiver
+        // we just pushed and leave the field at its undefined default — the
+        // same outcome as before this deferral existed.
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+      if (deferred.fieldType.kind === "externref") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (deferred.fieldType.kind === "eqref") {
+        // ref → eqref is an implicit GC subtype widening.
+      } else if (
+        (deferred.fieldType.kind === "ref" || deferred.fieldType.kind === "ref_null") &&
+        (deferred.fieldType as { typeIdx: number }).typeIdx !== (closureType as { typeIdx: number }).typeIdx
+      ) {
+        // Mismatched ref types — same guard the in-loop path uses. Drop both the
+        // closure and the receiver rather than emitting an ill-typed store.
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: deferred.fieldIdx });
+    }
+    fctx.body.push({ op: "local.get", index: objTmp });
+    releaseTempLocal(fctx, objTmp);
+  }
+
   return { kind: "ref", typeIdx: structTypeIdx };
 }
 
@@ -4279,7 +4419,12 @@ export function compileTupleLiteral(
       } else if (expectedType.kind === "i32") {
         fctx.body.push({ op: "i32.const", value: 0 });
       } else if (expectedType.kind === "externref") {
-        emitUndefined(ctx, fctx);
+        // (#5158) A missing tuple slot IS `undefined`, so use the canonical
+        // producer: `emitUndefined` is gated on the (default-off) #2106
+        // singleton flag and otherwise emits `ref.null.extern`, which the
+        // standalone value model reads back as JS **null** — `let [_, x] = []`
+        // then answered `x === null`, not `undefined`.
+        fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         fctx.body.push({ op: "ref.null", typeIdx: expectedType.typeIdx });
       } else {
@@ -4320,7 +4465,10 @@ export function compileTupleLiteral(
       } else if (expectedType.kind === "i32") {
         fctx.body.push({ op: "i32.const", value: 0 });
       } else if (expectedType.kind === "externref") {
-        emitUndefined(ctx, fctx);
+        // (#5158) See the note on the spread-expansion padding above: the
+        // canonical producer is what makes an absent element read back as
+        // `undefined` instead of `null` in the host-free value model.
+        fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         const typeIdx = (expectedType as { typeIdx: number }).typeIdx;
         fctx.body.push({ op: "ref.null", typeIdx });

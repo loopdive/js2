@@ -205,7 +205,19 @@ export function tryEmitNullishIdentifierCalleeTypeError(
   // call, and flush against the already-emitted body — the #1839/#117/#1886
   // late-registration index-shift class.
   const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  // (#5148 checkpoint) The non-nullish half of this arm used to answer
+  // `undefined` with the callee never invoked — which silently swallowed any
+  // callable stored through an erased slot (a computed carrier read like
+  // Deno's `realm["Symbol"]["for"]`, or a value peeled out of a runtime-eval
+  // slot). Dispatch it through the native open-`any` `__apply_closure`
+  // classifier instead: a genuine non-callable still degrades to the same
+  // undefined sentinel, while a real closure value is now actually applied.
+  const canApply =
+    !expr.arguments.some((a) => ts.isSpreadElement(a)) && expr.arguments.length <= APPLY_CLOSURE_MAX_ARITY;
+  const applyIdx = canApply ? reserveApplyClosure(ctx) : undefined;
+  const vecBuilders = canApply ? ensureObjVecBuilders(ctx) : { newIdx: undefined, pushIdx: undefined };
   flushLateImportShifts(ctx, fctx);
+  const dispatchable = applyIdx !== undefined && vecBuilders.newIdx !== undefined && vecBuilders.pushIdx !== undefined;
 
   const calleeLocal = allocLocal(fctx, `__nc_callee_${fctx.locals.length}`, { kind: "externref" });
   const calleeType = compileExpression(ctx, fctx, callee, { kind: "externref" });
@@ -216,9 +228,23 @@ export function tryEmitNullishIdentifierCalleeTypeError(
   }
   fctx.body.push({ op: "local.set", index: calleeLocal });
 
-  for (const arg of expr.arguments) {
-    const argType = compileExpression(ctx, fctx, arg);
-    if (argType) fctx.body.push({ op: "drop" });
+  let vecLocal: number | undefined;
+  if (dispatchable) {
+    vecLocal = allocLocal(fctx, `__nc_args_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? vecBuilders.newIdx! });
+    fctx.body.push({ op: "local.set", index: vecLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      const t = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (t === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecBuilders.pushIdx! });
+    }
+  } else {
+    for (const arg of expr.arguments) {
+      const argType = compileExpression(ctx, fctx, arg);
+      if (argType) fctx.body.push({ op: "drop" });
+    }
   }
 
   // nullish = ref.is_null(callee) || __extern_is_undefined(callee). The #2106
@@ -240,7 +266,16 @@ export function tryEmitNullishIdentifierCalleeTypeError(
     // inside one is the index-shift trap.
     then: buildThrowJsErrorInstrs(ctx, "TypeError", `${callee.text} is not a function`, { forceInModuleCtor: true }),
   });
-  fctx.body.push({ op: "ref.null.extern" });
+  if (dispatchable && vecLocal !== undefined) {
+    fctx.body.push(
+      { op: "local.get", index: calleeLocal },
+      { op: "ref.null.extern" }, // bare identifier call — undefined `this` (§13.3.6.1)
+      { op: "local.get", index: vecLocal },
+      { op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx! },
+    );
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
   return { kind: "externref" };
 }
 

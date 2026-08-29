@@ -11,15 +11,44 @@
  * stays the single one both consumers (the twin's minting and the trampoline
  * reservation) ask.
  *
- * ## Why it is opt-in and not part of the tuned set
+ * ## Why it is DEFAULT-ON as of Phase 4 (it was opt-in for Phases 0–3)
  *
- * The tuned eleven in `perf-flags.ts` INVERTED their default after a measured
- * wall-clock gate. A mechanism that has not been through that gate must not
- * inherit the inverted default — shipping ON-when-unset is exactly the shape
- * that makes "byte-identical when off" untestable, because there is no "off"
- * until someone sets a variable they do not know exists. So this family uses
- * `optInFlagEnabled`: unset ⇒ OFF, and every off-token of the shared rule
- * (`0` / `off` / `false` / `no` / empty) disables it too.
+ * Phases 0–3 shipped opt-in on a deliberate rule: a mechanism that has not been
+ * through a measured gate must not inherit the tuned set's inverted default,
+ * because "byte-identical when off" is untestable when there is no "off" until
+ * someone sets a variable they do not know exists.
+ *
+ * Phase 4 retires that reasoning for this flag, on two grounds and not on a
+ * perf argument:
+ *
+ * 1. **The OFF position is the miscompile.** With the flag off,
+ *    `refinedTwinReturnType` reaches its numeric arm for a predicate method and
+ *    mints an `f64` twin, because `Prover.isNumeric` deliberately answers true
+ *    for booleans and the `numericFunctions` loop carries no `isBooleanish`
+ *    filter (the plan's §1.2). Measured on `origin/main` @ `f727d529ab`, four
+ *    witnesses answer wrongly by default and correctly with the flag on:
+ *    `("" + p.pred(5)).length` reads 1 (`"1"`) where node reads 4 (`"true"`),
+ *    the false case reads 1 (`"0"`) where node reads 5 (`"false"`), and
+ *    `typeof p.pred(5)` reads `"number"`. Keeping a correctness fix behind an
+ *    opt-in flag ships the defect.
+ * 2. **It HAS been through the gate**, three times: Phase 1's funnel + poison,
+ *    Phase 2's lever-4 decline tally, Phase 3's parameter census — each with a
+ *    reproduced acorn checksum of 422 and a byte-identity sweep.
+ *
+ * The "off" stays testable because the family's OFF tokens are unchanged: this
+ * predicate now uses `tunedFlagEnabled`, so unset ⇒ ON while
+ * `0` / `off` / `false` / `no` / empty ⇒ OFF, and `JS2WASM_RET_UNBOX_ABI=0`
+ * reproduces the pre-Phase-4 default artifact byte-for-byte.
+ *
+ * ## What the flag now also gates (Phase 4)
+ *
+ * The ADMISSION FILTER on the `numericFunctions` fixpoint
+ * (`numeric-property-analysis.ts`). The flag's boolean arm keeps a predicate
+ * out of an `f64` twin, but `numericFunctionNames` has a SECOND consumer —
+ * `provenNumericOperand` in `binary-ops.ts` — which the arm cannot reach, and
+ * which mis-lowers `this.tag + this.eq(x)` as f64 arithmetic. Withdrawing the
+ * boolean names from the verdict itself is what makes the two consumers agree.
+ * See {@link retUnboxNumericFilterEnabled}.
  *
  * ## Module shape
  *
@@ -29,12 +58,37 @@
  * lives beside the flag rather than inside a god-file.
  */
 import type { ValType } from "../ir/types.js";
-import { optInFlagEnabled } from "../perf-flags.js";
+import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
 
-/** Is the refined boolean return ABI enabled? Unset ⇒ **false**. */
+/**
+ * Is the refined boolean return ABI enabled? Unset ⇒ **true** (Phase 4; it was
+ * `optInFlagEnabled` for Phases 0–3 — the module header records why it moved).
+ */
 export function retUnboxAbiEnabled(): boolean {
-  return optInFlagEnabled(process.env.JS2WASM_RET_UNBOX_ABI);
+  return tunedFlagEnabled(process.env.JS2WASM_RET_UNBOX_ABI);
+}
+
+/**
+ * (Phase 4) Is the ADMISSION FILTER on the `numericFunctions` fixpoint on?
+ *
+ * `Prover.isNumeric` answers true for booleans by design, and the
+ * `numericFunctions` loop — alone among the three loops in that fixpoint —
+ * applies no `isBooleanish` filter, so `booleanFunctionNames` is a strict
+ * SUBSET of `numericFunctionNames`. Phase 1 worked around that inside
+ * `refinedTwinReturnType` by testing boolean BEFORE numeric. That fixes the
+ * twin, and nothing else: the plan's §3.2 deliberately deferred subtracting the
+ * names from the verdict because the set's other consumer
+ * (`provenNumericOperand`, `binary-ops.ts`) would change behaviour.
+ *
+ * Phase 4 is where that is paid. It rides the SAME variable as the rest of the
+ * ABI on purpose — the two are a matched pair, and splitting them is the one
+ * combination that regresses: withdrawing a name from `numericFunctions` while
+ * the boolean arm is off costs it an `f64` twin and gives it no `i32` one,
+ * which is exactly the ordering hazard the plan's §6 Phase 4 warns about.
+ */
+export function retUnboxNumericFilterEnabled(): boolean {
+  return retUnboxAbiEnabled();
 }
 
 /**

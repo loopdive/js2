@@ -10,6 +10,30 @@ feasibility: hard
 task_type: perf
 area: codegen
 related: [4157, 4405]
+# (2026-08-28, Phase 4) The admission filter has to land in
+# `numeric-property-analysis.ts` because that is where the `numericFunctions`
+# verdict is COMPUTED and PUBLISHED — the whole point of the slice is that both
+# of the verdict's consumers (`refinedTwinReturnType` and
+# `provenNumericOperand`) read one filtered set, so filtering at either consumer
+# would reintroduce the disagreement it exists to remove. +65 there is ~50 lines
+# of the measured loop-vs-publication rationale (the loop variant costs +19.9 %
+# executed boolean boxes) plus the host field's contract; the code itself is 6
+# lines. `index.ts` +9 is the two wiring sites the previous phases already used,
+# minus the now-dead `analyzeBooleanPropertyNames` import.
+# GRANTS RESTATED HERE DELIBERATELY: Phases 0+1/2/3 listed the same paths, but a
+# grant is only live in a PR that also modifies this file, so an un-restated one
+# is stranded and fails `quality` on CI's merge preview.
+# (2026-08-28, Phase 3) The parameter half needs the same shape Phase 1 needed
+# and for the same stated reason: §5.1 makes the twin's minting and the
+# trampoline's reservation ask ONE function, so `refinedTwinParamTypes` has to
+# sit in `typed-this.ts` beside `refinedTwinReturnType` (it reads the private
+# `writeOnceMethodKeyOf`), the twin's param list and the shim suppression have
+# to land at the minting site in `closures.ts::compileArrowAsClosure`, and the
+# published verdict needs a context field plus the same two wiring sites in
+# `index.ts` the previous phases used. Everything that COULD move out did: the
+# ~210-line analysis, both flag predicates and the census live in the new leaf
+# `src/codegen/param-unbox-abi.ts`, which is what holds `typed-this.ts` to +97
+# and `closures.ts` to +21.
 # (2026-08-27, Phase 0+1) The plan keeps `refinedTwinReturnType` as the SINGLE
 # decision point (§3.2/§5.1), so the boolean arm has to land in `typed-this.ts`;
 # the shim's brand-driven re-box has to land at the twin's minting site in
@@ -24,6 +48,7 @@ loc-budget-allow:
   - src/codegen/statements/control-flow.ts
   - src/codegen/closures.ts
   - src/codegen/context/types.ts
+  - src/codegen/numeric-property-analysis.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsClosure
   - src/codegen/index.ts::generateModule
@@ -924,3 +949,479 @@ where the pass is off) · all 8 equivalence shards · the adjacent canaries
   `tests/issue-4774-…` passes 10/10 as well (PR #5078), and the invalid-module
   shape it pins is the second defect. The adjacent #4157 suites
   (`box-boolean-fuse`, `is-truthy-inline-ic`) pass 3/3 and 5/5.
+
+---
+
+## Slice record — Phase 3, the parameter half (2026-08-28)
+
+Implemented against `origin/main` @ `30a3335b80` (= Phase 0+1's PR #5061 and
+Phase 2's #5089, both landed). Every number below was measured in a FRESH
+process, on that base or on this branch, with `.tmp/probe-4406-census.mjs`
+(§0's driver, checksum `parse(acorn dist).body.length = 422`).
+
+**Lane, restated.** Phase 2's reading still holds: #4157's tuned eleven are
+default-ON, so "lane B" means **today's default + lever 4**
+(`JS2WASM_UNBOXED_BOOL_FUSE=1`) and nothing else. Both re-measured baselines
+reproduce Phase 2's figures **exactly** — `__box_boolean` 275,113 flag-off and
+256,189 flag-on — which is what certifies this slice measures the same tree.
+
+### Finding 1 — the plan's §1.4 ranking is right, and the parameter half is where the residual lives
+
+§4 said the 29 % + 15 % + 5 % argument buckets "need the parameter half of the
+ABI, which is a different change to the same registry". Measured, that is the
+whole of what moved:
+
+| lane (standalone, `optimize: 0`, census installed) | binary B | `__box_boolean` | `__unbox_number` | `__is_truthy` | checksum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| lane B, flag off | 3,800,894 | 275,113 | 224,707 | 237,265 | 422 |
+| lane B, flag on — Phases 1+2 (base code) | 3,798,781 | **256,189** | 224,707 | 237,230 | 422 |
+| **lane B, flag on — Phase 3 (this branch)** | 3,793,884 | **222,133** | 225,213 | 237,230 | **422** |
+
+**`__box_boolean` 256,189 → 222,133 (−34,056, −13.3 %)**; against the flag-off
+lane B, 275,113 → 222,133 (−53,000, **−19.3 %**). Binary **−4,897 B (−0.13 %)**
+against the Phase-1+2 lane — the parameter half SHRINKS the module, because a
+deleted argument box is deleted at every call site while the analysis itself
+emits nothing.
+
+Still **not** below §7's 100k. The residual is now dominated by the two `prev-*`
+buckets lever 4 cannot reach and by boxes at sites that never devirtualize; see
+"What remains".
+
+### What landed
+
+| ref | change | file |
+| --- | --- | --- |
+| §6 Phase 3 | the whole-program `(name, slot)` verdict, both flag predicates, the funnel census, the shim-suppression counter — a new LEAF | `param-unbox-abi.ts` (new) |
+| §6 Phase 3 | the widened `anyCalls` index (every `m(…)` / `<any>.m(…)` / `new m(…)`), and `inferBooleanValueNames` made non-mutating so it can run a SECOND time over that index | `struct-field-boolean-brand.ts` |
+| §3.1 shape | `ctx.booleanParamSlots` + the same two wiring sites Phases 0+1 used | `context/types.ts`, `index.ts` |
+| §5.1 | `refinedTwinParamTypes` — the single decision point, beside `refinedTwinReturnType` | `typed-this.ts` |
+| §6 Phase 3 | the trampoline's params, the pad, and the ToBoolean argument arm | `typed-this.ts` |
+| — | the twin's param list, and the SHIM SUPPRESSION that makes the whole thing sound | `closures.ts` |
+| §8.2 | `JS2WASM_PARAM_UNBOX_ABI_POISON=1`, deliberately separate from Phase 1's | `param-unbox-abi.ts`, `typed-this.ts` |
+
+Funnel, flag on: `provenNames=27 provenSlots=35 refinedTwins=24
+refinedTwinSlots=32 shimsSuppressed=48`. The 27 names are acorn's own
+flag-passing idiom — `parseExprList[1,2]`, `parseClassMethod[1,2,3]`,
+`parsePropertyValue[1,2,3]`, `parseBindingList[1,2]`, `toAssignable[1]`,
+`parseMaybeUnary[2]`, `parseFunctionStatement[1,2]`, … (48 suppressions for 24
+twins because the closure lifter lifts each arrow twice).
+
+### Finding 2 — the proof obligation is NOT the return half's, and the shim is what discharges it
+
+This is the load-bearing correctness argument and it is worth stating plainly,
+because §3.3's transfer argument does **not** carry over.
+
+A refined RESULT is *imposed* on the callee: every `return` coerces to it, so an
+imprecise fixpoint costs performance. A refined PARAMETER is imposed on the
+**callers**, and an unproven caller does not coerce — it simply hands the body a
+value the body will then read as a boolean. Three things carry it:
+
+1. **Conjunctive over call sites, with a WIDENED receiver rule.** The verdict
+   requires every syntactic `m(…)` / `<anything>.m(…)` / `new m(…)` to supply
+   that slot with a provably boolean argument. Note the direction: `callName`
+   (the return verdict's) deliberately stays narrow — aggregating a user
+   `find()` with `array.find()` would brand a numeric field boolean — but for a
+   parameter the verdict is a conjunction, so folding unrelated sites in can
+   only WITHDRAW a slot, never grant one wrongly. Using the narrow map here
+   would have been the bug: a `recv.m(nonBoolean)` site would be invisible.
+2. **Conjunctive over declarations, re-checked at the point of use.** Plain
+   identifier, no initializer, no `...rest`, no `arguments` in the body, never
+   assigned. `refinedTwinParamTypes` re-asks this about the exact function it is
+   minting rather than trusting the name index to be complete.
+3. **The forwarding shim is SUPPRESSED for any refined method.** `o.m` can
+   escape as a value — `arr.map(o.m)`, `o.m.call(…)`, `o["m"](…)` — and reach
+   the method with anything. None of those can reach the TWIN: devirtualization
+   fires only on a syntactic `recv.m(args)`, and the twin's other entry is the
+   `ref.test` shim prepended to the generic body. Suppressed, the generic body
+   keeps its `externref` parameters and stays the single entry for every dynamic
+   caller, which is what reduces the obligation to the enumerable sites.
+
+`closures.ts` already contemplated exactly this ("emit NO shim rather than an
+ill-typed tail call … the only cost is an unmonomorphized dynamic entry"); Phase
+3 takes that branch deliberately rather than as a fallback.
+
+### Finding 3 — the measured COST of suppressing the shim
+
+`shimsSuppressed=48` mint events (24 methods) and `__unbox_number` **224,707 →
+225,213 (+506, +0.23 %)**. That is the only counter that moved the wrong way,
+and the mechanism it matches is the shim suppression: a dynamic call to one of
+those 24 methods now runs the generic body, which reads its fields through the
+dynamic path. **Stated as a reasoned attribution, not a measurement** — it was
+not isolated, because isolating it would mean keeping a shim that is exactly
+what makes the slice unsound. It is 1.5 % of the boolean boxes removed.
+
+### Finding 4 — a refined trampoline whose method has NO twin
+
+First measurement of this slice showed `legacyFills` leaving 0 for the first
+time in the issue's history (`legacyFills=2`,
+`Parser.parseParenAndDistinguishExpression/2:no-twin=2`): the trampoline refined
+its parameter while the method's callee is a GENERIC lifted body, which keeps
+`externref`, so the signatures disagreed and both sites degraded to the legacy
+dispatcher — correct, but it ADDS a box where the phase is meant to remove one.
+
+Fixed at the fill, not by declining the refinement: `buildGenericArm` now boxes
+a branded `i32` back up at the trampoline edge, exactly as it already adapts a
+refined RESULT (`typed-this.ts`, the `unboxFromExternref` arm). `legacyFills`
+back to **0**, `genericFills` back to **29**, and the box is paid once inside
+the shared trampoline instead of at each call site.
+
+### Measured against the checkpoints
+
+| criterion | result |
+| --- | --- |
+| `__box_boolean` drops on lane B | **256,189 → 222,133 (−34,056, −13.3 %)**; vs flag-off, **−19.3 %** |
+| checksum 422 | ✅ every lane, every off-token |
+| `legacyFills` stays 0 | ✅ `sites=3976 trampolines=545 twinFills=516 genericFills=29 legacyFills=0` — identical on and off |
+| `__unbox_boolean` stays at 2 (§3.3(b)'s tripwire) | ✅ **2** on and off |
+| flag-off byte-identical | ✅ see the sweep below |
+| binary size | **−4,897 B (−0.13 %)**; no floor risk |
+| `__is_truthy` | 237,230, unchanged — the ToBoolean argument arm is defensive, not hot |
+| below 100k | **no.** §7 does not hold Phase 3 to it either; see "What remains" |
+
+### Byte-identity sweep (sha256 per lane, uninstrumented)
+
+| lane | base @ `30a3335b80` | branch | identical |
+| --- | --- | --- | --- |
+| default (no lever 4), flag off | `58f33e3f87046286c68fe060b412632378da49c45eb58f3bb59bc3251b18f829` · 3,810,266 B | same | ✅ |
+| lane B (lever 4), flag off | `f4d6dcacbacf025af2cba0232f3140ead5e2d3921f44c3b3261cce11a4a330f2` · 3,800,674 B | same | ✅ |
+| default, `JS2WASM_RET_UNBOX_ABI` ∈ {`0`,`off`,`false`,`no`,`""`} | — | `58f33e3f…` | ✅ |
+| default, `JS2WASM_PARAM_UNBOX_ABI_POISON=1` alone | — | `58f33e3f…` | ✅ |
+
+Flag-off identity is not only structural here: the parameter analysis is
+**skipped outright** when the flag is off (it is the one part of the module that
+is not free — a second value-name fixpoint plus a body walk per declaration), so
+a flag-off compile is also no slower than before.
+
+### Poison — the liveness proof
+
+`JS2WASM_PARAM_UNBOX_ABI_POISON=1` inverts every refined boolean ARGUMENT where
+it is pushed. It is a SEPARATE variable from Phase 1's on purpose: Phase 1's
+poison already breaks the acorn parse on its own, so a shared switch could not
+attribute a break to this half.
+
+- acorn lane, flag on + Phase-3 poison: the self-parse **fails**
+  (`RuntimeError: dereferencing a null pointer`); flag on, poison off: checksum
+  422. Poison alone: byte-identical to the default.
+- `tests/issue-4406-param-unbox-abi.test.ts` isolates it on a weighted fixture
+  (`takeFlag(true) * 10 + takeFlag(false)`): `10 → 1` under poison. Unweighted,
+  inverting both arguments is the identity on the sum — a shape that would have
+  read as "inert" while the path was live.
+
+### Tests — pinned and proven non-vacuous
+
+`tests/issue-4406-param-unbox-abi.test.ts`, 7 tests, all green on the branch.
+Re-run against BASE code (all six files reverted from `.tmp/base/`, the standard
+file-copy A/B): **3 fail** — the box differential, the shim suppression, and the
+poison liveness. The other four (value equivalence, the two withdrawal rules,
+off-token identity) pass on base **by construction**, which is what they are
+for.
+
+The value tests are the ones the acorn lane cannot provide: `typeof flag` reads
+`"boolean"` (not `"number"`), `"" + flag` reads `"true"`/`"false"`, and
+`flag === true` holds — for a slot carried as a raw `i32`. A refinement that
+dropped the boolean BRAND would pass every acorn checksum and fail here.
+
+### Gates
+
+`typecheck` · `lint` · `prettier` · `check-loc-budget` / `check-func-budget`
+(grants restated in this file's frontmatter with the dated rationale above —
+the previous phases' grants were *stranded*, i.e. live only in a PR that also
+modified this file) · `check-coercion-sites` · `check:oracle-ratchet` (+0/+0 —
+every type question routes through `ctx.oracle` via the existing
+`expressionIsBoolean`, or through plain syntax) · `check:dead-exports` ·
+`check:ir-fallbacks` / `check:ir-only` unchanged (they run the default lane,
+where the analysis is skipped) · all 8 equivalence shards · the adjacent
+canaries (#4157's fuse and truthy-IC suites, #3754, Phase 0+1's own file).
+
+### Pre-existing failures observed (not introduced here, not fixed here)
+
+Verified by reverting all five touched source files to `HEAD` and re-running —
+same failures, same names, on `origin/main` @ `30a3335b80`:
+
+- `tests/issue-3683-direct-calls.test.ts` — 2 red ("declines an optional call
+  `this.m?.()`", "devirtualizes a VOID-returning callee").
+- `tests/issue-3683-arity-padding.test.ts` — 1 red ("distinguishes a PADDED
+  `undefined` from an explicitly passed `null`").
+- `check:godfiles` is red on base too; the branch's output differs only in the
+  two `index.ts` functions this change-set already grants (+2 LOC each). It is
+  not one of the six required checks.
+
+One NON-failure worth recording so the next lane does not chase it:
+`tests/issue-4157-box-boolean-fuse.test.ts` failed once with
+`Test timed out in 35000ms` while eight equivalence shards were saturating the
+box. Re-run unloaded it takes **10.8 s** and passes. The suite compiles nine
+modules in one `it`, so it is timeout-sensitive to machine load, not to this
+change.
+
+### What remains
+
+- **§6 Phase 4 — the default-ON `isBooleanish` filter** on the
+  `numericFunctions` loop. Untouched; Phase 0+1's drift 3 ("only 7 acorn names")
+  still applies.
+- **The residual `__box_boolean` is no longer argument-shaped.** With the
+  argument buckets closed, what is left is dominated by
+  `prev-extern.convert_any=1,549` (the truthy-IC's own terminal fallback, one
+  per IC'd call site — #4157's IC, not this issue) plus boxes at call sites that
+  never devirtualize at all (`no-write-once-verdict=208` of them). A route to
+  §7's `< 100k` would have to attack one of those, and neither is return-ABI
+  work.
+- **The verdict is name-keyed, so it is coarse.** `parseExprList[1,2]` is proven
+  because every `parseExprList` call in the program agrees; one non-boolean
+  argument anywhere withdraws the slot for every class. A receiver-specialised
+  verdict (#4405's registry) would be strictly finer — that is the natural
+  follow-on, not more work in this shape.
+- **§1.4's producer census** is still unreconciled (1.40×), unchanged by this
+  slice. It was not needed: the `exec-census` delta is exact and reproducible.
+
+---
+
+## Slice record — Phase 4, default-ON + the admission filter (2026-08-28)
+
+Implemented against `origin/main` @ `f727d529ab` (= Phase 3's PR #5154 landed).
+Every number below was measured in a FRESH process, on that base or on this
+branch, with `.tmp/probe-4406-census.mjs` (§0's driver, checksum
+`parse(acorn dist).body.length = 422`, standalone, `optimize: 0`).
+
+### What Phase 4 turned out to be, once measured
+
+§6 Phase 4 describes one change — "filter `isBooleanish` out of the
+`numericFunctions` loop … it must land **after** Phase 1". Measured, it is
+**two** changes with one switch, and the sketch is wrong in three specifics:
+
+1. **The flag default is the load-bearing half, and it is a CORRECTNESS fix.**
+   Phases 0–3 shipped opt-in, so `main` ships the miscompile by default: with
+   the flag off, `refinedTwinReturnType` reaches its numeric arm for a predicate
+   and mints an `f64` twin. Five witnesses measured wrong on base and right with
+   the flag on (table below). §6 treated Phase 4 as the miscompile fix and
+   Phases 1–3 as perf; it is the other way round — Phase 1 built the fix and
+   left it switched off.
+2. **The filter belongs at the PUBLICATION boundary, not in the loop.** §6 says
+   "mirroring the property loop's `anyBoolean`", i.e. inside the fixpoint. Both
+   were built and measured. The loop variant costs **+51,252 executed
+   `__box_boolean` (+19.9 %)** and buys nothing either consumer can see, because
+   withdrawing the name from `sets.numericFunctions` also withdraws the prover's
+   own call arm and demotes every property/slot proven through a predicate call.
+3. **`isBooleanish` alone is not the right predicate.** It is syntactic, so it
+   misses acorn's own idiom — `return this.eq(x) && this.eq(x)`, an `&&` of
+   CALLS. #2847's name-keyed `booleanFunctionNames` catches that but declines a
+   MIXED `return 7` / `return a === b`, which is exactly where an `f64` result is
+   unsound. The filter withdraws on **either**, supplied as
+   `excludeFunctionNames` the same way `excludeNames` already supplies #2847's
+   property verdict.
+
+### §0/§1 revalidation — the baselines reproduce, drift 3 is unchanged
+
+| lane (census installed) | binary B | `__box_boolean` | `__unbox_number` | `__is_truthy` | checksum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| default, flag off | 3,810,504 | **291,279** | 224,707 | 239,854 | 422 |
+| default, flag on | 3,802,605 | **257,258** | 225,213 | 239,802 | 422 |
+| lane B (lever 4), flag off | 3,800,912 | **275,113** | 224,707 | 237,265 | 422 |
+| lane B, flag on | 3,793,902 | **222,133** | 225,213 | 237,230 | 422 |
+
+The two lane-B figures reproduce Phase 3 **exactly** (275,113 / 222,133), which
+certifies this slice measures the same tree. **Phase 3 never published the
+default-lane flag-on figure; it is 257,258** — that is what flipping the default
+is worth on the artifact that actually ships, since lever 4 is default-OFF.
+
+**Drift 3 re-measured and unchanged.** `JS2WASM_RET_UNBOX_STATS=1`, flag off:
+`numericFunctions=102 booleanFunctions=83 overlap=83 booleanOnly=0`; twins
+`i32b` 54 → **61** with the flag on, trampolines 53 → **60**. The same seven
+names still ride the unfiltered verdict into an `f64` twin — `isAwaitUsing`,
+`isSimpleAssignTarget`, `isUsing`, `regexp_eatCharacterEscape`,
+`regexp_eatLoneUnicodePropertyNameOrValue`, `shouldParseAsyncArrow`,
+`shouldParseExportStatement`.
+
+### Finding 1 — the miscompile is default-ON on `main`, and there are two of them
+
+`.tmp/probe-4406-witness.mjs`, each case compiled standalone and compared to
+node's own answer for the same source:
+
+| witness | node | base default | branch default |
+| --- | ---: | ---: | ---: |
+| `("" + p.pred(5)).length` | 4 (`"true"`) | **1** (`"1"`) | **4** ✅ |
+| `("" + p.pred(7)).length` | 5 (`"false"`) | **1** (`"0"`) | **5** ✅ |
+| `typeof p.pred(5) === "boolean"` | 1 | **0** | **1** ✅ |
+| `p.show(5).length` where `show = this.tag + this.eq(x)` | 6 (`"v=true"`) | **0** (NaN) | **6** ✅ |
+| control: same shape, numeric callee | 4 | 4 | 4 |
+
+The fourth row is a **second, distinct** defect and the reason the filter is not
+optional. Lane sweep on base isolates it: `JS2WASM_NUMERIC_OPERANDS=0` fixes it;
+`JS2WASM_RET_UNBOX_ABI=1`, `JS2WASM_NUMERIC_TWINS=0` and `JS2WASM_DIRECT_CALLS=0`
+all **do not**. So it is `provenNumericOperand` (`binary-ops.ts`) — the second
+consumer of `numericFunctionNames`, which the flag's boolean arm cannot reach
+because that arm only decides a twin's result type. Only withdrawing the names
+from the verdict itself fixes it, which is what §3.2 deferred to this phase.
+
+### What landed
+
+| ref | change | file |
+| --- | --- | --- |
+| §6 Phase 4 | `retUnboxAbiEnabled` moves `optInFlagEnabled` → `tunedFlagEnabled`: unset ⇒ **ON**, every off-token still OFF. Header records why the opt-in argument is retired for this flag | `ret-unbox-abi.ts` |
+| §6 Phase 4 | `retUnboxNumericFilterEnabled()` — same variable on purpose; splitting them is the one combination that regresses | `ret-unbox-abi.ts` |
+| §6 Phase 4 | `excludeFunctionNames` host field + the publication-boundary filter (`returnsBoolean` = #2847's verdict ∪ any `isBooleanish` return) | `numeric-property-analysis.ts` |
+| §3.1 shape | both wiring sites ask `analyzeBooleanNames` for the PAIR from one traversal | `index.ts` |
+| — | `analyzeBooleanPropertyNames` deleted — its only caller was that site, so it would have failed `check:dead-exports` | `struct-field-boolean-brand.ts`, `index.ts` |
+
+**Funnel, branch default:** `numericFunctions=18 booleanFunctions=83 overlap=0
+booleanOnly=83`; `twins=244 i32Boolean=61 trampolines=247 i32Boolean=60`. The
+102 → **18** collapse and the `overlap` 83 → **0** are the phase's checkpoint:
+§1.2's "boolean ⊂ numeric" — the single most important fact in the plan — is
+closed.
+
+### Finding 2 — the filter is FREE at the publication boundary, and expensive in the loop
+
+| configuration | default lane `__box_boolean` | lane B |
+| --- | ---: | ---: |
+| base default (flag off, no filter) — **miscompiles** | 291,279 | 275,113 |
+| flag on, no filter (Phase 3's shape) — still miscompiles `numericOperand` | 257,258 | 222,133 |
+| **flag on + publication filter (this branch's default)** | **257,258** | **222,133** |
+| flag on + loop filter | **308,510** | — |
+
+The publication filter is **exactly free**: identical executed-box counts to
+flag-on-without-filter, in both lanes, while fixing the fourth witness. The loop
+filter is +51,252 (+19.9 %) against that. Stated as a **measurement**, not an
+attribution — both variants were built and each lane was run in a fresh process.
+
+### Measured against the checkpoints
+
+| criterion | result |
+| --- | --- |
+| `__box_boolean` on the DEFAULT artifact | **291,279 → 257,258 (−34,021, −11.7 %)** |
+| `__box_boolean` on lane B | 275,113 → **222,133 (−19.3 %)** |
+| `numericFunctions` ∩ `booleanFunctions` | 83 → **0** |
+| checksum 422 | ✅ every lane, every off-token, and under poison-off |
+| `legacyFills` stays 0 | ✅ unchanged from Phase 3 |
+| `__unbox_boolean` stays at 2 (§3.3(b)'s tripwire) | ✅ **2** in every lane |
+| binary size (default, uninstrumented) | 3,810,284 → **3,802,225 B (−8,059, −0.21 %)** |
+| `__unbox_number` | 224,707 → **225,213 (+506, +0.23 %)** |
+| `__is_truthy` | 239,854 → 239,802 (−52) |
+| below §7's 100k | **no.** Unchanged from Phase 3: the residual is `prev-extern.convert_any` (the truthy-IC's fallback) plus never-devirtualized sites, neither of which is return-ABI work |
+
+**The `__unbox_number` +506 is the one counter that moves the wrong way**, and
+it is Phase 3's shim-suppression cost — previously paid only by an opt-in lane,
+now paid by the default artifact. **Reasoned attribution, not an isolated
+measurement**: it is the identical +506 Phase 3 recorded for
+`shimsSuppressed=48`, and it appears on this branch in exactly the lanes where
+the flag is on. It is 1.5 % of the boolean boxes removed.
+
+### Byte-identity sweep (sha256, uninstrumented)
+
+| lane | digest | bytes | identical to base |
+| --- | --- | ---: | --- |
+| base default @ `f727d529ab` | `c95e7941d2d773dfe31fe5242daa9e09c51857c867156e1813912e8ceb426106` | 3,810,284 | — |
+| base lane B (lever 4) | `2f0d0b5a1a284df04b80a52bee06872c0f44ddcb5e1687447238fd9de3388ab8` | 3,800,692 | — |
+| branch, `JS2WASM_RET_UNBOX_ABI` ∈ {`0`, `off`, `false`, `no`, `""`} | `c95e7941…` | 3,810,284 | ✅ all five |
+| branch, lane B + `JS2WASM_RET_UNBOX_ABI=0` | `2f0d0b5a…` | 3,800,692 | ✅ |
+| branch, `JS2WASM_RET_UNBOX_ABI_POISON=1` + flag `0` | `c95e7941…` | 3,810,284 | ✅ poison alone inert |
+| branch, DEFAULT (the new artifact) | `54de38391c137e7e06f3ccd56c6f426aff20502d87f1129ecd85318dcc8542d9` | 3,802,225 | intentionally different |
+
+"Flag-off byte-identical" now means the OFF token reproduces the **pre-Phase-4
+default**, which is the statement that matters once the default flips.
+
+### Poison — liveness of the now-DEFAULT path
+
+`JS2WASM_RET_UNBOX_ABI_POISON=1` with no other variable set (i.e. against the
+new default): the acorn self-parse **fails** (`RangeError: Maximum call stack
+size exceeded` — an inverted predicate makes the parser recurse). Poison with
+`JS2WASM_RET_UNBOX_ABI=0`: byte-identical to base and checksum 422. So the
+refined path is live and executed **on the artifact that now ships**, not merely
+on an opt-in lane.
+
+The admission filter has no value-inverting poison to define — it is a set
+subtraction, and inverting it publishes a verdict that is wrong by construction
+rather than a poisoned value. Its liveness rests on two instruments instead: the
+funnel (`numericFunctions` 102 → 18, `overlap` 83 → 0) and the
+`provenNumericOperand` witness, which is red on base and green on the branch.
+
+### Tests — pinned and proven non-vacuous
+
+`tests/issue-4406-ret-unbox-default-on.test.ts`, 6 tests, green on the branch.
+Re-run against BASE code (all four files reverted from `.tmp/base/`, the
+standard file-copy A/B): **4 fail** — the three stringification/`typeof`
+witnesses and the `provenNumericOperand` witness. The other two pass on base by
+construction: the numeric-callee control (which the filter must NOT touch) and
+the off-token contract (unchanged by this slice).
+
+Every default expectation is pinned against its own `JS2WASM_RET_UNBOX_ABI=0`
+twin **in the same test**, so a build in which the flag silently reverted to
+opt-in fails here rather than passing quietly.
+
+### Out of scope, with evidence
+
+- **The local-carrier residual.** `var f = this.pred(x); "" + f` reads `"1"`.
+  It is the SAME root cause at a THIRD site — the prover's internal call arm,
+  which the publication filter deliberately leaves alone. Measured: it
+  reproduces identically on base and on this branch, and the loop-filter variant
+  fixes it at the cost of +19.9 % executed boolean boxes. That is a real
+  trade-off someone should take deliberately, not a rider on this slice. The
+  property side of the same shape (`this.flag = this.pred(x)`) is already
+  correct on base — #2847's boolean-property brand covers it.
+- **A prototype method called from its own constructor fails at runtime.**
+  `function P(n){ this.flag = this.twice(n); }` traps with a thrown `undefined`.
+  Verified unrelated: the CONTROL with a plain numeric method
+  (`pp.twice = function (x) { return x + x; }`) fails identically, and all five
+  lanes (default, `RET_UNBOX_ABI=1`, `NUMERIC_OPERANDS=0`, `NUMERIC_TWINS=0`,
+  `DIRECT_CALLS=0`) fail the same way on base. Not #4406's; worth its own issue.
+- **§1.4's producer census** is still unreconciled (1.40×), unchanged again. Not
+  needed: the `exec-census` deltas here are exact and reproducible.
+- **§7's `< 100k`** is still out of reach and still not this issue's residual —
+  see Phase 3's "What remains", unchanged.
+
+### Suites the default flip required updating (not a regression)
+
+`tests/issue-4406-ret-unbox-abi.test.ts` (Phases 0–2) and
+`tests/issue-4406-param-unbox-abi.test.ts` (Phase 3) used a BARE build as their
+OFF lane, which the flip turns into the ON lane — 10 tests failed for that
+reason and no other. Every OFF lane now spells `JS2WASM_RET_UNBOX_ABI: "0"` out;
+the differentials they assert are unchanged. Both files gained a pin on the flip
+itself: unset must NOT reproduce the off lane, and a typo (`"yes"`) must land on
+the new default rather than half-disabling anything. 26/26 green across the
+three #4406 suites.
+
+### Pre-existing failures observed (not introduced here, not fixed here)
+
+Verified by reverting all four touched source files to `HEAD` and re-running —
+same four failures, same names, on `origin/main` @ `f727d529ab`:
+
+- `tests/issue-3683-direct-calls.test.ts` — 2 red ("declines an optional call
+  `this.m?.()`", "devirtualizes a VOID-returning callee"). Phase 3 recorded both.
+- `tests/issue-3683-arity-padding.test.ts` — 1 red ("distinguishes a PADDED
+  `undefined` from an explicitly passed `null`"). Phase 3 recorded it.
+- `tests/issue-3683-numeric-fields.test.ts` — 1 red ("a promoted slot still
+  marshals through the reflection arms"). **New to this record**; it is the
+  suite nearest this slice's blast radius, which is why it was checked.
+
+Green canaries: `#4157` box-boolean-fuse (3/3) and is-truthy-inline-ic (5/5),
+`#3754` numeric-return-twin (10/10), `#4774` (10/10), `#3683` typed-this-twin
+(12/12) and proto-method-write-once (10/10).
+
+### Gates
+
+`typecheck` · `lint` · `prettier` · `check-loc-budget` (+9 `index.ts`, +57
+`numeric-property-analysis.ts`, both granted in this file's frontmatter with the
+dated rationale above — restated because the previous phases' grants are
+stranded) · `check-func-budget` (`generateModule` +7, `generateMultiModule` +6,
+already granted) · `check-coercion-sites` · `check:oracle-ratchet` (+0/+0) ·
+`check:dead-exports` (0 new — the deleted `analyzeBooleanPropertyNames` is why
+that gate had to be run) · **all 8 equivalence shards**: 24 failing, which is
+exactly the 24 known-failures in `scripts/equivalence-baseline.json` — zero new,
+zero newly-fixed, so the failing NAME set is unchanged.
+
+### What remains
+
+- **#4405's receiver-specialised verdict** is the natural follow-on for both
+  halves: this verdict is name-keyed, so one non-boolean same-named function
+  anywhere withdraws the name for every class.
+- **The `JS2WASM_RET_UNBOX_ABI` off-token is now a REVERT SWITCH for four
+  phases at once.** That is deliberate (they compose, and Phase 4's filter is
+  unsound to enable without Phase 1's arm), but it means a future bisect of any
+  one half needs a finer switch added first.
+- **A third boolean site the Phase 4 filter deliberately leaves alone
+  (2026-08-28, PR #5171):** `var f = this.pred(x); "" + f` still reads `"1"` —
+  the prover's *internal* call arm consumes `numericFunctionNames` before the
+  publication-boundary filter runs. Fixable only by the measured-and-rejected
+  loop variant, at **+51,252 executed `__box_boolean` (+19.9 %)** on the acorn
+  self-parse; taking that trade is a deliberate future decision, not a rider.
+  The property-write form of the same shape is already correct via #2847's
+  boolean brand. (The unrelated constructor→own-prototype-method trap found by
+  the same probe set is filed as #5162.)

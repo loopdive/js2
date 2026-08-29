@@ -51,11 +51,12 @@ import {
   getOrRegisterTaDynViewType,
   getOrRegisterTaViewType,
   getTaViewName,
+  isTaViewTypeIdx,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
   taCtorKindOf,
 } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
+import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3177) OOB read = undefined, not null
 import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -63,6 +64,7 @@ import { coerceType } from "./type-coercion.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js"; // (#4449) TypedArraySpeciesCreate
 import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449) custom species constructors
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
+import { ensureNativeArrayFromIterN } from "./iterator-native.js"; // (#5138 A1) iterable ctor arg
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
 interface DvAccessor {
@@ -82,6 +84,180 @@ interface DvAccessor {
    * |v| < 2^53, which covers the conformance corpus's small-literal rows.
    */
   int64?: boolean;
+}
+
+const NATIVE_BUFFER_BUILTINS = new Set(["ArrayBuffer", "SharedArrayBuffer", "DataView"]);
+const NATIVE_BUFFER_VIEW_BUILTINS = new Set([
+  "DataView",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
+
+/**
+ * Recover a native buffer/view constructor brand through one or more local
+ * identifier bindings. TypeScript intentionally reports `any` for a declaration
+ * such as `const buffer: any = new ArrayBuffer(8)`, so the ordinary oracle query
+ * cannot route `new Uint8Array(buffer)` to the shared-backing carrier. Follow
+ * only an unambiguous, single variable declaration and keep a cycle guard; all
+ * other expressions remain governed by the oracle's normal static answer.
+ *
+ * This helper is shared by constructor emission and variable-local inference.
+ * Keeping those two decisions identical is load-bearing: emitting a
+ * `$__ta_view` into an ordinary vec local (or vice versa) nulls/traps at the
+ * guarded cast boundary.
+ */
+export function nativeBufferBuiltinOf(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  seen: Set<ts.Symbol> = new Set(),
+): string | undefined {
+  const direct = ctx.oracle.builtinReceiverOf(expression);
+  if (direct !== undefined && NATIVE_BUFFER_BUILTINS.has(direct)) return direct;
+
+  let candidate = expression;
+  while (
+    ts.isParenthesizedExpression(candidate) ||
+    ts.isAsExpression(candidate) ||
+    ts.isTypeAssertionExpression(candidate) ||
+    ts.isNonNullExpression(candidate) ||
+    ts.isSatisfiesExpression(candidate)
+  ) {
+    candidate = candidate.expression;
+  }
+  // `view.buffer` is the native ArrayBuffer backing for every statically
+  // branded DataView/TypedArray. The property expression itself has type
+  // `ArrayBufferLike` (and may be widened further by a lib declaration), so
+  // asking only for its direct builtin brand misses the dominant
+  // `new Uint8Array(view.buffer, view.byteOffset, view.byteLength)` shape and
+  // falls into the multi-argument TA(0) fallback. Classify it from the receiver
+  // brand before following identifier aliases. Constructor emission and local
+  // inference both call this helper, keeping their carrier choice identical.
+  if (ts.isPropertyAccessExpression(candidate) && candidate.name.text === "buffer") {
+    let receiverBrand = ctx.oracle.builtinReceiverOf(candidate.expression);
+    try {
+      const receiverType = ctx.checker.getTypeAtLocation(candidate.expression);
+      const receiverSymbol = receiverType.aliasSymbol ?? receiverType.getSymbol?.();
+      const declarations = receiverSymbol?.getDeclarations() ?? [];
+      if (receiverBrand !== undefined && declarations.some((d) => !d.getSourceFile().isDeclarationFile)) {
+        // A source declaration shadows/augments the ambient name. Do not let a
+        // name-only oracle fact grant it native backing semantics.
+        receiverBrand = undefined;
+      }
+      if (receiverBrand === undefined) {
+        // Checker-name fallback is safe only for the ambient builtin. A
+        // source-declared class named `DataView`/`Uint8Array` must remain an
+        // ordinary user object and must not select the native B2 carrier.
+        if (
+          receiverSymbol !== undefined &&
+          declarations.length > 0 &&
+          declarations.every((d) => d.getSourceFile().isDeclarationFile)
+        ) {
+          receiverBrand = receiverSymbol.name;
+        }
+      }
+    } catch {
+      receiverBrand = undefined;
+    }
+    if (receiverBrand !== undefined && NATIVE_BUFFER_VIEW_BUILTINS.has(receiverBrand)) return "ArrayBuffer";
+  }
+  if (!ts.isIdentifier(candidate)) return undefined;
+
+  const symbol = ctx.checker.getSymbolAtLocation(candidate);
+  if (!symbol || seen.has(symbol)) return undefined;
+  const declarations = symbol.declarations?.filter(ts.isVariableDeclaration) ?? [];
+  if (declarations.length !== 1) return undefined;
+  const initializer = declarations[0]!.initializer;
+  if (!initializer) return undefined;
+
+  seen.add(symbol);
+  return nativeBufferBuiltinOf(ctx, initializer, seen);
+}
+
+const NATIVE_TA_VIEW_CTORS = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+]);
+
+/**
+ * Infer the concrete carrier produced by a native buffer-backed TypedArray
+ * constructor. This is shared by variable slots and function-result ABI
+ * planning; otherwise a function declared as returning `Uint8Array` receives
+ * the ordinary packed-vec result type and coerces the real `$__ta_view` return
+ * to null at its boundary.
+ */
+export function inferNativeTaViewConstructType(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): ValType | null {
+  if (!initializer) return null;
+  let expression = initializer;
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  if (!ts.isNewExpression(expression) || !ts.isIdentifier(expression.expression)) return null;
+  const viewName = expression.expression.text;
+  if (!NATIVE_TA_VIEW_CTORS.has(viewName)) return null;
+  const args = expression.arguments;
+  if (!args || args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return null;
+  const argBrand = nativeBufferBuiltinOf(ctx, args[0]!);
+  if (!noJsHost(ctx)) {
+    return argBrand === "ArrayBuffer" || argBrand === "SharedArrayBuffer" ? { kind: "externref" } : null;
+  }
+  if (argBrand !== "ArrayBuffer" && argBrand !== "SharedArrayBuffer" && argBrand !== "DataView") return null;
+  return { kind: "ref_null", typeIdx: getOrRegisterTaViewType(ctx, viewName) };
+}
+
+/** Recover a graph-local call whose registered ABI returns a `$__ta_view`. */
+export function inferNativeTaViewCallResultType(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): ValType | null {
+  if (!initializer) return null;
+  let expression = initializer;
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return null;
+  const resolvedDeclaration = ctx.checker.getResolvedSignature(expression)?.declaration;
+  const funcIdx =
+    (resolvedDeclaration && ts.isFunctionDeclaration(resolvedDeclaration)
+      ? ctx.sourceFunctionHandleByDeclaration.get(resolvedDeclaration)
+      : undefined) ?? ctx.funcMap.get(expression.expression.text);
+  if (funcIdx === undefined) return null;
+  const funcType = funcSignatureOf(ctx, funcIdx);
+  if (!funcType || funcType.kind !== "func" || funcType.results.length !== 1) return null;
+  const result = funcType.results[0]!;
+  if ((result.kind !== "ref" && result.kind !== "ref_null") || !isTaViewTypeIdx(ctx, result.typeIdx)) return null;
+  return result;
 }
 
 const DV_ACCESSORS: Record<string, DvAccessor> = {
@@ -2491,8 +2667,9 @@ export function taViewDecode(
  * `rab.resize(n)` swaps the buffer's `length`/`data` the view reflects the new
  * length — length-tracking-on-resize (Phase A A.1), which is only "free" for the
  * BYTES (the byte engine already reads `buf.data` live); the length field is
- * cached and needs this indirection. A fixed view (field0 >= 0) takes the
- * `then`-branch → byte-identical to the pre-C direct `struct.get 0` read.
+ * cached and needs this indirection. Detachment is stored on the shared buffer
+ * (`buf.length == -1`), so every existing view observes length zero without a
+ * registry walk or per-view mutation.
  */
 export function pushTaViewEffectiveLen(
   ctx: CodegenContext,
@@ -2500,37 +2677,58 @@ export function pushTaViewEffectiveLen(
   tvLocal: number,
   taViewTypeIdx: number,
 ): void {
-  // Byte-inert gate: a module with no resizable ArrayBuffer type can have NO
-  // auto-length view, so the sentinel is impossible — read field0 directly,
-  // byte-identical to B1. The tracking indirection is emitted only once a
-  // `$__resizable_ab` exists in the module.
-  if (ctx.resizableAbTypeIdx < 0) {
-    fctx.body.push({ op: "local.get", index: tvLocal });
-    fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 0 });
-    return;
-  }
   const { vecTypeIdx } = i32ByteVec(ctx);
   const bytes = taViewDecode(ctx, taViewTypeIdx)?.bytes ?? 1;
   const storedLocal = allocLocal(fctx, `__tav_slen_${fctx.locals.length}`, { kind: "i32" });
+  const bufLenLocal = allocLocal(fctx, `__tav_blen_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: tvLocal });
   fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.tee", index: storedLocal });
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "i32.ge_s" });
-  const elseInstrs: Instr[] = [
+  fctx.body.push({ op: "local.set", index: storedLocal });
+  fctx.body.push(
     { op: "local.get", index: tvLocal },
     { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 }, // buf (ref_null $__vec_i32_byte)
     { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }, // buf.length (byte count)
-  ];
-  if (bytes !== 1) {
-    elseInstrs.push({ op: "i32.const", value: bytes });
-    elseInstrs.push({ op: "i32.div_u" });
+    { op: "local.set", index: bufLenLocal },
+  );
+
+  let liveLength: Instr[] = [{ op: "local.get", index: storedLocal }];
+  if (ctx.resizableAbTypeIdx >= 0) {
+    const availableLocal = allocLocal(fctx, `__tav_avail_${fctx.locals.length}`, { kind: "i32" });
+    const trackingLength: Instr[] = [
+      { op: "local.get", index: bufLenLocal },
+      { op: "local.get", index: tvLocal },
+      { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 },
+      { op: "i32.sub" },
+      { op: "local.tee", index: availableLocal },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ge_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "local.get", index: availableLocal }],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    ];
+    if (bytes !== 1) trackingLength.push({ op: "i32.const", value: bytes }, { op: "i32.div_u" });
+    liveLength = [
+      { op: "local.get", index: storedLocal },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ge_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "local.get", index: storedLocal }],
+        else: trackingLength,
+      },
+    ];
   }
+
+  fctx.body.push({ op: "local.get", index: bufLenLocal }, { op: "i32.const", value: 0 }, { op: "i32.lt_s" });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "i32" } },
-    then: [{ op: "local.get", index: storedLocal }],
-    else: elseInstrs,
+    then: [{ op: "i32.const", value: 0 }],
+    else: liveLength,
   });
 }
 
@@ -2573,7 +2771,7 @@ export function emitTaViewConstruct(
   const bufLocal = allocLocal(fctx, `__tav_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
   fctx.body.push({ op: "local.set", index: bufLocal });
 
-  // struct.new order = [length, buf, byteOffset]. length field = fixed element
+  // struct.new order = [length, buf, byteOffset, kind]. length field = fixed element
   // count `buf.length / elementSize` (B1/B2). (#3054 C) When the MODULE contains a
   // resizable ArrayBuffer (`ctx.resizableAbTypeIdx >= 0`), this offset-0 view may
   // be AUTO-LENGTH over a `$__resizable_ab` (§23.2.5.1 — length arg omitted +
@@ -2603,6 +2801,8 @@ export function emitTaViewConstruct(
   fctx.body.push({ op: "local.get", index: bufLocal });
   // byteOffset = 0 (B1: offset-0 window).
   fctx.body.push({ op: "i32.const", value: 0 });
+  // Runtime kind survives `any`/externref erasure and drives reflective branding.
+  fctx.body.push({ op: "i32.const", value: taCtorKindOf(viewName) });
   fctx.body.push({ op: "struct.new", typeIdx: taViewTypeIdx });
   return { kind: "ref_null", typeIdx: taViewTypeIdx };
 }
@@ -2933,15 +3133,14 @@ export function emitDynEncodeDispatch(
 }
 
 /**
- * (#3057) `ta[i]` read where `ta` is a boxed `$__ta_dyn_view` reached through an
- * `any`/externref receiver. The receiver boxed externref is already on the stack.
- * Compiles the index ONCE (single evaluation), then a `ref.test $__ta_dyn_view`
- * gate byte-decodes on the runtime `kind` (in-bounds → boxed number, OOB →
- * `undefined`), falling through to the existing `__extern_get_idx` for any
- * non-dyn-view receiver (plain arrays / `$ObjVec` / `$Object`). Returns externref
- * (the caller coerces to f64 in numeric context), or null when no `$__ta_dyn_view`
- * type exists (byte-inert — caller keeps its existing path with the receiver still
- * on the stack).
+ * (#3057) `ta[i]` read where `ta` is a boxed static `$__ta_view` or dynamic
+ * `$__ta_dyn_view` reached through an `any`/externref receiver. The receiver
+ * boxed externref is already on the stack. Compiles the index ONCE (single
+ * evaluation), then runtime carrier gates byte-decode on the stored `kind`
+ * (in-bounds → boxed number, OOB → `undefined`), falling through to the existing
+ * `__extern_get_idx` for any non-view receiver (plain arrays / `$ObjVec` /
+ * `$Object`). Returns externref (the caller coerces to f64 in numeric context),
+ * or null when the module contains no boxed TypedArray-view carrier.
  */
 export function emitTaDynViewElementGet(
   ctx: CodegenContext,
@@ -2949,10 +3148,9 @@ export function emitTaDynViewElementGet(
   indexExpr: import("../ts-api.js").ts.Expression,
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  // Register the runtime-kinded view type on demand: this may compile in a helper
-  // BEFORE the construct that would otherwise register it (the caller gates on the
-  // module-level `moduleUsesDynTaView` pre-scan flag, so the type WILL exist).
-  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  const dynIdx = ctx.moduleUsesDynTaView ? getOrRegisterTaDynViewType(ctx) : -1;
+  const staticIdx = ctx.moduleUsesStaticTaView ? getOrRegisterTaViewType(ctx, "Uint8Array") : -1;
+  if (dynIdx < 0 && staticIdx < 0) return null;
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
 
   // Receiver boxed externref is on the stack — stash it (needed by both arms).
@@ -2968,14 +3166,11 @@ export function emitTaDynViewElementGet(
 
   // Resolve the fallback / boxing imports up front, then flush the funcIdx shift
   // once (before any body-swap building) so every captured funcIdx stays live.
-  const getIdxFn = ensureLateImport(
-    ctx,
-    "__extern_get_idx",
-    [{ kind: "externref" }, { kind: "f64" }],
-    [{ kind: "externref" }],
-  );
-  const boxNumFn = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
+  const getIdxFn = ctx.funcMap.get("__extern_get_idx");
+  const boxNumFn = ctx.funcMap.get("__box_number");
 
   const resultLocal = allocLocal(fctx, `__dtag_res_${fctx.locals.length}`, { kind: "externref" });
   if (getIdxFn === undefined || boxNumFn === undefined) {
@@ -2990,71 +3185,80 @@ export function emitTaDynViewElementGet(
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "local.set", index: anyLocal });
+  const candidateLocal = emitTaViewDispatchCandidate(ctx, fctx, anyLocal, "__dtag");
 
-  // THEN arm — receiver IS a $__ta_dyn_view: byte-decode on the runtime kind.
-  const dvLocal = allocLocal(fctx, `__dtag_dv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
-  const kindLocal = allocLocal(fctx, `__dtag_k_${fctx.locals.length}`, { kind: "i32" });
-  const esLocal = allocLocal(fctx, `__dtag_es_${fctx.locals.length}`, { kind: "i32" });
-  const lenLocal = allocLocal(fctx, `__dtag_len_${fctx.locals.length}`, { kind: "i32" });
-  const idxI32 = allocLocal(fctx, `__dtag_i_${fctx.locals.length}`, { kind: "i32" });
-  const arrLocal = allocLocal(fctx, `__dtag_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
-  const offLocal = allocLocal(fctx, `__dtag_off_${fctx.locals.length}`, { kind: "i32" });
-  const leLocal = allocLocal(fctx, `__dtag_le_${fctx.locals.length}`, { kind: "i32" });
+  const buildViewArm = (viewTypeIdx: number, label: string): Instr[] => {
+    const dvLocal = allocLocal(fctx, `__dtag_${label}_dv_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: viewTypeIdx,
+    });
+    const kindLocal = allocLocal(fctx, `__dtag_${label}_k_${fctx.locals.length}`, { kind: "i32" });
+    const esLocal = allocLocal(fctx, `__dtag_${label}_es_${fctx.locals.length}`, { kind: "i32" });
+    const lenLocal = allocLocal(fctx, `__dtag_${label}_len_${fctx.locals.length}`, { kind: "i32" });
+    const idxI32 = allocLocal(fctx, `__dtag_${label}_i_${fctx.locals.length}`, { kind: "i32" });
+    const arrLocal = allocLocal(fctx, `__dtag_${label}_arr_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: arrTypeIdx,
+    });
+    const offLocal = allocLocal(fctx, `__dtag_${label}_off_${fctx.locals.length}`, { kind: "i32" });
+    const leLocal = allocLocal(fctx, `__dtag_${label}_le_${fctx.locals.length}`, { kind: "i32" });
 
-  const thenArm: Instr[] = [];
-  const saved = fctx.body;
-  fctx.body = thenArm;
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.cast", typeIdx: dynIdx });
-  fctx.body.push({ op: "local.tee", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 }); // kind
-  fctx.body.push({ op: "local.set", index: kindLocal });
-  pushElemSizeForKind(fctx, kindLocal);
-  fctx.body.push({ op: "local.set", index: esLocal });
-  pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal);
-  fctx.body.push({ op: "local.set", index: lenLocal });
-  // idx (i32) = trunc(idxF64) — a negative / huge index fails the unsigned bounds
-  // check below → OOB → undefined (spec IsValidIntegerIndex).
-  fctx.body.push({ op: "local.get", index: idxF64 });
-  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  fctx.body.push({ op: "local.set", index: idxI32 });
-  // arr = dv.buf.data (buf = field1 → $__vec_i32_byte; .data = its field1).
-  fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.set", index: arrLocal });
-  // off = dv.byteOffset + idx*elemSize(kind).
-  fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 }); // byteOffset
-  fctx.body.push({ op: "local.get", index: idxI32 });
-  fctx.body.push({ op: "local.get", index: esLocal });
-  fctx.body.push({ op: "i32.mul" });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "local.set", index: offLocal });
-  fctx.body.push({ op: "i32.const", value: 1 }); // little-endian
-  fctx.body.push({ op: "local.set", index: leLocal });
-  const decodeInstrs = emitDynDecodeDispatch(ctx, fctx, kindLocal, arrLocal, offLocal, leLocal, arrTypeIdx);
-  const inBounds: Instr[] = [
-    ...decodeInstrs,
-    { op: "call", funcIdx: boxNumFn },
-    { op: "local.set", index: resultLocal },
-  ];
-  // if ((unsigned)idx < len) { box(decode) } else { undefined }
-  // (#3177) OOB = the `undefined` SINGLETON, not ref.null.extern — a null read
-  // makes `ta[oob] === undefined` false (it compares as null; probe code 2).
-  fctx.body.push({ op: "local.get", index: idxI32 });
-  fctx.body.push({ op: "local.get", index: lenLocal });
-  fctx.body.push({ op: "i32.lt_u" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: inBounds,
-    else: [
-      ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr]),
+    const arm: Instr[] = [];
+    const saved = fctx.body;
+    fctx.body = arm;
+    fctx.body.push({ op: "local.get", index: candidateLocal });
+    fctx.body.push({ op: "ref.cast", typeIdx: viewTypeIdx });
+    fctx.body.push({ op: "local.tee", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 3 });
+    fctx.body.push({ op: "local.set", index: kindLocal });
+    pushElemSizeForKind(fctx, kindLocal);
+    fctx.body.push({ op: "local.set", index: esLocal });
+    pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal, viewTypeIdx);
+    fctx.body.push({ op: "local.set", index: lenLocal });
+    // idx (i32) = trunc(idxF64) — a negative / huge index fails the unsigned
+    // bounds check below → OOB → undefined (spec IsValidIntegerIndex).
+    fctx.body.push({ op: "local.get", index: idxF64 });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: idxI32 });
+    // arr = dv.buf.data (buf = field1 → $__vec_i32_byte; .data = its field1).
+    fctx.body.push({ op: "local.get", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "local.set", index: arrLocal });
+    // off = dv.byteOffset + idx*elemSize(kind).
+    fctx.body.push({ op: "local.get", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 2 });
+    fctx.body.push({ op: "local.get", index: idxI32 });
+    fctx.body.push({ op: "local.get", index: esLocal });
+    fctx.body.push({ op: "i32.mul" });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: offLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: leLocal });
+    const decodeInstrs = emitDynDecodeDispatch(ctx, fctx, kindLocal, arrLocal, offLocal, leLocal, arrTypeIdx);
+    const inBounds: Instr[] = [
+      ...decodeInstrs,
+      { op: "call", funcIdx: boxNumFn },
       { op: "local.set", index: resultLocal },
-    ],
-  });
-  fctx.body = saved;
+    ];
+    // if ((unsigned)idx < len) { box(decode) } else { undefined }
+    // (#3177) OOB = the `undefined` SINGLETON, not ref.null.extern — a null read
+    // makes `ta[oob] === undefined` false (it compares as null; probe code 2).
+    fctx.body.push({ op: "local.get", index: idxI32 });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "i32.lt_u" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: inBounds,
+      else: [
+        ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr]),
+        { op: "local.set", index: resultLocal },
+      ],
+    });
+    fctx.body = saved;
+    return arm;
+  };
 
   // ELSE arm — any other boxed receiver keeps the EXACT existing behavior.
   const elseArm: Instr[] = [
@@ -3064,22 +3268,36 @@ export function emitTaDynViewElementGet(
     { op: "local.set", index: resultLocal },
   ];
 
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: dynIdx });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm, else: elseArm });
+  let dispatch = elseArm;
+  if (staticIdx >= 0) {
+    dispatch = [
+      { op: "local.get", index: candidateLocal },
+      { op: "ref.test", typeIdx: staticIdx },
+      { op: "if", blockType: { kind: "empty" }, then: buildViewArm(staticIdx, "static"), else: dispatch },
+    ];
+  }
+  if (dynIdx >= 0) {
+    dispatch = [
+      { op: "local.get", index: candidateLocal },
+      { op: "ref.test", typeIdx: dynIdx },
+      { op: "if", blockType: { kind: "empty" }, then: buildViewArm(dynIdx, "dyn"), else: dispatch },
+    ];
+  }
+  fctx.body.push(...dispatch);
   fctx.body.push({ op: "local.get", index: resultLocal });
   return { kind: "externref" };
 }
 
 /**
- * (#3057) `ta[i] = v` write where `ta` is a boxed `$__ta_dyn_view` reached through
- * an `any`/externref receiver. The receiver boxed externref is already on the
- * stack. Compiles the index and value ONCE each, then a `ref.test $__ta_dyn_view`
- * gate byte-encodes `v` little-endian on the runtime `kind` into the SHARED buffer
+ * (#3057) `ta[i] = v` write where `ta` is a boxed static `$__ta_view` or dynamic
+ * `$__ta_dyn_view` reached through an `any`/externref receiver. The receiver
+ * boxed externref is already on the stack. Compiles the index and value ONCE
+ * each, then runtime carrier gates byte-encode `v` little-endian on the stored kind
+ * into the SHARED buffer
  * (true aliasing — sibling views / DataViews observe it); an OOB write is a silent
  * no-op (§10.4.5.16). Any non-dyn-view receiver falls through to the existing
  * `__extern_set`. Leaves the assigned value (externref) as the expression result.
- * Returns null when no `$__ta_dyn_view` type exists (byte-inert).
+ * Returns null when the module contains no boxed TypedArray-view carrier.
  */
 export function emitTaDynViewElementSet(
   ctx: CodegenContext,
@@ -3088,8 +3306,13 @@ export function emitTaDynViewElementSet(
   valueExpr: import("../ts-api.js").ts.Expression,
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  // Register the runtime-kinded view type on demand (see emitTaDynViewElementGet).
-  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  const dynIdx = ctx.moduleUsesDynTaView ? getOrRegisterTaDynViewType(ctx) : -1;
+  // Per-name static view types have the same four-field layout and carry their
+  // exact kind in field 3. WasmGC canonicalizes those identical definitions, so
+  // one eagerly registered representative is a valid runtime guard for all of
+  // them, including a concrete view constructed after this helper compiled.
+  const staticIdx = ctx.moduleUsesStaticTaView ? getOrRegisterTaViewType(ctx, "Uint8Array") : -1;
+  if (dynIdx < 0 && staticIdx < 0) return null;
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
 
   // Receiver boxed externref on the stack → recvLocal.
@@ -3118,14 +3341,16 @@ export function emitTaDynViewElementSet(
   coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
   fctx.body.push({ op: "local.set", index: valF64 });
 
-  const setFn = ensureLateImport(
-    ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
-  );
-  const boxNumFn = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
+  // A later ensureLateImport in this batch may insert before an already
+  // reserved helper. `flushLateImportShifts` repairs instructions already in
+  // the function body, but cannot repair numeric indices held in local
+  // variables and used to build an arm afterward. Resolve both settled indices
+  // only after the batch has been flushed.
+  const setFn = ctx.funcMap.get("__extern_set");
+  const boxNumFn = ctx.funcMap.get("__box_number");
   if (setFn === undefined || boxNumFn === undefined) {
     // Defensive (unreachable in the noJsHost lane): keep the value as the result.
     fctx.body.push({ op: "local.get", index: valExt });
@@ -3136,52 +3361,59 @@ export function emitTaDynViewElementSet(
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "local.set", index: anyLocal });
+  const candidateLocal = emitTaViewDispatchCandidate(ctx, fctx, anyLocal, "__dtas");
 
-  // THEN arm — byte-encode into the shared backing on the runtime kind.
-  const dvLocal = allocLocal(fctx, `__dtas_dv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
-  const kindLocal = allocLocal(fctx, `__dtas_k_${fctx.locals.length}`, { kind: "i32" });
-  const esLocal = allocLocal(fctx, `__dtas_es_${fctx.locals.length}`, { kind: "i32" });
-  const lenLocal = allocLocal(fctx, `__dtas_len_${fctx.locals.length}`, { kind: "i32" });
-  const idxI32 = allocLocal(fctx, `__dtas_i_${fctx.locals.length}`, { kind: "i32" });
-  const arrLocal = allocLocal(fctx, `__dtas_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
-  const offLocal = allocLocal(fctx, `__dtas_off_${fctx.locals.length}`, { kind: "i32" });
-  const leLocal = allocLocal(fctx, `__dtas_le_${fctx.locals.length}`, { kind: "i32" });
-
-  const thenArm: Instr[] = [];
-  const saved = fctx.body;
-  fctx.body = thenArm;
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.cast", typeIdx: dynIdx });
-  fctx.body.push({ op: "local.tee", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 }); // kind
-  fctx.body.push({ op: "local.set", index: kindLocal });
-  pushElemSizeForKind(fctx, kindLocal);
-  fctx.body.push({ op: "local.set", index: esLocal });
-  pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal);
-  fctx.body.push({ op: "local.set", index: lenLocal });
-  fctx.body.push({ op: "local.get", index: idxF64 });
-  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  fctx.body.push({ op: "local.set", index: idxI32 });
-  fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.set", index: arrLocal });
-  fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 }); // byteOffset
-  fctx.body.push({ op: "local.get", index: idxI32 });
-  fctx.body.push({ op: "local.get", index: esLocal });
-  fctx.body.push({ op: "i32.mul" });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "local.set", index: offLocal });
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: leLocal });
-  const encodeInstrs = emitDynEncodeDispatch(ctx, fctx, kindLocal, arrLocal, offLocal, valF64, leLocal, arrTypeIdx);
-  // OOB write is a silent no-op — guard the encode on `(unsigned)idx < len`.
-  fctx.body.push({ op: "local.get", index: idxI32 });
-  fctx.body.push({ op: "local.get", index: lenLocal });
-  fctx.body.push({ op: "i32.lt_u" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: encodeInstrs, else: [] });
-  fctx.body = saved;
+  const buildViewArm = (viewTypeIdx: number, label: string): Instr[] => {
+    const dvLocal = allocLocal(fctx, `__dtas_${label}_dv_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: viewTypeIdx,
+    });
+    const kindLocal = allocLocal(fctx, `__dtas_${label}_k_${fctx.locals.length}`, { kind: "i32" });
+    const esLocal = allocLocal(fctx, `__dtas_${label}_es_${fctx.locals.length}`, { kind: "i32" });
+    const lenLocal = allocLocal(fctx, `__dtas_${label}_len_${fctx.locals.length}`, { kind: "i32" });
+    const idxI32 = allocLocal(fctx, `__dtas_${label}_i_${fctx.locals.length}`, { kind: "i32" });
+    const arrLocal = allocLocal(fctx, `__dtas_${label}_arr_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: arrTypeIdx,
+    });
+    const offLocal = allocLocal(fctx, `__dtas_${label}_off_${fctx.locals.length}`, { kind: "i32" });
+    const leLocal = allocLocal(fctx, `__dtas_${label}_le_${fctx.locals.length}`, { kind: "i32" });
+    const arm: Instr[] = [];
+    const saved = fctx.body;
+    fctx.body = arm;
+    fctx.body.push({ op: "local.get", index: candidateLocal });
+    fctx.body.push({ op: "ref.cast", typeIdx: viewTypeIdx });
+    fctx.body.push({ op: "local.tee", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 3 });
+    fctx.body.push({ op: "local.set", index: kindLocal });
+    pushElemSizeForKind(fctx, kindLocal);
+    fctx.body.push({ op: "local.set", index: esLocal });
+    pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal, viewTypeIdx);
+    fctx.body.push({ op: "local.set", index: lenLocal });
+    fctx.body.push({ op: "local.get", index: idxF64 });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: idxI32 });
+    fctx.body.push({ op: "local.get", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "local.set", index: arrLocal });
+    fctx.body.push({ op: "local.get", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 2 });
+    fctx.body.push({ op: "local.get", index: idxI32 });
+    fctx.body.push({ op: "local.get", index: esLocal });
+    fctx.body.push({ op: "i32.mul" });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: offLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: leLocal });
+    const encodeInstrs = emitDynEncodeDispatch(ctx, fctx, kindLocal, arrLocal, offLocal, valF64, leLocal, arrTypeIdx);
+    fctx.body.push({ op: "local.get", index: idxI32 });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "i32.lt_u" });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: encodeInstrs, else: [] });
+    fctx.body = saved;
+    return arm;
+  };
 
   // ELSE arm — any other boxed receiver keeps the EXACT existing behavior:
   // __extern_set(recv, box(idx), val).
@@ -3193,12 +3425,81 @@ export function emitTaDynViewElementSet(
     { op: "call", funcIdx: setFn },
   ];
 
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: dynIdx });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm, else: elseArm });
+  let dispatch = elseArm;
+  if (staticIdx >= 0) {
+    dispatch = [
+      { op: "local.get", index: candidateLocal },
+      { op: "ref.test", typeIdx: staticIdx },
+      { op: "if", blockType: { kind: "empty" }, then: buildViewArm(staticIdx, "static"), else: dispatch },
+    ];
+  }
+  if (dynIdx >= 0) {
+    dispatch = [
+      { op: "local.get", index: candidateLocal },
+      { op: "ref.test", typeIdx: dynIdx },
+      { op: "if", blockType: { kind: "empty" }, then: buildViewArm(dynIdx, "dyn"), else: dispatch },
+    ];
+  }
+  fctx.body.push(...dispatch);
   // Assignment is an expression — the value is its result.
   fctx.body.push({ op: "local.get", index: valExt });
   return { kind: "externref" };
+}
+
+/**
+ * Normalize only the receiver used by the erased TypedArray-view carrier gate.
+ * Fast standalone `any` slots wrap a GC object as `$AnyValue { tag: 6,
+ * refval: object }`; testing the wrapper against `$__ta_view` necessarily
+ * misses. Preserve the original externref for the generic fallback and peel a
+ * single honest object payload into a separate candidate local. Primitive and
+ * non-`$AnyValue` receivers remain byte-for-byte unchanged.
+ */
+function emitTaViewDispatchCandidate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rawAnyLocal: number,
+  prefix: string,
+): number {
+  const candidateLocal = allocLocal(fctx, `${prefix}_candidate_${fctx.locals.length}`, {
+    kind: "anyref",
+  } as ValType);
+  fctx.body.push({ op: "local.get", index: rawAnyLocal });
+  fctx.body.push({ op: "local.set", index: candidateLocal });
+  if (ctx.anyValueTypeIdx < 0) return candidateLocal;
+
+  const boxedLocal = allocLocal(fctx, `${prefix}_boxed_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.anyValueTypeIdx,
+  });
+  // Erased call/return and local-assignment boundaries can each add one honest
+  // object wrapper. Keep the peel bounded and view-dispatch-local; each step
+  // still requires the exact `$AnyValue` RTT and tag 6.
+  for (let depth = 0; depth < 4; depth += 1) {
+    fctx.body.push({ op: "local.get", index: candidateLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: ctx.anyValueTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: candidateLocal },
+        { op: "ref.cast", typeIdx: ctx.anyValueTypeIdx },
+        { op: "local.tee", index: boxedLocal },
+        { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 6 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: boxedLocal },
+            { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 3 },
+            { op: "local.set", index: candidateLocal },
+          ],
+        },
+      ],
+    });
+  }
+  return candidateLocal;
 }
 
 /**
@@ -3223,17 +3524,17 @@ export function pushTaDynViewInBoundsLen(
   fctx: FunctionContext,
   dvLocal: number,
   esLocal: number,
+  viewTypeIdx = ctx.taDynViewTypeIdx,
 ): void {
-  const dynIdx = ctx.taDynViewTypeIdx;
   const { vecTypeIdx } = i32ByteVec(ctx);
   const storedLocal = allocLocal(fctx, `__tdvib_s_${fctx.locals.length}`, { kind: "i32" });
   const availLocal = allocLocal(fctx, `__tdvib_av_${fctx.locals.length}`, { kind: "i32" });
   // availElems = max(0, buf.length - byteOffset) / elemSize.
   fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 }); // buf
+  fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 1 }); // buf
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // buf.length (bytes)
   fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 }); // byteOffset
+  fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 2 }); // byteOffset
   fctx.body.push({ op: "i32.sub" }); // availBytes (may be < 0 after a deep shrink)
   // clamp availBytes to >= 0. `select` yields `cond ? val1 : val2` (val1 pushed
   // FIRST / deeper), so with val1=0, val2=availBytes, cond=(availBytes<0):
@@ -3251,7 +3552,7 @@ export function pushTaDynViewInBoundsLen(
   fctx.body.push({ op: "local.set", index: availLocal });
   // storedLen = field0.
   fctx.body.push({ op: "local.get", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.tee", index: storedLocal });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "i32.lt_s" }); // storedLen < 0 → length-tracking
@@ -3491,10 +3792,11 @@ export function emitTaViewConstructWindowed(
     fctx.body.push({ op: "local.set", index: lenLocal });
   }
 
-  // struct.new $__ta_view {length (elements), buf (shared vec), byteOffset (bytes)}.
+  // struct.new $__ta_view {length (elements), buf (shared vec), byteOffset (bytes), kind}.
   fctx.body.push({ op: "local.get", index: lenLocal });
   fctx.body.push({ op: "local.get", index: bufLocal });
   fctx.body.push({ op: "local.get", index: offsetLocal });
+  fctx.body.push({ op: "i32.const", value: taCtorKindOf(viewName) });
   fctx.body.push({ op: "struct.new", typeIdx: taViewTypeIdx });
   return { kind: "ref_null", typeIdx: taViewTypeIdx };
 }
@@ -3714,8 +4016,8 @@ export function pushElemSizeForKind(fctx: FunctionContext, kindLocal: number): v
 }
 
 /**
- * (#3054 D) Read `.byteLength` (or `.BYTES_PER_ELEMENT`) off a boxed `$__ta_dyn_view`
- * at RUNTIME — a dynamically-constructed view read back through an `any`/union
+ * (#3054 D) Read `.byteLength` (or `.BYTES_PER_ELEMENT`) off a boxed static
+ * `$__ta_view` or dynamic `$__ta_dyn_view` at RUNTIME — a view read back through an `any`/union
  * receiver (e.g. length-tracking-N's `for (ta of tas) … ta.byteLength`), where the
  * compile-time-typeIdx accessor arm can't fire and the generic dynamic reader THROWS
  * on `.byteLength`. The view's element kind is stored in the struct's `kind` field
@@ -3724,7 +4026,7 @@ export function pushElemSizeForKind(fctx: FunctionContext, kindLocal: number): v
  * `byteLength = effectiveLen × elemSize(kind)`; a bare ArrayBuffer/DataView vec →
  * its byte length; anything else → 0 (never throws). `wantElemSize` returns
  * `elemSize(kind)` instead (for a dynamic `view.BYTES_PER_ELEMENT`). Returns the
- * numeric ValType, or null when no `$__ta_dyn_view` type exists (byte-inert).
+ * numeric ValType, or null when no TypedArray-view carrier is demanded (byte-inert).
  */
 export function emitTaViewDynamicByteLength(
   ctx: CodegenContext,
@@ -3732,8 +4034,9 @@ export function emitTaViewDynamicByteLength(
   compileRecv: () => ValType | null,
   wantElemSize = false,
 ): ValType | null {
-  if (ctx.taDynViewTypeIdx < 0) return null;
-  const dynIdx = ctx.taDynViewTypeIdx;
+  const dynIdx = ctx.moduleUsesDynTaView ? getOrRegisterTaDynViewType(ctx) : -1;
+  const staticIdx = ctx.moduleUsesStaticTaView ? getOrRegisterTaViewType(ctx, "Uint8Array") : -1;
+  if (dynIdx < 0 && staticIdx < 0) return null;
   const { vecTypeIdx } = i32ByteVec(ctx);
   const rt = compileRecv();
   if (rt === null) {
@@ -3744,50 +4047,75 @@ export function emitTaViewDynamicByteLength(
   const anyLocal = allocLocal(fctx, `__tvbl_recv_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "local.set", index: anyLocal });
+  const candidateLocal = emitTaViewDispatchCandidate(ctx, fctx, anyLocal, "__tvbl");
   const resultLocal = allocLocal(fctx, `__tvbl_res_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: resultLocal });
 
-  // $__ta_dyn_view arm: read kind → elemSize; result = elemSize (BYTES_PER_ELEMENT)
-  // or effectiveLen × elemSize (byteLength).
-  const dvLocal = allocLocal(fctx, `__tvbl_dv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
-  const kindLocal = allocLocal(fctx, `__tvbl_k_${fctx.locals.length}`, { kind: "i32" });
-  const esLocal = allocLocal(fctx, `__tvbl_es_${fctx.locals.length}`, { kind: "i32" });
-  const arm: Instr[] = [];
-  const saved = fctx.body;
-  fctx.body = arm;
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.cast", typeIdx: dynIdx });
-  fctx.body.push({ op: "local.tee", index: dvLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 }); // kind
-  fctx.body.push({ op: "local.set", index: kindLocal });
-  pushElemSizeForKind(fctx, kindLocal);
-  fctx.body.push({ op: "local.set", index: esLocal });
-  if (wantElemSize) {
-    fctx.body.push({ op: "local.get", index: esLocal });
-    fctx.body.push({ op: "local.set", index: resultLocal });
-  } else {
-    pushTaDynViewEffectiveLen(ctx, fctx, dvLocal, kindLocal, esLocal);
-    fctx.body.push({ op: "local.get", index: esLocal });
-    fctx.body.push({ op: "i32.mul" });
-    fctx.body.push({ op: "local.set", index: resultLocal });
+  const buildViewArm = (viewTypeIdx: number, label: string): Instr[] => {
+    const dvLocal = allocLocal(fctx, `__tvbl_${label}_dv_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: viewTypeIdx,
+    });
+    const kindLocal = allocLocal(fctx, `__tvbl_${label}_k_${fctx.locals.length}`, { kind: "i32" });
+    const esLocal = allocLocal(fctx, `__tvbl_${label}_es_${fctx.locals.length}`, { kind: "i32" });
+    const arm: Instr[] = [];
+    const saved = fctx.body;
+    fctx.body = arm;
+    fctx.body.push({ op: "local.get", index: candidateLocal });
+    fctx.body.push({ op: "ref.cast", typeIdx: viewTypeIdx });
+    fctx.body.push({ op: "local.tee", index: dvLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: viewTypeIdx, fieldIdx: 3 });
+    fctx.body.push({ op: "local.set", index: kindLocal });
+    pushElemSizeForKind(fctx, kindLocal);
+    fctx.body.push({ op: "local.set", index: esLocal });
+    if (wantElemSize) {
+      fctx.body.push({ op: "local.get", index: esLocal });
+      fctx.body.push({ op: "local.set", index: resultLocal });
+    } else {
+      pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal, viewTypeIdx);
+      fctx.body.push({ op: "local.get", index: esLocal });
+      fctx.body.push({ op: "i32.mul" });
+      fctx.body.push({ op: "local.set", index: resultLocal });
+    }
+    fctx.body = saved;
+    return arm;
+  };
+
+  if (staticIdx >= 0) {
+    fctx.body.push({ op: "local.get", index: candidateLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: staticIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildViewArm(staticIdx, "static"), else: [] });
   }
-  fctx.body = saved;
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: dynIdx });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: arm, else: [] });
+  if (dynIdx >= 0) {
+    fctx.body.push({ op: "local.get", index: candidateLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: dynIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildViewArm(dynIdx, "dyn"), else: [] });
+  }
 
   // Fallback (byteLength only): a bare ArrayBuffer/DataView vec → its byte length.
   if (!wantElemSize) {
-    fctx.body.push({ op: "local.get", index: anyLocal });
+    fctx.body.push({ op: "local.get", index: candidateLocal });
     fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: anyLocal },
+        // A detached buffer stores -1 as its canonical native marker; the
+        // public byteLength accessor observes zero (#5148 checkpoint — this
+        // arm now also serves STATIC ArrayBuffer receivers when the module
+        // constructs buffer-backed views, so the clamp the concrete arm in
+        // property-access-dispatch.ts applies must hold here too).
+        { op: "local.get", index: candidateLocal },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: candidateLocal },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        { op: "select" },
         { op: "local.set", index: resultLocal },
       ],
       else: [],
@@ -4557,6 +4885,19 @@ export function emitTaDynCtorConstructFromLocals(
       fctx.body = saved;
     }
     let chain: Instr[] = countArm;
+    // (#5138) Every arm below is built DETACHED and only spliced into
+    // `fctx.body` at the end, so a late import minted by a LATER arm (the
+    // `coerceType` ToNumber path pulls `__unbox_number`/`__to_primitive`)
+    // would shift funcIdxs that earlier arms have already baked. Registering
+    // each chain link in `ctx.liveBodies` makes `shiftLateImportIndices` walk
+    // them like any attached body. Cleared once the chain is spliced in.
+    const liveChains: Instr[][] = [];
+    const trackChain = (next: Instr[]): Instr[] => {
+      ctx.liveBodies.add(next);
+      liveChains.push(next);
+      return next;
+    };
+    trackChain(countArm);
 
     // ── Array-LIKE `$Object` arm (§23.2.5.1 InitializeTypedArrayFromArrayLike):
     // the harness `makeArrayLike` factory passes `{length: n, 0: v, …}` — read
@@ -4570,8 +4911,11 @@ export function emitTaDynCtorConstructFromLocals(
       const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
       if (objTypeIdx >= 0 && externLengthIdx !== undefined && externGetIdxIdx !== undefined) {
         const objArm: Instr[] = [];
+        trackChain(objArm);
         const saved = fctx.body;
-        fctx.body = objArm;
+        const arrayLikeArm: Instr[] = [];
+        trackChain(arrayLikeArm);
+        fctx.body = arrayLikeArm;
         const lenF64 = allocLocal(fctx, `__dtac_olen_${fctx.locals.length}`, { kind: "f64" });
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "call", funcIdx: externLengthIdx });
@@ -4601,11 +4945,115 @@ export function emitTaDynCtorConstructFromLocals(
           coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
         });
         fctx.body = saved;
-        chain = [
+
+        // (#5138 A1) §23.2.5.1 step 6: `usingIterator = ? GetMethod(O,
+        // @@iterator)` is consulted BEFORE the array-like path. Without this
+        // probe `new TA({[Symbol.iterator](){…}})` fell through the array-like
+        // arm (no `length` → 0) — the harness `makeIterable` factory shape,
+        // which every `testWithTypedArrayConstructors` body runs.
+        //
+        // A present-but-non-callable, non-nullish `@@iterator` is a TypeError
+        // (GetMethod step 3); a null/undefined one keeps the array-like arm.
+        // Materialization reuses the native iterator ladder
+        // (`__array_from_iter_n(obj, -1)` — the same helper spread uses), so an
+        // abrupt completion out of `next()` propagates unwrapped and no host
+        // import is introduced.
+        let iterablePrelude: Instr[] | null = null;
+        {
+          ensureSymbolCarrier(ctx);
+          const externGetPropIdx = ensureLateImport(
+            ctx,
+            "__extern_get",
+            [{ kind: "externref" }, { kind: "externref" }],
+            [{ kind: "externref" }],
+          );
+          const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+          const typeofFunctionIdx = ensureLateImport(
+            ctx,
+            "__typeof_function",
+            [{ kind: "externref" }],
+            [{ kind: "i32" }],
+          );
+          const isUndefinedIdx = ensureLateImport(
+            ctx,
+            "__extern_is_undefined",
+            [{ kind: "externref" }],
+            [{ kind: "i32" }],
+          );
+          const afinIdx = ensureNativeArrayFromIterN(ctx);
+          if (
+            externGetPropIdx !== undefined &&
+            boxSymbolIdx !== undefined &&
+            typeofFunctionIdx !== undefined &&
+            isUndefinedIdx !== undefined &&
+            afinIdx !== undefined
+          ) {
+            const usingIterLocal = allocLocal(fctx, `__dtac_ui_${fctx.locals.length}`, { kind: "externref" });
+            const matLocal = allocLocal(fctx, `__dtac_mat_${fctx.locals.length}`, { kind: "externref" });
+            const iterArm: Instr[] = [];
+            trackChain(iterArm);
+            fctx.body = iterArm;
+            const notCallableArm: Instr[] = [];
+            trackChain(notCallableArm);
+            fctx.body = notCallableArm;
+            emitThrowTypeError(ctx, fctx, "TypedArray source is not iterable");
+            fctx.body = iterArm;
+            fctx.body.push({ op: "local.get", index: usingIterLocal });
+            fctx.body.push({ op: "call", funcIdx: typeofFunctionIdx });
+            fctx.body.push({ op: "i32.eqz" });
+            fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: notCallableArm, else: [] });
+            fctx.body.push({ op: "local.get", index: argLocals[0]! });
+            fctx.body.push({ op: "f64.const", value: -1 });
+            fctx.body.push({ op: "call", funcIdx: afinIdx });
+            fctx.body.push({ op: "local.set", index: matLocal });
+            fctx.body.push({ op: "local.get", index: matLocal });
+            fctx.body.push({ op: "call", funcIdx: externLengthIdx });
+            fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+            fctx.body.push({ op: "local.set", index: dstNLocal });
+            fctx.body.push({ op: "local.get", index: dstNLocal });
+            fctx.body.push({ op: "i32.const", value: 0 });
+            fctx.body.push({ op: "i32.lt_s" });
+            fctx.body.push({
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: dstNLocal },
+              ],
+              else: [],
+            });
+            emitAllocViewFromN();
+            emitCopyLoop((iLocal) => {
+              fctx.body.push({ op: "local.get", index: matLocal });
+              fctx.body.push({ op: "local.get", index: iLocal });
+              fctx.body.push({ op: "f64.convert_i32_s" });
+              fctx.body.push({ op: "call", funcIdx: externGetIdxIdx });
+              coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+            });
+            fctx.body = saved;
+            iterablePrelude = [
+              { op: "local.get", index: argLocals[0]! },
+              { op: "i32.const", value: 1 }, // @@iterator well-known id
+              { op: "call", funcIdx: boxSymbolIdx },
+              { op: "call", funcIdx: externGetPropIdx },
+              { op: "local.set", index: usingIterLocal },
+              { op: "local.get", index: usingIterLocal },
+              { op: "ref.is_null" },
+              { op: "local.get", index: usingIterLocal },
+              { op: "call", funcIdx: isUndefinedIdx },
+              { op: "i32.or" },
+              { op: "if", blockType: { kind: "empty" }, then: arrayLikeArm, else: iterArm },
+            ];
+          }
+        }
+        if (iterablePrelude) objArm.push(...iterablePrelude);
+        else objArm.push(...arrayLikeArm);
+
+        chain = trackChain([
           { op: "local.get", index: a0AnyLocal },
           { op: "ref.test", typeIdx: objTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: objArm, else: chain },
-        ];
+        ]);
       }
     }
 
@@ -4622,6 +5070,7 @@ export function emitTaDynCtorConstructFromLocals(
       const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx ?? -1;
       if (objVecTypeIdx >= 0 && objVecArrTypeIdx >= 0) {
         const objVecArm: Instr[] = [];
+        trackChain(objVecArm);
         const saved = fctx.body;
         fctx.body = objVecArm;
         const srcVecLocal = allocLocal(fctx, `__dtac_ov_${fctx.locals.length}`, {
@@ -4648,11 +5097,11 @@ export function emitTaDynCtorConstructFromLocals(
           coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
         });
         fctx.body = saved;
-        chain = [
+        chain = trackChain([
           { op: "local.get", index: a0AnyLocal },
           { op: "ref.test", typeIdx: objVecTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: objVecArm, else: chain },
-        ];
+        ]);
       }
     }
 
@@ -4667,6 +5116,7 @@ export function emitTaDynCtorConstructFromLocals(
       if (!srcArrDef || srcArrDef.kind !== "array") continue;
       const elemType = srcArrDef.element;
       const vecArm: Instr[] = [];
+      trackChain(vecArm);
       const saved = fctx.body;
       fctx.body = vecArm;
       const srcVecLocal = allocLocal(fctx, `__dtac_sv_${fctx.locals.length}`, { kind: "ref", typeIdx: vIdx });
@@ -4691,16 +5141,17 @@ export function emitTaDynCtorConstructFromLocals(
         }
       });
       fctx.body = saved;
-      chain = [
+      chain = trackChain([
         { op: "local.get", index: a0AnyLocal },
         { op: "ref.test", typeIdx: vIdx },
         { op: "if", blockType: { kind: "empty" }, then: vecArm, else: chain },
-      ];
+      ]);
     }
 
     // ── `$__ta_dyn_view` copy arm: re-encode element-by-element on both kinds.
     {
       const dvArm: Instr[] = [];
+      trackChain(dvArm);
       const saved = fctx.body;
       fctx.body = dvArm;
       const srcDvLocal = allocLocal(fctx, `__dtac_sdv_${fctx.locals.length}`, { kind: "ref", typeIdx: dynIdx });
@@ -4739,11 +5190,11 @@ export function emitTaDynCtorConstructFromLocals(
         );
       });
       fctx.body = saved;
-      chain = [
+      chain = trackChain([
         { op: "local.get", index: a0AnyLocal },
         { op: "ref.test", typeIdx: dynIdx },
         { op: "if", blockType: { kind: "empty" }, then: dvArm, else: chain },
-      ];
+      ]);
     }
 
     // ── ArrayBuffer arm (outermost test): shared-backing view over the byte vec
@@ -4756,6 +5207,7 @@ export function emitTaDynCtorConstructFromLocals(
     // replaces the old clamp-offset + static-resizable-flag heuristics.
     {
       const bufArm: Instr[] = [];
+      trackChain(bufArm);
       const saved = fctx.body;
       fctx.body = bufArm;
       ctx.liveBodies.add(saved);
@@ -4837,14 +5289,15 @@ export function emitTaDynCtorConstructFromLocals(
         fctx.body = saved;
         ctx.liveBodies.delete(saved);
       }
-      chain = [
+      chain = trackChain([
         { op: "local.get", index: a0AnyLocal },
         { op: "ref.test", typeIdx: byteVecIdx },
         { op: "if", blockType: { kind: "empty" }, then: bufArm, else: chain },
-      ];
+      ]);
     }
 
     for (const instr of chain) fctx.body.push(instr);
+    for (const link of liveChains) ctx.liveBodies.delete(link);
   }
 
   fctx.body = savedTa;
@@ -6173,20 +6626,15 @@ export function emitTaViewAccessor(
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
   if (propName === "byteLength") {
-    // (#3054 C) Effective element count × elementSize. When a resizable buffer
-    // type exists in the module, stash the receiver + derive the live length so a
-    // resize is tracked; otherwise read field0 directly (BYTE-IDENTICAL to B2 —
-    // no extra local, receiver stays on the stack).
-    if (ctx.resizableAbTypeIdx >= 0) {
-      const tvLocal = allocLocal(fctx, `__tav_bl_recv_${fctx.locals.length}`, {
-        kind: "ref_null",
-        typeIdx: taViewTypeIdx,
-      });
-      fctx.body.push({ op: "local.set", index: tvLocal });
-      pushTaViewEffectiveLen(ctx, fctx, tvLocal, taViewTypeIdx);
-    } else {
-      fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 0 });
-    }
+    // Effective element count × elementSize. The shared helper observes both
+    // resizes and the ArrayBuffer detach marker, so every pre-existing view
+    // reports zero after `buffer.transfer(...)`.
+    const tvLocal = allocLocal(fctx, `__tav_bl_recv_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: taViewTypeIdx,
+    });
+    fctx.body.push({ op: "local.set", index: tvLocal });
+    pushTaViewEffectiveLen(ctx, fctx, tvLocal, taViewTypeIdx);
     if (elemSize !== 1) {
       fctx.body.push({ op: "i32.const", value: elemSize });
       fctx.body.push({ op: "i32.mul" });
@@ -6195,31 +6643,34 @@ export function emitTaViewAccessor(
     return ctx.fast ? { kind: "i32" } : { kind: "f64" };
   }
   if (propName === "byteOffset") {
-    // §23.2.3.3: a detached TypedArray reports byteOffset 0. The shared
-    // backing byte-vector stores the standalone detach marker in field 0;
-    // test it here rather than using the view's element length, because an
-    // attached zero-length view still exposes its stored offset.
+    // Integer-indexed views expose byteOffset 0 once their viewed buffer is
+    // detached. The buffer owns the single detach marker, so sibling views all
+    // observe this without being rewritten individually. Test the backing
+    // vector rather than the view length: an attached zero-length view still
+    // exposes its stored offset.
     const tvLocal = allocLocal(fctx, `__tav_bo_recv_${fctx.locals.length}`, {
       kind: "ref_null",
       typeIdx: taViewTypeIdx,
     });
     fctx.body.push({ op: "local.set", index: tvLocal });
-    fctx.body.push({ op: "local.get", index: tvLocal });
-    fctx.body.push({ op: "ref.as_non_null" });
-    fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 }); // buf
-    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // buf.length
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.lt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [{ op: "i32.const", value: 0 }],
-      else: [
-        { op: "local.get", index: tvLocal },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 },
-      ],
-    });
+    fctx.body.push(
+      { op: "local.get", index: tvLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 0 }],
+        else: [
+          { op: "local.get", index: tvLocal },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 },
+        ],
+      },
+    );
     if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
     return ctx.fast ? { kind: "i32" } : { kind: "f64" };
   }

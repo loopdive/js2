@@ -202,6 +202,7 @@ import { orderNamesByInsertion } from "./struct-field-exports.js";
 import {
   buildRuntimeEvalValueWrap,
   buildRuntimeEvalValueUnwrap,
+  ensureRuntimeEvalCallResultUnwrapHelper,
   ensureRuntimeEvalProviderActiveGlobal,
   RUNTIME_EVAL_AOT_CALLABLE_BRAND_A,
   RUNTIME_EVAL_AOT_CALLABLE_BRAND_B,
@@ -4935,6 +4936,41 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
       if (boxSymbolIdx === undefined) return [];
       const applyClosureIdx = reserveApplyClosure(ctx);
+      // (#5156) §7.1.1 step 4 is `GetMethod(input, @@toPrimitive)` — an ordinary
+      // [[Get]], so an ACCESSOR entry must have its getter INVOKED (and its
+      // abrupt completion propagated: `isNaN/toprimitive-get-abrupt.js`). Load
+      // the method from whichever entry shape is present, then share one
+      // invocation tail.
+      const loadDataMethod: Instr[] = [
+        { op: "local.get", index: L_ENTRY },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+        { op: "extern.convert_any" },
+        ...s1ToPrimNorm.map((i) => ({ ...i })),
+        { op: "local.set", index: L_METHOD },
+      ];
+      const loadAccessorMethod: Instr[] = [
+        // getter = extern.convert_any(e.$get); a null getter is §6.2.5.5's
+        // `undefined`, which GetMethod treats as absent.
+        { op: "local.get", index: L_ENTRY },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
+        { op: "extern.convert_any" },
+        { op: "local.tee", index: L_METHOD },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: L_METHOD },
+            { op: "call", funcIdx: callMethod0Idx },
+            ...s1ToPrimNorm.map((i) => ({ ...i })),
+            { op: "local.set", index: L_METHOD },
+          ],
+        },
+      ];
       const ownDataMethod: Instr[] = [
         { op: "local.get", index: L_ENTRY },
         { op: "ref.as_non_null" },
@@ -4945,66 +4981,65 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: L_ENTRY },
-            { op: "ref.as_non_null" },
-            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-            { op: "extern.convert_any" },
-            ...s1ToPrimNorm.map((i) => ({ ...i })),
-            { op: "local.set", index: L_METHOD },
-            { op: "local.get", index: L_METHOD },
-            { op: "ref.is_null" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [],
-              else: [
-                { op: "local.get", index: L_METHOD },
-                { op: "call", funcIdx: typeofFunctionIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "call", funcIdx: objVecNewIdx },
-                    { op: "local.set", index: L_ARGS },
-                    { op: "local.get", index: L_ARGS },
-                    { op: "local.get", index: 1 },
-                    { op: "call", funcIdx: objVecPushIdx },
-                    { op: "local.get", index: L_METHOD },
-                    { op: "local.get", index: 0 },
-                    { op: "local.get", index: L_ARGS },
-                    { op: "call", funcIdx: applyClosureIdx },
-                    { op: "local.set", index: L_RESULT },
-                    ...returnIfPrimitive(L_RESULT, false),
-                    // ToNumber(Symbol) is abrupt. Keep the Symbol result for
-                    // string-hint users such as ToPropertyKey; number/default
-                    // consumers must throw before __unbox_number can degrade
-                    // the carrier to NaN.
-                    { op: "local.get", index: L_RESULT },
-                    { op: "any.convert_extern" },
-                    { op: "ref.test", typeIdx: symbolTypeIdx },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: [
-                        ...isStringHint,
-                        {
-                          op: "if",
-                          blockType: { kind: "empty" },
-                          then: [{ op: "local.get", index: L_RESULT }, { op: "return" }],
-                          else: [...throwTypeError()],
-                        },
-                      ],
-                      else: [...throwTypeError()],
-                    },
-                    ...throwTypeError(),
-                  ],
-                  else: [...throwTypeError()],
-                },
-              ],
-            },
-          ],
+          then: loadDataMethod,
+          else: loadAccessorMethod,
         },
+        ...([
+          {
+            op: "local.get",
+            index: L_METHOD,
+          },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [],
+            else: [
+              { op: "local.get", index: L_METHOD },
+              { op: "call", funcIdx: typeofFunctionIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "call", funcIdx: objVecNewIdx },
+                  { op: "local.set", index: L_ARGS },
+                  { op: "local.get", index: L_ARGS },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: objVecPushIdx },
+                  { op: "local.get", index: L_METHOD },
+                  { op: "local.get", index: 0 },
+                  { op: "local.get", index: L_ARGS },
+                  { op: "call", funcIdx: applyClosureIdx },
+                  { op: "local.set", index: L_RESULT },
+                  ...returnIfPrimitive(L_RESULT, false),
+                  // ToNumber(Symbol) is abrupt. Keep the Symbol result for
+                  // string-hint users such as ToPropertyKey; number/default
+                  // consumers must throw before __unbox_number can degrade
+                  // the carrier to NaN.
+                  { op: "local.get", index: L_RESULT },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: symbolTypeIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      ...isStringHint,
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [{ op: "local.get", index: L_RESULT }, { op: "return" }],
+                        else: [...throwTypeError()],
+                      },
+                    ],
+                    else: [...throwTypeError()],
+                  },
+                  ...throwTypeError(),
+                ],
+                else: [...throwTypeError()],
+              },
+            ],
+          },
+        ] satisfies Instr[]),
       ];
       return [
         { op: "local.get", index: L_ANY },
@@ -7104,7 +7139,18 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // Build the arity dispatch from the bottom up (n>MAX → undefined), each arm
   // guarded on the matching __call_fn_method_N being registered.
   const callMethod = (n: number): number | undefined => ctx.funcMap.get(`__call_fn_method_${n}`);
-  const armUnsupported = undefinedSentinel();
+  const linkedCallName = ctx.standaloneGlobalThisImport?.call;
+  const linkedCallIdx = linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName);
+  const linkedFallback = (): Instr[] =>
+    linkedCallIdx === undefined
+      ? undefinedSentinel()
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: linkedCallIdx },
+        ];
+  const armUnsupported = linkedFallback();
 
   // (#3310 G2) Match the `__call_fn_method_N` emission cap (index.ts:
   // min(maxClosureArity, 8)); the prior hard cap at 4 dropped 5+-arg dynamic
@@ -7223,7 +7269,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       // No closure of this arity was emitted ⇒ no dispatcher. A live call of
       // this arity is impossible (the program has no arity-n closure), but keep
       // a valid body: return the undefined sentinel.
-      return undefinedSentinel();
+      return linkedFallback();
     }
     // __call_fn_method_N(recv, fn, arg0..arg{N-1})
     const ops: Instr[] = [
@@ -7391,6 +7437,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // shape is known.
   const runtimeEvalCarrier = ctx.runtimeEvalAotCallableCarrier;
   if (runtimeEvalCarrier !== undefined && externLengthIdx !== undefined && externGetIdxArr !== undefined) {
+    const unwrapResultIdx = ensureRuntimeEvalCallResultUnwrapHelper(ctx);
     body.unshift(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -7437,6 +7484,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
               { op: "ref.cast", typeIdx: runtimeEvalCarrier.structTypeIdx },
               { op: "struct.get", typeIdx: runtimeEvalCarrier.structTypeIdx, fieldIdx: 0 },
               { op: "call_ref", typeIdx: runtimeEvalCarrier.funcTypeIdx },
+              { op: "call", funcIdx: unwrapResultIdx },
               { op: "return" },
             ],
           },
@@ -7907,6 +7955,45 @@ export function fillExternIsArray(ctx: CodegenContext): void {
     { op: "local.set", index: anyLocal },
   ];
 
+  // Fast standalone `any`/`unknown` parameters use `$AnyValue`. A real array
+  // then reaches this externref predicate as tag 6 with the vec stored in
+  // `refval`; testing the wrapper itself against the vec families necessarily
+  // answers false. Peel the reference payload before the carrier chain. Repeat
+  // a bounded number of times because erased call/return boundaries can nest
+  // `$AnyValue` wrappers while the observable value remains the same array.
+  const anyValueTypeIdx = ctx.anyValueTypeIdx;
+  if (anyValueTypeIdx >= 0) {
+    const boxedAnyLocal = 2;
+    for (let depth = 0; depth < 8; depth += 1) {
+      body.push(
+        { op: "local.get", index: anyLocal },
+        { op: "ref.test", typeIdx: anyValueTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: anyValueTypeIdx },
+            { op: "local.tee", index: boxedAnyLocal },
+            { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 0 },
+            { op: "i32.const", value: 6 },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: boxedAnyLocal },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 3 },
+                { op: "local.set", index: anyLocal },
+              ],
+            },
+          ],
+        },
+      );
+    }
+  }
+
   let chain: Instr[] = [{ op: "i32.const", value: 0 }];
   for (let i = carrierTypeIdxs.length - 1; i >= 0; i--) {
     const typeIdx = carrierTypeIdxs[i]!;
@@ -7923,7 +8010,12 @@ export function fillExternIsArray(ctx: CodegenContext): void {
   }
   body.push(...excludeArgumentsArrayCarrier(ctx, anyLocal, chain));
 
-  fn.locals = [{ name: "any", type: { kind: "anyref" } }];
+  fn.locals = [
+    { name: "any", type: { kind: "anyref" } },
+    ...(anyValueTypeIdx >= 0
+      ? [{ name: "boxed_any", type: { kind: "ref_null", typeIdx: anyValueTypeIdx } } as const]
+      : []),
+  ];
   fn.body = body;
 }
 
@@ -8034,7 +8126,8 @@ export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType)
  * STORE path (`(arr as any)[i] = v` → `__extern_set` → `fillExternSetVecArms`).
  *
  *   - f64            → `__unbox_number(value)` (ToNumber; NaN for a non-number).
- *   - i32 (numeric)  → `__unbox_number` then `i32.trunc_sat_f64_s`.
+ *   - i32/i8/i16 numeric storage → `__unbox_number` then
+ *     `i32.trunc_sat_f64_s` (the packed array.set truncates to its width).
  *   - externref      → identity (the canonical `externref` `$Vec`).
  *
  * Returns null for the kinds `boxVecElementToExternref` also skips
@@ -8050,7 +8143,7 @@ function unboxExternrefToVecElement(ctx: CodegenContext, elemType: ValType): Ins
     const unboxIdx = ctx.funcMap.get("__unbox_number");
     return unboxIdx === undefined ? null : [{ op: "call", funcIdx: unboxIdx }];
   }
-  if (elemType.kind === "i32") {
+  if (elemType.kind === "i32" || elemType.kind === "i8" || elemType.kind === "i16") {
     if ((elemType as { boolean?: boolean }).boolean) return null;
     const unboxIdx = ctx.funcMap.get("__unbox_number");
     return unboxIdx === undefined ? null : [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }];
@@ -10827,7 +10920,11 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const carrierArms: Instr[] = [];
   const carriers: { typeIdx: number; arrTypeIdx: number; elemType: ValType }[] = [];
   for (const [elemKind, vecTypeIdx] of ctx.vecTypeMap.entries()) {
-    if (NON_ARRAY_BYTE_VEC_ELEM_KINDS.has(elemKind)) continue;
+    // `NON_ARRAY_BYTE_VEC_ELEM_KINDS` is an IsArray classification set, not an
+    // indexability set: `i8_byte` and `i32_elem` are the packed storage for
+    // integer TypedArrays and must accept dynamic indexed writes. Only the raw
+    // ArrayBuffer/DataView byte store is not a JS indexed-element carrier.
+    if (elemKind === "i32_byte") continue;
     if (seen.has(vecTypeIdx)) continue;
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     if (arrTypeIdx < 0) continue;
@@ -11995,6 +12092,11 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   // proto-dropping stub. (GC/host keeps the stub — see the calls.ts dual-mode
   // gate.)
   "__object_setPrototypeOf",
+  // #5148 cluster 2b — the BOOLEAN OrdinarySetPrototypeOf answer without the
+  // write, so `Object.setPrototypeOf` / `__proto__`'s setter can satisfy
+  // §20.1.2.21 step 4 (throw a TypeError on a `false` status) while the writer
+  // above keeps its lenient internal-caller posture.
+  "__object_setPrototypeOf_status",
   // #1888 Slice 2 — open-`any` method dispatch `recv.m(args)`. Native arm
   // (__extern_method_call → __extern_get + __apply_closure arity bridge). The
   // closure round-trips through __extern_set/__extern_get as a ref.test-able

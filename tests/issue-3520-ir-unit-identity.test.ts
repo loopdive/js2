@@ -798,18 +798,19 @@ describe("#3520 structural IR identity", () => {
     expect(unsupportedConstructorRecord).toMatchObject({
       sourceId,
       lexicalOwnerId: unsupportedClassId,
-      terminal: false,
-      terminalOwnerId: outerId,
+      terminal: true,
+      terminalOwnerId: unsupportedConstructorId,
+      containingTerminalOwnerId: outerId,
     });
-    expect(context.terminalByUnitId.has(unsupportedConstructorId)).toBe(false);
+    expect(context.terminalByUnitId.get(unsupportedConstructorId)).toBe(unsupportedConstructorRecord);
     expect(unsupportedFieldRecord).toMatchObject({
       sourceId,
       lexicalOwnerId: unsupportedClassId,
       terminal: false,
-      terminalOwnerId: outerId,
+      terminalOwnerId: unsupportedConstructorId,
     });
-    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(outerId);
-    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(outerId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(unsupportedConstructorId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(unsupportedConstructorId);
   });
 
   it("keeps planning declaration identities stable when source input order reverses", () => {

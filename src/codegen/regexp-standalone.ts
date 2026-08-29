@@ -79,7 +79,7 @@ import {
 import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
-import { noJsHost } from "./js-errors.js"; // (#4439) pairs the poison with its guard
+import { noJsHost, emitThrowTypeError } from "./js-errors.js"; // (#4439) pairs the poison with its guard
 import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
@@ -982,16 +982,21 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
   const i32ArrIdx = regexI32ArrayType(ctx);
   const i32ArrRef: ValType = { kind: "ref", typeIdx: i32ArrIdx };
   const typeIdx = ctx.mod.types.length;
+  // (#5142) The pattern fields are MUTABLE: Annex B §B.2.4.1
+  // `RegExp.prototype.compile` recompiles a regexp IN PLACE, so the receiver's
+  // program / flags / source have to be replaceable on an existing struct.
+  // There is exactly one `$NativeRegExp` heap type and nothing reads it through
+  // a subtype, so widening mutability is additive.
   const fields = [
-    { name: "flags", type: { kind: "i32" } as ValType, mutable: false },
-    { name: "nGroups", type: { kind: "i32" } as ValType, mutable: false },
-    { name: "prog", type: i32ArrRef, mutable: false },
-    { name: "classTable", type: i32ArrRef, mutable: false },
-    { name: "source", type: nativeStringType(ctx), mutable: false },
+    { name: "flags", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "nGroups", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "prog", type: i32ArrRef, mutable: true },
+    { name: "classTable", type: i32ArrRef, mutable: true },
+    { name: "source", type: nativeStringType(ctx), mutable: true },
     // Scratch capture-slot count for PROGRESS empty-loop guards (#1959). The VM
     // caps array is sized `2*nGroups + nScratch`; scratch slots are never
     // reported as captures. Field added after source to keep lastIndex last.
-    { name: "nScratch", type: { kind: "i32" } as ValType, mutable: false },
+    { name: "nScratch", type: { kind: "i32" } as ValType, mutable: true },
     // [[LastIndex]] (§22.2.7.1) — keep the numeric slot for the hot path, and
     // pair it with an opaque raw value/presence bit for deferred ToLength of
     // object assignments (`re.lastIndex = {valueOf(){...}}`).
@@ -4650,6 +4655,20 @@ export function tryCompileStandaloneRegExpSymbolCall(
       const flags = staticRegExpFlags(ctx, regexExpr);
       if (flags === null) return undefined;
       const globalReplace = flags.includes("g");
+      // (#5142) A CALLABLE replacer routes into the #4224 call-site walk with
+      // the operands swapped (regex = RECEIVER, subject = arg[0]). Only the
+      // route was missing — the machinery is the same one
+      // `String.prototype.replace(re, fn)` already uses — so this form used to
+      // hit the flat refusal below and fail to compile at all.
+      const fnReplace = tryCompileStandaloneRegExpFunctionReplace(
+        ctx,
+        fctx,
+        strExpr,
+        regexExpr,
+        replExpr,
+        globalReplace,
+      );
+      if (fnReplace !== undefined) return fnReplace;
       return emitStandaloneRegExpReplaceCore(ctx, fctx, expr, strExpr, regexExpr, replExpr, globalReplace, "@@replace");
     }
     case "split": {
@@ -4830,6 +4849,53 @@ export function tryCompileStandaloneRegExpToString(
     }
   }
   return emitStandaloneRegExpToStringFromExpr(ctx, fctx, propAccess.expression);
+}
+
+/**
+ * (#5142) `re.compile(pattern, flags)` — the DIRECT call spelling of Annex B
+ * §B.2.4.1. It previously had no dispatch arm at all, so the call fell through
+ * to the generic member-call path and silently no-op'd (the receiver kept its
+ * original program). Shares `emitRegExpCompileInPlace` with the reflective
+ * `RegExp.prototype.compile` closure, so the two cannot drift.
+ */
+export function tryCompileStandaloneRegExpCompile(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "compile" || expr.arguments.length > 2) {
+    return undefined;
+  }
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, propAccess.expression);
+  if (loaded === null) return null;
+  const { regexpLocal, structTypeIdx } = loaded;
+
+  // Both operands are evaluated (left-to-right) into externref locals BEFORE
+  // any coercion runs, matching the spec's argument-evaluation order.
+  const argLocals: number[] = [];
+  for (let i = 0; i < 2; i++) {
+    const local = allocLocal(fctx, `__re_cmp_arg${i}_${fctx.locals.length}`, { kind: "externref" });
+    const arg = expr.arguments[i];
+    if (arg === undefined) {
+      fctx.body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr]));
+    } else {
+      const emitted = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (emitted === null) return null;
+      if (emitted.kind !== "externref") {
+        coerceType(ctx, fctx, emitted, { kind: "externref" }, "string", compileStringLiteral);
+      }
+    }
+    fctx.body.push({ op: "local.set", index: local });
+    argLocals.push(local);
+  }
+
+  if (!emitRegExpCompileInPlace(ctx, fctx, regexpLocal, structTypeIdx, argLocals[0]!, argLocals[1]!)) {
+    return null;
+  }
+  // Step 6 — return the receiver itself.
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  return { kind: "ref", typeIdx: structTypeIdx };
 }
 
 /**
@@ -5168,6 +5234,12 @@ const REGEXP_METHOD_LENGTH: Readonly<Record<string, number>> = {
   test: 1,
   toString: 0,
   compile: 2,
+  // §22.2.6.8/.11/.12/.14 — `@@match`/`@@search` take (string);
+  // `@@replace`/`@@split` take (string, replaceValue|limit).
+  "@@7": 1,
+  "@@8": 2,
+  "@@9": 1,
+  "@@10": 2,
 };
 
 /**
@@ -5274,11 +5346,11 @@ function emitRegExpProtoMemberBody(
   if (recovered === null) return null;
   const { regexpLocal, structTypeIdx } = recovered;
 
-  if (member === "test" || member === "@@9") {
-    // `.test(s)` and `[Symbol.search]`-adjacent forms both run the search and
-    // return an i32-ish result; here we return the i32 match flag for `.test`.
-    // (Full `[Symbol.search]` index semantics are a later refinement; the
-    // dispatch path + brand recovery are what S1 proves.)
+  if (member === "test") {
+    // (#5142) `@@9` (`[Symbol.search]`) used to share this arm, but §22.2.6.12
+    // returns the match INDEX (or -1) as a number, not `.test`'s i32 boolean —
+    // the shared arm handed back a boolean-shaped flag under a Symbol.search
+    // read. Until the real search body lands it falls to the placeholder below.
     const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
     emitRegExpTestFromLocals(ctx, fctx, regexpLocal, structTypeIdx, subjLocal);
     return { kind: "i32" };
@@ -5311,6 +5383,14 @@ function emitRegExpProtoMemberBody(
     return { kind: "externref" };
   }
 
+  if (member === "compile") {
+    // Params: 1 = `this` externref, 2 = pattern, 3 = flags. Step 6 returns the
+    // ORIGINAL receiver externref, so `re.compile(…) === re` holds.
+    if (!emitRegExpCompileInPlace(ctx, fctx, regexpLocal, structTypeIdx, 2, 3)) return null;
+    fctx.body.push({ op: "local.get", index: 1 });
+    return { kind: "externref" };
+  }
+
   if (member === "source" || member === "flags") {
     // Defensive: these are getters, but if reached as a "method" form, fall to
     // the field read.
@@ -5325,6 +5405,152 @@ function emitRegExpProtoMemberBody(
   // externref (null) until their engine body lands.
   fctx.body.push({ op: "ref.null.extern" });
   return { kind: "externref" };
+}
+
+/**
+ * (#5142) Annex B §B.2.4.1 `RegExp.prototype.compile(pattern, flags)` — the
+ * in-place recompile.
+ *
+ * Closure params: 1 = `this` externref (already brand-recovered into
+ * `regexpLocal`), 2 = pattern, 3 = flags. Steps, observably:
+ *
+ *   3. pattern is a RegExp object ⇒ flags must be `undefined` (else TypeError);
+ *      P is the pattern's [[OriginalSource]], F its [[OriginalFlags]].
+ *   4. otherwise P = ToString(pattern) / `""` when undefined, F likewise.
+ *   Then RegExpInitialize: recompile (a bad pattern/flag pair raises the
+ *   runtime compiler's own SyntaxError), copy the fresh program into the
+ *   receiver's now-mutable fields, set lastIndex to 0, return the receiver.
+ *
+ * Returns the closure result ValType (externref — the receiver), or null if the
+ * runtime compiler / ToString plumbing is unavailable.
+ */
+function emitRegExpCompileInPlace(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpLocal: number,
+  structTypeIdx: number,
+  patternParam: number,
+  flagsParam: number,
+): boolean {
+  ensureNativeStringHelpers(ctx);
+  const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
+  const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
+  const flagsStrIdx = ensureRegexFlagsStr(ctx);
+  flushLateImportShifts(ctx, fctx);
+  if (isUndefIdx === undefined || toStringIdx === undefined) return false;
+
+  const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  const patLocal = allocLocal(fctx, `__re_cmp_pat_${fctx.locals.length}`, anyStrRef);
+  const flgLocal = allocLocal(fctx, `__re_cmp_flg_${fctx.locals.length}`, anyStrRef);
+  const freshLocal = allocLocal(fctx, `__re_cmp_new_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: structTypeIdx,
+  });
+
+  addStringConstantGlobal(ctx, "");
+  const emptyStr: Instr[] = [
+    ...stringConstantExternrefInstrs(ctx, ""),
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+  ];
+  /** `undefined ⇒ ""`, else ToString(param) — as a `ref $AnyString`. */
+  const argAsString = (paramIdx: number): Instr[] => [
+    { op: "local.get", index: paramIdx },
+    { op: "call", funcIdx: isUndefIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: anyStrRef },
+      then: emptyStr.map((i) => ({ ...i })),
+      else: [
+        { op: "local.get", index: paramIdx },
+        { op: "call", funcIdx: toStringIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+      ],
+    },
+  ];
+
+  // Step 3 vs 4 — is the pattern argument itself a native RegExp?
+  const reBorrowArm: Instr[] = [];
+  {
+    const srcLocal = allocLocal(fctx, `__re_cmp_src_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: structTypeIdx,
+    });
+    reBorrowArm.push(
+      { op: "local.get", index: patternParam },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: structTypeIdx },
+      { op: "local.set", index: srcLocal },
+    );
+    // Step 3.a — `pattern` is a RegExp and `flags` is not undefined ⇒ TypeError.
+    const throwFctx: FunctionContext = { ...fctx, body: [] };
+    emitThrowTypeError(ctx, throwFctx, "Cannot supply flags when constructing one RegExp from another");
+    reBorrowArm.push(
+      { op: "local.get", index: flagsParam },
+      { op: "call", funcIdx: isUndefIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: throwFctx.body },
+    );
+    reBorrowArm.push(
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE },
+      { op: "local.set", index: patLocal },
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+      { op: "call", funcIdx: flagsStrIdx },
+      { op: "local.set", index: flgLocal },
+    );
+  }
+  const stringArm: Instr[] = [
+    ...argAsString(patternParam),
+    { op: "local.set", index: patLocal },
+    ...argAsString(flagsParam),
+    { op: "local.set", index: flgLocal },
+  ];
+
+  fctx.body.push(
+    { op: "local.get", index: patternParam },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: structTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: reBorrowArm, else: stringArm },
+  );
+
+  // RegExpInitialize — recompile, then copy the fresh program in place.
+  fctx.body.push(
+    { op: "local.get", index: patLocal },
+    { op: "local.get", index: flgLocal },
+    { op: "call", funcIdx: dynamicCompilerIdx },
+    { op: "local.set", index: freshLocal },
+  );
+  for (const fieldIdx of [
+    RE_FIELD_FLAGS,
+    RE_FIELD_NGROUPS,
+    RE_FIELD_PROG,
+    RE_FIELD_CLASS_TABLE,
+    RE_FIELD_SOURCE,
+    RE_FIELD_NSCRATCH,
+  ]) {
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "local.get", index: freshLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
+    );
+  }
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "f64.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+    { op: "local.get", index: regexpLocal },
+    { op: "ref.null.extern" },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW },
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+  );
+  return true;
 }
 
 /**

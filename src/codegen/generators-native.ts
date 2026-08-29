@@ -4426,14 +4426,29 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         // instead of re-entering the throwing state. Keep this wrapper out of
         // the JS-host lane: its foreign-exception recovery and legacy lowering
         // have their own established path.
+        // (#5141) The wrapper must NOT be a result-typed `try_table`: V8 12.4
+        // (Node 22, the floor in `package.json` engines) executes
+        // `try_table (ref null $result)` as `unreachable`, so every first
+        // resume trapped. Every other standalone EH site emits the empty
+        // blocktype (`promise-executor.ts`, `expressions/calls.ts`), so match
+        // them: keep the trampoline's own value-producing shape inside a plain
+        // `block (result R)`, spill it to `resultLocal`, and read it back after
+        // the (empty-typed) try scaffold. Branch depths inside the trampoline
+        // are unchanged relative to that inner block, and `bumpBranches` still
+        // retargets the ones escaping it.
+        const tryBody: Instr[] = [
+          { op: "block", blockType: { kind: "val", type: resultType }, body: trampoline },
+          { op: "local.set", index: resultLocal },
+        ];
         resumeFctx.body.push(
-          buildTargetTaggedTry(ctx, { kind: "val", type: resultType }, trampoline, [
+          buildTargetTaggedTry(ctx, { kind: "empty" }, tryBody, [
             {
               tagIdx: ensureExnTag(ctx),
               body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
             },
           ]),
         );
+        resumeFctx.body.push({ op: "local.get", index: resultLocal });
       } else {
         resumeFctx.body.push(...trampoline);
       }

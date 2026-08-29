@@ -1,9 +1,10 @@
 ---
 id: 5093
 title: "A spread call into a method WITH formals misaligns arguments, and one shape emits invalid Wasm"
-status: in-review
+status: done
 sprint: current
 created: 2026-08-27
+completed: 2026-08-28
 priority: high
 horizon: m
 feasibility: medium
@@ -225,11 +226,33 @@ ir-layering, host-import-policy, test-vacuity-shapes — all green.
   issue's own control — the object-literal receiver with the *mixed* spread — is
   correct and is pinned in the test file.
 - **Standalone value carriers**: a string element, a `null` element, and a
-  spread of a string still answer wrongly on the standalone lane (they answered
-  wrongly, or produced an invalid module, before too). Pinned host-only.
-- **Sloppy-mode MAPPED `arguments` write-back** (`f(a) { arguments[0] = 5 }`)
-  does not reflect into `a` — but `f(1)` with **no spread at all** answers the
-  same way, so it is spread-independent and out of scope.
+  spread of a string still answer wrongly on the standalone lane. Each was
+  wrong (or an invalid module) before too, so this PR improves all three and
+  fixes none of them; they are pinned **host-only** rather than pinned to the
+  wrong answer.
+
+  | shape | node | before host / standalone | after host / standalone |
+  | --- | --- | --- | --- |
+  | `method(s)` ← `...["x", "y"]`, body `s + "\|" + arguments.length + "\|" + arguments[1]` | `"x\|2\|y"` | INVALID_MODULE / INVALID_MODULE | `"x\|2\|y"` / `{}` |
+  | `method(a)` ← `...[true, null]`, body tests `a === true`, `arguments[1] === null` | `221` | INVALID_MODULE / INVALID_MODULE | `221` / `220` |
+  | `method(a)` ← `..."ab"` (string spread) | `21` | `11` / INVALID_MODULE | `21` / `0` |
+
+- **Sloppy-mode MAPPED `arguments` write-back** (`f(a) { arguments[0] = 5; return a + arguments.length }`)
+  does not reflect into `a`. The proof that it is spread-independent — and so
+  not this issue's to fix — is that the **no-spread** calls answer identically
+  wrongly:
+
+  | call | node | host (before == after) |
+  | --- | --- | --- |
+  | `f(1)` — no spread | `6` | `2` |
+  | `f(1, 2)` — no spread | `7` | `3` |
+  | `f(...tail)`, `tail = [1, 2]` | `7` | `3` |
+
+All figures above were measured **before** #5126 was released (host and
+standalone lanes, node as the oracle, same probe harness as the table further
+up). They are recorded here through the docs lane rather than in #5126 itself
+because that branch was already armed with auto-merge when the request came in;
+adding a commit to it would have re-run CI and disturbed a green queued PR.
 
 ### Acceptance criteria
 

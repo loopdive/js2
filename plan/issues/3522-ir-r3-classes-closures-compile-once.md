@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-27
+updated: 2026-08-29
 assignee: ttraenkler/codex
 branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
@@ -28,6 +28,8 @@ files:
   - .github/workflows/test262-sharded.yml
   - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
+  - src/ir/class-accessor-safety.ts
+  - src/ir/class-field-call-planning.ts
   - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
   - src/ir/extern-support.ts
@@ -51,6 +53,7 @@ files:
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-overlay-safety.ts
+  - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-imported-call-planning.ts
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -67,6 +70,13 @@ files:
   - tests/issue-3214-callable-abi.test.ts
   - tests/issue-2859.test.ts
   - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
+  - tests/issue-3522-ir-nested-class-ownership.test.ts
+  - tests/issue-3522-nested-class-field-call-planning.test.ts
+  - tests/issue-3522-nested-class-field-call-admission.test.ts
+  - tests/issue-3522-nested-class-field-call-marker.test.ts
+  - tests/issue-3520-ir-first-identity.test.ts
+  - tests/issue-3520-ir-unit-identity.test.ts
+  - tests/issue-3520-planning-owner.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
@@ -93,6 +103,17 @@ loc-budget-allow:
   - src/ir/prepared-closure-support.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
+  # 2026-08-28 (F4). Measured against origin/main 81e54a98e: the admitted-class
+  # marker adds +120 LOC to `identity.ts` (1471 -> 1591) and +146 to
+  # `select-identity.ts` (1463 -> 1609), pushing both across the 1500-LOC
+  # god-file threshold for the first time. The marker's container, its
+  # authenticity check and the two threading helpers belong with the identity
+  # records they key on; its proof-consuming derivation belongs with the
+  # selector that consumes it. Splitting either into a new module would put the
+  # marker type on the wrong side of the identity/selection seam and force a new
+  # ir->ir import edge for every one of the seven consumers.
+  - src/ir/identity.ts
+  - src/ir/select-identity.ts
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/codegen/class-bodies.ts::collectClassDeclaration
@@ -100,6 +121,13 @@ func-budget-allow:
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
   - src/codegen/index.ts::generateModule
+  # 2026-08-28 (F4). Measured against origin/main 81e54a98e: 628 -> 652 (+24).
+  # F4 requires the ONE resolver, the F3 proof and the derived admitted-class
+  # marker to be constructed here, before local class-expression resolution and
+  # identity selection, and then handed to five call sites in the same
+  # function. Hoisting them out would either recompute the marker per consumer
+  # (the exact thing the slice forbids) or make it a mutable sidecar.
+  - src/codegen/index.ts::planIrOverlay
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
@@ -3301,6 +3329,73 @@ F3 shares the identity-selection and direct-call sidecar seam with #3521.
 Rebase it onto the exact landed #3521 L1/L3 API and use that API's ownership and
 copy-on-write rules. Do not land a competing resolver or mutable sidecar.
 
+##### F3a disjoint dormant-evidence checkpoint (2026-08-28, non-authoritative)
+
+The disjoint F3 core is intentionally separable from the active
+`src/codegen/index.ts` merge surface. It establishes the following contracts
+without activating F4:
+
+- `isNestedOrdinaryClassFieldCallInventoryCandidate` is a syntax-only
+  inventory predicate. The existing
+  `isBoundedPreparedNestedOrdinaryClass` selector/preparation gate remains
+  unchanged.
+- The inventory promotes only that exact direct-nested candidate's constructor
+  and body members to terminal identities, keeps every field initializer as a
+  constructor-owned support row, and retains an immutable marker tied to the
+  exact inventory, source, class, constructor, containing terminal, fields,
+  calls, and terminal-member rows.
+- `class-field-call-planning.ts` reuses the exact identity imported-function
+  resolver's same-source top-level value path. It retains a frozen
+  source-qualified `IrFuncRef`, explicit stable callable signature, and exact
+  argument population only after every forward/reverse AST and inventory join
+  revalidates.
+- Selection consumes the proof-independent marker only to force every newly
+  inventoried constructor/member terminal to
+  `class-member-unsupported@select`; it does not consume the optional proof for
+  admission. Identity and overlay plans retain the marker and optional proof
+  sidecar as dormant evidence.
+
+This checkpoint is **not F3 acceptance** while the final production seam is
+unwired. The overlap audit originally found #5154 at `be5ec432…`, #5148 at
+`fd7b280c…`, and #5097 at `f10283be…` touching `src/codegen/index.ts`. #5154 is
+now present in the refreshed `a2191bb09520…` base; the disjoint branch still
+deliberately leaves that file untouched while #5148/#5097 remain adjacent.
+After those heads settle, the remaining narrow follow-up is:
+
+1. construct the already-shared exact resolver once before identity selection;
+2. call `planIrNestedClassFieldCalls` over the exact planning context and pass
+   its sidecar through `IrIdentitySelectionOptions`;
+3. retain that same sidecar on the outer overlay plan without rebuilding it;
+4. run the proof-enabled/proof-disabled full compiler A/B matrix and pin exact
+   inventory/outcome deltas, unchanged claims/preparation/runtime/bytes, and
+   proof-only sidecar variance.
+
+Direct planner/identity tests are necessary evidence for this checkpoint but
+cannot substitute for that final compile A/B. Until the follow-up lands, the
+production path intentionally behaves as proof-disabled: the typed candidate
+inventory and exact unsupported terminal outcomes exist, but no field-call
+body is admitted or prepared.
+
+Checkpoint evidence on the refreshed `a2191bb09520…` base. The only
+intervening changes since the measured `9f5c421b9849…` baseline were the
+unrelated #5157/#5158 issue plans; they did not touch this source or test
+surface:
+
+- TS 7 and TS 5 no-emit checks pass.
+- The focused dormant-planner matrix passes **16/16** and the four directly
+  affected identity/ownership files pass **55/55**.
+- The complete 20-file #3522 matrix on code-identical `9f5c421b9849…` reports
+  **300 pass / 17 fail**. A clean detached worktree at that same base reproduces
+  those exact 17 failures in the same four files (two cross-owner expectations,
+  eleven stale GC import-surface expectations, and four nested-static poison
+  expectations), so they are current-main baseline debt rather than an F3a
+  delta.
+- Prettier, IR layering, IR fallback, IR-only readiness, IR adoption,
+  codegen-fallback, oracle, coercion-site, optimization-retirement,
+  dead-export, LOC, and function-budget gates pass. The LOC gate measures
+  **+669 src LOC** with no unallowed growth; the existing issue-local function
+  grant accounts for `planIrCompilationByIdentity` growing **481 → 542**.
+
 #### F4. Activate only the exact prepared field-call family
 
 Primary production ownership:
@@ -3521,3 +3616,264 @@ baseline SHA-256 is
 `check:ir-kind-neutrality` again reports 85 kinds: 55 neutral, 27 JS-dialect,
 and 3 unresolved, with 58 core placements and 27 dialect placements. No row,
 verdict, placement, or phase-two move was added, removed, or widened.
+
+### 2026-08-28 F4 implementation checkpoint — the exact prepared field-call family
+
+F4 activates the narrow family F3 prepared evidence for, and nothing wider.
+Measured baseline on `origin/main` `81e54a98e`, through the production
+`compile` seam with `experimentalIR: true, trackIrOutcomes: true`, for
+`class Box { p: number = seed(40); get(): number { return this.p; } }` inside
+`run`: `seed=emitted(ir)`, and `run`, `Box_new@`, `Box_get@` all
+`unsupported(legacy)` on both **gc** and **standalone**. On this branch all
+four are `emitted(ir)` with `legacyBodyEmitted: false`, on both lanes, with the
+direct class and function emitters poisoned.
+
+**Candidacy stays separate from admission.**
+`isBoundedPreparedNestedOrdinaryClass` is unchanged and still refuses a
+call-bearing field; `boundedPreparedInstanceFieldInitializer` still rejects
+`CallExpression`. It is now expressed as
+`isBoundedPreparedNestedOrdinaryClass(d) ? nestedOrdinaryClassLexicalBindingName(d) : undefined`,
+so the syntax-only lexical name is shared by inventory candidacy and admission
+without either deriving from the other.
+
+**One marker, computed once, threaded never recomputed.** `planIrOverlay` in
+`src/codegen/index.ts` now constructs the ONE exact resolver at the top of the
+function (it previously built it at the plan boundary), calls
+`planIrNestedClassFieldCalls` over it, and derives one immutable
+`IrNestedClassFieldCallAdmission` via
+`computeIrNestedClassFieldCallAdmission` — all before `buildIrClassShapes`
+(`selection-candidate`), before `makeIrLocalClassExpressionResolver`, and
+before identity selection. That same object is then passed to the
+selection-candidate and lowering class-shape builds, local class-expression
+resolution, `planIrOverlayByIdentity`, and the class-body routing; it is
+carried on `IrIdentitySelection` and `IrOverlayIdentityPlan` and read from
+there by `ir-prepared-free-functions`, `class-bodies` and
+`ir-prepared-nested-executable-syntax`. No consumer re-runs a syntax predicate:
+each either finds the exact class in the marker or falls back to the unchanged
+strict predicate. `src/ir/from-ast.ts` requires the identity again at the
+lowering boundary by exact `classId` — the shape published in the class-shape
+sidecar under the binding name must be the shape of exactly that class
+expression — which is strictly stronger than the previous name-plus-presence
+check and closes the outer-class shadowing hole.
+
+The admission is minted only when the sidecar belongs to this exact inventory,
+EVERY call-bearing field carries a currently valid proof whose class, field,
+constructor, containing owner, source and `IrFuncRef` all rejoin the candidate,
+and the class resolves one lexical binding name. The selector then revalidates
+every admitted row against the live inventory — including that each field's
+callee is an exact active same-source top-level function terminal whose
+declaration name equals the retained compatibility name — and raises a typed
+planning invariant otherwise. The final combined R2/R3 prepared fixed point in
+`ir-prepared-free-functions.ts` treats each admitted class as one atom:
+constructor, every promoted body member, the containing terminal owner and
+every proved callee survive together or the whole class withdraws.
+
+**The first family excludes nested executables, and that exclusion is
+measured, not assumed.** On `origin/main` a CALL-FREE bounded nested class
+whose method contains `const f = (): number => this.p` is already a hard
+compile failure (`ir/from-ast: 'this' reference outside an instance method
+body`, owner outcome `invariant`). Admitting the field-call variant of that
+shape produced the identical failure, so
+`nestedOrdinaryClassBodyHasNestedExecutable` keeps it out; the control is
+pinned in the negative matrix and now matches `origin/main` exactly.
+
+Positive coverage on both **gc** and **standalone**, with the direct class and
+function emitters poisoned: implicit nested declaration, explicit constructor
+proving field initialization precedes constructor-body reads (`40100`, where
+every wrong ordering yields `0` or `NaN`), immutable nested class expression,
+two source-ordered call-bearing fields, the already-admitted F2 nested-method
+call, and the unchanged top-level initialized-field call. Component evidence
+attributes the call to the CLASS: `run`, `Box_new@` and `Box_get@` share one
+`prepared-component:` id naming both the `class-implicit-constructor` and the
+`class-instance-method` terminals, while the callee keeps its own single-unit
+component.
+
+With inlining OFF the emitted call edge is observable exactly once, in the
+constructor `_init` and nowhere else, with no `call_ref` / `call_indirect` /
+`__call_m_`. That assertion needed a non-foldable callee: with
+`seed(v) => v + 2` the whole initializer folds to `f64.const 42` even at
+`JS2WASM_IR_INLINE=0`, and emitted calls carry the numeric function index, not
+`call $seed` — a `call \$seed` regex matches nothing and the assertion would
+have passed vacuously. With inlining ON the optimizer may remove the edge;
+semantics, validity and the component evidence still hold.
+
+Negative source controls, each measured identical on `origin/main` and on this
+branch: member call, construction, tagged template, optional call, generic
+call, spread call, lexical shadowing, enclosing-frame capture, overloaded
+target, static field, heritage, dynamic computed field name, mutable
+class-expression binding, nested executable in a member, a callee removed by
+the final prepared fixed point, and a same-spelled cross-source target. Three
+of these carry PRE-EXISTING direct-path divergences from node unrelated to F4
+(spread evaluates to `NaN`/`0`, lexical shadowing resolves the outer `seed`,
+enclosing-frame capture yields `0`), so those rows are anchored to the direct
+compiler rather than to a node constant; the optional-call program is a
+pre-existing hard codegen failure on `origin/main` and is therefore proved at
+the marker level instead of the runtime level.
+
+The unpreparable-callee control proves all four required facts: successful
+direct execution, exact whole-WAT and whole-binary parity between
+`experimentalIR: false` and `experimentalIR: true`, typed `unsupported`
+outcomes for the owner and both class members, and a firing
+`JS2WASM_TEST_POISON_DIRECT_CLASS_BODY` proving the direct constructor emitter
+stayed live.
+
+Evidence:
+
+- New focused suites pass **59/59**: `issue-3522-nested-class-field-call-admission`
+  38/38 (both lanes) and `issue-3522-nested-class-field-call-marker` 21/21.
+- The marker suite covers the one-fact fail-closed mutations: forged
+  (non-planner) marker, wrong inventory, replaced class/constructor/containing/
+  source id, replaced class declaration object, replaced inventory candidate,
+  mismatched `SourceFile`, replaced field declaration / initializer call /
+  field-support unit id / callee unit id / callee compatibility name,
+  duplicated admitted row, missing field row, and construction without planner
+  authority.
+- The #3522 class-family matrix, run in batches on a 16 GB container: **19 of
+  20 files** run; `issue-3522-ir-object-method-call-ownership` OOMs the vitest
+  fork on `origin/main` and on this branch alike (also true of
+  `issue-3521-prepared-free-function-routing`), so it is an environment limit,
+  not a delta. Across the 19: **7 failures, all reproduced identically on
+  `origin/main` `81e54a98e`** — four nested-static, one accessor
+  optimized-binary bound, one cross-owner unsupported-console parity, one
+  captured object-method gc. **F4 introduces no new failure.**
+- Four pre-F4 boundary pins were retargeted, because they pinned exactly the
+  gate F4 opens: the three "field initializer CALLS a local function stays
+  direct" controls now use a MEMBER call (which no proof can reach), and
+  `issue-3522-ir-nested-class-ownership`'s "keeps the call-bearing nested field
+  family closed" became "prepares the call-bearing nested field family once".
+  The retargeted controls were verified to stay direct.
+- Adjacent suites pass: `issue-3520-ir-unit-identity`,
+  `issue-3520-planning-owner`, `issue-3520-lowering-plan-identity`,
+  `issue-3520-ir-first-identity` and `issue-3521-prepared-component-dependencies`
+  **96/96**; `class-expressions` and `nested-class-declarations` 4/4.
+- TypeScript 7 and TypeScript 5 no-emit, Prettier, Biome lint, IR layering (86
+  import lines, baseline 86), IR dialect, IR fallback, IR-only readiness
+  (verdict READY), IR adoption, codegen-fallback, oracle, coercion-site,
+  optimization-retirement, dead-export, LOC and function budgets all pass,
+  including the CI-base simulation (`LOC_GATE_BASE=origin/main`).
+- `check:ir-kind-neutrality` needed one evidence relocation caused by the +24
+  lines in `from-ast.ts`: `vec.new_fixed` moves from `from-ast.ts:4502` to
+  `:4526` and `vec.set`'s second evidence entry from `:380` to `:383`. No row,
+  verdict, placement, rationale or phase-two move changed; the diff is two
+  lines. The relocked baseline SHA-256 is
+  `64c8e68d5c56620872363b187c381255a1c2e989a5d09a217fd2e7c60df1bc1f`, and the
+  gate again reports 85 kinds: 55 neutral, 27 JS-dialect, 3 unresolved, 58 core
+  placements, 27 dialect placements.
+
+Production growth against `81e54a98e`, confined to the F4 ownership list:
+`src/ir/select-identity.ts` +156, `src/ir/identity.ts` +120,
+`src/ir/class-accessor-safety.ts` +59, `src/codegen/index.ts` +36,
+`src/codegen/ir-prepared-free-functions.ts` +25, `src/ir/from-ast.ts` +24,
+`src/ir/module-bindings.ts` +14, `src/codegen/ir-overlay-identity.ts` +11,
+`src/codegen/class-bodies.ts` +7, `src/codegen/ir-class-shapes.ts` +7,
+`src/codegen/ir-prepared-nested-executable-syntax.ts` +4 — net **+463 src
+LOC**. `src/codegen/ir-plain-implicit-constructors.ts` and
+`src/ir/prepared-component-dependencies.ts` remained audit-only: no test
+demonstrated a shared-API need across their boundaries. Two issue-local
+allowances are added with dated rationale — `src/ir/identity.ts` and
+`src/ir/select-identity.ts` cross the 1500-LOC god-file threshold for the first
+time, and `src/codegen/index.ts::planIrOverlay` grows 628 → 652 because the
+resolver, the proof and the marker must all be constructed there, before
+selection, and handed to five call sites in the same function. No budget
+baseline file was edited.
+
+F4 remains `in-progress` work under #3522. Not yet covered, and deliberately
+left specified rather than half-implemented: the wider families the spec
+already excludes (static fields, heritage, computed names, member/imported/
+cross-source targets), and the pre-existing nested-executable-in-a-member
+failure that F4 routes around rather than fixes — that shape is broken for the
+CALL-FREE bounded family too and belongs to its own slice.
+
+#### 2026-08-29 correction — accessors leave the first admitted family
+
+The first F4 push turned `quality` red on the accessor suite's
+"does not grow the optimized binary versus the direct control" row. The
+checkpoint above attributed that row to a container artifact. **That
+attribution was wrong, and the A/B that produced it was run but not read
+carefully enough**: reverting only the eleven F4 source files to
+`origin/main` and re-measuring gives, for all three fixtures in that row,
+byte-identical numbers and byte-identical claimed-unit sets —
+
+| fixture | rawDirect | rawPrepared | optDirect | optPrepared |
+| --- | --- | --- | --- | --- |
+| `METHOD_AND_GETTER` | 683 | 690 | 367 | 367 |
+| `GETTER_AND_SETTER` | 1081 | 1007 | 588 | **1007** |
+| `CLASS_EXPRESSION` | 4915 | 855 | 4915 | 382 |
+
+identical on `origin/main` `23bc3ddece` and on the F4 branch. So F4 did not
+grow that binary. The failing fixture is `GETTER_AND_SETTER`, an
+**accessor-only class with no field call**, which F4's admission never
+touches: `optPrepared == rawPrepared` because wasm-opt aborts on the prepared
+module (`Assertion failed: type.isStruct(), effects.h:650, writesStruct`) and
+`optimize` silently returns the unoptimized binary, while the direct module
+optimizes 1081 → 588.
+
+It reached CI only because the slice had MODIFIED that file. `test:changed-root`
+runs exactly the root test files a branch adds or modifies — `ci.yml`'s own
+comment states "Untouched root test files do NOT run at PR time" — and
+`tests/guard-suite.json`'s twenty entries contain no `issue-3522` file. So the
+row never runs on `main`, and `main` being green was never evidence about it.
+Touching the file armed the fix-on-touch ratchet against pre-existing rot the
+slice has no remit to repair.
+
+The resolution narrows F4 rather than the bound. **Accessor-bearing classes
+leave the first admitted family** (`nestedOrdinaryClassBodyHasAccessor`),
+for the same kind of measured reason as the nested-executable exclusion:
+
+1. the F4 plan's positive-coverage list contains no accessor case;
+2. F3 already inventories accessor field-call candidates and deliberately
+   leaves them unclaimed — its merged suite pins exactly that; and
+3. the accessor family's optimized lane is already broken on `origin/main`
+   independently of any field call, as the table above shows, so admitting its
+   field-call variant would add instances of a known-broken shape rather than
+   new compile-once coverage.
+
+With that narrowing, `tests/issue-3522-nested-class-accessor.test.ts` is
+restored to `origin/main` byte-for-byte: its
+"keeps a nested accessor class whose field initializer CALLS a local function
+direct" assertion is TRUE again under F4 (verified passing), the file is no
+longer selected by `changed-root`, and that lane returns to main's behaviour
+exactly. The accessor boundary is instead pinned where F4 owns it — three new
+controls in the F4 suites (two runtime, one marker-level, the last one
+asserting that F3 still inventories the candidate and mints its dormant proof
+while admission refuses).
+
+Evidence after the correction:
+
+- CI's gate reproduced exactly (`scripts/hooks/changed-root-tests.sh` against
+  `23bc3ddece`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`,
+  `JS2WASM_EVAL_ENGINE=interpreter`): **5 files selected, 113 tests, exit 0** —
+  `issue-3522-ir-nested-class-ownership` 7/7,
+  `issue-3522-nested-class-field-call-admission` 40/40,
+  `issue-3522-nested-class-field-call-marker` 22/22,
+  `issue-3522-nested-class-field` 24/24,
+  `issue-3522-nested-implicit-constructor` 20/20.
+- All fifteen ratchet/format/lint gates pass, plus the
+  `LOC_GATE_BASE=origin/main` simulation for both budgets, and TypeScript 7 and
+  5 no-emit.
+- Source growth is now `src/ir/select-identity.ts` +158,
+  `src/ir/identity.ts` +120, `src/ir/class-accessor-safety.ts` +88,
+  `src/codegen/index.ts` +36, `src/codegen/ir-prepared-free-functions.ts` +25,
+  `src/ir/from-ast.ts` +24, `src/ir/module-bindings.ts` +14,
+  `src/codegen/ir-overlay-identity.ts` +11, `src/codegen/class-bodies.ts` +7,
+  `src/codegen/ir-class-shapes.ts` +7,
+  `src/codegen/ir-prepared-nested-executable-syntax.ts` +4 — net **+494 src
+  LOC**, inside the same allowances.
+
+The other six failures the checkpoint above called pre-existing were re-audited
+against the CI lane, not just the container. None of them is in
+`tests/guard-suite.json`, and this branch modifies none of them, so
+`changed-root` does not select any of them and CI does not exercise them on
+this PR: four in `issue-3522-nested-class-static`, one in
+`issue-3522-ir-cross-owner-free-function`, one in
+`issue-3522-ir-object-method-ownership`. Each was additionally confirmed to
+fail with the eleven F4 source files reverted to `origin/main` in the same
+container — the correct instrument for "did this slice cause it", which
+answers no. Whether they would fail on a CI runner is a separate question this
+slice does not answer and does not need to.
+
+The remaining accessor-family defect is real and now explicitly out of scope:
+wasm-opt aborts on the prepared accessor module, and `optimize` swallows the
+abort and returns the unoptimized binary rather than reporting it. The silent
+fallback is the more dangerous half — a crashing optimizer currently reads as a
+successful compile. Both belong to the accessor slice, not to F4.

@@ -819,6 +819,20 @@ function buildCodegenOptions(
         `target: "${options.target}" does not use that cell bridge.`,
     );
   }
+  if (options.standaloneGlobalThisImport !== undefined) {
+    if (options.target !== "standalone") {
+      throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
+    }
+    if (!options.standaloneGlobalThisImport.module || !options.standaloneGlobalThisImport.name) {
+      throw new Error("Compile option standaloneGlobalThisImport requires non-empty module and name fields.");
+    }
+    if (!options.link?.includes(options.standaloneGlobalThisImport.module)) {
+      throw new Error("Compile option standaloneGlobalThisImport requires its provider module to be listed in link.");
+    }
+    if (options.standaloneGlobalThisImport.call !== undefined && !options.standaloneGlobalThisImport.call) {
+      throw new Error("Compile option standaloneGlobalThisImport.call must be non-empty when provided.");
+    }
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
@@ -837,6 +851,7 @@ function buildCodegenOptions(
     link: [...new Set(options.link ?? [])],
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
+    standaloneGlobalThisImport: options.standaloneGlobalThisImport,
     directEval: options.directEval,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,
@@ -1204,7 +1219,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   let sourceMapJson: string | undefined;
   try {
     if (emitSourceMap) {
-      const emitResult = emitBinaryWithSourceMap(mod);
+      const emitResult = profilePhase("emit-binary-source-map", () => emitBinaryWithSourceMap(mod));
       const sourceMap = generateSourceMap(emitResult.sourceMapEntries, input.sourcesContent);
       sourceMapJson = JSON.stringify(sourceMap);
       // Append sourceMappingURL custom section to the binary.
@@ -1217,7 +1232,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       combined.set(urlSectionBytes, emitResult.binary.length);
       binary = combined;
     } else {
-      binary = emitBinary(mod);
+      binary = profilePhase("emit-binary", () => emitBinary(mod));
     }
   } catch (e) {
     if (isWasmException(e)) throw e;
@@ -1264,9 +1279,11 @@ function runPipeline(input: PipelineInput): CompileResult {
   let wat = "";
   if (emitWatOutput) {
     try {
-      wat = emitWat(
-        mod,
-        options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+      wat = profilePhase("emit-wat", () =>
+        emitWat(
+          mod,
+          options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+        ),
       );
     } catch (e) {
       pushSourceAnchoredDiagnostic(
@@ -1279,7 +1296,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   }
 
   // Step 5: Generate .d.ts.
-  const dts = generateDts(entryAst, mod);
+  const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
   const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);

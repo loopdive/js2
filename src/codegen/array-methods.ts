@@ -15,6 +15,12 @@ import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
 import { emitF64HoleToUndef, f64HolesActive, f64HoleTestInstrs, f64HoleToUndefFor } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4491 T11)
+import {
+  arraySpeciesActive,
+  emitArraySpeciesCreate,
+  emitArraySpeciesResultSwap,
+  prepareArraySpeciesDeps,
+} from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
@@ -54,6 +60,8 @@ import {
   emitTaViewToVec,
   emitTaViewValidate,
   emitTaViewWriteBack,
+  pushTaViewEffectiveLen,
+  taViewDecode,
 } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
@@ -67,7 +75,7 @@ import {
   registerEmitBoundsCheckedArrayGet,
   VOID_RESULT,
 } from "./shared.js";
-import { emitIncludesSearchValue } from "./array-includes-search-value.js";
+import { emitIncludesSearchValue, emitIndexOfAbsentSearchValue } from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import {
@@ -1401,10 +1409,17 @@ function shouldWrapDynViewTwoArm(
     // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
     (!FIND_METHODS.has(methodName) || ctx.standalone) &&
     // (#2872) The static per-method impls the arms route to hard-require their
-    // search/index argument (`indexOf requires 1 argument` reportError). A
-    // 0-arg call (`ta.indexOf()` — legal JS, searches `undefined`) must NOT be
-    // promoted from the tolerant generic ladder into that hard CE — skip the
-    // wrap and keep the pre-#2872 lowering for it.
+    // search/index argument. A 0-arg call must NOT be promoted from the
+    // tolerant generic ladder into that hard CE — skip the wrap and keep the
+    // pre-#2872 lowering for it.
+    // (#5121 S1) The three search/index rejects this clause was written for are
+    // GONE — `includes` (#2872), `at` (#5095) and now `indexOf`/`lastIndexOf`
+    // all model an absent argument. The clause STAYS because the set above also
+    // holds the callback methods (`reduce`, `reduceRight`, `find`, …), whose
+    // typed impls still hard-require their callback; narrowing it to just those
+    // would move `ta.indexOf()` onto a different lowering, which is a lowering
+    // change with its own blast radius and no defect behind it. Deliberately
+    // left for whoever needs it — same call #5095 made.
     (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
     ts.isIdentifier(propAccess.expression) &&
     dynViewReceiverIsExternref(fctx, propAccess.expression.text)
@@ -2011,6 +2026,18 @@ export function compileArrayMethodCall(
       (actualType as { typeIdx: number }).typeIdx !== vecTypeIdx
     ) {
       const actualVecIdx = (actualType as { typeIdx: number }).typeIdx;
+      // A buffer-backed TypedArray must keep `subarray` on the SAME byte buffer.
+      // Materializing it into the ordinary element vec first (the generic method
+      // bridge below) makes the subview alias that temporary copy and resets its
+      // byteOffset to zero. Build a sibling `$__ta_view` directly instead.
+      if (
+        methodName === "subarray" &&
+        isTaViewTypeIdx(ctx, actualVecIdx) &&
+        ts.isIdentifier(receiverExpr) &&
+        fctx.localMap.has(receiverExpr.text)
+      ) {
+        return compileTaViewSubarray(ctx, fctx, propAccess, callExpr, actualVecIdx);
+      }
       // (#3054 B1 Option A) `$__ta_view` receiver: materialize into the native
       // element-typed vec (`vecTypeIdx`, from `resolveArrayInfo`) and rebind the
       // identifier so the method's receiver re-compile loads the copy instead of
@@ -3267,11 +3294,6 @@ function compileArrayIndexOf(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  if (callExpr.arguments.length < 1) {
-    reportError(ctx, callExpr, "indexOf requires 1 argument");
-    return null;
-  }
-
   const vecTmp = allocLocal(fctx, `__arr_iof_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_iof_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_iof_i_${fctx.locals.length}`, { kind: "i32" });
@@ -3316,8 +3338,25 @@ function compileArrayIndexOf(
   });
   fctx.body.push({ op: "local.set", index: effLenTmp });
 
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, elemType);
-  fctx.body.push({ op: "local.set", index: valTmp });
+  // (#5121 S1) `searchElement` is an ORDINARY parameter, so `a.indexOf()` is
+  // legal JS and searches for `undefined` (§23.1.3.13 step 1). Rejecting it (an
+  // `indexOf requires 1 argument` reportError here) returned null, whose
+  // diagnostic the caller SWALLOWS — `compile()` reports `success: true` with an
+  // EMPTY errors array — so the call collapsed into the caller's degraded
+  // fallback and `[10,20,30].indexOf()` answered `0` instead of `-1`. Identical
+  // mechanism to #5095 (`at()`), one method over; the difference is that the
+  // default is a search VALUE compared with STRICT equality, not an index.
+  const searchArg = callExpr.arguments[0];
+  if (searchArg !== undefined) {
+    compileExpression(ctx, fctx, searchArg, elemType);
+    fctx.body.push({ op: "local.set", index: valTmp });
+  } else if (emitIndexOfAbsentSearchValue(ctx, fctx, valType, valTmp)) {
+    // No value of this element type can strictly-equal `undefined` ⇒ -1 with no
+    // scan. A zero-argument call has no `fromIndex`, so nothing is left to
+    // evaluate for side effects (the receiver is already in `vecTmp`).
+    fctx.body.push(ctx.fast ? { op: "i32.const", value: -1 } : { op: "f64.const", value: -1 });
+    return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  }
 
   // fromIndex (optional 2nd arg, default 0)
   if (callExpr.arguments.length >= 2) {
@@ -4837,6 +4876,21 @@ export function compileArraySliceFromVecLocal(
   // represents. So copy only the in-backing prefix (guarded: a start past the
   // backing must skip the copy entirely — array.copy traps on an out-of-backing
   // srcOffset even at count 0).
+  // (#5145) §23.1.3.25 step 8 — `A = ArraySpeciesCreate(O, count)`, emitted
+  // BEFORE the element copy so an abrupt species completion beats it. Null
+  // sentinel ⇒ the `struct.new $vec` below is the result, unchanged.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: vecLocal }, { op: "extern.convert_any" }],
+          [{ op: "local.get", index: sliceLenTmp }, { op: "f64.convert_i32_s" }],
+        );
+
   emitBackingClampedArrayCopy(ctx, fctx, arrTypeIdx, newData, null, dataTmp, startLocal, sliceLenTmp);
 
   // struct.new vec { sliceLen, newData }
@@ -4844,6 +4898,12 @@ export function compileArraySliceFromVecLocal(
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: vecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 
@@ -5052,7 +5112,12 @@ function compileArrayConcat(
   // gate, and the same argument, as `array-join-proto-hole.ts` (#4491 lane J)
   // uses for `join`. Flag clear ⇒ not reached ⇒ bytes unchanged.
   // See array-concat-carrier.ts; the SLOT typers ask that same predicate.
-  if (concatMustConsultPrototypeChain(ctx)) {
+  // (#5145) The same argument applies to `ArraySpeciesCreate`: every path below
+  // mints a raw `struct.new $vec`, so a module that can observe `@@species`
+  // must take the spec loop (which carries the species prologue) — including
+  // the 0-arg shallow-copy shortcut, which `concat/create-species*.js` exercises
+  // with a bare `a.concat()`.
+  if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx)) {
     const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
     if (spec !== undefined) return spec;
   }
@@ -5888,14 +5953,37 @@ function compileArraySplice(
 ): ValType | null {
   // 0-arg splice: no mutation, return empty array
   if (callExpr.arguments.length === 0) {
-    // Still need to evaluate receiver for side effects
-    compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "drop" });
+    // Still need to evaluate receiver for side effects. (#5145) It is also the
+    // ArraySpeciesCreate receiver: `splice/create-species-non-ctor.js` and its
+    // siblings call `a.splice()` with NO arguments and still expect the §23.1.3.29
+    // step-11 `ArraySpeciesCreate(O, 0)` to run (and throw).
+    const recvType = compileExpression(ctx, fctx, propAccess.expression);
+    const zeroArgSpeciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+    let zeroArgSpeciesLocal: number | undefined;
+    if (zeroArgSpeciesDeps !== undefined && (recvType?.kind === "ref" || recvType?.kind === "ref_null")) {
+      const recvTmp = allocLocal(fctx, `__arr_spl0_recv_${fctx.locals.length}`, recvType);
+      fctx.body.push({ op: "local.set", index: recvTmp });
+      zeroArgSpeciesLocal = emitArraySpeciesCreate(
+        ctx,
+        fctx,
+        zeroArgSpeciesDeps,
+        [{ op: "local.get", index: recvTmp }, { op: "extern.convert_any" }],
+        [{ op: "f64.const", value: 0 }],
+      );
+    } else {
+      fctx.body.push({ op: "drop" });
+    }
     // Return empty vec struct: { 0, array.new_default(0) }
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
     fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    if (zeroArgSpeciesDeps !== undefined && zeroArgSpeciesLocal !== undefined) {
+      return emitArraySpeciesResultSwap(ctx, fctx, zeroArgSpeciesDeps, zeroArgSpeciesLocal, {
+        kind: "ref_null",
+        typeIdx: vecTypeIdx,
+      });
+    }
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
@@ -5967,6 +6055,20 @@ function compileArraySplice(
     ],
   });
   emitClampNonNeg(fctx, delCountTmp);
+
+  // (#5145) §23.1.3.29 step 11 — `A = ArraySpeciesCreate(O, actualDeleteCount)`,
+  // before any element is moved.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: vecTmp }, { op: "extern.convert_any" }],
+          [{ op: "local.get", index: delCountTmp }, { op: "f64.convert_i32_s" }],
+        );
 
   // Create deleted elements backing array and copy
   fctx.body.push({ op: "local.get", index: delCountTmp });
@@ -6066,6 +6168,12 @@ function compileArraySplice(
   fctx.body.push({ op: "local.get", index: delData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: vecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 
@@ -7043,6 +7151,19 @@ function compileArrayFilter(
     typeIdx: resultArrTypeIdx,
   });
   const boundTmp = overlay ? loop.logicalLenTmp : loop.lenTmp;
+  // (#5145) §23.1.3.7 step 5 — `A = ArraySpeciesCreate(O, 0)`. Zero, not `len`:
+  // `filter/create-species.js` asserts `args[0] === 0`.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: loop.vecTmp }, { op: "extern.convert_any" }],
+          [{ op: "f64.const", value: 0 }],
+        );
   fctx.body.push({ op: "local.get", index: boundTmp });
   fctx.body.push({ op: "array.new_default", typeIdx: resultArrTypeIdx });
   fctx.body.push({ op: "local.set", index: resData });
@@ -7095,6 +7216,12 @@ function compileArrayFilter(
   fctx.body.push({ op: "local.get", index: resData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: resultVecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
@@ -7201,6 +7328,21 @@ function compileArrayMap(
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "map", receiverIsExternref);
 
+  // (#5145) §23.1.3.19 step 5 — `A = ArraySpeciesCreate(O, len)`, BEFORE the
+  // callback loop: `map/create-species-abrupt.js` and `-non-ctor.js` both
+  // assert `callCount === 0` on an abrupt species completion.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: loop.vecTmp }, { op: "extern.convert_any" }],
+          [{ op: "local.get", index: loop.logicalLenTmp }, { op: "f64.convert_i32_s" }],
+        );
+
   const resData = allocLocal(fctx, `__arr_map_rd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: mapArrTypeIdx });
 
   // Allocate result array with the LOGICAL length (§23.1.3.19 — map's result is
@@ -7262,6 +7404,12 @@ function compileArrayMap(
   fctx.body.push({ op: "local.get", index: resData });
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: mapVecTypeIdx });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
+      kind: "ref_null",
+      typeIdx: mapVecTypeIdx,
+    });
+  }
   return { kind: "ref_null", typeIdx: mapVecTypeIdx };
 }
 
@@ -8814,6 +8962,41 @@ function tryCompileComparatorSort(
  * arr.fill(value, start?, end?) -> fill elements with value, return same vec ref.
  * Mutates the array in place.
  */
+/**
+ * (#5145) §7.1.5 ToIntegerOrInfinity → §7.1.4 ToNumber step 3: a **Symbol** in
+ * an index-argument position throws a TypeError. `fill`/`copyWithin` compile
+ * their index args in `{kind: "f64"}` context, where a Symbol (lowered to an
+ * i32 id) coerces SILENTLY — measured: `[1,2,3].fill(0, Symbol())` did not
+ * throw. Mirrors `emitSymbolToNumberThrow` (`expressions/unary.ts`), including
+ * its oracle-only type question.
+ *
+ * Emits the receiver + every argument (each dropped) before the throw so the
+ * observable evaluation order of a normal call is preserved, then the throw.
+ * Returns true when it fired; a dynamic externref Symbol keeps the existing
+ * silent path (the rarer shape — every ES2015 file passes `Symbol()` literally).
+ */
+function emitSymbolIndexArgThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  indexArgPositions: readonly number[],
+): boolean {
+  const hasSymbolIndexArg = indexArgPositions.some((position) => {
+    const arg = callExpr.arguments[position];
+    return arg !== undefined && ctx.oracle.staticJsTypeOf(arg) === "symbol";
+  });
+  if (!hasSymbolIndexArg) return false;
+  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+  if (receiverType !== null) fctx.body.push({ op: "drop" });
+  for (const arg of callExpr.arguments) {
+    const argType = compileExpression(ctx, fctx, arg);
+    if (argType !== null) fctx.body.push({ op: "drop" });
+  }
+  emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+  return true;
+}
+
 function compileArrayFill(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -8826,6 +9009,11 @@ function compileArrayFill(
   if (callExpr.arguments.length < 1) {
     reportError(ctx, callExpr, "fill requires at least 1 argument");
     return null;
+  }
+  // fill(value, start, end) — positions 1 and 2 are the index args.
+  if (emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [1, 2])) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
   const vecTmp = allocLocal(fctx, `__arr_fill_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -9176,6 +9364,102 @@ function numericElemConvert(from: ValType, to: ValType): Instr[] {
 }
 
 /**
+ * `TypedArray.prototype.subarray` for a byte-backed `$__ta_view`.
+ *
+ * Unlike the ordinary native-vec `$__subview` path below, this retains the
+ * viewed ArrayBuffer identity, accumulates the parent's byte offset, and copies
+ * the runtime TypedArray kind tag. Reads and writes therefore keep aliasing the
+ * parent and sibling DataView/TypedArray views even after the result passes
+ * through an `any` slot.
+ */
+function compileTaViewSubarray(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  taViewTypeIdx: number,
+): ValType | null {
+  const desc = taViewDecode(ctx, taViewTypeIdx);
+  if (!desc) return null;
+
+  const viewLocal = allocLocal(fctx, `__tav_sub_recv_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: taViewTypeIdx,
+  });
+  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+  if (receiverType?.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: taViewTypeIdx });
+  } else if (
+    receiverType &&
+    (receiverType.kind === "ref" || receiverType.kind === "ref_null") &&
+    receiverType.typeIdx !== taViewTypeIdx
+  ) {
+    fctx.body.push({ op: "ref.cast", typeIdx: taViewTypeIdx });
+  }
+  fctx.body.push({ op: "local.set", index: viewLocal });
+
+  const lenLocal = allocLocal(fctx, `__tav_sub_len_${fctx.locals.length}`, { kind: "i32" });
+  pushTaViewEffectiveLen(ctx, fctx, viewLocal, taViewTypeIdx);
+  fctx.body.push({ op: "local.set", index: lenLocal });
+
+  const beginLocal = allocLocal(fctx, `__tav_sub_begin_${fctx.locals.length}`, { kind: "i32" });
+  if (callExpr.arguments.length >= 1) {
+    const beginType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
+    if (beginType && beginType.kind !== "i32") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  fctx.body.push({ op: "local.set", index: beginLocal });
+  emitClampIndex(fctx, beginLocal, lenLocal);
+
+  const endLocal = allocLocal(fctx, `__tav_sub_end_${fctx.locals.length}`, { kind: "i32" });
+  if (callExpr.arguments.length >= 2) {
+    const endType = compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
+    if (endType && endType.kind !== "i32") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: endLocal });
+    emitClampIndex(fctx, endLocal, lenLocal);
+  } else {
+    fctx.body.push({ op: "local.get", index: lenLocal }, { op: "local.set", index: endLocal });
+  }
+
+  // length = max(end - begin, 0)
+  const resultLenLocal = allocLocal(fctx, `__tav_sub_result_len_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push(
+    { op: "local.get", index: endLocal },
+    { op: "local.get", index: beginLocal },
+    { op: "i32.sub" },
+    { op: "local.tee", index: resultLenLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: resultLenLocal },
+      ],
+    },
+  );
+
+  fctx.body.push(
+    { op: "local.get", index: resultLenLocal },
+    { op: "local.get", index: viewLocal },
+    { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 }, // shared buffer
+    { op: "local.get", index: viewLocal },
+    { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 }, // parent byteOffset
+    { op: "local.get", index: beginLocal },
+  );
+  if (desc.bytes !== 1) fctx.body.push({ op: "i32.const", value: desc.bytes }, { op: "i32.mul" });
+  fctx.body.push(
+    { op: "i32.add" },
+    { op: "local.get", index: viewLocal },
+    { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 3 }, // runtime kind
+    { op: "struct.new", typeIdx: taViewTypeIdx },
+  );
+  return { kind: "ref_null", typeIdx: taViewTypeIdx };
+}
+
+/**
  * TypedArray.prototype.subarray(begin?, end?) (#1664 / #2357 / #47).
  *
  * In standalone / WASI mode this returns a `$__subview` that SHARES the parent's
@@ -9324,6 +9608,11 @@ function compileArrayCopyWithin(
     reportError(ctx, callExpr, "copyWithin requires at least 2 arguments (target, start)");
     return null;
   }
+  // copyWithin(target, start, end) — all three are index args.
+  if (emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [0, 1, 2])) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "ref_null", typeIdx: vecTypeIdx };
+  }
 
   const vecTmp = allocLocal(fctx, `__arr_cw_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_cw_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
@@ -9440,11 +9729,6 @@ function compileArrayLastIndexOf(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  if (callExpr.arguments.length < 1) {
-    reportError(ctx, callExpr, "lastIndexOf requires 1 argument");
-    return null;
-  }
-
   const vecTmp = allocLocal(fctx, `__arr_liof_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_liof_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_liof_i_${fctx.locals.length}`, { kind: "i32" });
@@ -9560,9 +9844,17 @@ function compileArrayLastIndexOf(
     ],
   });
 
-  // Compile search value
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, valType);
-  fctx.body.push({ op: "local.set", index: valTmp });
+  // Compile search value. (#5121 S1) Absent ⇒ search for `undefined`
+  // (§23.1.3.20 step 1) — see the twin comment in `compileArrayIndexOf` for the
+  // swallowed-diagnostic collapse this replaces.
+  const liofSearchArg = callExpr.arguments[0];
+  if (liofSearchArg !== undefined) {
+    compileExpression(ctx, fctx, liofSearchArg, valType);
+    fctx.body.push({ op: "local.set", index: valTmp });
+  } else if (emitIndexOfAbsentSearchValue(ctx, fctx, valType, valTmp)) {
+    fctx.body.push(ctx.fast ? { op: "i32.const", value: -1 } : { op: "f64.const", value: -1 });
+    return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  }
 
   // (#2648) View-name-driven signedness for the packed i8/i16 element load.
   const getOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, propAccess.expression));

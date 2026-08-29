@@ -258,7 +258,15 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
       (ts.isPrefixUnaryExpression(node) &&
         (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) ||
       ts.isPostfixUnaryExpression(node) ||
-      (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind))
+      (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) ||
+      // (#5140) `in` / `instanceof` are METHOD-INVOKING relational operators, not
+      // inert comparisons: `k in proxy` runs the Proxy `has` trap (§10.5.7) and
+      // `v instanceof C` runs `C[Symbol.hasInstance]` (§7.3.20). A bare
+      // `"attr" in p;` statement therefore observably runs user code, and
+      // dropping it made every `Proxy/has/call-*` test a vacuous pass.
+      (ts.isBinaryExpression(node) &&
+        (node.operatorToken.kind === ts.SyntaxKind.InKeyword ||
+          node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword))
     ) {
       found = true;
       return;

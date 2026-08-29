@@ -27,6 +27,7 @@ import {
   shiftLateImportIndices,
 } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
+import { tryEmitArrayProtoIteratorDelete } from "./expressions/proto-override.js";
 import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js";
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
 import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
@@ -57,6 +58,8 @@ import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
+import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
+import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -381,12 +384,25 @@ export function compileDeleteExpression(
   // on the super base is enforced here, when the delete is evaluated — not
   // before — so a null / uninitialized super base still reaches this throw
   // (super-property-null-base.js, super-property-uninitialized-this.js).
+  // (#5139) `delete Array.prototype[Symbol.iterator]` has no compiled landing
+  // spot (the LHS is a builtin with no struct), so it used to be a silent no-op
+  // and every later array destructuring kept iterating the backing store. Record
+  // the removal in a flag global instead; the GetIterator sites read it and
+  // throw the §7.4.2 TypeError.
+  if (tryEmitArrayProtoIteratorDelete(ctx, fctx, expr)) return { kind: "i32" };
+
   if (
     (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) &&
     inner.expression.kind === ts.SyntaxKind.SuperKeyword
   ) {
     emitDeleteThrow(ctx, fctx, "ReferenceError", "'super' property cannot be deleted");
     return { kind: "i32" };
+  }
+  // (#5154 cluster A) `delete Array.prototype[Symbol.iterator]` must make later
+  // array iteration throw §7.4.2's TypeError. Record the tombstone; the delete
+  // itself keeps its normal lowering below.
+  if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
+    maybeRecordArrayProtoIteratorTombstone(ctx, inner);
   }
   if (ts.isIdentifier(inner)) {
     // (#2663 Slice 3) `delete name` inside a dynamic `with`: if the with-object
@@ -1902,6 +1918,12 @@ export function compileTypeofExpression(
     if (ts.isIdentifier(bareTdz) && fctx.boxedTdzFlags?.has(bareTdz.text)) {
       forceRuntimeTypeof = true;
     }
+    // An explicit ambient variable describes a host capability, not a value
+    // the checker can prove is present. Read it and classify the runtime value;
+    // in particular, an optional ambient may be absent and answer "undefined".
+    if (ts.isIdentifier(bareTdz) && identifierHasExplicitHostAmbientValueDeclaration(ctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
     // A script global synchronized around runtime eval is mutable in the JS
     // sense, irrespective of the checker's flow type at this source position.
     // Eval may have replaced `var initial` (statically `undefined`) with an
@@ -2247,6 +2269,13 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
+  if (
+    staticTypeof !== null &&
+    ts.isIdentifier(guardOperand) &&
+    identifierHasExplicitHostAmbientValueDeclaration(ctx, guardOperand)
+  ) {
+    staticTypeof = null;
+  }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
@@ -2429,7 +2458,9 @@ export function compileTypeofComparison(
   // Route through compileExpression, whose identifier path derefs the cell.
   if (ts.isIdentifier(operand)) {
     const localIdx =
-      fctx.boxedCaptures?.has(operand.text) || runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
+      identifierHasExplicitHostAmbientValueDeclaration(ctx, operand) ||
+      fctx.boxedCaptures?.has(operand.text) ||
+      runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
         ? undefined
         : fctx.localMap.get(operand.text);
     if (localIdx !== undefined) {

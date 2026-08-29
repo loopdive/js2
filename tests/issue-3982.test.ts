@@ -800,16 +800,10 @@ describe("ReactDOM upstream-suite compiler blockers (#3982)", () => {
     expect((instance.exports.probe as () => number)()).toBe(42);
   });
 
-  // (#3982, still open) `captureSourceSlot` (#4134) resolves a cross-frame
-  // capture by NAME. When the lifted caller declares its own local with the
-  // same text as the capture — `var root = 1` here, shadowing the outer
-  // `root = 40` that the sibling `updateOuterRoot` captures — a name lookup
-  // cannot tell the two bindings apart, so the emitted `local.get` reads the
-  // caller's own f64 slot and the module fails validation
-  // (`struct.new[0] expected type f64, found local.get of type externref`).
-  // Closing this needs capture slots keyed on the OWNING frame, not the name.
-  // Kept and skipped rather than deleted; see plan/issues/3982-*.md.
-  it.skip("threads a sibling capture past a same-named caller local", async () => {
+  // A stable leading capture slot forwards the outer `root` cell while the
+  // caller's name-keyed binding metadata continues to describe its own local
+  // `var root`. The two bindings share spelling but not storage or identity.
+  it("threads a sibling capture past a same-named caller local", async () => {
     const result = await compile(
       `
         function clientModule() {

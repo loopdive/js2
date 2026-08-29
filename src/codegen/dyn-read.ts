@@ -337,17 +337,40 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
     // `ctx.closureInfoByTypeIdx` (walking each to its root struct) to avoid a
     // circular import on index.ts's private `collectClosureBaseWrapperTypeIdxs`.
     // (#2896) Standalone: a builtin function value carries its spec arity in
-    // the finalize-filled `__builtinfn_get_meta` native — ask it first; a null
-    // result (plain user closure, or a builtin fn whose `length` was deleted →
-    // inherited Function.prototype.length === 0) keeps the prior flat 0.
+    // the finalize-filled `__builtinfn_get_meta` native — ask it first. When
+    // that metadata was deleted, consult the ordinary closure-property bag
+    // before falling back to Function.prototype.length === 0. This matters for
+    // dynamically registered host functions: they delete the configurable
+    // intrinsic metadata and define an exact own `length` in the bag.
     const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
     const closureArmThen = (): Instr[] => {
-      if (bfnGetMetaIdx === undefined) {
-        // arity fallback: box_number(0.0) — matches the prior numeric path.
+      const ownLengthOrZero = (): Instr[] => {
+        if (isUndefIdx === undefined) {
+          return [
+            { op: "f64.const", value: 0 },
+            { op: "call", funcIdx: boxNumIdx },
+          ];
+        }
+        const ownTmp = allocLocal(fctx, `__dg_fnlen_${fctx.locals.length}`, { kind: "externref" });
         return [
-          { op: "f64.const", value: 0 },
-          { op: "call", funcIdx: boxNumIdx },
+          { op: "local.get", index: recvTmp },
+          ...stringConstantExternrefInstrs(ctx, keyName),
+          { op: "call", funcIdx: finalExternGetIdx },
+          { op: "local.tee", index: ownTmp },
+          { op: "call", funcIdx: isUndefIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } as ValType },
+            then: [
+              { op: "f64.const", value: 0 },
+              { op: "call", funcIdx: boxNumIdx },
+            ],
+            else: [{ op: "local.get", index: ownTmp }],
+          },
         ];
+      };
+      if (bfnGetMetaIdx === undefined) {
+        return ownLengthOrZero();
       }
       const metaTmp = allocLocal(fctx, `__dg_bfnmeta_${fctx.locals.length}`, { kind: "externref" });
       return [
@@ -359,10 +382,7 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: [
-            { op: "f64.const", value: 0 },
-            { op: "call", funcIdx: boxNumIdx },
-          ],
+          then: ownLengthOrZero(),
           else: [{ op: "local.get", index: metaTmp }],
         },
       ];

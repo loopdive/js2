@@ -59,6 +59,13 @@ import type {
 } from "./backend/handles.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import {
+  emitWasmInt32Coercion,
+  emitWasmMathClz32,
+  emitWasmMathImul,
+  type WasmInt32CoercionScratch,
+} from "./backend/wasm-int32-coercion.js";
+import { emitWasmMathMinMax, type WasmMathMinMaxScratch } from "./backend/wasm-math-minmax.js";
+import {
   type AllocSiteId,
   type IrBlock,
   type IrClassShape,
@@ -69,6 +76,7 @@ import {
   type IrGlobalRef,
   type IrInstr,
   type IrInstrIntrinsic,
+  type IrIntrinsicBackendComposite,
   type IrLabelId,
   type IrObjectShape,
   type IrStringLengthProvider,
@@ -323,7 +331,7 @@ export interface IrLowerResolver {
   /**
    * #1373b Phase C scaffolding — resolve (and lazily register) the
    * standalone `$Promise` WasmGC struct type. The struct's layout is
-   * `{ state: i32, value: externref, callbacks: externref }` (see
+   * `{ state: i32, value: externref, callbacks: externref, $bag: externref }` (see
    * `src/codegen/async-scheduler.ts` for the canonical registration).
    *
    * Returns the struct's typeIdx. Used by IR's `async.return`,
@@ -392,6 +400,7 @@ function emitPreparedIntrinsic<S>(
   emitter: BackendEmitter<S>,
   resolver: IrLowerResolver,
   emitValue: (value: IrValueId, out: S) => void,
+  emitComposite: (operation: IrIntrinsicBackendComposite, out: S) => void,
   funcName: string,
 ): void {
   for (const arg of instr.args) emitValue(arg, out);
@@ -402,8 +411,29 @@ function emitPreparedIntrinsic<S>(
       `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
     );
   }
-  if (instr.provider.kind === "backend-op") emitter.emitUnary(instr.provider.opcode, out);
-  else emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
+  if (instr.provider.kind === "backend-op") {
+    emitter.emitUnary(instr.provider.opcode, out);
+    return;
+  }
+  if (instr.provider.kind === "backend-sequence") {
+    switch (instr.provider.sequence) {
+      case "f64.fround":
+        emitter.emitNumericConversion("f32.demote_f64", out);
+        emitter.emitNumericConversion("f64.promote_f32", out);
+        return;
+    }
+    const sequence: never = instr.provider.sequence;
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: semantic intrinsic ${instr.id} has unsupported backend sequence ${String(sequence)} (${funcName})`,
+    );
+  }
+  if (instr.provider.kind === "backend-composite") {
+    emitComposite(instr.provider.operation, out);
+    return;
+  }
+  emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
 }
 
 /**
@@ -1085,6 +1115,7 @@ export function lowerIrFunctionBody<S, Slot>(
   let jsBitwiseRhsIdxF64: number | null = null;
   let jsBitwiseRhsIdxI32: number | null = null;
   let jsBitwiseTmpIdx: number | null = null;
+  let mathMinMaxScratch: WasmMathMinMaxScratch | null = null;
   let dateSnapshotScratch: { timestamp: number; packed: number; year: number } | null = null;
   const ensureDateSnapshotScratch = (): { timestamp: number; packed: number; year: number } => {
     if (dateSnapshotScratch === null) {
@@ -1146,8 +1177,8 @@ export function lowerIrFunctionBody<S, Slot>(
   // (#3739) Lazily-allocated i64 scratch pool for `emitJsToInt32`'s fast
   // bit-manipulation path (WasmGC/linear only — see that function). Kept
   // separate from `jsBitwiseTmpIdx` (f64) since the fast path doesn't use it.
-  let jsBitwiseI64Scratch: { bits: number; e: number; significand: number; magnitude: number } | null = null;
-  const ensureJsBitwiseI64Scratch = (): { bits: number; e: number; significand: number; magnitude: number } => {
+  let jsBitwiseI64Scratch: WasmInt32CoercionScratch | null = null;
+  const ensureJsBitwiseI64Scratch = (): WasmInt32CoercionScratch => {
     if (jsBitwiseI64Scratch === null) {
       const alloc = (name: string): number => {
         const idx = func.params.length + locals.length;
@@ -1157,22 +1188,25 @@ export function lowerIrFunctionBody<S, Slot>(
       };
       jsBitwiseI64Scratch = {
         bits: alloc("$js_bitwise_i64_bits"),
-        e: alloc("$js_bitwise_i64_e"),
+        exponent: alloc("$js_bitwise_i64_e"),
         significand: alloc("$js_bitwise_i64_significand"),
         magnitude: alloc("$js_bitwise_i64_magnitude"),
       };
     }
     return jsBitwiseI64Scratch;
   };
+  const ensureJsBitwiseRhsI32 = (): number => {
+    if (jsBitwiseRhsIdxI32 === null) {
+      jsBitwiseRhsIdxI32 = func.params.length + locals.length;
+      const type: ValType = { kind: "i32" };
+      locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
+    }
+    return jsBitwiseRhsIdxI32;
+  };
   const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
     const tmp = ensureJsBitwiseTmp();
     if (rhsIsI32) {
-      if (jsBitwiseRhsIdxI32 === null) {
-        jsBitwiseRhsIdxI32 = func.params.length + locals.length;
-        const type: ValType = { kind: "i32" };
-        locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
-      }
-      return { rhs: jsBitwiseRhsIdxI32, tmp };
+      return { rhs: ensureJsBitwiseRhsI32(), tmp };
     }
     if (jsBitwiseRhsIdxF64 === null) {
       jsBitwiseRhsIdxF64 = func.params.length + locals.length;
@@ -1180,6 +1214,21 @@ export function lowerIrFunctionBody<S, Slot>(
       locals.push({ name: "$js_bitwise_rhs", type, logicalType: { kind: "val", val: type } });
     }
     return { rhs: jsBitwiseRhsIdxF64, tmp };
+  };
+  const ensureMathMinMaxScratch = (): WasmMathMinMaxScratch => {
+    if (mathMinMaxScratch === null) {
+      const alloc = (name: string): number => {
+        const idx = func.params.length + locals.length;
+        const type: ValType = { kind: "f64" };
+        locals.push({ name, type, logicalType: { kind: "val", val: type } });
+        return idx;
+      };
+      mathMinMaxScratch = {
+        left: alloc("$math_minmax_left"),
+        right: alloc("$math_minmax_right"),
+      };
+    }
+    return mathMinMaxScratch;
   };
   const dynamicScratch = createIrDynamicScratchLocals(func.params.length, locals);
 
@@ -1585,7 +1634,48 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "intrinsic": {
-        emitPreparedIntrinsic(instr, out, emitter, resolver, emitValue, func.name);
+        emitPreparedIntrinsic(
+          instr,
+          out,
+          emitter,
+          resolver,
+          emitValue,
+          (operation, compositeOut) => {
+            if (!Array.isArray(compositeOut)) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "lower",
+                `ir/lower: backend ${emitter.backend} cannot emit composite ${operation} (${func.name})`,
+              );
+            }
+            switch (operation) {
+              case "math.clz32":
+                emitWasmMathClz32(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
+                return;
+              case "math.imul":
+                emitWasmMathImul(compositeOut as Instr[], ensureJsBitwiseI64Scratch(), ensureJsBitwiseRhsI32());
+                return;
+              case "math.max":
+              case "math.min":
+                emitWasmMathMinMax(
+                  compositeOut as Instr[],
+                  ensureMathMinMaxScratch(),
+                  operation === "math.max" ? "f64.max" : "f64.min",
+                );
+                return;
+              case "to-uint32":
+                emitWasmInt32Coercion(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
+                return;
+            }
+            const exhaustive: never = operation;
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "lower",
+              `ir/lower: unsupported backend composite ${String(exhaustive)} (${func.name})`,
+            );
+          },
+          func.name,
+        );
         return;
       }
       case "global.get":
@@ -4342,81 +4432,11 @@ function emitJsToInt32<S>(
   emitter: BackendEmitter<S>,
   out: S,
   tmpLocalIdx: number,
-  allocI64Scratch: () => { bits: number; e: number; significand: number; magnitude: number },
+  allocI64Scratch: () => WasmInt32CoercionScratch,
 ): void {
   if (Array.isArray(out)) {
     const wasmOut = out as Instr[];
-    const { bits, e, significand, magnitude } = allocI64Scratch();
-    wasmOut.push({ op: "i64.reinterpret_f64" }, { op: "local.set", index: bits });
-    wasmOut.push(
-      { op: "local.get", index: bits },
-      { op: "i64.const", value: 52n },
-      { op: "i64.shr_u" },
-      { op: "i64.const", value: 0x7ffn },
-      { op: "i64.and" },
-      { op: "i64.const", value: 1023n },
-      { op: "i64.sub" },
-      { op: "local.set", index: e },
-    );
-    wasmOut.push(
-      { op: "local.get", index: bits },
-      { op: "i64.const", value: 0xfffffffffffffn },
-      { op: "i64.and" },
-      { op: "i64.const", value: 0x10000000000000n },
-      { op: "i64.or" },
-      { op: "local.set", index: significand },
-    );
-    const shiftLeft: Instr[] = [
-      { op: "local.get", index: significand },
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 52n },
-      { op: "i64.sub" },
-      { op: "i64.shl" },
-    ];
-    const shiftRight: Instr[] = [
-      { op: "local.get", index: significand },
-      { op: "i64.const", value: 52n },
-      { op: "local.get", index: e },
-      { op: "i64.sub" },
-      { op: "i64.shr_u" },
-    ];
-    wasmOut.push(
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 0n },
-      { op: "i64.ge_s" },
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 83n },
-      { op: "i64.le_s" },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i64" } },
-        then: [
-          { op: "local.get", index: e },
-          { op: "i64.const", value: 52n },
-          { op: "i64.ge_s" },
-          { op: "if", blockType: { kind: "val", type: { kind: "i64" } }, then: shiftLeft, else: shiftRight },
-        ],
-        else: [{ op: "i64.const", value: 0n }],
-      },
-      { op: "local.set", index: magnitude },
-    );
-    wasmOut.push(
-      { op: "local.get", index: bits },
-      { op: "i64.const", value: 0n },
-      { op: "i64.lt_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: magnitude },
-          { op: "i32.wrap_i64" },
-          { op: "i32.sub" },
-        ],
-        else: [{ op: "local.get", index: magnitude }, { op: "i32.wrap_i64" }],
-      },
-    );
+    emitWasmInt32Coercion(wasmOut, allocI64Scratch());
     return;
   }
   // Stack: [f64]

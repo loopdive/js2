@@ -91,6 +91,12 @@
         font-size: 13px;
         color: var(--fg-faint);
       }
+      .edition-spread {
+        margin: 2px 0 0;
+        font-family: var(--mono, ui-monospace, monospace);
+        font-size: 12px;
+        color: var(--fg-faint, #94a3b8);
+      }
       .description {
         color: var(--fg-soft);
         margin: 0 0 24px;
@@ -285,6 +291,7 @@
         <span id="feat-pct" class="feat-pct"></span>
       </div>
       <p id="feat-description" class="description"></p>
+      <p id="feat-edition-spread" class="edition-spread" hidden></p>
       <div class="filters" id="filters" hidden>
         <button data-filter="all" aria-pressed="true">All</button>
         <button data-filter="fail" aria-pressed="false">Failures only</button>
@@ -369,6 +376,23 @@
           pctEl.textContent = `(${Math.round(ratio * 100)}%)`;
         }
         if (feature.description) descEl.textContent = feature.description;
+
+        // Which editions the scored tests actually belong to. The row
+        // is displayed under the edition its FEATURE dates from, while these
+        // tests carry their own markers — for `Comma operator` that is five
+        // ES5 and one ES2015, under an "ES3 / Core" heading.
+        const spreadEl = document.getElementById("feat-edition-spread");
+        const spread = Array.isArray(feature.editionSpread) ? feature.editionSpread : [];
+        if (spreadEl) {
+          if (spread.length > 0) {
+            spreadEl.textContent = `By edition: ${spread
+              .map((s) => `${s.edition} ${s.pass}/${s.total}`)
+              .join(" · ")}`;
+            spreadEl.hidden = false;
+          } else {
+            spreadEl.hidden = true;
+          }
+        }
 
         const tests = Array.isArray(feature.tests) ? feature.tests : [];
         if (tests.length === 0) {

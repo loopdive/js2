@@ -216,12 +216,28 @@ export interface Test262ScopeInfo {
   strict: "only" | "no" | "both";
 }
 
+// Feature flags that upstream test262 still lists under the *proposals*
+// section of `features.txt` (i.e. stage ≤ 3, not in a published edition).
+// A test carrying one of these is classified `scope: "proposal",
+// official: false` and is excluded from the default (official) scope.
+//
+// KEEP THIS IN SYNC WITH UPSTREAM `test262/features.txt`: the file has a
+// `## Standard language features` header (~L80); everything ABOVE it is a
+// proposal, everything BELOW it shipped in a published ECMA-262 edition.
+// Audited against the vendored corpus on 2026-08-29:
+//   • `source-phase-imports` (features.txt L40) — still a proposal. KEEP.
+//   • `import-defer`         (features.txt L46) — still a proposal. KEEP.
+//   • `Temporal`             (features.txt L249) — now BELOW the standard
+//     header. REMOVED (#5173): Temporal reached Stage 4 in March 2026 and
+//     shipped in **ECMA-262 17th edition (ES2026)**, approved by the Ecma
+//     General Assembly on 2026-06-30. It is a published-edition feature, so
+//     it belongs in the official scope like any other `built-ins/` path.
 const PROPOSAL_FEATURES = new Map([
-  ["Temporal", "proposal feature: Temporal"],
   ["import-defer", "proposal feature: import defer"],
   ["source-phase-imports", "proposal feature: source phase imports"],
   // (#837) `upsert` removed — Map/WeakMap.getOrInsert / .getOrInsertComputed
   // are now host-imported as extern methods (see src/codegen/index.ts).
+  // (#5173) `Temporal` removed — ES2026 (17th ed.), see the note above.
 ]);
 
 function getTest262RelativePath(filePath?: string): string | undefined {
@@ -261,9 +277,15 @@ export function classifyTestScope(source: string, meta: Test262Meta, filePath?: 
     return { scope: "annex_b", official: true, reason: "Annex B", strict };
   }
 
-  if (relPath.includes("built-ins/Temporal/")) {
-    return { scope: "proposal", official: false, reason: "proposal feature: Temporal", strict };
-  }
+  // (#5173) The `built-ins/Temporal/` path rule that used to sit here — forcing
+  // `scope: "proposal", official: false` — is GONE. Temporal shipped in
+  // ECMA-262 17th edition (ES2026, approved 2026-06-30) and upstream test262
+  // lists the `Temporal` feature under "Standard language features". Temporal
+  // tests now classify as ordinary `standard` scope with `official: true`, so
+  // they count toward the official-edition denominator and run regardless of
+  // `TEST262_INCLUDE_PROPOSALS`. `test/staging/Temporal/**` is unaffected — the
+  // staging rule above still fires first and keeps those out of the official
+  // scope.
 
   if (meta.features) {
     for (const feat of meta.features) {
