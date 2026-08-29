@@ -1,10 +1,11 @@
 {
   "id": "5165",
   "assignee": "ttraenkler/opus-5165",
-  "requested_by": "ttraenkler/opus-5165",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5165-tail-loops-try",
   "claimed_at": "2026-08-29T02:43:24Z",
-  "updated_at": "2026-08-29T02:43:24Z",
-  "write_id": "25682-jatm6rgf"
+  "updated_at": "2026-08-29T20:05:48Z",
+  "write_id": "1756-tdsonltw",
+  "released_at": "2026-08-29T20:05:48Z"
 }
