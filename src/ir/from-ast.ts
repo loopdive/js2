@@ -167,7 +167,7 @@ import {
   domSurfaceCapability,
   hostExternCapability,
   prefixOpCapability,
-  stringIndexProvenBelow,
+  stringElementReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
@@ -6165,9 +6165,20 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
   // `stringMethodNeeded`, whose finalize loop registers the `string_charAt`
   // env import (host lane) or calls `ensureNativeStringHelpers` for
   // `__str_charAt` (native lane) — no late-import shift at IR lower time.
+  //
+  // (#5167) SECOND proof, same delegation: the counted-loop witness
+  // (`isProvenInBoundsIr` — `detectCountedLoopSafeIndex` recorded this
+  // `receiver:index` pair for the enclosing `for`) pins 0 ≤ i < s.length at
+  // every body point WITHOUT a statically known length, which is the only way
+  // a string PARAM can be proven — `cx.stringLiteralLens` is empty for one by
+  // construction. `detectCountedLoopSafeIndex` is purely syntactic and already
+  // records string receivers, so this adds no new analysis, no new read
+  // primitive, and no OOB decision (OOB is unreachable under the proof). The
+  // pre-registration above already covers it: the collector's element-access
+  // arm keys off a string-typed receiver with a non-string-literal index, so
+  // an identifier index registers charAt exactly the same way.
   if (recvType.kind === "string" && ts.isIdentifier(expr.expression)) {
-    const litLen = cx.stringLiteralLens?.get(expr.expression.text);
-    if (litLen !== undefined && stringIndexProvenBelow(arg, litLen)) {
+    if (stringElementReadLowerable(expr, cx.stringLiteralLens, isProvenInBoundsIr(expr, cx))) {
       const r = lowerStringMethodCall("charAt", recv, expr.expression, ts.factory.createNodeArray([arg]), cx);
       if (r !== null) return r;
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
