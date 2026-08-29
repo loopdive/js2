@@ -1,10 +1,10 @@
 ---
 id: 5149
 title: "ES2015 standalone: object-literal conformance wave 1"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: medium
@@ -25,6 +25,11 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/global-environment.ts
   - src/stdlib/object-runtime.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/closures/arrow-phases.ts
+  - src/codegen/function-instance-meta-methods.ts
+func-budget-allow:
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
 ---
 
 # #5149 — ES2015 standalone: object-literal conformance wave 1
@@ -274,3 +279,93 @@ computed-name resolution so it CEs cleanly or compiles, never overflows).
   Step 1e).
 - **#1702 / #1636s1** (done) — strict-`this` direct-call fixes: the pattern
   for Step 2a.
+
+## Results (wave 1, 2026-08-29)
+
+Measured with `npx tsx .tmp/run-standalone.mts --list
+.tmp/es2015/wp-object-literal-current-fails.txt` (80 paths) on this branch's
+base and again after the change.
+
+| | before | after |
+|---|---|---|
+| pass | 9 | 22 |
+| fail | 67 | 54 |
+| compile error | 4 | 4 |
+
+**+13 passing, 0 lost.** The `#5060` resume trap named in the head-regression
+note had already landed on this base — the 15 cluster-A traps were gone before
+this work started, which is why the "before" column reads 9 rather than the
+issue's 0. The 40-file passing spotcheck reads **36/40 both before and after**;
+the 4 failures are the same four `dstr/*-obj-ptrn-*` destructuring tests in
+both runs (#1719's lane), untouched here.
+
+### What landed
+
+- **Cluster B — method/function `name` metadata (10 tests).**
+  - `mintClosureStructTypes` (`closures/arrow-phases.ts`) now consults the
+    MEMBER walk before `fnMetaSlot`. `fnInstanceMetaOf` accepts a
+    `MethodDeclaration` and answers `""` for it, so the old
+    `fnMetaSlot ?? member` order published that empty name and never reached
+    the walk that knows the property key. Measured: `o = { id() {} }` had
+    `o.id.name === "id"` (static fold) but
+    `Object.getOwnPropertyDescriptor(o.id, "name").value === ""` — one function
+    with two answers.
+  - New `symbolComputedKeyFunctionName` (`function-instance-meta.ts`) resolves
+    a symbol-keyed property to §10.2.9's `"[description]"` (and `""` for a
+    description-less `Symbol()`), wired into both the function-value lane
+    (`fnInstanceNameOf`) and the member lane (`memberNameOf`). Purely
+    syntactic and conservative: two declarations of the name, any later
+    assignment, or a non-literal description all decline.
+  - The static `.name` fold no longer publishes TypeScript's internal
+    `__computed` placeholder for a symbol-keyed member — it falls through to
+    the runtime read, which now carries the right name.
+  - The same fold no longer folds the property key for a COVERED initializer:
+    `o = { xId: (0, function () {}) }` keeps `name === ""` (the #1049 rule the
+    identifier lane already had).
+- **Cluster F — shorthand ReferenceError (2 tests).** `identifierValueSymbol`
+  stopped falling back to `getSymbolAtLocation` when the shorthand's VALUE is
+  unresolvable. That fallback returned the shorthand's own PROPERTY symbol —
+  always present — so `({ notDefined })` silently built
+  `{ notDefined: undefined }` instead of throwing.
+- **Cluster F — computed-key carrier (3 tests).** The #5108 open-carrier gate
+  required a `+ - * /` binary key. The defect is not about arithmetic:
+  `let x = 1; ({ [x]: '2' })` and `({ [null]: null })` fold to the same
+  statically-known key through the same index-signature-only type, and the
+  dynamic read (`o[x]`, `o[String(x)]`) missed the closed struct. Any
+  statically resolvable non-`@@` computed key now gets the open carrier.
+
+### Not done — residual, with what each needs
+
+- **Cluster A (generators) / D (destructuring iterator)** — owned by #5141 /
+  #1719, verify-only here as planned. Two of D's members
+  (`meth-ary-init-iter-get-err-array-prototype` and siblings) already pass on
+  this base.
+- **Cluster E (`__proto__`, 5 tests) — blocked on a prerequisite this issue
+  did not own.** All five need an ordinary object's [[Prototype]] to BE
+  `Object.prototype`. Measured on this base: `__new_plain_object`
+  (`object-runtime.ts`) stores `$proto = null`, so `var o; o = { a: 1 };
+  Object.getPrototypeOf(o)` answers `null` — a plain literal with no
+  `__proto__` in it at all. Seeding that (or teaching `__getPrototypeOf` to
+  distinguish "default proto" from an explicit `Object.create(null)`) is a
+  runtime-representation change with reach far past object literals, so the
+  §B.3.1 colon-form arm was NOT written on top of it: it would have shipped a
+  half-answer. Note the declaration form `var o = { a: 1 }` passes only
+  because BOTH sides read `null` there.
+- **Cluster F this-binding (4 tests).** `{ method() {} }.method()` observes
+  `this === null`, not the strict `undefined` / sloppy global object. Narrowed
+  by measurement: the same shape with a function-VALUED property
+  (`{ m: function () {} }.m()`) is already correct, and so is a bare function
+  expression — only METHOD SHORTHAND is wrong, so the receiver is being lost
+  in the method lowering (trampoline / struct-method path), not in the
+  `this` ladder, which already has the #1702/#4190 split.
+- **Cluster B `delete` (2 tests).** `delete o.method` returns `true` and
+  leaves the property present (`hasOwnProperty` still true), so
+  `verifyProperty`'s configurable cycle fails. Reproduced standalone in three
+  lines; the struct-field delete arm in `typeof-delete.ts` and the open-object
+  `__delete_property` disagree about which carrier holds the method.
+- **Cluster B symbol-keyed ACCESSORS (2 tests).** `get [sym]() {}` is dropped
+  entirely: `resolveAccessorPropName` declines a runtime-computed key and the
+  accessor pre-pass `continue`s, so
+  `Object.getOwnPropertyDescriptor(o, sym)` is null and the test crashes
+  reading `.get`. Needs a runtime-keyed accessor arm, not a name fix.
+- **Cluster C (`super`), G (defaults + `arguments`)** — not started.

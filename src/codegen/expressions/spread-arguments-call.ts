@@ -80,6 +80,9 @@ function collect(fctx: FunctionContext, emit: () => void): Instr[] {
  * @param paramOffset leading Wasm params that are not user-visible formals
  *                    (the `self` receiver of a method, or lifted captures).
  *                    Those operands are already on the stack.
+ * @param trailingParamCount trailing Wasm params that are not user-visible
+ *                    formals and are pushed by the caller AFTER this helper
+ *                    returns — the `self` receiver of a class `_init` (#5153).
  */
 export function compileSpreadCallArgsWithArguments(
   ctx: CodegenContext,
@@ -88,12 +91,13 @@ export function compileSpreadCallArgsWithArguments(
   funcIdx: number,
   paramOffset: number,
   funcName: string,
+  trailingParamCount = 0,
 ): boolean {
   const args = expr.arguments as readonly ts.Expression[];
   const paramTypes = getFuncParamTypes(ctx, funcIdx);
   const optInfo: readonly OptionalParamInfo[] | undefined = ctx.funcOptionalParams.get(funcName);
   if (!paramTypes) return false;
-  const formalCount = paramTypes.length - paramOffset;
+  const formalCount = paramTypes.length - paramOffset - trailingParamCount;
   if (formalCount <= 0) return false;
   if (!args.some((a) => ts.isSpreadElement(a))) return false;
   // WASI without the standalone object runtime has neither the host readers nor

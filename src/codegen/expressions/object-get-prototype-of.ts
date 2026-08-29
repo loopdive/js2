@@ -42,7 +42,11 @@ const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
  * Membership is per-constructor and deliberate: most builtin prototypes do NOT
  * root directly at `%Object.prototype%` (see the call site's comment).
  */
-const OBJECT_ROOTED_PROTOTYPE_CTORS = new Set(["Function", "Promise"]);
+// (#5151) The four keyed-collection prototypes DO uniformly inherit directly
+// from %Object.prototype% (§24.1.3/§24.2.3/§24.3.3/§24.4.3), so they join the
+// rooted set (getPrototypeOf(Map.prototype) must answer %Object.prototype%,
+// not the receiver's own brand page).
+const OBJECT_ROOTED_PROTOTYPE_CTORS = new Set(["Function", "Promise", "Map", "Set", "WeakMap", "WeakSet"]);
 
 const ES5_NATIVE_ERROR_CTORS = new Set([
   "EvalError",
@@ -199,11 +203,12 @@ export function tryCompileEs5GetPrototypeOfEarly(
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
-    // (#4781) The ES2015 WeakMap constructor is itself a built-in function,
-    // so its [[Prototype]] is %Function.prototype%. Keep this query on the
-    // intrinsic path in both lanes; the native collection path below models
-    // WeakMap instances and must not answer for the constructor object.
-    if (arg0.text === "WeakMap") {
+    // (#4781/#5151) The ES2015 keyed-collection constructors are themselves
+    // built-in function objects, so their [[Prototype]] is %Function.prototype%.
+    // Keep these queries on the intrinsic path in both lanes; the native
+    // collection path below models INSTANCES and must not answer for the
+    // constructor object.
+    if (NATIVE_COLLECTION_NAMES.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
     if (ES5_NATIVE_ERROR_CTORS.has(arg0.text)) {

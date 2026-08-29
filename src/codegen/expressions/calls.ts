@@ -283,10 +283,12 @@ import {
   brandExternMethodResult,
   coerceType,
   compileExpression,
+  resolveEnclosingClassName,
   resolveThisStructName,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
+import { compileSuperCall } from "../class-bodies.js"; // (#5153 F) nested `super(...)`
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
@@ -349,6 +351,7 @@ import {
   emitBoolToString,
   emitBorrowedStringReceiverToString,
   isStaticUndefinedArg,
+  tryThrowOnBigIntOrSymbolArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
@@ -468,7 +471,7 @@ import { resolveStructName } from "./misc.js";
 import {
   tryCompileDateCallWithoutNew,
   tryCompileErrorCtorCallWithoutNew,
-  tryCompileWeakSetCallWithoutNew,
+  tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
@@ -4928,7 +4931,21 @@ export function tryEmitInlineDynamicCall(
     const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Constructor cannot be invoked without 'new'", {
       flush: fctx,
     });
-    const int8CarrierThrow = buildInt8ArrayCarrierMatch(ctx, anyLocal, throwInstrs);
+    // (#5188) The carrier match nests its `onMatch` under an `empty`-typed
+    // `if`, while the `$__ta_ctor` arm below uses the SAME sequence as the
+    // `then` of a `val externref` `if`. Handing ONE `Instr[]` object to both
+    // makes that array reachable from two incompatible branch contexts, and
+    // the stack-balance repair pass then fails the whole compile closed rather
+    // than mutate a shared body ("reaches an instruction array from
+    // incompatible control-flow ... contexts", #1058). That refusal hit EVERY
+    // test262 file including `testTypedArray.js` — 534 of the 540 on the
+    // #5188 target list were compile errors for this one aliased array — so
+    // give each consumer its own copy.
+    const int8CarrierThrow = buildInt8ArrayCarrierMatch(
+      ctx,
+      anyLocal,
+      throwInstrs.map((instr) => ({ ...instr })),
+    );
     if (ctx.taCtorTypeIdx >= 0) {
       dispatch = [
         { op: "local.get", index: anyLocal },
@@ -5881,6 +5898,13 @@ export function compileFromCharCodeFamily(
     const savedBody = fctx.body;
     fctx.body = buf;
     try {
+      // (#5152) §22.1.2.2 step 2a / §22.1.2.1 step 2a apply ToNumber to every
+      // argument, and §7.1.4 ToNumber(Symbol) throws a TypeError. Without this
+      // a statically Symbol-typed arg silently coerced its internal id.
+      if (noJsHost(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
+        parts.push(buf);
+        continue;
+      }
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
       // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
       // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
@@ -7042,9 +7066,10 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
-  // (#4732) `WeakSet(...)` has no [[Call]] — §23.4.1.1 step 1 requires `new`.
+  // (#4732/#5151) `Map(...)`/`Set(...)`/`WeakMap(...)`/`WeakSet(...)` have no
+  // [[Call]] — §24.1.1.1 step 1 and siblings require `new`.
   {
-    const r = tryCompileWeakSetCallWithoutNew(ctx, fctx, expr);
+    const r = tryCompileCollectionCtorCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -7513,6 +7538,25 @@ function compileCallExpression(
     expr.expression.expression.kind === ts.SyntaxKind.SuperKeyword
   ) {
     return compileSuperMethodCall(ctx, fctx, expr);
+  }
+
+  // (#5153 F) A NESTED `super(...)` — one that is not a top-level statement of
+  // the constructor body, e.g. inside a `try`. `class-bodies.ts` intercepts
+  // only the statement form (its loop matches `ExpressionStatement` →
+  // `CallExpression` → `SuperKeyword`), so this shape reached the generic
+  // callee dispatch and emitted NOTHING: the parent constructor never ran and
+  // an abrupt completion inside it could not be caught
+  // (`call-construct-error.js`). Route it to the same lowering.
+  //
+  // Own-field initializers are deliberately NOT re-run here — the statement
+  // site owns that sequencing, and this arm only replaces a no-op.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor === true) {
+    const enclosingClass = resolveEnclosingClassName(fctx);
+    const thisLocal = fctx.localMap.get("this");
+    if (enclosingClass !== undefined && thisLocal !== undefined) {
+      compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+      return VOID_RESULT;
+    }
   }
 
   // (#1467) AggregateError(errors, message, options?) — called WITHOUT `new`.

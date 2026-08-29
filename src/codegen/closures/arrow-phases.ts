@@ -871,7 +871,16 @@ export function mintClosureStructTypes(
   // `FunctionExpression` for the closure compile). `fnMetaSlot` declines those —
   // §10.2.9 for an accessor is `"get p"` / `"set p"`, which comes from the
   // property KEY, not from a function name. The member walk answers it.
-  const metaSlot = fnMetaSlot(ctx, opts.decl) ?? fnMetaSlotForMemberDecl(ctx, opts.decl);
+  //
+  // (#5149 cluster B) The member walk runs FIRST for a member declaration.
+  // `fnInstanceMetaOf` accepts a `MethodDeclaration` and answers `""` for it —
+  // §10.2.9 for a method comes from the property KEY, which only the member
+  // walk reads — so the old `fnMetaSlot ?? member` order published that empty
+  // name and never consulted the member walk at all. Measured on
+  // `{ id() {} }` reached through the open-object literal path: the descriptor
+  // `Object.getOwnPropertyDescriptor(o.id, "name").value` read `""` while the
+  // static `.name` fold answered `"id"` — one function, two answers.
+  const metaSlot = fnMetaSlotForMemberDecl(ctx, opts.decl) ?? fnMetaSlot(ctx, opts.decl);
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
   let liftedSelfTypeIdx: number;

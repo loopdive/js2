@@ -1,10 +1,10 @@
 ---
 id: 5152
 title: "ES2015 standalone: string conformance wave 1"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: medium
@@ -28,6 +28,21 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/symbol-native.ts
   - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/string-isregexp-guard.ts
+  - src/codegen/string-proto-tostring.ts
+coercion-sites-allow:
+  # (#5152) §7.2.8 IsRegExp step 3 is literally `ToBoolean(matcher)`, and this
+  # site performs it by CALLING the shared native `__is_truthy` helper — the
+  # same one `new Boolean(x)` and the object-ops truthiness path use. No
+  # ToString/ToNumber/ToPrimitive matrix is hand-rolled here; the ToString half
+  # of the same lane deliberately delegates to `emitStringProtoToStringFlat`.
+  - src/codegen/string-isregexp-guard.ts
+func-budget-allow:
+  - src/codegen/case-convert-native.ts::emitNativeCaseConversion
+  - src/codegen/case-convert-native.ts::makeStr
+  - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
 ---
 
 # ES2015 standalone: string conformance wave 1
@@ -340,3 +355,66 @@ issue's acceptance.
 - #40 / #3900 — case-convert-native + generated tables (Step E)
 - #4274 / #4634 — realm identity (cluster J owner)
 - #2860 — standalone vs js-host test262 gap umbrella
+
+## Results (wave 1 implementation, 2026-08-29)
+
+Target list `.tmp/es2015/wp-string-current-fails.txt` re-verified on the branch
+base before any edit: **53 failing** (52 FAIL + 1 COMPILE_ERROR) — the plan's
+count reproduced exactly, nothing already fixed.
+
+After this change-set: **29 failing, 24 fixed.** The 40-path
+`wp-string-passing-spotcheck.txt` regression guard stayed 40/40 PASS throughout.
+
+| cluster | planned | fixed | note |
+|---|---|---|---|
+| K padStart/padEnd Symbol fill | 2 | **2** | `emitArgAsNativeString` for the fill arg — the §7.1.17 guard turns invalid Wasm into the spec TypeError |
+| I fromCodePoint(Symbol) | 1 | **1** | static Symbol/BigInt rejection in `compileFromCharCodeFamily`'s per-arg ToNumber |
+| H codePointAt OOB | 2 | **2** | `UNDEF_F64_BITS` sentinel + `undefSentinel: true` result type (standalone only) |
+| E astral case mapping | 4 | **4** | new `ASTRAL_{UPPER,LOWER}_CASE_RUNS` tables + surrogate-pair decode/re-encode in pass 2 |
+| B normalize | 10 | **7** | validation + preamble; the 3 `return-normalized-string*` tests need real NFC/NFD tables (wave 2) |
+| C `String.prototype[Symbol.iterator]` | 5 | **5** | `@@1` glue member with ROC + ToString + the code-point vec |
+| G runtime IsRegExp | 3 | **3** | new `src/codegen/string-isregexp-guard.ts` — `Get(arg, @@match)` runs, abrupt propagates |
+| A @@protocol dispatch | 15 | 0 | **not attempted** — see below |
+| D indexOf ToPrimitive | 5 | 0 | **blocked** — see below |
+| F String.raw fidelity | 3 | 0 | **not attempted** — see below |
+| J cross-realm | 3 | 0 | deferred by the plan (#4274/#4634) |
+
+### Deliberately left for wave 2
+
+- **Cluster A (15)** — the runtime `@@match/@@search/@@split/@@replace` GetMethod
+  lane. Calling an arbitrary user method needs the `__call_fn_method_N` arity
+  dispatcher, which is filled at FINALIZE time and carries its own declared-arity
+  ladder (`objlit-to-primitive.ts`); wiring it into six string-method arms plus
+  the `<Builtin>.prototype[Symbol.X]` reflective READ fix is a change of its own
+  size and risk. `split/limit-touint32-error.js` is in this cluster but is purely
+  a coercion-ORDER fix; it still needs holding an un-coerced separator across the
+  limit coercion, which `stageCoercedOperands` cannot express today.
+- **Cluster D (5)** — MEASURED root cause, narrower than the plan's: the runtime
+  ToPrimitive walker does find `@@toPrimitive` installed by ASSIGNMENT and does
+  unbox `Object(Symbol())`/`Object("foo")` correctly (verified through the
+  reflective `String.prototype.indexOf.call` lane, which already routes through
+  `emitStringProtoToStringFlat`). What it cannot see is a `@@toPrimitive` written
+  as a COMPUTED KEY IN AN OBJECT LITERAL — that literal compiles to a closed
+  struct. Every one of the five files contains at least one such literal, so
+  none of them flips until the literal lowering is fixed; routing indexOf's arg
+  through the reflective ToString lane alone buys zero tests.
+- **Cluster F (3)** — `materializeStructAsDynamicObject` snapshots the template,
+  losing accessors installed later on the nested `raw` object.
+
+Equivalence gate (`npm run -s test:equivalence:gate`): 1718 passing, 24 failing,
+all 24 in the committed baseline — no new regressions. Source-ratchet gates all
+green with the allowances granted in this file's frontmatter.
+
+### Files touched
+
+`src/codegen/string-ops.ts`, `src/codegen/case-convert-native.ts`,
+`src/codegen/case-tables.ts` (generated), `scripts/gen-case-tables.mjs`,
+`src/codegen/array-object-proto.ts`, `src/codegen/string-proto-tostring.ts`,
+`src/codegen/expressions/calls.ts`, and the new
+`src/codegen/string-isregexp-guard.ts`.
+
+`scripts/gen-case-tables.mjs` grew an `astralPairs` scan; the astral tables were
+SPLICED into `src/codegen/case-tables.ts` rather than regenerating the whole
+file, because this container runs Node v22 while the committed BMP tables were
+generated on Node v24 — a blind re-run would have silently downgraded the BMP
+Unicode data (one Latin-Extended run differs).

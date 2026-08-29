@@ -1,7 +1,7 @@
 ---
 id: 5153
 title: "ES2015 standalone: super conformance wave 1"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-28
 updated: 2026-08-28
@@ -21,6 +21,19 @@ loc-budget-allow:
   - src/codegen/expressions/spread-arguments-call.ts
   - src/codegen/object-runtime.ts
   - src/codegen/js-errors.ts
+  # 2026-08-29 (wave-1 implementation): the nested-`super(...)` route lives
+  # beside the existing `super.method()` route in the call dispatcher, which is
+  # the only place a CallExpression callee is classified.
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  # 2026-08-29 (wave-1 implementation): each of these grew by the arms named in
+  # the plan — the iterator-protocol + ctor-`arguments` arms of step A, the
+  # standalone fnctor-parent arm of step F, and the nested-`super(...)` dispatch
+  # that makes step F reachable from inside a `try`.
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/class-bodies.ts::compileSuperCall
 ---
 
 # #5153 — ES2015 standalone: `super` conformance wave 1
@@ -279,6 +292,107 @@ call-construct-error.js (throw propagation only) and file the residual.
   npm run -s check:oracle-ratchet && npm run -s check:dead-exports` (also with
   `LOC_GATE_BASE` at upstream-main tip).
 - Equivalence tests pass: `npm test -- tests/equivalence.test.ts`.
+
+## Results
+
+Wave 1 landed steps **A** (14), **D** (4) and the reachable half of **F** (1).
+Measured with `npx tsx .tmp/run-standalone.mts --list
+.tmp/es2015/wp-super-current-fails.txt` on this branch:
+
+| | before | after |
+|---|---|---|
+| pass | 0 | **19** |
+| fail | 50 | 31 |
+| compile_error | 1 | 1 |
+
+`.tmp/es2015/wp-super-passing-spotcheck.txt` — 7/7 still PASS (order preserved).
+
+### What was implemented
+
+- **A.1 — `super(...spread)` runs the iterator protocol.** The runtime-spread
+  arm of `class-bodies.ts:compileSuperCall` no longer evaluates the operands
+  for side effects and calls the parent with argc 0. It routes through
+  `compileSpreadCallArgsWithArguments` (which gained a `trailingParamCount`
+  parameter, because `_init`'s `self` is the LAST param, not a leading one),
+  and through `emitSetExtrasArgv` directly when the parent constructor has zero
+  formals. Both flatten via the shared machinery, so GetIterator /
+  IteratorStep / IteratorValue actually run and their abrupt completions
+  propagate. This is the whole `call-spread-err-*` family.
+- **A.2 — class constructors get an `arguments` object.** `_init` now emits it
+  (unmapped; class bodies are strict) before the parameter defaults, mirroring
+  the method arm, and `${className}_init` / the ctor are registered in
+  `ctx.funcUsesArguments` so `super()` and `new C(...)` call sites publish
+  `__argc`/`__extras_argv`. Needed by `call-spread-{sngl,mult}-iter.js`, which
+  assert `arguments.length` inside the parent constructor.
+- **D — `super[keyExpr]` evaluates its key.** The `propName === undefined` arm
+  of `compileSuperElementAccess` emitted a bare type-shaped default without
+  ever compiling `argumentExpression`. It now compiles the key and applies
+  ToPropertyKey (`emitToPropertyKeyOnce`) before discarding it, so a throwing
+  key expression or a poisoned `toString` propagates. The value still falls
+  back to the historical default — that half needs step B.
+- **C.1 (partial) — RequireObjectCoercible on the super base.** The #4688
+  object-literal runtime-read lane now throws a TypeError when
+  `__getPrototypeOf(<home object>)` is nullish, per §12.3.5.3 step 5. Verified
+  by probe; the four `*-null-proto` tests still fail for an unrelated reason
+  (below), so this banks no test on its own.
+- **F (partial) — `super()` to a plain-function parent now CALLS it.** The
+  fnctor-parent bridge was host-only, so in standalone the parent function was
+  never invoked and a throwing parent constructor completed normally. A
+  standalone arm installs the derived receiver as `__current_this` and calls
+  the compiled fnctor. Reaching it also required routing a **nested**
+  `super(...)` — one inside a `try`, not a top-level statement of the ctor body
+  — which `class-bodies.ts` never intercepted and which therefore emitted
+  nothing at all. That route now lives beside the `super.method()` route in the
+  call dispatcher. `call-construct-error.js` passes.
+
+### Clusters deliberately not landed, and why
+
+- **B (12 tests) — runtime super reads for class methods.** Blocked on a
+  prerequisite the plan flagged (B.3) and which measured WORSE than expected:
+  a class prototype does not behave as a property store at all in standalone.
+  `A.prototype.x = 'a'; A.prototype.x` reads back `undefined`
+  (`.tmp/probes5153/p7b-protowrite.js`), `Object.getOwnPropertyNames(A.prototype)`
+  is empty even for a declared method, and `Object.getOwnPropertyDescriptor(A.prototype,'ma')`
+  answers undefined — so the #3976 `$Object` prototype sidecar is not the object
+  a `A.prototype` READ resolves to. Wiring `__getPrototypeOf` →
+  `__reflect_get_receiver` for class methods on top of that would resolve the
+  chain and find no properties. This is a representation gap in the class
+  prototype value, not a `super` gap, and it is wave-2's first task.
+- **C (10 tests) — spec throws.** Every test in this cluster asserts through
+  `assert.sameValue(typeof caught, 'object')` +
+  `assert.sameValue(caught.constructor, TypeError)` on a module-level
+  `var caught;` that is assigned only from INSIDE a function. Two independent
+  standalone defects sit on that idiom, both unrelated to `super`:
+  1. `typeof caught` const-folds to `"undefined"`. TypeScript's flow type for an
+     uninitialized `var` ignores writes made inside a nested function, and the
+     existing #2623 P-7 unsound-fold guard (`typeof-delete.ts`, both the value
+     arm and the comparison arm) is gated `ctx.standalone !== true` on the
+     stated grounds that standalone's `__typeof` is "a `ref.null.extern` stub
+     (#2107)". That justification is STALE — `typeof-natives-finalize.ts` /
+     `registry/imports.ts` materialize `__typeof` whenever
+     `nativeStrTypeIdx >= 0`, which standalone always has. Relaxing the gate was
+     tried on this branch and does fix the fold (probes q8/q12/q13), but it
+     flips none of these tests on its own, so it was reverted rather than ship
+     a corpus-wide fold change with no measured gain here.
+  2. Even with the fold fixed, `caught.constructor` reads `null` for the same
+     binding — the member read is compiled against the checker's `undefined`
+     type for the slot.
+  Both are one shared root cause: a module `var` whose only writes cross a
+  function boundary keeps a static type that contradicts its runtime slot.
+- **E (6 tests) — `super.x =`.** Four of the six are the `*-ref-strict` pair
+  and are blocked by the same C idiom. The two `*-ref-non-strict` tests are
+  genuinely reachable and need the receiver-aware `[[Set]]` arm in
+  `assignment.ts` plus a `__reflect_set_receiver` native; deferred to wave 2 so
+  the write path is designed once against a working class-prototype store.
+- **F residual (2 tests) — parent constructor return-override.**
+  `call-expr-value.js` / `call-bind-this-value.js` need a parent that returns an
+  object to REBIND the derived `this` for the rest of the constructor and to be
+  the value of `super()`. That means re-pointing the ctor body's `this` slot
+  mid-body; explicitly out of this wave per the plan.
+- **G (2 tests) — unchanged, as planned.** `realm.js` needs `$262.createRealm`
+  (and cannot even run in this container: the QuickJS provider is not built).
+  `call-construct-invocation.js` is the deliberate #3371 standalone
+  Reflect.construct NewTarget COMPILE_ERROR and must stay one.
 
 ## References
 

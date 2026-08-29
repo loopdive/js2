@@ -2745,6 +2745,60 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
   });
 }
 
+/**
+ * (#5149 cluster B) Does SOME object literal in this file define `recv.<key>`
+ * with a COVERED function initializer — `{ xId: (0, function () {}) }` — rather
+ * than an anonymous function definition?
+ *
+ * §10.2.9 NamedEvaluation only names an ANONYMOUS function definition after the
+ * property key. A comma expression, a call, or any other cover grammar is not
+ * one, so those keep `name === ""`. The static `.name` fold for `obj.key.name`
+ * has no receiver identity to consult, so it asks the weaker question — is
+ * there ANY literal in this file whose `key` is covered — and declines the fold
+ * when there is. Declining costs only the fold: the read falls through to the
+ * ordinary property path, which answers from the closure's own `$fnmeta`.
+ *
+ * Syntactic on purpose: "which expression initialized this key" is a question
+ * about source shape, not about a type, so no type query belongs here.
+ */
+function propertyKeyIsCoveredFunctionDefinition(access: ts.PropertyAccessExpression): boolean {
+  const key = access.name.text;
+  const file = access.getSourceFile?.();
+  if (file === undefined) return false;
+  let covered = false;
+  const visit = (node: ts.Node): void => {
+    if (covered) return;
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const prop of node.properties) {
+        if (!ts.isPropertyAssignment(prop)) continue;
+        const propKey = prop.name;
+        const text =
+          ts.isIdentifier(propKey) || ts.isStringLiteral(propKey) || ts.isNumericLiteral(propKey)
+            ? propKey.text
+            : undefined;
+        if (text !== key) continue;
+        let init: ts.Expression = prop.initializer;
+        while (ts.isParenthesizedExpression(init)) init = init.expression;
+        // A comma expression is THE cover grammar these tests use; a call or a
+        // conditional is equally not a function DEFINITION. Only flag shapes
+        // that still produce a function value, so an ordinary data property of
+        // the same name in an unrelated literal cannot suppress the fold.
+        if (
+          ts.isBinaryExpression(init) &&
+          init.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+          isAnonymousFunctionDefinition(init.right)
+        ) {
+          covered = true;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return covered;
+}
+
 /** Emit a boxed read for standalone `IArguments.length`. */
 function emitArgumentsLengthRead(
   ctx: CodegenContext,
@@ -2997,7 +3051,16 @@ export function tryLengthAndNameReads(
           }
         }
       }
-      if (hasFuncSig && !objType.isUnion()) {
+      // (#5149 cluster B) A SYMBOL-keyed member's type symbol carries
+      // TypeScript's internal placeholder name `__computed`, which this fold
+      // published verbatim: `({ [Symbol('test262')]() {} })[s].name` answered
+      // `"__computed"` — a compiler-internal identifier as an observable value,
+      // worse than the miss it replaced. There is no static answer here (the
+      // key is a runtime symbol), so fall through to the ordinary property read
+      // and let the closure's own `$fnmeta` name it.
+      if (hasFuncSig && objType.getSymbol()?.name === "__computed") {
+        // no static fold — the runtime read below answers it
+      } else if (hasFuncSig && !objType.isUnion()) {
         // Resolve the function name from the type symbol or the expression.
         //
         // UNION-typed receivers are excluded in BOTH lanes: a union (e.g.
@@ -3054,6 +3117,17 @@ export function tryLengthAndNameReads(
             funcName = expr.expression.text;
           } else if (ts.isPropertyAccessExpression(expr.expression)) {
             // Property access: obj.method.name => infer "method"
+            //
+            // (#5149 cluster B) …but only when the property was defined by an
+            // ANONYMOUS function definition. §10.2.9 NamedEvaluation does not
+            // reach a COVERED initializer: `o = { xId: (0, function () {}) }`
+            // leaves `o.xId.name` as `""`, and folding the key text here made
+            // it read `'xId'`. The identifier lane above already carries this
+            // #1049 rule; this is the same rule for the property lane.
+            if (propertyKeyIsCoveredFunctionDefinition(expr.expression)) {
+              addStringConstantGlobal(ctx, "");
+              return compileStringLiteral(ctx, fctx, "");
+            }
             funcName = expr.expression.name.text;
           } else if (
             ts.isElementAccessExpression(expr.expression) &&

@@ -1679,17 +1679,19 @@ function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr
   if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
   for (const prop of expr.properties) {
     if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
-    if (!ts.isBinaryExpression(prop.name.expression)) return false;
-    const operator = prop.name.expression.operatorToken.kind;
-    if (
-      operator !== ts.SyntaxKind.PlusToken &&
-      operator !== ts.SyntaxKind.MinusToken &&
-      operator !== ts.SyntaxKind.AsteriskToken &&
-      operator !== ts.SyntaxKind.SlashToken
-    ) {
-      return false;
-    }
-    if (resolveComputedKeyExpression(ctx, prop.name.expression) === undefined) return false;
+    // (#5149 cluster F) The #5108 arm required a `+ - * /` binary key. The
+    // defect it describes is not about arithmetic: `let x = 1; ({ [x]: '2' })`
+    // and `({ [null]: null })` fold to the same statically-known key through
+    // the same index-signature-only type, and the same dynamic read
+    // (`o[x]`, `o[String(x)]`) missed the closed struct and answered
+    // `undefined`. Any statically resolvable computed key gets the open
+    // carrier now.
+    const resolved = resolveComputedKeyExpression(ctx, prop.name.expression);
+    if (resolved === undefined) return false;
+    // A well-known-Symbol key resolves to the reserved `@@name` spelling, whose
+    // carriers (`__box_symbol` + the host/accessor route) are chosen elsewhere.
+    // Leave that representation exactly as it was.
+    if (resolved.startsWith("@@")) return false;
   }
   return true;
 }
