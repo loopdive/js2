@@ -77,7 +77,11 @@ import {
   resolvePromiseSubclassIdentifier,
   tryEmitPromiseSubclassValue,
 } from "./promise-subclass.js";
-import { emitLiveIdentifierGlobalRead, tryEmitAmbientRegistryCollisionRead } from "./identifier-module-storage.js";
+import {
+  emitLiveIdentifierGlobalRead,
+  tryEmitAmbientRegistryCollisionRead,
+  tryEmitExplicitHostAmbientValueRead,
+} from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -638,7 +642,11 @@ export function computeElidableTopLevelTdzNames(
       if (!isDeclName) {
         // Verify this identifier resolves to OUR top-level declaration
         // (and not a shadowed local with the same name).
-        const symbol = ctx.checker.getSymbolAtLocation(node);
+        // (#5144 cluster S) Use the VALUE symbol — a shorthand assignment
+        // target (`for ({ x } of …)`) resolves through `getSymbolAtLocation`
+        // to the property, so the write was invisible here and the whole TDZ
+        // flag got elided (`obj-id-put-let` threw nothing).
+        const symbol = identifierValueSymbol(ctx, node);
         const decl = symbol?.valueDeclaration;
         if (decl === declByName.get(node.text)) {
           const result = analyzeTdzAccess(ctx, node);
@@ -814,7 +822,7 @@ function compileCapturedGlobalRead(
 ): ValType {
   const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
   if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name);
+    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
   } else if (tdzResult === "throw") {
     emitStaticTdzThrow(ctx, fctx, id.text);
   }
@@ -889,7 +897,7 @@ function compileExactAmbientShadowedModuleBinding(
     if (tdzLocalIdx < 0) return undefined;
     const tdzResult = analyzeTdzAccess(ctx, id);
     if (tdzResult === "check") {
-      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text);
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -908,6 +916,25 @@ function compileIdentifierCore(
   skipRuntimeEvalState = false,
 ): ValType | null {
   const name = id.text;
+
+  const runtimeEvalMayShadow = !skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name);
+  const foldedEvalActivationOwnsBinding =
+    fctx.directEvalActivationBindingNames?.has(name) === true && fctx.localMap.has(name);
+
+  // A typed source-level `declare const/let/var` is a promise that the host
+  // environment owns the value; it does not allocate a Wasm local. Resolve it
+  // by checker identity before the legacy flat local maps. Those maps can carry
+  // an unrelated same-named block binding from elsewhere in the function (the
+  // TypeScript compiler's performanceCore has exactly this shape), which would
+  // otherwise hijack the ambient read and apply that dead block's TDZ flag.
+  // Concrete lexical shadows do not enter this arm because their checker
+  // declarations are not ambient-only. A provider-created binding must select
+  // before this fallback, and a successfully folded sloppy eval can create the
+  // same activation binding statically; both shadows therefore take priority.
+  if (!runtimeEvalMayShadow && !foldedEvalActivationOwnsBinding) {
+    const explicitAmbientType = tryEmitExplicitHostAmbientValueRead(ctx, fctx, id);
+    if (explicitAmbientType !== undefined) return explicitAmbientType;
+  }
 
   // A direct CaseBlock lexical declaration is visible only while evaluating
   // that switch's clauses.  Keep an outside reference from falling through to
@@ -964,7 +991,7 @@ function compileIdentifierCore(
   // outer capture or ambient/global symbol. Compile the ordinary resolution as
   // the miss arm, then select through the stable caller-owned value cell. A
   // current-function local/lexical binding is excluded by the shared predicate.
-  if (!skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name)) {
+  if (runtimeEvalMayShadow) {
     const savedFallback = pushBody(fctx);
     const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
     if (fallbackType === null) {
@@ -1343,7 +1370,7 @@ function compileIdentifierCore(
   if (capturedBox !== undefined) {
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -1373,7 +1400,7 @@ function compileIdentifierCore(
     // Apply static analysis for module-level globals
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }

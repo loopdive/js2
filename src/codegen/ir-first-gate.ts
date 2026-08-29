@@ -54,11 +54,13 @@ import {
  * (#3203) The value-domain an allowlist expression evaluates to. `number` = JS
  * `number` (Wasm `f64`); `bool` = JS `boolean` (Wasm `i32`, disambiguated from
  * native-int by the caller via an explicit `boolean` annotation — see
- * `computeIrFirstSkipSet`). from-ast's Phase-1 arithmetic requires MATCHED
- * operand types and its logical/`!` ops require BOOLEAN operands; tracking a
- * per-expression domain (checker-free) is how the walk enforces that split.
+ * `computeIrFirstSkipSet`); `string` = a source string value; `dynamic` = the
+ * exact #5092 join of two different members of that primitive set. from-ast's
+ * Phase-1 arithmetic requires MATCHED operand types and its logical/`!` ops
+ * require BOOLEAN operands; tracking a per-expression domain (checker-free)
+ * is how the walk enforces that split.
  */
-export type ValueDomain = "number" | "bool";
+export type ValueDomain = "number" | "bool" | "string" | "dynamic";
 
 /**
  * (#3143/#3203) Return true iff `fn`'s body is entirely within the
@@ -76,22 +78,25 @@ export type ValueDomain = "number" | "bool";
  *     value-less body). Defaults to `number`.
  *
  * **Domain-tracked, safe-by-construction (#3203 widen).** Every identifier is
- * resolved to a `number`/`bool` domain via a per-name map (params seeded from
+ * resolved to a primitive domain via a per-name map (params seeded from
  * `paramDomains`, locals inferred from their initializer). `exprDomain` returns
  * the domain of an expression or `null` when it is outside the subset:
  *   - arithmetic / bit / shift over two NUMBERS → number;
  *   - relational (`< > <= >=`) over two NUMBERS → bool;
  *   - equality (`== === != !==`) over two operands of the SAME domain → bool;
  *   - `&&` / `||` / `!` over BOOLS → bool;
- *   - `?:` — bool condition, same-domain branches → that domain;
+ *   - `?:` — bool condition, same-domain branches → that domain; two different
+ *     exact number/bool/string branches → the #5092 dynamic carrier;
+ *   - `"prefix" + dynamic`, direct mixed-conditional `String` / `Number`,
+ *     and `typeof dynamic` retain their exact result domains;
  *   - `=` preserves the target local's domain; `+=`…`^=` and `++`/`--` are
  *     number-only local mutation (PARAMETER mutation is rejected);
  *   - a call to a claimed pure-`f64` callee with exact arity and number args →
  *     number.
  * if/while/do/for conditions must be `bool`; `return <e>` must match
- * `returnDomain`. No string/array/object/closure/class/extern/dynamic/member/
- * element/`new`/coercion constructs — all stay COMPILE-TWICE (a shape the walk
- * does not recognise returns `null`/`false`, never a hard error).
+ * `returnDomain`. No array/object/closure/class/extern/member/element/`new` or
+ * general coercion constructs are admitted — all stay COMPILE-TWICE (a shape
+ * the walk does not recognise returns `null`/`false`, never a hard error).
  */
 export function irFirstBodyIsProvenLowerable(
   fn: ts.FunctionDeclaration,
@@ -154,6 +159,9 @@ export function irFirstBodyIsProvenLowerable(
     switch (e.kind) {
       case ts.SyntaxKind.NumericLiteral:
         return "number";
+      case ts.SyntaxKind.StringLiteral:
+      case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+        return "string";
       case ts.SyntaxKind.TrueKeyword:
       case ts.SyntaxKind.FalseKeyword:
         return "bool";
@@ -161,6 +169,8 @@ export function irFirstBodyIsProvenLowerable(
         return domain.get((e as ts.Identifier).text) ?? null;
       case ts.SyntaxKind.ParenthesizedExpression:
         return exprDomain((e as ts.ParenthesizedExpression).expression);
+      case ts.SyntaxKind.TypeOfExpression:
+        return exprDomain((e as ts.TypeOfExpression).expression) === null ? null : "string";
       case ts.SyntaxKind.PrefixUnaryExpression: {
         const u = e as ts.PrefixUnaryExpression;
         if (u.operator === ts.SyntaxKind.PlusPlusToken || u.operator === ts.SyntaxKind.MinusMinusToken) {
@@ -172,14 +182,13 @@ export function irFirstBodyIsProvenLowerable(
         if (u.operator === ts.SyntaxKind.ExclamationToken) {
           return exprDomain(u.operand) === "bool" ? "bool" : null; // `!` over a bool
         }
-        // `+x` / `-x` / `~x` are numeric.
-        if (
-          u.operator === ts.SyntaxKind.PlusToken ||
-          u.operator === ts.SyntaxKind.MinusToken ||
-          u.operator === ts.SyntaxKind.TildeToken
-        ) {
-          return exprDomain(u.operand) === "number" ? "number" : null;
+        // `+x` / `-x` perform ToNumber. The exact #5092 dynamic domain has
+        // only number/bool/string members, all owned by from-ast's existing
+        // unary coercion; `~` stays number-only.
+        if (u.operator === ts.SyntaxKind.PlusToken || u.operator === ts.SyntaxKind.MinusToken) {
+          return exprDomain(u.operand) === null ? null : "number";
         }
+        if (u.operator === ts.SyntaxKind.TildeToken) return exprDomain(u.operand) === "number" ? "number" : null;
         return null;
       }
       case ts.SyntaxKind.PostfixUnaryExpression: {
@@ -202,6 +211,23 @@ export function irFirstBodyIsProvenLowerable(
           if (!isAssignableLocal(b.left) || domain.get((b.left as ts.Identifier).text) !== "number") return null;
           return exprDomain(b.right) === "number" ? "number" : null;
         }
+        if (op === ts.SyntaxKind.PlusToken) {
+          const left = exprDomain(b.left);
+          const right = exprDomain(b.right);
+          if (left === "number" && right === "number") return "number";
+          // (2026-08-28) Concatenation is admitted ONLY for the operand pairs
+          // from-ast actually lowers: two strings, or a string beside the
+          // #5092 dynamic carrier. The wider "either side is a string" row this
+          // replaces promised `"a" + 1` and `"a" + (2 > 1)`, which have no IR
+          // producer — so the legacy body was skipped and an ordinary
+          // concatenation became an `unpatched-slot` invariant with an EMPTY
+          // binary (caught by #3529 producer parity).
+          if (left === "string" && right === "string") return "string";
+          if ((left === "string" && right === "dynamic") || (left === "dynamic" && right === "string")) {
+            return "string";
+          }
+          return null;
+        }
         if (isNumericBinaryToken(op)) {
           return exprDomain(b.left) === "number" && exprDomain(b.right) === "number" ? "number" : null;
         }
@@ -223,11 +249,37 @@ export function irFirstBodyIsProvenLowerable(
         if (exprDomain(c.condition) !== "bool") return null;
         const t = exprDomain(c.whenTrue);
         const f = exprDomain(c.whenFalse);
-        return t !== null && t === f ? t : null;
+        if (t !== null && t === f) return t;
+        if (
+          process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL !== "0" &&
+          t !== null &&
+          f !== null &&
+          t !== "dynamic" &&
+          f !== "dynamic"
+        ) {
+          return "dynamic";
+        }
+        return null;
       }
       case ts.SyntaxKind.CallExpression: {
         const c = e as ts.CallExpression;
         if (!ts.isIdentifier(c.expression)) return null; // no method calls
+        let wrapperArgument = c.arguments[0];
+        while (wrapperArgument && ts.isParenthesizedExpression(wrapperArgument)) {
+          wrapperArgument = wrapperArgument.expression;
+        }
+        if (
+          !domain.has(c.expression.text) &&
+          !claimedArity.has(c.expression.text) &&
+          (c.expression.text === "String" || c.expression.text === "Number") &&
+          c.arguments.length === 1 &&
+          !ts.isSpreadElement(c.arguments[0]!) &&
+          wrapperArgument !== undefined &&
+          ts.isConditionalExpression(wrapperArgument) &&
+          exprDomain(wrapperArgument) === "dynamic"
+        ) {
+          return c.expression.text === "String" ? "string" : "number";
+        }
         const arity = claimedArity.get(c.expression.text);
         if (arity === undefined || arity !== c.arguments.length) return null; // exact arity to a claimed f64 fn
         for (const a of c.arguments) {

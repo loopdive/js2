@@ -1761,6 +1761,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   vecIndexDeleteDirty: boolean;
   /**
+   * (#5145) The module may observe `ArraySpeciesCreate` — it mentions
+   * `Symbol.species` or assigns to a `.constructor` property. Consumer:
+   * `array-species.ts` and the `slice`/`splice`/`map`/`filter` producers, which
+   * only then emit the §10.4.2.3 species prologue + result swap. Clear ⇒ the
+   * producers keep their raw `struct.new $vec` result and their static
+   * `(ref null $vec)` result type, so emission is byte-identical.
+   */
+  arraySpeciesDirty: boolean;
+  /**
    * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
    * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a
    * two-argument `create`, `getOwnPropertyNames`, `ownKeys`,
@@ -2327,6 +2336,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   nativeIteratorUserArmPending?: boolean;
   /**
+   * (#5147) Set by `reserveAnyIterNext` — `__any_iter_next` was minted with a
+   * placeholder body that `fillAnyIterNext` must replace at finalize (it needs
+   * the `$LazyIterHelper` type and the ladder's late arms, which only exist by
+   * then). Same reserve-then-fill discipline as `nativeIteratorUserArmPending`.
+   */
+  anyIterNextPending?: boolean;
+  /** (#5147) `__iter_result_obj` reserved with a placeholder body; filled at finalize. */
+  iterResultObjPending?: boolean;
+  /** (#5147) the `$__IterRec` identity arm was already prepended to `__iterator`. */
+  iterRecIdentityArmDone?: boolean;
+  /**
    * Static property initializer expressions to compile into __module_init.
    * `className` (#1395) is the owning class name — used to set
    * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
@@ -2339,6 +2359,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     staticBlock?: ts.ClassStaticBlockDeclaration;
     className?: string;
   }[];
+  /**
+   * Static initializers owned by a class expression. Unlike class-declaration
+   * statics, these execute as part of ClassDefinitionEvaluation at the exact
+   * expression site, so they cannot share the module-level static queue.
+   *
+   * A variable-bound class expression is registered under both its source
+   * binding and a synthetic identity. `staticPropKey` retains each internal
+   * storage alias while the emitter evaluates the source initializer once.
+   */
+  classExpressionStaticInitExprs: Map<
+    ts.ClassExpression,
+    {
+      initializer?: ts.Expression;
+      staticBlock?: ts.ClassStaticBlockDeclaration;
+      className: string;
+      staticPropKey?: string;
+    }[]
+  >;
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**
@@ -3478,6 +3516,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   needsToUint32: boolean;
   /** Map from class name → class AST declaration node */
   classDeclarationMap: Map<string, ts.ClassDeclaration | ts.ClassExpression>;
+  /**
+   * (#4646) Declarations whose constructor/method bodies `compileClassBodies`
+   * has already emitted, keyed by the DECLARATION NODE.
+   *
+   * `structMap` is keyed by class NAME, so "is this class already compiled?"
+   * was answered by `structMap.has(className)` — a name test standing in for a
+   * declaration test. Two same-named classes in different scopes collapse onto
+   * that one key, so the second declaration's bodies were skipped and every
+   * call to it ran the FIRST declaration's code (no invalid wasm, no compile
+   * error — silently wrong results). This set makes the question node-scoped.
+   */
+  compiledClassBodies: Set<ts.ClassDeclaration | ts.ClassExpression>;
   /** Cache for function type deduplication: signature key → type index */
   funcTypeCache: Map<string, number>;
   /** Wrapper type indices */

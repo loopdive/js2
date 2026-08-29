@@ -118,10 +118,10 @@ export function computeRecGroups(
  * guard — and (b) near-zero cost: the encoder already dispatches per-op, so
  * each index pays only a null-check plus a range compare (a separate full
  * walk measured ~15% of emit time on the playground-examples corpus; inline
- * is <1%). `valCtx` is set only inside `emitBinaryWithSourceMap` (cleared in
- * a finally); the relocatable object emitter (`src/emit/object.ts`) reuses
- * the encode helpers with symbolic placeholder indices and intentionally
- * runs unchecked.
+ * is <1%). `valCtx` is set only inside the complete-module emit entry points
+ * (cleared in a finally); the relocatable object emitter
+ * (`src/emit/object.ts`) reuses the encode helpers with symbolic placeholder
+ * indices and intentionally runs unchecked.
  *
  * Spaces covered: functions (call/return_call/ref.func, element segments,
  * declaredFuncRefs, start, exports), types (function/import/tag signatures,
@@ -166,8 +166,8 @@ let valCtx: EmitValidationCtx | null = null;
 // ---------------------------------------------------------------------------
 // #1916/#2710 — handle→final-index resolution seam.
 //
-// `layout` is armed per-emit in `emitBinaryWithSourceMap` (same lifecycle as
-// `valCtx`) and dereferenced by `fIdx`/`gIdx` at every seam where a function or
+// `layout` is armed per complete-module emit (same lifecycle as `valCtx`) and
+// dereferenced by `fIdx`/`gIdx` at every seam where a function or
 // global reference becomes bytes: `call`, `return_call`, `ref.func`,
 // `global.{get,set}`, export descriptors, element-segment function lists,
 // `declaredFuncRefs`, and the start section. When unarmed (the relocatable
@@ -180,6 +180,24 @@ let valCtx: EmitValidationCtx | null = null;
 // `resolve-layout.ts` ONLY — see the preconditions documented there.
 // ---------------------------------------------------------------------------
 let layout: ModuleLayout | null = null;
+
+/**
+ * Per-function cache for instruction arrays that have more than one physical
+ * parent in the IR graph. The cache is armed only by `emitBinary`: source-map
+ * emission must visit every occurrence so its offsets retain their historical
+ * behaviour. Keeping this state per function is also correctness-critical:
+ * encoding an array performs the inline local-index checks against the current
+ * function frame, so bytes validated for one function must never be reused in
+ * another function with a different parameter/local count.
+ */
+interface InstrArrayEmitCache {
+  shared: Set<Instr[]>;
+  bytes: WeakMap<Instr[], Uint8Array>;
+  encoding: WeakSet<Instr[]>;
+  remainingUses: Map<Instr[], number>;
+}
+
+let instrArrayEmitCache: InstrArrayEmitCache | null = null;
 
 /** Resolve a function handle to its final function-index-space position. */
 function fIdx(h: number): number {
@@ -291,7 +309,7 @@ function vStructField(typeIdx: number, fieldIdx: number, op: string): void {
 
 /** Emit a complete Wasm binary from an IR module */
 export function emitBinary(mod: WasmModule): Uint8Array {
-  return emitBinaryWithSourceMap(mod).binary;
+  return emitBinaryInternal(mod, false).binary;
 }
 
 /**
@@ -303,20 +321,26 @@ export function emitBinary(mod: WasmModule): Uint8Array {
  * JS2WASM_SKIP_INDEX_VALIDATION=1 is an escape hatch only.
  */
 export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
+  return emitBinaryInternal(mod, true);
+}
+
+function emitBinaryInternal(mod: WasmModule, collectSourceMap: boolean): EmitResult {
   valCtx = process.env.JS2WASM_SKIP_INDEX_VALIDATION ? null : makeValidationCtx(mod);
   // #1916/#2710 — resolve the final index layout once, at serialization: the
   // single point that sees the fully-settled index space (post late imports,
   // post DCE). All func/global references below dereference through it.
   layout = resolveLayout(mod);
+  instrArrayEmitCache = null;
   try {
-    return emitBinaryWithSourceMapUnguarded(mod);
+    return emitBinaryWithSourceMapUnguarded(mod, collectSourceMap);
   } finally {
     valCtx = null;
     layout = null;
+    instrArrayEmitCache = null;
   }
 }
 
-function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
+function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boolean): EmitResult {
   const enc = new WasmEncoder();
   const sourceMapEntries: SourceMapEntry[] = [];
 
@@ -603,7 +627,18 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
         valCtx.maxLocals = params >= 0 ? params + f.locals.length : -1;
       }
       const bodyStartInSection = codeSectionBody.length;
-      encodeFunctionWithSourceMap(f, codeSectionBody, bodyStartInSection, funcRelativeEntries);
+      if (collectSourceMap) {
+        encodeFunctionWithSourceMap(f, codeSectionBody, bodyStartInSection, funcRelativeEntries);
+      } else {
+        instrArrayEmitCache = makeInstrArrayEmitCache(f.body);
+        try {
+          encodeFunction(f, codeSectionBody);
+        } finally {
+          // A body can be shared by multiple functions. Never carry bytes or
+          // their completed validation into the next function's local frame.
+          instrArrayEmitCache = null;
+        }
+      }
     }
 
     const codeSectionData = codeSectionBody.finish();
@@ -692,6 +727,24 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
   }
 
   return { binary: enc.finish(), sourceMapEntries };
+}
+
+/** Encode a function body when no source map was requested. */
+function encodeFunction(f: WasmFunction, enc: WasmEncoder): void {
+  const body = new WasmEncoder();
+
+  const localGroups = groupLocals(f.locals);
+  body.vector(localGroups, (group, e) => {
+    e.u32(group.count);
+    encodeValType(group.type, e);
+  });
+
+  encodeInstrArray(f.body, body);
+  body.byte(OP.end);
+
+  const bodyBytes = body.finish();
+  enc.u32(bodyBytes.length);
+  enc.bytes(bodyBytes);
 }
 
 /** Encode a function body, tracking instruction offsets for source maps */
@@ -1022,6 +1075,98 @@ export function encodeBlockType(bt: BlockType, enc: WasmEncoder): void {
   }
 }
 
+/**
+ * Count physical incoming edges without expanding a shared DAG. Only arrays
+ * with multiple parents need retained bytes; ordinary tree nodes keep the
+ * direct encoder path and avoid cache allocation/copy overhead.
+ */
+function makeInstrArrayEmitCache(root: Instr[]): InstrArrayEmitCache {
+  const parentCounts = new Map<Instr[], number>();
+  const visited = new Set<Instr[]>();
+  const pending = [root];
+  const recordChild = (child: Instr[]): void => {
+    parentCounts.set(child, (parentCounts.get(child) ?? 0) + 1);
+    if (!visited.has(child)) pending.push(child);
+  };
+
+  while (pending.length > 0) {
+    const instrs = pending.pop()!;
+    if (visited.has(instrs)) continue;
+    visited.add(instrs);
+
+    for (const instr of instrs) {
+      switch (instr.op) {
+        case "block":
+        case "loop":
+        case "try_table":
+          recordChild(instr.body);
+          break;
+        case "if":
+          recordChild(instr.then);
+          if (instr.else && instr.else.length > 0) recordChild(instr.else);
+          break;
+        case "try":
+          recordChild(instr.body);
+          for (const clause of instr.catches) recordChild(clause.body);
+          if (instr.catchAll) recordChild(instr.catchAll);
+          break;
+      }
+    }
+  }
+
+  const shared = new Set<Instr[]>();
+  const remainingUses = new Map<Instr[], number>();
+  for (const [instrs, count] of parentCounts) {
+    if (count > 1) {
+      shared.add(instrs);
+      remainingUses.set(instrs, count);
+    }
+  }
+  return { shared, bytes: new WeakMap(), encoding: new WeakSet(), remainingUses };
+}
+
+function finishInstrArrayUse(cache: InstrArrayEmitCache, instrs: Instr[]): void {
+  const remaining = (cache.remainingUses.get(instrs) ?? 1) - 1;
+  if (remaining > 0) {
+    cache.remainingUses.set(instrs, remaining);
+    return;
+  }
+  cache.remainingUses.delete(instrs);
+  cache.bytes.delete(instrs);
+}
+
+/** Encode one instruction array, reusing bytes only for shared DAG nodes. */
+function encodeInstrArray(instrs: Instr[], enc: WasmEncoder): void {
+  const cache = instrArrayEmitCache;
+  if (!cache || !cache.shared.has(instrs)) {
+    for (const instr of instrs) encodeInstr(instr, enc);
+    return;
+  }
+
+  const cached = cache.bytes.get(instrs);
+  if (cached) {
+    enc.bytes(cached);
+    finishInstrArrayUse(cache, instrs);
+    return;
+  }
+
+  if (cache.encoding.has(instrs)) {
+    throw new Error("Codegen error: cyclic instruction-array graph cannot be emitted");
+  }
+
+  cache.encoding.add(instrs);
+  try {
+    const child = new WasmEncoder();
+    for (const instr of instrs) encodeInstr(instr, child);
+    const bytes = child.finish();
+    cache.bytes.set(instrs, bytes);
+    enc.bytes(bytes);
+    finishInstrArrayUse(cache, instrs);
+  } finally {
+    cache.encoding.delete(instrs);
+  }
+}
+
 export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
   switch (instr.op) {
     case "unreachable":
@@ -1033,25 +1178,25 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
     case "block":
       enc.byte(OP.block);
       encodeBlockType(instr.blockType, enc);
-      for (const i of instr.body) encodeInstr(i, enc);
+      encodeInstrArray(instr.body, enc);
       enc.byte(OP.end);
       break;
     case "loop":
       enc.byte(OP.loop);
       encodeBlockType(instr.blockType, enc);
-      for (const i of instr.body) encodeInstr(i, enc);
+      encodeInstrArray(instr.body, enc);
       enc.byte(OP.end);
       break;
     case "if": {
       enc.byte(OP.if);
       encodeBlockType(instr.blockType, enc);
-      for (const i of instr.then) encodeInstr(i, enc);
+      encodeInstrArray(instr.then, enc);
       const hasElse = instr.else && instr.else.length > 0;
       const needsElse = hasElse || instr.blockType.kind === "val";
       if (needsElse) {
         enc.byte(OP.else);
         if (hasElse) {
-          for (const i of instr.else!) encodeInstr(i, enc);
+          encodeInstrArray(instr.else!, enc);
         } else {
           // Valued if with no else — emit unreachable to satisfy validator
           enc.byte(OP.unreachable);
@@ -1625,25 +1770,25 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
             break;
         }
       }
-      for (const i of instr.body) encodeInstr(i, enc);
+      encodeInstrArray(instr.body, enc);
       enc.byte(OP.end);
       break;
     }
     case "try": {
       enc.byte(OP.try);
       encodeBlockType(instr.blockType, enc);
-      for (const i of instr.body) encodeInstr(i, enc);
+      encodeInstrArray(instr.body, enc);
       // Encode catch clauses (catch $tag)
       for (const c of instr.catches) {
         if (valCtx) vIdx("exception tag", c.tagIdx, valCtx.numTags);
         enc.byte(OP.catch);
         enc.u32(c.tagIdx);
-        for (const i of c.body) encodeInstr(i, enc);
+        encodeInstrArray(c.body, enc);
       }
       // Encode catch_all clause
       if (instr.catchAll) {
         enc.byte(OP.catch_all);
-        for (const i of instr.catchAll) encodeInstr(i, enc);
+        encodeInstrArray(instr.catchAll, enc);
       }
       enc.byte(OP.end);
       break;

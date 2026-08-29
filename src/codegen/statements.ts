@@ -22,6 +22,7 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
+import { mintScopedClassIdentity } from "./class-bodies.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -644,7 +645,12 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // `const Foo = class {…}` — locals outrank the name-keyed
     // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
     // scope resolve to THIS declaration, not the first same-named one.
-    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    // (#4646) The collection pass mints that identity only for the scopes it
+    // walks — a class in a sibling BLOCK, or in a class/object-literal METHOD
+    // body, is never visited, so its name collision survives to here. Mint on
+    // demand from the same helper: the check is declaration-node identity, so a
+    // class that legitimately owns its name is untouched.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt) ?? mintScopedClassIdentity(ctx, stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
     // Only synthetic nested duplicates need a local singleton binding.  The
     // ordinary class-declaration path intentionally keeps its historical
@@ -684,6 +690,19 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // in the top-level declaration pass, but can reach this statement compiler
   // from a namespace/module block or another nested statement list.
   if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) {
+    return;
+  }
+
+  // A `const enum` is a type-directed compile-time declaration with no runtime
+  // evaluation. Top-level enum declarations are consumed by the declaration
+  // collector, but a function-local const enum reaches this dispatcher (the
+  // TypeScript compiler's Debug.formatControlFlowGraph declares two). Its
+  // member reads are folded through the checker in property-access dispatch;
+  // the declaration itself must disappear just as it does in TypeScript emit.
+  if (
+    ts.isEnumDeclaration(stmt) &&
+    stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ConstKeyword) === true
+  ) {
     return;
   }
 
