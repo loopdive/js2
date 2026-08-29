@@ -1,10 +1,10 @@
 {
   "id": "4628",
-  "assignee": "ttraenkler/opus-dev-4628",
-  "requested_by": "ttraenkler/opus-dev-4628",
+  "assignee": "ttraenkler/opus-dev-temporal",
+  "requested_by": "ttraenkler/opus-dev-temporal",
   "status": "in-progress",
-  "branch": "issue-4628-temporal-runtime-spike",
-  "claimed_at": "2026-08-23T06:46:59Z",
-  "updated_at": "2026-08-23T06:46:59Z",
-  "write_id": "25698-q7cct1si"
+  "branch": "issue-4628-temporal-global",
+  "claimed_at": "2026-08-29T10:27:41Z",
+  "updated_at": "2026-08-29T10:27:41Z",
+  "write_id": "15469-gdd56o22"
 }
