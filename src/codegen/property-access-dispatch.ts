@@ -31,6 +31,7 @@ import {
   isStringType,
   isStringWrapperType,
 } from "../checker/type-mapper.js";
+import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
@@ -4244,7 +4245,7 @@ export function finalizeStructAndDynamicMemberGet(
         const fields = ctx.structFields.get(typeName);
         if (structTypeIdx !== undefined && fields) {
           const typeDef = ctx.mod.types[structTypeIdx];
-          if (typeDef?.kind === "struct") {
+          if (typeDef?.kind === "struct" && structGrowsWithMetadata(typeDef, fields)) {
             // A nominal parent's fields are the physical prefix of every
             // existing child. Growing that prefix now would put the new field
             // after each child's own fields and make the explicit WasmGC
@@ -4286,8 +4287,7 @@ export function finalizeStructAndDynamicMemberGet(
                   ? { kind: "ref_null" as const, typeIdx: (propWasmType as { typeIdx: number }).typeIdx }
                   : propWasmType;
               const newField: FieldDef = { name: propName, type: fieldType, mutable: true };
-              fields.push(newField);
-              // fields === typeDef.fields (same array ref from structFields map)
+              fields.push(newField); // fields === typeDef.fields, enforced above (#5180)
               patchStructNewForAddedField(ctx, fctx, structTypeIdx, propWasmType);
               const fieldIdx = fields.length - 1;
               if (fieldIdx !== -1) {
