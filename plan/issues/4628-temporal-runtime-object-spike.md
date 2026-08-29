@@ -2,10 +2,10 @@
 id: 4628
 title: "Temporal as a real runtime object: spike @js-temporal/polyfill vs porting engine262's abstract-ops (2,206 × 'Temporal is not defined')"
 status: in-progress
-assignee: ttraenkler/opus-dev-4628
+assignee: ttraenkler/opus-dev-temporal
 sprint: current
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: hard
@@ -15,8 +15,8 @@ area: codegen, runtime
 language_feature: temporal
 goal: spec-completeness
 test262_fail: 2206
-depends_on: [4627]
-related: [661]
+depends_on: [4627, 5191]
+related: [661, 5192]
 ---
 
 # #4628 — Temporal as a real runtime object
@@ -492,3 +492,212 @@ into a required check on work nobody has committed to yet.
   compilation stops terminating.
 - No runtime / differential-execution lane. Compile + validate only, by design.
 - Step 0 (see above).
+
+---
+
+## Step 3 attempt — 2026-08-29 (`ttraenkler/opus-dev-temporal`, branch `issue-4628-temporal-global`)
+
+Measured on `origin/main` @ `279ce9a4f2`. **Outcome: Option A is confirmed as
+the right path and is BLOCKED on one specific compiler defect, now filed as
+#5191.** Acceptance criteria 1–3 are NOT met and are not claimed. What follows
+is what was measured, what was decided, and what is left.
+
+### Step 0 — the baseline the spike left outstanding, now taken
+
+`node scripts/fetch-baseline-jsonl.mjs --force`, 2026-08-29, 48,735 entries
+(85,308,991 B), bucketed by `.tmp/bucket-baseline.mjs` over rows whose path
+contains `Temporal`. **This supersedes the "Measured baseline" numbers at the
+top of this file, which were pre-#4627.**
+
+| Bucket | Pre-#4627 (2026-08-23) | **Now (2026-08-29)** |
+| --- | --- | --- |
+| Temporal-path rows | 4,611 | 4,611 |
+| `pass` | 207 | **594** |
+| `compile_error` status | 1,487 | **0** |
+| `Temporal is not defined` | 2,206 | **1,589** |
+| other `fail` | ~711 | 2,428 |
+
+Two corrections that matter for how this issue is scoped:
+
+- **#4627 landed and the compile-error bucket is gone.** Those rows now
+  instantiate and fail on substance, which is exactly the predicted growth in
+  the semantic bucket (711 → 2,428).
+- **The headline is 1,589, not 2,206.** Any delta claim against this issue must
+  cite this run, not the numbers in the Problem section.
+
+Largest non-`not defined` failure buckets now: `Cannot read properties of null
+[in __module_init()]` 487, `Expected a RangeError but got a TypeError` 155,
+`round is not a function` 77, `until` 65, `since` 64. By directory:
+ZonedDateTime 818, PlainDateTime 686, PlainDate 531, Duration 474,
+PlainYearMonth 447, Instant 407, PlainTime 390, PlainMonthDay 186, Now 65.
+
+### Gate re-verification on this branch base
+
+`node --import tsx tests/dogfood/temporal-polyfill-harness.mjs --no-umd` —
+ESM linked lane, 157,541 B: compile **success, 0 errors / 2 warnings** in
+21,418 ms, binary **1,095,206 B**, `WebAssembly.compile()` **OK**. The spike's
+whole-bundle non-termination is **gone** — 45+ minutes then, 21 s now. Plain
+`node` fails on `bundle-manifest.js` with `ERR_MODULE_NOT_FOUND`; use
+`node --import tsx`.
+
+The UMD lane was run for the first time (90,724 ms, 0 errors, 1,644,531 B) and
+**fails validation**: `#470:"__closure_35" … return[0] (expected externref, got
+i32)`. Filed as [#5192](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5192-umd-closure-return-type-invalid-wasm),
+deliberately not fixed here — it is a second, independent bundle shape and is
+not on Option A's critical path.
+
+### The finding that decides this step: a THIRD gate the spike never reached
+
+Compile and validate are different gates — the spike said so and checked both.
+**Instantiate is a third gate, and the polyfill fails it.** The ESM binary
+validates and then throws a `WebAssembly.Exception` the moment its module init
+runs, so it produces **no exports at all**. No wiring choice can install a
+`Temporal` global from a module that never finishes initialising, which is why
+this blocks every integration option equally rather than favouring one.
+
+The harness now measures it (`measure({ instantiate })`, `--no-instantiate` to
+skip) and the summary carries `moduleInitRuns` / `moduleInitError`, so no
+future run can read "validates" as "works". Current headline:
+`"compiled + validates, but module init THROWS"`.
+
+**Root cause, isolated.** Bisecting the linked bundle by top-level-statement
+prefix (`.tmp/probe-bisect.mts`, 9 compiles) puts the first failing prefix at
+statement **2 of 341** — prefix 1 instantiates, prefix 2 does not. Statement 2
+is jsbi's static-table block on `class JSBI extends Array`. Reduced to three
+lines:
+
+```js
+class C extends Array {}
+C == null;             // spec: false. js2wasm: TRUE
+C.zzz === undefined;   // spec: true.  js2wasm: throws
+```
+
+**A class extending a builtin evaluates to `null` as a value.** The property
+access throws only because the receiver it loaded is null. `class C {}`,
+`class C extends B {}` (user base), `function C(){}` and `const C = {}` are all
+correct; `Array`, `Error` and `Map` bases are all null. It stays hidden because
+`typeof C`, `C.name` and `new C()` are served by static arms that never
+materialise the constructor object.
+
+Located to one line: `src/codegen/class-bodies.ts` (~L1188) skips registering
+the class-object singleton when `ctx.classBuiltinParentMap.has(className)`
+(#1366a), because `emitLazyClassObjectGet`
+(`src/codegen/expressions/extern.ts:362`) builds that object as a `struct.new`
+of the `$ClassName` WasmGC struct, which an externref-backed subclass does not
+have. So the guard is not gratuitous and the fix is not deleting it — the lane
+needs a different carrier. Filed with the full receiver table as
+[#5191](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5191-builtin-derived-ctor-property-miss-throws),
+recorded in `depends_on` above.
+
+This is precisely the "free, prioritized compiler-bug backlog against a
+real-world library" #661 predicted — and note it was invisible to both gates
+the spike used.
+
+### Integration approach — decided, with the number that decides it
+
+**Compile-once, never per-test.** The polyfill's compile costs **21.4 s**
+(measured, above). The test262 runner compiles one synthetic module per test
+(preamble + body, `tests/test262-runner.ts`), and `$262` shows the established
+way to inject a global is a **source-level preamble declaration** compiled with
+the body — there is no host-injection path for realm objects. Prepending the
+polyfill would therefore cost 21.4 s × 4,611 Temporal rows ≈ **27 hours** of
+added compile, or ~1.7 h on each of the 16 merge-group shards against a job
+that runs ~19 minutes today. Option (c), source-level prepend, is arithmetically
+dead. So is any scheme keyed on the test body, because the runner's disk cache
+key includes it.
+
+That leaves **option (a), compile-once + link per test**, and the machinery
+already exists: `src/package-linker.ts` compiles a bare-package edge into its
+own Wasm binary, content-addresses it into a provider cache
+(`cachePaths()` → `<cacheKey>.wasm`), and hands the application graph an import
+map via the internal `linkedPackageBindings` option, over a frozen cross-module
+type group (`RUNTIME_RECGROUP_ABI_VERSION`,
+`src/emit/canonical-recgroup.ts`). `scripts/build-runtime-provider.mjs` is the
+existing precedent for publishing a compiler-owned provider artifact this way.
+
+Concretely, the intended shape:
+
+1. A build step compiles the linked polyfill **once** into a provider `.wasm`
+   (21 s, cached, content-addressed) — the same acquisition/link path the
+   dogfood harness already pins.
+2. The runner passes `linkedPackageBindings` mapping `Temporal` to that
+   provider's export, for the tests that need it.
+3. Per-test cost becomes the ordinary body compile plus a second instantiation.
+
+Option (b) — instantiate the polyfill in the JS host and hand `Temporal` to the
+test module as an imported `externref` — was considered and **rejected**: the
+polyfill's objects would be js2wasm WasmGC structs, opaque to the JS host, so
+the host cannot serve property access on them; and injecting the *untranspiled*
+JS polyfill as a host object instead would abandon standalone mode, which the
+dual-mode architecture principle forbids without a Wasm-native fallback.
+
+**None of this was implemented, because #5191 makes it unmeasurable.** A
+provider artifact whose module init throws is worth nothing, and wiring built
+against it could not be validated. The order is: fix #5191 → re-run the
+harness's instantiate lane → then build the provider wiring.
+
+### `src/codegen/temporal-native.ts` — KEEP, unchanged
+
+Measured, not assumed: the 594 passing Temporal rows in the current baseline
+are the compile-time lowering's, and `tests/issue-661.test.ts` passes **5/5**
+on this branch. The polyfill path covers **zero** of them today — it cannot
+produce a `Temporal` object at all. The plan's instruction was to measure before
+removing; the measurement says removing it would forfeit the project's only
+Temporal conformance for nothing. Precedence between the lowering and a real
+global is a decision that belongs to the PR that first makes the global exist;
+it cannot be defined against a global that does not.
+
+### `CLOSURE_UNSAFE_HOST_AMBIENTS` — deliberately NOT changed, and here is why
+
+`src/codegen/array-methods.ts:447` still reads
+`new Set(["Temporal", "TemporalHelpers", "Intl", "$262"])`.
+
+Reading the gate (`hofRefElemClosureLaneSafe`) settles when the removal is
+correct. The deny list is checked **before** the generic
+`decl === undefined || decl.getSourceFile().isDeclarationFile` test. So:
+
+- While `Temporal` is a **host ambient** (today), the generic test already
+  classifies it unsafe. The explicit entry is redundant but harmless.
+- Once `Temporal` is a **compiled, user-source binding** (a linked provider
+  import), the generic test would classify it **safe** — and the explicit entry
+  is then the only thing wrongly forcing it onto the host-callback path, which
+  for a ref-element receiver is the #3126 silent no-op.
+
+So the entry must be removed **in the PR that makes `Temporal` real, not
+before**. Removing it now would re-create the PR #2838 hazard (212 Temporal
+tests pass→fail) with no compensating benefit, because there is nothing yet for
+the closure lane to resolve. `TemporalHelpers` stays regardless — it is a
+harness ambient and is not what this issue makes real, exactly as the plan
+says.
+
+### Scoped validation actually run on this branch
+
+- `tests/dogfood/temporal-polyfill-harness.mjs --no-umd` — ESM lane: compile
+  0 errors / validates / **instantiate FAILS** (the finding above).
+- `tests/dogfood/temporal-polyfill-harness.mjs --no-whole` — UMD lane: compile
+  0 errors / **validate FAILS** (#5192).
+- `tests/dogfood/temporal-polyfill-harness.mjs --no-umd --no-whole --slices=200`
+  — slice lane, 342/342 statements, 0 skipped.
+- `npx vitest run tests/issue-661.test.ts` — **5/5 pass**.
+- `npx tsx scripts/run-test262-paths.mts .tmp/paths.txt --isolate` over five
+  hand-picked Temporal rows through the runner's own `runTest262File`:
+  `getOwnPropertyNames.js` → `ReferenceError: Temporal is not defined`;
+  `prop-desc.js` → `Expected SameValue(«"undefined"», «"object"»)`;
+  `PlainDate/prototype/add/argument-duration-max.js` → `Temporal is not
+  defined`; `Instant/prototype/toString/basic.js` → `Expected
+  SameValue(«"null"», …)`. These are acceptance criterion 1's own tests, and
+  they still fail — recorded, not claimed as met.
+- Minimal-repro matrices for #5191 are in `.tmp/probe-min{,2,…,6}.mts` on this
+  branch (not committed — `.tmp/` is scratch by convention).
+
+### What remains
+
+1. **#5191** — the blocker. Nothing else here can be measured until it clears.
+2. Provider-artifact build step + `linkedPackageBindings` wiring in the runner
+   (design above; no code written).
+3. Precedence between `temporal-native.ts` and the real global, once one exists.
+4. Remove `"Temporal"` from `CLOSURE_UNSAFE_HOST_AMBIENTS` **in that same PR**,
+   re-verifying against the full Temporal bucket per the PR #2838 hazard.
+5. #5192 (UMD lane) — independent, not on the critical path.
+6. jsbi is userland-BigInt (`class JSBI extends Array`); further defects it
+   surfaces get their own issues rather than widening this one.

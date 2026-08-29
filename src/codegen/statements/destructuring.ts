@@ -197,7 +197,6 @@ export function tryEmitArrayProtoIteratorReadDrive(
           localIdx = allocLocal(fctx, name, declType);
         }
       }
-      console.error("DBG drain elem", name, localIdx, JSON.stringify(getLocalType(fctx, localIdx)));
       const localType = getLocalType(fctx, localIdx) ?? ({ kind: "externref" } as ValType);
 
       // value-present arm: coerce `value` externref → the binding's local type.
