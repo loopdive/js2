@@ -464,6 +464,7 @@ import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
+import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
 import {
   buildIsUndefinedExternBody,
   emitWrapperValueOfFunctions,
@@ -6983,13 +6984,46 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
           if (classArity !== undefined && funcType.params.length - 1 !== classArity) continue;
           if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
         }
-        // Class-method rest metadata uses the Wasm parameter index, including
-        // the receiver at slot 0. The rest vector therefore lives at
-        // `restIndex`; fixed user parameters occupy slots 1..restIndex-1.
-        // Slicing through `1 + restIndex` treated the vector itself as a fixed
-        // argument, which made the vararg bridge pass three values to a
-        // `(receiver, vector)` method and produced invalid Wasm.
-        const extraParams = restInfo ? funcType.params.slice(1, restInfo.restIndex) : funcType.params.slice(1);
+        // (#4644) Locate the rest vector by its TYPE in the emitted signature,
+        // not by arithmetic on `restInfo.restIndex`.
+        //
+        // `restIndex` is written as `member.parameters.indexOf(param)` — a
+        // SOURCE parameter index, with no receiver slot — while these params
+        // are the Wasm signature, whose slot 0 is the receiver. The two
+        // conventions differ by one, and the comment that used to sit here
+        // asserted the opposite ("the Wasm parameter index, including the
+        // receiver at slot 0"). The off-by-one is invisible for the common
+        // `m(...args)` (restIndex 0, no fixed params, both readings agree) and
+        // wrong for every method with a fixed param before the rest:
+        // `formatToParts(e, ...t)` on @js-temporal/polyfill's
+        // `DateTimeFormatImpl` yielded ZERO fixed params, so the bridge called
+        // a 3-param method with 2 operands — clean at `compile()`, rejected by
+        // `WebAssembly.compile()`.
+        //
+        // The vector is always the LAST parameter (JS forbids anything after a
+        // rest param), so scan from the end for `vecTypeIdx`. Scanning from the
+        // end also disambiguates `m(a: number[], ...rest: number[])`, where a
+        // fixed param shares the vector's type. If it is not found the
+        // signature is not the shape this bridge assumes — skip the entry
+        // rather than emit a call whose arity we are guessing at.
+        let extraParams: ValType[];
+        if (restInfo) {
+          let restSlot = -1;
+          for (let p = funcType.params.length - 1; p > 0; p--) {
+            const param = funcType.params[p]!;
+            if (
+              (param.kind === "ref" || param.kind === "ref_null") &&
+              (param as { typeIdx: number }).typeIdx === restInfo.vecTypeIdx
+            ) {
+              restSlot = p;
+              break;
+            }
+          }
+          if (restSlot < 0) continue;
+          extraParams = funcType.params.slice(1, restSlot);
+        } else {
+          extraParams = funcType.params.slice(1);
+        }
         entries.push({ structName, typeIdx, funcIdx, resultType, extraParams, restInfo });
         continue;
       }
@@ -7203,18 +7237,23 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             ...coercion,
           );
         }
-        // The legacy shape starts with the receiver cast, so fixed arguments
-        // were inserted at offset 2. Vararg bridges now build their arguments
-        // before loading/casting the receiver; prepend those fixed arguments
-        // instead of splitting the length result from its local.set.
-        testAndCall.splice(classMember && classArity === -1 ? 0 : 2, 0, ...fixedInstrs);
-        // Reload both operands immediately before the target call. In
-        // particular, do not carry the receiver through the host helper calls
-        // above: the target ABI is `(receiver, rest-vector)`, not just the
-        // vector produced by the packing loop.
+        // Reload the operands immediately before the target call, in ABI
+        // order. In particular, do not carry the receiver through the host
+        // helper calls above: the target ABI is
+        // `(receiver, ...fixed, rest-vector)`, not just the vector produced by
+        // the packing loop.
+        //
+        // (#4644) The fixed arguments belong HERE, between the receiver and the
+        // vector — not spliced to the front of the bridge body. Prepending them
+        // pushed them *before* the receiver, so a method with a fixed param
+        // ahead of its rest param would have been called as
+        // `(fixed, receiver, vector)`. The packing prologue above is
+        // stack-neutral, so reading the host argument array a second time here
+        // is safe.
         testAndCall.push(
           { op: "local.get", index: receiverAnyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
+          ...fixedInstrs,
           { op: "local.get", index: 6 },
           { op: "ref.cast", typeIdx: restInfo.vecTypeIdx },
         );
@@ -7969,6 +8008,34 @@ function toPrimitiveNeedsBoxing(ctx: CodegenContext, methodSuffix: string): bool
  */
 function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   const mod = ctx.mod;
+  // (#4644) A `toString(hint)` / `valueOf(hint)` reached ONLY through
+  // ToPrimitive needs the host `undefined` for its padded argument, and
+  // nothing else in such a module necessarily imports it — `__get_undefined`
+  // was absent and `canonicalUndefinedExternInstrs` fell back to
+  // `ref.null.extern`, which surfaces in JS as **null**, not `undefined`.
+  // Measured: `new N() + 1` with `valueOf(hint){return hint===undefined?41:7}`
+  // answered 8 instead of 42. Register it here — before any funcIdx below is
+  // captured, and well before the #1984 index-space freeze — so the pad is the
+  // real `undefined`.
+  if (!ctx.standalone && !ctx.nativeStrings && ctx.funcMap.get("__get_undefined") === undefined) {
+    let needsUndefinedPad = false;
+    outer: for (const [structName] of ctx.structFields) {
+      for (const methodName of ["toString", "valueOf"]) {
+        const idx = ctx.funcMap.get(`${structName}_${methodName}`);
+        if (idx === undefined) continue;
+        const def = definedFuncAt(ctx, idx);
+        const ft = def ? mod.types[def.typeIdx] : undefined;
+        if (ft?.kind === "func" && ft.params.slice(1).some((p) => p.kind === "externref")) {
+          needsUndefinedPad = true;
+          break outer;
+        }
+      }
+    }
+    if (needsUndefinedPad) {
+      ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
+  }
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_toPrim_type");
 
   const emitDispatchForMethod = (methodName: string, exportName: string) => {
@@ -7979,6 +8046,18 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           mode: "standalone";
           funcIdx: number;
           resultType: ValType;
+          /**
+           * (#4644) Operands for the callee's params BEYOND `this`. ToPrimitive
+           * invokes `toString`/`valueOf` with ZERO arguments, but the method may
+           * still DECLARE parameters — `toString(e = void 0)` on
+           * `@js-temporal/polyfill`'s `PlainMonthDay` compiles to a 2-param Wasm
+           * func. The arm used to push only the receiver, so the module was
+           * clean at `compile()` and rejected by `WebAssembly.compile()` with
+           * `not enough arguments on the stack for call (need 2, got 1)`.
+           * Padding with `undefined` is also the correct JS answer: an omitted
+           * argument IS `undefined`, so a defaulted param takes its default.
+           */
+          padInstrs: Instr[];
         }
       | {
           structName: string;
@@ -8164,7 +8243,13 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           funcType && funcType.kind === "func" && funcType.results.length > 0
             ? funcType.results[0]!
             : { kind: "externref" };
-        entries.push({ structName, typeIdx, mode: "standalone", funcIdx, resultType });
+        // (#4644) Pad the declared-but-unpassed params. A method whose extra
+        // params we cannot supply a value for (a non-nullable GC ref) is
+        // skipped entirely rather than emitted short — an arm that cannot be
+        // built correctly must not be built at all.
+        const padInstrs = zeroArgCallPadInstrs(ctx, funcIdx);
+        if (!padInstrs) continue;
+        entries.push({ structName, typeIdx, mode: "standalone", funcIdx, resultType, padInstrs });
       }
     }
 
@@ -8212,6 +8297,9 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         thenInstrs.push(
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
+          // (#4644) `this`, then one operand per DECLARED param — the callee's
+          // arity, not the zero arguments ToPrimitive passes.
+          ...entry.padInstrs,
           {
             op: "call",
             funcIdx: entry.funcIdx,
