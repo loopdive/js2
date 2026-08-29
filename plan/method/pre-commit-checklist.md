@@ -16,6 +16,11 @@
 7. [ ] No test files from other issues being deleted
 8. [ ] No source files being reverted to old versions
 9. [ ] Commit message references your issue number (#N)
+9b. [ ] **Agent commits carry a `Model:` trailer** — vendor, family,
+        version/subtype and configured effort, e.g. `Model: Claude Fable 5 Max`
+        or `Model: Codex GPT-5.6 Sol Max` (enforced by `.husky/commit-msg` when
+        an agent `Co-authored-by:` trailer is present; see AGENTS.md
+        "Commit Attribution").
 10. [ ] **Never `git commit --no-verify`.** If the full pre-commit chain is too
         slow for your tool timeout (test:changed-root + ratchets take minutes),
         commit with `SKIP_SLOW_PRECOMMIT=1 git commit …` instead — that keeps
