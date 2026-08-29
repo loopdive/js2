@@ -4,7 +4,7 @@ title: "ES2015 standalone: regexp conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: medium
@@ -14,10 +14,11 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
-  # Wave-1 growth, rationale dated 2026-08-28 (see ## Results): the generic
-  # §22.2.6.4 `flags` getter, the Annex B `compile` body + its call arm, the
-  # well-known-symbol proto value-read arm, and the @@replace function-replacer
-  # route are all measured emission growth in these files.
+  # Wave-1 growth, rationale dated 2026-08-29 (see ## Results): the Annex B
+  # `compile` body + its call-site dispatch arm, the well-known-symbol proto
+  # value-read arm + its shared `[Symbol.x]` display-name helper, and the
+  # @@replace function-replacer route are all measured emission growth in these
+  # files. The §22.2.6.4 generic `flags` getter was NOT attempted this wave.
   - src/runtime.ts
   - src/codegen/builtin-value-read.ts
   - src/codegen/native-proto.ts
@@ -31,10 +32,10 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   - src/codegen/regexp-dynamic-pattern.ts
 coercion-sites-allow:
-  # The §22.2.6.4 `flags` getter's eight `ToBoolean(Get(R, <flag>))` steps. This
-  # does NOT hand-roll a ToBoolean matrix: it CALLS the one shared native
-  # `__is_truthy` helper (the standalone ToBoolean engine), which is the
-  # sanctioned routing — the gate counts the new reference to it (2026-08-28).
+  # Held for the §22.2.6.4 `flags` getter's `ToBoolean(Get(R, <flag>))` steps,
+  # which are NOT part of this wave — the gate reports no net vocabulary growth
+  # as landed (2026-08-29). The Annex B `compile` body's ToString goes through
+  # the existing `ensureRuntimeToStringIdx` single coercion site.
   - src/codegen/regexp-standalone.ts
 func-budget-allow:
   # +6 lines: the `re.compile(…)` dispatch arm, added next to the existing
@@ -298,18 +299,18 @@ of refusing.
 
 ## Results
 
-Wave 1, measured 2026-08-28 with `npx tsx .tmp/run-standalone.mts --list
+Wave 1, measured 2026-08-29 with `npx tsx .tmp/run-standalone.mts --list
 .tmp/es2015/wp-regexp-current-fails.txt` (182 paths, standalone target) on this
-branch.
+branch, split into two 91-path chunks.
 
 | | before | after |
 | --- | --- | --- |
-| pass | 0 | **29** |
-| not passing | 182 | 153 (149 fail + 4 compile error) |
+| pass | 0 | **25** |
+| not passing | 182 | 157 (154 fail + 3 compile error) |
 
-The "before" row is the target list's definition — every one of the 182 paths
-was failing on head `86739f05`, which is what the list was written from. The
-"after" row is a full re-run of all 182 on this branch.
+The "before" row is a full base run executed on this branch's HEAD (`0712819b`)
+before touching any source: 0 pass, 171 fail, 11 compile error. Compile errors
+dropped 11 → 3.
 
 Regression guard: all 40 paths in `.tmp/es2015/wp-regexp-passing-spotcheck.txt`
 still PASS. Source-ratchet gates (loc / func / coercion-sites / oracle-ratchet /
@@ -318,64 +319,59 @@ dead-exports) all green with this file's grants.
 ### Clusters closed or advanced
 
 - **Cluster 2 — @@-method reification (12 of 27).** The root cause was a missing
-  arm, not the glue: `<Builtin>.prototype[Symbol.<wellKnown>]` had no
-  value-read path except Map/Set's `@@iterator` alias (#4731), so the computed
-  read fell through to `__extern_get`, which has no standalone symbol-key arm,
-  and `RegExp.prototype[Symbol.match]` READ as `undefined` while its `typeof`
-  folded to `"function"`. Generalized that arm to every well-known symbol
+  arm, not the glue: `<Builtin>.prototype[Symbol.<wellKnown>]` had no value-read
+  path except Map/Set's `@@iterator` alias (#4731), so the computed read fell
+  through to `__extern_get`, which has no standalone symbol-key arm, and
+  `RegExp.prototype[Symbol.match]` READ as `undefined` while its `typeof` folded
+  to `"function"`. Generalized that arm to every well-known symbol
   (builtin-value-read.ts), gave `@@N` members their §10.2.9 display name
   `"[Symbol.x]"` derived from the one well-known-symbol table (native-proto.ts,
   literals.ts), and gave `@@7`–`@@10` their real arities. `length` / `name` /
-  `not-a-constructor` now pass for all four symbol methods.
-- **Cluster 3 — `RegExp.prototype.compile` (11 of 15).** `$NativeRegExp`'s
+  `not-a-constructor` now pass for all four symbol methods. `@@9` no longer
+  shares `.test`'s i32 boolean arm (§22.2.6.12 returns an index, not a boolean).
+- **Cluster 3 — `RegExp.prototype.compile` (7 of 15).** `$NativeRegExp`'s
   pattern fields are now mutable, `compile` has a real Annex B §B.2.4.1 body
   (RegExp-pattern borrow + step 3.a TypeError, ToString with `undefined ⇒ ""`,
   runtime re-compile, in-place field copy, lastIndex reset, receiver returned),
-  and `re.compile(…)` has a dispatch arm — it previously had none and silently
-  no-op'd. An out-of-subset pattern now throws SyntaxError instead of copying
-  the #4439 poison struct into the receiver.
+  and `re.compile(…)` has a call-site dispatch arm — it previously had none and
+  silently no-op'd.
 - **Cluster 5 — @@replace function replacer (6 of 7).** `re[Symbol.replace](s,
-  fn)` routes into the existing #4224 call-site walk with operands swapped,
-  instead of refusing. This was purely a missing route: the machinery was
-  already wired for `String.prototype.replace(re, fn)`.
-- **Cluster 7 — generic `flags` getter (0 of 5, but the getter is fixed).**
-  §22.2.6.4 is now emitted generically: branded receiver → struct bitfield,
-  any other object → `ToBoolean(Get(R, <flag>))` in spec order folded into the
-  same bitfield, primitive → TypeError. The five `coercion-*` tests still fail
-  for an unrelated reason (below).
+  fn)` routes into the existing #4224 call-site walk with the operands swapped,
+  instead of refusing. Purely a missing route: the machinery was already wired
+  for `String.prototype.replace(re, fn)`.
 
 ### Deliberately not attempted / blocked
 
 - **Cluster 1 — RegExpExec protocol (103 tests): NOT attempted.** It is a
-  rewrite of all four @@-cores around an observable `RegExpExec` loop, and it
-  is the single largest item in the plan; splitting it out keeps this wave
-  landable. Everything it needs is still true as the plan describes it.
-- **Cluster 7's five `coercion-*` tests are blocked on an unrelated
-  open-object defect, not on the getter.** Measured: on a standalone plain
-  object, only the FIRST assignment to a property takes effect —
-  `r.global = undefined; r.global = "string"` reads back `undefined`. The tests
-  reassign the same property nine times with different types, so they can never
-  observe more than the first value. Direct probe with a single assignment
-  (`{global: "string"}`) returns `"g"` correctly through the new getter. Needs
-  its own issue against the open-object property-write path.
-- **Cluster 8 — u-mode pattern strictness (3 tests): blocked as scoped.** The
-  plan targets `src/codegen/regex/parse.ts`, but these tests build patterns at
+  rewrite of all four @@-cores around an observable `RegExpExec` loop and is the
+  single largest item in the plan; splitting it out keeps this wave landable.
+  Everything it needs is still true as the plan describes it. It also gates
+  `this-val-non-regexp` (a plain object carrying its own `exec` must WORK) and
+  the whole `*-lastindex-*` family.
+- **Cluster 7 — generic `flags` getter: not attempted.** Its five `coercion-*`
+  tests are blocked on an unrelated open-object defect (repeated assignment to
+  the same property on a standalone plain object keeps only the FIRST value), so
+  the getter rewrite would have bought 0 tests while spending LOC budget.
+- **Cluster 8 — u-mode pattern strictness (4): blocked as scoped.** The plan
+  targets `src/codegen/regex/parse.ts`, but these tests build their patterns at
   RUN time (`RegExp("\\" + s, "u")` over a `String.fromCharCode` loop), so the
-  rejection has to come from the hand-emitted Wasm runtime compiler
-  (`ensureDynamicStandaloneRegExpCompiler`), not the TypeScript-side parser.
-  Fixing `parse.ts` alone would not move them.
+  rejection has to come from the hand-emitted Wasm runtime compiler, not the
+  TypeScript-side parser.
 - **Cluster 9 — dynamic-flags demotion (3 CE): not attempted.** Unchanged.
-- **Cluster 6 — cross-realm (8): unchanged**; one now reports a compilation
-  timeout rather than the missing QuickJS provider.
-- Remaining cluster-3 residue: `flags-to-string` (a `.test()` on a
-  statically-known literal still selects g/y semantics from the LITERAL's
-  flags, which `compile` can now invalidate — static flag analysis is unsound
-  once a regexp is mutable, and should be demoted to the runtime bitfield on
-  any module that calls `compile`), `pattern-regexp-immutable-lastindex`
-  (needs the observable lastIndex Set from cluster 1 step 2),
-  `pattern-regexp-props` (an `Object.defineProperties` descriptor-shape
-  limitation, #1906), `pattern-string-u` (the runtime compiler has no `u`
-  support).
+- **Cluster 6 — cross-realm (8): unchanged** — the QuickJS eval provider is not
+  built in this environment.
+- Remaining cluster-3 residue: `pattern-string-invalid{,-u}` (the #4439 runtime
+  compiler returns a POISON struct for out-of-subset patterns rather than
+  throwing, and the poison cannot distinguish "invalid" from "valid but
+  unsupported" — turning it into an eager SyntaxError would mis-reject `abc{1}`),
+  `flags-to-string` (a `.test()` on a statically-known literal still selects g/y
+  semantics from the LITERAL's flags, which `compile` can now invalidate — static
+  flag analysis is unsound once a regexp is mutable),
+  `pattern-regexp-immutable-lastindex` (needs the observable lastIndex Set from
+  cluster 1), `pattern-regexp-props` (#1906 descriptor-shape limitation),
+  `pattern-{to-string,string}-err` (ToString(Symbol) must throw TypeError — a
+  shared runtime concern, not RegExp's), `pattern-string-u` (the runtime
+  compiler has no `u` support).
 
 ## References
 

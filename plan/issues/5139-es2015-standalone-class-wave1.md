@@ -289,10 +289,10 @@ plain-function lane shares it — fixes ripple beyond this package).
 - **#1119 / #1049** — fn-name inference for class/function values (touches the
   `definition/fn-name-*` files in cluster 4's neighborhood).
 
-## Results (wave 1 implementation, 2026-08-28)
+## Results (wave 1 implementation, 2026-08-29)
 
 Measured with `npx tsx .tmp/run-standalone.mts --list <chunk>` on the 292-path
-target list, before and after, in this worktree.
+target list, before and after, in this worktree (base `577ce9d6`).
 
 | List | Before | After |
 |---|---|---|
@@ -344,7 +344,7 @@ target list, before and after, in this worktree.
   nothing, so it no longer takes a struct hint.
 - **Escaped `let` as a method name (2).** A property name is an IdentifierName,
   which permits `\u` escapes; the early error now excludes property-name
-  positions.
+  positions (`compiler/early-errors/node-checks.ts`).
 
 ### Not attempted / skipped this pass
 
@@ -368,6 +368,11 @@ target list, before and after, in this worktree.
   method lane already handles it; only the generator lane fails. Not isolated.
 - **`yield [...yield]` shapes (8) and the 8 CE `sequential numeric yields`** —
   plan Step 6, explicitly lowest certainty.
+- **`static constructor()` (2 CE)** — the one-constructor early error
+  (`compiler/early-errors/module-rules.ts:checkDuplicateConstructors`) counts
+  statics. Left alone deliberately: relaxing it only converts the CE into a
+  FAIL, because the same two tests then assert `C.hasOwnProperty('constructor')`
+  and `C.prototype.hasOwnProperty('constructor')` — cluster 4, still blocked.
 - **Method named `new` (2)** — `new()` miscompiles to an invalid module
   (`local.tee expected ref, found f64`); a distinct codegen bug, not a parser one.
 - 5 quickjs-artifact env failures and 6 decorator CE tests: documented residuals.
@@ -375,19 +380,17 @@ target list, before and after, in this worktree.
 ### Validation
 
 - Spotcheck list: 40/40 (was 27/40 on head).
-- `tests/issue-4768-generator-call-boundary.test.ts` green (the goal #5060 was
-  serving is preserved).
-- Targeted vitest runs — generators, native method generators, try_table EH,
-  #1719 CPR, param defaults, arguments, destructuring, classes, early errors,
-  and ~50 `tests/equivalence/*` files. Every failure observed was reproduced on
-  a clean checkout of the same tree and is PRE-EXISTING: `issue-1719-cpr` (6, TS
-  lib type error), `equivalence/tdz-reference-error` (6),
-  `equivalence/logical-conditional-identity` (3),
-  `issue-3632-eval-early-errors` (2), `equivalence/delete-sentinel` (1),
-  `issue-1053-arguments-global-staleness` (1),
-  `equivalence/arguments-nested-and-loops` (1),
-  `equivalence/yield-as-expression` (1).
-- The full `tests/equivalence` directory OOMs in this container (documented in
-  CLAUDE.md); it was run in subsets instead.
+- `tests/equivalence/**` run in full, in batches of six files (the whole
+  directory OOMs in this container — SIGKILL at ~20 files, documented in
+  CLAUDE.md). Every failure was A/B-verified PRE-EXISTING by re-running it on a
+  clean checkout of the same tree:
+  `arguments-nested-and-loops` (1), `array-inline-return` (1),
+  `delete-sentinel` (1), `logical-conditional-identity` (3),
+  `misc-small-patterns` (1), `new-non-constructor` (2),
+  `null-dereference-guards` (5), `optional-direct-closure-call` (2),
+  `reflect-api` (1), `tdz-reference-error` (6), `yield-as-expression` (1).
+  One file, `multi-file-compilation`, cannot be judged here at all: it OOMs the
+  vitest worker (V8 heap limit) on a clean base too, even at
+  `--max-old-space-size=6144`. Environmental, not a verdict.
 - All five source-ratchet gates green (loc, func, coercion-sites,
   oracle-ratchet, dead-exports).

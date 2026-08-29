@@ -21,10 +21,12 @@ export async function loadAcorn(): Promise<void> {
   acornMod = (await import(s.entryModulePath)) as typeof acornMod;
 }
 
-/** Parse a source string to an ESTree Program (script goal symbol). */
-export function parse(src: string): JSValue {
+/** Parse a source string to an ESTree Program (script goal symbol). Callers
+ * exercising source metadata may forward the exact parser options supplied by
+ * the runtime-eval entry point. */
+export function parse(src: string, options?: object): JSValue {
   if (!acornMod) throw new Error("harness: call loadAcorn() first (beforeAll)");
-  return acornMod.parse(src, { ecmaVersion: 2023, sourceType: "script" });
+  return acornMod.parse(src, options ?? { ecmaVersion: 2023, sourceType: "script" });
 }
 
 // ── differential result model ─────────────────────────────────────────────────
