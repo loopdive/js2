@@ -334,6 +334,7 @@ export function createCodegenContext(
     pendingMethodTrampolines: [],
     needsToUint32: false,
     classDeclarationMap: new Map(),
+    compiledClassBodies: new Set(),
     wrapperNumberTypeIdx: -1,
     wrapperStringTypeIdx: -1,
     wrapperBooleanTypeIdx: -1,

@@ -22,6 +22,7 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
+import { mintScopedClassIdentity } from "./class-bodies.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -644,7 +645,12 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // `const Foo = class {…}` — locals outrank the name-keyed
     // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
     // scope resolve to THIS declaration, not the first same-named one.
-    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    // (#4646) The collection pass mints that identity only for the scopes it
+    // walks — a class in a sibling BLOCK, or in a class/object-literal METHOD
+    // body, is never visited, so its name collision survives to here. Mint on
+    // demand from the same helper: the check is declaration-node identity, so a
+    // class that legitimately owns its name is untouched.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt) ?? mintScopedClassIdentity(ctx, stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
     // Only synthetic nested duplicates need a local singleton binding.  The
     // ordinary class-declaration path intentionally keeps its historical
