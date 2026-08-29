@@ -2846,11 +2846,14 @@ reorder-stable phase-local plus aggregate digests.
 
 `relock.mjs` recomputes every source digest, requires the `bundle/` mirror to be
 byte-for-byte, and derives a root hash over the sorted per-file digests together
-with the pins, expected census, and expected ABI. Both tamper paths were proven
-to fail closed: a one-line edit to a mirrored file reports
-`bundle/contract.mjs is DIFFERS`, and editing the contract's expected ABI reports
-`expectedWatAbi` / `sources` / `rootHash` drift. Adapter root hash at this
-checkpoint: `64ce58ee960210e12a3ecb719107554d778bcd30c83eb94ab25d9e5317c64475`.
+with the pins, expected census, and expected ABI. Every manifest field is compared on its
+own — deliberately not through a `JSON.stringify` replacer array, which filters
+object properties at every level and would let a hand-edit inside a nested field
+read as equal. Three tamper paths were proven to fail closed: a one-line edit to
+a mirrored file reports `bundle/contract.mjs is DIFFERS`; editing the contract's
+expected ABI reports `expectedWatAbi` / `sources` / `rootHash` drift; and a
+hand-edit to `manifest.json`'s `pins.base` alone reports `pins` drift. Adapter root hash at this
+checkpoint: `9ffa4a764f5e7169e363e025430857dd70718860a2fa71fa8c85d85d86c45619`.
 
 ### Open items the independent auditor must close before any relock
 

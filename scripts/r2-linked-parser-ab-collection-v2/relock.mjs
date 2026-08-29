@@ -29,6 +29,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// `bundle/` is byte-identical, so this resolves to the same implementation
+// whether this file runs from the adapter root or from the mirror.
+import { stableStringify } from "./contract.mjs";
+
 const selfDir = dirname(fileURLToPath(import.meta.url));
 // Byte-for-byte mirroring means this file also lives in `bundle/`; when run
 // from there, the adapter root is the parent directory.
@@ -88,15 +92,15 @@ async function buildManifest() {
   };
 }
 
+// Compare EVERY field on its own. Do not pre-filter with a `JSON.stringify`
+// replacer array: a replacer array filters object properties at every level, so
+// nested fields (`pins`, `sources`, `bundleEqual`, `expectedWatAbi`) would
+// serialize as `{}` and a hand-edit inside one of them could read as equal.
 function diffManifest(expected, observed) {
   const problems = [];
-  const a = JSON.stringify(expected, Object.keys(expected).sort(), 2);
-  const b = JSON.stringify(observed, Object.keys(observed).sort(), 2);
-  if (a !== b) {
-    for (const key of new Set([...Object.keys(expected), ...Object.keys(observed)])) {
-      if (JSON.stringify(expected[key]) !== JSON.stringify(observed[key])) {
-        problems.push(`manifest field \`${key}\` drifted`);
-      }
+  for (const key of new Set([...Object.keys(expected), ...Object.keys(observed)])) {
+    if (stableStringify(expected[key]) !== stableStringify(observed[key])) {
+      problems.push(`manifest field \`${key}\` drifted`);
     }
   }
   return problems;
