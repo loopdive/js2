@@ -495,6 +495,7 @@ import {
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
+import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
@@ -11210,6 +11211,11 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       const templateVecTypeIdx = getOrRegisterTemplateVecType(ctx);
       return { kind: "ref_null", typeIdx: templateVecTypeIdx };
     }
+
+    // (#5201) An externref-backed user class outranks every structural /
+    // intrinsic-spelling arm below — see externref-backed-class-rep.ts.
+    const externrefBacked = externrefBackedClassValType(ctx, sym);
+    if (externrefBacked !== undefined) return externrefBacked;
 
     // (#5096) The intrinsic-name arms below (`Array`, the wrapper objects,
     // `Promise`, the TypedArrays, `Date`, `Map`/`Set`/`WeakMap`/`WeakSet`)
