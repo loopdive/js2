@@ -1,10 +1,10 @@
 {
   "id": "5181",
-  "assignee": "ttraenkler/fable-ir-takeover",
-  "requested_by": "ttraenkler/fable-ir-takeover",
+  "assignee": "ttraenkler/opus-5181-ab",
+  "requested_by": "ttraenkler/opus-5181-ab",
   "status": "in-progress",
   "branch": "claude/issue-5181-standalone-rootcause-unblock",
-  "claimed_at": "2026-08-29T04:47:30Z",
-  "updated_at": "2026-08-29T04:47:30Z",
-  "write_id": "4571-ca7kf0c5"
+  "claimed_at": "2026-08-29T06:21:52Z",
+  "updated_at": "2026-08-29T06:21:52Z",
+  "write_id": "1745-gtvpj7pq"
 }
