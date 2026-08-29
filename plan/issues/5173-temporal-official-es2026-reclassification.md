@@ -250,3 +250,55 @@ reclassification is due. Their runner scope is also independently
 corroborated by the baseline: the 511 non-Temporal proposal-scope rows are
 exactly `language/expressions/import.source` + `AbstractModuleSource`
 (source-phase-imports) and `language/import` (import-defer).
+
+### 7. Merge-queue park of PR #5209 (2026-08-29) — NOT caused by this change
+
+PR #5209 was auto-parked. Two required checks failed in the `merge_group`
+(run 33233874554): `merge shard reports` with **"Standalone root-cause map
+has 24 unclassified failures; threshold is 0"**, and `check for test262
+regressions` with **net −947 pass (35,377 → 34,430)**.
+
+The working hypothesis at park time was that the reclassification pushed
+~4.5k Temporal failures into the standard/official bucket and that 24 of
+them had no root-cause classifier. **That mechanism does not exist**, and
+the 24 are not Temporal:
+
+- **The root-cause map is scope-blind.** In `build-test262-report.mjs`,
+  `rootCauseRecords` collects *every* non-pass/non-skip standalone row —
+  there is no `scope` / `scope_official` filter anywhere in the ingestion
+  loop or the dedup. The `temporal-proposal` bucket matches on the **path**
+  `built-ins/temporal`, not on scope. So no record can enter or leave the
+  map because of this PR. Confirmed empirically: building the standalone
+  report from the current main baseline gives **0 unclassified**.
+- **The 24 are one codegen family, zero Temporal.** All 24 are
+  `compile_error` with
+  `stack-balance (#1058): function "…" reaches an instruction array from
+  incompatible control-flow or function-local contexts. The repair pass
+  refuses to mutate one shared body for all owners`:
+  15 × `built-ins/Error/prototype/stack/**` (`makeNativeError`),
+  7 × `harness/**` (`deepEqual-*`, `testTypedArray*`; `cacheComparison`,
+  `__closure_69`), 2 × `language/expressions/instanceof/S15.3.5.3_*`
+  (`__closure_61`). The family has **2,580** occurrences across the merged
+  run and **0** in main's promoted baseline; the other 2,556 are absorbed
+  by existing path buckets, leaving these 24 unowned.
+- **This PR changes no compiler code.** `git diff --name-only` against main
+  lists nine files: `.gitignore`, `README.md`, the high-water JSON, this
+  issue file, two `scripts/generate-*.ts`, the deleted `runner-bundle.mjs`,
+  and two files under `tests/`. Zero under `src/`, so the merged state's
+  emitted Wasm is identical to main's.
+- **Another PR reproduced it first.** PR #5199's `merge_group` run
+  (33232469498, base `bdb19824b0`, ~40 min earlier, unrelated work) failed
+  with the *identical* "24 unclassified failures" line and the *identical*
+  `Net: -947 pass (35377 → 34430)`. Two unrelated PRs cannot share a net to
+  the test — the −947 belongs to `main`. The regression job says as much
+  itself: it printed a shared bucket signature plus a **BASELINE DRIFT
+  WARNING** (baseline 6 test262-relevant commits behind main HEAD).
+
+**No map change was made, deliberately.** Adding a bucket for a live,
+unfixed codegen regression is functionally identical to raising the
+threshold by 24: it turns the gate green while the 2,580 CEs stand. That is
+the same accounting-laundering the strict `--max-unclassified-root-causes 0`
+policy (#2961) exists to prevent, and the same defect class as
+special-casing Temporal out of the official bucket — which is what this
+issue removes. The unclassified gate is doing its job; the fix belongs with
+the `#1058` stack-balance change on `main`, not here.
