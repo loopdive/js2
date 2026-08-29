@@ -568,6 +568,85 @@ export function sourceHasDynamicTaConstruct(checker: ts.TypeChecker, sourceFile:
 }
 
 /**
+ * True when a statically named TypedArray constructor receives an
+ * ArrayBuffer/SharedArrayBuffer backing. The view type is registered lazily by
+ * the constructor lowering, but an `any`-receiver indexed-write helper may be
+ * compiled earlier and therefore needs a whole-module demand bit.
+ */
+export function sourceHasStaticTaViewConstruct(checker: ts.TypeChecker, sourceFile: ts.SourceFile): boolean {
+  const unwrap = (expr: ts.Expression): ts.Expression => {
+    let current = expr;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+  const nativeBufferCtor = (expr: ts.Expression, seen = new Set<ts.Symbol>()): string | undefined => {
+    const candidate = unwrap(expr);
+    if (ts.isNewExpression(candidate) && ts.isIdentifier(candidate.expression)) {
+      const name = candidate.expression.text;
+      if (name === "ArrayBuffer" || name === "SharedArrayBuffer") return name;
+    }
+    if (ts.isPropertyAccessExpression(candidate) && candidate.name.text === "buffer") {
+      try {
+        const receiverType = checker.getTypeAtLocation(candidate.expression);
+        const receiverSymbol = receiverType.aliasSymbol ?? receiverType.getSymbol?.();
+        const declarations = receiverSymbol?.getDeclarations() ?? [];
+        if (
+          receiverSymbol !== undefined &&
+          (receiverSymbol.name === "DataView" || TYPED_ARRAY_NAMES.has(receiverSymbol.name)) &&
+          declarations.length > 0 &&
+          declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+        ) {
+          return "ArrayBuffer";
+        }
+      } catch {
+        // Type resolution failure — keep the pre-scan conservative.
+      }
+    }
+    if (ts.isIdentifier(candidate)) {
+      const symbol = checker.getSymbolAtLocation(candidate);
+      if (symbol && !seen.has(symbol)) {
+        seen.add(symbol);
+        const declarations = symbol.declarations?.filter(ts.isVariableDeclaration) ?? [];
+        if (declarations.length === 1 && declarations[0]!.initializer) {
+          const fromInitializer = nativeBufferCtor(declarations[0]!.initializer!, seen);
+          if (fromInitializer !== undefined) return fromInitializer;
+        }
+      }
+    }
+    try {
+      const type = checker.getTypeAtLocation(candidate);
+      const name = (type.aliasSymbol ?? type.getSymbol?.())?.name;
+      return name === "ArrayBuffer" || name === "SharedArrayBuffer" ? name : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  let found = false;
+  function walk(node: ts.Node): void {
+    if (found) return;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && TYPED_ARRAY_NAMES.has(node.expression.text)) {
+      const arg0 = node.arguments?.[0];
+      if (arg0 !== undefined && !ts.isNumericLiteral(arg0)) {
+        if (nativeBufferCtor(arg0) !== undefined) {
+          found = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  return found;
+}
+
+/**
  * #1623 — true when the source contains any object/array binding pattern
  * (destructuring) in a parameter, variable declaration, or assignment target.
  * Used to decide whether to pre-emit the WASI/standalone TypeError constructor

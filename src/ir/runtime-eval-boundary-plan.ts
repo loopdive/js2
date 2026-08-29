@@ -125,15 +125,54 @@ function isFunctionPrototypeMethodChain(identifier: ts.Identifier): boolean {
   const proto = identifier.parent;
   if (!ts.isPropertyAccessExpression(proto) || proto.expression !== identifier) return false;
   if (proto.name.text !== "prototype") return false;
-  const member = proto.parent;
-  if (ts.isPropertyAccessExpression(member) && member.expression === proto) {
+  // (#5148 checkpoint) Walk out of transparent wrappers so a cast between the
+  // proto read and its member does not defeat the excusal —
+  // `(Function.prototype as any).p = 12` is the same non-escape as
+  // `Function.prototype.p = 12`, but the AsExpression made it an
+  // `intrinsic-value` site, which pulled `js2wasm:runtime-eval` imports into
+  // zero-import standalone modules (the #4563 carrier-walk red).
+  let outer: ts.Node = proto;
+  while (
+    outer.parent !== undefined &&
+    (ts.isParenthesizedExpression(outer.parent) ||
+      ts.isAsExpression(outer.parent) ||
+      ts.isSatisfiesExpression(outer.parent) ||
+      ts.isNonNullExpression(outer.parent) ||
+      ts.isTypeAssertionExpression(outer.parent)) &&
+    outer.parent.expression === outer
+  ) {
+    outer = outer.parent;
+  }
+  const member = outer.parent;
+  if (member !== undefined && ts.isPropertyAccessExpression(member) && member.expression === outer) {
     return member.name.text !== "constructor";
   }
-  if (ts.isElementAccessExpression(member) && member.expression === proto) {
+  if (member !== undefined && ts.isElementAccessExpression(member) && member.expression === outer) {
     const key = unwrapExpression(member.argumentExpression);
     return ts.isStringLiteralLike(key) && key.text !== "constructor";
   }
-  return false;
+  // (#5148 checkpoint) A DESTRUCTURE of the proto object — Deno's
+  // `const { bind, call } = Function.prototype` — is the same member-read
+  // family: safe unless it binds `constructor`.
+  if (
+    member !== undefined &&
+    ts.isVariableDeclaration(member) &&
+    member.initializer === outer &&
+    ts.isObjectBindingPattern(member.name)
+  ) {
+    return member.name.elements.every((element) => {
+      const key = element.propertyName ?? element.name;
+      return !(ts.isIdentifier(key) && key.text === "constructor");
+    });
+  }
+  // The BARE `Function.prototype` VALUE (stored, passed on): the proto object
+  // itself is not eval-capable, and its `.constructor` read is served by the
+  // self-contained `%Function%` arm (function-intrinsic-carrier.ts) exactly
+  // like `<fn>.constructor` — there is no bare `Function` read for it to
+  // disagree with when this excusal fires. Before this, storing the value
+  // linked the provider ABI, and a module whose imports were stubbed threw
+  // during `__module_init` while seeding the companion's `constructor`.
+  return true;
 }
 
 function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {

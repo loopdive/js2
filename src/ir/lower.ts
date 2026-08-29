@@ -331,7 +331,7 @@ export interface IrLowerResolver {
   /**
    * #1373b Phase C scaffolding — resolve (and lazily register) the
    * standalone `$Promise` WasmGC struct type. The struct's layout is
-   * `{ state: i32, value: externref, callbacks: externref }` (see
+   * `{ state: i32, value: externref, callbacks: externref, $bag: externref }` (see
    * `src/codegen/async-scheduler.ts` for the canonical registration).
    *
    * Returns the struct's typeIdx. Used by IR's `async.return`,

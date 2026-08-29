@@ -62,10 +62,17 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { fusedToNumberEnabled, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 export { fusedToNumberEnabled, smiFastPathAllValues, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
 
 /** The abstract `i31` heap type, as every other `ref.test`/`ref.cast` site spells it. */
 const HEAP_I31 = -20;
+
+/**
+ * §7.1.4 step 2 — ToNumber of a Symbol throws. The message is the one V8 and
+ * SpiderMonkey use; test262 only checks the constructor.
+ */
+const SYMBOL_TO_NUMBER_MESSAGE = "Cannot convert a Symbol value to a number";
 
 /** The fused helper's name in `ctx.funcMap`. */
 const FUSED_NAME = "__to_number";
@@ -123,7 +130,52 @@ function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: F
   return [
     ...stringConstantExternrefInstrs(ctx, "number"),
     { op: "call", funcIdx: toPrimIdx },
+    ...symbolThrowArm(ctx),
     { op: "call", funcIdx: unboxIdx },
+  ];
+}
+
+/**
+ * §7.1.4 step 2 — `ToNumber(Symbol)` throws a TypeError. Spliced between
+ * `__to_primitive` and `__unbox_number` in the fused helper's slow arm, which is
+ * where the spec puts it: ToNumber of an OBJECT is
+ * `ToNumber(ToPrimitive(v, number))`, so a `{valueOf(){return sym}}` and a bare
+ * Symbol reach the check at the same point and both throw.
+ *
+ * The standalone `__unbox_number` (registry/imports.ts) answers NaN for every
+ * shape it does not recognise, Symbols included — so before this arm
+ * `sample.fill(Symbol())` silently filled with NaN instead of throwing. The
+ * check lives HERE, not inside `__unbox_number`, because that native is ALSO
+ * the numeric-key probe for `__extern_set` on a vec receiver
+ * (`object-runtime.ts` ~L11001, "NaN = non-numeric key") — `arr[sym] = v` is an
+ * ordinary property write and must not throw. Only the value-coercion funnel
+ * gets the guard.
+ *
+ * Local 2 holds the post-ToPrimitive value across the brand test; it is
+ * declared with the helper at reserve time (`$prim`) rather than allocated
+ * here, since this arm is spliced at finalize where the locals list is fixed.
+ *
+ * A module that never registered the `$Symbol` carrier emits nothing.
+ */
+function symbolThrowArm(ctx: CodegenContext): Instr[] {
+  const symTypeIdx = ctx.symbolTypeIdx;
+  if (!ctx.standalone || symTypeIdx < 0) return [];
+  const L_PRIM = 2;
+  return [
+    { op: "local.tee", index: L_PRIM },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: symTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      // Re-derives the throw at FILL time on purpose: the string constant, the
+      // `__new_TypeError` carrier and the exception tag were all registered
+      // during ordinary body compilation (`ensureDeps`), so every call here is
+      // idempotent and adds no global — it only reads their FINAL indices,
+      // which is exactly what a finalize-time splice needs.
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, { forceInModuleCtor: true }),
+    },
+    { op: "local.get", index: L_PRIM },
   ];
 }
 
@@ -151,6 +203,20 @@ function ensureDeps(
   if (toPrimIdx === undefined) return undefined;
   addUnionImportsViaRegistry(ctx); // __unbox_number + ctx.nativeBoxNumberTypeIdx
   addStringConstantGlobal(ctx, "number");
+  // Pre-register everything the §7.1.4 Symbol throw needs — the message's
+  // string-constant GLOBAL, the in-module `__new_TypeError`, the exception tag
+  // — while we are still in ordinary body compilation, where a global/import
+  // addition is followed by a shift flush. `fillFusedToNumber` then rebuilds the
+  // same instruction sequence at finalize purely to read their final indices;
+  // every registration below is idempotent, so that rebuild adds nothing.
+  // Doing it the other way round (registering at finalize) would add an
+  // imported global after the shift pass had already run.
+  if (ctx.standalone) {
+    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+      forceInModuleCtor: true,
+      flush: fctx,
+    });
+  }
   flushLateImportShifts(ctx, fctx);
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   if (unboxIdx === undefined) return undefined;
@@ -255,7 +321,12 @@ function reserveFusedToNumber(ctx: CodegenContext, fctx: FunctionContext): FuncH
   pushDefinedFunc(ctx, funcIdx, {
     name: FUSED_NAME,
     typeIdx,
-    locals: [{ name: "$any", type: { kind: "anyref" } as ValType }],
+    locals: [
+      { name: "$any", type: { kind: "anyref" } as ValType },
+      // Local 2 — the post-ToPrimitive primitive, held across the §7.1.4
+      // Symbol brand test in the slow arm (see `symbolThrowArm`).
+      { name: "$prim", type: { kind: "externref" } as ValType },
+    ],
     body: [{ op: "unreachable" }],
     exported: false,
   });

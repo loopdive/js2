@@ -242,12 +242,22 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
 export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
   if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
-    const shorthand = (
+    const resolveShorthand = (
       ctx.checker as typeof ctx.checker & {
         getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
       }
-    ).getShorthandAssignmentValueSymbol?.(id.parent);
-    if (shorthand !== undefined) return shorthand;
+    ).getShorthandAssignmentValueSymbol;
+    if (typeof resolveShorthand === "function") {
+      const shorthand = resolveShorthand(id.parent);
+      // (#5149 cluster F) An `undefined` answer means the shorthand's VALUE is
+      // unresolvable: `({ notDefined })` reads a binding that does not exist
+      // and must throw a ReferenceError (§13.2.5.5 step 3 forwards the
+      // IdentifierReference GetValue). The old fall-through to
+      // `getSymbolAtLocation` handed back the shorthand's own PROPERTY symbol,
+      // which is ALWAYS present, so the caller's `!sym` undeclared test never
+      // fired and the literal quietly built `{ notDefined: undefined }`.
+      return shorthand;
+    }
   }
   return ctx.checker.getSymbolAtLocation(id);
 }
@@ -2087,6 +2097,35 @@ function compileIdentifierCore(
     // module's top-level binding, not a candidate runtime global — the
     // runtime-eval binding pool is graph-wide and would hand that foreign
     // binding back. Skip the dynamic read and throw.
+    // A context-linked standalone module shares its GlobalEnvironmentRecord's
+    // object half with the owning realm. Static source cannot see names that a
+    // prior classic Script introduced (for example Deno tests commonly install
+    // a global `assert` before evaluating an ES module), so resolve otherwise
+    // unbound identifiers through that linked global object at runtime.
+    // (#5148 checkpoint) `moduleGoalIdentifierIsUndeclared` answers true for
+    // BOTH a foreign module's top-level binding (sym defined, declared in
+    // another module-goal file — the #3505 leak this gate exists for) and a
+    // name with NO symbol at all. Only the former must skip the linked read: a
+    // symbol-less name has no foreign binding to leak, and it is exactly the
+    // script-installed-global shape the linked realm serves (`dynamicAnswer`
+    // written by the owning realm before this module evaluates).
+    if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const globalType = emitNativeGlobalThisObject(ctx, fctx);
+      if (getIdx !== undefined && globalType !== null) {
+        addStringConstantGlobal(ctx, name);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
+      if (globalType !== null) fctx.body.push({ op: "drop" });
+    }
     if (!unresolvedInModuleGoal && (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
         ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)

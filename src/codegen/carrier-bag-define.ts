@@ -65,10 +65,33 @@ import { fnIntrinsicSeedInstrs } from "./fn-intrinsic-seed.js"; // (#4562) intri
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
 const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 const CLOSURE_BAG_ENSURE = "__closure_bag_ensure";
+/**
+ * User-class / anonymous-instance carriers share the identity-keyed closure
+ * bag.  In particular, Deno's `class SafeMap extends Map {}` prototype is a
+ * legacy user-class struct rather than `$Object`, but it is still an ordinary
+ * extensible ECMAScript object and Reflect.defineProperty must be able to copy
+ * descriptors onto it.
+ */
+const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
 /** (#4098) Native `$Error_struct.$props` substrate (`error-props.ts`). */
 const IS_ERROR_PROP_CARRIER = "__is_error_prop_carrier";
 const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
 const ERROR_PROP_BAG_ENSURE = "__error_prop_bag_ensure";
+
+/** `closure || user-instance`, whose values share the same identity bag. */
+function sharedBagCarrierTest(ctx: CodegenContext, localIdx: number): Instr[] | undefined {
+  const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const isInstanceIdx = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER);
+  if (isClosureIdx === undefined && isInstanceIdx === undefined) return undefined;
+  const test = (idx: number | undefined): Instr[] =>
+    idx === undefined
+      ? [{ op: "i32.const", value: 0 }]
+      : [
+          { op: "local.get", index: localIdx },
+          { op: "call", funcIdx: idx },
+        ];
+  return [...test(isClosureIdx), ...test(isInstanceIdx), { op: "i32.or" }];
+}
 
 /**
  * Emit `[] -> [externref]`: a supported define carrier's own-property bag,
@@ -77,6 +100,7 @@ const ERROR_PROP_BAG_ENSURE = "__error_prop_bag_ensure";
  */
 export function defineCarrierBagEnsureInstrs(ctx: CodegenContext, recvLocalIdx: number): Instr[] | undefined {
   const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const isInstanceIdx = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER);
   const ensureIdx = ctx.funcMap.get(CLOSURE_BAG_ENSURE);
   const errorEnsureIdx = ctx.funcMap.get(ERROR_PROP_BAG_ENSURE);
   const errorFallback: Instr[] =
@@ -86,12 +110,13 @@ export function defineCarrierBagEnsureInstrs(ctx: CodegenContext, recvLocalIdx: 
           { op: "local.get", index: recvLocalIdx },
           { op: "call", funcIdx: errorEnsureIdx },
         ];
-  if (isClosureIdx === undefined || ensureIdx === undefined) {
+  if ((isClosureIdx === undefined && isInstanceIdx === undefined) || ensureIdx === undefined) {
     return errorEnsureIdx === undefined ? undefined : errorFallback;
   }
+  const sharedBagCarrier = sharedBagCarrierTest(ctx, recvLocalIdx);
+  if (sharedBagCarrier === undefined) return errorEnsureIdx === undefined ? undefined : errorFallback;
   return [
-    { op: "local.get", index: recvLocalIdx },
-    { op: "call", funcIdx: isClosureIdx },
+    ...sharedBagCarrier,
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
@@ -145,8 +170,9 @@ export function defineCarrierBagSubstitutionArm(
  */
 export function isDefineCarrierInstrs(ctx: CodegenContext, localIdx: number): Instr[] | undefined {
   const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const isInstanceIdx = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER);
   const isErrorIdx = ctx.funcMap.get(IS_ERROR_PROP_CARRIER);
-  if (isClosureIdx === undefined && isErrorIdx === undefined) return undefined;
+  if (isClosureIdx === undefined && isInstanceIdx === undefined && isErrorIdx === undefined) return undefined;
   const test = (idx: number | undefined): Instr[] =>
     idx === undefined
       ? [{ op: "i32.const", value: 0 }]
@@ -154,7 +180,7 @@ export function isDefineCarrierInstrs(ctx: CodegenContext, localIdx: number): In
           { op: "local.get", index: localIdx },
           { op: "call", funcIdx: idx },
         ];
-  return [...test(isClosureIdx), ...test(isErrorIdx), { op: "i32.or" }];
+  return [...test(isClosureIdx), ...test(isInstanceIdx), { op: "i32.or" }, ...test(isErrorIdx), { op: "i32.or" }];
 }
 
 /**
@@ -185,11 +211,12 @@ export function definePropertiesCarrierBagArm(
   },
 ): Instr[] | undefined {
   const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const isInstanceIdx = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER);
   const lookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
   const isErrorIdx = ctx.funcMap.get(IS_ERROR_PROP_CARRIER);
   const errorLookupIdx = ctx.funcMap.get(ERROR_PROP_BAG_LOOKUP);
   if (
-    (isClosureIdx === undefined || lookupIdx === undefined) &&
+    ((isClosureIdx === undefined && isInstanceIdx === undefined) || lookupIdx === undefined) &&
     (isErrorIdx === undefined || errorLookupIdx === undefined)
   ) {
     return undefined;
@@ -197,10 +224,9 @@ export function definePropertiesCarrierBagArm(
   const carrierTest = isDefineCarrierInstrs(ctx, opts.propsLocalIdx);
   if (carrierTest === undefined) return undefined;
   const lookup: Instr[] =
-    isClosureIdx !== undefined && lookupIdx !== undefined
+    (isClosureIdx !== undefined || isInstanceIdx !== undefined) && lookupIdx !== undefined
       ? [
-          { op: "local.get", index: opts.propsLocalIdx },
-          { op: "call", funcIdx: isClosureIdx },
+          ...sharedBagCarrierTest(ctx, opts.propsLocalIdx)!,
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },

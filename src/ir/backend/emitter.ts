@@ -216,7 +216,8 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
   // The caller resolves the backend's Promise type and owns operand order:
   // construction leaves state, value, and callbacks on the stack; await
   // leaves the Promise reference on the stack before selecting a semantic
-  // field. The backend owns the concrete aggregate allocation and field map.
+  // field. The backend owns the concrete aggregate allocation and field map,
+  // including any representation-only fields such as the WasmGC `$bag`.
   /** state + value + callbacks on the stack -> a new Promise value. */
   emitPromiseNew(promiseTypeIdx: number, out: S): void;
   /** Promise ref on the stack -> its settlement-state discriminator. */
