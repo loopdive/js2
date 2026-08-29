@@ -4426,14 +4426,32 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         // instead of re-entering the throwing state. Keep this wrapper out of
         // the JS-host lane: its foreign-exception recovery and legacy lowering
         // have their own established path.
+        //
+        // The try scaffold itself MUST carry the empty blocktype: a
+        // result-typed `try_table` (`1f 63 …`) is the only such instruction the
+        // emitter would produce, and V8 12.4 (Node 22) executes it as
+        // `unreachable`, trapping every first generator resume. Keep the
+        // trampoline's value-producing shape inside a plain `block (result R)`,
+        // spill it to `resultLocal`, and read the local back after the scaffold
+        // — the shape every other standalone EH site uses
+        // (`promise-executor.ts`, `calls.ts`, statement try/catch).
         resumeFctx.body.push(
-          buildTargetTaggedTry(ctx, { kind: "val", type: resultType }, trampoline, [
-            {
-              tagIdx: ensureExnTag(ctx),
-              body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
-            },
-          ]),
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [
+              { op: "block", blockType: { kind: "val", type: resultType }, body: trampoline },
+              { op: "local.set", index: resultLocal },
+            ],
+            [
+              {
+                tagIdx: ensureExnTag(ctx),
+                body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
+              },
+            ],
+          ),
         );
+        resumeFctx.body.push({ op: "local.get", index: resultLocal });
       } else {
         resumeFctx.body.push(...trampoline);
       }

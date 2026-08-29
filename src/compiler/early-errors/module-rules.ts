@@ -7,7 +7,7 @@
 // threading an EarlyErrorContext and importing the shared predicate helpers.
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
-import { findInnermostNodeAtPosition, isStrictMode } from "./predicates.js";
+import { findInnermostNodeAtPosition, isInYieldParamContext, isStrictMode } from "./predicates.js";
 
 /**
  * `export default const/var/let` — always a SyntaxError.
@@ -204,20 +204,12 @@ export function checkReservedIdentifiers(ctx: EarlyErrorContext): void {
       const name = node.text;
       if (name === "yield") {
         // Reserved in strict mode or inside any enclosing generator.
-        let reserved = isStrictMode(node) || sourceFileIsModule;
-        if (!reserved) {
-          let c: ts.Node | undefined = node.parent;
-          while (c) {
-            if (
-              (ts.isFunctionDeclaration(c) || ts.isFunctionExpression(c) || ts.isMethodDeclaration(c)) &&
-              c.asteriskToken
-            ) {
-              reserved = true;
-              break;
-            }
-            c = c.parent;
-          }
-        }
+        // (#5141) `[Yield]` is a grammar parameter, not lexical containment —
+        // a nested ordinary function resets it, and a function's own
+        // BindingIdentifier is parsed in the position the function occupies.
+        // The plain upward walk this replaced rejected legal sloppy code such
+        // as `function*g(){ function h(){ yield = 1; } }`.
+        const reserved = isStrictMode(node) || sourceFileIsModule || isInYieldParamContext(node);
         if (reserved) {
           ctx.addError(node, "'yield' is a reserved word and may not be used as an identifier in strict mode");
         }

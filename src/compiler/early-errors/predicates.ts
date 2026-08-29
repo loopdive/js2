@@ -785,6 +785,43 @@ export function isInsideGeneratorFunction(node: ts.Node): boolean {
   return final;
 }
 
+/**
+ * `[Yield]` grammar-parameter context for an occurrence of `yield` in an
+ * IdentifierReference / BindingIdentifier position (#5141, cluster D).
+ *
+ * Unlike `isInsideGeneratorFunction` this models the grammar parameter rather
+ * than lexical containment, so it gets the two boundary cases right:
+ *
+ * - a nested ordinary function resets `[Yield]` — `function*g(){ function h(){
+ *   yield = 1; } }` is legal sloppy code;
+ * - a function's own BindingIdentifier is parsed in the position the function
+ *   itself occupies: a FunctionExpression name is always `[~Yield]`
+ *   (`function*g(){ (function yield(){}) }`), while a FunctionDeclaration name
+ *   inherits the enclosing context (`function* yield(){}` at sloppy top level).
+ *
+ * Arrow functions inherit `[Yield]` and are therefore transparent here.
+ */
+export function isInYieldParamContext(node: ts.Node): boolean {
+  let child: ts.Node = node;
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isClassStaticBlockDeclaration(current)) return false;
+    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isMethodDeclaration(current)) {
+      if (current.name === child) {
+        // BindingIdentifier / property-name position, not the function body.
+        if (!ts.isFunctionDeclaration(current)) return false;
+        child = current;
+        current = current.parent;
+        continue;
+      }
+      return !!current.asteriskToken;
+    }
+    child = current;
+    current = current.parent;
+  }
+  return false;
+}
+
 /** Check if a function declaration is in a single-statement position (not a block). */
 export function isStatementPosition(parent: ts.Node, child: ts.Node): boolean {
   // If the parent is a block/source file, this is a normal declaration — allowed

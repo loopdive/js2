@@ -31,6 +31,7 @@ import {
   isInsideMethod,
   isInsideNestedFunction,
   isInvalidAssignmentTarget,
+  isInYieldParamContext,
   isStatementPosition,
   isStrictMode,
   isUsingDeclarationStatement,
@@ -882,7 +883,10 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
         if (node.text === "await" && isInsideAsyncFunction(node)) {
           ctx.addError(node, "'await' is not allowed as an identifier in an async function");
         }
-        if (node.text === "yield" && isInsideGeneratorFunction(node)) {
+        // (#5141) `[Yield]` is a grammar parameter, not lexical containment:
+        // a nested ordinary function resets it and a function's own
+        // BindingIdentifier is parsed in the position the function occupies.
+        if (node.text === "yield" && isInYieldParamContext(node)) {
           ctx.addError(node, "'yield' is not allowed as an identifier in a generator function");
         }
       }
