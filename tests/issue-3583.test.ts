@@ -236,13 +236,22 @@ describe("#3583 — bare `for (;;)` is IR-claimed and lowered", () => {
     expect(Buffer.from(a.binary!).equals(Buffer.from(b.binary!))).toBe(true);
   });
 
-  // --- negative boundary: a `for (;;)` in TAIL position is still rejected,
-  // by the orthogonal `tail-unhandled` gate (a `return` inside a trailing
-  // loop), NOT by the retired `for-missing-cond` arm. Pinning it keeps the
-  // two gates from being conflated in a future widening.
-  it("does NOT claim a tail-position `for (;;)` that returns from inside", () => {
+  // --- tail boundary. #5165 S1 ADOPTED the tail-position case this issue's
+  // original negative pinned: a `for (;;)` whose body returns provably never
+  // completes normally, so the block after it is genuinely unreachable and the
+  // orthogonal `tail-unhandled` gate no longer fires. The negative that
+  // survives is the one where the tail gate is still load-bearing — a loop
+  // that CAN fall out — because there the retired `for-missing-cond` arm and
+  // the tail arm must still not be conflated.
+  it("DOES claim a tail-position `for (;;)` that returns from inside (#5165 S1)", () => {
     expect(
       claims(`export function f(n: number): number { let i = 0; for (;;) { i = i + 1; if (i > n) return i; } }`, "f"),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("does NOT claim a tail-position loop that can fall out of a non-void function", () => {
+    expect(claims(`export function f(n: number): number { for (;;) { if (n > 0) return n; break; } }`, "f")).toBe(
+      false,
+    );
   });
 });

@@ -2177,6 +2177,30 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
     return;
   }
+  // #5165 S1 — a function ENDING in a C-style loop. Identical
+  // `{while,for,do}.loop` lowering to the non-tail form; only the block
+  // terminator differs. The selector proved one of:
+  //   - void return → control may fall out of the loop into the implicit
+  //     empty return (mirrors the `tail-if-noelse` / tail-switch void arms);
+  //   - non-void → `loopNeverFallsThrough` proved the loop has no normal
+  //     completion (no falsifiable condition, no `break` binding it), so the
+  //     instruction after it is unreachable.
+  if (ts.isWhileStatement(stmt) || ts.isForStatement(stmt) || ts.isDoStatement(stmt)) {
+    const loopCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
+    if (ts.isWhileStatement(stmt)) lowerWhileStatement(stmt, loopCx);
+    else if (ts.isForStatement(stmt)) lowerForStatement(stmt, loopCx);
+    else lowerDoStatement(stmt, loopCx);
+    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    return;
+  }
+  // #5165 S3 — a function ENDING in a `try`. Same `emitTry` lowering as the
+  // non-tail form; the selector proved void (fall out into the implicit empty
+  // return) or `tryAllPathsTerminate` (nothing falls out at all).
+  if (ts.isTryStatement(stmt)) {
+    lowerTryStatement(stmt, { ...cx, scope: new Map(cx.scope) });
+    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    return;
+  }
   demoteToLegacy(
     "body-shape-rejected",
     `ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
@@ -14480,9 +14504,18 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
   // stale ASCII evidence cannot cross an exceptional edge.
   const tryMayWriteScope = conservativeStringEncodingScope(stmt.tryBlock, cx);
 
+  // (#5165 S2) The try/catch region bars early returns ONLY when a `finally`
+  // is present — that is the sole thing a Wasm `return` would skip (an
+  // exception handler does not intercept it). Mirrors the selector's
+  // `earlyReturnBarrierDepth`-vs-`earlyReturnLoopDepth` split in
+  // `isPhase1TryStatementInScope`. An enclosing barrier (a for-of iterator
+  // body, an outer finally-bearing try) still propagates through
+  // `cx.noEarlyReturn`, so a nested finally-less try inherits the bar.
+  const regionBarsEarlyReturn = cx.noEarlyReturn === true || stmt.finallyBlock !== undefined;
+
   // ── Try body ────────────────────────────────────────────────────────
   const tryScope = new Map(cx.scope);
-  const tryCx: LowerCtx = { ...cx, scope: tryScope, noEarlyReturn: true };
+  const tryCx: LowerCtx = { ...cx, scope: tryScope, noEarlyReturn: regionBarsEarlyReturn };
   const tryBody = cx.builder.collectBodyInstrs(() => {
     for (const s of stmt.tryBlock.statements) {
       lowerStmt(s, tryCx);
@@ -14512,7 +14545,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       // Destructuring catch — selector should have rejected this.
       demoteToLegacy("body-shape-rejected", `ir/from-ast: destructuring catch param not in slice 9 (${cx.funcName})`);
     }
-    const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: true };
+    const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: regionBarsEarlyReturn };
     const catchBody = cx.builder.collectBodyInstrs(() => {
       for (const s of stmt.catchClause!.block.statements) {
         lowerStmt(s, catchCx);
