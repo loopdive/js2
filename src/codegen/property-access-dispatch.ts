@@ -179,6 +179,7 @@ import {
   receiverIsCatchClauseBinding,
   receiverIsNativeStringValType,
   resolveInheritedStaticProp,
+  assignsCoveredFunctionValue,
   resolveLogicalAssignmentName,
   resolveStructNameForExpr,
   runtimeAccessorDescriptorKey,
@@ -2955,8 +2956,11 @@ export function tryLengthAndNameReads(
               initExpr = decl.initializer;
             }
             if (
-              initExpr !== undefined &&
-              (!isAnonymousFunctionDefinition(initExpr) || classExpressionDefinesOwnName(initExpr))
+              (initExpr !== undefined &&
+                (!isAnonymousFunctionDefinition(initExpr) || classExpressionDefinesOwnName(initExpr))) ||
+              // (#5146) No initializer, but every simple assignment to the
+              // binding installs a COVERED form (`x = (0, function(){})`).
+              (initExpr === undefined && decl !== undefined && assignsCoveredFunctionValue(ctx, expr.expression, decl))
             ) {
               // Covered form — .name is "" (or whatever the inner fn already has).
               // (#2756) A class with its own `static name` member overrides the

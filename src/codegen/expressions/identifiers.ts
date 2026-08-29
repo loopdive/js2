@@ -893,7 +893,7 @@ function compileExactAmbientShadowedModuleBinding(
     if (tdzLocalIdx < 0) return undefined;
     const tdzResult = analyzeTdzAccess(ctx, id);
     if (tdzResult === "check") {
-      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text);
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
