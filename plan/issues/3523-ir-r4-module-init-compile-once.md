@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-26
+updated: 2026-08-29
 assignee: ttraenkler/codex-ir-lead
 branch: codex/3523-r4-statement-module-init
 priority: critical
@@ -35,10 +35,12 @@ files:
   - src/ir/array-element-lowering.ts
   - src/ir/passes/batch-string-concat.ts
   - src/codegen/declarations.ts
+  - src/codegen/declarations/module-init-call-free.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/context/types.ts
   - tests/issue-3523-ir-module-init-compile-once.test.ts
+  - tests/issue-3523-module-init-single-pass.test.ts
   - tests/issue-3523-ir-calendar-retirement.test.ts
   - tests/issue-2766.test.ts
   - tests/issue-2856-nonterminating-if-guard.test.ts
@@ -1075,3 +1077,271 @@ fresh 6.110 replay supplied the accepted result. The semantic checkpoint is
 not publication acceptance until it is reconciled append-only with current
 main, independently audited at the exact final head, and passes the full
 unskipped pre-push hook.
+
+## 2026-08-29 gap-1a implementation plan — single direct compile for call-free module inits
+
+**Fable lane.** Grounded on `origin/main` merged at `fe3fe11e52` (probe
+`.tmp/r4gap1-census.mts`, `JS2WASM_COMPILE_PROFILE=1`, reading the
+`module-init-pass1`/`module-init-pass2` phase `calls` counters — the census's
+"direct N" column). Opus implements against this plan.
+
+### Measured census (current main)
+
+| shape | host | standalone | init outcome |
+| --- | --- | --- | --- |
+| `const memo = new Map()` | 0/0 | 0/0 | emitted (IR-owned) |
+| `let v = 7` + TDZ read | 0/0 | 0/0 | emitted |
+| `let total = 0; total = total + 1;` | 0/0 | 0/0 | emitted (gap 2 landed) |
+| class + `static n = 3` | **1/1** | **1/1** | unsupported:static-class-initialization |
+| `const greeting = "hi"` | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| top-level `var w = 5` | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| `const f = (x) => x*2` | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| `let z = h();` (call in init) | **1/1** | **1/1** | unsupported:call-graph-closure (#2855 warning channel) |
+| `Object.freeze(o)` in init | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| function-only module | 0/0 | 0/0 | no outcome row (gap 4, separate) |
+
+The IR-prepared route now fully suppresses both passes in both admitted lanes
+(direct 0). **Every typed-Unsupported module-init still compiles the direct
+body twice** — pass 1 + pass 2 — in every mode. That is gap 1, unchanged since
+the 2026-08-22 census.
+
+### Why two passes exist (verified against `src/codegen/declarations.ts` on the grounded tree)
+
+- **Pass 1** (`:5096`) runs before top-level function bodies to "seed
+  closure/setup discovery": compiling the init entries registers module-level
+  closures, string constants, and setup state that the function bodies
+  compiled after it consume. Function bodies also deliberately observe pass
+  1's END integrity state (`frozenVars` etc. — the #2965 comment at `:4860`).
+- **Pass 2** (`:5278`) recompiles after function bodies **for exactly one
+  stated reason**: "so call sites inside module-level code can see the final
+  inlinable-function registry" (`registerInlinableFunction` entries appear as
+  function bodies compile). `restorePropOrderState()` (`:5277`) resets the
+  order-sensitive maps so pass 2 compiles from the same initial state, and
+  `dedupeDiagnosticsFrom` (`:5280`) reconciles the doubled diagnostics.
+- The emitted body is `compiledInitFctx?.body` (`:5305`), i.e. whichever pass
+  ran last, and `ctx.pendingInitBody` is index-maintained across everything
+  compiled between the passes: module-global shifts
+  (`src/codegen/registry/imports.ts:425`), late func-index shifts (`:713`,
+  `:1027`) all patch the pending body. **Pass 1's body is therefore kept
+  structurally valid to the end already** — that machinery is what makes this
+  slice small.
+
+Existing scars of the double compile, all of which this slice retires for the
+gated population: #2965/#3872 prop-order snapshot/restore, #4195 diagnostic
+double-report dedupe, the per-pass `capturedGlobals` reset (`:4920`-area
+comment), and the #4182 Annex-B seed divergence (fixed by making the preamble
+decision pass-invariant — the precedent that pass-1/pass-2 preambles must not
+consult state that grows between passes).
+
+### The slice: skip pass 2 when the init population is call-free
+
+A pass-2 recompile can only differ from pass 1's (fixup-maintained) body
+through the inlinable-function registry, and that registry is consulted only
+at call sites. So:
+
+**Gate.** Immediately before the pass-2 block (`:5273`), compute
+`initPopulationIsCallFree`: a full-subtree scan over exactly the inputs
+`compileModuleInitBody` compiles — every `ctx.moduleInitStatements` statement
+and every `ctx.staticInitExprs` entry's `staticBlock ?? initializer` (the
+`orderedInitEntries` construction at `:5015`-`:5040` names the exact set).
+Refuse (keep two passes) on ANY of: `CallExpression` (covers `super(...)`),
+`NewExpression`, `TaggedTemplateExpression`, `Decorator`, `AwaitExpression`.
+The scan includes nested arrow/function/class-expression bodies inside
+initializers (a `const f = () => h()` closure body compiles during the init
+statement and would otherwise bake pass-1's un-inlined call in). Anything not
+provably call-free keeps today's two passes — fail closed, no allowlist.
+
+**Skip.** When the gate holds and the pass-2 condition
+(`moduleInitMode === "full"` etc.) is met: do not run pass 2, do not
+`restorePropOrderState()` (nothing recompiles), and do **not** call
+`dedupeDiagnosticsFrom` (there is no doubled range; calling it against a
+single pass would be wrong). Pass 1's `compiledInitFctx` remains the emitted
+body — already the variable the injection reads.
+
+**Census truth.** The skip must be observable: keep the
+`module-init-pass1`/`-pass2` profile phases as-is (a skipped pass simply
+records no pass-2 call), so the probe above reads `1/0` for gated shapes.
+
+### Constraints (each one is a test)
+
+1. **The gate scans the exact compile inputs, not the source file.** A call
+   inside a top-level function body must NOT disqualify (function bodies are
+   not init inputs); a call inside a static block or a class-expression method
+   in an initializer MUST disqualify.
+2. **Preamble emissions must remain pass-invariant** — the seeds
+   (`emitModuleVarUndefinedSeeds`, function-binding/Annex-B seeds,
+   `emitScriptGlobalVarBindings`, `liveFuncBindingGlobals` closures) are
+   emitted by pass 1 and stand. #4182 already made the one known
+   pass-sensitive preamble decision static; no new dependence may be
+   introduced.
+3. **Multi-source: the accumulated population decides.**
+   `ctx.moduleInitStatements`/`ctx.staticInitExprs` are per-graph accumulated
+   state; the scan runs over the full accumulated set at the emitting source's
+   pass-2 site, so a call-bearing statement contributed by an EARLIER source
+   keeps two passes even when the emitting source's own statements are
+   call-free. `"discover"`/`"skip"`/`"prepared"` modes are untouched.
+4. **Diagnostics parity.** For a gated shape with a compile error in an init
+   statement, the error appears exactly once (today: twice + dedupe). The
+   dedupe call must still run whenever pass 2 ran.
+5. **No behavior widening.** This slice does not touch the IR selector, the
+   prepared route, `applyModuleInitGuard`, or invocation wiring. It changes
+   how many times the DIRECT body compiles, nothing about what it contains
+   for call-free inputs.
+
+### Mutations / anti-vacuity
+
+Add `tests/issue-3523-module-init-single-pass.test.ts`:
+
+- **Gated shapes** (string const, top-level `var`, arrow initializer, object
+  literal, static `n = 3` class): profile census `pass1=1, pass2=0`; runtime
+  A/B parity (exports + observed values) against a forced-two-pass control.
+  Add a test-only `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` seam that restores
+  the old unconditional recompile for exactly this comparison; the seam must
+  not otherwise alter either route.
+- **Control shapes** (call in init, `new` in init, call inside a static
+  block, call inside an initializer arrow body, tagged template): census
+  stays `pass1=1, pass2=1` and behavior is unchanged.
+- **Non-vacuity**: `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` still
+  fails a gated shape (proves pass 1 runs; the skip must not silently skip
+  BOTH passes).
+- **Diagnostics**: a gated shape with a deliberate init-statement error
+  reports it exactly once; a control shape also exactly once (dedupe path).
+- **Inlining regression guard (the reason pass 2 exists)**: a control with a
+  module-level call to a top-level function must produce the same body bytes
+  as before this change (pass 2 still supplies the final registry there).
+- **IR-owned and fn-only shapes**: stay `0/0`; the gate must not create an
+  outcome row or touch the prepared route (run beside
+  `tests/issue-3523-ir-module-init-compile-once.test.ts`).
+
+Byte-equality between the gated route and the forced-two-pass control is NOT
+required (pass 2 may currently emit deduped closure twins); runtime parity,
+export surface, import surface, and Wasm validity are.
+
+### Explicitly out of scope (the rest of gap 1)
+
+Call-bearing typed-Unsupported inits keep two passes. Retiring pass 1 itself
+(the discovery purpose) requires the R2/R3 unit inventory to supply
+closure/setup discovery ahead of body compilation — that is the follow-up
+slice, not this one. Gaps 3 (WASI adapter), 4 (non-executable outcome row) and
+5 (class population) are unchanged.
+
+### Validation
+
+Focused suite + `tests/issue-3523-ir-module-init-compile-once.test.ts` +
+`tests/issue-2965*`/`#3872`/`#4195`/`#4182` families if present; typecheck;
+`pnpm run check:ir-fallbacks` bare; ratchet chain bare
+(`node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs &&
+node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet &&
+npm run -s check:dead-exports`), plus the `LOC_GATE_BASE=$(git rev-parse
+origin/main)` CI-base simulation. Hooks run without bypass. Acceptance: gated
+census rows read `1/0`, controls `1/1`, IR-owned `0/0`, all constraint tests
+green.
+
+### 2026-08-29 gap-1a implementation checkpoint (Opus lane)
+
+**Branch** `claude/issue-3523-gap1a-single-pass`, based on `origin/main` at
+`fe3fe11e52`. Implemented exactly the slice above; nothing widened.
+
+**Re-verification before coding.** Every cited site was re-located by symbol,
+not line number, and the plan's line numbers were all off by a few (the file
+had drifted): pass 1 is at `declarations.ts:5096`, pass 2 at `:5278`,
+`restorePropOrderState` at `:4887`, `dedupeDiagnosticsFrom` (import) at `:61`
+and its call at `:5280`, `orderedInitEntries` at `:5023`-`:5040`,
+`compiledInitFctx?.body` at `:5304`, and the `pendingInitBody` fixups in
+`src/codegen/registry/imports.ts` at `:425`, `:713`, `:1027`. All named
+mechanisms exist as described.
+
+The census probe was re-run first on the untouched tree
+(`.tmp/r4gap1-census.mts`, `JS2WASM_COMPILE_PROFILE=1`, `target: "standalone"`
+for the standalone lane) and **reproduced the plan's table exactly**, including
+the three `0/0` IR-owned rows and the six `1/1` typed-Unsupported rows, in both
+lanes.
+
+**Change.** Two files:
+
+- `src/codegen/declarations/module-init-call-free.ts` (new, 95 lines) —
+  `moduleInitPopulationIsCallFree(ctx)`, an iterative full-subtree scan over
+  `ctx.moduleInitStatements` plus each `ctx.staticInitExprs` entry's
+  `staticBlock ?? initializer`, refusing on `CallExpression`, `NewExpression`,
+  `TaggedTemplateExpression`, `Decorator` and `AwaitExpression`.
+- `src/codegen/declarations.ts` (+11 net) — the pass-2 block now runs only
+  when `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1"` or the population is not
+  provably call-free. `restorePropOrderState()` and `dedupeDiagnosticsFrom()`
+  moved inside that guard, per the plan.
+
+**Post-change census** (same probe): gated shapes `1/0`, controls `1/1`,
+IR-owned and function-only `0/0`, in both lanes. With
+`JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` every row returns to the pre-change
+`1/1`, so the seam is a faithful control.
+
+**Empirical check of the plan's central claim** ("a pass-2 recompile can only
+differ from pass 1's fixup-maintained body through the inlinable-function
+registry"). Two independent probes:
+
+- A source-level audit found `ctx.inlinableFunctions` read in exactly two
+  places: `expressions/call-identifier.ts:2962` (a call site) and
+  `runtime-module-callable-metadata.ts:43`, which only saves/restores
+  name-keyed state around namespace-scoped compilation and makes no codegen
+  decision from it. The preamble's one conditional path
+  (`emitCachedFuncClosureAccess` → `ensureFuncClosureSingleton` →
+  `normalizeOrdinaryFunctionConstructibility`) resolves from
+  declaration-derived state only, never from compiled function bodies —
+  which is what constraint 2 requires, and what the #4182 comment and the
+  "identical across passes" note at `method-trampolines.ts:1018` already
+  assert by design.
+- A whole-corpus A/B (`.tmp/r4gap1-corpus-ab2.mts`): all 25
+  `website/playground/examples/**` + `examples/**` sources compiled in both
+  lanes, single-pass vs `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1`. **50/50
+  byte-identical binaries**, identical success flags and error counts, zero
+  divergences. Byte equality is not asserted in the test suite (the plan does
+  not require it), but it is the measured outcome on this corpus.
+
+**Divergence from the plan (one, benign).** Constraint 1's example "a call
+inside a class-expression method in an initializer MUST disqualify" holds only
+when that statement actually reaches the init population. `const K = class {
+m() { return h(); } };` with **no** class-expression statics is deliberately
+NOT pushed to `ctx.moduleInitStatements` (`declarations.ts:3658`-`:3668` —
+reads use the canonical class singleton), so it is not a compile input and
+correctly stays gated at `1/0`. Adding a static to the same class expression
+puts the statement in the population and the method-body call then disqualifies
+it (`1/1`), which is the behavior the constraint is about. The test encodes
+the reaching case. Symmetrically, a class **declaration** whose methods contain
+calls but whose static field is call-free stays gated — only
+`staticBlock ?? initializer` are init inputs there, and that is exactly what
+constraint 1's first half demands.
+
+**Tests.** `tests/issue-3523-module-init-single-pass.test.ts`, 9 cases, green
+under CI's flags (`--pool=forks --poolOptions.forks.singleFork
+--no-file-parallelism`): gated census `1/0` ×5 shapes ×2 lanes; forced-two-pass
+A/B parity on runtime value, export names, import descriptors and
+`WebAssembly.validate`; control census `1/1` ×5 shapes ×2 lanes with unchanged
+runtime values; the compile-inputs-not-source-file constraint (function-body
+call does not disqualify; static block and reaching class-expression method
+do); the multi-source accumulated-population constraint (`2/0` when both
+sources are call-free, `2/1` when the dependency contributes the call);
+diagnostics parity (`Cannot destructure: not an array type` reported exactly
+once on the gated route, exactly once on the control's dedupe route, exactly
+once under the forced seam); non-vacuity via
+`JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` (a gated shape still fails, so
+pass 1 demonstrably runs, while an IR-owned shape stays unaffected); the
+inlining regression guard (`const v = twice(21)` is byte-identical to the
+forced-two-pass build and still reads 42); and IR-owned/function-only shapes
+pinned at `0/0`.
+
+**Adjacent families.** `tests/issue-2965`, `issue-4182-annexb-global-blockfn`,
+`issue-4195-eval-refusal-message-and-dedupe`, `issue-2766`,
+`issue-2856-nonterminating-if-guard`, `issue-3734-i32-array-elements`,
+`issue-4110-ir-fetch-all-parallel`, `tests/ir/passes` — all green. Seven
+failures in `issue-3523-ir-calendar-retirement` (1),
+`issue-3523-ir-module-init-compile-once` (1, "keeps duplicated class-expression
+static queues observational") and `issue-3872` (5) **reproduce identically on
+an untouched `fe3fe11e52` control** measured by file-copy revert in this same
+worktree, so they are pre-existing and not touched by this slice.
+
+**Gates.** `pnpm run typecheck`, `pnpm run check:ir-fallbacks` (OK, no
+unintended/post-claim/module-level increases), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports` all pass bare. LOC and function
+budgets report `src/codegen/declarations.ts` +11 and
+`compileDeclarations` +10, both covered by this issue file's existing
+`loc-budget-allow` / `func-budget-allow` entries — restated here because the
+gate reads allowances only from plan files the change-set itself touches.
