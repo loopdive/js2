@@ -45,6 +45,26 @@ function simplePairs(which) {
   return pairs;
 }
 
+// (#5152) Supplementary-plane (astral) simple case pairs. The BMP scan above
+// walks code UNITS, so U+10400 DESERET CAPITAL LONG I and friends were never
+// mapped. Every astral mapping is a simple 1:1 whose image is itself astral —
+// asserted below — so the UTF-16 length is unchanged and the two-pass length
+// counting in `case-convert-native.ts` needs no adjustment.
+function astralPairs(which) {
+  const pairs = [];
+  for (let cp = 0x10000; cp <= 0x10ffff; cp++) {
+    const s = String.fromCodePoint(cp);
+    const m = which === "upper" ? s.toUpperCase() : s.toLowerCase();
+    const cps = [...m].map((c) => c.codePointAt(0));
+    if (cps.length !== 1) throw new Error(`astral ${which} ${cp.toString(16)} outLen ${cps.length} != 1`);
+    const mc = cps[0];
+    if (mc === cp) continue;
+    if (mc < 0x10000) throw new Error(`astral ${which} ${cp.toString(16)} maps into the BMP (${mc.toString(16)})`);
+    pairs.push([cp, mc - cp]);
+  }
+  return pairs;
+}
+
 // Stride-aware run-length encoding. Greedily prefer the longer of a contiguous
 // (stride 1) or alternating (stride 2) run starting at each unencoded cp.
 function encodeRuns(pairs) {
@@ -106,6 +126,8 @@ function propertyRanges(property) {
 
 const upperRuns = encodeRuns(simplePairs("upper")).flat();
 const lowerRuns = encodeRuns(simplePairs("lower")).flat();
+const astralUpperRuns = encodeRuns(astralPairs("upper")).flat();
+const astralLowerRuns = encodeRuns(astralPairs("lower")).flat();
 const upperSpecial = specialEntries("upper").flat();
 const lowerSpecial = specialEntries("lower").flat();
 const casedRanges = propertyRanges("Cased").flat();
@@ -133,6 +155,10 @@ const body =
   fmt("UPPER_CASE_RUNS", upperRuns, 4) +
   "\n" +
   fmt("LOWER_CASE_RUNS", lowerRuns, 4) +
+  "\n// Supplementary-plane (astral) [start, count, stride, delta] tuples (#5152).\n" +
+  fmt("ASTRAL_UPPER_CASE_RUNS", astralUpperRuns, 4) +
+  "\n" +
+  fmt("ASTRAL_LOWER_CASE_RUNS", astralLowerRuns, 4) +
   "\n// [cp, outLen, c0, c1, c2] tuples (c2 = 0 when outLen < 3), sorted by cp.\n" +
   fmt("UPPER_CASE_SPECIAL", upperSpecial, 5) +
   "\n" +
@@ -145,6 +171,7 @@ const body =
 writeFileSync(outPath, body);
 console.log(
   `Wrote ${outPath}: upperRuns=${upperRuns.length / 4} lowerRuns=${lowerRuns.length / 4} ` +
+    `astralUpperRuns=${astralUpperRuns.length / 4} astralLowerRuns=${astralLowerRuns.length / 4} ` +
     `upperSpecial=${upperSpecial.length / 5} lowerSpecial=${lowerSpecial.length / 5} ` +
     `casedRanges=${casedRanges.length / 2} caseIgnorableRanges=${caseIgnorableRanges.length / 2}`,
 );

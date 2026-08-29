@@ -20,7 +20,7 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
 import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
-import { emitTaViewConstruct, emitTaViewConstructWindowed } from "../dataview-native.js";
+import { emitTaViewConstruct, emitTaViewConstructWindowed, nativeBufferBuiltinOf } from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper, ensureNativeStringBoundaryBridge } from "../native-strings.js";
@@ -29,6 +29,8 @@ import { ensureNativeProxyRuntime } from "../object-runtime.js";
 import { ensureSymbolCarrier } from "../symbol-native.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
+import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { isInertNonCallableLiteral } from "../promise-newtarget.js"; // (#5143)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
@@ -564,6 +566,23 @@ export function tryCompileBuiltinGlobalNew(
     // below (byte-unchanged in host/gc mode). Guard the ambient-global binding so
     // a user `class Promise {}` / local shadow keeps the normal ctor path.
     const promiseArgs = expr.arguments ?? [];
+    // (#5143 C3) §27.2.3.1 step 2: `IsCallable(executor)` is false → throw a
+    // TypeError. The native lowerings below only admit a resolvable closure, so
+    // a syntactically non-callable executor (`new Promise(1)`, `new Promise({})`,
+    // `new Promise()`) fell through to the `Promise_new` host import — which in
+    // standalone mode is a host-import LEAK that silently constructs nothing and
+    // throws nothing. Only literal shapes the compiler can prove non-callable are
+    // claimed here; a runtime value stays on the value path below, which does its
+    // own callability check. Standalone-carrier gated, so host/gc is byte-inert.
+    if (
+      isStandalonePromiseActive(ctx) &&
+      !ctx.classSet.has("Promise") &&
+      resolvesToAmbientGlobal(ctx, expr.expression) &&
+      (promiseArgs.length === 0 || isInertNonCallableLiteral(ctx, fctx, promiseArgs[0]!))
+    ) {
+      emitThrowTypeError(ctx, fctx, "Promise resolver is not a function");
+      return { kind: "externref" };
+    }
     if (
       promiseArgs.length >= 1 &&
       !ctx.classSet.has("Promise") &&
@@ -1816,7 +1835,13 @@ export function tryCompileBuiltinGlobalNew(
         // `new Int32Array(new SharedArrayBuffer(...))`. Host mode already
         // handles the buffer arg correctly via the runtime, so skip the
         // native view path there.
-        const argSymName = argSym?.name;
+        // Query the provenance-aware oracle here, rather than only the widened
+        // checker type.  In bootstrap-style code the buffer is commonly stored
+        // in an `any` binding before it is passed to a TypedArray constructor;
+        // the checker then has no symbol, while the oracle can still recover the
+        // ArrayBuffer initializer.  This must stay in lock-step with
+        // `inferTaViewType` so the emitted carrier matches the binding's local.
+        const argSymName = nativeBufferBuiltinOf(ctx, args[0]!);
         // (#3054 B1) Build a SHARED-BACKING `$__ta_view` that refs the buffer's
         // vec (not a copy) so sibling views / DataViews observe writes. Gated on
         // `noJsHost` (standalone/WASI): the native `i32_byte` vec representation
@@ -1875,7 +1900,11 @@ export function tryCompileBuiltinGlobalNew(
               fieldIdx: 0,
             });
             const lenLocal = allocLocal(fctx, `__ta_len_${fctx.locals.length}`, { kind: "i32" });
-            fctx.body.push({ op: "local.tee", index: lenLocal });
+            // Consume the source length here. Keeping it on the operand stack
+            // leaks an i32 underneath the constructed TypedArray, so an inline
+            // `receiver.call(new Uint8Array(arrayLike))` later tries to store
+            // that stale length as the externref receiver.
+            fctx.body.push({ op: "local.set", index: lenLocal });
             // Create new array of that length
             fctx.body.push({ op: "local.get", index: lenLocal });
             fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
@@ -2046,7 +2075,7 @@ export function tryCompileBuiltinGlobalNew(
         // (#1930) Query the type-oracle boundary, not the raw checker — this
         // also keeps the gate in lock-step with `inferTaViewType` (variables.ts),
         // which resolves the buffer arg through the same oracle.
-        const winArgSymName = ctx.oracle.builtinReceiverOf(args[0]!);
+        const winArgSymName = nativeBufferBuiltinOf(ctx, args[0]!);
         if (winArgSymName === "ArrayBuffer" || winArgSymName === "SharedArrayBuffer" || winArgSymName === "DataView") {
           const winResult = emitTaViewConstructWindowed(
             ctx,
@@ -2141,23 +2170,30 @@ export function tryCompileErrorCtorCallWithoutNew(
  * The ambient-global and class checks are important: a user binding named
  * `WeakSet` must retain ordinary call semantics, just like the Error and Date
  * guards above.
+ *
+ * (#5151) The same clause governs the other three keyed collections
+ * (§24.1.1.1 / §24.2.1.1 / §24.3.1.1 step 1), which were never added here — so
+ * `Map()`, `Set()` and `WeakMap()` each returned an object instead of throwing.
+ * They are table-driven off the one set below rather than three copies.
  */
-export function tryCompileWeakSetCallWithoutNew(
+const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
+
+export function tryCompileCollectionCtorCallWithoutNew(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (expr.questionDotToken) return undefined;
   const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || callee.text !== "WeakSet") return undefined;
-  if (ctx.classSet.has("WeakSet")) return undefined;
+  if (!ts.isIdentifier(callee) || !CALL_WITHOUT_NEW_COLLECTION_CTORS.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
   if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
 
   for (const arg of expr.arguments ?? []) {
     const argResult = compileExpression(ctx, fctx, arg);
     if (argResult) fctx.body.push({ op: "drop" });
   }
-  emitThrowTypeError(ctx, fctx, "Constructor WeakSet requires 'new'");
+  emitThrowTypeError(ctx, fctx, `Constructor ${callee.text} requires 'new'`);
   return { kind: "externref" };
 }
 

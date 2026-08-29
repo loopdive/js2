@@ -116,4 +116,120 @@ describe("#4563 — an own property must not sever a callable carrier's prototyp
       `),
     ).toBe(1);
   });
+
+  it("keeps an array inheriting after a dynamic element write creates its bag", async () => {
+    expect(
+      await runStandalone(`
+        function set(o: any, k: any, v: any): void { o[k] = v; }
+        function get(o: any, k: any): any { return o[k]; }
+        export function run(): number {
+          const expected: any = (Array.prototype as any).every;
+          const a: any[] = [];
+          set(a, 0, 1);
+          return typeof expected === "function" && get(a, "every") === expected ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("keeps an array inheriting after an unrelated named expando", async () => {
+    expect(
+      await runStandalone(`
+        function set(o: any, k: any, v: any): void { o[k] = v; }
+        function get(o: any, k: any): any { return o[k]; }
+        export function run(): number {
+          const expected: any = (Array.prototype as any).every;
+          const a: any[] = [];
+          set(a, "unrelated", 1);
+          return typeof expected === "function" && get(a, "every") === expected ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("still lets an array own property with value undefined shadow the prototype", async () => {
+    expect(
+      await runStandalone(`
+        function set(o: any, k: any, v: any): void { o[k] = v; }
+        function get(o: any, k: any): any { return o[k]; }
+        export function run(): number {
+          const a: any[] = [];
+          (Array.prototype as any).p4563vec = 12;
+          set(a, "p4563vec", undefined);
+          return get(a, "p4563vec") === undefined ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("binds an array descriptor getter to the original array", async () => {
+    expect(
+      await runStandalone(`
+        function get(o: any, k: any): any { return o[k]; }
+        let seen: any = null;
+        export function run(): number {
+          const a: any[] = [];
+          Object.defineProperty(a, "own4563", {
+            configurable: true,
+            get: function (): number { seen = this; return 7; },
+          });
+          return get(a, "own4563") === 7 && seen === a ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("coerces an object key only once on an array bag hit", async () => {
+    expect(
+      await runStandalone(`
+        function set(o: any, k: any, v: any): void { o[k] = v; }
+        function get(o: any, k: any): any { return o[k]; }
+        let calls = 0;
+        export function run(): number {
+          const a: any[] = [];
+          set(a, "x", 7);
+          const key: any = { toString: function (): string { calls += 1; return "x"; } };
+          calls = 0;
+          const value = get(a, key);
+          return calls * 10 + value;
+        }
+      `),
+    ).toBe(17);
+  });
+
+  it("coerces an object key only once when an array bag misses into its prototype", async () => {
+    expect(
+      await runStandalone(`
+        function set(o: any, k: any, v: any): void { o[k] = v; }
+        function get(o: any, k: any): any { return o[k]; }
+        let calls = 0;
+        export function run(): number {
+          const a: any[] = [];
+          (Array.prototype as any).x4563 = 7;
+          set(a, "unrelated", 1);
+          const key: any = { toString: function (): string { calls += 1; return "x4563"; } };
+          calls = 0;
+          const value = get(a, key);
+          return calls * 10 + value;
+        }
+      `),
+    ).toBe(17);
+  });
+
+  it("coerces an object key before the array descriptor overlay lookup", async () => {
+    expect(
+      await runStandalone(`
+        function get(o: any, k: any): any { return o[k]; }
+        let calls = 0;
+        export function run(): number {
+          const a: any[] = [];
+          Object.defineProperty(a, "x4563overlay", { value: 7, configurable: true });
+          const key: any = { toString: function (): string { calls += 1; return "x4563overlay"; } };
+          calls = 0;
+          const value = get(a, key);
+          return calls * 10 + (value === 7 ? 1 : 0);
+        }
+      `),
+    ).toBe(11);
+  });
 });

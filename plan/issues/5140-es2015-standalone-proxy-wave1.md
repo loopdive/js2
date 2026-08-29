@@ -4,7 +4,7 @@ title: "ES2015 standalone: proxy conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: l
 feasibility: medium
@@ -15,6 +15,7 @@ goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
   - src/codegen/declarations.ts
+  - src/codegen/module-init-collection.ts
   - src/codegen/binary-ops-in.ts
   - src/codegen/analysis/proxy-binding-escape.ts
   - src/codegen/function-prototype-callable.ts
@@ -236,58 +237,75 @@ still fails after step 1, leave it).
   npm run -s check:oracle-ratchet && npm run -s check:dead-exports`.
 - Equivalence tests pass: `npm test -- tests/equivalence.test.ts`.
 
-## Results (wave 1, 2026-08-28)
+## Results (wave 1, 2026-08-29)
 
 Target list `.tmp/es2015/wp-proxy-current-fails.txt` (216 paths), standalone
-probe, 2-way parallel (4-way over-subscribes the box and injects spurious
-20 s compile timeouts — measured, not inferred):
+probe on this branch's base `507ad13e`, 2-way parallel:
 
 | | before | after |
 |---|---|---|
-| pass | 2 | 50 |
-| fail | 188 | 143 |
-| compile_error | 26 | 23 |
+| pass | 2 | 51 |
+| fail | 191 | 142 |
+| compile_error | 23 | 23 |
 
-Spotcheck `.tmp/es2015/wp-proxy-passing-spotcheck.txt`: 40/40 before and after.
+Both numbers are runs I executed on this worktree (`.tmp/base_*.txt` →
+`.tmp/final_*.txt`); no test that passed before fails now (set-diff, 0 entries).
+Spotcheck `.tmp/es2015/wp-proxy-passing-spotcheck.txt`: **40/40 before and
+after**.
 
 **Ceiling note**: 34 of the 216 are `*-realm*` tests that need the QuickJS eval
-artifact, which is not built here — they cannot pass locally regardless.
+artifact, which is not built in this worktree — they cannot pass here at all.
+
+Equivalence: `tests/equivalence/` run in three batches (the whole directory
+OOMs vitest on a 4-core box). 12 failures, **all pre-existing** — each
+re-measured against the unmodified files via the file-copy A/B and failing
+identically: `logical-conditional-identity` (3 × `void`),
+`arguments-nested-and-loops` (1), `tdz-reference-error` (6),
+`yield-as-expression` (1), `reflect-api` (`Reflect.construct`, 1).
 
 ### Fixed
 
-1. **Proxy-as-target/handler admission (cluster 3 core).** Two defects, not one.
+1. **Proxy-as-target/handler admission (cluster 3 core).** Two defects.
    `__proxy_create`'s `requireObject` misclassified a `$Proxy` carrier as a
-   primitive (masked with a `ref.test $Proxy` short-circuit), and — the actual
-   cause of the probe failure — `proxyBindingEscapesToCall` treated
-   `new Proxy(p, h)` as an escaping argument, so the binding kept its nominal
-   target struct and the guarded cast replaced the live proxy with **null**.
-   Carve-outs added for `new Proxy`, `Proxy.revocable`, all of `Reflect.*`, and
-   the `Object.*` meta-object statics, all of which consume externref carriers.
-2. **Trap callability at operation time (cluster 6).** §7.3.9 GetMethod now runs
-   in every dispatch builder's trap arm, not just `[[Get]]`. Plus the §10.5.12
-   non-callable-target guard on `__proxy_apply_dispatch`.
+   primitive (masked with a `ref.test $Proxy` short-circuit), and
+   `proxyBindingEscapesToCall` treated `new Proxy(p, h)` as an escaping
+   argument, so the binding kept its nominal target struct and the guarded cast
+   replaced the live proxy with **null**. Carve-outs added for `new Proxy`,
+   `Proxy.revocable`, all of `Reflect.*`, and the `Object.*` meta-object
+   statics — every one of which consumes externref carriers.
+2. **Trap callability at operation time (cluster 6).** §7.3.9 GetMethod now
+   runs in EVERY dispatch builder's trap arm (#4721 had it for `[[Get]]`
+   only), plus the §10.5.12 non-callable-target guard on
+   `__proxy_apply_dispatch` (new `F_CALLABLE` read).
 3. **§10.5 invariants (cluster 1, partial).** getPrototypeOf result must be
-   Object|null and must match a non-extensible target's prototype;
-   setPrototypeOf's truthy result on a non-extensible target; isExtensible
-   SameValue; preventExtensions must actually seal.
+   Object|null and must SameValue a non-extensible target's prototype;
+   setPrototypeOf's truthy result over a non-extensible target;
+   isExtensible SameValue; preventExtensions must actually seal. The
+   booleanish trap results now go through `__is_truthy` (spec ToBoolean)
+   instead of reference truthiness.
 4. **`Object.isExtensible(proxy)` bypassed its trap entirely** — the oracle
    proves a proxy binding is a JS object, so the call picks the
    `__object_isExtensible_obj` twin, which carried no proxy front-guard.
 5. **`"k" in p;` / `v instanceof C;` in statement position were DROPPED**
-   (cluster 7a). Not a fold problem: the top-level statement allow-list in
-   `collectDeclarations` had no arm for relational binary operators, so the
-   whole statement never reached `__module_init` and the `has` trap never ran —
-   a vacuous pass across the `Proxy/has/call-*` family. Same collection-gap
-   family as #2992 (`delete`), #3592 (`throw`), #3615 (bare property read).
+   (cluster 7a). Not a fold problem: `expressionRunsUserCode` did not count
+   `in`/`instanceof` as effectful, so the whole statement never reached
+   `__module_init` and the `has` trap never ran — a vacuous pass across the
+   `Proxy/has/call-*` family. Same collection-gap family as #2992 (`delete`),
+   #3592 (`throw`), #3615 (bare property read).
 6. **`Reflect.apply` (cluster 4, partial).** Two independent blockers: the name
    collided with `%Function.prototype%.apply` in
    `tryEmitNonCallableNamespaceInvokerThrow`, so every call threw
    "Reflect.apply is not a function"; and standalone had no native arm at all.
-   Both fixed (CreateListFromArrayLike + `__apply_closure`).
+   Both fixed — the new arm routes through `__apply_closure` (which reads the
+   argumentsList generically and front-guards `$Proxy`), with an
+   IsCallable(target) guard built from positive primitive brands.
 7. **`p.call(…)` / `p.apply(…)` on a proxy over a callable (cluster 11).**
-   Front-guard on `__extern_method_call`.
+   Front-guard on `__extern_method_call`, ahead of the property walk that made
+   the `$Proxy` carrier look like it owned no `call`: `.call` rebuilds the
+   argument vec from `args[1..]`, `.apply` forwards the list carrier as-is.
 8. **`new Proxy(t, revokedProxy)` threw at construction** — the trap reads are
-   per-operation GetMethod calls, not construction-time reads.
+   per-operation GetMethod calls, not construction-time reads; the eager reads
+   are now suppressed when the handler is a revoked proxy.
 
 ### Skipped / still open
 
@@ -298,23 +316,27 @@ artifact, which is not built here — they cannot pass locally regardless.
 - **Cluster 2 (34 realm tests)** — environment-gated, see the ceiling note.
 - **Descriptor-model invariants** (defineProperty targetdesc compatibility,
   getOwnPropertyDescriptor resultdesc reconciliation, ownKeys key-set rules,
-  has/get/set target-property rules) — ~25 tests. These need the standalone
+  has/get/set target-property rules) — ~35 tests, the largest remaining bucket
+  ("Expected a TypeError … no exception"). These need the standalone
   descriptor-attribute model, which is the bulk of #1355 slice G. The
   self-hosted-stdlib vehicle the plan proposed does not fit: the IR-claimable
   subset has no `throw`, so a validator cannot signal the TypeError.
 - **Cluster 7b — proto-chain proxy entry** (`Object.create(proxy).attr = 5`,
-  ~6 tests) and **7c receiver threading**: unstarted.
+  ~6 tests, the "handler is context" failures): NOT a walk-arm change. The
+  `$Object` proto field is typed `ref null $Object` and a `$Proxy` is a
+  SIBLING type, so a proxy cannot even be STORED as a prototype today.
+  Fixing it means widening that field (or boxing), which is a type-layout
+  change well outside this wave. **7c receiver threading**: unstarted.
 - **Revoker fidelity (cluster 10)**: `r.revoke()` returns `null` rather than
-  `undefined` because the standalone `$undefined` singleton regime (#2106) is
-  still inert; the revoker's `length`/`name` own properties are unimplemented.
-- `Proxy/getPrototypeOf/not-extensible-same-proto.js` now fails on the new
-  invariant instead of on a missing throw: `Object.create(Array.prototype)`'s
-  prototype does not compare SameValue with the `Array.prototype` the trap
-  returns. That is the proto-model identity gap named in cluster 4, not the
-  invariant.
-- `Reflect/apply/call-target.js` still reports `this === null` inside the target
-  — `__apply_closure` does not thread an explicit this-value into a plain
-  compiled closure.
+  `undefined` (the `$undefined` singleton regime, #2106, is still inert); the
+  revoker's `length`/`name` own properties are unimplemented.
+- `Reflect/apply/call-target.js` still reports `this === null` inside the
+  target — `__apply_closure` does not thread an explicit this-value into a
+  plain compiled closure.
+- `Reflect.getOwnPropertyDescriptor({}, k)` / `Reflect.ownKeys` reject an
+  object-LITERAL target ("called on non-object"): the literal compiles to a
+  closed typed struct, which `emitNativeReflectTargetGuard` does not admit.
+  Pre-existing, unrelated to the Proxy MOP.
 
 ## References
 

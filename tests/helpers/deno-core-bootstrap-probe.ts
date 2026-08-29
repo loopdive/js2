@@ -488,9 +488,9 @@ if (!result.success) {
   throw new Error(result.errors.map((error) => error.message).join("\n"));
 }
 
-const module = new WebAssembly.Module(result.binary);
 const artifactOutput = process.env.DENO_CORE_BOOTSTRAP_WASM_OUTPUT;
 if (artifactOutput) writeFileSync(artifactOutput, result.binary);
+const module = new WebAssembly.Module(result.binary);
 const moduleImports = WebAssembly.Module.imports(module);
 const imports = moduleImports.map(({ module, name }) => `${module}::${name}`).sort();
 const bridgeExports = WebAssembly.Module.exports(module)

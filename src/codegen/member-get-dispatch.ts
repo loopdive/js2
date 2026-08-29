@@ -65,6 +65,7 @@ import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-hel
 import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import {
   findFnctorLayoutStructsForField,
   findFnctorResidStructsForField,
@@ -740,40 +741,17 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       // two objects with different field names can share a Wasm heap type.
       // Check the collision stamp before reading a slot, and keep searching on
       // a shape mismatch just like the generated __sget_* dispatcher does.
-      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
-        return [
-          { op: "local.get", index: 1 }, // __any
-          { op: "ref.test", typeIdx: cand.structTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: 1 },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
-              { op: "i32.const", value: cand.shapeId },
-              { op: "i32.eq" },
-            ],
-            else: [{ op: "i32.const", value: 0 }],
-          },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } as ValType },
-            then: readInstrs,
-            else: next,
-          },
-        ];
-      }
-      return [
-        { op: "local.get", index: 1 }, // __any
-        { op: "ref.test", typeIdx: cand.structTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: readInstrs,
-          else: next,
-        },
-      ];
+      // (#4645) `buildShapeGuardedArm` names `next` exactly once — the nested
+      // form this replaced named it twice, doubling the chain's walk/emit cost
+      // per stamped arm.
+      return buildShapeGuardedArm(
+        1, // __any
+        cand.structTypeIdx,
+        cand,
+        { kind: "val", type: { kind: "externref" } as ValType },
+        readInstrs,
+        next,
+      );
     };
 
     // (#3041) Get-accessor arms tried FIRST, terminating in the struct-field /
@@ -986,40 +964,15 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
             ]
           : readValue;
       const next = buildChain(idx + 1);
-      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
-        return [
-          { op: "local.get", index: 1 }, // __any
-          { op: "ref.test", typeIdx: cand.structTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: 1 },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
-              { op: "i32.const", value: cand.shapeId },
-              { op: "i32.eq" },
-            ],
-            else: [{ op: "i32.const", value: 0 }],
-          },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "f64" } as ValType },
-            then: armBody,
-            else: next,
-          },
-        ];
-      }
-      return [
-        { op: "local.get", index: 1 }, // __any
-        { op: "ref.test", typeIdx: cand.structTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "f64" } as ValType },
-          then: armBody,
-          else: next,
-        },
-      ];
+      // (#4645) single-`next` arm — see `buildShapeGuardedArm`.
+      return buildShapeGuardedArm(
+        1, // __any
+        cand.structTypeIdx,
+        cand,
+        { kind: "val", type: { kind: "f64" } as ValType },
+        armBody,
+        next,
+      );
     };
 
     dispFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
