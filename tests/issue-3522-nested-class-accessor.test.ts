@@ -373,14 +373,12 @@ describe("#3522 nested class accessor negative boundaries", () => {
   // initialized-field slice; the boundary moved to a CALL EDGE inside the
   // initializer (two owners plan the same call). See
   // `tests/issue-3522-nested-class-field.test.ts` for the positive family.
-  it("keeps a nested accessor class whose field initializer calls a MEMBER expression direct", async () => {
-    // #3522 F4 admitted only the exact bare same-source top-level call family.
-    // A member call cannot mint a proof, so the accessor class and its owner
-    // both stay direct.
+  it("keeps a nested accessor class whose field initializer CALLS a local function direct", async () => {
     const result = await compile(
       `
+      function seed(): number { return 42; }
       export function run(): number {
-        class Box { v: number = Math.floor(42.5); get w(): number { return this.v; } }
+        class Box { v: number = seed(); get w(): number { return this.v; } }
         return new Box().w;
       }
       `,

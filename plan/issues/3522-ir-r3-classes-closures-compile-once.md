@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-28
+updated: 2026-08-29
 assignee: ttraenkler/codex
 branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
@@ -3783,3 +3783,97 @@ already excludes (static fields, heritage, computed names, member/imported/
 cross-source targets), and the pre-existing nested-executable-in-a-member
 failure that F4 routes around rather than fixes — that shape is broken for the
 CALL-FREE bounded family too and belongs to its own slice.
+
+#### 2026-08-29 correction — accessors leave the first admitted family
+
+The first F4 push turned `quality` red on the accessor suite's
+"does not grow the optimized binary versus the direct control" row. The
+checkpoint above attributed that row to a container artifact. **That
+attribution was wrong, and the A/B that produced it was run but not read
+carefully enough**: reverting only the eleven F4 source files to
+`origin/main` and re-measuring gives, for all three fixtures in that row,
+byte-identical numbers and byte-identical claimed-unit sets —
+
+| fixture | rawDirect | rawPrepared | optDirect | optPrepared |
+| --- | --- | --- | --- | --- |
+| `METHOD_AND_GETTER` | 683 | 690 | 367 | 367 |
+| `GETTER_AND_SETTER` | 1081 | 1007 | 588 | **1007** |
+| `CLASS_EXPRESSION` | 4915 | 855 | 4915 | 382 |
+
+identical on `origin/main` `23bc3ddece` and on the F4 branch. So F4 did not
+grow that binary. The failing fixture is `GETTER_AND_SETTER`, an
+**accessor-only class with no field call**, which F4's admission never
+touches: `optPrepared == rawPrepared` because wasm-opt aborts on the prepared
+module (`Assertion failed: type.isStruct(), effects.h:650, writesStruct`) and
+`optimize` silently returns the unoptimized binary, while the direct module
+optimizes 1081 → 588.
+
+It reached CI only because the slice had MODIFIED that file. `test:changed-root`
+runs exactly the root test files a branch adds or modifies — `ci.yml`'s own
+comment states "Untouched root test files do NOT run at PR time" — and
+`tests/guard-suite.json`'s twenty entries contain no `issue-3522` file. So the
+row never runs on `main`, and `main` being green was never evidence about it.
+Touching the file armed the fix-on-touch ratchet against pre-existing rot the
+slice has no remit to repair.
+
+The resolution narrows F4 rather than the bound. **Accessor-bearing classes
+leave the first admitted family** (`nestedOrdinaryClassBodyHasAccessor`),
+for the same kind of measured reason as the nested-executable exclusion:
+
+1. the F4 plan's positive-coverage list contains no accessor case;
+2. F3 already inventories accessor field-call candidates and deliberately
+   leaves them unclaimed — its merged suite pins exactly that; and
+3. the accessor family's optimized lane is already broken on `origin/main`
+   independently of any field call, as the table above shows, so admitting its
+   field-call variant would add instances of a known-broken shape rather than
+   new compile-once coverage.
+
+With that narrowing, `tests/issue-3522-nested-class-accessor.test.ts` is
+restored to `origin/main` byte-for-byte: its
+"keeps a nested accessor class whose field initializer CALLS a local function
+direct" assertion is TRUE again under F4 (verified passing), the file is no
+longer selected by `changed-root`, and that lane returns to main's behaviour
+exactly. The accessor boundary is instead pinned where F4 owns it — three new
+controls in the F4 suites (two runtime, one marker-level, the last one
+asserting that F3 still inventories the candidate and mints its dormant proof
+while admission refuses).
+
+Evidence after the correction:
+
+- CI's gate reproduced exactly (`scripts/hooks/changed-root-tests.sh` against
+  `23bc3ddece`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`,
+  `JS2WASM_EVAL_ENGINE=interpreter`): **5 files selected, 113 tests, exit 0** —
+  `issue-3522-ir-nested-class-ownership` 7/7,
+  `issue-3522-nested-class-field-call-admission` 40/40,
+  `issue-3522-nested-class-field-call-marker` 22/22,
+  `issue-3522-nested-class-field` 24/24,
+  `issue-3522-nested-implicit-constructor` 20/20.
+- All fifteen ratchet/format/lint gates pass, plus the
+  `LOC_GATE_BASE=origin/main` simulation for both budgets, and TypeScript 7 and
+  5 no-emit.
+- Source growth is now `src/ir/select-identity.ts` +158,
+  `src/ir/identity.ts` +120, `src/ir/class-accessor-safety.ts` +88,
+  `src/codegen/index.ts` +36, `src/codegen/ir-prepared-free-functions.ts` +25,
+  `src/ir/from-ast.ts` +24, `src/ir/module-bindings.ts` +14,
+  `src/codegen/ir-overlay-identity.ts` +11, `src/codegen/class-bodies.ts` +7,
+  `src/codegen/ir-class-shapes.ts` +7,
+  `src/codegen/ir-prepared-nested-executable-syntax.ts` +4 — net **+494 src
+  LOC**, inside the same allowances.
+
+The other six failures the checkpoint above called pre-existing were re-audited
+against the CI lane, not just the container. None of them is in
+`tests/guard-suite.json`, and this branch modifies none of them, so
+`changed-root` does not select any of them and CI does not exercise them on
+this PR: four in `issue-3522-nested-class-static`, one in
+`issue-3522-ir-cross-owner-free-function`, one in
+`issue-3522-ir-object-method-ownership`. Each was additionally confirmed to
+fail with the eleven F4 source files reverted to `origin/main` in the same
+container — the correct instrument for "did this slice cause it", which
+answers no. Whether they would fail on a CI runner is a separate question this
+slice does not answer and does not need to.
+
+The remaining accessor-family defect is real and now explicitly out of scope:
+wasm-opt aborts on the prepared accessor module, and `optimize` swallows the
+abort and returns the unoptimized binary rather than reporting it. The silent
+fallback is the more dangerous half — a crashing optimizer currently reads as a
+successful compile. Both belong to the accessor slice, not to F4.

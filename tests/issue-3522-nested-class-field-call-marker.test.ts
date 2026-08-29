@@ -29,6 +29,7 @@ import {
   boundedPreparedNestedOrdinaryClassBindingName,
   isBoundedPreparedNestedOrdinaryClass,
   isNestedOrdinaryClassFieldCallInventoryCandidate,
+  nestedOrdinaryClassBodyHasAccessor,
   nestedOrdinaryClassBodyHasNestedExecutable,
 } from "../src/ir/class-accessor-safety.js";
 import { makeIrIdentityImportedFunctionResolver } from "../src/ir/imported-functions.js";
@@ -186,6 +187,40 @@ describe("#3522 F4 inventory candidacy is not selector admission", () => {
     const withMarker = selectWith(graph, admission);
     expect(withMarker.nestedClassFieldCallAdmission).toBe(admission);
     expect(withMarker.nestedClassFieldCallAdmission?.classes).toHaveLength(1);
+  });
+
+  it("refuses to mint a marker for an ACCESSOR-bearing class", () => {
+    // F3 inventories it (accessors are callable members of the candidate
+    // shape); F4 does not admit it. The two decisions are separate, and this
+    // is the row that proves the separation is real rather than nominal.
+    const graph = fixture({
+      "/repo/entry.ts": `
+        function seed(value: number): number { return value + 2; }
+        export function run(): number {
+          class Box {
+            value: number = seed(40);
+            get current(): number { return this.value; }
+          }
+          return new Box().current;
+        }
+      `,
+    });
+    const [candidate] = getIrNestedClassFieldCallInventoryCandidates(graph.context.inventory);
+    expect(candidate, "F3 must still inventory the accessor candidate").toBeDefined();
+    expect(candidate!.terminalMembers.map(({ record }) => record.kind).sort()).toEqual([
+      "class-implicit-constructor",
+      "class-instance-getter",
+    ]);
+    expect(nestedOrdinaryClassBodyHasAccessor(candidate!.declaration)).toBe(true);
+    // The dormant F3 proof is still built — only admission refuses.
+    const proofs = planIrNestedClassFieldCalls({ identityContext: graph.context, resolver: graph.resolver });
+    expect(proofs.entries).toHaveLength(1);
+    expect(admissionFor(graph).classes).toHaveLength(0);
+    const selection = selectWith(graph, admissionFor(graph));
+    expect(selection.classMembers?.size ?? 0).toBe(0);
+    for (const { record } of candidate!.terminalMembers) {
+      expect(selection.fallbacks?.get(record.id)?.reason).toBe("class-member-unsupported");
+    }
   });
 
   it("refuses to mint a marker for a class body carrying a nested executable", () => {

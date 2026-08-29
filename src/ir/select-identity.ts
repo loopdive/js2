@@ -44,6 +44,7 @@ import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
   exactPreparedAccessorSyntaxKey,
   isBoundedPreparedAccessorClass,
+  nestedOrdinaryClassBodyHasAccessor,
   nestedOrdinaryClassBodyHasNestedExecutable,
   nestedOrdinaryClassLexicalBindingName,
 } from "./class-accessor-safety.js";
@@ -212,6 +213,7 @@ export function computeIrNestedClassFieldCallAdmission(
     if (
       bindingName === undefined ||
       candidate.fields.length === 0 ||
+      nestedOrdinaryClassBodyHasAccessor(candidate.declaration) ||
       nestedOrdinaryClassBodyHasNestedExecutable(candidate.declaration)
     ) {
       continue;

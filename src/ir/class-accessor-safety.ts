@@ -310,6 +310,35 @@ export function isNestedOrdinaryClassFieldCallInventoryCandidate(
 }
 
 /**
+ * (#3522 F4) Does the class carry a get/set accessor?
+ *
+ * Accessors stay INVENTORY CANDIDATES — F3 deliberately mints their terminals
+ * and leaves them unclaimed — but they are outside F4's first admitted family.
+ * Three measured reasons, not a taste call:
+ *
+ *  1. The F4 plan's positive-coverage list names an implicit constructor, an
+ *     explicit constructor, a class expression, two ordered fields, the F2
+ *     method call and a top-level field. No accessor case appears in it.
+ *  2. The accessor family's OPTIMIZED lane is already broken on `origin/main`,
+ *     independently of any field call: for the accessor-only fixture in
+ *     `tests/issue-3522-nested-class-accessor.test.ts`, wasm-opt aborts
+ *     (`Assertion failed: type.isStruct(), effects.h:650, writesStruct`) and
+ *     `optimize` silently returns the UNoptimized module — measured 1,007
+ *     bytes prepared against 588 direct, byte-identical before and after F4.
+ *  3. Admitting the accessor variant of a family whose optimized output already
+ *     crashes the optimizer adds instances of a known-broken shape rather than
+ *     new compile-once coverage — the same reasoning, and the same kind of
+ *     measurement, as the nested-executable exclusion below.
+ *
+ * Syntax-only, and never an admission decision on its own.
+ */
+export function nestedOrdinaryClassBodyHasAccessor(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
+  return declaration.members.some(
+    (member) => ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member),
+  );
+}
+
+/**
  * (#3522 F4) Does any member body or field initializer carry a nested
  * executable?
  *

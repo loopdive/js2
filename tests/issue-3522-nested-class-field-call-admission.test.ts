@@ -612,6 +612,38 @@ describe("#3522 F4 negative source controls", () => {
       42,
     ],
     [
+      // Accessors are EXCLUDED from the first admitted family. F3 mints their
+      // terminals as inventory candidates and leaves them unclaimed, and the
+      // accessor family's optimized lane is already broken on `origin/main`
+      // independently of any field call: wasm-opt aborts on the accessor-only
+      // fixture in `issue-3522-nested-class-accessor` and `optimize` silently
+      // returns the UNoptimized module (1,007 bytes vs 588 direct, measured
+      // byte-identical before and after F4). Admitting the field-call variant
+      // would add instances of a known-broken shape.
+      "instance accessor in the class",
+      "neg-accessor.ts",
+      `function seed(v: number): number { return v + 2; }
+       export function run(): number {
+         class Box { p: number = seed(40); get w(): number { return this.p; } }
+         return new Box().w;
+       }`,
+      42,
+    ],
+    [
+      "getter/setter pair in the class",
+      "neg-accessor-pair.ts",
+      `function seed(v: number): number { return v + 2; }
+       export function run(): number {
+         class Box {
+           p: number = seed(40);
+           get w(): number { return this.p; }
+           set w(x: number) { this.p = x; }
+         }
+         return new Box().w;
+       }`,
+      42,
+    ],
+    [
       // A nested executable in a member body is EXCLUDED from the first
       // admitted family on purpose: measured on `origin/main`, the CALL-FREE
       // bounded variant of this exact shape is already a hard compile failure
