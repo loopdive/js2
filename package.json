@@ -124,6 +124,7 @@
     "check:ir-optimization-retirement": "node scripts/check-ir-optimization-retirement.mjs",
     "check:linear-ir": "npx tsx scripts/check-linear-ir.ts",
     "check:oracle-ratchet": "node scripts/check-oracle-ratchet.mjs",
+    "check:r2-v2-collector": "node scripts/r2-linked-parser-ab-collection-v2/selftest.mjs && node scripts/r2-linked-parser-ab-collection-v2/relock.mjs",
     "check:pushraw": "node scripts/check-pushraw.mjs",
     "check:loc-budget": "node scripts/check-loc-budget.mjs",
     "check:func-budget": "node scripts/check-func-budget.mjs",
