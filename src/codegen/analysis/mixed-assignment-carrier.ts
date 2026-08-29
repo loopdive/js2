@@ -15,6 +15,7 @@ import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
 
 function stripParens(expr: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
@@ -27,6 +28,99 @@ function containingScope(decl: ts.VariableDeclaration): ts.Node {
     if (ts.isSourceFile(node)) return node;
   }
   return decl.getSourceFile();
+}
+
+interface AssignmentFact {
+  /** Identifier on the left, retained for the declaration-name self guard. */
+  target: ts.Identifier;
+  /** RHS is deliberately retained as syntax, not a phase-sensitive type verdict. */
+  value: ts.Expression;
+  /** Source-walk order, so resolved and `with` fallback facts can be merged exactly. */
+  order: number;
+}
+
+interface ScopeCarrierFacts {
+  assignmentsByDeclaration: WeakMap<ts.VariableDeclaration, AssignmentFact[]>;
+  unresolvedWithAssignmentsByName: Map<string, AssignmentFact[]>;
+  propertyWritesByDeclaration: WeakMap<ts.VariableDeclaration, Set<string>>;
+}
+
+/**
+ * Per-(codegen context, var scope) syntax index shared by every carrier query.
+ *
+ * A large bundled factory can declare hundreds of locals in one scope. Walking
+ * its entire AST once for every declaration made hoisting quadratic (the
+ * TypeScript 5.9 bundle has 928 outer vars and over a million nodes once nested
+ * bodies are included). Keep only declaration-identity facts here; the
+ * phase-sensitive numeric and static-type verdicts remain query-time work.
+ */
+const scopeCarrierFactsByContext = new WeakMap<CodegenContext, WeakMap<ts.Node, ScopeCarrierFacts>>();
+
+function pushWeakFact<K extends object>(map: WeakMap<K, AssignmentFact[]>, key: K, fact: AssignmentFact): void {
+  const facts = map.get(key);
+  if (facts) facts.push(fact);
+  else map.set(key, [fact]);
+}
+
+function pushNamedFact(map: Map<string, AssignmentFact[]>, name: string, fact: AssignmentFact): void {
+  const facts = map.get(name);
+  if (facts) facts.push(fact);
+  else map.set(name, [fact]);
+}
+
+function scopeCarrierFacts(ctx: CodegenContext, scope: ts.Node): ScopeCarrierFacts {
+  let byScope = scopeCarrierFactsByContext.get(ctx);
+  if (!byScope) {
+    byScope = new WeakMap();
+    scopeCarrierFactsByContext.set(ctx, byScope);
+  }
+  const cached = byScope.get(scope);
+  if (cached) return cached;
+
+  const facts: ScopeCarrierFacts = {
+    assignmentsByDeclaration: new WeakMap(),
+    unresolvedWithAssignmentsByName: new Map(),
+    propertyWritesByDeclaration: new WeakMap(),
+  };
+  let order = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const target = stripParens(node.left);
+      if (ts.isIdentifier(target)) {
+        const resolved = ctx.oracle.variableDeclarationOf(target);
+        const fact: AssignmentFact = { target, value: node.right, order: order++ };
+        if (resolved !== undefined) {
+          pushWeakFact(facts.assignmentsByDeclaration, resolved, fact);
+        } else if (isInsideWithBody(target)) {
+          // The checker intentionally resolves no identifier inside a `with`
+          // body. Preserve the existing tightly-bounded name fallback.
+          pushNamedFact(facts.unresolvedWithAssignmentsByName, target.text, fact);
+        }
+      } else if (ts.isPropertyAccessExpression(node.left)) {
+        // Keep the old out-of-shape predicate exact: it accepted parentheses
+        // around the receiver, but not around the entire assignment target.
+        const propertyTarget = node.left;
+        const receiver = stripParens(propertyTarget.expression);
+        if (ts.isIdentifier(receiver)) {
+          const resolved = ctx.oracle.variableDeclarationOf(receiver);
+          if (resolved !== undefined) {
+            let names = facts.propertyWritesByDeclaration.get(resolved);
+            if (!names) {
+              names = new Set();
+              facts.propertyWritesByDeclaration.set(resolved, names);
+            }
+            names.add(propertyTarget.name.text);
+          }
+        }
+      }
+    }
+    // Deliberately cross nested function boundaries. An inner closure can
+    // assign to or grow a captured outer binding, changing its required ABI.
+    forEachChild(node, visit);
+  };
+  forEachChild(scope, visit);
+  byScope.set(scope, facts);
+  return facts;
 }
 
 /**
@@ -74,29 +168,33 @@ function bindingHasOutOfShapePropertyWrite(ctx: CodegenContext, decl: ts.Variabl
   if (!initialProperties) return false;
 
   const scope = containingScope(decl);
-  let widens = false;
-  const visit = (node: ts.Node): void => {
-    if (widens) return;
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left)
-    ) {
-      let receiver: ts.Expression = node.left.expression;
-      while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
-      if (
-        ts.isIdentifier(receiver) &&
-        ctx.oracle.variableDeclarationOf(receiver) === decl &&
-        !initialProperties.has(node.left.name.text)
-      ) {
-        widens = true;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  forEachChild(scope, visit);
-  return widens;
+  const writtenProperties = scopeCarrierFacts(ctx, scope).propertyWritesByDeclaration.get(decl);
+  if (!writtenProperties) return false;
+  for (const name of writtenProperties) {
+    if (!initialProperties.has(name)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when an initialized binding can receive a genuine JavaScript function
+ * externref, either initially or through a later simple assignment.
+ *
+ * A host function and a compiled closure share JavaScript's `function` type but
+ * not a Wasm representation.  This proof therefore complements the JsTag
+ * comparison below: both values report the same tag even though a closure-ref
+ * slot would null the host value during coercion.
+ */
+export function bindingMayReceiveHostCallable(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || ctx.standalone || ctx.wasi) return false;
+  if (initializerMayProduceHostCallable(ctx, decl.initializer)) return true;
+
+  const facts = scopeCarrierFacts(ctx, containingScope(decl));
+  const resolved = facts.assignmentsByDeclaration.get(decl) ?? [];
+  const unresolvedWith = facts.unresolvedWithAssignmentsByName.get(decl.name.text) ?? [];
+  return [...resolved, ...unresolvedWith].some(
+    (fact) => fact.target !== decl.name && initializerMayProduceHostCallable(ctx, fact.value),
+  );
 }
 
 /**
@@ -127,28 +225,17 @@ function isInsideWithBody(node: ts.Node): boolean {
 }
 
 /**
- * (#4264) Does this assignment target `decl`? Normally the oracle answers, but
- * inside a `with` body it cannot (see {@link isInsideWithBody}). There, fall
- * back to a NAME match — and only when the oracle resolved NOTHING, so a genuine
- * inner shadow (which the oracle *does* resolve, to a different declaration)
- * still excludes the write.
+ * Decide whether the initialized binding must use a carrier that can represent
+ * assignments from more than one JavaScript domain. The scope index preserves
+ * exact declaration identity; only oracle-unresolved targets inside a `with`
+ * body use the narrowly bounded name fallback described above.
  */
-function assignmentTargetsDeclaration(
-  ctx: CodegenContext,
-  target: ts.Identifier,
-  decl: ts.VariableDeclaration,
-  declName: string,
-): boolean {
-  const resolved = ctx.oracle.variableDeclarationOf(target);
-  if (resolved !== undefined) return resolved === decl;
-  return target.text === declName && isInsideWithBody(target);
-}
-
 export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
   if (!ts.isIdentifier(decl.name)) return false;
   if (!decl.initializer) return false;
 
   if (bindingHasOutOfShapePropertyWrite(ctx, decl)) return true;
+  if (bindingMayReceiveHostCallable(ctx, decl)) return true;
 
   const initialTag = ctx.oracle.staticJsTypeOf(decl.initializer);
   if (initialTag === "mixed") return false;
@@ -183,26 +270,29 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
     initialDomain === "number" &&
     ctx.numericLocalVerdict?.(decl.name, decl.name.text) === true;
 
-  const visit = (node: ts.Node): void => {
-    if (mixed) return;
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      const target = stripParens(node.left);
-      if (
-        ts.isIdentifier(target) &&
-        target !== decl.name &&
-        assignmentTargetsDeclaration(ctx, target, decl, declName)
-      ) {
-        const assignedTag = ctx.oracle.staticJsTypeOf(node.right);
-        const unresolvable = assignedTag === "mixed";
-        if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {
-          mixed = true;
-          return;
-        }
-      }
+  const indexed = scopeCarrierFacts(ctx, scope);
+  const resolvedFacts = indexed.assignmentsByDeclaration.get(decl) ?? [];
+  const unresolvedWithFacts = indexed.unresolvedWithAssignmentsByName.get(declName) ?? [];
+  // The two tables are separately keyed to preserve exact declaration identity
+  // and the bounded `with` fallback. Merge by walk order so query-time oracle
+  // calls retain the old traversal's short-circuit order.
+  let resolvedIndex = 0;
+  let unresolvedIndex = 0;
+  while (resolvedIndex < resolvedFacts.length || unresolvedIndex < unresolvedWithFacts.length) {
+    const resolvedFact = resolvedFacts[resolvedIndex];
+    const unresolvedFact = unresolvedWithFacts[unresolvedIndex];
+    const fact =
+      unresolvedFact === undefined || (resolvedFact !== undefined && resolvedFact.order < unresolvedFact.order)
+        ? resolvedFacts[resolvedIndex++]!
+        : unresolvedWithFacts[unresolvedIndex++]!;
+    if (fact.target === decl.name) continue;
+    const assignedTag = ctx.oracle.staticJsTypeOf(fact.value);
+    const unresolvable = assignedTag === "mixed";
+    if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {
+      mixed = true;
+      break;
     }
-    forEachChild(node, visit);
-  };
-  forEachChild(scope, visit);
+  }
   return mixed;
 }
 
