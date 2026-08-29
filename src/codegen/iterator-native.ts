@@ -2218,6 +2218,73 @@ function ensureNotAnObjectThrowDeps(ctx: CodegenContext): void {
   ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
 }
 
+/**
+ * (#5188) IDENTITY-ADOPT arm for a `@@iterator` result that IS already an
+ * iterator record.
+ *
+ * A user `@@iterator` that delegates — `obj[Symbol.iterator] = function () {
+ * return src[Symbol.iterator](); }`, the shape test262's `makeIterable` harness
+ * helper builds — returns whatever the inner `[Symbol.iterator]()` produced. On
+ * the native path that value is an externref-wrapped `$__IterRec` (a VEC cursor
+ * for an array source, a DRIVEN generator frame for a generator source, …), NOT
+ * a `{next()}` object. Wrapping it AGAIN as an OBJ/USER record makes the step
+ * arms probe a `next` PROPERTY on the record — which no record carries — so the
+ * very first `__iterator_next` reports done and the iteration yields zero
+ * elements.
+ *
+ * The record already IS the answer `__iterator` must return, so adopt it by
+ * identity: its own kind tag keeps VEC cursors, driven generator frames and
+ * host-gen records delegating exactly as the inner iterable intended. `ref.test`
+ * is on the exact `$__IterRec` struct type, so a genuine user iterator object
+ * (a plain `$Object` with a `next` method) can never match this arm.
+ *
+ * The `$Vec` half is the case that actually fires for the harness helper: a
+ * native array's `[Symbol.iterator]()` lowers to its canonical `$Vec` carrier
+ * rather than to a record, so the delegating closure hands back a raw `$Vec`.
+ * Wrapping THAT as an OBJ record is the same zero-element bug, so the vec is
+ * adopted into a fresh `$IterRec{VEC, vec, 0, null}` cursor — exactly what the
+ * ladder's own top-level vec arm would have built for it.
+ *
+ * `localIdx` names the externref local holding the `@@iterator` call's result.
+ * Fresh Instr objects per call (#2169b) — never share an `Instr` object across
+ * branches, or a mutate-in-place body pass double-remaps its type index.
+ */
+function iterRecAdoptArm(types: IterRuntimeTypes, localIdx: number): Instr[] {
+  const { iterRecTypeIdx, vecTypeIdx } = types;
+  return [
+    // Already a record → return it unchanged, kind tag and all.
+    { op: "local.get", index: localIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: localIdx }, { op: "return" }],
+      else: [],
+    },
+    // A canonical `$Vec` → wrap as a fresh VEC cursor.
+    { op: "local.get", index: localIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: vecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: ITER_KIND_VEC },
+        { op: "local.get", index: localIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "ref.null.extern" },
+        { op: "struct.new", typeIdx: iterRecTypeIdx },
+        { op: "extern.convert_any" },
+        { op: "return" },
+      ],
+      else: [],
+    },
+  ];
+}
+
 function buildIteratorBody(
   types: IterRuntimeTypes,
   deps: UserCarrierDeps | undefined,
@@ -2402,6 +2469,8 @@ function buildIteratorBody(
                   } satisfies Instr,
                 ]
               : []),
+            // (#5188) A delegating `@@iterator` already handed back a record.
+            ...iterRecAdoptArm(types, 2),
             // $IterRec{OBJ, vec:null, idx:0, userIter:iterObj}
             { op: "i32.const", value: ITER_KIND_OBJ },
             { op: "ref.null", typeIdx: vecTypeIdx },
@@ -2479,6 +2548,8 @@ function buildIteratorBody(
             ]
           : [{ op: "local.get", index: 0 }]) satisfies Instr[]),
         { op: "local.set", index: 2 },
+        // (#5188) A delegating `@@iterator` already handed back a record.
+        ...iterRecAdoptArm(types, 2),
         // (#3146) kind selection: a closed iterable's `@@iterator` can return
         // a PLAIN-`$Object` iterator (closure-property `next`/`return`) — the
         // closed-struct USER dispatchers cannot drive that; route it through
@@ -2519,6 +2590,8 @@ function buildIteratorBody(
             else: [{ op: "local.get", index: 2 }],
           },
           { op: "local.set", index: 2 },
+          // (#5188) A delegating `@@iterator` already handed back a record.
+          ...iterRecAdoptArm(types, 2),
           ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }]),
           {
             op: "if",
