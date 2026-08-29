@@ -3958,15 +3958,37 @@ function isPhase1ForOfInScope(
   if (!(flags & ts.NodeFlags.Let) && !(flags & ts.NodeFlags.Const)) return false;
   if (stmt.initializer.declarations.length !== 1) return false;
   const decl = stmt.initializer.declarations[0]!;
-  if (!ts.isIdentifier(decl.name)) return false;
+  // (#4470 via #5166) An ARRAY binding-pattern head is claimable now that a
+  // vec whose element is a vec has a carrier: the pattern's source is the
+  // for-of element, so `for (const [a, b] of m)` over a `number[][]` needs an
+  // element that is itself indexable. #4470 measured that lifting this arm
+  // BEFORE the carrier existed turned working programs into hard compile
+  // errors; with the carrier in place the leaves lower through the same
+  // per-index vec read the VariableStatement destructuring row already uses.
+  //
+  // Scope is deliberately the same as `isPhase1BindingPattern`: identifier
+  // leaves, sparse holes allowed, no defaults / rest / nesting. OBJECT
+  // patterns stay rejected on their own arm — the element slot carries a
+  // `val` ValType, not an `IrType.object`, so there is nothing for
+  // `lowerObjectPattern` to bind against.
+  if (!ts.isIdentifier(decl.name)) {
+    if (ts.isObjectBindingPattern(decl.name)) return shapeNo("forof-head-object-pattern", decl.name);
+    if (!ts.isArrayBindingPattern(decl.name)) return shapeNo("forof-head-pattern-complex", decl.name);
+    if (!isPhase1BindingPattern(decl.name, scope)) return shapeNo("forof-head-pattern-complex", decl.name);
+  }
   if (decl.initializer) return false; // for-of decl shouldn't have an `=` initializer
   if (expressionTouchesModuleExtern(stmt.expression)) {
     return shapeNo("forof-module-extern-iterable", stmt.expression);
   }
   if (!isPhase1Expr(stmt.expression, scope, localClasses)) return false;
   const innerScope = new Set(scope);
-  clearProjectionBinding(decl.name.text);
-  innerScope.add(decl.name.text);
+  const headNames = new Set<string>();
+  if (ts.isIdentifier(decl.name)) headNames.add(decl.name.text);
+  else collectPatternNames(decl.name, headNames);
+  for (const name of headNames) {
+    clearProjectionBinding(name);
+    innerScope.add(name);
+  }
   // (#2856 C1) A for-of body is an early-return BARRIER: the iterator-
   // protocol drive would skip its `iter.return` cleanup on a Wasm return
   // (whether the iterable resolves to the vec fast path is a lowering-time

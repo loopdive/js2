@@ -69,8 +69,8 @@ const SECTIONS = [
       [
         "`ForOfStatement`",
         "mixed",
-        "Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof`. #4470 measured what happens if that arm is lifted: the head itself lowers fine (element slot + one `vec.get` per leaf, reusing `lowerArrayPattern`), but the ELEMENT CARRIER is the real blocker — a vec whose element is itself a vec is unrepresentable, so `number[][]` dies at `resolve` (`array element TypeNode ArrayType could not be lowered to a primitive ValType`) and `string[][]`/`any[][]` die as a HARD `invariant` in `prepared-vector-support.ts` (elements must be `f64`/`i32`/`externref`). Lifting `nontail-forof` alone turns working legacy programs into compile errors — fix the nested-vec carrier FIRST.",
-        "#3518, #4470",
+        "Array iteration claims, over NESTED arrays too (#5166, 2026-08-29): a `number[][]` / `string[][]` / `any[][]` / `Uint8Array[]` iterable now resolves, because `resolvePositionType` carries a vec-typed element as a CONCRETE ref to the inner vec struct — legacy `resolveWasmType`\u2019s own carrier — and `prepared-vector-support.ts` accepts that element. An ARRAY-PATTERN head (`for (const [p, q] of m)`) claims with it (#4470): leaves bind per iteration from the element slot, each a bounds-checked read whose out-of-bounds value is the element ZERO, matching legacy exactly. Residual, all soft: OBJECT-pattern heads (`forof-head-object-pattern` \u2014 the element slot carries a `val`, not an `IrType.object`), array patterns with defaults / rest / nesting (`forof-head-pattern-complex`), a pattern head whose row leaf is not f64/i32 (a `string[][]` leaf is an externref whose `.length` is a separate hard error), an OBJECT element type (`{ v: number }[][]` at `resolve`), and the LOCAL `number[][]` annotation arm (`vardecl-typenode:ArrayType`, `isPhase1TypeNode`).",
+        "#3518, #4470, #5166",
       ],
       ["`WhileStatement`", "ir-owned", "—", "—"],
       [

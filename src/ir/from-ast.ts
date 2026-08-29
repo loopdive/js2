@@ -9113,10 +9113,18 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: for-of init shape unexpected (${cx.funcName})`);
   }
   const decl = init.declarations[0]!;
-  if (!ts.isIdentifier(decl.name)) {
+  // (#4470 via #5166) The selector claims an ARRAY binding-pattern head
+  // (`for (const [a, b] of m)`) alongside the identifier head. Object patterns
+  // and wider array patterns still reject at select, so anything that reaches
+  // here that is neither shape is a selector<->builder desync.
+  const headPattern = ts.isArrayBindingPattern(decl.name) ? decl.name : null;
+  if (!ts.isIdentifier(decl.name) && !headPattern) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: for-of destructuring init not in slice 6 (${cx.funcName})`);
   }
-  const loopVarName = decl.name.text;
+  // The pattern head binds its own leaves; the element slot itself is
+  // anonymous. `__forof_elem` is the slot name either way, so the placeholder
+  // never reaches the emitted module.
+  const loopVarName = headPattern ? "__forof_pattern_elem" : (decl.name as ts.Identifier).text;
 
   // 3. Strategy dispatch.
   //
@@ -9141,12 +9149,22 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   //   - anything else                → throw, fall back to legacy.
   const valTy = asVal(iterableT);
   if (iterableT.kind === "vec") {
-    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName);
+    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName, headPattern);
     return;
   }
   if (valTy && (valTy.kind === "ref" || valTy.kind === "ref_null")) {
-    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName);
+    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName, headPattern);
     return;
+  }
+  // (#4470) Only the vec arm can index an element. A `(ref $AnyString)` char
+  // and an opaque iter-host externref are not indexable, so a pattern head on
+  // either arm demotes rather than binding garbage.
+  if (headPattern) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: for-of array-pattern head needs an indexable vec element, got ` +
+        `${describeIrType(iterableT)} (${cx.funcName})`,
+    );
   }
   if (iterableT.kind === "string") {
     // (#2955 slice 5) The strategy selection is resolver-owned; from-ast
@@ -10183,12 +10201,92 @@ function lowerForOfString(stmt: ts.ForOfStatement, cx: LowerCtx, strV: IrValueId
  * Slice 6 part 2 (#1181) vec fast-path — extracted into a helper so
  * `lowerForOfStatement` can dispatch between vec and iter-host arms.
  */
+/**
+ * (#4470 via #5166) Bind one array-pattern head's leaves from the element
+ * slot, emitted INSIDE the body collector so the reads re-run per iteration.
+ *
+ * Each leaf is a bounds-checked read with the element type's ZERO as the
+ * out-of-bounds value — legacy's observable for a missing leaf, see the
+ * `oobOverride` contract on `emitSafeVecGet`. `lowerArrayPattern` (the
+ * VariableStatement destructuring row) is deliberately NOT reused: its
+ * `vec.get` is unchecked and TRAPS on a short row, which would turn
+ * `for (const [a, b] of rows)` over ragged data from a working legacy program
+ * into a runtime trap.
+ */
+interface ForOfPatternLeaf {
+  readonly name: string;
+  readonly index: number;
+  readonly slotIndex: number;
+}
+
+/**
+ * (#4470 via #5166) Allocate one mutable slot per array-pattern head leaf.
+ *
+ * Slots, not SSA locals, for the same reason the IDENTIFIER head binds a slot:
+ * a `let` head is assignable inside the body (`for (let [a, b] of m) { a = a +
+ * 1; ... }`), and an SSA-local binding makes that a HARD error at the
+ * assignment site ("assignment to non-slot binding"). Slot allocation happens
+ * once, outside the body collector; only the per-iteration WRITE is inside it.
+ */
+function declareForOfPatternLeafSlots(
+  pattern: ts.ArrayBindingPattern,
+  rowElemValType: ValType,
+  cx: LowerCtx,
+): ForOfPatternLeaf[] {
+  const leaves: ForOfPatternLeaf[] = [];
+  let i = 0;
+  for (const elem of pattern.elements) {
+    if (ts.isOmittedExpression(elem)) {
+      i++;
+      continue;
+    }
+    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
+      // `isPhase1BindingPattern` already excluded all three at select, so
+      // reaching here is a selector<->builder desync, not a capability gap.
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: for-of array-pattern head leaf shape not in scope (${cx.funcName})`,
+      );
+    }
+    const name = (elem.name as ts.Identifier).text;
+    leaves.push({ name, index: i, slotIndex: cx.builder.declareSlot(name, rowElemValType) });
+    i++;
+  }
+  return leaves;
+}
+
+/**
+ * (#4470 via #5166) Read one array-pattern head's leaves out of the element
+ * slot. Emitted INSIDE the body collector so the reads re-run per iteration.
+ *
+ * Each leaf is a bounds-checked read with the element type's ZERO as the
+ * out-of-bounds value — legacy's observable for a missing leaf, see the
+ * `oobOverride` contract on `emitSafeVecGet`. `lowerArrayPattern` (the
+ * VariableStatement destructuring row) is deliberately NOT reused: its
+ * `vec.get` is unchecked and TRAPS on a short row, which would turn
+ * `for (const [a, b] of rows)` over ragged data from a working legacy program
+ * into a runtime trap.
+ */
+function bindForOfArrayPatternLeaves(
+  leaves: readonly ForOfPatternLeaf[],
+  element: IrValueId,
+  rowElemValType: ValType,
+  cx: LowerCtx,
+): void {
+  const zero: IrConst = rowElemValType.kind === "i32" ? { kind: "i32", value: 0 } : { kind: "f64", value: 0 };
+  for (const leaf of leaves) {
+    const idx = cx.builder.emitConst({ kind: "i32", value: leaf.index }, irVal({ kind: "i32" }));
+    cx.builder.emitSlotWrite(leaf.slotIndex, emitSafeVecGet(element, idx, rowElemValType, cx, zero));
+  }
+}
+
 function lowerForOfVec(
   stmt: ts.ForOfStatement,
   cx: LowerCtx,
   iterableV: IrValueId,
   iterableType: IrType,
   loopVarName: string,
+  headPattern: ts.ArrayBindingPattern | null = null,
 ): void {
   // Slice 6 part 4 refactor (#1185): ask the resolver for the vec
   // shape rather than hard-coding `f64` element / `vecTypeIdx - 1`
@@ -10242,9 +10340,39 @@ function lowerForOfVec(
   const dataSlot = cx.builder.declareSlot("__forof_data", dataValType);
   const elementSlot = cx.builder.declareSlot("__forof_elem", elemValType);
 
+  // (#4470 via #5166) An array-pattern head needs the ELEMENT to be indexable
+  // — the iterable is a `number[][]` / `boolean[][]` whose element is a
+  // concrete ref to the inner vec (the #5166 carrier). Leaves are restricted
+  // to f64/i32: a `string[][]` leaf is carried as an externref whose first op
+  // (`.length`) is a known adjacent HARD error, so those stay on the legacy
+  // body until that is fixed on its own.
+  let rowElemValType: ValType | null = null;
+  if (headPattern) {
+    const row = elemValType.kind === "ref" || elemValType.kind === "ref_null" ? resolveIrVecType(elemIrT, cx) : null;
+    const leaf = row?.lowering.elementValType;
+    if (!leaf || (leaf.kind !== "f64" && leaf.kind !== "i32")) {
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: for-of array-pattern head needs an f64/i32-element row, got ` +
+          `${describeIrType(elemIrT)} (${cx.funcName})`,
+      );
+    }
+    rowElemValType = leaf;
+  }
+
+  const patternLeaves =
+    headPattern && rowElemValType ? declareForOfPatternLeafSlots(headPattern, rowElemValType, cx) : [];
+
   const loopScope = conservativeLoopStringEncodingScope(stmt, cx);
   const bodyScope = new Map(loopScope);
-  bodyScope.set(loopVarName, { kind: "slot", slotIndex: elementSlot, type: elemIrT });
+  if (headPattern) {
+    const leafIr = irVal(rowElemValType!);
+    for (const leaf of patternLeaves) {
+      bodyScope.set(leaf.name, { kind: "slot", slotIndex: leaf.slotIndex, type: leafIr });
+    }
+  } else {
+    bodyScope.set(loopVarName, { kind: "slot", slotIndex: elementSlot, type: elemIrT });
+  }
   // #2952 slice 2 — this loop is the innermost break/continue target.
   // (#2856) …and an early-return BARRIER (iter cleanup / conservative).
   // (slice 3) A labeled for-of adopts the pre-allocated id.
@@ -10259,6 +10387,11 @@ function lowerForOfVec(
   };
 
   const body = cx.builder.collectBodyInstrs(() => {
+    // The leaf reads go INSIDE the collector, ahead of the user statement, so
+    // they re-run on every iteration against that iteration's element slot.
+    if (headPattern) {
+      bindForOfArrayPatternLeaves(patternLeaves, bodyCx.builder.emitSlotRead(elementSlot), rowElemValType!, bodyCx);
+    }
     lowerStmt(stmt.statement, bodyCx);
   });
 
