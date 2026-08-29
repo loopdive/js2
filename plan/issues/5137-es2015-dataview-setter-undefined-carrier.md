@@ -2,6 +2,7 @@
 id: 5137
 title: "ES2015 standalone DataView setter undefined result carrier"
 status: done
+pr: 5274
 sprint: current
 created: 2026-08-28
 updated: 2026-08-30
@@ -261,13 +262,12 @@ warning.
 Worktree: `/private/tmp/js2-es2015-dataview-setter-undefined-20260828`.
 Branch: `codex/5137-es2015-dataview-setter-undefined`.
 The plan-only upstream PR #5152 is merged in `upstream/main`; it is not the
-implementation PR. The implementation branch is ready for root to open as a
-new non-draft PR targeting `loopdive/js2:main`, and no PR was opened by this
-worker. The implementation commit is
-`97334bd6a5659d3595e6c480e08e8a8f95d2815e`; the handoff-evidence commit below
-records this final validation. The normal non-force push was attempted but was
-blocked by the execution environment's external-write approval policy; the
-fork ref remains at the earlier plan checkpoint, so root must publish this
-branch with the permitted fork write. The plan checkpoint remains
+implementation PR. The completed implementation is published as non-draft
+upstream PR #5274 from `ttraenkler/js2` at
+<https://github.com/loopdive/js2/pull/5274>. Root corrected the unpublished
+commit-message attribution marker without changing the trees, reran the
+focused 36/36 suite through the normal commit hooks, and then published the
+branch with the complete pre-push chain green. The final implementation commit
+is `744806b52bf7b28cdb233525fb87b8941d7e74df`; the plan checkpoint remains
 `c808092cb828e9b2abef4ef6af27d95e1d822ee1`.
 No GitHub issue was created.
