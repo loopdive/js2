@@ -235,16 +235,25 @@ jobs:
         env:
           JS2WASM_EVAL_ENGINE: quickjs
           JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
-          # Five suites share one vitest process here, and the step ran with no
-          # heap cap at all — so it got the runner default (~500 MB) and OOMed
-          # deterministically once the corpus grew past it (PR #5260, two
-          # identical failures on different SHAs: "Reached heap limit" at
-          # Mark-Compact 544.9 MB, then ERR_IPC_CHANNEL_CLOSED as the pool
-          # collapsed). It presents as a channel-closed error rather than as
-          # memory pressure, which is what makes it read like a flake.
-          # 3072 matches eval-interpreter-lane.yml; test262-sharded.yml caps the
-          # same way via VITEST_FORK_MAX_OLD_SPACE_SIZE.
-          NODE_OPTIONS: --max-old-space-size=3072
+          # The OOM here is in a vitest WORKER, not the step's own process:
+          # "FATAL ERROR: Reached heap limit" with the frames tagged
+          # `[node (vitest 3)]`, at Mark-Compact ~545 MB, then
+          # ERR_IPC_CHANNEL_CLOSED as the pool collapses. The pool collapse is
+          # what surfaces, which is why it reads as infrastructure noise.
+          #
+          # `NODE_OPTIONS` does NOT fix it. vitest.config.ts forks workers with
+          # an explicit `--max-old-space-size=${VITEST_FORK_MAX_OLD_SPACE_SIZE
+          # || 512}` in `poolOptions.forks.execArgv`, and execArgv overrides an
+          # inherited NODE_OPTIONS — so the 512 default IS the ~545 MB ceiling
+          # observed. Verified: a NODE_OPTIONS=--max-old-space-size=3072 attempt
+          # OOMed at the identical ceiling (PR #5263, 80fa9c65).
+          #
+          # 1024 is the value every other capped lane uses (test262-sharded.yml,
+          # refresh-baseline.yml, and the 1024 defaults in equivalence-gate.mjs
+          # / issue-tests-gate.mjs). Deliberately not higher: `maxForks` runs
+          # several per-file forks concurrently, so the cap is multiplied by
+          # fork count against the runner's memory.
+          VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
         run: |
           npx vitest run \
             tests/quickjs-eval-provider.test.ts \
