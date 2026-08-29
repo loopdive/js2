@@ -235,6 +235,16 @@ jobs:
         env:
           JS2WASM_EVAL_ENGINE: quickjs
           JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
+          # Five suites share one vitest process here, and the step ran with no
+          # heap cap at all — so it got the runner default (~500 MB) and OOMed
+          # deterministically once the corpus grew past it (PR #5260, two
+          # identical failures on different SHAs: "Reached heap limit" at
+          # Mark-Compact 544.9 MB, then ERR_IPC_CHANNEL_CLOSED as the pool
+          # collapsed). It presents as a channel-closed error rather than as
+          # memory pressure, which is what makes it read like a flake.
+          # 3072 matches eval-interpreter-lane.yml; test262-sharded.yml caps the
+          # same way via VITEST_FORK_MAX_OLD_SPACE_SIZE.
+          NODE_OPTIONS: --max-old-space-size=3072
         run: |
           npx vitest run \
             tests/quickjs-eval-provider.test.ts \
