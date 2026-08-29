@@ -1,10 +1,11 @@
 {
   "id": "5092",
   "assignee": "ttraenkler/opus-5092-takeover",
-  "requested_by": "ttraenkler/opus-5092-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5092-ir-conditional-expression",
   "claimed_at": "2026-08-28T21:58:36Z",
-  "updated_at": "2026-08-28T21:58:36Z",
-  "write_id": "11059-mw3r8ynr"
+  "updated_at": "2026-08-29T01:13:25Z",
+  "write_id": "31910-rmiofxdc",
+  "released_at": "2026-08-29T01:13:25Z"
 }
