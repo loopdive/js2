@@ -1,7 +1,9 @@
 ---
 id: 5202
 title: Compiled class prototypes are empty during module init — the #5193 window's method/prototype facet blocks Temporal
-status: ready
+status: done
+assignee: ttraenkler/opus-dev-5202
+completed: 2026-08-29
 sprint: current
 priority: high
 horizon: m
@@ -10,6 +12,22 @@ feasibility: hard
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-29
+# Two small growths; the mechanism itself went into a NEW module
+# (src/codegen/init-class-dispatch-helpers.ts) plus a helper in the existing
+# src/runtime/init-marshal-registry.ts.
+#  - runtime.ts (+~20): the `__register_init_class_export` handler must live in
+#    the import-resolution switch, and one resolver call site swaps one
+#    expression (`exports` → `marshalExports(callbackState, exports)`).
+#  - codegen/index.ts (+~10): one import + one call in each of the two finalize
+#    pipelines, at a placement contract only expressible there.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/index.ts
+# Dispatch/sequence functions whose growth IS the new arm/step (same rationale
+# as #5193, which added the sibling arm to both).
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/codegen/index.ts::generateModule
 ---
 
 # #5202 — class prototypes unpopulated during the module-init window
@@ -74,6 +92,92 @@ for the non-init case, and keep standalone/WASI untouched.
    #4628's integration step.
 3. No regressions in the #5193 test file, the #5201 test file, and scoped
    class/method runs (name them). Ratchet gates green.
+
+## Fix
+
+**Mechanism: extend the #5193 start-export channel with a NAME-keyed
+registration, and let the class-method resolver read it.** Decided against the
+two alternatives, with evidence:
+
+- *Populate `Sub.prototype` during init instead.* Rejected: there is nothing to
+  populate it WITH. A compiled method is not a JS function object anywhere —
+  `__set_subclass_proto` synthesizes a bare `class Sub extends Parent {}`, and
+  the runtime answers `inst.m()` by calling the compiler-emitted dispatch
+  EXPORTS (`__class_call_*`, `__member_kind_*`, `__member_arity_*`,
+  `__call_get_*`) through `_resolveClassMemberOnInstance`. The issue title says
+  "prototypes are empty"; measurement says the prototype is empty AFTER init too
+  and that is fine — the missing thing is the export view, not the prototype.
+  Confirmed by instrumenting the throw: it comes from `__extern_method_call`'s
+  `typeof fn !== "function"` arm, and `_resolveClassMemberOnInstance` bails on
+  its literal first line, `if (exports === undefined) return miss`.
+- *Make `deferTopLevelInit` (#2796) the default* — i.e. run top-level code from
+  an exported `__module_init` after `setInstance`, the way standalone/WASI
+  already does. This is the real structural cure and would close every facet of
+  the window at once, but it changes the host contract for every consumer
+  (website, playground, test262, library users must call
+  `instance.exports.__module_init()`), and #2796 deliberately kept it opt-in for
+  byte-identity. Out of scope here; worth a separate issue.
+
+### What landed
+
+- `src/codegen/init-class-dispatch-helpers.ts` (new) — prepends
+  `__register_init_class_export(namesCsv, index, ref.func $export)` onto
+  `__module_init` for every class-method dispatch export the module emitted.
+  Placement contract mirrors #5193's (after `emitIteratorMethodExport`, before
+  dead-import elimination / the #1984 freeze / `finalizeInModuleInitFlag`).
+- **Wire shape — one CSV, not one string per name.** #5193 could use a fixed
+  positional `i32` id because its helper set is six names, append-only. The
+  dispatch surface is one export per (class, method, arity), unbounded and
+  module-specific; a string constant per name would add one imported
+  `string_constants` global PER NAME (hundreds on a Temporal-sized bundle). The
+  module registers ONE pooled comma-separated name list and indexes into it, so
+  the cost is one new pooled string + one new import + four instructions per
+  export. The runtime splits the CSV once per distinct string
+  (`classDispatchExportName` in `src/runtime/init-marshal-registry.ts`);
+  splitting per call would be quadratic.
+- `src/runtime.ts` — handles the new import (unknown index ignored, so an older
+  runtime tolerates a newer module) and passes `marshalExports(callbackState,
+  exports)` instead of bare `exports` at the `_invokeClassMethod` call site in
+  `__extern_method_call`. That is the ONLY resolver site changed: the property-
+  READ sites (`_resolveClassMember` at the `__extern_get`/gOPD paths) were left
+  alone because nothing measured needs them and widening them would change what
+  `getExports() !== undefined` means on paths that use it as a
+  "post-instantiation" test.
+
+As in #5193 this is a pure TIMING shim: a `funcref` passed to a JS import
+materializes as the same function object the export later yields. The registry
+stays OUT of `getExports()`, the late `__setInstance` path is untouched, and
+standalone/WASI never reach the emitter (`ctx.wasi || noJsHost(ctx)` early
+return; the nativeStrings `-1` string-pool sentinel is also refused).
+
+### Evidence
+
+- Reduced repro, A/B on this branch's base (PR #5252's branch), file-copy revert:
+  base `TypeError: __clzmsd is not a function` thrown from
+  `WebAssembly.instantiate`; with the fix `atInit() === 7` and the after-init
+  control `test() === 7`.
+- `tests/issue-5202-init-window-class-dispatch.test.ts` — 3 of 5 cases fail on
+  base, 5 of 5 pass with the fix. The 2 that pass on base are deliberate
+  controls (plain WasmGC-struct class; module with no dispatch exports).
+- Byte-identity: 13/13 `website/playground/examples` binaries hash-identical
+  base vs fix (sha1 of `result.binary`, measured 2026-08-29 on this branch).
+
+### Deliberately NOT fixed here (pre-existing, NOT timing)
+
+Measured with an after-init-only control on the base branch — these fail
+*after* init too, so they are not this window:
+
+- a builtin-derived method taking arguments (`add(x: number, y: number)`) →
+  `add is not a function`;
+- a builtin-derived rest-param method (`sum(...xs: number[])`) →
+  `sum is not a function`;
+- a builtin-derived getter (`get g()`) → reads `NaN`.
+
+`emitExternrefClassMethodDispatch` publishes the class-qualified bridge only
+when every parameter passes `supportsHostClassBridgeParam`, which an `f64`
+parameter does not. jsbi's `__clzmsd()` is zero-arg, so the harness gets past
+it; the next jsbi method that takes arguments will hit this instead. Worth its
+own issue.
 
 ## Notes
 
