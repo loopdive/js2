@@ -42,7 +42,17 @@ tables (file:function root causes), and per-package acceptance criteria.
 - **Never started**: object-literal #5149, collections #5151, string #5152,
   super #5153 (plans are complete and on main; no implementation exists).
 
-## Final update (2026-08-29 ~12:10Z)
+## Session closed (2026-08-29 ~13:30Z)
+
+Wave 7 (PR #5244) **merged at 13:11Z** — the #1058 fix-forward and the last five
+first-pass packages are on main. The wave-8 relaunch (second passes over
+typedarray/class/proxy/promise/regexp/generators residuals) was stopped at the
+planning stage on the user's wrap-up instruction; **no r2 issue files were
+written** — ids 5194–5199 remain reserved on the issue-assignments ref and
+unused. The goal hook was cleared by the user; continuation starts from
+"Method notes" below plus the per-issue follow-ups.
+
+## Earlier update (2026-08-29 ~12:10Z)
 
 - Wave 6 (second passes) **merged** as [#5213](https://github.com/loopdive/js2/pull/5213)
   — but it carried a #1058 aliased-`Instr[]` stack-balance regression that turned
