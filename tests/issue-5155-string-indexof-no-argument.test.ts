@@ -22,11 +22,14 @@ import { compile } from "../src/index.ts";
 //   `tryCompileIndexOfHoistedUndefinedSearch` only fires when `args[0]` exists,
 //   so a zero-argument call never reached it.
 //
-//   NOT fixed here — the identical defect in three siblings that share this
-//   list (measured on the same base, gc lane): `"aundefinedb".includes()` is
-//   false, `"undefinedb".startsWith()` is false, and `"aundefinedb".search()`
-//   is -1, all spec-wrong and all correct in standalone. They are recorded as a
-//   follow-up in the issue file rather than widened into this change.
+//   Not fixed here — the identical defect in three siblings that share this
+//   list (measured on the same base, gc lane): `"aundefinedb".includes()` was
+//   false, `"undefinedb".startsWith()` was false, and `"aundefinedb".search()`
+//   was -1, all spec-wrong and all correct in standalone. They were recorded as
+//   a follow-up rather than widened into this change, and their wrong values
+//   pinned below. #5160 has since fixed all three by adding them to the same
+//   `padsUndefined` set, so those pins now carry the spec answers; the full
+//   evidence lives in `tests/issue-5160-padsundefined-siblings.test.ts`.
 //
 //   `skipSemanticDiagnostics` mirrors the test262 runner — TS types these
 //   methods as requiring an argument, which is not a hard error there.
@@ -138,14 +141,16 @@ describe("#5155 — String.prototype.indexOf with no argument", () => {
     expect(await runGc(fn("const a=[10,20,30]; return a.at();"))).toBe(10);
   });
 
-  it("records the three siblings this change deliberately does NOT fix", async () => {
-    // Same `padsUndefined` omission, same lane. Pinned as the OBSERVED wrong
-    // values (with the spec answer named in the comment) so the follow-up that
-    // fixes them is forced to update this test rather than silently diverge.
-    // Spec: includes() → true, startsWith() → true, search() → 0.
-    expect(await runGc(fn(HIT + " return s.includes()?1:0;"))).toBe(0);
-    expect(await runGc(fn('const s="undefinedb"; return s.startsWith()?1:0;'))).toBe(0);
-    expect(await runGc(fn(HIT + " return s.search();"))).toBe(-1);
+  it("records the three siblings — FIXED by the #5160 follow-up", async () => {
+    // Same `padsUndefined` omission, same lane. These were pinned here as the
+    // OBSERVED WRONG values (0 / 0 / -1) when #5155 deliberately left them out,
+    // precisely so the follow-up could not diverge silently. #5160 added
+    // `includes`, `startsWith` and `search` to the same set, so the pins are
+    // now the spec answers: includes() → true, startsWith() → true,
+    // search() → 0 (§22.1.3.19 → `RegExp(undefined)` = /(?:)/, matching at 0).
+    expect(await runGc(fn(HIT + " return s.includes()?1:0;"))).toBe(1);
+    expect(await runGc(fn('const s="undefinedb"; return s.startsWith()?1:0;'))).toBe(1);
+    expect(await runGc(fn(HIT + " return s.search();"))).toBe(0);
     // …and that standalone already gets all three right, which is the evidence
     // they are the same host-padding defect and not a semantics gap.
     expect(await runStandalone(fn(HIT + " return s.includes()?1:0;"))).toBe(1);
