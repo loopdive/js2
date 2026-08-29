@@ -9212,19 +9212,33 @@ function lowerChainedAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void {
     }
     targets.push({ kind: recvType.kind, recv, field: fieldName, type: field.type });
   }
-  // One shared f64 destination type keeps the single RHS value sound for every
-  // target without any per-target coercion.
+  // ONE shared destination type is what makes a single RHS value sound for
+  // every target with no per-target coercion. The type itself is unconstrained
+  // — f64, string and any other representation all store through the same
+  // type-agnostic emits below — so a string chain (`a = b = "z"`) lowers here
+  // rather than demoting. That matters beyond tidiness: a string-route function
+  // has its LEGACY body skipped, so a build-stage demote there surfaces as an
+  // `unpatched-slot` INVARIANT (a hard compile error) instead of a fallback.
   const destType = targets[0]!.type;
-  if (asVal(destType)?.kind !== "f64" || !targets.every((t) => irTypeEquals(t.type, destType))) {
+  if (!targets.every((t) => irTypeEquals(t.type, destType))) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: chained assignment needs one shared f64 destination type in ${cx.funcName}`,
+      `ir/from-ast: chained assignment needs one shared destination type in ${cx.funcName}`,
     );
   }
   // (2) The RHS — ONCE.
-  const value = lowerExpr(chain.rhs, cx, destType);
-  const valueType = cx.builder.typeOf(value);
+  let value = lowerExpr(chain.rhs, cx, destType);
+  let valueType = cx.builder.typeOf(value);
+  // Same concrete → dynamic boxing `lowerIdentifierAssignment` performs, so a
+  // dynamic-typed chain target does not demote on an unboxed carrier.
+  if (destType.kind === "dynamic" && valueType.kind !== "dynamic") {
+    const boxed = boxConcreteToDynamic(value, valueType, chain.rhs, cx);
+    if (boxed !== null) {
+      value = boxed;
+      valueType = cx.builder.typeOf(value);
+    }
+  }
   if (!irTypeAssignable(valueType, destType)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",

@@ -377,6 +377,28 @@ export function test(): number {
     // target would read 992.
     await expectIrLegacyParity(CHAIN_ONCE, [], 991);
   });
+
+  // A chain is NOT restricted to f64 destinations, and that is load-bearing
+  // rather than a nicety. A string-route function has its LEGACY body skipped,
+  // so a build-stage demote there does not fall back — it surfaces as an
+  // `unpatched-slot` INVARIANT, a hard compile error. Lowering the string chain
+  // is what keeps that path off the table.
+  it("a string chain lowers rather than demoting (a demote here would hard-error)", async () => {
+    const source = `export function test(): string { let a = ""; let b = ""; a = b = "z"; return a + b; }`;
+    expect(await outcomeKind(source, "test")).toBe("emitted");
+    await expectIrLegacyParity(source, [], "zz");
+  });
+
+  it("a three-target string chain lowers", async () => {
+    const source = `export function test(): string {
+      let a = "";
+      let b = "";
+      let c = "";
+      a = b = c = "z";
+      return a + b + c;
+    }`;
+    await expectIrLegacyParity(source, [], "zzz");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -393,11 +415,38 @@ describe("#5163 — out-of-scope shapes demote cleanly, never hard-error", () =>
   it.each([
     ["string field compound", `export function test(o: { s: string }): string { o.s += "a"; return o.s; }`],
     ["string element compound", `export function test(a: string[]): string { a[0] += "b"; return a[0]; }`],
-    ["string chain", `export function test(): string { let a = ""; let b = ""; a = b = "z"; return a + b; }`],
     ["TypedArray element compound", `export function test(a: Float64Array): number { a[0] += 1; return a[0]; }`],
+    ["boolean field write", `export function test(o: { b: boolean }): boolean { o.b = o.b; return o.b; }`],
+    [
+      "nested-receiver property compound",
+      `export function test(o: { i: { x: number } }): number { o.i.x += 1; return o.i.x; }`,
+    ],
   ])("%s demotes as `unsupported`", async (_label, source) => {
     const kind = await outcomeKind(source, "test");
     expect(kind).toBe("unsupported");
+  });
+
+  // The general form of the rule the string chain taught: whether a demote
+  // falls back or hard-errors depends on whether the LEGACY body was emitted,
+  // which the compiler decides per route. So no shape the new selector arms
+  // admit may reach a build-stage demote on a legacy-skipping route. Compiling
+  // each source ALONE is what exposes that (a multi-function module often
+  // keeps the legacy body and hides the failure).
+  it.each([
+    [`export function test(o: { s: string }): string { o.s += "a"; return o.s; }`],
+    [`export function test(a: string[]): string { a[0] += "b"; return a[0]; }`],
+    [`export function test(): string { let a = ""; let b = ""; a = b = "z"; return a + b; }`],
+    [`export function test(o: { x: string; y: string }): string { o.x = o.y = "z"; return o.x + o.y; }`],
+    [`export function test(a: Float64Array): number { a[0] += 1; return a[0]; }`],
+    [`export function test(o: { i: { x: number } }): number { o.i.x += 1; return o.i.x; }`],
+    [`export function test(o: { x: number }): number { let a = 0; a = o.x = 1; return a + o.x; }`],
+    [`export function test(a: number[], s: string): number { a[s.length] += 1; return a[0]; }`],
+    [
+      `export function test(n: number): string { let a = ""; let b = ""; for (let i = 0; i < n; i++) { a = b = "z"; } return a + b; }`,
+    ],
+  ])("no adopted shape ever reports `invariant` (case %#)", async (source) => {
+    const r = await compile(source, { fileName: "test.ts", trackIrOutcomes: true });
+    expect((r.irOutcomes ?? []).filter((o) => o.kind === "invariant")).toEqual([]);
   });
 
   it("an accessor-backed property compound demotes rather than writing the backing field", async () => {

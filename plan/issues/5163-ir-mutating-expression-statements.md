@@ -163,6 +163,18 @@ Three findings worth carrying forward:
   whose write is a link in a `=`-chain (#3741 invariant W forbids reaching an
   i32 slot by truncating an already-lowered f64). All chain targets are f64 by
   construction afterwards.
+- **A build-stage demote is NOT always a fallback — it depends on the route.**
+  Found when `origin/main` (with #5092) was merged in: the string chain
+  `a = b = "z"` went from a clean `unsupported` to a `kind:invariant`
+  (`unpatched-slot`) hard error, because a **string-route** function has its
+  LEGACY body skipped (`multi-prepared-body-skips.ts`), leaving a build demote
+  with nothing to fall back to. The fix was to LOWER the shape rather than
+  refuse it: `lowerChainedAssignment` no longer requires f64 destinations, only
+  one shared destination type (every write emit it uses is type-agnostic), plus
+  the same concrete→dynamic boxing `lowerIdentifierAssignment` does. The
+  general lesson is pinned as a test: no shape the new selector arms admit may
+  reach a build-stage demote, and each case must be compiled ALONE to see it —
+  a multi-function module often keeps the legacy body and hides the failure.
 - **Both walkers and both dispatchers now share ONE gate each** —
   `phase1MutatingStatementVerdict` (select.ts) and
   `lowerAdoptedMutatingStatement` (from-ast.ts) — so top-level and body-buffer
