@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-28
+updated: 2026-08-29
 priority: critical
 horizon: xl
 complexity: XL
@@ -1109,3 +1109,162 @@ still compiles the direct body twice (pass1 + pass2)** — the largest remaining
 item; then gap 3 (WASI prepared adapter), gap 4 (empty/function-only modules
 record no terminal outcome row), gap 5 (class declarations in the module-init
 population — R3/#3522 territory).
+
+## 2026-08-29 gap-1a implementation plan — single direct compile for call-free module inits
+
+**Fable lane.** Grounded on `origin/main` merged at `fe3fe11e52` (probe
+`.tmp/r4gap1-census.mts`, `JS2WASM_COMPILE_PROFILE=1`, reading the
+`module-init-pass1`/`module-init-pass2` phase `calls` counters — the census's
+"direct N" column). Opus implements against this plan.
+
+### Measured census (current main)
+
+| shape | host | standalone | init outcome |
+| --- | --- | --- | --- |
+| `const memo = new Map()` | 0/0 | 0/0 | emitted (IR-owned) |
+| `let v = 7` + TDZ read | 0/0 | 0/0 | emitted |
+| `let total = 0; total = total + 1;` | 0/0 | 0/0 | emitted (gap 2 landed) |
+| class + `static n = 3` | **1/1** | **1/1** | unsupported:static-class-initialization |
+| `const greeting = "hi"` | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| top-level `var w = 5` | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| `const f = (x) => x*2` | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| `let z = h();` (call in init) | **1/1** | **1/1** | unsupported:call-graph-closure (#2855 warning channel) |
+| `Object.freeze(o)` in init | **1/1** | **1/1** | unsupported:body-shape-rejected |
+| function-only module | 0/0 | 0/0 | no outcome row (gap 4, separate) |
+
+The IR-prepared route now fully suppresses both passes in both admitted lanes
+(direct 0). **Every typed-Unsupported module-init still compiles the direct
+body twice** — pass 1 + pass 2 — in every mode. That is gap 1, unchanged since
+the 2026-08-22 census.
+
+### Why two passes exist (verified against `src/codegen/declarations.ts` on the grounded tree)
+
+- **Pass 1** (`:5096`) runs before top-level function bodies to "seed
+  closure/setup discovery": compiling the init entries registers module-level
+  closures, string constants, and setup state that the function bodies
+  compiled after it consume. Function bodies also deliberately observe pass
+  1's END integrity state (`frozenVars` etc. — the #2965 comment at `:4860`).
+- **Pass 2** (`:5278`) recompiles after function bodies **for exactly one
+  stated reason**: "so call sites inside module-level code can see the final
+  inlinable-function registry" (`registerInlinableFunction` entries appear as
+  function bodies compile). `restorePropOrderState()` (`:5277`) resets the
+  order-sensitive maps so pass 2 compiles from the same initial state, and
+  `dedupeDiagnosticsFrom` (`:5280`) reconciles the doubled diagnostics.
+- The emitted body is `compiledInitFctx?.body` (`:5305`), i.e. whichever pass
+  ran last, and `ctx.pendingInitBody` is index-maintained across everything
+  compiled between the passes: module-global shifts
+  (`src/codegen/registry/imports.ts:425`), late func-index shifts (`:713`,
+  `:1027`) all patch the pending body. **Pass 1's body is therefore kept
+  structurally valid to the end already** — that machinery is what makes this
+  slice small.
+
+Existing scars of the double compile, all of which this slice retires for the
+gated population: #2965/#3872 prop-order snapshot/restore, #4195 diagnostic
+double-report dedupe, the per-pass `capturedGlobals` reset (`:4920`-area
+comment), and the #4182 Annex-B seed divergence (fixed by making the preamble
+decision pass-invariant — the precedent that pass-1/pass-2 preambles must not
+consult state that grows between passes).
+
+### The slice: skip pass 2 when the init population is call-free
+
+A pass-2 recompile can only differ from pass 1's (fixup-maintained) body
+through the inlinable-function registry, and that registry is consulted only
+at call sites. So:
+
+**Gate.** Immediately before the pass-2 block (`:5273`), compute
+`initPopulationIsCallFree`: a full-subtree scan over exactly the inputs
+`compileModuleInitBody` compiles — every `ctx.moduleInitStatements` statement
+and every `ctx.staticInitExprs` entry's `staticBlock ?? initializer` (the
+`orderedInitEntries` construction at `:5015`-`:5040` names the exact set).
+Refuse (keep two passes) on ANY of: `CallExpression` (covers `super(...)`),
+`NewExpression`, `TaggedTemplateExpression`, `Decorator`, `AwaitExpression`.
+The scan includes nested arrow/function/class-expression bodies inside
+initializers (a `const f = () => h()` closure body compiles during the init
+statement and would otherwise bake pass-1's un-inlined call in). Anything not
+provably call-free keeps today's two passes — fail closed, no allowlist.
+
+**Skip.** When the gate holds and the pass-2 condition
+(`moduleInitMode === "full"` etc.) is met: do not run pass 2, do not
+`restorePropOrderState()` (nothing recompiles), and do **not** call
+`dedupeDiagnosticsFrom` (there is no doubled range; calling it against a
+single pass would be wrong). Pass 1's `compiledInitFctx` remains the emitted
+body — already the variable the injection reads.
+
+**Census truth.** The skip must be observable: keep the
+`module-init-pass1`/`-pass2` profile phases as-is (a skipped pass simply
+records no pass-2 call), so the probe above reads `1/0` for gated shapes.
+
+### Constraints (each one is a test)
+
+1. **The gate scans the exact compile inputs, not the source file.** A call
+   inside a top-level function body must NOT disqualify (function bodies are
+   not init inputs); a call inside a static block or a class-expression method
+   in an initializer MUST disqualify.
+2. **Preamble emissions must remain pass-invariant** — the seeds
+   (`emitModuleVarUndefinedSeeds`, function-binding/Annex-B seeds,
+   `emitScriptGlobalVarBindings`, `liveFuncBindingGlobals` closures) are
+   emitted by pass 1 and stand. #4182 already made the one known
+   pass-sensitive preamble decision static; no new dependence may be
+   introduced.
+3. **Multi-source: the accumulated population decides.**
+   `ctx.moduleInitStatements`/`ctx.staticInitExprs` are per-graph accumulated
+   state; the scan runs over the full accumulated set at the emitting source's
+   pass-2 site, so a call-bearing statement contributed by an EARLIER source
+   keeps two passes even when the emitting source's own statements are
+   call-free. `"discover"`/`"skip"`/`"prepared"` modes are untouched.
+4. **Diagnostics parity.** For a gated shape with a compile error in an init
+   statement, the error appears exactly once (today: twice + dedupe). The
+   dedupe call must still run whenever pass 2 ran.
+5. **No behavior widening.** This slice does not touch the IR selector, the
+   prepared route, `applyModuleInitGuard`, or invocation wiring. It changes
+   how many times the DIRECT body compiles, nothing about what it contains
+   for call-free inputs.
+
+### Mutations / anti-vacuity
+
+Add `tests/issue-3523-module-init-single-pass.test.ts`:
+
+- **Gated shapes** (string const, top-level `var`, arrow initializer, object
+  literal, static `n = 3` class): profile census `pass1=1, pass2=0`; runtime
+  A/B parity (exports + observed values) against a forced-two-pass control.
+  Add a test-only `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` seam that restores
+  the old unconditional recompile for exactly this comparison; the seam must
+  not otherwise alter either route.
+- **Control shapes** (call in init, `new` in init, call inside a static
+  block, call inside an initializer arrow body, tagged template): census
+  stays `pass1=1, pass2=1` and behavior is unchanged.
+- **Non-vacuity**: `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` still
+  fails a gated shape (proves pass 1 runs; the skip must not silently skip
+  BOTH passes).
+- **Diagnostics**: a gated shape with a deliberate init-statement error
+  reports it exactly once; a control shape also exactly once (dedupe path).
+- **Inlining regression guard (the reason pass 2 exists)**: a control with a
+  module-level call to a top-level function must produce the same body bytes
+  as before this change (pass 2 still supplies the final registry there).
+- **IR-owned and fn-only shapes**: stay `0/0`; the gate must not create an
+  outcome row or touch the prepared route (run beside
+  `tests/issue-3523-ir-module-init-compile-once.test.ts`).
+
+Byte-equality between the gated route and the forced-two-pass control is NOT
+required (pass 2 may currently emit deduped closure twins); runtime parity,
+export surface, import surface, and Wasm validity are.
+
+### Explicitly out of scope (the rest of gap 1)
+
+Call-bearing typed-Unsupported inits keep two passes. Retiring pass 1 itself
+(the discovery purpose) requires the R2/R3 unit inventory to supply
+closure/setup discovery ahead of body compilation — that is the follow-up
+slice, not this one. Gaps 3 (WASI adapter), 4 (non-executable outcome row) and
+5 (class population) are unchanged.
+
+### Validation
+
+Focused suite + `tests/issue-3523-ir-module-init-compile-once.test.ts` +
+`tests/issue-2965*`/`#3872`/`#4195`/`#4182` families if present; typecheck;
+`pnpm run check:ir-fallbacks` bare; ratchet chain bare
+(`node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs &&
+node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet &&
+npm run -s check:dead-exports`), plus the `LOC_GATE_BASE=$(git rev-parse
+origin/main)` CI-base simulation. Hooks run without bypass. Acceptance: gated
+census rows read `1/0`, controls `1/1`, IR-owned `0/0`, all constraint tests
+green.
