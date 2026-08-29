@@ -71,6 +71,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.inheritedSetDescriptorDirty &&
       ctx.vecIndexDeleteDirty &&
       ctx.vecOwnKeysDirty &&
+      ctx.arraySpeciesDirty &&
       ctx.dynamicCodeDirty
     ) {
       return;
@@ -128,6 +129,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     }
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
+    }
+    if (!ctx.arraySpeciesDirty && isArraySpeciesObservable(node)) {
+      ctx.arraySpeciesDirty = true;
     }
     if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
@@ -603,6 +607,37 @@ function descriptorBagPoisonedKeys(node: ts.Expression | undefined): "all" | rea
 function isIndexDelete(node: ts.Node): boolean {
   if (!ts.isDeleteExpression(node)) return false;
   return ts.isElementAccessExpression(unwrapExpr(node.expression));
+}
+
+/**
+ * (#5145) Can this module observe `ArraySpeciesCreate` (§10.4.2.3)? Two
+ * syntactic triggers, both cheap and both necessary:
+ *
+ *  - `Symbol.species` anywhere — the only way to install a species constructor;
+ *  - an assignment whose target is a `.constructor` property — the only way to
+ *    make step 5's `Get(O, "constructor")` answer anything on a `$vec` (nothing
+ *    installs a reflective `constructor` on an array otherwise).
+ *
+ * Clear ⇒ `slice`/`splice`/`map`/`filter` keep their raw `struct.new $vec`
+ * result AND their static `(ref null $vec)` result type, so no unrelated typed
+ * code is pushed onto the dynamic lane. Deliberately over-approximate: a module
+ * that merely *reads* `Symbol.species` pays the (runtime-null, one helper call)
+ * species prologue, which is the cheap side of the error.
+ */
+function isArraySpeciesObservable(node: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === "species") return true;
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    const lhs = unwrapExpr(node.left);
+    if (ts.isPropertyAccessExpression(lhs) && lhs.name.text === "constructor") return true;
+    if (
+      ts.isElementAccessExpression(lhs) &&
+      ts.isStringLiteralLike(lhs.argumentExpression) &&
+      lhs.argumentExpression.text === "constructor"
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

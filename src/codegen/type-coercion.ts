@@ -984,6 +984,31 @@ export function buildVecFromExternref(
     // (loopdive/js2wasm#389 / #2311 regression — buildElemCoerce only handled
     // f64/i32/externref/ref). (#2839)
     if ((et.kind === "i32" || et.kind === "i8" || et.kind === "i16") && unboxIdx !== undefined) {
+      // (#3481) A BRANDED symbol element (`symbol[]`, its own `__vec_i32_symbol`
+      // type since the element carries `{kind:"i32", symbol:true}`) is a real
+      // host Symbol on the wire, not a boxed number. `__unbox_number` on it is
+      // `Number(Symbol())` — a §7.1.4 TypeError — which is why
+      // `const syms = Object.getOwnPropertySymbols(obj)` threw at the
+      // DECLARATION, before `syms` was read at all.
+      //
+      // Route it through the existing symbol boundary seam instead —
+      // `__unbox_symbol`, which resolves the symbol through the SAME
+      // per-instance `symbolCache` that `__box_symbol` populates, so a symbol
+      // the module created round-trips to its own id and `syms[0] === sym`
+      // holds. Only the branded vec reaches this arm, so `boolean[]`, the i32
+      // typed-array views and plain numeric arrays keep the untouched
+      // `__unbox_number` path below.
+      //
+      // HOST LANE ONLY, deliberately: standalone/WASI keep the #2866 arm just
+      // below, which `ref.test`s the `$Symbol` carrier and falls back to a
+      // number unbox. The boundary helper's standalone branch is an UNGUARDED
+      // `ref.cast` that would trap on a non-symbol element, and with no
+      // `$Symbol` carrier registered it reaches for the `__unbox_symbol` host
+      // import — which a host-free module must never acquire.
+      if (et.kind === "i32" && et.symbol === true && !ctx.standalone && !ctx.wasi) {
+        const symInstrs = symbolBoundaryCoercionInstrs(ctx, { kind: "externref" }, et, fctx);
+        if (symInstrs !== undefined) return symInstrs;
+      }
       // (#2866 slice 3) In a symbol-bearing module the externref element may be a
       // `$Symbol` carrier (materialising `Object.getOwnPropertySymbols(o)` into a
       // typed `symbol[]` whose value-position rep is the i32 id) rather than a
