@@ -1,10 +1,11 @@
 ---
 id: 5180
 title: "`JSBI___toPrimitive` binary emit fails with struct field index out of range — new on main, blocks the temporal-polyfill lane"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-29
 updated: 2026-08-29
+pr: 5223
 priority: high
 horizon: m
 feasibility: medium
