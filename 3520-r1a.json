@@ -2,10 +2,11 @@
   "id": "3520",
   "slice": "r1a",
   "assignee": "ttraenkler/opus-3520-r1a",
-  "requested_by": "ttraenkler/opus-3520-r1a",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3520-r1-vec-export-ownership",
   "claimed_at": "2026-08-29T01:48:51Z",
-  "updated_at": "2026-08-29T01:48:51Z",
-  "write_id": "19753-0we3robc"
+  "updated_at": "2026-08-29T21:37:54Z",
+  "write_id": "1740-3pwddk5f",
+  "released_at": "2026-08-29T21:37:54Z"
 }
