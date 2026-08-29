@@ -57,6 +57,9 @@ import {
 } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3177) OOB read = undefined, not null
+// (#5150) canonical `undefined` externref — NOT flag-gated, unlike
+// `undefinedExternInstrs`; the standalone lane always reserves the singleton.
+import { canonicalUndefinedExternInstrs, ensureAnyValueType } from "./any-helpers.js";
 import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
@@ -193,10 +196,31 @@ export function emitArrayBufferSlice(
   // end (default srcLen). Same clamp/negate.
   const endLocal = allocLocal(fctx, `__abs_end_${fctx.locals.length}`, { kind: "i32" });
   if (args.length >= 2) {
-    compileExpr(args[1]!, { kind: "f64" });
+    // (#5150) An EXPLICIT `undefined` end means "to the end of the buffer"
+    // (§25.1.5.3 step 8), not ToIntegerOrInfinity(undefined) = 0. Keep the
+    // value as an externref so the undefined singleton is still
+    // distinguishable, compute the ordinary clamped index from it, then
+    // override with srcLen when it was undefined. `null` deliberately still
+    // coerces to 0.
+    const endExtern = allocLocal(fctx, `__abs_endx_${fctx.locals.length}`, { kind: "externref" });
+    const endTy = compileExpr(args[1]!, { kind: "externref" });
+    if (endTy === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (endTy.kind !== "externref") coerceType(ctx, fctx, endTy, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: endExtern });
+    coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     fctx.body.push({ op: "local.set", index: endLocal });
     emitNormalizeIndex(fctx, endLocal, srcLenLocal);
+    fctx.body.push(...undefinedOnlyExternTest(ctx, fctx, endExtern));
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: srcLenLocal },
+        { op: "local.set", index: endLocal },
+      ],
+      else: [],
+    });
   } else {
     fctx.body.push({ op: "local.get", index: srcLenLocal });
     fctx.body.push({ op: "local.set", index: endLocal });
@@ -1649,8 +1673,8 @@ export function emitDataViewAccessor(
  * Sequence (§24.3.1.1 GetViewValue / §24.3.1.2 SetViewValue):
  *   brand TypeError → ToIndex(requestIndex) RangeError → [ToNumber(value)] →
  *   ToBoolean(littleEndian) → detached TypeError → bounds RangeError → op.
- * Getters box the f64 result (`__box_number`); setters return undefined
- * (null extern). noJsHost lane only; idempotent per member.
+ * Getters box the f64 result (`__box_number`); setters return the `undefined`
+ * singleton (#5150). noJsHost lane only; idempotent per member.
  *
  * IMPORT DISCIPLINE: every reachable helper (`__to_primitive`/`__unbox_number`
  * via the externref→f64 coercion, `__is_truthy`, `__box_number`, the error
@@ -1658,6 +1682,88 @@ export function emitDataViewAccessor(
  * appends only and cannot shift baked funcIdxs; all are pre-ensured before the
  * throw templates capture their ctor indices anyway.
  */
+/**
+ * (#5150) i32 test: is the externref in param/local `externIdx` nullish —
+ * `ref.null.extern` OR the tag-1 `$AnyValue` `undefined` singleton? Unlike
+ * `nullishExternTestInstrs` (any-helpers.ts) this is NOT gated on the
+ * default-off `undefinedSingleton` flag, because the standalone lane reserves
+ * the singleton unconditionally and #5150 made the DataView arg padding use it.
+ * Falls back to a bare `ref.is_null` when the AnyValue type is unavailable.
+ */
+/**
+ * (#5150) i32 test: is the externref in `externIdx` the tag-1 `$AnyValue`
+ * `undefined` singleton (and NOT `null`)? Used where the spec distinguishes an
+ * explicitly-passed `undefined` — "argument absent" — from `null`, which
+ * coerces to 0. Answers 0 when the AnyValue type is unavailable.
+ */
+function undefinedOnlyExternTest(ctx: CodegenContext, fctx: FunctionContext, externIdx: number): Instr[] {
+  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
+  const t = ctx.anyValueTypeIdx;
+  if (t < 0) return [{ op: "i32.const", value: 0 }];
+  const scratch = allocLocal(fctx, "usc", { kind: "anyref" });
+  return [
+    { op: "local.get", index: externIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: externIdx },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: scratch },
+        { op: "ref.test", typeIdx: t },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: scratch },
+            { op: "ref.cast", typeIdx: t },
+            { op: "struct.get", typeIdx: t, fieldIdx: 0 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.eq" },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ],
+    },
+  ];
+}
+
+function nullishOrUndefinedExternTest(ctx: CodegenContext, fctx: FunctionContext, externIdx: number): Instr[] {
+  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
+  const t = ctx.anyValueTypeIdx;
+  if (t < 0) return [{ op: "local.get", index: externIdx }, { op: "ref.is_null" }];
+  const scratch = allocLocal(fctx, "nsc", { kind: "anyref" });
+  return [
+    { op: "local.get", index: externIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [
+        { op: "local.get", index: externIdx },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: scratch },
+        { op: "ref.test", typeIdx: t },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: scratch },
+            { op: "ref.cast", typeIdx: t },
+            { op: "struct.get", typeIdx: t, fieldIdx: 0 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.eq" },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ],
+    },
+  ];
+}
+
 export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): number | undefined {
   if (!usesNativeDataViewProvider(ctx)) return undefined;
   const acc = DV_ACCESSORS[member];
@@ -1745,13 +1851,14 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
   fctx.body.push({ op: "local.set", index: getIdxLocal });
 
   // Setters: numberValue = ToNumber(value) (a1) — observable, after ToIndex.
-  // (#3173) BigInt setters: §7.1.13 ToBigInt(undefined) throws TypeError — a
-  // MISSING value arrives as a null extern (dispatcher/closure padding).
+  // (#3173/#5150) BigInt setters: §7.1.13 ToBigInt(undefined) throws TypeError.
+  // A MISSING value arrives as the `undefined` SINGLETON (#5150 changed the
+  // dispatcher/closure padding from `ref.null.extern`, which made float
+  // setters write 0 instead of NaN), so the test is nullish, not is_null.
   const valLocal = acc.kind === "set" ? allocLocal(fctx, "val", { kind: "f64" }) : -1;
   if (acc.kind === "set") {
     if (toBigIntThrow) {
-      fctx.body.push({ op: "local.get", index: 2 });
-      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push(...nullishOrUndefinedExternTest(ctx, fctx, 2));
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: toBigIntThrow, else: [] });
     }
     fctx.body.push({ op: "local.get", index: 2 });
@@ -1796,9 +1903,10 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
     coerceType(ctx, fctx, acc.int64 ? { kind: "i64", bigint: true } : { kind: "f64" }, { kind: "externref" });
   } else {
     emitWriteBytes(ctx, fctx, acc, arrLocal, offLocal, valLocal, leLocal, arrTypeIdx);
-    // Setters return undefined — standalone lowers `undefined` to the null
-    // externref (`x === undefined` is `ref.is_null`), so this IS undefined.
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#5150) Setters return undefined — the #2106 distinct-undefined
+    // singleton, NOT `ref.null.extern` (which compares as JS `null` and made
+    // every `set*` return-value test read `SameValue(«null», «undefined»)`).
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
   }
 
   pushDefinedFunc(ctx, funcIdx, {
@@ -1893,14 +2001,16 @@ export function emitDataViewProtoMemberBody(
   if (helperIdx === undefined) return null;
   const acc = DV_ACCESSORS[member]!;
   const helperArgs = acc.kind === "get" ? 2 : 3;
-  // this (param 1) + args (params 2..), padded with null extern (undefined).
+  // this (param 1) + args (params 2..), padded with the `undefined` SINGLETON
+  // (#5150 — a null pad coerced to 0, so `setFloat32()` wrote 0 where
+  // ToNumber(undefined) = NaN is required).
   fctx.body.push({ op: "local.get", index: 1 });
   for (let i = 0; i < helperArgs; i++) {
     const paramIdx = 2 + i;
     if (paramIdx < fctx.params.length) {
       fctx.body.push({ op: "local.get", index: paramIdx });
     } else {
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
     }
   }
   fctx.body.push({ op: "call", funcIdx: helperIdx });
@@ -2319,6 +2429,20 @@ function emitWriteBytes(
   leLocal: number,
   arrTypeIdx: number,
 ): void {
+  if (!acc.float) {
+    // (#5150) §7.1.x ToInt8/ToUint16/… map NaN and ±Infinity to +0 BEFORE the
+    // modular wrap. `i64.trunc_sat_f64_s` saturates instead (Infinity →
+    // i64::MAX → low byte 0xff), so `setInt8(0, Infinity)` stored -1.
+    // finite = |v| < Infinity (false for NaN too); select(v, 0, finite).
+    fctx.body.push({ op: "local.get", index: valLocal });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "local.get", index: valLocal });
+    fctx.body.push({ op: "f64.abs" });
+    fctx.body.push({ op: "f64.const", value: Number.POSITIVE_INFINITY });
+    fctx.body.push({ op: "f64.lt" });
+    fctx.body.push({ op: "select" });
+    fctx.body.push({ op: "local.set", index: valLocal });
+  }
   if (acc.bytes === 1) {
     // arr[off] = (value mod 256). Spec ToInt8/ToUint8 are modular; go via i64
     // (`i64.trunc_sat_f64_s` + `i32.wrap_i64`) so large values wrap rather than

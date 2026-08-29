@@ -461,6 +461,7 @@ import { resolveStructName } from "./misc.js";
 import {
   tryCompileDateCallWithoutNew,
   tryCompileErrorCtorCallWithoutNew,
+  tryCompileBufferCtorCallWithoutNew,
   tryCompileWeakSetCallWithoutNew,
 } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
@@ -6967,6 +6968,13 @@ function compileCallExpression(
   // (#4732) `WeakSet(...)` has no [[Call]] — §23.4.1.1 step 1 requires `new`.
   {
     const r = tryCompileWeakSetCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#5150) `ArrayBuffer(...)` / `DataView(...)` — same "NewTarget is
+  // undefined ⇒ TypeError" clause; neither has a [[Call]] behaviour.
+  {
+    const r = tryCompileBufferCtorCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 

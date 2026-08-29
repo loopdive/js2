@@ -37,7 +37,12 @@
  * arguments fall through to the existing path (the dispatcher is not used).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
+import {
+  canonicalUndefinedExternInstrs,
+  ensureExternSameValueZeroHelper,
+  ensureExternStrictEqHelper,
+  undefinedExternInstrs,
+} from "./any-helpers.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
@@ -1469,7 +1474,10 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         const helperArgs = methodName.startsWith("get") ? 2 : 3;
         const dvCall: Instr[] = [{ op: "local.get", index: 0 }];
         for (let i = 0; i < helperArgs; i++) {
-          dvCall.push(i < arity ? { op: "local.get", index: 1 + i } : { op: "ref.null.extern" });
+          // (#5150) pad absent args with the `undefined` singleton, not null —
+          // ToNumber(undefined) is NaN, ToNumber(null) is 0.
+          if (i < arity) dvCall.push({ op: "local.get", index: 1 + i });
+          else dvCall.push(...canonicalUndefinedExternInstrs(ctx));
         }
         dvCall.push({ op: "call", funcIdx: dvHelperIdx });
         current = [

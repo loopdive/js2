@@ -3361,9 +3361,18 @@ export function taViewReceiverTypeIdx(
 ): number | undefined {
   if (!ts.isIdentifier(recvExpr)) return undefined;
   const localIdx = fctx.localMap.get(recvExpr.text);
-  if (localIdx === undefined) return undefined;
-  const localType =
-    localIdx < fctx.params.length ? fctx.params[localIdx]!.type : fctx.locals[localIdx - fctx.params.length]?.type;
+  let localType: ValType | undefined;
+  if (localIdx !== undefined) {
+    localType =
+      localIdx < fctx.params.length ? fctx.params[localIdx]!.type : fctx.locals[localIdx - fctx.params.length]?.type;
+  } else {
+    // (#5150) …or a MODULE GLOBAL with the same slot type. test262 declares its
+    // bindings at top level (`var ta = new Uint8Array(buffer)`), so the
+    // locals-only lookup missed every one of them and `ta.length` fell to the
+    // checker-typed vec arm — which `ref.test`s a different struct and answers 0.
+    const globalIdx = ctx.moduleGlobals.get(recvExpr.text);
+    if (globalIdx !== undefined) localType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+  }
   if (
     (localType?.kind === "ref" || localType?.kind === "ref_null") &&
     localType.typeIdx !== undefined &&

@@ -2140,6 +2140,43 @@ export function tryCompileWeakSetCallWithoutNew(
   return { kind: "externref" };
 }
 
+/** (#5150) Buffer constructors with no [[Call]] behaviour. */
+const BUFFER_CTORS_REQUIRING_NEW: ReadonlySet<string> = new Set(["ArrayBuffer", "SharedArrayBuffer", "DataView"]);
+
+/**
+ * (#5150) `ArrayBuffer(10)` / `DataView(buf, off)` called WITHOUT `new`.
+ * §25.1.3.1 step 1 and §25.3.2.1 step 1 both read "If NewTarget is undefined,
+ * throw a TypeError exception", so neither ctor has a [[Call]] behaviour at
+ * all. Previously the generic identifier-call terminal answered with the
+ * undefined sentinel and the call silently succeeded.
+ *
+ * Arguments ARE evaluated (they are evaluated at the call site, before
+ * [[Call]] is entered) but never coerced — that is exactly what
+ * `DataView/newtarget-undefined-throws.js` asserts: a `byteOffset` whose
+ * `valueOf` throws must NOT run, because ToIndex is never reached.
+ *
+ * Same ambient-global / class guards as the WeakSet arm above: a user binding
+ * named `ArrayBuffer` keeps ordinary call semantics.
+ */
+export function tryCompileBufferCtorCallWithoutNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || !BUFFER_CTORS_REQUIRING_NEW.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
+  if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
+
+  for (const arg of expr.arguments ?? []) {
+    const argResult = compileExpression(ctx, fctx, arg);
+    if (argResult) fctx.body.push({ op: "drop" });
+  }
+  emitThrowTypeError(ctx, fctx, `Constructor ${callee.text} requires 'new'`);
+  return { kind: "externref" };
+}
+
 /** `__date_format_string` mode selector for §21.4.4.41 `toString`. */
 const DATE_FORMAT_MODE_TO_STRING = 2;
 

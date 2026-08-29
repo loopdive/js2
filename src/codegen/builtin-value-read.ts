@@ -28,6 +28,7 @@ import {
 } from "./shared.js";
 import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
 import { allocLocal } from "./context/locals.js";
+import { getOrRegisterDvWindowType } from "./dataview-native.js"; // (#5150) isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
 import { ensureRegExpNativeProtoGlue } from "./regexp-standalone.js";
 import {
@@ -1134,6 +1135,18 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // natives are standalone-DEFINED funcs (host-free) registered by
     // `addUnionImports`; if the substrate is unavailable, degrade to the generic
     // catchable-TypeError body (identity/meta still hold).
+    // (#5150) `ArrayBuffer.isView` as a first-class VALUE
+    // (`isView/invoked-as-a-fn.js` does `var isView = ArrayBuffer.isView;
+    // isView(x)`). The direct-call site is already host-free
+    // (call-namespace-static.ts); only the value read fell to the generic
+    // "not yet implemented in --target standalone" throw. Same 1-arg boxed
+    // predicate shape as the `Number.is*` closures.
+    case "ArrayBuffer.isView": {
+      if (!noJsHost(ctx)) return null;
+      paramTypes = [{ kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
+      break;
+    }
     case "Number.isInteger":
     case "Number.isFinite":
     case "Number.isNaN":
@@ -1538,6 +1551,27 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           else: [{ op: "i32.const", value: 0 }],
         },
       );
+    } else if (key === "ArrayBuffer.isView" && !genericThrowBody) {
+      // (#5150) §25.1.4.1 — true iff the argument has a [[ViewedArrayBuffer]]
+      // slot. Decided host-free by the SAME carrier `ref.test` chain the direct
+      // call emits (call-namespace-static.ts): every registered vec carrier
+      // (TypedArrays lower to one) plus the `$__dv_window` DataView brand.
+      const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+      const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
+      const anyTmp = allocLocal(closureFctx, "isview_any", { kind: "anyref" });
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "any.convert_extern" });
+      closureFctx.body.push({ op: "local.set", index: anyTmp });
+      let emittedIsView = false;
+      for (const vi of vecTypeIdxs) {
+        closureFctx.body.push({ op: "local.get", index: anyTmp });
+        closureFctx.body.push({ op: "ref.test", typeIdx: vi });
+        if (emittedIsView) closureFctx.body.push({ op: "i32.or" });
+        emittedIsView = true;
+      }
+      closureFctx.body.push({ op: "local.get", index: anyTmp });
+      closureFctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx });
+      if (emittedIsView) closureFctx.body.push({ op: "i32.or" });
     } else if (key === "Object.is" && !genericThrowBody) {
       // (#2963 Tier 2b) Body. Params: 0=self, 1=x, 2=y (both boxed externref).
       const typeofNumIdx = ctx.funcMap.get("__typeof_number");
