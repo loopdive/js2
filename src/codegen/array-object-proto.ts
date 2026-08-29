@@ -3222,6 +3222,18 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     // not cover. Runtime-eval modules deliberately skip the constructor helper,
     // so seed their constructor names through the non-recursive carrier path.
     if (namespaceHelperNames.has(name) || (constructorHelpersActive && constructorHelperNames.has(name))) continue;
+    // (#5148 checkpoint) `Function` is NEVER seeded from this loop. When the
+    // constructor helpers are active (no runtime-eval sites) they own the
+    // binding and the generic skip above already fired. When the module LINKS
+    // the runtime-eval provider, `%Function%` must be the provider's intrinsic
+    // (the one-emitter rule in function-intrinsic-carrier.ts): seeding the
+    // self-contained `__builtin_ctor_Function` carrier here split that
+    // identity — measured on the QuickJS provider canary, `made.constructor
+    // === Function` read false and `made.apply(...)` threw, which failed the
+    // adapter build (functionParityProbe -11) and with it every
+    // provider-linked lane (#4442, #2928). The provider's global-environment
+    // seeding owns the realm `Function` binding in that mode.
+    if (name === "Function" && !constructorHelpersActive) continue;
     fctx.body.push({ op: "local.get", index: objLocal });
     addStringConstantGlobal(ctx, name);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, name));

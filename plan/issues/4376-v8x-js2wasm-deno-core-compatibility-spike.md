@@ -55,6 +55,15 @@ loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/expressions.ts
   - src/codegen/property-access.ts
+  # 2026-08-29: deno-core bootstrap local-index remapping (createTimer /
+  # __eventLoopTick / runImmediates class): lift-time transitive-capture
+  # promotion incl. no-captures branch, recorded-slot fallbacks, stale
+  # name-keyed box guard, plus env-gated standalone debug facilities
+  # (JS2WASM_DUMP_TYPES / JS2WASM_TRACE_LAST_STMT).
+  - src/codegen/closures.ts
+  - src/emit/binary.ts
+  - src/codegen/statements.ts
+  - src/link/linker.ts
 func-budget-allow:
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement
@@ -68,6 +77,9 @@ func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  # 2026-08-29: deno-core bootstrap remapping (see loc grants above).
+  - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
+  - src/link/linker.ts::emitLinked
   - src/codegen/declarations.ts::compileDeclarations
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/object-runtime.ts::fillApplyClosure

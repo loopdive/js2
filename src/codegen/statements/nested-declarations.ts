@@ -1099,6 +1099,35 @@ function compileNestedFunctionDeclarationInScope(
     ctx.funcUsesArguments.add(funcName);
   }
 
+  // (#5148 checkpoint) Classify referenced sibling registry functions for the
+  // lift-time transitive-capture promotion both branches below perform. The
+  // capture registry is NAME-keyed across frames, so a same-named local can
+  // shadow a foreign frame's function (Deno's 01_core destructures 00_infra's
+  // `__resolvePromise` from `window.__infra`). Discriminate by whether the
+  // registry entry's recorded captures are actually sourceable from THIS
+  // frame: if any capture's recorded slot neither names the captured binding
+  // here nor has a same-named local, the registry entry is foreign — the only
+  // sound call target is the local VALUE, so value-promote it instead of
+  // chasing unresolvable captures.
+  const referencedSiblingFns = new Set<string>();
+  const shadowedSiblingFnValues = new Set<string>();
+  for (const name of referencedNames) {
+    if (name === funcName || !ctx.funcMap.has(name) || !ctx.nestedFuncCaptures.has(name)) continue;
+    const sibCaps = ctx.nestedFuncCaptures.get(name)!;
+    const capsForeign =
+      fctx.localMap.has(name) &&
+      sibCaps.some((cap) => {
+        if (fctx.localMap.has(cap.name)) return false;
+        const def =
+          cap.outerLocalIdx < fctx.params.length
+            ? fctx.params[cap.outerLocalIdx]
+            : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+        return def?.name !== cap.name;
+      });
+    if (capsForeign) shadowedSiblingFnValues.add(name);
+    else referencedSiblingFns.add(name);
+  }
+
   if (captures.length === 0) {
     // No captures — compile as a regular module-level function
     const funcTypeIdx = addFuncType(ctx, paramTypes, results, `${funcName}_type`);
@@ -1174,6 +1203,20 @@ function compileNestedFunctionDeclarationInScope(
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
       ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
+    }
+
+    // (#5148 checkpoint) Same lift-time transitive-capture promotion as the
+    // has-captures branch below: a ZERO-capture lifted body can still call a
+    // sibling registered with foreign-frame capture indices (Deno's
+    // `__eventLoopTick` → `__resolvePromise`, whose caps live in the infra
+    // frame). Promote those transitive captures from the DECLARING frame,
+    // where their slots are still valid, before the body bakes them in.
+    if (referencedSiblingFns.size > 0 || shadowedSiblingFnValues.size > 0) {
+      promoteAccessorCapturesToGlobals(ctx, fctx, undefined, undefined, undefined, {
+        fnNames: referencedSiblingFns,
+        excludeNames: new Set(),
+        forceValueNames: shadowedSiblingFnValues,
+      });
     }
 
     // Emit default-value initialization for parameters with initializers
@@ -1615,6 +1658,23 @@ function compileNestedFunctionDeclarationInScope(
       if (savedFunc) ctx.parentBodiesStack.pop();
       ctx.currentFunc = savedFunc;
       return;
+    }
+
+    // (#5148 checkpoint) Promote — from the DECLARING frame, where
+    // `cap.outerLocalIdx` is still a valid slot — the TRANSITIVE captures of
+    // sibling nested functions this body references but does not itself
+    // capture-carry. Without this, a sibling call/reify inside the lifted body
+    // bakes a declaring-frame local index into this function ("references
+    // local N … out of range" — Deno's createTimer → __isLeakTracingEnabled).
+    // The lifted function's own captures arrive as leading params and are
+    // excluded. Idempotent: already-promoted names are skipped inside.
+    if (referencedSiblingFns.size > 0 || shadowedSiblingFnValues.size > 0) {
+      const ownCaptureNames = new Set(captures.map((c) => c.name));
+      promoteAccessorCapturesToGlobals(ctx, fctx, undefined, undefined, undefined, {
+        fnNames: referencedSiblingFns,
+        excludeNames: ownCaptureNames,
+        forceValueNames: shadowedSiblingFnValues,
+      });
     }
 
     // (#2758) Pre-box any by-value capture that a sibling this function CALLS

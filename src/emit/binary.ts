@@ -12,6 +12,8 @@ import type {
   WasmFunction,
   WasmModule,
 } from "../ir/types.js";
+import { writeFileSync } from "node:fs";
+import { emitWat } from "./wat.js";
 import { WasmEncoder } from "./encoder.js";
 import { GC, OP, SECTION, SIMD, TYPE } from "./opcodes.js";
 import { resolveLayout, type ModuleLayout } from "./resolve-layout.js";
@@ -212,6 +214,26 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
       numTypes += t.types.length;
     } else {
       numTypes += 1;
+    }
+  }
+  if (process.env.JS2WASM_DUMP_TYPES) {
+    const flat: typeof mod.types = [];
+    for (const t of mod.types) {
+      if (t.kind === "rec") flat.push(...t.types);
+      else flat.push(t);
+    }
+    const lines = flat.map((t, i) => {
+      const inner = t.kind === "sub" ? t.type : t;
+      const name = (inner as { name?: string }).name ?? "";
+      const detail = inner.kind === "struct" ? JSON.stringify(inner.fields.slice(0, 8)) : inner.kind;
+      return `${i}\t${inner.kind}\t${name}\t${detail}`;
+    });
+    writeFileSync(process.env.JS2WASM_DUMP_TYPES, lines.join("\n"));
+    if (process.env.JS2WASM_DUMP_WAT_FN) {
+      writeFileSync(
+        `${process.env.JS2WASM_DUMP_TYPES}.wat`,
+        emitWat(mod, { onlyFunctions: new Set(process.env.JS2WASM_DUMP_WAT_FN.split(",")) }),
+      );
     }
   }
   return {

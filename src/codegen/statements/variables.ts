@@ -73,6 +73,35 @@ import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 
 /**
+ * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
+ * that SHADOWS a boxed capture of the same name (Deno's `const queue = …`
+ * inside `runImmediates`, while the lifted frame carries a boxed capture
+ * `queue` from the module frame's FixedQueue) finds the stale entry and would
+ * route its init through a ref cell the live local does not hold — an invalid
+ * `struct.set $__ref_cell_T` on a raw value local. The live storage local's
+ * DECLARED type is ground truth: when it is not this entry's cell type, the
+ * entry belongs to a different binding. Drop it so this declaration and every
+ * later read/write in the shadowing scope uses the plain local.
+ * Returns true when the entry was stale (and removed).
+ */
+function dropStaleBindingBox(
+  fctx: FunctionContext,
+  name: string,
+  entry: { refCellTypeIdx: number },
+  storageIdx: number | undefined,
+): boolean {
+  if (storageIdx === undefined) return false;
+  const t = getLocalType(fctx, storageIdx);
+  const isCell =
+    t !== undefined &&
+    (t.kind === "ref" || t.kind === "ref_null") &&
+    (t as { typeIdx?: number }).typeIdx === entry.refCellTypeIdx;
+  if (isCell) return false;
+  fctx.boxedCaptures?.delete(name);
+  return true;
+}
+
+/**
  * A transferred generic Array reverse returns its ORIGINAL receiver, which is
  * an open object for the ES5/ES2015 genericity rows. TypeScript still exposes
  * the borrowed method's `T[]` return type, so an unannotated binding such as
@@ -1611,7 +1640,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // untouched.
         const boxedClosureCell = fctx.boxedCaptures?.get(name);
         const boxedCellLocalIdx = boxedClosureCell !== undefined ? fctx.localMap.get(name) : undefined;
-        if (boxedClosureCell !== undefined && boxedCellLocalIdx !== undefined) {
+        if (
+          boxedClosureCell !== undefined &&
+          boxedCellLocalIdx !== undefined &&
+          !dropStaleBindingBox(fctx, name, boxedClosureCell, boxedCellLocalIdx)
+        ) {
           if (!valTypesMatch(closureType, boxedClosureCell.valType)) {
             // Precise closure struct → externref cell field: extern.convert_any.
             coerceType(ctx, fctx, closureType, boxedClosureCell.valType);
@@ -2456,7 +2489,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // closure that captured the same cell. (The inner-scope `boxedForInit`
       // above made the initializer value/coerce box-aware; re-resolve here for
       // this outer scope.)
-      const boxedForInitStore = fctx.boxedCaptures?.get(name);
+      let boxedForInitStore = fctx.boxedCaptures?.get(name);
+      if (
+        boxedForInitStore &&
+        dropStaleBindingBox(fctx, name, boxedForInitStore, fctx.localMap.get(name) ?? localIdx)
+      ) {
+        boxedForInitStore = undefined;
+      }
       if (boxedForInitStore) {
         const boxedForInit = boxedForInitStore;
         // (#4368) The initializer itself may be what first captures `name`.
@@ -2517,7 +2556,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // ref.cast null (ref __ref_cell_T)` that traps at runtime ("illegal cast"),
         // because JS undefined is not a struct ref.
         const boxedNoInit = fctx.boxedCaptures?.get(name);
-        if (boxedNoInit) {
+        if (boxedNoInit && !dropStaleBindingBox(fctx, name, boxedNoInit, localIdx)) {
           const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedNoInit.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
           fctx.body.push({ op: "local.get", index: localIdx });

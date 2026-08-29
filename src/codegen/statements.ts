@@ -26,6 +26,7 @@ import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+import { nextModuleGlobalIdx } from "./registry/imports.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
@@ -86,8 +87,35 @@ export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
 /**
  * Mark the first instruction emitted for a statement with its source position.
  */
+let traceStmtGlobalSerial = 0;
 function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement, compile: () => void): void {
   const pos = getSourcePos(ctx, stmt);
+  if (process.env.JS2WASM_TRACE_LAST_STMT && pos) {
+    // Debug-only (env-gated): stream every statement boundary into an exported
+    // mutable f64 global so a host harness can read WHERE a standalone module
+    // trapped (file index * 1e6 + line). No imports — global writes don't
+    // shift function indices.
+    const anyCtx = ctx as unknown as { __traceStmtGlobalIdx?: number; __traceStmtFiles?: Map<string, number> };
+    if (anyCtx.__traceStmtGlobalIdx === undefined) {
+      const idx = nextModuleGlobalIdx(ctx);
+      ctx.mod.globals.push({
+        name: "__trace_last_stmt",
+        type: { kind: "f64" },
+        mutable: true,
+        init: [{ op: "f64.const", value: -1 }],
+      });
+      ctx.mod.exports.push({
+        name: `__trace_last_stmt_${traceStmtGlobalSerial++}`,
+        desc: { kind: "global", index: idx },
+      });
+      anyCtx.__traceStmtGlobalIdx = idx;
+      anyCtx.__traceStmtFiles = new Map();
+    }
+    const files = anyCtx.__traceStmtFiles!;
+    if (!files.has(pos.file)) files.set(pos.file, files.size);
+    fctx.body.push({ op: "f64.const", value: files.get(pos.file)! * 1e6 + pos.line });
+    fctx.body.push({ op: "global.set", index: anyCtx.__traceStmtGlobalIdx });
+  }
   const bodyLenBefore = fctx.body.length;
   compile();
   if (pos && fctx.body.length > bodyLenBefore) {
