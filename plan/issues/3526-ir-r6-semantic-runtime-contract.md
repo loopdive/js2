@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-28
+updated: 2026-08-29
 priority: critical
 horizon: xl
 complexity: XL
@@ -859,3 +859,169 @@ frontend deletion remains #3090/R10.
 - **Math slice widening:** `Math.random`, dynamic coercion, or variadic calls can
   make M1 impure. Define M1 by the exact deterministic table entries and reject
   unlisted shapes until their later family slice.
+
+## 2026-08-29 F1-S1 implementation plan — number-boundary intrinsics (family 1, slice 1)
+
+**Fable lane.** Grounded on `origin/main` merged at `fe3fe11e52`. This is the
+first slice of "Later measured family slices" item 1 (scalar/coercion/value
+carriers). It follows the A1/A2 shape: a behavior-neutral authority transfer
+with an exact ownership list, no provider-choice change, no Wasm delta on any
+clean lane. Opus implements against this plan; every cited line number must be
+re-located by symbol before editing.
+
+### Measured facts (verified on the grounded tree)
+
+- The family-1 beachhead already exists and is wired end-to-end:
+  `NUMERIC_COERCION_INTRINSIC_IDS = ["js.to_uint32"]`
+  (`src/ir/intrinsics.ts:51`), feature (`:98`), signature row (`:194`,
+  `F64_TO_U32_INTRINSIC_SIGNATURE`), provider `backend.js.to_uint32`
+  (`src/ir/runtime-manifest.ts:105`, `:324`), backend composite `"to-uint32"`
+  (`src/ir/intrinsic-support.ts:37` — the composite table also carries
+  `math.clz32/imul/max/min`). Copy this pattern, do not invent a parallel one.
+- The number boundary is the widest un-migrated coercion carrier, and its IR
+  authority is currently split across name-symbolic emission and resolver mode
+  proxies:
+  - **Box arm** — `coerceToExpectedExtern` (`src/ir/from-ast.ts:6929-6947`):
+    f64→externref emits `emitCall(irImportFuncRef("env", "__box_number"))`
+    gated on `cx.resolver?.hasHostNumberBox?.()`. Standalone has NO
+    `__box_number` (its boxing is the `$AnyValue` family) so the predicate is
+    false there and the arm falls through to the demote throw.
+  - **Unbox arm** — the declared-f64 return coercion
+    (`src/ir/from-ast.ts:8936-8948`): both lanes own `__unbox_number`
+    `(externref) -> f64`; the PROVIDER choice is inlined in from-ast —
+    `hasHostNumberBox()` → `irImportFuncRef("env","__unbox_number")`, else
+    `hasNativeNumberUnbox()` → `irRuntimeFuncRef("__unbox_number")` (the
+    native function `addUnionImports` registers under
+    `semanticProviders: "native-first"`, #4461), else return unconverted.
+  - The predicate implementations are one-line mode reads on the
+    integration resolver: `hasHostNumberBox(): !ctx.nativeStrings`
+    (`src/ir/integration.ts:4722`), `hasNativeNumberUnbox():
+    ctx.targetProfile.semanticProviders === "native-first"` (`:4749`). #2955
+    moved these OUT of from-ast precisely so the front-end reads no mode
+    flags; F1-S1 finishes the move by making the answer a frozen-manifest
+    fact instead of a live mode read.
+  - These two arms are the ONLY from-ast consumers of the two predicates
+    (measured: `from-ast.ts:6939`, `:8936-8938`; every other hit is doc
+    text). `hasHostBooleanBox` (boolean boxing) is a separate consumer family
+    and stays untouched.
+  - Name-symbolic joins elsewhere in IR:
+    `src/ir/compiler-timer-shim-preparation.ts:42,244-278` resolves
+    `__box_number`/`__unbox_number` by `ctx.funcMap.get(name)`;
+    `src/ir/async-prepare.ts:805-808` authenticates a carrier unbox by target
+    NAME `"__unbox_number"`. Both are in-scope consumers of the new records
+    (join by attached record, keep the name as diagnostic), IF the join is a
+    mechanical substitution; otherwise record them as follow-up rows — do not
+    widen.
+- `prepareIrRuntimeManifest` runs at `src/ir/integration.ts:752`, after
+  lowering and before prepared-component sealing (the M1 ordering), so
+  provider choice at freeze-time and intrinsic emission at lowering-time is
+  the established order. `IrInstrIntrinsic` (`src/ir/nodes.ts:867`) is the
+  node to reuse.
+- A2 already publishes `RuntimeBackendRequirement` including
+  `async.native.number-boundary` for async owners — the number boundary is
+  already a named backend concept; F1-S1 gives it a family-owned intrinsic
+  identity for the two synchronous coercion arms.
+
+### Contract
+
+Add to the closed vocabularies (canonical order, versioned signatures):
+
+- `js.number.box` — `(f64) -> externref`. Target policy: HOST-ONLY for this
+  slice. A native-first/standalone request is a preparation-time typed
+  `Unsupported` naming the intrinsic — exactly the population that demotes at
+  the box arm today, moved to a typed reason. The `$AnyValue` standalone
+  boxing family is explicitly NOT this intrinsic and NOT this slice.
+- `js.number.unbox` — `(externref) -> f64`. Target policy: host AND
+  native-first. Two providers, chosen at freeze exactly as the from-ast
+  inline pick does today:
+  - `host.js.number.unbox` → host capability record `env.__unbox_number`
+    `(externref) -> f64`;
+  - `native.js.number.unbox` → the union-native `__unbox_number` function
+    (symbolic runtime funcref; NO host capability).
+- `host.js.number.box` → host capability record `env.__box_number`
+  `(f64) -> externref`.
+
+The two host records are the FIRST non-async `HostCapability` records. Reuse
+A1's record machinery (`AsyncHostAdapter`-style exact frozen records,
+`hostCapabilityRecords` projection, canonical-record guards) — generalize the
+record type's name if needed, but do NOT create a second record table or a
+second resolver. Feature rows mirror 1:1 (the `js.to_uint32` pattern); the
+callable-backed provider attachment follows the seven self-host Math
+methods, not the five native-opcode ones.
+
+### Production changes (exact ownership)
+
+1. `src/ir/intrinsics.ts` — the two IDs, signatures, features.
+2. `src/ir/runtime-manifest.ts` — the three providers, target policies, host
+   capability records, freeze/verification rows.
+3. `src/ir/from-ast.ts` — the two arms emit `intrinsic` nodes (id, args, f64/
+   externref result, source location) with NO provider and NO predicate read.
+   Delete `hasHostNumberBox`/`hasNativeNumberUnbox` from the from-ast
+   resolver contract ONLY if the final trace confirms no other consumer;
+   otherwise leave the contract entries and delete just these two reads.
+4. `src/ir/intrinsic-support.ts` — provider attachment for the two IDs
+   (callable-backed pattern); the host arm attaches its exact capability
+   record, the native arm its runtime funcref.
+5. `src/ir/integration.ts` — provider selection at manifest preparation from
+   the target profile (the SAME `!ctx.nativeStrings` /
+   `semanticProviders === "native-first"` facts, now consulted exactly once,
+   at freeze); the resolver predicate implementations are deleted with their
+   contract entries or left for non-from-ast callers per the trace.
+6. Timer-shim and async-prepare joins per the measured-facts caveat.
+
+Do NOT touch: legacy codegen emission of `__box_number`/`__unbox_number`
+(`coerceType`, deno-api, generators-native-consumer, builtin-value-read — the
+direct-route substrate stays until R9/R10), `addUnionImports` registration,
+`__box_boolean`/`__box_symbol`, `__any_to_f64`/`__to_primitive`/equality
+(later F1 rows), the #2108 coercion-sites gate baseline, and the public
+`ImportIntent` projection.
+
+### Behavior-neutrality obligations (each is a test)
+
+1. **Host lane byte-parity**: fixtures whose IR bodies box (f64→externref
+   argument/return) and unbox (the #4461 `Map.get` return-hit shape) compile
+   byte-identically before/after — same `env` imports, same call sites.
+2. **Native-first unbox parity**: the standalone `Map.get` shape still
+   IR-emits and calls the union-native `__unbox_number`; runtime parity.
+3. **Standalone box parity**: every shape that demotes at the box arm today
+   still demotes — now as preparation-time typed `Unsupported` naming
+   `js.number.box`. The strict fixed-corpus census
+   (`pnpm run check:ir-fallbacks`) must be unchanged in every unintended
+   bucket; a reason-string migration inside the same bucket is acceptable,
+   a bucket count change is not.
+4. **Freeze discipline**: a post-freeze request for either intrinsic is an
+   invariant; provider substitution/duplication/cross-wiring on the
+   attachment rejects before materialization (A2's mutation matrix shape).
+5. **Canonicalization**: reversed traversal publishes byte-equivalent
+   manifest projections; the two new records appear in
+   `hostCapabilityRecords` only when a provider edge requests them —
+   async-only and Math-only manifests keep their current record sets.
+6. **Non-vacuity**: reverting only the from-ast arm changes (keeping the
+   schema) must fail the new tests (the intrinsic path, not the old inline
+   path, carries the fixtures).
+
+### Required pre-implementation verifications (record answers in the checkpoint note)
+
+- Full-repo trace of `hasHostNumberBox`/`hasNativeNumberUnbox` consumers
+  (expected: the two from-ast arms + integration implementations only).
+- The `gen.setReturn` boxing path (`from-ast.ts` ~2010, throws to legacy when
+  the box helper is unresolvable): confirm whether it routes through
+  `coerceToExpectedExtern` (then it is covered) or emits its own
+  `__box_number` join (then it is an explicit follow-up row, not silent
+  scope).
+- Who guarantees the union-native `__unbox_number` exists when a prepared
+  body calls it (materialization trigger for `irRuntimeFuncRef` resolution)
+  — the manifest records the choice; materialization must keep its current
+  owner.
+- Whether `IrInstrIntrinsic` lowering for callable-backed providers already
+  handles externref args/results (the Math seven are all-f64).
+
+### Validation
+
+Focused suite (`tests/issue-3526-ir-runtime-manifest.test.ts` ownership +
+a new `tests/issue-3526-number-boundary-intrinsics.test.ts`), the M1/A1/A2
+suites unchanged, `tests/issue-4106-ir-async-fetch-user.test.ts` and
+`tests/issue-4167-async-rejection-identity.test.ts` as controls; typecheck;
+`pnpm run check:ir-fallbacks` bare; ratchet chain bare + `LOC_GATE_BASE`
+CI-base simulation; hooks without bypass. Acceptance: all six neutrality
+obligations green, census unchanged, the two arms free of predicate reads.
