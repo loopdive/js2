@@ -755,6 +755,16 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     if (objArrayLikeArms) ctx.externGetIdxReserved = true;
   }
   const externSetIdx = ctx.funcMap.get("__extern_set")!;
+  // (#5148 cluster 4b/4c) `Object.assign`'s copy loop is a §20.1.2.1 step 5.c
+  // `Get(from, key)` + `Set(to, key, value, true)` pair, NOT a raw table copy:
+  // a source getter must RUN (and its abrupt completion propagate), and a
+  // refused write on a frozen / sealed / non-extensible / non-writable target
+  // must THROW. Both helpers are registered earlier in `ensureObjectRuntime`
+  // (`__extern_get` with the enumeration natives, `__extern_set_strict` right
+  // after `__reflect_set`), so their funcIdx is stable here. When either is
+  // absent the loop keeps its historical raw-read/lenient-write pair.
+  const assignGetIdx = ctx.funcMap.get("__extern_get");
+  const assignStrictSetIdx = ctx.funcMap.get("__extern_set_strict");
 
   // ── __object_values(externref obj) -> externref ──────────────────────────
   //
@@ -1219,20 +1229,44 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                               {
                                 op: "if",
                                 blockType: { kind: "empty" },
-                                then: [
-                                  // __extern_set(target, extern.convert_any(e.key),
-                                  //              extern.convert_any(e.value))
-                                  { op: "local.get", index: 0 },
-                                  { op: "local.get", index: 11 },
-                                  { op: "ref.as_non_null" },
-                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                                  { op: "extern.convert_any" },
-                                  { op: "local.get", index: 11 },
-                                  { op: "ref.as_non_null" },
-                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                                  { op: "extern.convert_any" },
-                                  { op: "call", funcIdx: externSetIdx },
-                                ],
+                                then:
+                                  assignGetIdx !== undefined && assignStrictSetIdx !== undefined
+                                    ? ([
+                                        // §20.1.2.1 step 5.c.ii:
+                                        //   propValue = ? Get(from, nextKey)
+                                        //   ? Set(to, nextKey, propValue, true)
+                                        // Reading through `__extern_get` runs a
+                                        // source ACCESSOR (and lets its throw
+                                        // escape); writing through
+                                        // `__extern_set_strict` turns a refused
+                                        // write into the spec's TypeError.
+                                        { op: "local.get", index: 0 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "local.get", index: 12 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "call", funcIdx: assignGetIdx },
+                                        { op: "call", funcIdx: assignStrictSetIdx },
+                                      ] satisfies Instr[])
+                                    : ([
+                                        // __extern_set(target, extern.convert_any(e.key),
+                                        //              extern.convert_any(e.value))
+                                        { op: "local.get", index: 0 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                                        { op: "extern.convert_any" },
+                                        { op: "call", funcIdx: externSetIdx },
+                                      ] satisfies Instr[]),
                               },
                             ],
                           },

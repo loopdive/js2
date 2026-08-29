@@ -898,8 +898,11 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const vecLocal = allocLocal(fctx, `__pm_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
       fctx.body.push({ op: "local.set", index: vecLocal });
-      compileArraySliceFromVecLocal(ctx, fctx, vecLocal, vecTypeIdx, arrTypeIdx, startLocal, endLocal);
-      fctx.body.push({ op: "extern.convert_any" }); // vec → externref
+      const sliced = compileArraySliceFromVecLocal(ctx, fctx, vecLocal, vecTypeIdx, arrTypeIdx, startLocal, endLocal);
+      // (#5145) The species-aware core already answers an externref (the
+      // constructed object, or the widened vec); only the raw-vec result needs
+      // the box.
+      if (sliced.kind !== "externref") fctx.body.push({ op: "extern.convert_any" }); // vec → externref
     },
     () => {
       // Non-array (genuine host) `this`: no compiled backing → return undefined.

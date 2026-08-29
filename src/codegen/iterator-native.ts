@@ -79,6 +79,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs as throwMsgExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { ensureLateImport } from "./expressions/late-imports.js";
 // (#3164) The GENSTATE step's f64 value read canonicalizes the UNDEF_F64
 // sentinel (a done/valueless yield) to the null externref — the standalone
 // canonical `undefined` — before boxing (same recipe as
@@ -461,6 +462,7 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
   // Must precede the `registerNative("__iterator", …)` below so the throw instrs
   // read a stable, already-registered funcIdx (no #2043 finalize shift).
   ensureNonIterableThrowDeps(ctx);
+  ensureNotAnObjectThrowDeps(ctx);
 
   const types = iterRuntimeTypes(ctx);
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
@@ -1507,8 +1509,21 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         { name: "userIter", type: { kind: "externref" } },
         // (#3119) `ret` scratch for the OBJ close arm — harmless when unused.
         ...(objDeps ? [{ name: "ret", type: { kind: "externref" as const } }] : []),
+        // (#5144) `closeres` scratch for the §7.4.9 step 9 result check.
+        ...(objDeps ? [{ name: "closeres", type: { kind: "externref" as const } }] : []),
       ];
-      iteratorReturnFn.body = buildIteratorReturnBody(types, deps?.callReturnIdx, objDeps, hostDeps, sgDeps);
+      const closeScratch = 4; // params(1) + recAny(1) + userIter(1) + ret(1)
+      const closeCheck = objDeps
+        ? () => notAnObjectThrowInstrs(ctx, closeScratch) ?? [{ op: "drop" } as Instr]
+        : undefined;
+      iteratorReturnFn.body = buildIteratorReturnBody(
+        types,
+        deps?.callReturnIdx,
+        objDeps,
+        hostDeps,
+        sgDeps,
+        closeCheck,
+      );
     }
   }
 
@@ -1609,8 +1624,16 @@ function buildIteratorReturnBody(
   objDeps: ObjCarrierDeps | undefined,
   hostDeps?: HostGenDeps,
   sgDeps?: SyncGenCarrierDeps,
+  /**
+   * (#5144 cluster C) §7.4.9 step 9 — the close-result "not an Object ⇒
+   * TypeError" refinement. A factory (never a shared array: the DCE in-place
+   * remap double-applies to an aliased instr object, #2169b). `undefined`
+   * keeps the legacy `drop`.
+   */
+  closeResultCheck?: () => Instr[],
 ): Instr[] {
   const { iterRecTypeIdx } = types;
+  const validateClose: Instr[] = closeResultCheck ? closeResultCheck() : [{ op: "drop" }];
   // (#3164) kind == GENSTATE → IteratorClose marks the sync-generator frame
   // COMPLETED (`state := doneState`): a subsequent `.next()` then answers
   // `{value: undefined, done: true}` (§27.5.3.3 — the generator moves to
@@ -1737,7 +1760,7 @@ function buildIteratorReturnBody(
             { op: "local.get", index: 2 },
             ...emptyArgsVecInstrs(types),
             { op: "call", funcIdx: objDeps.applyClosureIdx },
-            { op: "drop" },
+            ...validateClose,
             { op: "return" },
           ],
           else: [],
@@ -1847,6 +1870,73 @@ function nonIterableThrowInstrs(ctx: CodegenContext): Instr[] | undefined {
   if (ctorIdx === undefined) return undefined;
   const tagIdx = ensureExnTag(ctx);
   return [...throwMsgExternrefInstrs(ctx, NOT_ITERABLE_MSG), { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx }];
+}
+
+/** (#5144 cluster C) The §7.4.9 step 9 / §7.4.4 "not an Object" message. */
+const CLOSE_RESULT_MSG = "iterator result is not an object";
+
+/**
+ * (#5144 cluster C) FRESH instrs that CONSUME the externref on top of the stack
+ * and throw a catchable `TypeError` when it is not an ECMAScript Object —
+ * §7.4.9 step 9 (`IteratorClose`'s `innerResult`) and the same refinement for
+ * `IteratorNext`'s result.
+ *
+ * `scratch` is an externref local the caller guarantees is free. Returns
+ * `undefined` (caller keeps the legacy `drop`) in host mode or when the
+ * classifiers / TypeError constructor are not registered.
+ */
+function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (
+    ctorIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    typeofFunctionIdx === undefined ||
+    isTruthyIdx === undefined
+  ) {
+    return undefined;
+  }
+  const tagIdx = ensureExnTag(ctx);
+  return [
+    { op: "local.set", index: scratch },
+    { op: "local.get", index: scratch },
+    { op: "call", funcIdx: typeofObjectIdx },
+    { op: "local.get", index: scratch },
+    { op: "call", funcIdx: typeofFunctionIdx },
+    { op: "i32.or" },
+    // `typeof null` is "object", and every real Object is truthy — so the
+    // truthiness conjunct is what separates `null` from an ordinary object.
+    { op: "local.get", index: scratch },
+    { op: "call", funcIdx: isTruthyIdx },
+    { op: "i32.and" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...throwMsgExternrefInstrs(ctx, CLOSE_RESULT_MSG),
+        { op: "call", funcIdx: ctorIdx },
+        { op: "throw", tagIdx },
+      ],
+      else: [],
+    },
+  ];
+}
+
+/**
+ * (#5144) Eagerly register everything `notAnObjectThrowInstrs` reads, so both
+ * the eager and the finalize build sites only READ already-present symbols.
+ */
+function ensureNotAnObjectThrowDeps(ctx: CodegenContext): void {
+  if (!(ctx.standalone || ctx.wasi)) return;
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  addStringConstantGlobal(ctx, CLOSE_RESULT_MSG);
+  ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
 }
 
 function buildIteratorBody(
