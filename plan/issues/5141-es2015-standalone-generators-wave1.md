@@ -14,6 +14,9 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
+  # 2026-08-28: wave-1 growth allowance — cluster-B try-scaffold reshape,
+  # the [Yield] grammar-parameter predicate, and the §27.3.4
+  # non-constructor-generator guard.
   - src/runtime.ts
   - src/codegen/generators-native.ts
   - src/codegen/generators-native-consumer.ts
@@ -27,7 +30,10 @@ loc-budget-allow:
   - src/ir/try-table.ts
 func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::isStaticGeneratorFunctionTarget
   - src/codegen/generators-native.ts::ensureNativeGeneratorResumeFunction
+  - src/compiler/early-errors/predicates.ts::isInYieldParamContext
+  - src/compiler/early-errors/module-rules.ts::checkReservedIdentifiers
 ---
 
 # #5141 — ES2015 standalone: generators conformance wave 1
@@ -235,19 +241,18 @@ Regenerate the list; do not trust this table's error text after step 1.
 
 ## Results (wave 1, 2026-08-28)
 
-Measured on this branch's base (`7e2d98bd`) with
-`npx tsx .tmp/run-standalone.mts --list …`, Node 22.22.2.
+Measured on this branch's base (`f30c595c`) with
+`npx tsx .tmp/run-standalone.mts --list …`, Node 22.
 
 | List | Before | After |
 |------|--------|-------|
 | `wp-generators-current-fails.txt` (166) | 0 pass / 166 fail | **8 pass** / 158 fail |
 | `wp-generators-passing-spotcheck.txt` (40) | 15 pass / 25 fail | **39 pass** / 1 fail |
 
-The spotcheck's remaining failure is `yield-weak-binding.js`, a **negative
-parse** test that times out at compile in this container **identically with and
-without this change** (verified by reverting `src/compiler/early-errors/` and
-re-running the single file) — a missing early error plus a slow-compile
-artifact, not a regression here.
+The spotcheck's remaining failure is `yield-weak-binding.js`, which needs the
+quickjs eval provider (`JS2WASM_EVAL_ENGINE=quickjs`, artifact not built in this
+container) — an environment gap, identical before and after this change, and the
+same class as the four cluster-H tests the acceptance criteria exclude.
 
 The headline number is the spotcheck: cluster B was a live head regression that
 broke EVERY native-generator first resume on Node 22, well beyond this package.
@@ -279,37 +284,53 @@ independent second failures, exactly as Plan step 0 predicted.
 
 ### Clusters skipped (with the reason, for wave 2)
 
-- **A1 `yield*` delegation (38).** Widening `isGenericIterableDelegate` to
-  admit-by-default was tried and REVERTED: it converts 8 CEs into wrong-answer
-  FAILs and leaves 30 CEs untouched, because (a) most of the `star-rhs-iter-*`
-  family puts `yield*` inside a try-region, which still hits the #3050 hard bail
-  at line ~843, and (b) the existing iterable driver **rebuilds** the result as
-  `{value, done:0}` instead of re-yielding the delegate's own result object, so
-  `star-iterable.js` sees `done === false` where the spec requires the inner
-  object's `done === undefined`. Wave 2 must fix the driver's result passthrough
-  and the throw/return forwarding BEFORE touching the gate. Silent wrong codegen
-  is worse than the clean #680 refusal.
+- **A1 `yield*` delegation (~35 of the 58 remaining #680 compile errors,
+  the `star-rhs-iter-*` family).** NOT attempted in this pass. Widening the
+  admission gate alone cannot land it: most of that family puts `yield*` inside
+  a try-region, which hits the #3050 hard bail in `compileState`
+  (`generators-native.ts` ~L843, `if (unwind.some((e) => e.kind !== "replay"))
+  return fail()`), and the delegation protocol itself (`.throw()`/`.return()`
+  forwarding, inner-result passthrough per §27.5.3.7) is not implemented. Wave 2
+  must build the driver first and open the gate last — a gate opened early turns
+  a clean #680 refusal into silent wrong codegen.
 - **F1/F2/F3 generator object model (~38).** Needs a per-function `.prototype`
   slot and a real `%GeneratorFunction%` object; `.prototype` reads currently
   return the shared `%GeneratorPrototype%` intrinsic. Note for wave 2:
   `Object.getPrototypeOf(function*(){}).constructor` already resolves today, so
   the work is descriptor/identity correctness, not a from-scratch install.
-- **G — fn-name binding semantics (5).** NOT generator-specific: the plain
-  `language/expressions/function/named-strict-error-reassign-fn-name-in-body.js`
-  and `scope-name-var-open-strict.js` fail identically. Fix belongs with
-  #2037/#1049 for all named function expressions.
-- **C — dstr `[[] = init]` param rehydration (5)** and **E — rest-param
-  `__call_fn_*` arity (3)**: generator-specific (`function/dstr/ary-ptrn-elem-
-  ary-empty-init.js` passes), but inside the #3386 frame seam; not attempted.
+- **G — fn-name binding semantics (5).** Named-function-expression name binding
+  (strict reassignment → TypeError, sloppy → silently immutable). Not
+  generator-specific; belongs with #2037/#1049 for all named function
+  expressions.
+- **C — dstr param rehydration / GetIterator-failure (≈11)** and **E —
+  rest-param `__call_fn_*` arity (3)**: inside the #3386 frame seam; not
+  attempted. The `iter-get-err-array-prototype` quartet in C is really
+  general iterator-protocol fidelity (a deleted
+  `Array.prototype[Symbol.iterator]` must make destructuring throw), not a
+  generator-local fix.
+- **§27.5.3 "executing"-state TypeError (3, the `from-state-executing`
+  trio).** Needs a re-entrancy flag in the generator frame set on resume entry
+  and cleared at every return point; the state struct has no spare field and
+  the return points are scattered across the trampoline arms. Deferred rather
+  than done half-way.
 - **H — quickjs env (4)** and the 5 dynamic-`GeneratorFunction` tests: excluded
   by the acceptance criteria.
 
-Gates run bare and green: `check-loc-budget`, `check-func-budget`,
-`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`. The
-`loc-budget-allow` / `func-budget-allow` lists above were extended for the
-actual touched paths. Scoped vitest: all generator equivalence/issue suites
-green (73 tests). `tests/issue-3632-eval-early-errors.test.ts` has 2 failures
-that reproduce identically on clean HEAD (runtime-eval provider, pre-existing).
+Gates run bare (never piped) and green: `check-loc-budget`,
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`. The `loc-budget-allow` / `func-budget-allow` lists above
+were extended for the actual touched paths and functions.
+
+Scoped vitest: the eight generator equivalence suites plus
+`tests/issue-4768-generator-call-boundary.test.ts` and the three early-error
+suites are green apart from failures verified pre-existing on clean `HEAD` by
+reverting the five touched files and re-running the same file: one in
+`tests/equivalence/yield-as-expression.test.ts` (a TS assignability error in
+the fixture) and two in `tests/issue-3632-eval-early-errors.test.ts`
+(runtime-eval provider). A full `tests/equivalence` run OOMs in this container
+(known, CLAUDE.md); the three other failures it reported before dying
+(`arguments-nested-and-loops`, `logical-conditional-identity` ×3) were checked
+the same way and are likewise pre-existing.
 
 ## References
 

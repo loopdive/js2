@@ -31,6 +31,7 @@ import {
   isStringType,
   isStringWrapperType,
 } from "../checker/type-mapper.js";
+import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
@@ -255,10 +256,10 @@ export function tryDynamicReceiverRuntimeDispatchReads(
   // length-tracking-N's `for (ta of tas) … ta.byteLength`). The compile-time-typeIdx
   // `$__ta_view` accessor arm can't fire (the local is externref), and the generic
   // dynamic reader THROWS on `.byteLength`. Runtime `ref.test` dispatch instead.
-  // Gated to a dynamic receiver + at least one registered `$__ta_view` type
+  // Gated to a dynamic receiver + whole-module dynamic/static view demand
   // (byte-inert otherwise); a static ArrayBuffer/DataView/TA `.byteLength` keeps its
   // own concrete arm below (its receiver type is not `any`/union).
-  if (propName === "byteLength" && noJsHost(ctx) && ctx.taDynViewTypeIdx >= 0) {
+  if (propName === "byteLength" && noJsHost(ctx) && (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView)) {
     const isDynamicReceiver = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion();
     if (isDynamicReceiver) {
       const r = emitTaViewDynamicByteLength(ctx, fctx, () => compileExpression(ctx, fctx, expr.expression));
@@ -785,6 +786,26 @@ export function tryBufferViewAttributeReads(
     if (tvIdx !== undefined) {
       const r = emitTaViewAccessor(ctx, fctx, tvIdx, propName, expr.expression, (e, h) =>
         compileExpression(ctx, fctx, e, h),
+      );
+      if (r) return r;
+    }
+    if (
+      (propName === "byteLength" || propName === "BYTES_PER_ELEMENT") &&
+      noJsHost(ctx) &&
+      (ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView) &&
+      // (#5148 checkpoint) Dynamic receivers only — mirrors the sibling
+      // `.byteLength` gate above. A STATIC ArrayBuffer/DataView receiver must
+      // keep its concrete arm below (the DataView one throws the §25.3.4
+      // detached TypeError; the buffer one clamps the -1 detach marker), and
+      // this runtime-ref.test arm can classify neither the `$__dv_window`
+      // wrapper nor detachment.
+      ((objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || objType.isUnion())
+    ) {
+      const r = emitTaViewDynamicByteLength(
+        ctx,
+        fctx,
+        () => compileExpression(ctx, fctx, expr.expression),
+        propName === "BYTES_PER_ELEMENT",
       );
       if (r) return r;
     }
@@ -2513,77 +2534,110 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
     );
     addStringConstantGlobal(ctx, "length");
   }
+  // A configurable function `length` may have been deleted and recreated as
+  // an ordinary closure-bag property. On a metadata miss, the closure arm must
+  // consult that bag before falling back to Function.prototype.length (0).
+  // The dynamic-key path already routes through this helper; keep the direct
+  // `fn.length` spelling observably identical.
+  if (closureRootIdx !== undefined) {
+    ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
   const metaLengthToI32 = wantMeta ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
+  const ownLengthToI32 =
+    closureRootIdx !== undefined ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
   flushLateImportShifts(ctx, fctx);
 
   const lenFn = ctx.funcMap.get("__extern_length");
   const bfnGetMetaFn = ctx.funcMap.get("__builtinfn_get_meta");
+  const externGetFn = ctx.funcMap.get("__extern_get");
+  const isUndefinedFn = ctx.funcMap.get("__extern_is_undefined");
   const genericLength = (recvExternLocal: number): Instr[] =>
     lenFn !== undefined
       ? [{ op: "local.get", index: recvExternLocal }, { op: "call", funcIdx: lenFn }, { op: "i32.trunc_sat_f64_s" }]
       : [{ op: "i32.const", value: 0 }];
   const guardedLength = (recvExternLocal: number): Instr[] => {
+    let legacyLength: Instr[];
     if (bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
-      return genericLength(recvExternLocal);
+      legacyLength = genericLength(recvExternLocal);
+    } else {
+      const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
+      const ownLocal = allocLocal(fctx, `__fn_len_own_${fctx.locals.length}`, { kind: "externref" });
+      const closureOwnLength =
+        externGetFn !== undefined && isUndefinedFn !== undefined && ownLengthToI32 !== undefined
+          ? [
+              { op: "local.get", index: recvExternLocal } as Instr,
+              ...stringConstantExternrefInstrs(ctx, "length"),
+              { op: "call", funcIdx: externGetFn } as Instr,
+              { op: "local.tee", index: ownLocal } as Instr,
+              { op: "call", funcIdx: isUndefinedFn } as Instr,
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: 0 }],
+                else: [{ op: "local.get", index: ownLocal }, ...ownLengthToI32],
+              } as Instr,
+            ]
+          : ([{ op: "i32.const", value: 0 }] satisfies Instr[]);
+      // (#2175 S3b-3, defect B) The metadata consult is asked FIRST, for ANY
+      // receiver, instead of only for a closure-root subtype.
+      //
+      // WHY. `__builtinfn_get_meta` answers `length` for more shapes than
+      // closures: `fillTaCtorGetMetaArm` (ta-ctor-meta.ts) splices a `$__ta_ctor`
+      // arm returning 3 per §23.2.5.1. Gating the consult on `ref.test
+      // <closureRoot>` made that arm unreachable from this path, so a reified
+      // TypedArray constructor fell through to `__extern_length`, which has no
+      // notion of a ctor and answered **0**. Measured on `origin/main` @
+      // `9e17d34f3`, standalone: `Int8Array.length` → 0, while `Int8Array["length"]`
+      // → 3 and `gOPD(Int8Array,"length").value` → 3 — i.e. only the
+      // property-access lowering was wrong, which is what the nine
+      // `built-ins/TypedArrayConstructors/<View>/length.js` files assert.
+      //
+      // WHY NOT a `ref.test $__ta_ctor` arm alongside the closure one: this
+      // function runs during BODY compilation, and `$__ta_ctor` is registered
+      // lazily when a TA constructor is first reified. Function compilation order
+      // is not source order, so `ctx.taCtorTypeIdx` can still be unset here even
+      // for a program that does reify one — the same ordering trap that made the
+      // V2-S3b-1 seeder silently skip RegExp. Asking the meta native has no such
+      // dependency: it is a call, resolved at finalize.
+      //
+      // Legacy behaviour is preserved exactly on the miss path: a receiver with no
+      // metadata answers `0` if it is a closure (a plain user closure's arity is
+      // not statically tracked here — the #2580 Cluster-A value) and otherwise
+      // falls to `__extern_length`, which is what each did before.
+      legacyLength = [
+        { op: "local.get", index: recvExternLocal },
+        ...stringConstantExternrefInstrs(ctx, "length"),
+        { op: "call", funcIdx: bfnGetMetaFn },
+        { op: "local.tee", index: metaLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          // Miss path, byte-for-byte the previous semantics: a CLOSURE with no
+          // metadata answers 0 (a plain user closure's arity is not tracked here —
+          // the #2580 Cluster-A value); anything else falls to `__extern_length`.
+          // With no closure root in the module there is no closure to test, so the
+          // generic fallback stands alone.
+          then:
+            closureRootIdx === undefined
+              ? genericLength(recvExternLocal)
+              : [
+                  { op: "local.get", index: recvExternLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: closureRootIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: closureOwnLength,
+                    else: genericLength(recvExternLocal),
+                  },
+                ],
+          else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
+        },
+      ];
     }
-    const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
-    // (#2175 S3b-3, defect B) The metadata consult is asked FIRST, for ANY
-    // receiver, instead of only for a closure-root subtype.
-    //
-    // WHY. `__builtinfn_get_meta` answers `length` for more shapes than
-    // closures: `fillTaCtorGetMetaArm` (ta-ctor-meta.ts) splices a `$__ta_ctor`
-    // arm returning 3 per §23.2.5.1. Gating the consult on `ref.test
-    // <closureRoot>` made that arm unreachable from this path, so a reified
-    // TypedArray constructor fell through to `__extern_length`, which has no
-    // notion of a ctor and answered **0**. Measured on `origin/main` @
-    // `9e17d34f3`, standalone: `Int8Array.length` → 0, while `Int8Array["length"]`
-    // → 3 and `gOPD(Int8Array,"length").value` → 3 — i.e. only the
-    // property-access lowering was wrong, which is what the nine
-    // `built-ins/TypedArrayConstructors/<View>/length.js` files assert.
-    //
-    // WHY NOT a `ref.test $__ta_ctor` arm alongside the closure one: this
-    // function runs during BODY compilation, and `$__ta_ctor` is registered
-    // lazily when a TA constructor is first reified. Function compilation order
-    // is not source order, so `ctx.taCtorTypeIdx` can still be unset here even
-    // for a program that does reify one — the same ordering trap that made the
-    // V2-S3b-1 seeder silently skip RegExp. Asking the meta native has no such
-    // dependency: it is a call, resolved at finalize.
-    //
-    // Legacy behaviour is preserved exactly on the miss path: a receiver with no
-    // metadata answers `0` if it is a closure (a plain user closure's arity is
-    // not statically tracked here — the #2580 Cluster-A value) and otherwise
-    // falls to `__extern_length`, which is what each did before.
-    return [
-      { op: "local.get", index: recvExternLocal },
-      ...stringConstantExternrefInstrs(ctx, "length"),
-      { op: "call", funcIdx: bfnGetMetaFn },
-      { op: "local.tee", index: metaLocal },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        // Miss path, byte-for-byte the previous semantics: a CLOSURE with no
-        // metadata answers 0 (a plain user closure's arity is not tracked here —
-        // the #2580 Cluster-A value); anything else falls to `__extern_length`.
-        // With no closure root in the module there is no closure to test, so the
-        // generic fallback stands alone.
-        then:
-          closureRootIdx === undefined
-            ? genericLength(recvExternLocal)
-            : [
-                { op: "local.get", index: recvExternLocal },
-                { op: "any.convert_extern" },
-                { op: "ref.test", typeIdx: closureRootIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: [{ op: "i32.const", value: 0 }],
-                  else: genericLength(recvExternLocal),
-                },
-              ],
-        else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
-      },
-    ];
+    return legacyLength;
   };
 
   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
@@ -2689,6 +2743,60 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
         : undefined;
     return memberName === fieldName && isAnonymousFunctionDefinition(member.initializer);
   });
+}
+
+/**
+ * (#5149 cluster B) Does SOME object literal in this file define `recv.<key>`
+ * with a COVERED function initializer — `{ xId: (0, function () {}) }` — rather
+ * than an anonymous function definition?
+ *
+ * §10.2.9 NamedEvaluation only names an ANONYMOUS function definition after the
+ * property key. A comma expression, a call, or any other cover grammar is not
+ * one, so those keep `name === ""`. The static `.name` fold for `obj.key.name`
+ * has no receiver identity to consult, so it asks the weaker question — is
+ * there ANY literal in this file whose `key` is covered — and declines the fold
+ * when there is. Declining costs only the fold: the read falls through to the
+ * ordinary property path, which answers from the closure's own `$fnmeta`.
+ *
+ * Syntactic on purpose: "which expression initialized this key" is a question
+ * about source shape, not about a type, so no type query belongs here.
+ */
+function propertyKeyIsCoveredFunctionDefinition(access: ts.PropertyAccessExpression): boolean {
+  const key = access.name.text;
+  const file = access.getSourceFile?.();
+  if (file === undefined) return false;
+  let covered = false;
+  const visit = (node: ts.Node): void => {
+    if (covered) return;
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const prop of node.properties) {
+        if (!ts.isPropertyAssignment(prop)) continue;
+        const propKey = prop.name;
+        const text =
+          ts.isIdentifier(propKey) || ts.isStringLiteral(propKey) || ts.isNumericLiteral(propKey)
+            ? propKey.text
+            : undefined;
+        if (text !== key) continue;
+        let init: ts.Expression = prop.initializer;
+        while (ts.isParenthesizedExpression(init)) init = init.expression;
+        // A comma expression is THE cover grammar these tests use; a call or a
+        // conditional is equally not a function DEFINITION. Only flag shapes
+        // that still produce a function value, so an ordinary data property of
+        // the same name in an unrelated literal cannot suppress the fold.
+        if (
+          ts.isBinaryExpression(init) &&
+          init.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+          isAnonymousFunctionDefinition(init.right)
+        ) {
+          covered = true;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return covered;
 }
 
 /** Emit a boxed read for standalone `IArguments.length`. */
@@ -2943,7 +3051,16 @@ export function tryLengthAndNameReads(
           }
         }
       }
-      if (hasFuncSig && !objType.isUnion()) {
+      // (#5149 cluster B) A SYMBOL-keyed member's type symbol carries
+      // TypeScript's internal placeholder name `__computed`, which this fold
+      // published verbatim: `({ [Symbol('test262')]() {} })[s].name` answered
+      // `"__computed"` — a compiler-internal identifier as an observable value,
+      // worse than the miss it replaced. There is no static answer here (the
+      // key is a runtime symbol), so fall through to the ordinary property read
+      // and let the closure's own `$fnmeta` name it.
+      if (hasFuncSig && objType.getSymbol()?.name === "__computed") {
+        // no static fold — the runtime read below answers it
+      } else if (hasFuncSig && !objType.isUnion()) {
         // Resolve the function name from the type symbol or the expression.
         //
         // UNION-typed receivers are excluded in BOTH lanes: a union (e.g.
@@ -3000,6 +3117,17 @@ export function tryLengthAndNameReads(
             funcName = expr.expression.text;
           } else if (ts.isPropertyAccessExpression(expr.expression)) {
             // Property access: obj.method.name => infer "method"
+            //
+            // (#5149 cluster B) …but only when the property was defined by an
+            // ANONYMOUS function definition. §10.2.9 NamedEvaluation does not
+            // reach a COVERED initializer: `o = { xId: (0, function () {}) }`
+            // leaves `o.xId.name` as `""`, and folding the key text here made
+            // it read `'xId'`. The identifier lane above already carries this
+            // #1049 rule; this is the same rule for the property lane.
+            if (propertyKeyIsCoveredFunctionDefinition(expr.expression)) {
+              addStringConstantGlobal(ctx, "");
+              return compileStringLiteral(ctx, fctx, "");
+            }
             funcName = expr.expression.name.text;
           } else if (
             ts.isElementAccessExpression(expr.expression) &&
@@ -4244,7 +4372,7 @@ export function finalizeStructAndDynamicMemberGet(
         const fields = ctx.structFields.get(typeName);
         if (structTypeIdx !== undefined && fields) {
           const typeDef = ctx.mod.types[structTypeIdx];
-          if (typeDef?.kind === "struct") {
+          if (typeDef?.kind === "struct" && structGrowsWithMetadata(typeDef, fields)) {
             // A nominal parent's fields are the physical prefix of every
             // existing child. Growing that prefix now would put the new field
             // after each child's own fields and make the explicit WasmGC
@@ -4286,8 +4414,7 @@ export function finalizeStructAndDynamicMemberGet(
                   ? { kind: "ref_null" as const, typeIdx: (propWasmType as { typeIdx: number }).typeIdx }
                   : propWasmType;
               const newField: FieldDef = { name: propName, type: fieldType, mutable: true };
-              fields.push(newField);
-              // fields === typeDef.fields (same array ref from structFields map)
+              fields.push(newField); // fields === typeDef.fields, enforced above (#5180)
               patchStructNewForAddedField(ctx, fctx, structTypeIdx, propWasmType);
               const fieldIdx = fields.length - 1;
               if (fieldIdx !== -1) {

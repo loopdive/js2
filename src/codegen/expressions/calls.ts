@@ -90,7 +90,11 @@ import {
 } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { tryBorrowedPrototypeNullishThisThrow } from "../builtin-prototype-brand.js"; // (#4076)
+import {
+  tryBorrowedPrototypeBrandThisThrow,
+  tryBorrowedPrototypeNullishThisThrow,
+} from "../builtin-prototype-brand.js"; // (#4076, #5143)
+import { tryCompilePromiseCallWithoutNew } from "../promise-newtarget.js"; // (#5143)
 import {
   appendDynamicCandidateArgcSetup,
   appendExternResultArgcReset,
@@ -279,10 +283,12 @@ import {
   brandExternMethodResult,
   coerceType,
   compileExpression,
+  resolveEnclosingClassName,
   resolveThisStructName,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
+import { compileSuperCall } from "../class-bodies.js"; // (#5153 F) nested `super(...)`
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
@@ -306,7 +312,7 @@ import {
 // (#4119) The §20.1.3.6 classifiers — the #2501 COMPILE-TIME tag fold and the
 // runtime reflective one — now live together in their own subsystem module
 // rather than in this driver.
-import { resolveObjectToStringTag } from "../object-proto-tostring.js";
+import { ensureObjectProtoToStringRuntimeHelper, resolveObjectToStringTag } from "../object-proto-tostring.js";
 import {
   OBJECT_PROTO_TOSTRING_CLASSIFY_FN,
   emitClassifierSelect,
@@ -345,6 +351,7 @@ import {
   emitBoolToString,
   emitBorrowedStringReceiverToString,
   isStaticUndefinedArg,
+  tryThrowOnBigIntOrSymbolArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
@@ -464,7 +471,7 @@ import { resolveStructName } from "./misc.js";
 import {
   tryCompileDateCallWithoutNew,
   tryCompileErrorCtorCallWithoutNew,
-  tryCompileWeakSetCallWithoutNew,
+  tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
@@ -1286,7 +1293,10 @@ function tryEmitNativeProtoReflectiveCall(
   // `arr.getClass = Object.prototype.toString; arr.getClass()` never reaches a
   // `.call` at all. Neither gives the fold a receiver to read.
   if (ifaceName === "Object" && member === "toString" && ts.isPropertyAccessExpression(unwrapTransparent(receiver))) {
-    if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
+    // The lower direct-call path now owns BOTH statically-known tags and the
+    // runtime any/externref classifier. Never divert this syntactic form through
+    // the generic reflective Function#call adapter, which erases native view RTT.
+    return undefined;
   }
 
   let brand = nativeProtoBrandForInterface(ctx, ifaceName);
@@ -4921,7 +4931,21 @@ export function tryEmitInlineDynamicCall(
     const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Constructor cannot be invoked without 'new'", {
       flush: fctx,
     });
-    const int8CarrierThrow = buildInt8ArrayCarrierMatch(ctx, anyLocal, throwInstrs);
+    // (#5188) The carrier match nests its `onMatch` under an `empty`-typed
+    // `if`, while the `$__ta_ctor` arm below uses the SAME sequence as the
+    // `then` of a `val externref` `if`. Handing ONE `Instr[]` object to both
+    // makes that array reachable from two incompatible branch contexts, and
+    // the stack-balance repair pass then fails the whole compile closed rather
+    // than mutate a shared body ("reaches an instruction array from
+    // incompatible control-flow ... contexts", #1058). That refusal hit EVERY
+    // test262 file including `testTypedArray.js` — 534 of the 540 on the
+    // #5188 target list were compile errors for this one aliased array — so
+    // give each consumer its own copy.
+    const int8CarrierThrow = buildInt8ArrayCarrierMatch(
+      ctx,
+      anyLocal,
+      throwInstrs.map((instr) => ({ ...instr })),
+    );
     if (ctx.taCtorTypeIdx >= 0) {
       dispatch = [
         { op: "local.get", index: anyLocal },
@@ -5112,8 +5136,8 @@ export function compileStandalonePromiseThenCallback(
   // function value with no compile-time ClosureInfo — captured promise
   // resolvers, reassigned `$DONE`): the compiled externref rides the caps and
   // the shared `__then_dyn_*` wrapper applies it at settle time. Left off for
-  // `.finally` (no dynamic wrapper there yet), which keeps its old
-  // treated-as-absent behaviour.
+  // `.finally` opts in as well; its dedicated dynamic wrapper invokes the
+  // handler with zero arguments and preserves the original settlement.
   opts?: { allowDynamic?: boolean },
 ): StandalonePromiseThenCallback | null {
   if (arg === undefined || isNullishPromiseThenCallbackArg(arg)) return null;
@@ -5670,7 +5694,9 @@ export function emitStandaloneFinallyWithNativeFallback(
     }
     fctx.body.push({ op: "local.set", index: recvLocal });
 
-    const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, onFinallyArg, liveBuffers);
+    const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, onFinallyArg, liveBuffers, {
+      allowDynamic: true,
+    });
 
     const outerBody = fctx.body;
     const nativeArm: Instr[] = [];
@@ -5872,6 +5898,13 @@ export function compileFromCharCodeFamily(
     const savedBody = fctx.body;
     fctx.body = buf;
     try {
+      // (#5152) §22.1.2.2 step 2a / §22.1.2.1 step 2a apply ToNumber to every
+      // argument, and §7.1.4 ToNumber(Symbol) throws a TypeError. Without this
+      // a statically Symbol-typed arg silently coerced its internal id.
+      if (noJsHost(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
+        parts.push(buf);
+        continue;
+      }
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
       // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
       // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
@@ -6306,6 +6339,39 @@ function tryIteratorStaticsIntrinsicCall(
  */
 function canDeferStandaloneDynamicImport(fctx: FunctionContext): boolean {
   return fctx.deferredDynamicImportTrap === true;
+}
+
+/** Private, opt-in proxy brand probe used by the Deno app bridge. Ordinary
+ * source never sees this name; the JavaScript fallback returns false, while a
+ * standalone build can test the concrete `$Proxy` RTT without invoking any
+ * user-visible proxy trap. */
+function tryRuntimeIsProxyIntrinsic(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (
+    (!ctx.standalone && !ctx.wasi) ||
+    !ts.isIdentifier(expr.expression) ||
+    expr.expression.text !== "__runtime_is_proxy" ||
+    expr.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  const value = allocLocal(fctx, `__runtime_is_proxy_value_${fctx.locals.length}`, externref);
+  const type = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
+  if (type && type.kind !== "externref") coerceType(ctx, fctx, type, externref);
+  fctx.body.push({ op: "local.set", index: value });
+  emitRuntimeEvalBoundaryCarrierPeel(ctx, fctx, value, externref);
+  const runtime = ensureObjectRuntime(ctx);
+  fctx.body.push(
+    { op: "local.get", index: value },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
+  );
+  return { kind: "i32" };
 }
 
 /**
@@ -6854,7 +6920,11 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
             else: [{ op: "local.get", index: valueLocal }],
           },
         ],
-        else: [{ op: "local.get", index: valueLocal }],
+        // A non-marker reference may still have crossed an erased `any` slot
+        // in a `$AnyValue` tag-6 carrier. Return the peeled candidate so the
+        // interpreter can recognize a freshly-created raw closure before it
+        // wraps that callback for a native HOF.
+        else: [{ op: "local.get", index: candidateLocal }],
       },
     );
     return externref;
@@ -6940,6 +7010,10 @@ function compileCallExpression(
   }
 
   {
+    const r = tryRuntimeIsProxyIntrinsic(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+  {
     const r = tryRuntimeEvalApplyCallableIntrinsic(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
@@ -6992,9 +7066,17 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
-  // (#4732) `WeakSet(...)` has no [[Call]] — §23.4.1.1 step 1 requires `new`.
+  // (#4732/#5151) `Map(...)`/`Set(...)`/`WeakMap(...)`/`WeakSet(...)` have no
+  // [[Call]] — §24.1.1.1 step 1 and siblings require `new`.
   {
-    const r = tryCompileWeakSetCallWithoutNew(ctx, fctx, expr);
+    const r = tryCompileCollectionCtorCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#5143) `Promise(...)` / `Promise.call(...)` — §27.2.3.1 step 1 requires
+  // `new`. Standalone-carrier gated inside the helper.
+  {
+    const r = tryCompilePromiseCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -7458,6 +7540,25 @@ function compileCallExpression(
     return compileSuperMethodCall(ctx, fctx, expr);
   }
 
+  // (#5153 F) A NESTED `super(...)` — one that is not a top-level statement of
+  // the constructor body, e.g. inside a `try`. `class-bodies.ts` intercepts
+  // only the statement form (its loop matches `ExpressionStatement` →
+  // `CallExpression` → `SuperKeyword`), so this shape reached the generic
+  // callee dispatch and emitted NOTHING: the parent constructor never ran and
+  // an abrupt completion inside it could not be caught
+  // (`call-construct-error.js`). Route it to the same lowering.
+  //
+  // Own-field initializers are deliberately NOT re-run here — the statement
+  // site owns that sequencing, and this arm only replaces a no-op.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor === true) {
+    const enclosingClass = resolveEnclosingClassName(fctx);
+    const thisLocal = fctx.localMap.get("this");
+    if (enclosingClass !== undefined && thisLocal !== undefined) {
+      compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+      return VOID_RESULT;
+    }
+  }
+
   // (#1467) AggregateError(errors, message, options?) — called WITHOUT `new`.
   // Per ES §20.5.7.1, AggregateError called as a function must construct
   // normally (same effective semantics as `new`). Mirror the codegen in
@@ -7703,6 +7804,12 @@ function compileCallExpression(
       const compileOneArg = (a: ts.Expression) => compileExpression(ctx, fctx, a);
       const invalidThis = tryBorrowedPrototypeNullishThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
       if (invalidThis !== undefined) return invalidThis;
+
+      // (#5143) …and the other statically-decidable bad receiver: a builtin
+      // PROTOTYPE object handed to a brand-checked method
+      // (`Promise.prototype.then.call(Promise.prototype, …)`).
+      const brandThis = tryBorrowedPrototypeBrandThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
+      if (brandThis !== undefined) return brandThis;
 
       // (#4483) `Function.call(thisArg, …body)` / `Function.apply(thisArg, [body])`
       // are reflective spellings of the Function CONSTRUCTOR, whose [[Call]]
@@ -8568,6 +8675,26 @@ function compileCallExpression(
               // in non-nativeStrings mode, so use the shared helper).
               for (const instr of stringConstantExternrefInstrs(ctx, tagStr)) fctx.body.push(instr);
               return { kind: "externref" };
+            }
+            // An `any`-typed receiver has no static tag to fold. Route it through
+            // the same WasmGC runtime classifier as the reflective member body,
+            // but call the classifier directly: the generic Function#call
+            // adapter boxes the native ArrayBuffer/DataView/TA carrier and loses
+            // the RTT needed to distinguish it from an ordinary Array/Object.
+            if (ctx.standalone || ctx.wasi) {
+              const helperReady = ensureObjectProtoToStringRuntimeHelper(ctx);
+              if (helperReady !== undefined) {
+                fctx.body.push({ op: "ref.null.extern" }); // unused closure-self slot
+                const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+                if (valueType && valueType.kind !== "externref") {
+                  coerceType(ctx, fctx, valueType, { kind: "externref" });
+                }
+                const helperIdx = ensureObjectProtoToStringRuntimeHelper(ctx);
+                if (helperIdx !== undefined) {
+                  fctx.body.push({ op: "call", funcIdx: helperIdx });
+                  return { kind: "externref" };
+                }
+              }
             }
           }
 

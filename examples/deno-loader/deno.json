@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@loopdive/js2": "npm:@loopdive/js2",
+    "@loopdive/js2/runtime": "npm:@loopdive/js2/runtime"
+  },
+  "tasks": {
+    "start": "deno run --allow-read --allow-env main.ts"
+  }
+}

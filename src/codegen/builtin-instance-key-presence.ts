@@ -87,7 +87,7 @@ import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js";
  * and the fold-routing set cannot drift apart — a struct that can hold a bag
  * entry the fold cannot see is exactly a struct whose folds must be routed.
  */
-export const BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES: readonly string[] = ["__StandaloneRegExp", "__Date"];
+export const BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES: readonly string[] = ["__StandaloneRegExp", "__Date", "$Promise"];
 
 /** Is `recvWasm` a reference to one of the {@link BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES}? */
 export function isBuiltinInstanceCarrierType(ctx: CodegenContext, recvWasm: ValType | undefined): boolean {

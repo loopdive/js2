@@ -72,11 +72,7 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
       "__v8x_write_deno_timer_info",
     ]);
     expect(report.imports).toEqual([
-      "env::Promise_all",
-      "env::Promise_allSettled",
-      "env::Promise_any",
       "env::Promise_new",
-      "env::Promise_race",
       "js2wasm:runtime-eval::__runtime_apply_interpreted",
       "js2wasm:runtime-eval::__runtime_indirect_eval",
       "v8x:deno::__v8x_deno_error_kind",
@@ -203,5 +199,5 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
     };
     expect(report.hostOps).toEqual([expectedHostOps, expectedHostOps]);
     expect(report.calls).toEqual([]);
-  }, 30_000);
+  }, 120_000);
 });

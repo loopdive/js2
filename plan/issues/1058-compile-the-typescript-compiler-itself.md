@@ -13,6 +13,10 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
+  # 2026-08-29: the deferred object-literal method install (the Tier-3
+  # createIdentifier null-deref fix) adds the patch-up block to
+  # compileObjectLiteralForStruct.
+  - src/codegen/literals.ts
   # This is a consolidated TypeScript-parser stress harvest. The branch predates
   # the change-scoped file/function ratchets and intentionally spans the
   # compiler frontiers documented in the implementation handoff below.
@@ -50,6 +54,9 @@ loc-budget-allow:
   # threshold in the closure capture-analysis phase file.
   - src/codegen/closures/arrow-phases.ts
 func-budget-allow:
+  # 2026-08-29: same change — the deferred install lives at the end of this
+  # function, where the literal's method funcIdxs are finally resolvable.
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/declarations.ts::compileDeclarations

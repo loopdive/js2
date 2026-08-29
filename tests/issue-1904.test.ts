@@ -9,11 +9,12 @@ function envImportNames(bytes: Uint8Array): string[] {
     .map((i) => i.name);
 }
 
-async function compileStandaloneNumber(source: string): Promise<{ value: number; env: string[] }> {
+async function compileStandaloneNumber(source: string, fast = false): Promise<{ value: number; env: string[] }> {
   const r = await compile(source, {
     fileName: "issue-1904.ts",
     target: "standalone",
     skipSemanticDiagnostics: true,
+    fast,
   });
 
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
@@ -81,6 +82,47 @@ describe("#1904 standalone native __extern_is_array", () => {
     `);
 
     expect(value).toBe(1);
+    expect(env).toEqual([]);
+  });
+
+  it("preserves the array brand through an any-returning decoder", async () => {
+    const { value, env } = await compileStandaloneNumber(`
+      function decode(): any {
+        const result: any[] = [];
+        result.push(5);
+        result.push(10);
+        result.push(15);
+        return result;
+      }
+      function classify(value: any): number {
+        return Array.isArray(value) ? value.length : -1;
+      }
+      export function test(): number {
+        return classify(decode());
+      }
+    `);
+
+    expect(value).toBe(3);
+    expect(env).toEqual([]);
+  });
+
+  it("runtime-tests erased any and unknown parameters in the boxed fast lane", async () => {
+    const { value, env } = await compileStandaloneNumber(
+      `
+        function anyIsArray(value: any): number {
+          return Array.isArray(value) ? 1 : 0;
+        }
+        function unknownIsArray(value: unknown): number {
+          return Array.isArray(value) ? 1 : 0;
+        }
+        export function test(): number {
+          return anyIsArray([1, 2]) + unknownIsArray([3, 4, 5]);
+        }
+      `,
+      true,
+    );
+
+    expect(value).toBe(2);
     expect(env).toEqual([]);
   });
 });

@@ -14,6 +14,7 @@ import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
+import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; // native standalone Promise-subclass super(executor)
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
 // `arguments` methods route through the same native producer as fn
 // declarations/expressions (the drive gate self-limits to standalone/wasi).
@@ -40,7 +41,13 @@ import {
   isNullOrUndefinedLiteral,
   structHintForBindingPattern,
 } from "./destructuring-params.js";
-import { emitThrowReferenceError, emitThrowTypeError, getFuncParamTypes } from "./expressions/helpers.js";
+import {
+  emitThrowReferenceError,
+  emitThrowTypeError,
+  getFuncParamTypes,
+  wasmFuncReturnsVoid,
+} from "./expressions/helpers.js";
+import { compileSpreadCallArgsWithArguments } from "./expressions/spread-arguments-call.js";
 import { findTdzViolatingParamRef, paramDefaultsReferenceArguments } from "./param-tdz.js";
 import { pushDefaultValue } from "./type-coercion.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
@@ -78,6 +85,7 @@ import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
   emitParamDefaultArgMissingCheck,
+  emitSetExtrasArgv,
   ensureCurrentThisGlobal, // (#2637 B2.3) read host `this` (__current_this) in the run-on-host ctor
   maybeSetArgcForKnownCall,
   paramDefaultNeedsArgc,
@@ -1188,9 +1196,9 @@ export function collectClassDeclaration(
   // (#1395) Register a class-object singleton global (externref, lazily
   // initialized). The bare class identifier `C` resolves to this global,
   // giving `Object.getOwnPropertyDescriptor(C, "m")` a real receiver to
-  // inspect. Skip for externref-backed builtin subclasses (#1366a) — those
-  // don't have a `$ClassName` WasmGC struct.
-  if (!ctx.classBuiltinParentMap.has(className)) {
+  // inspect. (#5191) NOT skipped for externref-backed builtin subclasses any
+  // more — that #1366a guard left them null-valued; see emitLazyClassObjectGet.
+  {
     const classObjectGlobalIdx = nextModuleGlobalIdx(ctx);
     ctx.mod.globals.push({
       name: `__class_${className}`,
@@ -1355,6 +1363,14 @@ export function collectClassDeclaration(
     if (ctorOptionals) ctx.funcOptionalParams.set(initName, ctorOptionals);
     const ctorRest = ctx.funcRestParams.get(ctorName);
     if (ctorRest) ctx.funcRestParams.set(initName, ctorRest);
+    // (#5153 A.2) A constructor that reads `arguments` needs its call sites —
+    // `new C(...)` AND `super(...)` — to publish `__argc`/`__extras_argv`, the
+    // same contract methods get at L1502. Without this the `_init` body's
+    // arguments object saw argc 0 and no extras.
+    if (ctor && needsImplicitArgumentsObject(ctor)) {
+      ctx.funcUsesArguments.add(initName);
+      ctx.funcUsesArguments.add(ctorName);
+    }
   }
 
   // Register method functions (own methods defined on this class).
@@ -2295,6 +2311,21 @@ function compileClassBodiesInner(
     // Compile constructor body — `this` maps to __self local
     fctx.localMap.set("this", selfLocal);
     ctx.currentFunc = fctx;
+
+    // (#5153 A.2) §10.2.11: a constructor that reads `arguments` gets its
+    // (unmapped — class bodies are strict) arguments object materialized
+    // BEFORE the parameter defaults run, exactly like the method arm below.
+    // Only the user ctor params are formals; `self` is the trailing param of
+    // `_init` and must stay out of the object.
+    if (ctor && needsImplicitArgumentsObject(ctor)) {
+      emitArgumentsObject(
+        ctx,
+        fctx,
+        params.map((p) => p.type),
+        0,
+        /* unmapped */ true,
+      );
+    }
 
     // (#1965) Does this implicit ctor forward to a real parent `_init`?
     // If so, the parent's init applies the forwarded params' defaults — this
@@ -3722,6 +3753,34 @@ export function compileSuperCall(
       }
       return;
     }
+    // Deno's `SafePromise` is a direct subclass whose constructor is the pure
+    // forwarder `constructor(executor) { super(executor); }`.  The generic
+    // standalone builtin-subclass ladder represents Promise with an
+    // identity-only plain object, so routing this call through that ladder
+    // silently drops the executor and produces a value that native `.then`
+    // cannot consume.  Construct the real `$Promise` carrier through the same
+    // runtime-value executor bridge used by `new Promise(executor)` instead.
+    //
+    // Keep this before `resolveStandaloneBuiltinSuperCtorIdx`: once that
+    // resolver registers `__new_Promise@N`, the call is already committed to
+    // the placeholder carrier.  Arguments after the executor are still
+    // evaluated left-to-right for their side effects even though Promise
+    // ignores their values.
+    if (
+      builtinParent === "Promise" &&
+      isStandalonePromiseActive(ctx) &&
+      args.length > 0 &&
+      !ts.isSpreadElement(args[0]!) &&
+      emitStandalonePromiseFromExecutorValue(ctx, fctx, () => compileExternrefArgument(ctx, fctx, args[0]!))
+    ) {
+      for (let i = 1; i < args.length; i++) {
+        evaluateArgumentForSideEffects(ctx, fctx, args[i]!);
+      }
+      fctx.body.push({ op: "local.set", index: selfLocal });
+      emitSetSubclassProto(ctx, fctx, selfLocal, childClassName, builtinParent);
+      emitSetSubclassUserBrand(ctx, fctx, selfLocal, childClassName);
+      return;
+    }
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     const importName = getParentConstructorImportName(ctx, builtinParent);
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
@@ -3832,6 +3891,37 @@ export function compileSuperCall(
         }
       }
     }
+    // (#5153 F) Standalone has no host bridge, and the old lowering evaluated
+    // the arguments and returned — the parent function was never CALLED, so a
+    // parent constructor that throws completed normally
+    // (`call-construct-error.js`). Call the compiled fnctor directly with the
+    // derived receiver installed as `__current_this`, so its body observes a
+    // `this` and any abrupt completion propagates out of `super()`.
+    //
+    // Deliberately NOT covered here: §10.2.2 step 13's return-override, where a
+    // parent returning an object REBINDS the derived `this`. That needs the
+    // ctor body's `this` slot to be re-pointed after `super()` and is filed as
+    // a residual (`call-expr-value.js`, `call-bind-this-value.js`).
+    if (fnctorParent !== undefined && (ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+      const fnctorIdx = ctx.funcMap.get(fnctorParent);
+      const fnctorParamTypes = fnctorIdx === undefined ? undefined : getFuncParamTypes(ctx, fnctorIdx);
+      if (fnctorIdx !== undefined && fnctorParamTypes !== undefined && args.length <= fnctorParamTypes.length) {
+        const currentThisIdx = ensureCurrentThisGlobal(ctx);
+        fctx.body.push({ op: "local.get", index: selfLocal });
+        fctx.body.push({ op: "extern.convert_any" });
+        fctx.body.push({ op: "global.set", index: currentThisIdx });
+        for (let i = 0; i < args.length; i++) {
+          compileExpression(ctx, fctx, args[i]!, fnctorParamTypes[i]);
+        }
+        for (let i = args.length; i < fnctorParamTypes.length; i++) {
+          pushDefaultValue(fctx, fnctorParamTypes[i]!, ctx);
+        }
+        const finalFnctorIdx = ctx.funcMap.get(fnctorParent) ?? fnctorIdx;
+        fctx.body.push({ op: "call", funcIdx: finalFnctorIdx });
+        if (!wasmFuncReturnsVoid(ctx, finalFnctorIdx)) fctx.body.push({ op: "drop" });
+        return;
+      }
+    }
     // Parent is not a struct-backed user class with an init (should not
     // happen outside a host fnctor parent — builtin parents took the branch
     // above). Evaluate args for side effects to preserve
@@ -3852,6 +3942,7 @@ export function compileSuperCall(
   const flatArgs: ts.Expression[] | undefined = hasSpread ? (flattenStaticallyKnownArgs(args) ?? undefined) : [...args];
 
   let actualArgCount = 0;
+  let argcPublished = false;
   if (restInfo && !hasSpread) {
     // Parent ctor has a rest parameter: pack trailing args into a vec, the
     // same shape regular rest-param call sites build.
@@ -3892,19 +3983,43 @@ export function compileSuperCall(
     }
     actualArgCount = flatArgs.length;
   } else {
-    // Runtime spread that cannot be statically unpacked (#1551): evaluate
-    // operands left-to-right for side effects, then call the parent with
-    // default-padded params and argc 0 so the parent's own defaults fire.
-    for (const arg of args) {
-      evaluateArgumentForSideEffects(ctx, fctx, arg);
-    }
-    for (const t of paramTypes) {
-      pushDefaultValue(fctx, t, ctx);
+    // (#5153 A.1) Runtime spread. The old lowering evaluated the operands for
+    // side effects only, so `super(...iterable)` never ran GetIterator /
+    // IteratorStep / IteratorValue — an abrupt completion from a poisoned
+    // iterator was silently swallowed and the parent saw argc 0. Route through
+    // the same flatten-then-bind machinery ordinary spread calls use, which
+    // evaluates each argument exactly once and drives the full iterator
+    // protocol. `self` is the TRAILING param of `_init` and is pushed by the
+    // caller below, hence `trailingParamCount = 1` / the explicit param slice.
+    if (
+      paramTypes.length > 0 &&
+      compileSpreadCallArgsWithArguments(ctx, fctx, callExpr, parentInitIdx, 0, parentInitName, 1)
+    ) {
+      // The helper published `__argc`/`__extras_argv` itself.
+      argcPublished = true;
+    } else if (paramTypes.length === 0) {
+      // Zero-formal parent ctor: every flattened element is an "extra"
+      // (#2202's arm). `emitSetExtrasArgv` is stack-neutral and still walks the
+      // iterator protocol, so abrupt completions propagate.
+      emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], 0);
+      maybeSetArgcForKnownCall(ctx, fctx, parentInitName, 0, 0);
+      argcPublished = true;
+    } else {
+      // Preconditions for the flatten path failed (e.g. no object runtime).
+      // Keep the historical best-effort lowering.
+      for (const arg of args) {
+        evaluateArgumentForSideEffects(ctx, fctx, arg);
+      }
+      for (const t of paramTypes) {
+        pushDefaultValue(fctx, t, ctx);
+      }
     }
     actualArgCount = 0;
   }
   // Let the parent's defaults/`arguments` machinery see the real arg count.
-  maybeSetArgcForKnownCall(ctx, fctx, parentInitName, actualArgCount, paramTypes.length);
+  if (!argcPublished) {
+    maybeSetArgcForKnownCall(ctx, fctx, parentInitName, actualArgCount, paramTypes.length);
+  }
   fctx.body.push({ op: "local.get", index: selfLocal });
   // Re-resolve: compiling arguments may have added late imports and shifted
   // function indices.

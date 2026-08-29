@@ -13,6 +13,34 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 
 describe("#2928 — linked runtime Function provider", () => {
+  it("self-compiles lexical for-of emission without a nominal array RTT cast", { timeout: 120_000 }, async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--max-old-space-size=3072", "--import", "tsx", join(HERE, "interp", "runtime-function-link-probe.mjs")],
+      {
+        cwd: join(HERE, ".."),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          JS2WASM_RUNTIME_LINK_EMITTER_ONLY: "1",
+          JS2WASM_RUNTIME_LINK_PROVIDER_ONLY: "1",
+        },
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    const report = JSON.parse(stdout);
+
+    expect(report).toEqual({
+      runtimeSuccess: true,
+      runtimeErrors: [],
+      runtimeBytes: expect.any(Number),
+      runtimeImports: [],
+      values: { providerForOfLexical: 9 },
+      executionErrors: {},
+    });
+    expect(report.runtimeBytes).toBeGreaterThan(0);
+  });
+
   it("returns and invokes an interpreted closure across the Wasm module boundary", { timeout: 1_200_000 }, async () => {
     const { stdout } = await execFileAsync(
       process.execPath,
@@ -58,6 +86,7 @@ describe("#2928 — linked runtime Function provider", () => {
       provider: 3,
       providerDirect: 84,
       providerVar: 240,
+      providerSharedPrimitive: 12,
       create: 1,
       invokeNew: 3,
       invokeNewImmediate: 3,
@@ -69,6 +98,7 @@ describe("#2928 — linked runtime Function provider", () => {
       sloppyThis: 1,
       strictThis: 1,
       aotIdentityRoundTrip: 1,
+      aotThrowRoundTrip: 1,
       indirectEval: 42,
       indirectEvalLiteralScope: 42,
       indirectEvalAlias: 42,

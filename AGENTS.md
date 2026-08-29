@@ -42,5 +42,27 @@ Co-authored-by: Claude <noreply@anthropic.com>
 ```
 
 - Never attribute Codex work to Claude or Claude work to Codex.
+- **Also add a `Model:` trailer naming the exact model that produced the
+  commit — vendor, family, version/subtype, and the configured reasoning
+  effort** (project-lead order, 2026-08-29; enforced by `.husky/commit-msg`
+  for any commit carrying an agent co-author trailer):
+
+```text
+Model: Claude Fable 5 Max
+Model: Codex GPT-5.6 Sol Max
+Model: Claude Opus 5 High
+```
+
+  - Effort is the level your session/task was configured with — the dispatch
+    brief or the issue's `reasoning_effort` frontmatter; if genuinely
+    unknown, write `Default`. Do not guess a higher tier than you know.
+  - Auto-generated subjects (`Merge …`, `Revert …`, `fixup!`, `squash!`,
+    `chore(assign)…`) are exempt.
+  - Why: PR #5204 shipped three codegen regressions in one agent commit and
+    the model that produced it was unrecoverable from git. This trailer makes
+    that question answerable per commit.
+  - This project rule deliberately **overrides** any ambient harness default
+    of keeping model identifiers out of pushed artifacts (same precedence as
+    the "always open a PR" rule in CLAUDE.md).
 - Before committing, verify `git config user.name` and `git config user.email`
   still identify Thomas Tränkler.

@@ -60,6 +60,8 @@ import {
   emitTaViewToVec,
   emitTaViewValidate,
   emitTaViewWriteBack,
+  pushTaViewEffectiveLen,
+  taViewDecode,
 } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
@@ -2024,6 +2026,18 @@ export function compileArrayMethodCall(
       (actualType as { typeIdx: number }).typeIdx !== vecTypeIdx
     ) {
       const actualVecIdx = (actualType as { typeIdx: number }).typeIdx;
+      // A buffer-backed TypedArray must keep `subarray` on the SAME byte buffer.
+      // Materializing it into the ordinary element vec first (the generic method
+      // bridge below) makes the subview alias that temporary copy and resets its
+      // byteOffset to zero. Build a sibling `$__ta_view` directly instead.
+      if (
+        methodName === "subarray" &&
+        isTaViewTypeIdx(ctx, actualVecIdx) &&
+        ts.isIdentifier(receiverExpr) &&
+        fctx.localMap.has(receiverExpr.text)
+      ) {
+        return compileTaViewSubarray(ctx, fctx, propAccess, callExpr, actualVecIdx);
+      }
       // (#3054 B1 Option A) `$__ta_view` receiver: materialize into the native
       // element-typed vec (`vecTypeIdx`, from `resolveArrayInfo`) and rebind the
       // identifier so the method's receiver re-compile loads the copy instead of
@@ -9347,6 +9361,102 @@ function numericElemConvert(from: ValType, to: ValType): Instr[] {
   if (from.kind === "i32" && to.kind === "f64") return [{ op: "f64.convert_i32_s" }];
   if (from.kind === "f64" && to.kind === "i32") return [{ op: "i32.trunc_sat_f64_s" }];
   return [];
+}
+
+/**
+ * `TypedArray.prototype.subarray` for a byte-backed `$__ta_view`.
+ *
+ * Unlike the ordinary native-vec `$__subview` path below, this retains the
+ * viewed ArrayBuffer identity, accumulates the parent's byte offset, and copies
+ * the runtime TypedArray kind tag. Reads and writes therefore keep aliasing the
+ * parent and sibling DataView/TypedArray views even after the result passes
+ * through an `any` slot.
+ */
+function compileTaViewSubarray(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  taViewTypeIdx: number,
+): ValType | null {
+  const desc = taViewDecode(ctx, taViewTypeIdx);
+  if (!desc) return null;
+
+  const viewLocal = allocLocal(fctx, `__tav_sub_recv_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: taViewTypeIdx,
+  });
+  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+  if (receiverType?.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: taViewTypeIdx });
+  } else if (
+    receiverType &&
+    (receiverType.kind === "ref" || receiverType.kind === "ref_null") &&
+    receiverType.typeIdx !== taViewTypeIdx
+  ) {
+    fctx.body.push({ op: "ref.cast", typeIdx: taViewTypeIdx });
+  }
+  fctx.body.push({ op: "local.set", index: viewLocal });
+
+  const lenLocal = allocLocal(fctx, `__tav_sub_len_${fctx.locals.length}`, { kind: "i32" });
+  pushTaViewEffectiveLen(ctx, fctx, viewLocal, taViewTypeIdx);
+  fctx.body.push({ op: "local.set", index: lenLocal });
+
+  const beginLocal = allocLocal(fctx, `__tav_sub_begin_${fctx.locals.length}`, { kind: "i32" });
+  if (callExpr.arguments.length >= 1) {
+    const beginType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
+    if (beginType && beginType.kind !== "i32") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  fctx.body.push({ op: "local.set", index: beginLocal });
+  emitClampIndex(fctx, beginLocal, lenLocal);
+
+  const endLocal = allocLocal(fctx, `__tav_sub_end_${fctx.locals.length}`, { kind: "i32" });
+  if (callExpr.arguments.length >= 2) {
+    const endType = compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
+    if (endType && endType.kind !== "i32") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: endLocal });
+    emitClampIndex(fctx, endLocal, lenLocal);
+  } else {
+    fctx.body.push({ op: "local.get", index: lenLocal }, { op: "local.set", index: endLocal });
+  }
+
+  // length = max(end - begin, 0)
+  const resultLenLocal = allocLocal(fctx, `__tav_sub_result_len_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push(
+    { op: "local.get", index: endLocal },
+    { op: "local.get", index: beginLocal },
+    { op: "i32.sub" },
+    { op: "local.tee", index: resultLenLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: resultLenLocal },
+      ],
+    },
+  );
+
+  fctx.body.push(
+    { op: "local.get", index: resultLenLocal },
+    { op: "local.get", index: viewLocal },
+    { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 }, // shared buffer
+    { op: "local.get", index: viewLocal },
+    { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 }, // parent byteOffset
+    { op: "local.get", index: beginLocal },
+  );
+  if (desc.bytes !== 1) fctx.body.push({ op: "i32.const", value: desc.bytes }, { op: "i32.mul" });
+  fctx.body.push(
+    { op: "i32.add" },
+    { op: "local.get", index: viewLocal },
+    { op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 3 }, // runtime kind
+    { op: "struct.new", typeIdx: taViewTypeIdx },
+  );
+  return { kind: "ref_null", typeIdx: taViewTypeIdx };
 }
 
 /**

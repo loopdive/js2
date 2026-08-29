@@ -63,6 +63,21 @@ export const LOWER_CASE_RUNS: readonly number[] = [
   1, 42960, 1, 1, 1, 42966, 3, 2, 1, 42972, 1, 1, -42561, 42997, 1, 1, 1, 65313, 26, 1, 32,
 ];
 
+// (#5152) Supplementary-plane (astral) [start, count, stride, delta] tuples.
+// Same encoding as the BMP runs above. Every astral simple mapping is 1:1 and
+// stays astral, so a surrogate pair maps to a surrogate pair and the UTF-16
+// length never changes.
+export const ASTRAL_UPPER_CASE_RUNS: readonly number[] = [
+  66600, 40, 1, -40, 66776, 36, 1, -40, 66967, 19, 2, -39, 66968, 5, 2, -39, 66980, 7, 2, -39, 66996, 3, 2, -39, 67004,
+  1, 1, -39, 68800, 51, 1, -64, 68976, 22, 1, -32, 71872, 32, 1, -32, 93792, 32, 1, -32, 93883, 25, 1, -27, 125218, 34,
+  1, -34,
+];
+
+export const ASTRAL_LOWER_CASE_RUNS: readonly number[] = [
+  66560, 40, 1, 40, 66736, 36, 1, 40, 66928, 19, 2, 39, 66929, 5, 2, 39, 66941, 7, 2, 39, 66957, 3, 2, 39, 66965, 1, 1,
+  39, 68736, 51, 1, 64, 68944, 22, 1, 32, 71840, 32, 1, 32, 93760, 32, 1, 32, 93856, 25, 1, 27, 125184, 34, 1, 34,
+];
+
 // [cp, outLen, c0, c1, c2] tuples (c2 = 0 when outLen < 3), sorted by cp.
 export const UPPER_CASE_SPECIAL: readonly number[] = [
   223, 2, 83, 83, 0, 329, 2, 700, 78, 0, 496, 2, 74, 780, 0, 912, 3, 921, 776, 769, 944, 3, 933, 776, 769, 1415, 2,

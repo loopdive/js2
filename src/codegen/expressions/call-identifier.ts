@@ -2830,13 +2830,19 @@ export function compileIdentifierCall(
       const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
       const isRuntimeEvalGlobal =
         (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+      const isLinkedRealmGlobal = ctx.standaloneGlobalThisImport !== undefined && declaration === undefined;
       // (#3966) A callee whose only binding is a realm-global property the
       // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
       // see implicit-global-binding.ts for why the two arms below got it wrong.
       const implicitCallee = isSloppyImplicitGlobalBinding(ctx, fctx, funcName);
       const dyn = calleeComesFromElementRead
         ? null
-        : tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
+        : tryEmitInlineDynamicCall(
+            ctx,
+            fctx,
+            expr,
+            isKnownVariable || isRuntimeEvalGlobal || isLinkedRealmGlobal || implicitCallee,
+          );
       if (dyn !== null) return dyn;
 
       // (#4527) Reference-preserving dynamic-call bridge. A call on a KNOWN
@@ -3023,6 +3029,38 @@ export function compileIdentifierCall(
 
     // Prepend captured values for nested functions with captures
     const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
+    // (#5148 checkpoint) The funcMap/nestedFuncCaptures registries are
+    // NAME-keyed across the whole graph, so a callee name that is really a
+    // LOCAL closure value here (Deno's `const { __isLeakTracingEnabled } =
+    // window.__infra` inside 02_timers) can collide with a nested function
+    // declared in a DIFFERENT frame (00_infra's). The prepend below would
+    // then bake that frame's `cap.outerLocalIdx` into this one — "references
+    // local 2350 … out of range". When any capture has NO source this frame
+    // can address AND the callee name is bound to a live local value, the
+    // local closure is the semantically right callee: dispatch it dynamically
+    // instead of the misdirected direct call.
+    if (
+      nestedCaptures &&
+      (fctx.localMap.has(funcName) ||
+        ctx.capturedGlobals.has(funcName) ||
+        ctx.capturedBoxGlobals?.has(funcName) ||
+        ctx.moduleGlobals.has(funcName))
+    ) {
+      const frameLimit = fctx.params.length + fctx.locals.length;
+      const unsourceable = nestedCaptures.some(
+        (cap) =>
+          !fctx.localMap.has(cap.name) &&
+          !fctx.liftedCaptureSlots?.has(cap.name) &&
+          !ctx.capturedBoxGlobals?.has(cap.name) &&
+          !ctx.capturedGlobals.has(cap.name) &&
+          !ctx.moduleGlobals.has(cap.name) &&
+          cap.outerLocalIdx >= frameLimit,
+      );
+      if (unsourceable) {
+        const localDispatch = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+        if (localDispatch !== null) return localDispatch;
+      }
+    }
     if (nestedCaptures) {
       // #1177: Get param types early so we can coerce captures to expected types.
       // Re-fetch funcIdx in case a prior compileExpression triggered a late-import
