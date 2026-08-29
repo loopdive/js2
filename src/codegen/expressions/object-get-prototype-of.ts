@@ -28,6 +28,22 @@ const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
   "Error",
 ]);
 
+/**
+ * Constructors `C` for which `Object.getPrototypeOf(C.prototype)` is exactly
+ * `%Object.prototype%`.
+ *
+ * `Function.prototype` (§20.2.3) is the original member: a built-in function
+ * object whose [[Prototype]] is `%Object.prototype%`, carrying no `$proto` link
+ * the native `__getPrototypeOf` walk can follow — so that walk answered `null`.
+ * `Promise.prototype` (§27.2.3.1, #5143) has the same shape: it lowers to a
+ * `$NativeProto` struct whose `$parent` field is left null ("chain walk
+ * deferred", `native-proto.ts`), so the query silently answered `null` too.
+ *
+ * Membership is per-constructor and deliberate: most builtin prototypes do NOT
+ * root directly at `%Object.prototype%` (see the call site's comment).
+ */
+const OBJECT_ROOTED_PROTOTYPE_CTORS = new Set(["Function", "Promise"]);
+
 const ES5_NATIVE_ERROR_CTORS = new Set([
   "EvalError",
   "RangeError",
@@ -207,16 +223,17 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // identity-stable singleton this file emits for `Math`/`JSON`, so routing here
   // gives real `ref.eq` identity (test262 `Function/prototype/S15.3.4_A3_T1.js`).
   //
-  // Deliberately narrow: ONLY `Function.prototype`. The other builtin prototypes
-  // do NOT uniformly inherit from %Object.prototype% (`Int8Array.prototype` →
-  // %TypedArray%.prototype, `TypeError.prototype` → `Error.prototype`), and this
-  // hook runs BEFORE the typed-array / generator / class getPrototypeOf arms —
-  // a blanket branch here would preempt them with a wrong answer.
+  // Deliberately narrow — see `OBJECT_ROOTED_PROTOTYPE_CTORS`. The other builtin
+  // prototypes do NOT uniformly inherit from %Object.prototype%
+  // (`Int8Array.prototype` → %TypedArray%.prototype, `TypeError.prototype` →
+  // `Error.prototype`), and this hook runs BEFORE the typed-array / generator /
+  // class getPrototypeOf arms — a blanket branch here would preempt them with a
+  // wrong answer.
   if (
     ts.isPropertyAccessExpression(arg0) &&
     arg0.name.text === "prototype" &&
     ts.isIdentifier(arg0.expression) &&
-    arg0.expression.text === "Function" &&
+    OBJECT_ROOTED_PROTOTYPE_CTORS.has(arg0.expression.text) &&
     isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
   ) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");

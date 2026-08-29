@@ -291,6 +291,14 @@ const BRANDED_PROTO_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
       "toGMTString",
     ]),
   ],
+  // (#5143) §27.2.5.4 / §27.2.5.1 / §27.2.5.3 — `then`/`catch`/`finally` all
+  // begin with `IsPromise(this)` (or, for `catch`/`finally`, an `Invoke` on a
+  // receiver that must be object-coercible). `Promise.prototype` itself has no
+  // [[PromiseState]] slot, so the direct spelling is a TypeError, not a call
+  // (test262 `built-ins/Promise/prototype/no-promise-state.js`). Before this the
+  // receiver compiled to a `$NativeProto` the then-lowering happily accepted and
+  // the call silently returned a promise.
+  ["Promise", new Set(["then", "catch", "finally"])],
 ]);
 
 /**
@@ -541,6 +549,20 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
       ["bind", { kind: "externref" }],
     ]),
   ],
+  // (#5143) `Promise.prototype.{then,catch,finally}.call(undefined|null, …)`.
+  // `then` step 2 is `IsPromise(this)` → false for a nullish receiver;
+  // `catch`/`finally` reach `GetV`/`Invoke`, whose `ToObject(this)` throws.
+  // Every path is a TypeError, so the borrowed nullish form is decidable here
+  // (test262 `prototype/catch/this-value-non-object.js`). All three return a
+  // promise, hence externref.
+  [
+    "Promise",
+    new Map<string, ValType>([
+      ["then", { kind: "externref" }],
+      ["catch", { kind: "externref" }],
+      ["finally", { kind: "externref" }],
+    ]),
+  ],
 ]);
 
 /**
@@ -703,6 +725,60 @@ export function tryBorrowedPrototypeNullishThisThrow(
       ? `Function.prototype.${method} called on non-callable receiver`
       : `Object.prototype.${method} called on null or undefined`;
   return emitBrandThrowWithSentinel(ctx, fctx, `TypeError: ${what}`, expectedType ?? result);
+}
+
+/**
+ * (#5143) Borrowed BRAND arm: `<Ctor>.prototype.<brandedMethod>.call(
+ * <AnyCtor>.prototype, …)`.
+ *
+ * The sibling above decides the *nullish* receiver; this one decides the other
+ * statically-provable non-brand receiver — a builtin PROTOTYPE object. Every
+ * method in {@link BRANDED_PROTO_METHODS} opens with a `RequireInternalSlot`
+ * (or, for `Promise.prototype.then`, `IsPromise`), and a builtin prototype is
+ * by construction an ordinary object with none of those slots — §27.2.5.4 spells
+ * that out for Promise, and §21.4.4 / §24.1.3 / §23.2.3 do the same for their
+ * families. So the call is a TypeError whatever the arguments are.
+ *
+ * The receiver proof is `builtinPrototypeReceiver`, the same lib-identity test
+ * the direct arm uses, so a user `class Promise {}` is rejected rather than
+ * mis-claimed. The *borrowing* constructor and the *receiver* constructor need
+ * not match — `Map.prototype.get.call(Date.prototype)` is equally a TypeError —
+ * so no cross-check is made beyond "the receiver is some builtin prototype".
+ *
+ * `compileArg` is injected to avoid a module cycle with `expressions.ts`.
+ */
+export function tryBorrowedPrototypeBrandThisThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  /** The callee's base — `<Ctor>.prototype.<method>` in `<…>.call(recv, …)`. */
+  borrowedMethod: ts.Expression,
+  compileArg: (arg: ts.Expression) => ValType | null,
+  expectedType?: ValType,
+): ValType | undefined {
+  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
+  let base: ts.Expression = borrowedMethod;
+  while (ts.isParenthesizedExpression(base)) base = base.expression;
+  if (!ts.isPropertyAccessExpression(base)) return undefined;
+  const method = base.name.text;
+  const ctor = builtinPrototypeReceiver(ctx, base.expression);
+  if (ctor === undefined) return undefined;
+  if (BRANDED_PROTO_METHODS.get(ctor)?.has(method) !== true) return undefined;
+  const receiver = expr.arguments[0];
+  if (receiver === undefined) return undefined;
+  const receiverCtor = builtinPrototypeReceiver(ctx, skipParens(receiver));
+  if (receiverCtor === undefined) return undefined;
+
+  for (const arg of expr.arguments) {
+    const t = compileArg(arg);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+  return emitBrandThrowWithSentinel(
+    ctx,
+    fctx,
+    `TypeError: Method ${ctor}.prototype.${method} called on incompatible receiver ${receiverCtor}.prototype`,
+    expectedType ?? { kind: "externref" },
+  );
 }
 
 /**

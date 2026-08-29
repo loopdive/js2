@@ -185,8 +185,10 @@ describe("#3583 — type-erased assertion wrappers are IR-claimed and lowered", 
     // `**` is rejected at `expr-binary-op-**`; wrapping it in `as number`
     // must not launder it into the claim set.
     expect(claims(`export function f(x: number): number { return (x ** 2) as number; }`, "f")).toBe(false);
-    // Likewise the comma operator.
-    expect(claims(`export function f(x: number): number { return (x + 1, x + 2) as number; }`, "f")).toBe(false);
+    // The comma operator sat here as a second unsupported example until #5164
+    // adopted it — it now claims THROUGH the assertion, which pins the same
+    // transparency property from the positive side.
+    expect(claims(`export function f(x: number): number { return (x + 1, x + 2) as number; }`, "f")).toBe(true);
   });
 
   it("does NOT claim `x!` when the underlying local is union-typed", () => {

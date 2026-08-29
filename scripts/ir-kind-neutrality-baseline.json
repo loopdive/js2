@@ -599,14 +599,14 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1741",
       "why": "Builds a dense vector from statically-known elements. Sparse literals are explicitly out of scope and fall back to legacy, so no hole can reach this node.",
-      "evidence": ["src/ir/from-ast.ts:4556"]
+      "evidence": ["src/ir/from-ast.ts:4562"]
     },
     "vec.set": {
       "verdict": "neutral",
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1711",
       "why": "One planned in-bounds store. Bounds and growth policy stay explicit in the surrounding IR; a holey-array store is routed to a runtime helper instead.",
-      "evidence": ["src/ir/nodes.ts:1705", "src/ir/from-ast.ts:389"]
+      "evidence": ["src/ir/nodes.ts:1705", "src/ir/from-ast.ts:390"]
     },
     "vec.set_length": {
       "verdict": "neutral",

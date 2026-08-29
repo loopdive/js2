@@ -236,6 +236,22 @@ function emitStaticNotAConstructorThrow(
 }
 
 /**
+ * Does `callee` statically denote a generator function object? (#5141)
+ *
+ * Generator functions have no `[[Construct]]` slot (§27.3.4), so `new g()`
+ * throws. Kept to shapes that are provable without runtime information:
+ * `new (function*(){})()`, a `function* g(){}` declaration name, and
+ * `var g = function*(){}; new g()`.
+ */
+function isStaticGeneratorFunctionTarget(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (ts.isFunctionExpression(callee)) return !!callee.asteriskToken;
+  if (!ts.isIdentifier(callee)) return false;
+  if (ctx.generatorFunctions.has(callee.text)) return true;
+  const init = ctx.oracle.variableInitializerOf(callee);
+  return init !== undefined && ts.isFunctionExpression(init) && !!init.asteriskToken;
+}
+
+/**
  * Is `new <callee>` a construct on something reachable through `.prototype` that
  * provably has no `[[Construct]]`? Two shapes, both throwing a real `TypeError`
  * so test262 `assert.throws(TypeError, …)` catches it (#1528):
@@ -4715,6 +4731,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     isGlobalRegExpConstructorExpression(ctx, unwrappedLiteralCtor)
   ) {
     return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
+  }
+  // (#5141, §27.3.4) A generator function object is created by
+  // OrdinaryFunctionCreate with no `[[Construct]]` slot, so `new g()` is a
+  // TypeError. Only statically provable shapes fire: a literal `function*`,
+  // a name registered in `ctx.generatorFunctions`, or an identifier whose
+  // variable initializer is a generator function expression. Anything less
+  // certain falls through to the ordinary construct paths.
+  if (isStaticGeneratorFunctionTarget(ctx, unwrappedLiteralCtor)) {
+    return emitStaticNotAConstructorThrow(ctx, fctx, expr.arguments ?? []);
   }
   if (ts.isFunctionExpression(unwrappedLiteralCtor)) {
     return compileNewFunctionExpression(ctx, fctx, expr, unwrappedLiteralCtor);
