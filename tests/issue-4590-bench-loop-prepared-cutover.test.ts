@@ -173,6 +173,13 @@ async function benchRuntime(result: CompileResult): Promise<number> {
   return (instance.exports.bench_loop as () => number)();
 }
 
+function codegenErrors(result: GeneratedCodegenModule): string {
+  return result.errors
+    .filter((error) => error.severity !== "warning")
+    .map((error) => error.message)
+    .join("\n");
+}
+
 function expectDirectPoison(result: CompileResult): void {
   expect(result.success).toBe(false);
   expect(result.errors.map((error) => error.message).join("\n")).toContain(
@@ -375,8 +382,8 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     } else {
       expect(prepared.binary).toEqual(rawPrepared.binary);
       expect(direct.binary).toEqual(rawDirect.binary);
-      expect(prepared.binary.byteLength).toBe(133_067);
-      expect(direct.binary.byteLength).toBe(133_096);
+      expect(prepared.binary.byteLength).toBe(133_297);
+      expect(direct.binary.byteLength).toBe(133_326);
       expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 29);
       expect(normalizedRawTrampoline(preparedTrampoline)).toBe(normalizedRawTrampoline(directTrampoline));
     }
@@ -415,7 +422,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     const ids = [sourceId, trampolineId, cacheId] as const;
     const slotExpectations = [
       { result: prepared, source: 76, trampoline: 78, cache: 10 },
-      { result: direct, source: 76, trampoline: 290, cache: 139 },
+      { result: direct, source: 76, trampoline: 291, cache: 139 },
     ] as const;
 
     for (const { result, source, trampoline, cache } of slotExpectations) {
@@ -586,19 +593,17 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     await expect(benchRuntime(result)).resolves.toBe(EXPECTED_RUNTIME);
   });
 
-  it("observes the poison when the pre-C1 live-query path runs after finalization", async () => {
+  it("observes the poison when the pre-C1 live-query path runs after finalization", () => {
     vi.stubEnv(POISON_ORACLE, "bench_loop");
     vi.stubEnv(LIVE_ORACLE, "bench_loop");
-    const result = await compileBenchSources();
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(POISON_MESSAGE);
+    // Codegen-only: the route decision is complete before binary emission, and
+    // this assertion is about the diagnostic, not the artifact.
+    expect(codegenErrors(generatedBench(true))).toContain(POISON_MESSAGE);
   });
 
-  it("fails an armed-but-unmatched declaration fault injection instead of passing silently", async () => {
+  it("fails an armed-but-unmatched declaration fault injection instead of passing silently", () => {
     vi.stubEnv(POISON_ORACLE, "not_the_certified_route");
-    const result = await compileBenchSources();
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(
+    expect(codegenErrors(generatedBench(true))).toContain(
       "is armed for not_the_certified_route but the certified route is bench_loop",
     );
   });
@@ -606,10 +611,10 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
   it("keeps the live-oracle lane and the replay lane identical in route, surface, and runtime", async () => {
     vi.stubEnv(LIVE_ORACLE, "bench_loop");
     vi.stubEnv(REQUIRE_ROUTE, "1");
-    const live = await compileBenchSources({ emitWat: true, emitWatOnlyFunctions: ["bench_loop", TRAMPOLINE] });
+    const live = await compileBenchSources();
     vi.unstubAllEnvs();
     vi.stubEnv(REQUIRE_ROUTE, "1");
-    const replayed = await compileBenchSources({ emitWat: true, emitWatOnlyFunctions: ["bench_loop", TRAMPOLINE] });
+    const replayed = await compileBenchSources();
     expectSuccess(live, "live-oracle declaration lane");
     expectSuccess(replayed, "replayed declaration lane");
 
@@ -621,9 +626,9 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     expect(replayed.imports).toEqual(live.imports);
     expect(replayed.stringPool).toEqual(live.stringPool);
     expect(replayed.binary.byteLength).toBe(live.binary.byteLength);
+    // Byte-for-byte binary equality subsumes any WAT comparison, so this lane
+    // deliberately does not materialize two whole-module text renderings.
     expect(Buffer.from(replayed.binary).equals(Buffer.from(live.binary))).toBe(true);
-    expect(watFunction(replayed.wat, "bench_loop")).toBe(watFunction(live.wat, "bench_loop"));
-    expect(watFunction(replayed.wat, TRAMPOLINE)).toBe(watFunction(live.wat, TRAMPOLINE));
     expect(wasmSurface(replayed.binary)).toEqual(wasmSurface(live.binary));
     await expect(benchRuntime(replayed)).resolves.toBe(EXPECTED_RUNTIME);
     await expect(benchRuntime(live)).resolves.toBe(EXPECTED_RUNTIME);

@@ -10,13 +10,21 @@
 // This lives beside tests/issue-4590-bench-loop-prepared-cutover.test.ts (which
 // keeps the positive replay, anti-vacuity, live-lane parity, and
 // post-certification tamper cases) purely so one CI fork's 512 MB heap is not
-// asked to hold ~40 compilations of the real two-source benchmark graph.
+// asked to hold ~40 whole-pipeline compilations of the benchmark graph. For the
+// same reason these cases stop at `generateMultiModule`: the route decision and
+// its legacy audit are complete there, and binary/WAT/DTS emission would only
+// add memory, never evidence.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { compileMulti, type CompileResult } from "../src/index.js";
+import { analyzeMultiSource } from "../src/checker/index.js";
+import { generateMultiModule, type GeneratedCodegenModule } from "../src/codegen/index.js";
+import { compileMulti } from "../src/index.js";
+
+// Register the low-level codegen delegates used by generateMultiModule.
+import "../src/codegen/expressions.js";
 
 const ENTRY = resolve(import.meta.dirname, "../website/playground/examples/benchmarks/loop.ts");
 const HELPERS = resolve(import.meta.dirname, "../website/playground/examples/benchmarks/helpers.ts");
@@ -31,24 +39,40 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function compileBenchSources(): Promise<CompileResult> {
+// One analysis is shared by every case: the mutations act on the SNAPSHOT and
+// the inventory join, never on the typed AST, and re-binding the two sources 18
+// times is the single largest memory cost in this file.
+let sharedAst: ReturnType<typeof analyzeMultiSource> | undefined;
+
+function generateBench(): GeneratedCodegenModule {
   vi.stubEnv(CUTOVER, "1");
-  return compileMulti({ "helpers.ts": HELPERS_SOURCE, "loop.ts": LOOP_SOURCE }, "loop.ts", {
-    experimentalIR: true,
-    target: "standalone",
-    trackIrOutcomes: true,
-  });
+  sharedAst ??= analyzeMultiSource({ "helpers.ts": HELPERS_SOURCE, "loop.ts": LOOP_SOURCE }, "loop.ts");
+  return generateMultiModule(sharedAst, { experimentalIR: true, target: "standalone", trackIrOutcomes: true });
+}
+
+function hardErrors(result: GeneratedCodegenModule): string {
+  return result.errors
+    .filter((error) => error.severity !== "warning")
+    .map((error) => error.message)
+    .join("\n");
+}
+
+function benchLoopLegacyEntryPoints(result: GeneratedCodegenModule): readonly string[] {
+  return (result.irBodyRouteAudit?.legacyEntries ?? [])
+    .filter((row) => row.bodyName === "bench_loop")
+    .map((row) => row.entryPoint);
 }
 
 describe("#4617 C1 declaration-replay mutation matrix", () => {
-  it("routes the unmutated snapshot, so every rejection below is about the mutation", async () => {
+  it("routes the unmutated snapshot, so every rejection below is about the mutation", () => {
     vi.stubEnv(DIRECT_POISON, "bench_loop");
-    const result = await compileBenchSources();
-    expect(
-      result.success,
-      `unmutated replay lane failed:\n${result.errors.map((error) => error.message).join("\n")}`,
-    ).toBe(true);
-    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
+    const result = generateBench();
+    expect(hardErrors(result)).toBe("");
+    expect(benchLoopLegacyEntryPoints(result)).toEqual([]);
+    expect(result.irOutcomes?.find((outcome) => outcome.displayName === "bench_loop")).toMatchObject({
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
   });
 
   it.each([
@@ -68,33 +92,44 @@ describe("#4617 C1 declaration-replay mutation matrix", () => {
     "foreign-target",
     "copied-source",
     "stale-inventory",
-  ])("withdraws before support allocation and skip for the %s mutation", async (mutation) => {
+  ])("withdraws before support allocation and skip for the %s mutation", (mutation) => {
     vi.stubEnv(MUTATE_SNAPSHOT, mutation);
     vi.stubEnv(DIRECT_POISON, "bench_loop");
-    const result = await compileBenchSources();
-    const messages = result.errors.map((error) => error.message).join("\n");
+    const errors = hardErrors(generateBench());
 
-    expect(result.success).toBe(false);
     // The direct body ran: the route withdrew before requesting its skip.
-    expect(messages).toContain("injected direct function-body poison: bench_loop");
+    expect(errors).toContain("injected direct function-body poison: bench_loop");
+    // A withdrawal, never a live-oracle fallback, a late guess, or a torn skip.
+    expect(errors).not.toContain(POISON_MESSAGE);
+    expect(errors).not.toContain("did not withdraw atomically before its skip");
+    expect(errors).not.toContain("drifted after direct-body certification");
+    expect(errors).not.toContain("could not preallocate exact support");
+  });
+
+  // One case carries the whole pipeline so the legacy-route AUDIT — not just the
+  // poison message — witnesses that the direct body was physically emitted.
+  it("records the direct body on the whole-pipeline legacy audit when a mutation withdraws", async () => {
+    vi.stubEnv(MUTATE_SNAPSHOT, "drop-query");
+    vi.stubEnv(DIRECT_POISON, "bench_loop");
+    vi.stubEnv(CUTOVER, "1");
+    const result = await compileMulti({ "helpers.ts": HELPERS_SOURCE, "loop.ts": LOOP_SOURCE }, "loop.ts", {
+      experimentalIR: true,
+      target: "standalone",
+      trackIrOutcomes: true,
+    });
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: bench_loop",
+    );
     expect(
       result.irBodyRouteAudit?.legacyEntries
         .filter((row) => row.bodyName === "bench_loop")
         .map((row) => row.entryPoint),
     ).toContain("compileFunctionBody");
-    // A withdrawal, never a live-oracle fallback, a late guess, or a torn skip.
-    expect(messages).not.toContain(POISON_MESSAGE);
-    expect(messages).not.toContain("did not withdraw atomically before its skip");
-    expect(messages).not.toContain("drifted after direct-body certification");
-    expect(messages).not.toContain("could not preallocate exact support");
   });
 
-  it("fails an unknown mutation name instead of silently routing", async () => {
+  it("fails an unknown mutation name instead of silently routing", () => {
     vi.stubEnv(MUTATE_SNAPSHOT, "not-a-declared-mutation");
-    const result = await compileBenchSources();
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(
-      "unknown declaration-snapshot mutation not-a-declared-mutation",
-    );
+    expect(hardErrors(generateBench())).toContain("unknown declaration-snapshot mutation not-a-declared-mutation");
   });
 });

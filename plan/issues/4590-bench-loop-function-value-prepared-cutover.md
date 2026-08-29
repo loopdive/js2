@@ -255,21 +255,23 @@ review (not draft) and re-enqueue it only through the protected merge queue.
 
 ## 2026-08-28 pin remeasurement carried by the #4617 C1 checkpoint
 
-Three physical pins in `tests/issue-4590-bench-loop-prepared-cutover.test.ts`
-were obsolete on current `main` `f6c8e2ceaaa6dbaf0004596eb32dbe0a6d09310f` and
-failed there before the #4617 C1 branch existed (18/21, exactly these three).
-Remeasured on that clean tree and updated:
+Four physical pins in `tests/issue-4590-bench-loop-prepared-cutover.test.ts`
+were obsolete on current `main` and failed there before the #4617 C1 branch
+existed. They moved **twice in one day** from unrelated allocator growth, which
+is the maintenance cost these physical assertions carry:
 
-- raw Prepared bytes 131,207 to **133,067**;
-- raw direct bytes 131,235 to **133,096**;
-- the exact Prepared reduction 28 to **29** bytes;
-- the direct cache global slot 136 to **139**.
+| Pin | Was | Clean `f6c8e2c` | Clean `23bc3dd` (carried) |
+| --- | --- | --- | --- |
+| raw Prepared bytes | 131,207 | 133,067 | **133,297** |
+| raw direct bytes | 131,235 | 133,096 | **133,326** |
+| exact Prepared reduction | 28 | 29 | **29** |
+| direct trampoline function slot | 290 | 290 | **291** |
+| direct cache global slot | 136 | 139 | **139** |
 
 Prepared and direct byte counts are identical with and without the C1 branch, so
-this is unrelated allocator growth on `main`, not a route change. Source /
-trampoline / cache slots 76 / 78 / 10 (Prepared) and the direct 76 / 290
-source and trampoline slots are unchanged, as are every body, binding, surface,
-and runtime authority. The suite grew from 21 to 26 tests: the five added cases
+this is unrelated allocator growth on `main`, not a route change. The Prepared
+source / trampoline / cache slots 76 / 78 / 10 and the direct source slot 76 are
+unchanged, as are every body, binding, surface, and runtime authority. The suite grew from 21 to 26 tests: the five added cases
 are the #4617 C1 positive replay, anti-vacuity poison control, armed-but-
 unmatched injection, live-lane versus replay-lane parity, and post-certification
 snapshot tamper. The 16-case one-fact mutation matrix lives in

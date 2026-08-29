@@ -917,28 +917,44 @@ the `bench_loop` function-value use, the `addBenchCard` import specifier in
    recheck comes from the replayed snapshot.
 3. **The one-fact mutation matrix lives in its own test file**
    (`tests/issue-4617-declaration-replay-mutations.test.ts`) rather than inside
-   the #4590 file. Measured reason, not preference: with all 21 new cases in one
-   file, CI's `issue-tests` job (single fork, vitest's default 512 MB fork heap)
-   OOM'd — `Reached heap limit ... 510.4 MB` — while the same set passed in 106 s
-   at a 1 GB heap. Split across two files the whole set passes at the CI default.
-   The plan explicitly permits "a focused schema/adapter test file if keeping
-   pure mutations separate improves clarity"; this extends that to the route
+   the #4590 file, and its 16 cases stop at `generateMultiModule` over one
+   shared `analyzeMultiSource` result. Measured reason, not preference: with all
+   21 new cases inside #4590, a single-fork run at vitest's default 512 MB fork
+   heap OOM'd (`Reached heap limit ... 510.4 MB`) while the same set passed at a
+   1 GB heap. The route decision and its legacy audit are complete at
+   `generateMultiModule`; binary/WAT/DTS emission would add memory, never
+   evidence — so one case still carries the whole pipeline so the legacy AUDIT,
+   not only the poison diagnostic, witnesses the emitted direct body. The plan
+   explicitly permits "a focused schema/adapter test file if keeping pure
+   mutations separate improves clarity"; this extends that to the route
    mutations for a memory reason.
-4. **Three obsolete physical pins in #4590 and one in #4591 were remeasured**
-   (see below). All four fail on clean `origin/main` before this branch exists.
+4. **Two `#4590` C1 cases whose assertion is purely a diagnostic** (the poison
+   anti-vacuity control and the armed-but-unmatched injection) also stop at
+   `generateMultiModule`, and the live-versus-replay parity case asserts
+   byte-for-byte binary equality instead of materialising two whole-module WAT
+   renderings — binary equality subsumes the WAT comparison.
+5. **Four obsolete physical pins in #4590 and one in #4591 were remeasured**
+   (see below). All of them fail on clean `main` before this branch exists.
 
 ### Obsolete-pin remeasurement (verified on clean `origin/main` first)
 
 The A/B was run by deleting the three new files and restoring the three edited
 ones, so both sides are one `cp` apart:
 
-| Pin | Was | Measured on clean `f6c8e2c` | Now |
+| Pin | Was on `main` | Clean `f6c8e2c` | Clean `23bc3dd` (this branch's merge base) |
 | --- | --- | --- | --- |
-| #4590 raw Prepared bytes | 131,207 | **133,067** | 133,067 |
-| #4590 raw direct bytes | 131,235 | **133,096** | 133,096 |
-| #4590 exact Prepared reduction | 28 | **29** | 29 |
-| #4590 direct cache global slot | 136 | **139** | 139 |
-| #4591 direct `bench_fib` cache global slot | 136 | **139** | 139 |
+| #4590 raw Prepared bytes | 131,207 | 133,067 | **133,297** |
+| #4590 raw direct bytes | 131,235 | 133,096 | **133,326** |
+| #4590 exact Prepared reduction | 28 | 29 | **29** |
+| #4590 direct trampoline function slot | 290 | 290 | **291** |
+| #4590 direct cache global slot | 136 | 139 | **139** |
+| #4591 direct `bench_fib` trampoline slot | 291 | 291 | **292** |
+| #4591 direct `bench_fib` cache global slot | 136 | 139 | **139** |
+
+The branch carries the right-hand column. The middle column is the same
+measurement taken before `main` advanced under this work — the pins moved
+**twice in one day** from unrelated allocator growth, which is the maintenance
+cost these physical assertions carry.
 
 Clean-main evidence: `tests/issue-4590-...` 18/21 with exactly those three
 assertions red; `tests/issue-4591-...` 26/27 with exactly that one red. The
@@ -953,9 +969,9 @@ maintenance" section describes. Slots 76 / 78 / 10 (Prepared) and 76 / 290
 | Check | Result | Exit |
 | --- | --- | --- |
 | `tests/issue-4590-bench-loop-prepared-cutover.test.ts` | 26/26 | 0 |
-| `tests/issue-4617-declaration-replay-mutations.test.ts` | 18/18 | 0 |
+| `tests/issue-4617-declaration-replay-mutations.test.ts` | 19/19 | 0 |
 | `tests/issue-4617-semantic-declaration-snapshot.test.ts` | 6/6 | 0 |
-| all three together, CI flags, CI default 512 MB heap | 50/50 | 0 |
+| all four together, CI's exact flags, CI default 512 MB heap | 78/78 | 0 |
 | `tests/issue-4591-fib-pair-prepared-cutover.test.ts` | 27/27 | 0 |
 | `tests/issue-4589-multi-prepared-scalar-leaf.test.ts` | 15/15 | 0 |
 | `tests/issue-3518-bench-array-prepared-cutover.test.ts` | 5/5 | 0 |
@@ -982,16 +998,26 @@ maintenance" section describes. Slots 76 / 78 / 10 (Prepared) and 76 / 290
 | `npm run -s check:dead-exports` | 23 known, 0 new | 0 |
 | `LOC_GATE_BASE=f6c8e2c` LOC and function ratchets | both OK | 0 |
 
-Changed-root denominator: **50/50** across the three files this branch owns
-(26 + 18 + 6); adjacent controls **195/198**, where the three are the
-pre-existing `issue-3521-prepared-free-function-routing` failures reproduced
-identically without this branch.
+Changed-root denominator: **78/78** across the four files this branch touches
+(#4590 26, #4591 27, mutations 19, schema 6); adjacent controls **195/198**,
+where the three are the pre-existing
+`issue-3521-prepared-free-function-routing` failures reproduced identically
+without this branch.
 
-Two environment artifacts, both reproduced on clean `main` and neither a product
-signal: (a) `[vitest-worker]: Timeout calling "onTaskUpdate"` on long
-single-fork runs on this loaded 4-core box — it also fires for #4591 and the
-string-leaf planner without this branch, and clears at a 1 GB fork heap; (b) the
-512 MB OOM described in deviation 3, which the file split resolves.
+**One honest caveat on the combined run.** All four files pass individually and
+under the pre-commit hook (which invokes vitest once per file). Run *together*
+in a single fork at the 512 MB default they sit close to the ceiling: one
+ordering completed 78/78 and another OOM'd part-way. That is CI's advisory
+`issue-tests` changed-file step, which is `continue-on-error`, so it cannot
+turn the check run red or block the queue; the fatal pinned step runs only
+`tests/issue-3529-selector-preclaim.test.ts`. The measures in deviations 3 and 4
+were taken specifically to buy that margin back, and they cut the mutation
+matrix from ~40 s to ~16 s of test time.
+
+The `[vitest-worker]: Timeout calling "onTaskUpdate"` error seen on long
+single-fork runs is an environment artifact, not a product signal: it fires for
+#4591 and for the string-leaf planner on clean `main` without this branch, and
+it clears at a 1 GB fork heap.
 
 ### Non-vacuity evidence
 
@@ -1013,7 +1039,8 @@ The replay is load-bearing, not a spy that never throws:
   invariant.
 - 16 one-fact-at-a-time mutations each withdraw **before** support allocation
   and before the skip — proven by the direct body then running into its own
-  poison: `drop-query`, `answer-to-null`, `duplicate-query`, `unknown-query`,
+  poison, with one case carrying the whole pipeline so the legacy audit also
+  witnesses the emitted `compileFunctionBody` row: `drop-query`, `answer-to-null`, `duplicate-query`, `unknown-query`,
   `wrong-version`, `extra-field`, `wrong-source`, `wrong-range`, `wrong-role`,
   `empty-population`, `duplicate-population`, `value-not-in-population`,
   `foreign-import` (same-spelled foreign declaration), `foreign-target`
