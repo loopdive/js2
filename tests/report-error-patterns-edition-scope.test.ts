@@ -2,10 +2,20 @@
 // failure under a published ES edition.
 //
 // Observed symptom: selecting ES2026 on the edition slider listed
-// "Temporal is not defined". Temporal is NOT in ES2026 — it is a post-ES2026
-// stage-4 proposal (generate-editions.ts maps it to the 2027 DRAFT edition) and
-// the runner reports every `built-ins/Temporal/` test as `scope: "proposal",
-// scope_official: false`.
+// "Temporal is not defined" for tests the edition index had never seen.
+//
+// (#5173 update) The ORIGINAL framing of this bug used Temporal as its example
+// on the premise that "Temporal is not in ES2026". That premise is now false —
+// Temporal shipped in ECMA-262 17th edition (ES2026), the runner classifies
+// `built-ins/Temporal/**` as `scope: "standard", scope_official: true`, and
+// `generate-editions.ts` maps the feature to 2026. So a Temporal failure under
+// ES2026 is now a LEGITIMATE published-edition failure and must NOT be hidden.
+// The mechanism these tests pin is unchanged and still correct: a record whose
+// own verdict says proposal (staging, import-defer, source-phase-imports) must
+// not survive a published-edition filter. The Temporal paths below are retained
+// as SYNTHETIC fixtures — each carries an explicit `scope: "proposal"` in the
+// literal, so they exercise the filter regardless of how the runner would
+// classify that path today.
 //
 // Root cause: `renderHostErrorPatterns` filtered purely on the per-file edition
 // index (test262-file-editions.json) with the rule "no classification ⇒ can't

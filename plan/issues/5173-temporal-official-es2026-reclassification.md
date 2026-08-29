@@ -1,10 +1,11 @@
 ---
 id: 5173
 title: "Runner still classifies Temporal as proposal/official:false — ES2026 (17th ed.) shipped it on 2026-06-30"
-status: ready
+status: done
 sprint: current
 created: 2026-08-29
 updated: 2026-08-29
+completed: 2026-08-29
 priority: high
 horizon: m
 feasibility: medium
@@ -97,3 +98,155 @@ Found during #4628 (Temporal runtime-object work): the 2,206
 `Temporal is not defined` failures are conformance gaps against the
 published current edition, not a proposal — this issue makes the repo's
 own metrics say so.
+
+## Implementation notes (2026-08-29)
+
+### 1. What changed, and why there
+
+`tests/test262-runner.ts`
+: `Temporal` dropped from `PROPOSAL_FEATURES`; the `built-ins/Temporal/`
+  path rule deleted from `classifyTestScope`. Temporal now falls through to
+  the ordinary `{ scope: "standard", official: true }` tail. The staging
+  rule still runs FIRST, so `test/staging/Temporal/**` (3 files) stays
+  `proposal` — that is correct and deliberate, staging is not a published
+  edition regardless of the feature tag.
+
+`scripts/generate-editions.ts`
+: This is where the repo actually "records editions" — the runner itself
+  has no edition field. Three edits, all in lockstep with the runner:
+  `FEATURE_EDITION.Temporal` 2027 → **2026**; `Temporal` removed from
+  `PROPOSAL_FEATURE_TAGS`; the `built-ins/Temporal/` line removed from
+  `isProposalScopeByPath`. Without the last two, a Temporal file the
+  results walk adds (one the lane never reported) would still be parked in
+  the `Proposals` (-1) bucket while its reported siblings sat in ES2026.
+
+`scripts/generate-feature-examples.ts`
+: The landing-page catalog's `Temporal` row moved from the `Proposals`
+  section to `ES2026`, and gained `testCategories: ["built-ins/Temporal"]`
+  so the #2910 row reconciliation can actually score it (it read
+  `passCount: 0, totalCount: 0` before, because a Proposals-edition row can
+  match no ES2026-classified test).
+
+`tests/report-error-patterns-edition-scope.test.ts`
+: Comment-only. Its header asserted in prose that "Temporal is NOT in
+  ES2026", which is now false. The mechanism it pins is unaffected — every
+  Temporal path in that file is a **synthetic literal** carrying an
+  explicit `scope: "proposal"`, so the tests exercise the filter without
+  depending on how the runner classifies that path. Left as-is with the
+  premise corrected; all 4 tests pass.
+
+### 2. `scripts/runner-bundle.mjs` — DELETED, not regenerated
+
+The plan said "regenerate it, never hand-edit it". Neither was the right
+move, and the reason matters:
+
+- **Nothing in the repo references it.** Not `package.json`, not a
+  workflow, not another script. `scripts/{ts,js}config.json` explicitly
+  *exclude* it.
+- **No build recipe produces it.** `build:test262-cli` (the script the plan
+  named) writes `dist/test262-fyi-cli.js` + `dist/test262-worker.js`, both
+  gitignored. Its only commit in this repo's history is the initial import.
+- **It was already stale on three independent axes**, which is the proof it
+  is unmaintained: it still listed `upsert` as a proposal (removed in
+  #837), its `Test262ScopeInfo` had no `strict` field (predates the
+  strict-mode classification), and — the reason this issue found it — it
+  still carried the Temporal path rule.
+- **Its siblings are all gitignored build outputs.** `.gitignore` already
+  lists `scripts/compiler-bundle.mjs`, `runtime-bundle.mjs`,
+  `main-compiler-bundle.mjs`, `main-runtime-bundle.mjs`;
+  `runner-bundle.mjs` is simply missing from that list, which is why an
+  accidental commit stuck.
+
+Regenerating would have committed a fresh ~2.4 MB whole-compiler snapshot
+with no consumer, which would rot again on the next runner change — a new
+instance of the same defect. Deleted, and added to `.gitignore` alongside
+its siblings.
+
+### 3. Measured official before/after
+
+Source: `loopdive/js2wasm-baselines` JSONL, fetched fresh 2026-08-29
+(`node scripts/fetch-baseline-jsonl.mjs --force` and
+`ensureStandaloneBaselineJsonl({force:true})`), 48,735 rows each. Bucketed
+by path on `built-ins/Temporal/` plus the 8
+`built-ins/Date/prototype/toTemporalInstant/` tests, which carry
+`features: [Temporal]` and so also flip.
+
+| lane                     | official pass/total before | after                    |
+| ------------------------ | -------------------------- | ------------------------ |
+| JS-host                  | 34,547 / 43,621 (79.2 %)   | 35,141 / 48,232 (72.9 %) |
+| standalone (host-free)   | 33,488 / 43,621 (76.8 %)   | 33,641 / 48,232 (69.8 %) |
+
+Bucket detail: `built-ins/Temporal/**` = 4,603 rows (JS-host 594 pass /
+4,009 fail; standalone 153 host-free pass). `toTemporalInstant` = 8 rows,
+0 pass in both lanes. Total moved: **4,611**, matching the estimate.
+`intl402/` is not in the corpus at all (0 rows), so the ~2.1k
+`intl402/Temporal/**` files are not part of this delta.
+
+The **full-corpus** totals do not move at all — 48,735 rows and 35,377
+(JS-host) / 33,876 (standalone host-free) passes before and after. Only
+the official/proposal split moves; `scope_summaries.proposal` shrinks from
+5,114 to 503 rows.
+
+### 4. Consumers audited, and what was reseeded
+
+| consumer                                          | reads                                | action                                                                                       |
+| ------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `check-standalone-highwater.mjs` (the #2097 floor) | `full_summary.host_free_pass`        | **no change needed** — the gate keys on the FULL corpus, which this PR does not move          |
+| `benchmarks/results/test262-standalone-highwater.json` | its own `official_pass`/`official_total` | **reseeded** 33,256 / 43,621 → **33,641 / 48,232**                                        |
+| `README.md` standalone conformance line            | the mark's `official_*`              | regenerated via `pnpm run sync:conformance`: 33,256 / 43,621 (76.2 %) → 33,641 / 48,232 (69.7 %) |
+| `sync-conformance-numbers.mjs` JS-host line        | `benchmarks/results/test262-report.json` `summary` | **left alone** — see below                                                     |
+| `build-test262-report.mjs`                         | per-row `scope` / `scope_official`   | no change needed; the split is derived from the rows the runner emits                         |
+| `check-baseline-floor-staleness.mjs`               | `baseline_sha` commit distance       | scope/official never read                                                                     |
+| `diff-test262.ts` (regression gate)                | `file` + `status` (+ wasm sha)       | no change needed — see §5                                                                     |
+| dashboard/landing edition timeline                 | `test262-editions.json`              | regenerated by `build:pages`; the ES2026 notch drops, which is the point                      |
+
+Why the mark's `official_*` is reseeded but the committed **report** is
+not: the report (`benchmarks/results/test262-report.json`) is rewritten by
+`promote-baseline` on *every* push to main, so it self-heals within one
+merge cycle and hand-editing it would mean fabricating a dozen derived
+fields. The high-water mark's `official_*`, by contrast, is only rewritten
+when the mark actually **ratchets** (`hostFree > markHostFree`) — on a flat
+day it never does, so the stale 43,621 denominator would sit in README
+indefinitely. Both reseeded numbers come from the same fresh standalone
+baseline read, not from an estimate.
+
+The mark's `pass` / `host_free_pass` (33,644) were deliberately **not**
+touched: raising the ratchet is `promote-baseline --update`'s job, and the
+current measurement (33,876) is above the floor either way.
+
+### 5. Merge-group regression gate — neutrality verified, not assumed
+
+`scripts/diff-test262.ts` contains **no** reference to `scope`,
+`scope_official`, `includeProposals` or `include_proposals` (grepped). It
+keys each row on `file` + `status`, with the #1222 wasm-sha noise filter.
+This PR changes classification metadata only — no test's status moves, and
+no row enters or leaves the corpus (the shard runs set
+`TEST262_INCLUDE_PROPOSALS=1`, so Temporal ran and counted both before and
+after). The catastrophic guard (#1668) and the #1897/#2097 standalone
+guards all consume the same full-corpus figures. Expected merge-group
+result: **zero** regressions, zero net change.
+
+The one behavioural change is in the *other* direction and is the point of
+the issue: a run **without** `TEST262_INCLUDE_PROPOSALS=1` no longer skips
+Temporal. Verified directly with the env var unset — `built-ins/Temporal/`
+and `Date/prototype/toTemporalInstant/` return `standard` / `official:true`
+/ `skip:false`, while `staging/Temporal/`, `import-defer` and
+`source-phase-imports` still return `proposal` / `skip:true`.
+
+### 6. Audit of the remaining `PROPOSAL_FEATURES` entries
+
+Checked against the vendored corpus's `test262/features.txt` on 2026-08-29.
+That file has a `## Standard language features` header at L80 — everything
+above it is a proposal, everything below shipped in a published edition.
+
+| feature                | line | section                    | verdict                      |
+| ---------------------- | ---- | -------------------------- | ---------------------------- |
+| `source-phase-imports` | 40   | proposals                  | still a proposal — **KEEP**  |
+| `import-defer`         | 46   | proposals                  | still a proposal — **KEEP**  |
+| `Temporal`             | 249  | Standard language features | shipped — **REMOVED**        |
+
+Both survivors confirmed still in the proposals section; no further
+reclassification is due. Their runner scope is also independently
+corroborated by the baseline: the 511 non-Temporal proposal-scope rows are
+exactly `language/expressions/import.source` + `AbstractModuleSource`
+(source-phase-imports) and `language/import` (import-defer).

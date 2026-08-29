@@ -282,7 +282,7 @@ const FEATURE_EDITION: Record<string, number> = {
   "promise-try": 2025,
   "RegExp.escape": 2025,
 
-  // ES2026 — the 7 proposals published in the 17th edition (June 2026).
+  // ES2026 — the proposals published in the 17th edition (June 2026).
   // Source of truth for the year is the "Expected Publication Year" column of
   // tc39/proposals `finished-proposals.md`, NOT the date test262 moved the tag
   // from its "Proposed" to its "Standard language features" section: that move
@@ -296,13 +296,19 @@ const FEATURE_EDITION: Record<string, number> = {
   "Math.sumPrecise": 2026,
   "uint8array-base64": 2026,
   upsert: 2026,
+  // (#5173) Temporal moved 2027 → 2026. It reached Stage 4 at the March 2026
+  // TC39 meeting — BEFORE the ES2026 cut-off — and the Ecma General Assembly
+  // ratified ECMA-262 17th edition (ES2026) with Temporal in it on 2026-06-30.
+  // The comment above still holds: the features.txt move is corroboration, not
+  // the source of truth; the publication-year column is what puts it in 2026,
+  // alongside `upsert` from the same cohort.
+  Temporal: 2026,
 
   // ES2027 — stage 4, ratified after the ES2026 cut-off, so still the DRAFT
   // edition (see CURRENT_DRAFT_EDITION). Not a published-edition claim.
   "Atomics.pause": 2027,
   "explicit-resource-management": 2027,
   "joint-iteration": 2027,
-  Temporal: 2027,
 
   // Still stage-3 proposals. Records whose runner scope is `proposal` are
   // bucketed to -1 before edition classification ever runs; these entries only
@@ -593,17 +599,21 @@ function stripTestPrefix(file: string): string {
 /**
  * (#2871 follow-up) The runner's proposal-scope rules, for files the walk below
  * adds. A record carries the runner's own verdict (`scope_official === false`);
- * a file the lane never reported does not, so without this a Temporal or
- * staging test would be indexed as the draft edition and appear inside the
+ * a file the lane never reported does not, so without this a staging or
+ * import-defer test would be indexed as the draft edition and appear inside the
  * published range. Mirrors `classifyTestScope` / `PROPOSAL_FEATURES` in
  * tests/test262-runner.ts — that module is not importable here (it pulls in the
  * compiler), so keep the two in sync if the runner's list changes.
  */
-const PROPOSAL_FEATURE_TAGS = new Set(["Temporal", "import-defer", "source-phase-imports"]);
+// (#5173) `Temporal` removed from both this set and the path rule below, in
+// lockstep with the runner: Temporal is ES2026, so a Temporal file the walk
+// adds must be classified by FEATURE_EDITION (→ 2026), not parked in Proposals.
+// `staging/Temporal/**` is still a proposal — the staging prefix check catches
+// it, exactly as `classifyTestScope`'s staging rule does.
+const PROPOSAL_FEATURE_TAGS = new Set(["import-defer", "source-phase-imports"]);
 
 function isProposalScopeByPath(relPath: string, features: string[] | undefined): boolean {
   if (relPath.startsWith("staging/")) return true;
-  if (relPath.includes("built-ins/Temporal/")) return true;
   return (features ?? []).some((feature) => PROPOSAL_FEATURE_TAGS.has(feature));
 }
 
