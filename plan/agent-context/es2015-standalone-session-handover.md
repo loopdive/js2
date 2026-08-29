@@ -42,6 +42,31 @@ tables (file:function root causes), and per-package acceptance criteria.
 - **Never started**: object-literal #5149, collections #5151, string #5152,
   super #5153 (plans are complete and on main; no implementation exists).
 
+## Final update (2026-08-29 ~12:10Z)
+
+- Wave 6 (second passes) **merged** as [#5213](https://github.com/loopdive/js2/pull/5213)
+  — but it carried a #1058 aliased-`Instr[]` stack-balance regression that turned
+  534/540 standalone typedarray-list tests into compile errors on main (this is
+  what the 10:15Z standalone-floor park saw before the batch merged anyway).
+- Wave 7 is **PR [#5244](https://github.com/loopdive/js2/pull/5244)** (open,
+  `mergeable_state: clean`, auto-enqueued): the **fix-forward** for that
+  regression + IterRec delegation (#5188, +58) + collections #5151 (+25) +
+  string #5152 (+24) + super #5153 (+19) + object-literal #5149 (+13).
+  **Merging #5244 is the top priority for the next session** — until it lands,
+  main's standalone typedarray bucket is wholesale compile-erroring.
+- Wave 8 (second passes over typedarray/class/proxy/promise/regexp/generators
+  residuals) was aborted at wind-down before any plan completed. Issue ids
+  **5194–5199 are reserved on the issue-assignments ref but unused** — reuse
+  them for exactly those six r2 issues or note the hole.
+- New follow-up defects recorded by wave-7 agents (in their issue files'
+  Results/follow-ups): object-literal `__proto__` needs plain-object
+  [[Prototype]] = %Object.prototype% as a prerequisite (#5149); symbol-keyed
+  method calls on plain objects return undefined (#5188 followUp 3); the
+  aliased-`Instr[]` hazard is structural — a dozen sites hold throw arrays in
+  variables, worth a lint or a defensive copy (#5188 followUp 4); the delegation
+  adopt-arm covers canonical `$Vec` only, not the vec-family carriers (#5188
+  followUp 5).
+
 ## Merge-queue situation (read before re-enqueueing anything)
 
 Since ~02:26Z on 2026-08-29 most full merge-group runs fail the test262
