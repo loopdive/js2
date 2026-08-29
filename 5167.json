@@ -1,10 +1,11 @@
 {
   "id": "5167",
   "assignee": "ttraenkler/opus-5167",
-  "requested_by": "ttraenkler/opus-5167",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5167-string-index-loop-proof",
   "claimed_at": "2026-08-29T02:43:33Z",
-  "updated_at": "2026-08-29T02:43:33Z",
-  "write_id": "25791-ua75z5qq"
+  "updated_at": "2026-08-29T20:05:53Z",
+  "write_id": "1812-wvlfr64i",
+  "released_at": "2026-08-29T20:05:53Z"
 }
