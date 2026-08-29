@@ -429,13 +429,12 @@ function widenNonDefaultableTypes(mod: WasmModule): void {
   }
 
   // Widen function locals and block types in bodies
-  const visitedInstructionBodies = new WeakSet<Instr[]>();
   for (const func of mod.functions) {
     for (const local of func.locals) {
       local.type = widenValType(local.type);
     }
     // Widen block types (if/block/loop/try) in instruction bodies
-    widenBlockTypesInBody(func.body, widenValType, visitedInstructionBodies);
+    widenBlockTypesInBody(func.body, widenValType);
   }
 
   // Widen global types
@@ -455,13 +454,7 @@ function widenNonDefaultableTypes(mod: WasmModule): void {
  * Recursively walk an instruction body and widen block types (if/block/loop/try)
  * from `ref` to `ref_null`, matching the widened function type signatures.
  */
-function widenBlockTypesInBody(
-  body: Instr[],
-  widenValType: (t: ValType) => ValType,
-  visited = new WeakSet<Instr[]>(),
-): void {
-  if (visited.has(body)) return;
-  visited.add(body);
+function widenBlockTypesInBody(body: Instr[], widenValType: (t: ValType) => ValType): void {
   for (const instr of body) {
     const a = instr as any;
     // Widen block type if it's a val type with ref kind
@@ -469,15 +462,15 @@ function widenBlockTypesInBody(
       a.blockType.type = widenValType(a.blockType.type);
     }
     // Recurse into nested instruction arrays
-    if (a.then) widenBlockTypesInBody(a.then, widenValType, visited);
-    if (a.else) widenBlockTypesInBody(a.else, widenValType, visited);
-    if (a.body && Array.isArray(a.body)) widenBlockTypesInBody(a.body, widenValType, visited);
+    if (a.then) widenBlockTypesInBody(a.then, widenValType);
+    if (a.else) widenBlockTypesInBody(a.else, widenValType);
+    if (a.body && Array.isArray(a.body)) widenBlockTypesInBody(a.body, widenValType);
     if (a.catches) {
       for (const c of a.catches) {
-        if (c.body) widenBlockTypesInBody(c.body, widenValType, visited);
+        if (c.body) widenBlockTypesInBody(c.body, widenValType);
       }
     }
-    if (a.catchAll) widenBlockTypesInBody(a.catchAll, widenValType, visited);
+    if (a.catchAll) widenBlockTypesInBody(a.catchAll, widenValType);
   }
 }
 

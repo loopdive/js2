@@ -207,18 +207,10 @@ export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<
   // ── 4. Patch every `struct.new` of a branded type: the brand is the LAST
   //       field, so `ref.null <target>` goes immediately before the
   //       `struct.new`. Iterative walk (deep block nesting safe). ──
-  const visited = new WeakSet<Instr[]>();
   const patch = (roots: Instr[]): void => {
     const stack: Instr[][] = [roots];
     while (stack.length > 0) {
       const arr = stack.pop()!;
-      // Instruction arrays form a DAG after helper-body sharing and late
-      // rewrites. Visiting a shared child once per incoming edge can turn a
-      // linear finalizer into exponential work and would also insert the
-      // brand operand more than once. Array identity is the mutation unit, so
-      // one visit is both sufficient and required.
-      if (visited.has(arr)) continue;
-      visited.add(arr);
       for (let i = 0; i < arr.length; i++) {
         const ins = arr[i]! as Instr & { op: string; typeIdx?: number };
         walkChildren(ins, (children) => stack.push(children));

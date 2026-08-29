@@ -12,18 +12,11 @@
  */
 import type { ArrayTypeDef, Instr, StructTypeDef, SubTypeDef, TypeDef, ValType, WasmModule } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { walkInstructionDag } from "./walk-instructions.js";
+import { walkInstructions } from "./walk-instructions.js";
 
 // --- Reference collection ---
 
-function collectRefsFromBody(
-  body: Instr[],
-  usedFuncs: Set<number>,
-  usedTypes: Set<number>,
-  visited = new WeakSet<Instr[]>(),
-): void {
-  if (visited.has(body)) return;
-  visited.add(body);
+function collectRefsFromBody(body: Instr[], usedFuncs: Set<number>, usedTypes: Set<number>): void {
   for (const instr of body) {
     switch (instr.op) {
       case "call":
@@ -70,22 +63,22 @@ function collectRefsFromBody(
       case "block":
       case "loop":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.body, usedFuncs, usedTypes, visited);
+        collectRefsFromBody(instr.body, usedFuncs, usedTypes);
         break;
       case "if":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.then, usedFuncs, usedTypes, visited);
-        if (instr.else) collectRefsFromBody(instr.else, usedFuncs, usedTypes, visited);
+        collectRefsFromBody(instr.then, usedFuncs, usedTypes);
+        if (instr.else) collectRefsFromBody(instr.else, usedFuncs, usedTypes);
         break;
       case "try":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.body, usedFuncs, usedTypes, visited);
-        for (const c of instr.catches) collectRefsFromBody(c.body, usedFuncs, usedTypes, visited);
-        if (instr.catchAll) collectRefsFromBody(instr.catchAll, usedFuncs, usedTypes, visited);
+        collectRefsFromBody(instr.body, usedFuncs, usedTypes);
+        for (const c of instr.catches) collectRefsFromBody(c.body, usedFuncs, usedTypes);
+        if (instr.catchAll) collectRefsFromBody(instr.catchAll, usedFuncs, usedTypes);
         break;
       case "try_table":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.body, usedFuncs, usedTypes, visited);
+        collectRefsFromBody(instr.body, usedFuncs, usedTypes);
         break;
       default: {
         // Catch-all for instructions whose op carries type/func indices we may
@@ -158,63 +151,58 @@ function collectRefsFromTypeDef(td: TypeDef, used: Set<number>): void {
 // aliased template is remapped exactly once regardless of how many times the
 // walker reaches it. A `WeakSet` keyed on the instruction object is the right
 // scope: each `call`/`struct.new`/… is remapped at most once.
-function remapLayoutInBodyShared(
-  body: Instr[],
-  funcRemap: ReadonlyMap<number, number>,
-  typeRemap: ReadonlyMap<number, number>,
-  seen: WeakSet<object>,
-  visitedArrays: WeakSet<Instr[]>,
-): void {
-  walkInstructionDag(
-    body,
-    (instr) => {
-      if (seen.has(instr)) return;
-      const a = instr as any;
-      let changed = false;
-      if (typeof a.funcIdx === "number" && funcRemap.has(a.funcIdx)) {
-        a.funcIdx = funcRemap.get(a.funcIdx)!;
-        changed = true;
-      }
-      if (typeof a.typeIdx === "number" && typeRemap.has(a.typeIdx)) {
-        a.typeIdx = typeRemap.get(a.typeIdx)!;
-        changed = true;
-      }
-      if (typeof a.dstTypeIdx === "number" && typeRemap.has(a.dstTypeIdx)) {
-        a.dstTypeIdx = typeRemap.get(a.dstTypeIdx)!;
-        changed = true;
-      }
-      if (typeof a.srcTypeIdx === "number" && typeRemap.has(a.srcTypeIdx)) {
-        a.srcTypeIdx = typeRemap.get(a.srcTypeIdx)!;
-        changed = true;
-      }
-      // Remap blockType. (#2564) A `blockType` (and its `.type` ValType) can
-      // be aliased across distinct instructions. Guard the block-type object
-      // independently so a compaction chain is applied exactly once.
-      if (a.blockType && !seen.has(a.blockType)) {
-        let blockTypeChanged = false;
-        if (a.blockType.kind === "type" && typeRemap.has(a.blockType.typeIdx)) {
-          a.blockType.typeIdx = typeRemap.get(a.blockType.typeIdx)!;
-          blockTypeChanged = true;
-        }
-        if (a.blockType.kind === "val" && a.blockType.type) {
-          const remapped = remapVT(a.blockType.type, typeRemap);
-          if (remapped !== a.blockType.type) {
-            a.blockType.type = remapped;
-            blockTypeChanged = true;
-          }
-        }
-        if (blockTypeChanged) seen.add(a.blockType);
-      }
-      // Only mutated objects need the double-remap guard. Keeping every plain
-      // instruction in this ephemeron table dominated memory on compiler-sized
-      // accessor IR while providing no protection for objects with no index.
-      if (changed) seen.add(instr);
-    },
-    visitedArrays,
-  );
+function remapFuncIdxInBody(body: Instr[], remap: Map<number, number>): void {
+  const seen = new WeakSet<object>();
+  walkInstructions(body, (instr) => {
+    if (seen.has(instr)) return;
+    seen.add(instr);
+    const a = instr as any;
+    if (typeof a.funcIdx === "number" && remap.has(a.funcIdx)) {
+      a.funcIdx = remap.get(a.funcIdx)!;
+    }
+  });
 }
 
-function remapVT(vt: ValType, remap: ReadonlyMap<number, number>): ValType {
+function remapTypeIdxInBody(body: Instr[], remap: Map<number, number>): void {
+  // (#1302) Same shared-object double-remap guard as remapFuncIdxInBody — a
+  // `typeIdx`/`dstTypeIdx`/`blockType` operand on an aliased instruction must be
+  // chained-remapped exactly once.
+  const seen = new WeakSet<object>();
+  walkInstructions(body, (instr) => {
+    if (seen.has(instr)) return;
+    seen.add(instr);
+    const a = instr as any;
+    if (typeof a.typeIdx === "number" && remap.has(a.typeIdx)) {
+      a.typeIdx = remap.get(a.typeIdx)!;
+    }
+    if (typeof a.dstTypeIdx === "number" && remap.has(a.dstTypeIdx)) {
+      a.dstTypeIdx = remap.get(a.dstTypeIdx)!;
+    }
+    if (typeof a.srcTypeIdx === "number" && remap.has(a.srcTypeIdx)) {
+      a.srcTypeIdx = remap.get(a.srcTypeIdx)!;
+    }
+    // Remap blockType. (#2564) The double-remap guard above keys on the
+    // *instruction* object, but a `blockType` (and its `.type` ValType) can be
+    // ALIASED across several distinct `if`/`block` instructions — e.g. a
+    // tag-dispatch cascade that shares one `blockType` object across its nested
+    // arms. Each aliasing instruction passes the `seen` check (different `instr`)
+    // and would chain-remap the shared block-type a second time (20→16 then
+    // 16→13 under a compaction map). Guard on the `blockType` object itself so a
+    // shared block-type is remapped exactly once regardless of how many
+    // instructions alias it.
+    if (a.blockType && !seen.has(a.blockType)) {
+      seen.add(a.blockType);
+      if (a.blockType.kind === "type" && remap.has(a.blockType.typeIdx)) {
+        a.blockType.typeIdx = remap.get(a.blockType.typeIdx)!;
+      }
+      if (a.blockType.kind === "val" && a.blockType.type) {
+        a.blockType.type = remapVT(a.blockType.type, remap);
+      }
+    }
+  });
+}
+
+function remapVT(vt: ValType, remap: Map<number, number>): ValType {
   if ((vt.kind === "ref" || vt.kind === "ref_null") && typeof (vt as any).typeIdx === "number") {
     const old = (vt as any).typeIdx as number;
     if (remap.has(old)) {
@@ -289,51 +277,61 @@ function remapTD(td: TypeDef, remap: Map<number, number>): TypeDef {
  */
 export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): void {
   const numImpF = mod.imports.filter((i) => i.desc.kind === "func").length;
+  const usedF = new Set<number>();
+  const usedT = new Set<number>();
+
   // #2527: group identity is an ABI property. A module using one member must
   // retain the complete frozen group, otherwise separately compiled provider
   // and consumer modules declare different recursive groups and GC values can
   // no longer cross the link boundary.
   const canonicalGroup = mod.canonicalRuntimeRecGroup;
-  // Keep the large read-only DAG table inside a helper lifetime so V8 can
-  // reclaim it before the mutation/remap walk allocates its own table.
-  const { usedF, usedT } = (() => {
-    const usedFuncs = new Set<number>();
-    const usedTypes = new Set<number>();
-    if (canonicalGroup) {
-      for (let i = canonicalGroup.start; i <= canonicalGroup.end; i++) usedTypes.add(i);
-    }
-    // All local (non-import) functions are always reachable.
-    for (let i = 0; i < mod.functions.length; i++) usedFuncs.add(numImpF + i);
-    for (const func of mod.functions) {
-      // Reference collection is read-only and the result sets are idempotent,
-      // so cross-root aliases may be revisited safely. Scope the DAG table to
-      // one root: compiler-sized modules contain millions of child arrays and
-      // can exceed V8's maximum WeakSet table capacity with one module-wide
-      // table, even when ample heap remains.
-      collectRefsFromBody(func.body, usedFuncs, usedTypes);
-      usedTypes.add(func.typeIdx);
-      for (const l of func.locals) collectRefsFromValType(l.type, usedTypes);
-    }
-    for (const g of mod.globals) {
-      collectRefsFromBody(g.init, usedFuncs, usedTypes);
-      collectRefsFromValType(g.type, usedTypes);
-    }
-    for (const el of mod.elements) {
-      for (const fi of el.funcIndices) usedFuncs.add(fi);
-      collectRefsFromBody(el.offset, usedFuncs, usedTypes);
-    }
-    for (const ex of mod.exports) {
-      if (ex.desc.kind === "func") usedFuncs.add(ex.desc.index);
-    }
-    for (const fi of mod.declaredFuncRefs) usedFuncs.add(fi);
-    if (mod.startFuncIdx !== undefined) usedFuncs.add(mod.startFuncIdx);
-    for (const tag of mod.tags) usedTypes.add(tag.typeIdx);
-    for (const imp of mod.imports) {
-      if (imp.desc.kind === "tag") usedTypes.add(imp.desc.typeIdx);
-      if (imp.desc.kind === "global") collectRefsFromValType(imp.desc.type, usedTypes);
-    }
-    return { usedF: usedFuncs, usedT: usedTypes };
-  })();
+  if (canonicalGroup) {
+    for (let i = canonicalGroup.start; i <= canonicalGroup.end; i++) usedT.add(i);
+  }
+
+  // All local (non-import) functions are always reachable
+  for (let i = 0; i < mod.functions.length; i++) {
+    usedF.add(numImpF + i);
+  }
+
+  // Scan function bodies
+  for (const func of mod.functions) {
+    collectRefsFromBody(func.body, usedF, usedT);
+    usedT.add(func.typeIdx);
+    for (const l of func.locals) collectRefsFromValType(l.type, usedT);
+  }
+
+  // Scan global init expressions
+  for (const g of mod.globals) {
+    collectRefsFromBody(g.init, usedF, usedT);
+    collectRefsFromValType(g.type, usedT);
+  }
+
+  // Scan element segments
+  for (const el of mod.elements) {
+    for (const fi of el.funcIndices) usedF.add(fi);
+    collectRefsFromBody(el.offset, usedF, usedT);
+  }
+
+  // Scan exports
+  for (const ex of mod.exports) {
+    if (ex.desc.kind === "func") usedF.add(ex.desc.index);
+  }
+
+  // declaredFuncRefs
+  for (const fi of mod.declaredFuncRefs) usedF.add(fi);
+
+  // Start function (#907) — referenced by Wasm start section, not by export/element
+  if (mod.startFuncIdx !== undefined) usedF.add(mod.startFuncIdx);
+
+  // Tags reference types
+  for (const tag of mod.tags) usedT.add(tag.typeIdx);
+
+  // Non-func import descriptors reference types
+  for (const imp of mod.imports) {
+    if (imp.desc.kind === "tag") usedT.add(imp.desc.typeIdx);
+    if (imp.desc.kind === "global") collectRefsFromValType(imp.desc.type, usedT);
+  }
 
   // --- Phase 2: Determine dead function imports ---
   let fi2 = 0;
@@ -407,8 +405,6 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
 
   // --- Phase 5: Apply remapping ---
 
-  const remappedLayoutObjects = new WeakSet<object>();
-
   if (rem > 0) {
     // Validate and remap ABI sidecars before changing any module-owned array or
     // index. A rejected layout must not leave imports compacted while bodies,
@@ -448,9 +444,8 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
 
   // Remap function bodies
   for (const func of mod.functions) {
-    if (fR.size > 0 || tR.size > 0) {
-      remapLayoutInBodyShared(func.body, fR, tR, remappedLayoutObjects, new WeakSet<Instr[]>());
-    }
+    if (fR.size > 0) remapFuncIdxInBody(func.body, fR);
+    if (tR.size > 0) remapTypeIdxInBody(func.body, tR);
     if (tR.has(func.typeIdx)) func.typeIdx = tR.get(func.typeIdx)!;
     if (tR.size > 0) {
       for (let i = 0; i < func.locals.length; i++) {
@@ -497,9 +492,8 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
   // Remap element segments
   for (const el of mod.elements) {
     el.funcIndices = el.funcIndices.map((f) => fR.get(f) ?? f);
-    if (fR.size > 0 || tR.size > 0) {
-      remapLayoutInBodyShared(el.offset, fR, tR, remappedLayoutObjects, new WeakSet<Instr[]>());
-    }
+    if (fR.size > 0) remapFuncIdxInBody(el.offset, fR);
+    if (tR.size > 0) remapTypeIdxInBody(el.offset, tR);
   }
 
   // Remap declaredFuncRefs
@@ -513,9 +507,8 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
   // Remap globals
   for (const g of mod.globals) {
     if (tR.size > 0) g.type = remapVT(g.type, tR);
-    if (fR.size > 0 || tR.size > 0) {
-      remapLayoutInBodyShared(g.init, fR, tR, remappedLayoutObjects, new WeakSet<Instr[]>());
-    }
+    if (fR.size > 0) remapFuncIdxInBody(g.init, fR);
+    if (tR.size > 0) remapTypeIdxInBody(g.init, tR);
   }
 
   // Remap tags

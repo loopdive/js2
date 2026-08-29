@@ -2359,24 +2359,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     staticBlock?: ts.ClassStaticBlockDeclaration;
     className?: string;
   }[];
-  /**
-   * Static initializers owned by a class expression. Unlike class-declaration
-   * statics, these execute as part of ClassDefinitionEvaluation at the exact
-   * expression site, so they cannot share the module-level static queue.
-   *
-   * A variable-bound class expression is registered under both its source
-   * binding and a synthetic identity. `staticPropKey` retains each internal
-   * storage alias while the emitter evaluates the source initializer once.
-   */
-  classExpressionStaticInitExprs: Map<
-    ts.ClassExpression,
-    {
-      initializer?: ts.Expression;
-      staticBlock?: ts.ClassStaticBlockDeclaration;
-      className: string;
-      staticPropKey?: string;
-    }[]
-  >;
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**

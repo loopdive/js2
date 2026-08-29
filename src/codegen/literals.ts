@@ -49,7 +49,6 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) ab
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
-import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
@@ -377,21 +376,17 @@ function isCommonClassCarrier(ctx: CodegenContext, elemWasm: ValType, classNames
  * computed property names that TypeScript cannot statically resolve.
  * When TS returns 0 properties (e.g. { [1+1]: 2 }), we resolve the computed
  * keys at compile time and create proper struct fields.
- *
- * Returns a replacement struct name only when the resolved type is a sealed
- * nominal parent. Such a parent cannot grow, so the one literal gets a fresh
- * valid subtype carrying the extra fields instead.
  */
 export function ensureComputedPropertyFields(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
   tsType: ts.Type,
-): string | undefined {
+): void {
   const existingName = resolveStructName(ctx, tsType);
-  if (!existingName) return undefined;
+  if (!existingName) return;
   const existingFields = ctx.structFields.get(existingName);
-  if (!existingFields) return undefined;
+  if (!existingFields) return;
 
   // Collect all property assignments with their resolved names
   const resolvedProps: { name: string; valueExpr: ts.Expression }[] = [];
@@ -404,40 +399,7 @@ export function ensureComputedPropertyFields(
     resolvedProps.push({ name: propName, valueExpr: prop.initializer });
   }
 
-  if (resolvedProps.length === 0) return undefined;
-
-  const structTypeIdx = ctx.structMap.get(existingName)!;
-  if (isSealedNominalStructParent(ctx, structTypeIdx)) {
-    const parent = ctx.mod.types[structTypeIdx];
-    if (!parent || parent.kind !== "struct") return undefined;
-
-    // The parent may currently have no visible children because multi-source
-    // declaration reconciliation detached an edge it will rebuild later. The
-    // persistent seal is authoritative: reopen the parent and add this exact
-    // literal as a new valid leaf subtype rather than changing its prefix.
-    if (parent.superTypeIdx === undefined) parent.superTypeIdx = -1;
-    const replacementName = `__sealed_literal_${ctx.anonTypeCounter++}`;
-    const replacementFields = existingFields.map((field) => ({ ...field, type: { ...field.type } }));
-    for (const rp of resolvedProps) {
-      const propType = ctx.checker.getTypeAtLocation(rp.valueExpr);
-      replacementFields.push({
-        name: rp.name,
-        type: resolveWasmType(ctx, propType),
-        mutable: true,
-      });
-    }
-    const replacementTypeIdx = ctx.mod.types.length;
-    ctx.mod.types.push({
-      kind: "struct",
-      name: replacementName,
-      fields: replacementFields,
-      superTypeIdx: structTypeIdx,
-    });
-    ctx.structMap.set(replacementName, replacementTypeIdx);
-    ctx.typeIdxToStructName.set(replacementTypeIdx, replacementName);
-    ctx.structFields.set(replacementName, replacementFields);
-    return replacementName;
-  }
+  if (resolvedProps.length === 0) return;
 
   // Need to add new fields. Create a replacement struct with the combined fields.
   const fields = [...existingFields];
@@ -448,6 +410,7 @@ export function ensureComputedPropertyFields(
   }
 
   // Update the existing struct in-place
+  const structTypeIdx = ctx.structMap.get(existingName)!;
   const typeDef = ctx.mod.types[structTypeIdx] as any;
   typeDef.fields = fields;
   ctx.structFields.set(existingName, fields);
@@ -458,7 +421,6 @@ export function ensureComputedPropertyFields(
     const wasmType = resolveWasmType(ctx, propType);
     patchStructNewForAddedField(ctx, fctx, structTypeIdx, wasmType);
   }
-  return undefined;
 }
 
 /**
@@ -1985,8 +1947,8 @@ function tryCompileObjectLiteralAsExpectedStruct(
     return undefined;
   }
 
-  const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, litType);
-  return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? expectedName);
+  ensureComputedPropertyFields(ctx, fctx, expr, litType);
+  return compileObjectLiteralForStruct(ctx, fctx, expr, expectedName);
 }
 
 export function compileObjectLiteral(
@@ -2220,8 +2182,8 @@ export function compileObjectLiteral(
         litStructName = resolveStructName(ctx, litType);
       }
       if (litStructName !== undefined && ctx.structMap.get(litStructName) === expectedType.typeIdx) {
-        const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, litType);
-        return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? litStructName);
+        ensureComputedPropertyFields(ctx, fctx, expr, litType);
+        return compileObjectLiteralForStruct(ctx, fctx, expr, litStructName);
       }
     }
   }
@@ -2292,8 +2254,8 @@ export function compileObjectLiteral(
       typeName = resolveStructName(ctx, type);
     }
     if (typeName) {
-      const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, type);
-      return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? typeName);
+      ensureComputedPropertyFields(ctx, fctx, expr, type);
+      return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
     }
     // Fall back to externref plain object for unmappable types (e.g. {...null})
     const fallback = compileObjectLiteralAsExternref(ctx, fctx, expr);
@@ -2309,8 +2271,8 @@ export function compileObjectLiteral(
     typeName = resolveStructName(ctx, contextType);
   }
   if (typeName) {
-    const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, contextType);
-    return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? typeName);
+    ensureComputedPropertyFields(ctx, fctx, expr, contextType);
+    return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
   }
 
   // Contextual type couldn't be mapped; fall back to inferred type-at-location
@@ -2321,8 +2283,8 @@ export function compileObjectLiteral(
     inferredName = resolveStructName(ctx, inferredType);
   }
   if (inferredName) {
-    const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, inferredType);
-    return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? inferredName);
+    ensureComputedPropertyFields(ctx, fctx, expr, inferredType);
+    return compileObjectLiteralForStruct(ctx, fctx, expr, inferredName);
   }
 
   // Fall back to externref plain object for unmappable types

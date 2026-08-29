@@ -170,65 +170,11 @@ function childArrays(a: AnyInstr): Instr[][] {
   return out;
 }
 
-/**
- * Collect every local index written anywhere in `instr`'s subtree into `sink`.
- *
- * Instruction bodies are graphs: two branch arms may reference the same child
- * array (or even the same instruction object). Guard the object walk so write
- * invalidation stays proportional to the unique graph instead of expanding
- * once per incoming edge.
- */
-function collectWrites(instr: Instr, sink: Set<number>, seen = new WeakSet<object>()): void {
-  if (seen.has(instr)) return;
-  seen.add(instr);
+/** Collect every local index written anywhere in `instr`'s subtree into `sink`. */
+function collectWrites(instr: Instr, sink: Set<number>): void {
   const a = instr as AnyInstr;
   if ((a.op === "local.set" || a.op === "local.tee") && a.index !== undefined) sink.add(a.index);
-  for (const arr of childArrays(a)) for (const child of arr) collectWrites(child, sink, seen);
-}
-
-interface ReuseGraphInfo {
-  /** Arrays referenced from more than one instruction edge. */
-  sharedArrays: WeakSet<Instr[]>;
-  /** Instruction objects present in more than one array position. */
-  sharedInstructions: WeakSet<object>;
-}
-
-/**
- * Classify shared nodes in the instruction graph without following an array
- * more than once. A shared array's descendants inherit its multiple incoming
- * control-flow contexts even when each descendant has only one direct parent,
- * so the planner propagates the unsafe state while walking rather than trying
- * to multiply every descendant's reference count here.
- */
-function inspectReuseGraph(root: Instr[]): ReuseGraphInfo {
-  const arrayRefs = new WeakMap<Instr[], number>();
-  const instructionRefs = new WeakMap<object, number>();
-  const sharedArrays = new WeakSet<Instr[]>();
-  const sharedInstructions = new WeakSet<object>();
-  const visitedArrays = new WeakSet<Instr[]>();
-  const pending: Instr[][] = [root];
-  arrayRefs.set(root, 1);
-
-  while (pending.length > 0) {
-    const instrs = pending.pop()!;
-    if (visitedArrays.has(instrs)) continue;
-    visitedArrays.add(instrs);
-
-    for (const instr of instrs) {
-      const instructionCount = (instructionRefs.get(instr) ?? 0) + 1;
-      instructionRefs.set(instr, instructionCount);
-      if (instructionCount === 2) sharedInstructions.add(instr);
-
-      for (const child of childArrays(instr as AnyInstr)) {
-        const arrayCount = (arrayRefs.get(child) ?? 0) + 1;
-        arrayRefs.set(child, arrayCount);
-        if (arrayCount === 2) sharedArrays.add(child);
-        if (!visitedArrays.has(child)) pending.push(child);
-      }
-    }
-  }
-
-  return { sharedArrays, sharedInstructions };
+  for (const arr of childArrays(a)) for (const child of arr) collectWrites(child, sink);
 }
 
 /** True when `op` ends the array's straight-line flow at THIS nesting level. */
@@ -356,15 +302,7 @@ function walkForReuse(
   plan: ReusePlan,
   localKind: LocalKind,
   structOfSite: (instr: Instr) => number | undefined,
-  graph: ReuseGraphInfo,
-  visitedArrays: WeakSet<Instr[]>,
-  reuseAllowed: boolean,
 ): void {
-  // A multiply-parented array is intentionally visited through only one edge.
-  // `reuseAllowed=false` below makes that arbitrary edge observational only:
-  // no leader/follower decision can depend on its incoming dominance state.
-  if (visitedArrays.has(instrs)) return;
-  visitedArrays.add(instrs);
   const writes = new Set<number>();
   for (let i = 0; i < instrs.length; i++) {
     const instr = instrs[i]!;
@@ -379,30 +317,12 @@ function walkForReuse(
           collectWrites(instr, writes);
           for (const w of writes) sub.vals.clobber(w);
         }
-        walkForReuse(
-          kid,
-          sub,
-          plan,
-          localKind,
-          structOfSite,
-          graph,
-          visitedArrays,
-          reuseAllowed && !graph.sharedArrays.has(kid),
-        );
+        walkForReuse(kid, sub, plan, localKind, structOfSite);
       }
     }
     const structIdx = structOfSite(instr);
     if (structIdx !== undefined) {
       guardReuseStats.sites++;
-      // One instruction object can appear in multiple array positions, and a
-      // shared array (plus every descendant below it) has multiple incoming
-      // dominance contexts. There is no single leader that is valid on every
-      // edge. Keep the site's ordinary full IC instead of choosing an
-      // arbitrary incoming state and risking a stale guard/cast local.
-      if (!reuseAllowed || graph.sharedInstructions.has(instr)) {
-        guardReuseStats.unpaired++;
-        continue;
-      }
       const key = producerAt(localKind, instrs, i);
       // A site writes only the shared `$ic` scratch, never a tracked local.
       if (key === undefined) {
@@ -453,17 +373,7 @@ export function planGuardReuse(
 ): ReusePlan | undefined {
   if (!icGuardReuseEnabled()) return undefined;
   const plan: ReusePlan = { leaders: new Set(), followers: new Map(), keys: new Map(), emitted: new Map() };
-  const graph = inspectReuseGraph(body);
-  walkForReuse(
-    body,
-    { live: new Map(), vals: new ValueIds() },
-    plan,
-    localKind,
-    structOfSite,
-    graph,
-    new WeakSet<Instr[]>(),
-    true,
-  );
+  walkForReuse(body, { live: new Map(), vals: new ValueIds() }, plan, localKind, structOfSite);
   return plan.leaders.size === 0 ? undefined : plan;
 }
 

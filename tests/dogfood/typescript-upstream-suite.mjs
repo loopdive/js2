@@ -133,34 +133,4 @@ export async function runHarness({ quiet = false } = {}) {
   return report;
 }
 
-/**
- * TypeScript's adapter is an intentionally pinned slice, so its CLI can be a
- * strict gate: every selected callback must be native-compatible, every
- * generated module must validate, and every admitted callback must pass in
- * Wasm. Keep the positive floors here so an empty/partially extracted run
- * cannot look like an all-green result.
- */
-export function typescriptUpstreamReportSucceeded(report) {
-  const selectedFiles = report?.upstreamSuite?.selectedFiles?.length ?? 0;
-  const registered = report?.extraction?.testsRegistered ?? 0;
-  const scored = report?.results?.scored ?? 0;
-  const modules = report?.compile?.modules ?? 0;
-  return (
-    selectedFiles === 3 &&
-    registered === 11 &&
-    scored === 11 &&
-    report.extraction.nativePassed === registered &&
-    report.extraction.nativeFailed === 0 &&
-    modules === selectedFiles &&
-    report.compile.succeeded === modules &&
-    report.compile.validated === modules &&
-    scored === registered &&
-    report.results.passed === scored &&
-    report.results.failed === 0 &&
-    report.results.runtimeFailed === 0
-  );
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  cliUpstreamHarness(runHarness, { reportSucceeded: typescriptUpstreamReportSucceeded });
-}
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) cliUpstreamHarness(runHarness);

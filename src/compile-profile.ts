@@ -14,7 +14,7 @@
 // allocation, no `Map` writes. Compiles that don't opt in are unaffected.
 //
 //   JS2WASM_COMPILE_PROFILE=1        summary table on process exit
-//   JS2WASM_COMPILE_PROFILE=stream   print each phase as it opens and closes
+//   JS2WASM_COMPILE_PROFILE=stream   also print each phase as it closes
 //
 // Nested phases are tracked as a stack so `codegen > bodies > file:foo.js`
 // reads as a tree. Self time is wall time minus the time attributed to direct
@@ -148,13 +148,6 @@ export function profilePhase<T>(name: string, fn: () => T): T {
     childMs: 0,
   };
   stack.push(open);
-  if (streaming) {
-    const indent = "  ".repeat(stack.length - 1);
-    // A bounded worker may be terminated before its active phase closes. Emit
-    // the opening edge immediately so the final streamed record still names
-    // the phase that owned the timeout instead of only its last predecessor.
-    process.stderr.write(`[js2:profile] ${indent}START ${open.path}\n`);
-  }
   try {
     return fn();
   } finally {

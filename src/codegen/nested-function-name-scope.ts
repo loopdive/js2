@@ -307,22 +307,23 @@ function isTopOfFrameDeclaration(decl: ts.FunctionDeclaration): boolean {
  * compile error on `var-env-lower-lex-catch-non-strict.js` (four eval'd `err`
  * declarations reified into one catch block).
  *
- * ### The owner clause — displace only an exact source TOP-LEVEL registration
+ * ### The owner clause — never displace an OWNER-LESS registration
  *
- * Applied before either of the nested-owner branches below. An owner-less
- * registration may be an import or synthesized helper (#4133's convention),
- * and those still decline: there is no declaration identity proving that the
- * current binding is safe to shadow. A real source top-level function is the
- * one exception. `topLevelFunctionDeclarations` proves that owner, and the
- * shadow stack restores its complete registration when the nested body closes.
+ * Applied before either of the above. The incumbent must have a
+ * `funcMapOwnerDecl` record, i.e. be a nested declaration. Absent ⇒ the name
+ * belongs to a top-level declaration, an import or a synthesized helper
+ * (#4133's convention), and shadowing it deletes a registration no scope on the
+ * stack will put back — an independent route to the same CE, smallest
+ * reproduction in the table, and NOT reachable by the frame rules, since an
+ * incumbent with no owner record has no computable scope to compare.
  *
- * Keep that exception to an ordinary top-of-frame declaration outside the
- * synthetic eval lane. A block-level declaration has Annex-B visibility rules
- * that the flat name map cannot represent, while separate eval SourceFiles are
- * reified into a host frame and need the conservative same-frame treatment
- * described above. This narrow lane fixes first-class reads such as a factory
- * object's `{ createSourceFile }` shorthand without admitting the import/helper
- * and eval registrations that produced the original `funcIdx=undefined` CE.
+ * Consequence, accepted deliberately: a nested declaration shadowing a
+ * same-named TOP-LEVEL one stays unfixed. It costs nothing observable — that
+ * shape returned the wrong answer on the first cut too (the IR front-end's
+ * bare-name direct-call plan called the top-level unit even though both
+ * functions were emitted), so it was already a pinned `it.fails` residual in
+ * `tests/issue-4456.test.ts`. Its real owner is that call-binding resolution,
+ * not this gate.
  *
  * An UNDETERMINABLE scope on either side declines rather than guessing:
  * a synthesized declaration can carry a detached parent chain.
@@ -339,16 +340,7 @@ export function nestedFuncDeclNeedsShadow(
   if (funcName.startsWith("__")) return false;
 
   const incumbent = ctx.funcMapOwnerDecl.get(funcName);
-  if (incumbent === undefined) {
-    const topLevel = ctx.topLevelFunctionDeclarations.get(funcName);
-    return (
-      topLevel !== undefined &&
-      topLevel !== decl &&
-      isTopOfFrameDeclaration(decl) &&
-      !isEvalSourceFile(decl.getSourceFile())
-    );
-  }
-  if (incumbent === decl) return false;
+  if (incumbent === undefined || incumbent === decl) return false;
 
   const incumbentScope = enclosingFunctionScope(incumbent);
   const declScope = enclosingFunctionScope(decl);

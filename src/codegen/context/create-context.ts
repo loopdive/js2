@@ -210,7 +210,6 @@ export function createCodegenContext(
     staticProps: new Map(),
     protoOverrides: new Map(), // #1719 CPR — captured prototype-member overrides
     staticInitExprs: [],
-    classExpressionStaticInitExprs: new Map(),
     closureCounter: 0,
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),

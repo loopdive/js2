@@ -84,7 +84,6 @@ export function registerFnctorCaptureParams(
   recordLiftedCaptureSlots(
     fctx,
     layout.captures.map((capture) => capture.name),
-    { leadingParamOffset: 0 },
   );
   for (let i = 0; i < layout.captures.length; i++) {
     const capture = layout.captures[i]!;

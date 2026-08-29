@@ -2001,22 +2001,6 @@ export function collectEnumDeclarations(ctx: CodegenContext, sourceFile: ts.Sour
     for (const member of stmt.members) {
       const memberName = (member.name as ts.Identifier).text;
       const key = `${enumName}.${memberName}`;
-      // Ask the checker first: unlike the literal-only fallback below, this
-      // resolves aliases (`Alias = Earlier` / `E.Earlier`) and constant enum
-      // expressions. The following implicit member must advance from the
-      // resolved value, not from the collector's stale pre-alias counter.
-      // TypeScript's SyntaxKind relies on this for its deprecated aliases;
-      // drifting after one of them assigns computed object-table entries to
-      // the wrong numeric slot.
-      const checkerValue = ctx.checker.getConstantValue(member);
-      if (typeof checkerValue === "string") {
-        ctx.enumStringValues.set(key, checkerValue);
-        if (!ctx.stringGlobalMap.has(checkerValue)) stringEnumLiterals.push(checkerValue);
-        continue;
-      }
-      if (typeof checkerValue === "number") {
-        nextValue = checkerValue;
-      }
       if (member.initializer) {
         if (ts.isStringLiteral(member.initializer)) {
           // String enum member — store in enumStringValues
@@ -2027,10 +2011,9 @@ export function collectEnumDeclarations(ctx: CodegenContext, sourceFile: ts.Sour
           }
           continue;
         }
-        if (checkerValue === undefined && ts.isNumericLiteral(member.initializer)) {
+        if (ts.isNumericLiteral(member.initializer)) {
           nextValue = Number(member.initializer.text.replace(/_/g, ""));
         } else if (
-          checkerValue === undefined &&
           ts.isPrefixUnaryExpression(member.initializer) &&
           member.initializer.operator === ts.SyntaxKind.MinusToken &&
           ts.isNumericLiteral(member.initializer.operand)

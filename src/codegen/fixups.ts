@@ -10,71 +10,10 @@
  */
 
 import type { FuncTypeDef, Instr, ValType, WasmFunction, WasmModule } from "../ir/types.js";
-import type { CodegenContext, CodegenError } from "./context/types.js";
+import type { CodegenContext } from "./context/types.js";
 import { absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
 // (#4077) The exact forward stack model now lives beside its second consumer.
 import { callTargetFuncType, locateCallArgProducers } from "./call-arg-producers.js";
-
-/** Every nested instruction array owned by one structured instruction. */
-function nestedBodies(instr: Instr): Instr[][] {
-  const a = instr as {
-    body?: Instr[];
-    then?: Instr[];
-    else?: Instr[];
-    catches?: { body?: Instr[] }[];
-    catchAll?: Instr[];
-  };
-  const out: Instr[][] = [];
-  for (const body of [a.body, a.then, a.else, a.catchAll]) if (Array.isArray(body)) out.push(body);
-  if (Array.isArray(a.catches)) for (const c of a.catches) if (Array.isArray(c.body)) out.push(c.body);
-  return out;
-}
-
-/**
- * Arrays reached from multiple function roots have no single local namespace.
- * Context-sensitive fixups must decline them instead of mutating one owner's
- * interpretation into every other owner.
- */
-function crossFunctionBodies(mod: WasmModule): WeakSet<Instr[]> {
-  const owners = new WeakMap<Instr[], WasmFunction>();
-  const shared = new WeakSet<Instr[]>();
-  for (const func of mod.functions) {
-    const seen = new WeakSet<Instr[]>();
-    const pending = [func.body];
-    while (pending.length > 0) {
-      const body = pending.pop()!;
-      if (seen.has(body)) continue;
-      seen.add(body);
-      const owner = owners.get(body);
-      if (owner && owner !== func) shared.add(body);
-      else if (!owner) owners.set(body, func);
-      for (const instr of body) pending.push(...nestedBodies(instr));
-    }
-  }
-  return shared;
-}
-
-function recordContextBlockedFixup(
-  mod: WasmModule,
-  reported: WeakSet<Instr[]>,
-  body: Instr[],
-  pass: string,
-  diagnostics?: CodegenError[],
-): void {
-  if (reported.has(body)) return;
-  reported.add(body);
-  if (!mod.codegenErrors) mod.codegenErrors = [];
-  const diagnostic = {
-    message:
-      `${pass} (#1058): one instruction array is owned by multiple functions; ` +
-      "emit distinct bodies before applying function-local type repairs",
-    line: 0,
-    column: 0,
-    severity: "error" as const,
-  };
-  mod.codegenErrors.push(diagnostic);
-  diagnostics?.push(diagnostic);
-}
 
 /**
  * Post-processing pass: mark leaf struct types in subtype hierarchies as final.
@@ -186,11 +125,8 @@ export function markLeafStructsFinal(
  *
  * Recurses into nested blocks, loops, if/then/else, and try/catch bodies.
  */
-export function repairStructTypeMismatches(mod: WasmModule, diagnostics?: CodegenError[]): number {
+export function repairStructTypeMismatches(mod: WasmModule): number {
   let totalFixed = 0;
-  const contextBlocked = crossFunctionBodies(mod);
-  const visited = new WeakSet<Instr[]>();
-  const reportedBlocked = new WeakSet<Instr[]>();
 
   for (const func of mod.functions) {
     // Build local type map: params from func type, then locals
@@ -198,27 +134,13 @@ export function repairStructTypeMismatches(mod: WasmModule, diagnostics?: Codege
     const paramTypes: ValType[] = funcType && funcType.kind === "func" ? funcType.params : [];
     const localTypes: ValType[] = [...paramTypes, ...func.locals.map((l) => l.type)];
 
-    totalFixed += repairBody(func.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
+    totalFixed += repairBody(func.body, localTypes, mod);
   }
 
   return totalFixed;
 }
 
-export function repairBody(
-  body: Instr[],
-  localTypes: ValType[],
-  mod: WasmModule,
-  visited = new WeakSet<Instr[]>(),
-  contextBlocked = new WeakSet<Instr[]>(),
-  reportedBlocked = new WeakSet<Instr[]>(),
-  diagnostics?: CodegenError[],
-): number {
-  if (contextBlocked.has(body)) {
-    recordContextBlockedFixup(mod, reportedBlocked, body, "struct mismatch repair", diagnostics);
-    return 0;
-  }
-  if (visited.has(body)) return 0;
-  visited.add(body);
+export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule): number {
   let fixed = 0;
 
   // Recurse into nested blocks first
@@ -227,22 +149,17 @@ export function repairBody(
       case "block":
       case "loop":
       case "try_table":
-        if (instr.body)
-          fixed += repairBody(instr.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
+        if (instr.body) fixed += repairBody(instr.body, localTypes, mod);
         break;
       case "if":
-        if (instr.then)
-          fixed += repairBody(instr.then, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
-        if (instr.else)
-          fixed += repairBody(instr.else, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
+        if (instr.then) fixed += repairBody(instr.then, localTypes, mod);
+        if (instr.else) fixed += repairBody(instr.else, localTypes, mod);
         break;
       case "try":
-        if (instr.body)
-          fixed += repairBody(instr.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
+        if (instr.body) fixed += repairBody(instr.body, localTypes, mod);
         if ((instr as any).catches) {
           for (const c of (instr as any).catches) {
-            if (c.body)
-              fixed += repairBody(c.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
+            if (c.body) fixed += repairBody(c.body, localTypes, mod);
           }
         }
         break;
@@ -674,29 +591,27 @@ export function fixupStructNewArgCounts(ctx: CodegenContext): void {
   }
 
   // Scan all functions for struct.new instructions that need fixup
-  function fixupInstrs(instrs: Instr[], visited: WeakSet<Instr[]>): void {
-    if (visited.has(instrs)) return;
-    visited.add(instrs);
+  function fixupInstrs(instrs: Instr[]): void {
     for (let i = 0; i < instrs.length; i++) {
       const instr = instrs[i]!;
 
       // Recurse into nested instruction arrays
       if ("body" in instr && Array.isArray((instr as any).body)) {
-        fixupInstrs((instr as any).body, visited);
+        fixupInstrs((instr as any).body);
       }
       if ("then" in instr && Array.isArray((instr as any).then)) {
-        fixupInstrs((instr as any).then, visited);
+        fixupInstrs((instr as any).then);
       }
       if ("else" in instr && Array.isArray((instr as any).else)) {
-        fixupInstrs((instr as any).else, visited);
+        fixupInstrs((instr as any).else);
       }
       if ("catches" in instr && Array.isArray((instr as any).catches)) {
         for (const c of (instr as any).catches) {
-          if (Array.isArray(c.body)) fixupInstrs(c.body, visited);
+          if (Array.isArray(c.body)) fixupInstrs(c.body);
         }
       }
       if ("catchAll" in instr && Array.isArray((instr as any).catchAll)) {
-        fixupInstrs((instr as any).catchAll, visited);
+        fixupInstrs((instr as any).catchAll);
       }
 
       if (instr.op !== "struct.new") continue;
@@ -764,12 +679,9 @@ export function fixupStructNewArgCounts(ctx: CodegenContext): void {
   }
 
   // Only scan constructor functions and Object.create paths
-  // This fixup is independent of function-local types, so one module-wide
-  // visit safely updates a physical body exactly once for all of its owners.
-  const visited = new WeakSet<Instr[]>();
   for (const func of ctx.mod.functions) {
     if (func.body.length > 0) {
-      fixupInstrs(func.body, visited);
+      fixupInstrs(func.body);
     }
   }
 }
@@ -806,39 +718,27 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
     return def ? def.type : null;
   }
 
-  function fixupInstrs(
-    func: WasmFunction,
-    instrs: Instr[],
-    visited: WeakSet<Instr[]>,
-    contextBlocked: WeakSet<Instr[]>,
-    reportedBlocked: WeakSet<Instr[]>,
-  ): void {
-    if (contextBlocked.has(instrs)) {
-      recordContextBlockedFixup(ctx.mod, reportedBlocked, instrs, "struct.new result repair", ctx.errors);
-      return;
-    }
-    if (visited.has(instrs)) return;
-    visited.add(instrs);
+  function fixupInstrs(func: WasmFunction, instrs: Instr[]): void {
     for (let i = 0; i < instrs.length; i++) {
       const instr = instrs[i]!;
 
       // Recurse into nested instruction arrays
       if ("body" in instr && Array.isArray((instr as any).body)) {
-        fixupInstrs(func, (instr as any).body, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).body);
       }
       if ("then" in instr && Array.isArray((instr as any).then)) {
-        fixupInstrs(func, (instr as any).then, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).then);
       }
       if ("else" in instr && Array.isArray((instr as any).else)) {
-        fixupInstrs(func, (instr as any).else, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).else);
       }
       if ("catches" in instr && Array.isArray((instr as any).catches)) {
         for (const c of (instr as any).catches) {
-          if (Array.isArray(c.body)) fixupInstrs(func, c.body, visited, contextBlocked, reportedBlocked);
+          if (Array.isArray(c.body)) fixupInstrs(func, c.body);
         }
       }
       if ("catchAll" in instr && Array.isArray((instr as any).catchAll)) {
-        fixupInstrs(func, (instr as any).catchAll, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).catchAll);
       }
 
       // Fix array.new_default: length must be i32, not externref
@@ -945,12 +845,9 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
     }
   }
 
-  const contextBlocked = crossFunctionBodies(ctx.mod);
-  const visited = new WeakSet<Instr[]>();
-  const reportedBlocked = new WeakSet<Instr[]>();
   for (const func of ctx.mod.functions) {
     if (func.body.length > 0) {
-      fixupInstrs(func, func.body, visited, contextBlocked, reportedBlocked);
+      fixupInstrs(func, func.body);
     }
   }
 }
@@ -994,37 +891,25 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
     return def ? def.type : null;
   }
 
-  function fixupInstrs(
-    func: WasmFunction,
-    instrs: Instr[],
-    visited: WeakSet<Instr[]>,
-    contextBlocked: WeakSet<Instr[]>,
-    reportedBlocked: WeakSet<Instr[]>,
-  ): void {
-    if (contextBlocked.has(instrs)) {
-      recordContextBlockedFixup(ctx.mod, reportedBlocked, instrs, "extern.convert_any repair", ctx.errors);
-      return;
-    }
-    if (visited.has(instrs)) return;
-    visited.add(instrs);
+  function fixupInstrs(func: WasmFunction, instrs: Instr[]): void {
     // Recurse into nested blocks first
     for (const instr of instrs) {
       if ("body" in instr && Array.isArray((instr as any).body)) {
-        fixupInstrs(func, (instr as any).body, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).body);
       }
       if ("then" in instr && Array.isArray((instr as any).then)) {
-        fixupInstrs(func, (instr as any).then, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).then);
       }
       if ("else" in instr && Array.isArray((instr as any).else)) {
-        fixupInstrs(func, (instr as any).else, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).else);
       }
       if ("catches" in instr && Array.isArray((instr as any).catches)) {
         for (const c of (instr as any).catches) {
-          if (Array.isArray(c.body)) fixupInstrs(func, c.body, visited, contextBlocked, reportedBlocked);
+          if (Array.isArray(c.body)) fixupInstrs(func, c.body);
         }
       }
       if ("catchAll" in instr && Array.isArray((instr as any).catchAll)) {
-        fixupInstrs(func, (instr as any).catchAll, visited, contextBlocked, reportedBlocked);
+        fixupInstrs(func, (instr as any).catchAll);
       }
     }
 
@@ -1238,12 +1123,9 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
     }
   }
 
-  const contextBlocked = crossFunctionBodies(ctx.mod);
-  const visited = new WeakSet<Instr[]>();
-  const reportedBlocked = new WeakSet<Instr[]>();
   for (const func of ctx.mod.functions) {
     if (func.body.length > 0) {
-      fixupInstrs(func, func.body, visited, contextBlocked, reportedBlocked);
+      fixupInstrs(func, func.body);
     }
   }
 }

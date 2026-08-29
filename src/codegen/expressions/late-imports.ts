@@ -792,17 +792,11 @@ export function patchStructNewForAddedField(
   }
 
   // Iterative to avoid composing JS call-stack depth with the enclosing
-  // codegen stack: same reasoning as walkInstructions (#1087). One visited
-  // set spans every reachable root: a shared instruction array represents the
-  // same physical sequence even when several parents or ownership registries
-  // point at it, so inserting a pad more than once would overfill struct.new.
-  const visited = new WeakSet<Instr[]>();
+  // codegen stack: same reasoning as walkInstructions (#1087).
   function patchInstrs(root: Instr[]): void {
     const work: Instr[][] = [root];
     while (work.length > 0) {
       const arr = work.pop()!;
-      if (visited.has(arr)) continue;
-      visited.add(arr);
       for (let i = arr.length - 1; i >= 0; i--) {
         const instr = arr[i]!;
         if (instr.op === "struct.new" && (instr as any).typeIdx === typeIdx) {
@@ -833,31 +827,22 @@ export function patchStructNewForAddedField(
   }
 
   // Patch all already-compiled function bodies
+  const patched = new Set<Instr[]>();
   for (const func of ctx.mod.functions) {
     patchInstrs(func.body);
+    patched.add(func.body);
   }
-  // Match the in-progress body ownership coverage used by
-  // shiftLateImportIndices above. During nested closure/accessor compilation,
-  // an enclosing function is not yet installed in mod.functions and may be
-  // reachable only through currentFunc, funcStack, or parentBodiesStack.
-  patchInstrs(fctx.body);
+  // Patch current function body (if not already part of mod.functions)
+  if (!patched.has(fctx.body)) {
+    patchInstrs(fctx.body);
+    patched.add(fctx.body);
+  }
+  // Patch saved bodies from the savedBody swap pattern
   for (const sb of fctx.savedBodies) {
-    patchInstrs(sb);
-  }
-  if (ctx.currentFunc) {
-    patchInstrs(ctx.currentFunc.body);
-    for (const sb of ctx.currentFunc.savedBodies) {
+    if (!patched.has(sb)) {
       patchInstrs(sb);
+      patched.add(sb);
     }
-  }
-  for (const parentFctx of ctx.funcStack) {
-    patchInstrs(parentFctx.body);
-    for (const sb of parentFctx.savedBodies) {
-      patchInstrs(sb);
-    }
-  }
-  for (const pb of ctx.parentBodiesStack) {
-    patchInstrs(pb);
   }
   // (#2503) Patch DETACHED live bodies — buffers temporarily swapped onto
   // `fctx.body` via a plain JS-local swap (not `pushBody`, so absent from
@@ -871,9 +856,9 @@ export function patchStructNewForAddedField(
   // the grown 3-field type → invalid Wasm ("struct.new need 3, got 2"). Same bug
   // class as #2158 (late-import shift) but for the field-pad patch.
   for (const lb of ctx.liveBodies) {
-    patchInstrs(lb);
-  }
-  if (ctx.pendingInitBody) {
-    patchInstrs(ctx.pendingInitBody);
+    if (!patched.has(lb)) {
+      patchInstrs(lb);
+      patched.add(lb);
+    }
   }
 }

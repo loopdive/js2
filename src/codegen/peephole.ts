@@ -79,30 +79,6 @@ import type { Instr, ValType, WasmModule } from "../ir/types.js";
 import { walkChildren } from "./walk-instructions.js";
 
 /**
- * Find instruction arrays reachable from more than one function root.
- * Pattern 5 consults the enclosing function's local types, so it must not
- * rewrite such an array (or an arm stored in one) using either owner's view.
- */
-function crossFunctionBodies(mod: WasmModule): WeakSet<Instr[]> {
-  const owners = new WeakMap<Instr[], (typeof mod.functions)[number]>();
-  const shared = new WeakSet<Instr[]>();
-  for (const fn of mod.functions) {
-    const seen = new WeakSet<Instr[]>();
-    const pending = [fn.body];
-    while (pending.length > 0) {
-      const body = pending.pop()!;
-      if (seen.has(body)) continue;
-      seen.add(body);
-      const owner = owners.get(body);
-      if (owner && owner !== fn) shared.add(body);
-      else if (!owner) owners.set(body, fn);
-      for (const instr of body) walkChildren(instr, (children) => pending.push(children));
-    }
-  }
-  return shared;
-}
-
-/**
  * Remove redundant ref.as_non_null after ref.cast in a single instruction list.
  * Recurses into block, loop, if/then/else, and try/catch bodies.
  * Mutates the array in place and returns the number of instructions removed.
@@ -111,14 +87,7 @@ function crossFunctionBodies(mod: WasmModule): WeakSet<Instr[]> {
  *   indices [0..numParams-1] are param types, [numParams..] are declared locals.
  *   Used by Pattern 5 to look up whether a local is (ref_null T).
  */
-function optimizeBody(
-  body: Instr[],
-  localTypes: ValType[] | undefined,
-  visited: WeakSet<Instr[]>,
-  contextBlocked: WeakSet<Instr[]>,
-): number {
-  if (visited.has(body)) return 0;
-  visited.add(body);
+function optimizeBody(body: Instr[], localTypes?: ValType[]): number {
   let removed = 0;
 
   // First, recurse into nested child bodies. #1920 — drive the descent through
@@ -131,7 +100,7 @@ function optimizeBody(
   // child field, with no chance of the walkers drifting apart again.
   for (const instr of body) {
     walkChildren(instr, (children) => {
-      removed += optimizeBody(children, localTypes, visited, contextBlocked);
+      removed += optimizeBody(children, localTypes);
     });
   }
 
@@ -250,7 +219,6 @@ function optimizeBody(
     // Only valid when the local is (ref_null T) — ref.as_non_null on anyref would give (ref any).
     if (
       localTypes &&
-      !contextBlocked.has(body) &&
       i + 2 < body.length &&
       cur.op === "local.get" &&
       next.op === "ref.test" &&
@@ -259,23 +227,21 @@ function optimizeBody(
       const localIdx = (cur as any).index as number;
       const testTypeIdx = (next as any).typeIdx as number;
       const ifInstr = body[i + 2]!;
-      const thenBody = (ifInstr as { then?: Instr[] }).then;
       const localType = localTypes[localIdx];
       // Check: local is (ref_null T) where T matches the ref.test type
       if (
         localType &&
         localType.kind === "ref_null" &&
         (localType as any).typeIdx === testTypeIdx &&
-        thenBody &&
-        !contextBlocked.has(thenBody) &&
-        thenBody.length >= 2 &&
-        thenBody[0]!.op === "local.get" &&
-        (thenBody[0] as { index?: number }).index === localIdx &&
-        thenBody[1]!.op === "ref.cast" &&
-        (thenBody[1] as { typeIdx?: number }).typeIdx === testTypeIdx
+        (ifInstr as any).then &&
+        (ifInstr as any).then.length >= 2 &&
+        (ifInstr as any).then[0].op === "local.get" &&
+        (ifInstr as any).then[0].index === localIdx &&
+        (ifInstr as any).then[1].op === "ref.cast" &&
+        (ifInstr as any).then[1].typeIdx === testTypeIdx
       ) {
         // Replace ref.cast T with ref.as_non_null in the then branch
-        thenBody[1] = { op: "ref.as_non_null" };
+        (ifInstr as any).then[1] = { op: "ref.as_non_null" };
         removed++; // net: ref.cast (3+ bytes) → ref.as_non_null (1 byte)
         i++;
         continue;
@@ -308,15 +274,11 @@ function getFuncParamTypes(mod: WasmModule, typeIdx: number): ValType[] {
  */
 export function peepholeOptimize(mod: WasmModule): number {
   let totalRemoved = 0;
-  const contextBlocked = crossFunctionBodies(mod);
-  // Context-invariant patterns may safely mutate a physical array once for all
-  // of its owners. Sharing one visited set across function roots enforces that.
-  const visited = new WeakSet<Instr[]>();
   for (const func of mod.functions) {
     // Build flat local-type array: params first, then declared locals
     const paramTypes = getFuncParamTypes(mod, func.typeIdx);
     const localTypes: ValType[] = [...paramTypes, ...func.locals.map((l) => l.type)];
-    totalRemoved += optimizeBody(func.body, localTypes, visited, contextBlocked);
+    totalRemoved += optimizeBody(func.body, localTypes);
   }
   return totalRemoved;
 }

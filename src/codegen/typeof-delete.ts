@@ -58,7 +58,6 @@ import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
-import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
@@ -1918,12 +1917,6 @@ export function compileTypeofExpression(
     if (ts.isIdentifier(bareTdz) && fctx.boxedTdzFlags?.has(bareTdz.text)) {
       forceRuntimeTypeof = true;
     }
-    // An explicit ambient variable describes a host capability, not a value
-    // the checker can prove is present. Read it and classify the runtime value;
-    // in particular, an optional ambient may be absent and answer "undefined".
-    if (ts.isIdentifier(bareTdz) && identifierHasExplicitHostAmbientValueDeclaration(ctx, bareTdz)) {
-      forceRuntimeTypeof = true;
-    }
     // A script global synchronized around runtime eval is mutable in the JS
     // sense, irrespective of the checker's flow type at this source position.
     // Eval may have replaced `var initial` (statically `undefined`) with an
@@ -2269,13 +2262,6 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
-  if (
-    staticTypeof !== null &&
-    ts.isIdentifier(guardOperand) &&
-    identifierHasExplicitHostAmbientValueDeclaration(ctx, guardOperand)
-  ) {
-    staticTypeof = null;
-  }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
@@ -2458,9 +2444,7 @@ export function compileTypeofComparison(
   // Route through compileExpression, whose identifier path derefs the cell.
   if (ts.isIdentifier(operand)) {
     const localIdx =
-      identifierHasExplicitHostAmbientValueDeclaration(ctx, operand) ||
-      fctx.boxedCaptures?.has(operand.text) ||
-      runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
+      fctx.boxedCaptures?.has(operand.text) || runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
         ? undefined
         : fctx.localMap.get(operand.text);
     if (localIdx !== undefined) {

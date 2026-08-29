@@ -20,13 +20,8 @@ import type { Instr, WasmModule } from "../ir/types.js";
  * budgets. Pre-order semantics preserved: visit(instr) fires before recursion
  * into its children, and siblings are visited in source order.
  */
-function walkInstructionArrays(
-  instrs: Instr[],
-  visitor: (instr: Instr) => void,
-  visitedArrays: WeakSet<Instr[]> | undefined,
-): void {
+export function walkInstructions(instrs: Instr[], visitor: (instr: Instr) => void): void {
   const stack: { arr: Instr[]; i: number }[] = [{ arr: instrs, i: 0 }];
-  visitedArrays?.add(instrs);
   while (stack.length > 0) {
     const top = stack[stack.length - 1]!;
     if (top.i >= top.arr.length) {
@@ -38,46 +33,18 @@ function walkInstructionArrays(
     const children: Instr[][] = [];
     walkChildren(instr, (c) => children.push(c));
     for (let j = children.length - 1; j >= 0; j--) {
-      const child = children[j]!;
-      if (visitedArrays?.has(child)) continue;
-      visitedArrays?.add(child);
-      stack.push({ arr: child, i: 0 });
+      stack.push({ arr: children[j]!, i: 0 });
     }
   }
-}
-
-export function walkInstructions(instrs: Instr[], visitor: (instr: Instr) => void): void {
-  walkInstructionArrays(instrs, visitor, undefined);
-}
-
-/**
- * Walk finalized instruction IR as a graph, visiting each physical child
- * array once. Use this for whole-module analysis/finalization: helper bodies
- * and rewrite arms may be shared by multiple parents, and an edge-based walk
- * can otherwise become exponential. The ordinary tree walker remains
- * available for consumers whose result intentionally depends on occurrences.
- */
-export function walkInstructionDag(
-  instrs: Instr[],
-  visitor: (instr: Instr) => void,
-  visitedArrays = new WeakSet<Instr[]>(),
-): void {
-  if (visitedArrays.has(instrs)) return;
-  walkInstructionArrays(instrs, visitor, visitedArrays);
 }
 
 /** Struct types that have a concrete allocation site in the completed module. */
 export function allocatedStructTypeIndices(mod: WasmModule): ReadonlySet<number> {
   const out = new Set<number>();
-  const visited = new WeakSet<Instr[]>();
   for (const body of [...mod.functions.map((fn) => fn.body), ...mod.globals.map((global) => global.init)])
-    walkInstructionDag(
-      body,
-      (instr) => {
-        if (instr.op === "struct.new" && typeof instr.typeIdx === "number") out.add(instr.typeIdx);
-      },
-      visited,
-    );
+    walkInstructions(body, (instr) => {
+      if (instr.op === "struct.new" && typeof instr.typeIdx === "number") out.add(instr.typeIdx);
+    });
   return out;
 }
 

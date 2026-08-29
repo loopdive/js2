@@ -10,7 +10,6 @@ import {
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
-import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
@@ -401,7 +400,6 @@ import { emitInlineMathFunctions } from "./math-helpers.js";
 import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
 import { repairCrossHierarchyOperands } from "./cross-hierarchy-operands.js"; // (#4157 park 6)
-import { validateFinalStructHierarchies } from "./struct-hierarchy-layout.js";
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
@@ -497,7 +495,6 @@ import {
   inferNumericReturnTypes,
   inferBindingAwareNumericReturnTypes,
   bindingAwareNumericCallEvidence,
-  prepareIdentityPreservingStructuralParams,
   collectEmptyObjectWidening,
   collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
@@ -5281,7 +5278,6 @@ export function generateModule(
     ) {
       registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
     }
-    prepareIdentityPreservingStructuralParams(ctx, [ast.sourceFile]);
     collectDeclarations(ctx, ast.sourceFile);
     // #3522 R3: exact fields that reference a later local class are collected
     // provisionally as externref. Finalize their already-observed storage slot
@@ -6336,11 +6332,10 @@ export function generateModule(
     emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
-    validateFinalStructHierarchies(ctx);
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    repairStructTypeMismatches(mod, ctx.errors);
+    repairStructTypeMismatches(mod);
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
     peepholeOptimize(mod);
@@ -6373,9 +6368,9 @@ export function generateModule(
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    repairCrossHierarchyOperands(mod, ctx.errors);
+    repairCrossHierarchyOperands(mod);
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
-    stackBalance(mod, ctx.errors);
+    stackBalance(mod);
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     drainStackBalanceTelemetry(ctx, ast.sourceFile.fileName);
 
@@ -9597,7 +9592,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       Map<string, import("./context/types.js").NativeGeneratorInfo | undefined>
     >();
 
-    prepareIdentityPreservingStructuralParams(ctx, multiAst.sourceFiles);
     profilePhase("collect-declarations", () => {
       for (const sf of multiAst.sourceFiles) {
         const isEntry = sf === multiAst.entryFile;
@@ -9748,107 +9742,103 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Resolve deferred `export default <variable>` for module globals (#1108).
     // Must run AFTER compileDeclarations — string-constant imports added during
     // body compilation shift numImportGlobals, so indices aren't final until now.
-    profilePhase("deferred-default-exports", () => {
-      if (ctx.deferredDefaultGlobalExport) {
-        const varName = ctx.deferredDefaultGlobalExport;
-        const globalName = `__mod_${varName}`;
-        const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-        if (localIdx >= 0) {
-          const absIdx = ctx.numImportGlobals + localIdx;
-          const alreadyExported = ctx.mod.exports.some(
-            (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
-          );
-          if (!alreadyExported) {
-            ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
-            ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
-          }
+    if (ctx.deferredDefaultGlobalExport) {
+      const varName = ctx.deferredDefaultGlobalExport;
+      const globalName = `__mod_${varName}`;
+      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
+      if (localIdx >= 0) {
+        const absIdx = ctx.numImportGlobals + localIdx;
+        const alreadyExported = ctx.mod.exports.some(
+          (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
+        );
+        if (!alreadyExported) {
+          ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
+          ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
         }
-        ctx.deferredDefaultGlobalExport = undefined;
       }
-      for (const value of ctx.deferredDefaultExpressionExports ?? []) {
-        const localIdx = ctx.mod.globals.indexOf(value);
-        if (localIdx < 0) {
-          reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
-          continue;
-        }
-        if (ctx.mod.exports.some((e) => e.name === "default")) {
-          reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
-          continue;
-        }
-        ctx.mod.exports.push({
-          name: "default",
-          desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
-        });
+      ctx.deferredDefaultGlobalExport = undefined;
+    }
+    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
+      const localIdx = ctx.mod.globals.indexOf(value);
+      if (localIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
+        continue;
       }
-      ctx.deferredDefaultExpressionExports?.clear();
-    });
+      if (ctx.mod.exports.some((e) => e.name === "default")) {
+        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
+        continue;
+      }
+      ctx.mod.exports.push({
+        name: "default",
+        desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
+      });
+    }
+    ctx.deferredDefaultExpressionExports?.clear();
 
     // Copy metadata for .d.ts / helper generation
-    profilePhase("copy-module-metadata", () => {
-      const importNames = mod.imports.map((imp) => imp.name);
-      for (const [key, info] of ctx.externClasses) {
-        const prefix = `${info.importPrefix}_`;
-        const isUsed = importNames.some((n) => n.startsWith(prefix));
-        if (key === info.className && isUsed) {
-          mod.externClasses.push({
-            importPrefix: info.importPrefix,
-            namespacePath: info.namespacePath,
-            className: info.className,
-            constructorParams: info.constructorParams,
-            methods: info.methods,
-            properties: info.properties,
-          });
-        }
+    const importNames = mod.imports.map((imp) => imp.name);
+    for (const [key, info] of ctx.externClasses) {
+      const prefix = `${info.importPrefix}_`;
+      const isUsed = importNames.some((n) => n.startsWith(prefix));
+      if (key === info.className && isUsed) {
+        mod.externClasses.push({
+          importPrefix: info.importPrefix,
+          namespacePath: info.namespacePath,
+          className: info.className,
+          constructorParams: info.constructorParams,
+          methods: info.methods,
+          properties: info.properties,
+        });
       }
-      mod.stringLiteralValues = ctx.stringLiteralValues;
-      mod.asyncFunctions = ctx.asyncFunctions;
-      // (#1700/#4399) Surface per-export boundary classifications so wrapExports
-      // can marshal typed arrays and native strings across the JS↔Wasm edge.
-      if (ctx.exportSignatures.size > 0) {
-        const obj: Record<string, import("../ir/types.js").ExportSignature> = {};
-        for (const [k, v] of ctx.exportSignatures) obj[k] = v;
-        mod.exportSignatures = obj;
-      }
-    });
+    }
+    mod.stringLiteralValues = ctx.stringLiteralValues;
+    mod.asyncFunctions = ctx.asyncFunctions;
+    // (#1700/#4399) Surface per-export boundary classifications so wrapExports
+    // can marshal typed arrays and native strings across the JS↔Wasm edge.
+    if (ctx.exportSignatures.size > 0) {
+      const obj: Record<string, import("../ir/types.js").ExportSignature> = {};
+      for (const [k, v] of ctx.exportSignatures) obj[k] = v;
+      mod.exportSignatures = obj;
+    }
 
     // (#2847) Whole-program conservative branding for multi-source modules.
-    profilePhase("recover-boolean-struct-brands", () => recoverBooleanStructFieldBrands(ctx));
+    recoverBooleanStructFieldBrands(ctx);
 
     // Mirror single-source exact shape provenance before any closed-struct
     // runtime finalizer consumes the complete multi-source type table.
-    profilePhase("shape-stamping", () => resolveAndRecordShapeStamping(ctx));
+    resolveAndRecordShapeStamping(ctx);
 
     // (#2831) Reserve the host-externref → wasm-vec materializers before the
     // `__sset_*` setters and deferred member dispatchers bake their value
     // coercions (mirrors the generateModule path).
-    profilePhase("reserve-vec-field-materializers", () => reserveVecFieldMaterializers(ctx));
-    profilePhase("reserve-cold-tail-allocators", () => reserveColdTailAllocators(ctx)); // (#3927) mirrors the generateModule path
-    profilePhase("reserve-fnctor-resid-allocators", () => reserveFnctorResidAllocators(ctx)); // (#3927) per-type layouts — mirrors the generateModule path
+    reserveVecFieldMaterializers(ctx);
+    reserveColdTailAllocators(ctx); // (#3927) mirrors the generateModule path
+    reserveFnctorResidAllocators(ctx); // (#3927) per-type layouts — mirrors the generateModule path
 
     // Emit exported struct field getter helpers for the runtime (mirrors
     // generateModule path — #1308 surfaced that multi-source projects
     // were missing these export emits).
-    profilePhase("emit-struct-field-getters", () => emitStructFieldGetters(ctx));
-    profilePhase("emit-struct-field-boolean-markers", () => emitStructFieldBooleanMarkers(ctx));
-    profilePhase("emit-struct-field-presence-getters", () => emitStructFieldPresenceGetters(ctx));
-    profilePhase("emit-struct-field-setters", () => emitStructFieldSetters(ctx));
+    emitStructFieldGetters(ctx);
+    emitStructFieldBooleanMarkers(ctx);
+    emitStructFieldPresenceGetters(ctx);
+    emitStructFieldSetters(ctx);
 
     // (#2660 M3) Same ordering as the single-source pipeline.
-    profilePhase("fill-closure-prototype-edge", () => fillClosurePrototypeEdge(ctx));
+    fillClosurePrototypeEdge(ctx);
 
     // (#4637 A4) Same ordering as the single-source pipeline.
-    profilePhase("splice-closure-prototype-has-own", () => spliceClosurePrototypeEdgeHasOwn(ctx));
+    spliceClosurePrototypeEdgeHasOwn(ctx);
 
     // (#3468) Multi-source compilation can reserve the closure own-property
     // side-table helpers too. Fill their placeholders only after every source
     // has registered its closure types, matching the single-source pipeline.
-    profilePhase("fill-closure-prop-helpers", () => fillClosurePropHelpers(ctx));
+    fillClosurePropHelpers(ctx);
 
     // (#4637 A1) Same for the function-value proto-view map.
-    profilePhase("fill-proto-function-value", () => fillProtoFunctionValue(ctx));
+    fillProtoFunctionValue(ctx);
 
     // (#3537) Same for the array-expando side table.
-    profilePhase("fill-vec-prop-helpers", () => fillVecPropHelpers(ctx));
+    fillVecPropHelpers(ctx);
 
     // (#3496) A multi-source entry can reserve a closed method dispatcher just
     // like a single source can. The literal Test262 harness does so for
@@ -9858,16 +9848,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // object shapes and closure methods, matching the single-source pipeline.
     // The fill is read-only over the function map because its dependencies are
     // registered when the dispatcher is reserved.
-    profilePhase("fill-closed-method-dispatch", () => fillClosedMethodDispatch(ctx));
+    fillClosedMethodDispatch(ctx);
 
     // (#3683 S3) Fill the reserved `__dc_<F>_<m>_<n>` direct-call trampolines
     // now that every typed twin exists. Runs AFTER the closed-method fill
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
-    profilePhase("fill-direct-call-trampolines", () => fillDirectCallTrampolines(ctx));
+    fillDirectCallTrampolines(ctx);
     // (#4406 Phase 0) Same funnel report in the linked lane.
-    profilePhase("note-ret-unbox-stats", () => noteRetUnboxStats(ctx));
-    profilePhase("note-param-unbox-stats", () => noteParamUnboxStats(ctx));
+    noteRetUnboxStats(ctx);
+    noteParamUnboxStats(ctx);
 
     // (#3493) compileMulti shares the same property-access lowering as the
     // single-source path, so a dynamic property write/read can reserve one of
@@ -9877,55 +9867,55 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // after every source file has registered its struct types, exactly as the
     // single-source finalizer does. Their dependencies were registered by the
     // reserve phase, so these fills do not mutate function indices.
-    profilePhase("fill-member-set-dispatch", () => fillMemberSetDispatch(ctx));
-    profilePhase("fill-member-get-dispatch", () => fillMemberGetDispatch(ctx));
-    profilePhase("fill-typed-member-get-f64-dispatch", () => fillTypedMemberGetF64Dispatch(ctx)); // (#3673) typed f64 twins
-    profilePhase("fill-typed-member-set-f64-dispatch", () => fillTypedMemberSetF64Dispatch(ctx)); // (#4157 A) the WRITE-side f64 twins
-    profilePhase("inline-member-get-call-sites", () => inlineMemberGetCallSites(ctx)); // (#4157) call-site inline cache, default ON
-    profilePhase("inline-is-truthy-call-sites", () => inlineIsTruthyCallSites(ctx)); // (#4157) ToBoolean call-site fast path, default ON
-    profilePhase("fuse-box-boolean-sinks", () => fuseBoxBooleanSinks(ctx)); // (#4157) unboxed boolean fusion — AFTER the truthy IC, default OFF
-    profilePhase("fill-fused-to-number", () => fillFusedToNumber(ctx)); // (#4157) fused __to_number — no-op unless reserved
+    fillMemberSetDispatch(ctx);
+    fillMemberGetDispatch(ctx);
+    fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
+    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default ON
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
+    fuseBoxBooleanSinks(ctx); // (#4157) unboxed boolean fusion — AFTER the truthy IC, default OFF
+    fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Mirror the single-source closed-struct own-property finalizer.
-    profilePhase("fill-error-prop-helpers", () => fillErrorPropHelpers(ctx)); // (#4098) multi-source parity for the shared Error bag ABI
-    profilePhase("fill-instance-tombstones", () => fillInstanceTombstones(ctx)); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
-    profilePhase("fill-instance-props", () => fillInstanceProps(ctx)); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
-    profilePhase("fill-closed-struct-has-own-arms", () => fillClosedStructHasOwnArms(ctx));
+    fillErrorPropHelpers(ctx); // (#4098) multi-source parity for the shared Error bag ABI
+    fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
+    fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
+    fillClosedStructHasOwnArms(ctx);
     // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
     // its OWN members are invisible to the table walk. AFTER the closed-struct
     // prologue so the two arms compose in receiver-shape order.
-    profilePhase("unshift-native-proto-has-own-arms", () => unshiftNativeProtoHasOwnArms(ctx));
+    unshiftNativeProtoHasOwnArms(ctx);
     // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
     // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
-    profilePhase("unshift-native-proto-to-primitive-arm", () => unshiftNativeProtoToPrimitiveArm(ctx));
-    profilePhase("fill-closed-struct-own-property-names", () => fillClosedStructOwnPropertyNamesArms(ctx));
-    profilePhase("fill-closed-struct-enumeration", () => fillClosedStructEnumerationArms(ctx)); // (#3920) Object.keys / for…in
-    profilePhase("fill-closed-struct-extern-get", () => fillClosedStructExternGetArms(ctx));
+    unshiftNativeProtoToPrimitiveArm(ctx);
+    fillClosedStructOwnPropertyNamesArms(ctx);
+    fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
+    fillClosedStructExternGetArms(ctx);
     // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
     // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
     // tombstone revival, single-engine coercion). The expando-bag half — writes
     // with no physical slot, bag visibility, enumeration merge — is
     // fillInstanceProps (instance-props.ts). Misses fall through from the
     // declared ladder to the bag miss-arm, so the two compose without overlap.
-    profilePhase("fill-closed-struct-extern-set", () => fillClosedStructExternSetArms(ctx));
-    profilePhase("fill-fnctor-prototype-dispatch", () => fillFnctorPrototypeDispatchArms(ctx));
+    fillClosedStructExternSetArms(ctx);
+    fillFnctorPrototypeDispatchArms(ctx);
     // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
-    profilePhase("unshift-regexp-accessor-set-guard", () => unshiftRegExpAccessorSetGuard(ctx));
+    unshiftRegExpAccessorSetGuard(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
-    profilePhase("unshift-extern-get-wrapper-ctor", () => unshiftExternGetWrapperCtorArm(ctx));
+    unshiftExternGetWrapperCtorArm(ctx);
     // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
-    profilePhase("unshift-extern-get-proto-method", () => unshiftExternGetProtoMethodArm(ctx));
+    unshiftExternGetProtoMethodArm(ctx);
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
-    profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
-    profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
+    unshiftExternMethodCallProtoArm(ctx);
+    unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
     // MUST run HERE: `unshiftExternGetProtoCacheArm` above is the last pass that
@@ -9934,25 +9924,25 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
-    profilePhase("inline-extern-get-call-sites", () => inlineExternGetCallSites(ctx));
+    inlineExternGetCallSites(ctx);
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
     // sites — multi-source parity with the generateModule call above (same
     // after-the-set-fills, before-any-index-remap ordering). DEFAULT OFF.
-    profilePhase("inline-member-set-call-sites", () => inlineMemberSetCallSites(ctx));
+    inlineMemberSetCallSites(ctx);
     // (#4157) `__call_m_*` devirtualization — same finalize point as the
     // single-source pipeline above (after all dispatcher fills, before
     // dead-elim / census). DEFAULT OFF.
-    profilePhase("inline-call-dispatch-sites", () => inlineCallDispatchSites(ctx));
-    profilePhase("inline-flat-str-call-sites", () => inlineFlatStrCallSites(ctx)); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
-    profilePhase("fill-runtime-eval-callable-property-get", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
-    profilePhase("fill-runtime-eval-function-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx)); // (#4491 T7-B) — multi-source parity
+    inlineCallDispatchSites(ctx);
+    inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
+    fillRuntimeEvalCallablePropertyGetArm(ctx);
+    fillRuntimeEvalIntrinsicFunctionOwnProps(ctx); // (#4491 T7-B) — multi-source parity
 
     // (#1904/#3731) Multi-source parity for the native Array.isArray
     // predicate. Its reserve-time body is a fail-closed `false`; fill it only
     // after every source has registered its array carriers, exactly as the
     // single-source pipeline does above.
-    profilePhase("fill-extern-is-array", () => fillExternIsArray(ctx));
+    fillExternIsArray(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
     // numeric reads through an externref (for example `globalThis.logs[i]`).
@@ -9961,74 +9951,74 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // exactly as the single-source finalizer does. Without this multi-source
     // fill, the backing vec contains the right values but every indexed read
     // silently returns the undefined sentinel.
-    profilePhase("fill-extern-get-idx-vec-arms", () => fillExternGetIdxVecArms(ctx));
-    profilePhase("unshift-extern-get-string-exotic", () => unshiftExternGetStringExoticArm(ctx));
+    fillExternGetIdxVecArms(ctx);
+    unshiftExternGetStringExoticArm(ctx);
     // (#3666/#3251) Multi-source parity after every carrier/dynamic reader is complete.
-    profilePhase("fill-obj-vec-reflection-helpers", () => fillObjVecReflectionHelpers(ctx));
+    fillObjVecReflectionHelpers(ctx);
     // (#4098) Multi-source parity: the helper bodies were filled above; now
     // splice the native Error reader after the other dynamic-reader fills.
-    profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
+    fillExternGetErrorProps(ctx);
     // (#3371) Reflect.construct reserves the same host-free constructor
     // classifier and native-view prototype overrides in project compilation as
     // in the single-source pipeline. Keep native views after generic vec fills
     // so they retain front precedence.
-    profilePhase("fill-ta-dyn-view-mop-arms", () => fillTaDynViewMopArms(ctx));
-    profilePhase("fill-data-view-construct-proto", () => fillDataViewConstructProtoArm(ctx));
-    profilePhase("fill-reflect-is-constructor", () => fillReflectIsConstructor(ctx));
+    fillTaDynViewMopArms(ctx);
+    fillDataViewConstructProtoArm(ctx);
+    fillReflectIsConstructor(ctx);
     // (#4160) Prototype-index store — multi-source parity with the
     // generateModule call above (same after-the-shape-probing-fills ordering;
     // see the single-source comment). No-op unless reserved.
-    profilePhase("fill-proto-index-store", () => fillProtoIndexStore(ctx));
-    profilePhase("fill-holey-array-has-idx", () => fillHoleyArrayHasIdxArm(ctx));
+    fillProtoIndexStore(ctx);
+    fillHoleyArrayHasIdxArm(ctx);
     // (#4491 T11) f64 absence-marker presence arms. Must run AFTER
     // `fillExternGetIdxVecArms` (which locates its splice point by the eager
     // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
     // and only ever RETURNS 0 for a slot that literally holds the marker, so
     // taking the front slot cannot shadow another receiver's answer.
-    profilePhase("fill-sparse-hole-has-idx", () => fillSparseHoleHasIdxArms(ctx));
+    fillSparseHoleHasIdxArms(ctx);
     // (#4446) Multi-source parity for concat's `$Hole`-aware ObjVec readers
     // and sparse-tail HasProperty guard.
-    profilePhase("fill-concat-native-hole-arms", () => fillConcatNativeHoleArms(ctx));
+    fillConcatNativeHoleArms(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
-    profilePhase("emit-vec-access-exports", () => emitVecAccessExports(ctx));
+    emitVecAccessExports(ctx);
 
     // Emit __dv_byte_{len,get,set} exports for DataView host runtime.
-    profilePhase("emit-data-view-byte-exports", () => emitDataViewByteExports(ctx));
+    emitDataViewByteExports(ctx);
 
     // (#3058) Resizable-ArrayBuffer helper exports (mirrors generateModule path).
-    profilePhase("emit-resizable-ab-exports", () => emitResizableAbExports(ctx));
+    emitResizableAbExports(ctx);
 
     // Multi-source parity with generateModule: linked Web Crypto calls need a
     // byte writer for their Wasm vec argument, and exported typed-array params
     // need the inbound f64-vec allocator.
-    profilePhase("emit-vec-set-byte-export", () => emitVecSetByteExport(ctx));
-    profilePhase("emit-new-vec-f64-export", () => emitNewVecF64Export(ctx));
+    emitVecSetByteExport(ctx);
+    emitNewVecF64Export(ctx);
 
     // Emit __test_str_from_externref / __test_str_to_externref helpers
     // (no-op unless ctx.testRuntime && ctx.nativeStrings).
-    profilePhase("emit-test-runtime-string-helpers", () => emitTestRuntimeStringHelpers(ctx));
+    emitTestRuntimeStringHelpers(ctx);
 
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch.
-    profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
+    emitIteratorMethodExport(ctx);
 
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).
-    profilePhase("emit-closure-call-export-0", () => emitClosureCallExport(ctx));
+    emitClosureCallExport(ctx);
 
     // Emit __call_fn_1 export for calling one-arg closures from JS (#1090, #1308).
-    profilePhase("emit-closure-call-export-1", () => emitClosureCallExport1(ctx));
+    emitClosureCallExport1(ctx);
 
     // Multi-source projects can pass entry-module closures into an imported
     // function whose dynamic call is compiled before that closure wrapper is
     // known. The host fallback needs matching dispatchers or wider closures return null.
-    profilePhase("emit-closure-call-export-2", () => emitClosureCallExport2(ctx));
-    profilePhase("emit-closure-call-export-3", () => emitClosureCallExport3(ctx));
-    profilePhase("emit-closure-call-export-4", () => emitClosureCallExport4(ctx));
-    profilePhase("emit-date-host-bridge", () => emitDateHostBridge(ctx));
+    emitClosureCallExport2(ctx);
+    emitClosureCallExport3(ctx);
+    emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // Mirror the single-source receiver bridge over the complete multi-source
     // closure registry. Include native-construction demand in the cap so its
     // deferred drivers and ordinary host method calls share one dispatcher set.
-    profilePhase("emit-closure-method-call-exports", () => {
+    {
       let maxClosureArity = 5;
       for (const info of ctx.closureInfoByTypeIdx.values()) {
         if (info.paramTypes.length > maxClosureArity) maxClosureArity = info.paramTypes.length;
@@ -10037,67 +10027,67 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
-    });
+    }
     // (#4098) Error sidecar accessors reserve receiver-aware drivers while the
     // MOP is built. Refill them only after multi-source method dispatchers exist.
-    profilePhase("fill-accessor-drivers", () => fillAccessorDrivers(ctx));
+    fillAccessorDrivers(ctx);
 
     // Unknown-arity host wrappers use this classifier to choose a dispatcher
     // wide enough for the closure's declared parameters.
-    profilePhase("emit-closure-arity-export", () => emitClosureArityExport(ctx));
+    emitClosureArityExport(ctx);
 
     // Fill multi-source constructor method drivers after all closure tables.
-    profilePhase("fill-host-fnctor-method-drivers", () => fillHostFnctorMethodDrivers(ctx));
+    fillHostFnctorMethodDrivers(ctx);
 
     // (#4648) Same fill on the multi-source path — see the primary path note.
-    profilePhase("fill-async-closure-promise-wrappers", () => fillAsyncClosurePromiseWrappers(ctx));
+    fillAsyncClosurePromiseWrappers(ctx);
 
     // Fill apply only after every multi-source arity dispatcher exists.
-    profilePhase("fill-apply-closure", () => fillApplyClosure(ctx));
+    fillApplyClosure(ctx);
 
     // (#3481 step 3) Same fill on the multi-source path — see the primary path.
     fillObjLitToPrimitive(ctx);
 
     // #1504: emit __is_closure for wrapExports discrimination.
-    profilePhase("emit-is-closure-export", () => emitIsClosureExport(ctx));
+    emitIsClosureExport(ctx);
 
     // (#4661) IsConstructor bridge (see generateModule path).
-    profilePhase("emit-is-ctor-closure-export", () => emitIsCtorClosureExport(ctx));
+    emitIsCtorClosureExport(ctx);
 
     // #2742: accessor-returned rest-closure discriminator (see primary path).
-    profilePhase("emit-closure-has-rest-export", () => emitClosureHasRestExport(ctx));
+    emitClosureHasRestExport(ctx);
 
     // #2794: POSITIVE data-vs-closure discriminator (see generateModule path).
-    profilePhase("emit-is-data-struct-export", () => emitIsDataStructExport(ctx));
+    emitIsDataStructExport(ctx);
 
     // (#4629) Map/Set any-channel dispatch arms — BEFORE the typeof fill so
     // the minted iterator-closure wrap type is in the classifier roots.
-    profilePhase("fill-map-set-dyn-dispatch-arms", () => fillMapSetDynDispatchArms(ctx));
+    fillMapSetDynDispatchArms(ctx);
     // (#4631) BigInt wrapper [[PrimitiveValue]] arm of the __dyn_valueOf native.
-    profilePhase("fill-bigint-dyn-value-of-arm", () => fillBigIntDynValueOfArm(ctx));
+    fillBigIntDynValueOfArm(ctx);
 
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).
-    profilePhase("fill-standalone-typeof-closure-arms", () => fillStandaloneTypeofClosureArms(ctx));
+    fillStandaloneTypeofClosureArms(ctx);
 
     // Same late fnctor-carrier fill on the multi-source finalize path.
-    profilePhase("fill-standalone-fnctor-to-string-arms", () => fillStandaloneObjectProtoToStringFnctorArms(ctx));
+    fillStandaloneObjectProtoToStringFnctorArms(ctx);
 
     // Same reserve/fill identity probes as the single-source pipeline.
-    profilePhase("fill-native-dynamic-instanceof", () => fillNativeDynamicInstanceOf(ctx));
+    fillNativeDynamicInstanceOf(ctx);
 
     // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
-    profilePhase("fill-symbol-any-to-string-arm", () => fillSymbolAnyToStringArm(ctx));
+    fillSymbolAnyToStringArm(ctx);
     // (#4492 wave-5) …and the same CALLABLE arms, on both ToString dispatchers.
-    profilePhase("fill-callable-any-to-string-arm", () => fillCallableAnyToStringArm(ctx));
-    profilePhase("fill-callable-extern-to-string-arm", () => fillCallableExternToStringArm(ctx));
+    fillCallableAnyToStringArm(ctx);
+    fillCallableExternToStringArm(ctx);
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch.
-    profilePhase("emit-to-primitive-method-exports", () => emitToPrimitiveMethodExports(ctx));
+    emitToPrimitiveMethodExports(ctx);
 
     // (#4770) Multi-source parity for the dynamic class-constructor `name`
     // property view; see the single-source placement above.
-    profilePhase("fill-class-object-name-arms", () => fillClassObjectNameArms(ctx));
+    fillClassObjectNameArms(ctx);
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /
@@ -10114,8 +10104,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // reserved (`ctx.arrayToPrimitiveReserved`/`ctx.classToPrimitiveReserved`
     // unset) — byte-identical for modules that never reach `__to_primitive`'s
     // array/class-instance arms.
-    profilePhase("fill-array-to-primitive", () => fillArrayToPrimitive(ctx));
-    profilePhase("fill-class-to-primitive", () => fillClassToPrimitive(ctx));
+    fillArrayToPrimitive(ctx);
+    fillClassToPrimitive(ctx);
 
     // (#3981) Same class of multi-file gap as the two fills immediately above.
     // This path emits only `__call_fn_0`/`__call_fn_1`, never the
@@ -10126,52 +10116,50 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // than the null it replaced: an uncatchable Wasm trap. Emit the dispatchers
     // ONLY up to the arity a construct driver actually reserved, so a
     // multi-file module without such a site stays byte-identical.
-    profilePhase("fill-native-construct-drivers", () => fillNativeConstructDrivers(ctx));
-    profilePhase("fill-construct-bound-driver", () => fillConstructBoundDriver(ctx)); // (#4196) same stub hazard; degrades to null
-    profilePhase("fill-runtime-eval-construct-driver", () => fillRuntimeEvalConstructDriver(ctx)); // (#4438) same stub hazard; degrades to null
+    fillNativeConstructDrivers(ctx);
+    fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
+    fillRuntimeEvalConstructDriver(ctx); // (#4438) same stub hazard; degrades to null
     // Native Proxy trap drivers use the same finalize-only closure bridge in
     // project compilation as in the single-source pipeline.
-    profilePhase("fill-proxy-dispatch", () => fillProxyDispatch(ctx));
+    fillProxyDispatch(ctx);
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
     // dispatch of a class's [Symbol.toPrimitive] *method* on opaque structs.
-    profilePhase("emit-to-primitive-method-export", () => emitToPrimitiveMethodExport(ctx));
+    emitToPrimitiveMethodExport(ctx);
 
     // (#2962) Emit __exn_render_prepare / __exn_render_char so the test262
     // harness can render a natively-thrown GC payload ("TypeError: boom")
     // with zero host imports. No-op unless (standalone || wasi) &&
     // nativeStrings && the `$exc` tag was registered (i.e. the module can
     // actually throw).
-    profilePhase("emit-exception-render-exports", () => emitExceptionRenderExports(ctx));
+    emitExceptionRenderExports(ctx);
 
     // (#3469) Emit __stdout_prepare / __stdout_char so the runner can read the
     // standalone host-free `console.log`/`print` output (the test262 async
     // completion marker) with zero host imports. No-op unless the standalone
     // stdout sink was minted (ctx.stdoutAccGlobalIdx >= 0).
-    profilePhase("emit-stdout-sink-exports", () => emitStdoutSinkExports(ctx));
+    emitStdoutSinkExports(ctx);
 
     // #1326c Phase 1C-A — export __drain_microtasks BEFORE WASI _start so the
     // _start wrapper (which appends a drain call) can find its funcIdx.
     // Idempotent + no-op when the queue was never registered.
-    profilePhase("export-drain-microtasks", () => exportDrainMicrotasksIfRegistered(ctx));
-    profilePhase("export-promise-boundary", () => exportPromiseBoundaryIfRegistered(ctx));
+    exportDrainMicrotasksIfRegistered(ctx);
+    exportPromiseBoundaryIfRegistered(ctx);
 
     // WASI: export _start entry point (before dead import elimination adjusts indices)
-    profilePhase("add-wasi-start-export", () => {
-      if (ctx.wasi) addWasiStartExport(ctx);
-    });
+    if (ctx.wasi) {
+      addWasiStartExport(ctx);
+    }
 
     // Export the exception tag so the exec worker can extract thrown payloads
     // via WebAssembly.Exception.getArg(tag, 0).
-    profilePhase("export-exception-tag", () => {
-      if (ctx.exnTagIdx >= 0) {
-        const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-        mod.exports.push({
-          name: "__exn_tag",
-          desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-        });
-      }
-    });
+    if (ctx.exnTagIdx >= 0) {
+      const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
+      mod.exports.push({
+        name: "__exn_tag",
+        desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
+      });
+    }
 
     // Mark leaf struct types as final for V8 devirtualization (#594).
     // Skipped for `--target wasi` so that downstream `wasm-opt --all-features`
@@ -10181,87 +10169,82 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // call site flagged the module needs them (M1+). Gated on ctx.usesDynRead,
     // which M0 never sets, so this is a no-op in M0 → byte-identical. Runs before
     // dead-elim/freeze so the helper funcIdx values are stable.
-    profilePhase("ensure-dyn-read-helpers", () => ensureDynReadHelpers(ctx));
+    ensureDynReadHelpers(ctx);
     // (#3053 U0) See the single-module pipeline note above. No-op unless
     // ctx.usesDynMemberGet is set (U1+); byte-identical in U0.
-    profilePhase("ensure-dyn-member-get", () => ensureDynMemberGet(ctx));
+    ensureDynMemberGet(ctx);
 
     // (#2800) Allocate + wire the `__in_module_init` flag global now that every
     // import global has settled (final absolute index), patching the recorded
     // delete-aware read `global.get` placeholders and wrapping `__module_init`.
     // Runs before dead-elim (which never prunes/remaps live globals) and the
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
-    profilePhase("finalize-multi-prepared-module-init-startup", () =>
-      finalizeMultiPreparedModuleInitStartup(ctx, multiPreparedProgram),
-    );
+    finalizeMultiPreparedModuleInitStartup(ctx, multiPreparedProgram);
 
     // (#4150/#4157) Same module-value caches as the single-module pipeline.
-    profilePhase("finalize-module-value-caches", () => finalizeModuleValueCaches(ctx));
+    finalizeModuleValueCaches(ctx);
 
     // (#2853) Nominal shape branding — same pass + placement as the
     // single-module pipeline (see generateModule): after all instruction
     // emission, before dead-type elimination.
-    profilePhase("shape-branding", () => resolveAndRecordShapeBranding(ctx));
+    resolveAndRecordShapeBranding(ctx);
 
-    profilePhase("finalize-leaf-struct-types", () => finalizeLeafStructTypes(ctx));
+    finalizeLeafStructTypes(ctx);
 
-    profilePhase("emit-data-struct-host-bridge-manifest", () => emitDataStructHostBridgeManifest(ctx));
-    profilePhase("publish-dom-string-boundary", () => standaloneCalendar.publishDomStringBoundary());
+    emitDataStructHostBridgeManifest(ctx);
+    standaloneCalendar.publishDomStringBoundary();
 
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
-    profilePhase("finalize-standalone-timer-exports", () => finalizeStandaloneTimerCallbackExports(ctx));
+    finalizeStandaloneTimerCallbackExports(ctx);
 
     // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
     // Additive + before dead-elim (which remaps declaredFuncRefs).
-    profilePhase("declared-func-refs-late", () => collectDeclaredFuncRefs(ctx, { additive: true }));
+    collectDeclaredFuncRefs(ctx, { additive: true });
 
     // #2527 — same provider publication point as the single-source pipeline.
-    profilePhase("emit-shared-runtime-provider-exports", () => emitSharedRuntimeProviderExports(ctx));
+    emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
-    profilePhase("validate-final-struct-hierarchies", () => validateFinalStructHierarchies(ctx));
-    profilePhase("eliminate-dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
+    eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    profilePhase("repair-struct-type-mismatches", () => repairStructTypeMismatches(mod, ctx.errors));
+    repairStructTypeMismatches(mod);
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
-    profilePhase("peephole-optimize", () => peepholeOptimize(mod));
+    peepholeOptimize(mod);
 
     // (#3921) Allocation census — no-op unless JS2WASM_ALLOC_CENSUS=1. Placed
     // here because dead-type elimination has already remapped every `typeIdx`,
     // so the index on each `struct.new` is the one the reader will see.
-    profilePhase("install-alloc-census", () => installAllocCensus(ctx));
-    profilePhase("install-exec-census", () => installExecCensus(ctx));
+    installAllocCensus(ctx);
+    installExecCensus(ctx);
     // (#4157) IR-level inliner for USER code — runs by DEFAULT since the
     // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
-    profilePhase("inline-user-functions", () => inlineUserFunctions(ctx));
+    inlineUserFunctions(ctx);
 
     // Mirror the single-source ES5 Function `caller` finalizer.
-    profilePhase("finalize-function-poison-pill-calls", () => finalizeFunctionPoisonPillCalls(ctx));
+    finalizeFunctionPoisonPillCalls(ctx);
 
     // #1984 — freeze the index spaces (multi-module path). Same boundary as the
     // single-module generateModule: all legitimate late import mutations have
     // run; stackBalance / fixupExternConvertAny / emit add no imports. Any
     // addImport/ensureLateImport after here throws at the producer site.
-    profilePhase("finalize-vec-host-bridge-exports", () => finalizeVecHostBridgeExports(ctx));
+    finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
-    profilePhase("publish-multi-prepared-program", () =>
-      publishMultiPreparedProgram(multiPreparedProgram, ctx.programAbiSession, mod),
-    );
+    publishMultiPreparedProgram(multiPreparedProgram, ctx.programAbiSession, mod);
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    profilePhase("repair-cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod, ctx.errors));
+    repairCrossHierarchyOperands(mod);
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
-    profilePhase("stack-balance", () => stackBalance(mod, ctx.errors));
+    stackBalance(mod);
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
-    profilePhase("drain-stack-balance-telemetry", () => drainStackBalanceTelemetry(ctx, multiAst.entryFile.fileName));
+    drainStackBalanceTelemetry(ctx, multiAst.entryFile.fileName);
 
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after stackBalance since fixCallArgTypesInBody can insert
@@ -10271,7 +10254,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // extern.convert_any ops, the second of which fails validation
     // ("found extern.convert_any of type externref" — externref is NOT a
     // subtype of anyref). Mirror the single-module pipeline at line 1053.
-    profilePhase("fixup-extern-convert-any", () => fixupExternConvertAny(ctx));
+    fixupExternConvertAny(ctx);
   } catch (e) {
     const failure = classifyIrFailure(e, "build");
     for (const sourceFile of multiAst.sourceFiles) {
@@ -10284,7 +10267,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   }
 
   // (#2094) Emit-time backstop for the addImport gate — see generateModule.
-  profilePhase("assert-no-leaked-host-imports", () => assertNoLeakedHostImports(ctx, mod));
+  assertNoLeakedHostImports(ctx, mod);
 
   // (#4134) `JS2WASM_CHECK_FRAMES=1` reports every function whose body reads or
   // writes a local its own frame never declares, AT THE END OF CODEGEN.
@@ -10295,11 +10278,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // check here bisects the pipeline in one step: a function reported here was
   // already inconsistent when codegen finished; one that is clean here but
   // rejected at emit was corrupted by a later pass. Inert unless set.
-  profilePhase("report-out-of-frame-locals", () => {
-    if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
-      reportOutOfFrameLocals(ctx, mod);
-    }
-  });
+  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    reportOutOfFrameLocals(ctx, mod);
+  }
 
   return {
     module: mod,
@@ -10868,114 +10849,6 @@ export function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
 }
 
 /**
- * Resolve the element type of an interface whose runtime carrier is an Array.
- *
- * TypeScript models augmented arrays such as `NodeArray<T>` as interfaces that
- * extend `ReadonlyArray<T>`. They are still ordinary arrays at runtime; lowering
- * the interface itself to a closed Wasm struct makes an asserted array value
- * fail its guarded cast before its extra properties can be attached.
- */
-function inheritedArrayElementType(
-  checker: ts.TypeChecker,
-  type: ts.Type,
-  seen = new Set<ts.Type>(),
-): ts.Type | undefined {
-  if (seen.has(type) || !(type.flags & ts.TypeFlags.Object)) return undefined;
-  seen.add(type);
-
-  const objectType = type as ts.InterfaceType;
-  const symbol = objectType.symbol ?? type.symbol;
-  if (!symbolShadowsBuiltinGlobal(symbol) && (symbol?.name === "Array" || symbol?.name === "ReadonlyArray")) {
-    return checker.getTypeArguments(type as ts.TypeReference)[0];
-  }
-  if (!(objectType.objectFlags & (ts.ObjectFlags.Interface | ts.ObjectFlags.Reference))) return undefined;
-  for (const base of checker.getBaseTypes(objectType) ?? []) {
-    const element = inheritedArrayElementType(checker, base, seen);
-    if (element) return element;
-  }
-  return undefined;
-}
-
-/**
- * Whether an interface is only a typed view over the built-in Map carrier.
- *
- * TypeScript uses interfaces such as `PragmaMap extends Map<...>` and
- * `ReadonlyPragmaMap extends ReadonlyMap<...>` to refine method signatures.
- * Those declarations do not create JavaScript objects of their own: values are
- * still ordinary Maps. Registering each refining interface as a closed struct
- * makes an asserted `new Map()` fail the first method receiver cast.
- */
-const inheritedMapCarrierCache = new WeakMap<ts.TypeChecker, WeakMap<ts.Type, boolean>>();
-
-function isAmbientLibraryMapSymbol(symbol: ts.Symbol | undefined): boolean {
-  if (symbol?.name !== "Map" && symbol?.name !== "ReadonlyMap") return false;
-  const declarations = symbol.declarations;
-  if (!declarations || declarations.length === 0) return false;
-  return declarations.every((declaration) => {
-    const sourceFile = declaration.getSourceFile();
-    const baseName = sourceFile.fileName.split(/[\\/]/).pop() ?? sourceFile.fileName;
-    return sourceFile.isDeclarationFile && (sourceFile.hasNoDefaultLib || /^lib\..*\.d\.ts$/i.test(baseName));
-  });
-}
-
-function inheritsMapCarrier(checker: ts.TypeChecker, type: ts.Type | undefined, seen?: Set<ts.Type>): boolean {
-  // With semantic diagnostics skipped, an erroneous conditional/rest
-  // signature can expose a hole in the checker's base-type list. A missing
-  // base is simply not evidence of a Map carrier.
-  if (type === undefined) return false;
-  if (seen === undefined) {
-    let byType = inheritedMapCarrierCache.get(checker);
-    if (!byType) {
-      byType = new WeakMap();
-      inheritedMapCarrierCache.set(checker, byType);
-    }
-    const cached = byType.get(type);
-    if (cached !== undefined) return cached;
-    const result = inheritsMapCarrier(checker, type, new Set());
-    byType.set(type, result);
-    return result;
-  }
-  if (seen.has(type) || !(type.flags & ts.TypeFlags.Object)) return false;
-  seen.add(type);
-
-  const objectType = type as ts.InterfaceType;
-  const symbol = objectType.symbol ?? type.symbol;
-  // A real subclass has its own runtime identity/layout. Only interface views
-  // are representation-erased aliases of their Map base.
-  if (objectType.objectFlags & ts.ObjectFlags.Class) return false;
-  if (isAmbientLibraryMapSymbol(symbol)) return true;
-  const referencedTarget =
-    objectType.objectFlags & ts.ObjectFlags.Reference ? (objectType as unknown as ts.TypeReference).target : undefined;
-  const interfaceType =
-    objectType.objectFlags & ts.ObjectFlags.Interface
-      ? objectType
-      : ((referencedTarget?.objectFlags ?? 0) & ts.ObjectFlags.Interface) !== 0
-        ? referencedTarget
-        : undefined;
-  if (interfaceType === undefined) return false;
-  try {
-    return (checker.getBaseTypes(interfaceType) ?? []).some((base) => inheritsMapCarrier(checker, base, seen));
-  } catch {
-    // A semantically invalid heritage clause can leave a partially resolved
-    // interface in skipSemanticDiagnostics mode. Map-carrier recognition is
-    // an optimization/correctness refinement, so uncertain types fail closed.
-    return false;
-  }
-}
-
-/**
- * Return the ambient host class that implements a Map-refining interface.
- *
- * JS-host builds can dispatch `PragmaMap extends Map` directly through the
- * ordinary Map imports. Native-string/standalone builds deliberately retain
- * their existing exact-symbol routing until the native Map runtime supports
- * refined interface receivers as a separate change.
- */
-export function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Map" | undefined {
-  return !ctx.nativeStrings && inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
-}
-
-/**
  * Resolve a ts.Type to a ValType, using the struct registry and anonymous type map.
  * Use this instead of mapTsTypeToWasm in the codegen to get real type indices.
  */
@@ -10990,15 +10863,6 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // Check aliasSymbol first — TypeScript preserves the alias name on the type.
   const nativeType = resolveNativeTypeAnnotation(tsType);
   if (nativeType) return nativeType;
-
-  // A homomorphic `-readonly` mapped alias is a compile-time mutability view of
-  // its argument, not a second runtime object. Canonicalize before any object /
-  // anonymous-struct routing so parameter bodies and their callers agree on the
-  // exact same Wasm heap type.
-  const readonlyErasureTarget = readonlyErasureMappedAliasTarget(tsType);
-  if (readonlyErasureTarget) {
-    return resolveWasmType(ctx, readonlyErasureTarget, _depth + 1, _visited);
-  }
 
   // A JavaScript BigInt is arbitrary precision. The native i64 carrier is a
   // useful host-free representation, but using it in JS-host mode silently
@@ -11066,13 +10930,9 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // ReadonlyArray-typed struct field falls through to the anonymous-struct /
     // externref path and mismatches the vec the array literal builds, trapping
     // on indexed read (#1748).
-    const inheritedArrayElement =
-      builtinSymName === "Array" || builtinSymName === "ReadonlyArray"
-        ? undefined
-        : inheritedArrayElementType(ctx.checker, tsType);
-    if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray" || inheritedArrayElement) {
+    if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
-      const elemTsType = inheritedArrayElement ?? typeArgs[0];
+      const elemTsType = typeArgs[0];
       let elemWasm: ValType = elemTsType
         ? resolveWasmType(ctx, elemTsType, _depth + 1, _visited)
         : { kind: "externref" };
@@ -11128,14 +10988,6 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       const vecIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
       // Use ref_null so locals can default-initialize to null
       return { kind: "ref_null", typeIdx: vecIdx };
-    }
-
-    // A user interface extending Map/ReadonlyMap is a compile-time view over
-    // the same native Map instance, just as NodeArray is a view over Array.
-    // Resolve it before the named-interface struct lookup below so method calls
-    // retain the `$Map` receiver created by `new Map()`.
-    if (hostMapCarrierClassName(ctx, tsType) !== undefined) {
-      return { kind: "externref" };
     }
 
     // Wrapper types (Number, String, Boolean) — map to externref.
@@ -11318,14 +11170,14 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // to externref — the empty struct stays registered (harmless; dead-eliminated
     // if unreferenced) but is never used as a value type, so no type-index shift.
     //
-    // ALL targets. Host mode also builds ordinary object literals as real JS
-    // objects (externref); typing a pure dictionary parameter as a zero-field
-    // Wasm struct guard-casts those values to null before the host MOP can
-    // service the indexed access. TypeScript's `MapLike<any>` is the production
-    // witness (`hasProperty(option, key)` during command-line option setup).
-    // A MIXED `{ a: number; [s: string]: T }` stays excluded — it has a static
-    // shape consumers read by field.
+    // HOST-FREE targets (standalone AND wasi). The gate originally read
+    // `ctx.standalone` alone, which left wasi — equally host-free — with neither
+    // the host import gc/host uses nor this routing, so `o[k]` silently read the
+    // DEFAULT there. Analysis + measurements on plan/issues/2542-*.md. gc/host is
+    // unchanged (a JS host services `o[k]`); a MIXED `{ a: number; [s: string]: T }`
+    // stays excluded — it has a static shape consumers read by field.
     if (
+      (ctx.standalone || ctx.wasi) &&
       tsType.getProperties().length === 0 &&
       tsType.getCallSignatures().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)
@@ -11595,14 +11447,6 @@ function widenObjectLiteralFieldType(
  * For anonymous types, auto-registers them with a generated name.
  */
 export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void {
-  // Keep eager signature registration in lockstep with resolveWasmType. Without
-  // this guard, pre-registration creates a dead mapped anonymous struct whose
-  // reordered layout can still leak into later type/dispatch scans.
-  const readonlyErasureTarget = readonlyErasureMappedAliasTarget(tsType);
-  if (readonlyErasureTarget) {
-    ensureStructForType(ctx, readonlyErasureTarget);
-    return;
-  }
   if (!(tsType.flags & ts.TypeFlags.Object)) return;
   if (isExternalDeclaredClass(tsType, ctx.checker)) return;
   // (#2937) Never register a struct for the evolved checker type of a poisoned
@@ -11664,10 +11508,13 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
   // (see resolveWasmType's #2542 guard), NOT an empty WasmGC struct. Registering an
   // empty struct here would make `resolveWasmType` pick `ref $empty` for the binding
   // and break the call-boundary `$Object`→struct cast (every `o[k]` read returns 0).
-  // All targets, matching the resolveWasmType guard's scope. Host mode also
-  // represents the actual open dictionary as externref; registering a closed
-  // empty struct here would make a later lookup select an incompatible ABI.
-  if (tsType.getProperties().length === 0 && !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)) {
+  // Host-free targets (standalone AND wasi), matching the resolveWasmType guard's
+  // scope — see the #2542-follow-up note there for why wasi belongs here.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    tsType.getProperties().length === 0 &&
+    !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)
+  ) {
     return;
   }
   // Guard against infinite recursion on circular/self-referencing types.
@@ -12230,42 +12077,7 @@ export function ensureLetConstBindingPatternTdzFlags(
  * the hoisted binding dynamic whenever the same symbol is a for-in target so
  * it can represent both the string keys and later values.
  */
-const forInIdentifierTargetsByContext = new WeakMap<
-  CodegenContext,
-  WeakMap<ts.Node, ReadonlySet<ts.VariableDeclaration>>
->();
-
-function forInIdentifierTargetsInScope(ctx: CodegenContext, root: ts.Node): ReadonlySet<ts.VariableDeclaration> {
-  let byScope = forInIdentifierTargetsByContext.get(ctx);
-  if (!byScope) {
-    byScope = new WeakMap();
-    forInIdentifierTargetsByContext.set(ctx, byScope);
-  }
-  const cached = byScope.get(root);
-  if (cached) return cached;
-
-  const targets = new Set<ts.VariableDeclaration>();
-  const visit = (node: ts.Node): void => {
-    // A nested function owns a different var scope. Writes inside it must not
-    // widen a same-named binding in this hoist pass (captured outer writes are
-    // still resolved by the mixed-carrier index, whose traversal is distinct).
-    if (node !== root && ts.isFunctionLike(node)) return;
-    if (ts.isForInStatement(node)) {
-      let target: ts.Expression | ts.VariableDeclarationList = node.initializer;
-      while (ts.isParenthesizedExpression(target)) target = target.expression;
-      if (ts.isIdentifier(target)) {
-        const resolved = ctx.oracle.variableDeclarationOf(target);
-        if (resolved !== undefined) targets.add(resolved);
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  byScope.set(root, targets);
-  return targets;
-}
-
-export function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
   if (!ts.isIdentifier(decl.name)) return false;
   const bindingDeclaration = ctx.oracle.variableDeclarationOf(decl.name);
   if (!bindingDeclaration) return false;
@@ -12278,7 +12090,22 @@ export function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.
     }
   }
 
-  return forInIdentifierTargetsInScope(ctx, root).has(bindingDeclaration);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== root && ts.isFunctionLike(node)) return;
+    if (ts.isForInStatement(node)) {
+      let target: ts.Expression | ts.VariableDeclarationList = node.initializer;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target) && ctx.oracle.variableDeclarationOf(target) === bindingDeclaration) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
 }
 
 /** Hoist a single variable declaration (handles both simple identifiers and binding patterns). */

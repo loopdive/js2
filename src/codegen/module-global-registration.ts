@@ -204,12 +204,7 @@ export function registerModuleGlobal(
 }
 
 /** Allocate and structurally observe one retained top-level TDZ flag. */
-export function registerModuleTdzGlobal(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  name: string,
-  exactDeclaration?: ts.VariableDeclaration,
-): void {
+export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.SourceFile, name: string): void {
   if (!ctx.moduleGlobals.has(name)) return;
   const existingGlobalIdx = ctx.tdzGlobals.get(name);
   if (existingGlobalIdx !== undefined) {
@@ -217,7 +212,7 @@ export function registerModuleTdzGlobal(
     if (!existingGlobal || existingGlobal.name !== `__tdz_${name}`) {
       throw new TypeError(`module TDZ global ${name} has no exact allocator object at index ${existingGlobalIdx}`);
     }
-    const declaration = exactDeclaration ?? findRuntimeTopLevelDeclaration(sourceFile, name);
+    const declaration = findRuntimeTopLevelDeclaration(sourceFile, name);
     if (declaration && ctx.programAbiGlobals?.hasModuleValue(declaration)) {
       ctx.programAbiGlobals?.observeModuleTdz(declaration, name, existingGlobal);
     }
@@ -233,7 +228,7 @@ export function registerModuleTdzGlobal(
   ctx.mod.globals.push(flagGlobal);
   ctx.tdzGlobals.set(name, flagGlobalIdx);
 
-  const declaration = exactDeclaration ?? findRuntimeTopLevelDeclaration(sourceFile, name);
+  const declaration = findRuntimeTopLevelDeclaration(sourceFile, name);
   if (declaration && ctx.programAbiGlobals?.hasModuleValue(declaration)) {
     ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
   }

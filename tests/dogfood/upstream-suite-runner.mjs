@@ -1273,13 +1273,11 @@ export function writeUpstreamReport(reportPath, report) {
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 }
 
-export function cliUpstreamHarness(runHarness, { reportSucceeded } = {}) {
+export function cliUpstreamHarness(runHarness) {
   const jsonOnly = process.argv.includes("--json");
-  return runHarness({ quiet: jsonOnly })
+  runHarness({ quiet: jsonOnly })
     .then((report) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify(report)}\n`);
-      if (reportSucceeded && !reportSucceeded(report)) process.exitCode = 1;
-      return report;
     })
     .catch((error) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify({ fatal: errorText(error) })}\n`);

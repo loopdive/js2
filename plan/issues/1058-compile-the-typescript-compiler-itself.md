@@ -1,9 +1,9 @@
 ---
 id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
-status: in_progress
+status: ready
 created: 2026-04-11
-updated: 2026-08-29
+updated: 2026-08-09
 priority: high
 feasibility: hard
 model: fable
@@ -87,6 +87,17 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/native-construct.ts::fillNativeConstructDrivers
   - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
+  # 2026-08-29 (revert of 8f161cbf15 / PR #5204, see #5181): backing the selfhost
+  # commit out restores these three functions to their PRE-selfhost bodies. The
+  # selfhost change had REFACTORED each of them ~29 lines shorter, and the
+  # committed baseline was reseeded on main after it landed — so the restoration
+  # reads as growth against a ceiling that only exists because of the commit
+  # being reverted. No new code is introduced; the files are restored to their
+  # 70e8e3c1ca content (stack-balance.ts is line-for-line identical to it).
+  # These three entries retire with the re-land.
+  - src/codegen/stack-balance.ts::updateTypeStack
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
 oracle-ratchet-allow:
   # The parser stress harvest predates the ctx.oracle migration and exposes
   # TypeScript checker queries across these existing codegen paths.
@@ -420,84 +431,6 @@ peak memory, but the remaining returned-method table and finalization work
 still prevent a binary. Raising the timeout or heap alone does not close the
 gap; both the 4 GiB / 30-minute full-source run and the 31-file dynamic run
 prove that.
-
-## Codex implementation handoff (2026-08-28)
-
-Branch: `codex/1058-typescript5-selfhost`.
-
-The pinned TypeScript 5.9.3 parser graph now compiles to a valid WasmGC module.
-The latest authoritative run produced an 81,241,283-byte binary in 298,177 ms
-(3,638.8 MiB peak RSS); compilation succeeded and `WebAssembly.validate`
-returned true. This closes the former no-binary/finalization frontier, but Tier
-3 is not complete because runtime AST fingerprints do not yet return.
-
-```bash
-JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC=1 \
-JS2WASM_TYPESCRIPT_PROBE_SOURCE_MAP=1 \
-pnpm run dogfood:typescript-parser-source
-```
-
-Diagnostic artifacts are written to
-`/private/tmp/ts2wasm-typescript-parser-latest.wasm` and the adjacent `.map`.
-
-### Completed in this branch
-
-- Pins/prepares the exact upstream source and adds a three-file AST fingerprint
-  harness; consumer-driven barrel pruning and post-body DAG finalizers now
-  complete within the five-minute worker budget.
-- Repairs recursive layouts, mapped readonly erasure, constructor/factory
-  identity, late fixups, nested captures, module initialization, enum aliases,
-  and the large instruction graphs reached by the parser build.
-- Preserves omitted optional numeric arguments as `undefined` at callable
-  property boundaries (`scanner.setText(sourceText)` previously received zero
-  and produced an empty AST).
-- Widens mixed-`undefined` nested returns so `getDirectiveFromComment` no longer
-  boxes the undefined f64 sentinel as a Number.
-- Pre-registers safe zero-argument boolean/GC-reference callbacks and bridges
-  erased generic results, clearing `scanner.speculationHelper<T>` and
-  `parser.parseListElement<T>` without admitting unsafe argument-bearing ABIs.
-
-The latest focused checkpoint passed 14/14 optional-padding, generic-callback,
-and scalar-callable safety tests. `pnpm run typecheck` also passed.
-
-### Remaining Tier-3 blocker
-
-All three required inputs now converge on one runtime frontier:
-
-```text
-RuntimeError: dereferencing a null pointer
-  at createIdentifier
-  at parseIdentifier
-  at parsePrimaryExpression
-source: src/compiler/parser.ts:2649:9
-wasm offset: 2106116 (source-map anchor 2098406)
-```
-
-`builderStatePublic.ts`, `corePublic.ts`, and `performanceCore.ts` therefore do
-not yet return their expected fingerprints. Resume by extracting
-`createIdentifier` (function index 927 in the latest diagnostic module) and
-tracing the null receiver/argument at parser line 2649. Do not revisit the
-resolved empty-AST, comment-directive, or generic callback paths unless their
-focused regressions fail. After this frontier, rerun the three fingerprints,
-then the strict 11-callback upstream suite and final TS5/TS7 typechecks/oracle
-ratchet.
-
-### PR refresh against current main (2026-08-29)
-
-PR #5183 was refreshed onto `main` through
-`81e54a98ebf95285e22bd2a82ff339cfd06a3fc8`. The merge keeps the parser
-branch's nested-capture offset for spread calls while honoring main's newer
-`arguments`-based spread path, uses the prepared multi-source module-init
-finalizer, profiles both return- and parameter-unboxing statistics, and
-combines inherited-array carriers with builtin-shadow protection. The latter
-also guards recursive base-type discovery so a user-defined `Array` cannot be
-reclassified as the intrinsic.
-
-After the refresh, both TS5 and TS7 typechecks pass, repository lint reports no
-errors, all 45 issue-1058 test files pass (151 tests), and the merge-sensitive
-main regressions pass (8 files, 94 tests). The runtime `createIdentifier` null
-deref above remains the only known Tier-3 fingerprint blocker; this refresh
-does not claim it is resolved.
 
 ## Acceptance criteria
 

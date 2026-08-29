@@ -57,7 +57,6 @@
 import type { Instr, TypeDef, ValType, WasmModule } from "../ir/types.js";
 import { locateOperandProducers } from "./call-arg-producers.js";
 import { callArgCoercionInstrs, getFullParamTypes, inferInstrType, resolveFuncType } from "./stack-balance.js";
-import type { CodegenError } from "./context/types.js";
 
 interface Env {
   readonly types: TypeDef[];
@@ -65,7 +64,6 @@ interface Env {
   readonly numImports: number;
   readonly boxNumberIdx: number | null;
   readonly unboxNumberIdx: number | null;
-  readonly diagnostics?: CodegenError[];
 }
 
 /** Every nested instruction list a structured instruction owns. */
@@ -81,26 +79,6 @@ function nestedInstrArrays(instr: Instr): Instr[][] {
   for (const arm of [any.body, any.then, any.else, any.catchAll]) if (Array.isArray(arm)) nested.push(arm);
   if (Array.isArray(any.catches)) for (const c of any.catches) if (Array.isArray(c.body)) nested.push(c.body);
   return nested;
-}
-
-/** Arrays whose local-index meaning differs because two functions own them. */
-function crossFunctionBodies(mod: WasmModule): WeakSet<Instr[]> {
-  const owners = new WeakMap<Instr[], (typeof mod.functions)[number]>();
-  const shared = new WeakSet<Instr[]>();
-  for (const func of mod.functions) {
-    const seen = new WeakSet<Instr[]>();
-    const pending = [func.body];
-    while (pending.length > 0) {
-      const body = pending.pop()!;
-      if (seen.has(body)) continue;
-      seen.add(body);
-      const owner = owners.get(body);
-      if (owner && owner !== func) shared.add(body);
-      else if (!owner) owners.set(body, func);
-      for (const instr of body) pending.push(...nestedInstrArrays(instr));
-    }
-  }
-  return shared;
 }
 
 /** `externref` and `(ref extern)` — the EXTERNAL reference hierarchy. */
@@ -136,61 +114,15 @@ function requiredOperandTypes(
     const t = globalTypes[(instr as { index: number }).index];
     return t ? [t] : null;
   }
-  // A struct receiver can be separated from its consumer by an arbitrarily
-  // complex value producer. TypeScript's generic clone path is the production
-  // shape: `local.get externref; if (result externref) ...; struct.set $Node`.
-  // The legacy backward repair deliberately stops at the structured RHS, while
-  // this forward model already attributes both operands exactly. Repair only
-  // the receiver here; field-value coercion remains owned by its existing
-  // lowering/fixup paths.
-  if (op === "struct.get") {
-    return [{ kind: "ref_null", typeIdx: (instr as { typeIdx: number }).typeIdx }];
-  }
-  if (op === "struct.set") {
-    return [{ kind: "ref_null", typeIdx: (instr as { typeIdx: number }).typeIdx }, undefined];
-  }
   return null;
 }
 
-function repairBody(
-  body: Instr[],
-  localTypes: ValType[],
-  globalTypes: ValType[],
-  env: Env,
-  visited: WeakSet<Instr[]>,
-  contextBlocked: WeakSet<Instr[]>,
-  reportedBlocked: WeakSet<Instr[]>,
-): number {
-  // This repair interprets local indices through the enclosing function. If a
-  // physical body belongs to two functions, mutating it for either owner's
-  // locals is unsound. Decline the rewrite, but fail closed: otherwise a
-  // required concrete-ref/externref coercion can remain absent and callers
-  // that do not independently validate the binary could publish invalid Wasm.
-  if (contextBlocked.has(body)) {
-    if (!reportedBlocked.has(body)) {
-      reportedBlocked.add(body);
-      if (!env.mod.codegenErrors) env.mod.codegenErrors = [];
-      const diagnostic = {
-        message:
-          "cross-hierarchy operand repair (#1058): one instruction array is owned by multiple functions; " +
-          "emit distinct bodies before applying function-local type repairs",
-        line: 0,
-        column: 0,
-        severity: "error" as const,
-      };
-      env.mod.codegenErrors.push(diagnostic);
-      env.diagnostics?.push(diagnostic);
-    }
-    return 0;
-  }
-  if (visited.has(body)) return 0;
-  visited.add(body);
+function repairBody(body: Instr[], localTypes: ValType[], globalTypes: ValType[], env: Env): number {
   let fixups = 0;
   // Nested arms are separate instruction lists with their own stack — walk each
   // on its own, exactly as the two legacy repairs do.
   for (const instr of body) {
-    for (const arm of nestedInstrArrays(instr))
-      fixups += repairBody(arm, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    for (const arm of nestedInstrArrays(instr)) fixups += repairBody(arm, localTypes, globalTypes, env);
   }
 
   const producers = locateOperandProducers(body, env.mod);
@@ -232,7 +164,7 @@ function repairBody(
 }
 
 /** Repair every cross-hierarchy operand in the module. Returns the fixup count. */
-export function repairCrossHierarchyOperands(mod: WasmModule, diagnostics?: CodegenError[]): number {
+export function repairCrossHierarchyOperands(mod: WasmModule): number {
   const numImports = mod.imports.filter((imp) => imp.desc.kind === "func").length;
   const findFunc = (name: string): number | null => {
     const idx = mod.functions.findIndex((f) => f.name === name);
@@ -248,19 +180,15 @@ export function repairCrossHierarchyOperands(mod: WasmModule, diagnostics?: Code
     numImports,
     boxNumberIdx: findFunc("__box_number"),
     unboxNumberIdx: findFunc("__unbox_number"),
-    diagnostics,
   };
 
   let fixups = 0;
-  const contextBlocked = crossFunctionBodies(mod);
-  const visited = new WeakSet<Instr[]>();
-  const reportedBlocked = new WeakSet<Instr[]>();
   for (const func of mod.functions) {
     const ft = resolveFuncType(mod.types, func.typeIdx);
     const localTypes: ValType[] = [];
     if (ft) for (const p of ft.params) localTypes.push(p);
     for (const l of func.locals) localTypes.push(l.type);
-    fixups += repairBody(func.body, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    fixups += repairBody(func.body, localTypes, globalTypes, env);
   }
   return fixups;
 }

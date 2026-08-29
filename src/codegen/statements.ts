@@ -693,19 +693,6 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     return;
   }
 
-  // A `const enum` is a type-directed compile-time declaration with no runtime
-  // evaluation. Top-level enum declarations are consumed by the declaration
-  // collector, but a function-local const enum reaches this dispatcher (the
-  // TypeScript compiler's Debug.formatControlFlowGraph declares two). Its
-  // member reads are folded through the checker in property-access dispatch;
-  // the declaration itself must disappear just as it does in TypeScript emit.
-  if (
-    ts.isEnumDeclaration(stmt) &&
-    stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ConstKeyword) === true
-  ) {
-    return;
-  }
-
   // `debugger;` — no-op. Per ECMA-262 §13.16, DebuggerStatement evaluation may
   // trigger a breakpoint if an implementation-defined debugging facility is
   // available, and otherwise "has no observable effect". Wasm exposes no such

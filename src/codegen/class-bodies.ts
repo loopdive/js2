@@ -1733,28 +1733,10 @@ export function collectClassDeclaration(
   // Register static properties as module globals, and queue static `{ ... }`
   // blocks for execution. Both field initializers and static blocks must run
   // in source order during class evaluation (§15.7.10), so we iterate members
-  // once. Class DECLARATIONS join the module source-order queue; class
-  // EXPRESSIONS retain a per-expression queue that is emitted inline by
-  // ClassDefinitionEvaluation. Scheduling expression statics at module scope
-  // moves them past the rest of their containing expression/statement.
-  const classExpressionStaticEntries = ts.isClassExpression(decl)
-    ? (ctx.classExpressionStaticInitExprs.get(decl) ?? [])
-    : undefined;
-  if (ts.isClassExpression(decl) && !ctx.classExpressionStaticInitExprs.has(decl)) {
-    ctx.classExpressionStaticInitExprs.set(decl, classExpressionStaticEntries!);
-  }
+  // once and push to the shared `staticInitExprs` queue in declaration order.
   for (const member of decl.members) {
     if (ts.isClassStaticBlockDeclaration(member)) {
-      if (classExpressionStaticEntries) {
-        // The declaration collector intentionally registers a variable-bound
-        // class expression under both a visible and a synthetic identity.
-        // A static block is source syntax and must nevertheless execute once.
-        if (!classExpressionStaticEntries.some((entry) => entry.staticBlock === member)) {
-          classExpressionStaticEntries.push({ staticBlock: member, className });
-        }
-      } else {
-        ctx.staticInitExprs.push({ staticBlock: member, className });
-      }
+      ctx.staticInitExprs.push({ staticBlock: member, className });
       continue;
     }
     if (ts.isPropertyDeclaration(member) && member.name && hasStaticModifier(member)) {
@@ -1807,19 +1789,11 @@ export function collectClassDeclaration(
       // (e.g. `static f = () => this`) resolves to the class-object singleton
       // via `emitLazyClassObjectGet`, NOT to `undefined`.
       if (member.initializer) {
-        if (classExpressionStaticEntries) {
-          classExpressionStaticEntries.push({
-            initializer: member.initializer,
-            className,
-            staticPropKey: fullName,
-          });
-        } else {
-          ctx.staticInitExprs.push({
-            globalIdx,
-            initializer: member.initializer,
-            className,
-          });
-        }
+        ctx.staticInitExprs.push({
+          globalIdx,
+          initializer: member.initializer,
+          className,
+        });
       }
     }
   }
@@ -1882,13 +1856,7 @@ export function buildShapePropFlagsTable(ctx: CodegenContext): void {
  */
 export function collectDeclaredFuncRefs(ctx: CodegenContext, opts?: { additive?: boolean }): void {
   const refs = new Set<number>(opts?.additive ? ctx.mod.declaredFuncRefs : []);
-  const visited = new WeakSet<Instr[]>();
   function scanInstrs(instrs: Instr[]): void {
-    // Late IR is a DAG: helper/finalizer rewrites may share one instruction
-    // array between multiple parents. Its ref.func set is identity-invariant,
-    // so scan each array once rather than once per incoming edge.
-    if (visited.has(instrs)) return;
-    visited.add(instrs);
     for (const instr of instrs) {
       if (instr.op === "ref.func") {
         refs.add((instr as { op: "ref.func"; funcIdx: number }).funcIdx);

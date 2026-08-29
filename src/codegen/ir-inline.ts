@@ -427,95 +427,6 @@ function childBodies(instr: Instr): Instr[][] {
   }
 }
 
-interface SharedInstructionArrayOwnership {
-  /** Functions that reach at least one multiply-parented physical array. */
-  readonly sharedFunctionPositions: ReadonlySet<number>;
-  /** Direct function handles referenced from a multiply-parented region. */
-  readonly sharedRegionFuncHandles: ReadonlySet<number>;
-}
-
-/**
- * Inspect instruction-array ownership without following a shared edge twice.
- *
- * The inliner normally treats a body as a tree: call counts, loop depth, local
- * relocation, and mutation are all occurrence-sensitive. Late codegen can,
- * however, leave one physical `Instr[]` behind multiple parents (or even
- * multiple module roots). In that case there is no single incoming context the
- * inliner can safely assign to the shared region. Record the owning functions
- * up front so the pass can conservatively leave those functions opaque.
- */
-function inspectSharedInstructionArrayOwnership(mod: WasmModule): SharedInstructionArrayOwnership {
-  const incoming = new WeakMap<Instr[], number>();
-  const discovered = new WeakSet<Instr[]>();
-  const arrays: Instr[][] = [];
-  const pending: Instr[][] = [];
-
-  const noteReference = (arr: Instr[]): void => {
-    incoming.set(arr, (incoming.get(arr) ?? 0) + 1);
-    if (discovered.has(arr)) return;
-    discovered.add(arr);
-    arrays.push(arr);
-    pending.push(arr);
-  };
-
-  // Count every module-root reference as well as every structured child edge.
-  // Including non-function roots prevents the inliner from mutating an array
-  // that is also owned by a global initializer or element offset.
-  for (const fn of mod.functions) noteReference(fn.body);
-  for (const global of mod.globals) noteReference(global.init);
-  for (const element of mod.elements) noteReference(element.offset);
-  while (pending.length > 0) {
-    const arr = pending.pop()!;
-    for (const instr of arr) {
-      for (const child of childBodies(instr)) noteReference(child);
-    }
-  }
-
-  const sharedArrays = new WeakSet<Instr[]>();
-  const sharedSeeds: Instr[][] = [];
-  for (const arr of arrays) {
-    if ((incoming.get(arr) ?? 0) <= 1) continue;
-    sharedArrays.add(arr);
-    sharedSeeds.push(arr);
-  }
-
-  // A child with one physical incoming edge still executes once per occurrence
-  // of a shared ancestor. Conservatively taint the complete downstream region
-  // when deciding whether a physical call count can support `single-caller`.
-  const sharedRegionFuncHandles = new Set<number>();
-  const visitedSharedRegion = new WeakSet<Instr[]>();
-  const sharedRegionStack = [...sharedSeeds];
-  while (sharedRegionStack.length > 0) {
-    const arr = sharedRegionStack.pop()!;
-    if (visitedSharedRegion.has(arr)) continue;
-    visitedSharedRegion.add(arr);
-    for (const instr of arr) {
-      if (instr.op === "call" || instr.op === "return_call") sharedRegionFuncHandles.add(instr.funcIdx);
-      for (const child of childBodies(instr)) sharedRegionStack.push(child);
-    }
-  }
-
-  const sharedFunctionPositions = new Set<number>();
-  for (let position = 0; position < mod.functions.length; position++) {
-    const seen = new WeakSet<Instr[]>();
-    const stack = [mod.functions[position]!.body];
-    while (stack.length > 0) {
-      const arr = stack.pop()!;
-      if (seen.has(arr)) continue;
-      seen.add(arr);
-      if (sharedArrays.has(arr)) {
-        sharedFunctionPositions.add(position);
-        break;
-      }
-      for (const instr of arr) {
-        for (const child of childBodies(instr)) stack.push(child);
-      }
-    }
-  }
-
-  return { sharedFunctionPositions, sharedRegionFuncHandles };
-}
-
 export function countInstrs(body: Instr[]): number {
   let n = 0;
   for (const instr of body) {
@@ -554,27 +465,6 @@ function forEachInstr(body: Instr[], visit: (i: Instr) => void): void {
     visit(instr);
     for (const child of childBodies(instr)) forEachInstr(child, visit);
   }
-}
-
-/** Identity-based traversal for analyses that only need one physical visit. */
-function forEachInstrDag(body: Instr[], visit: (i: Instr) => void): void {
-  const seen = new WeakSet<Instr[]>();
-  const stack = [body];
-  while (stack.length > 0) {
-    const arr = stack.pop()!;
-    if (seen.has(arr)) continue;
-    seen.add(arr);
-    for (const instr of arr) {
-      visit(instr);
-      for (const child of childBodies(instr)) stack.push(child);
-    }
-  }
-}
-
-function countInstrsDag(body: Instr[]): number {
-  let count = 0;
-  forEachInstrDag(body, () => count++);
-  return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -943,8 +833,6 @@ function planNativeMapAdapterPrecomposition(
   opts: InlineOptions,
   callerCount: Int32Array,
   addressTaken: Uint8Array,
-  sharedFunctionPositions: ReadonlySet<number>,
-  singleCallerIneligible: ReadonlySet<number>,
 ): { positions: Set<number>; callerOrder: number[] } {
   const positions = new Set<number>();
   const frozenAdapterCallers = new Set<number>();
@@ -957,9 +845,7 @@ function planNativeMapAdapterPrecomposition(
       if (
         isNativeMapCarrierAdapter(mod.functions[index]!.name) &&
         callerCount[index] === 1 &&
-        addressTaken[index] === 0 &&
-        !sharedFunctionPositions.has(index) &&
-        !singleCallerIneligible.has(index)
+        addressTaken[index] === 0
       ) {
         positions.add(index);
       }
@@ -1033,15 +919,9 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   const callerCount = new Int32Array(mod.functions.length);
   const addressTaken = new Uint8Array(mod.functions.length);
   const posOf = (h: number): number => absoluteFuncIndex(mod, h) - numImportFuncs;
-  const { sharedFunctionPositions, sharedRegionFuncHandles } = inspectSharedInstructionArrayOwnership(mod);
-  const singleCallerIneligible = new Set<number>();
-  for (const handle of sharedRegionFuncHandles) {
-    const position = posOf(handle);
-    if (position >= 0 && position < mod.functions.length) singleCallerIneligible.add(position);
-  }
 
   for (const fn of mod.functions) {
-    forEachInstrDag(fn.body, (i) => {
+    forEachInstr(fn.body, (i) => {
       if (i.op === "call") {
         const p = posOf(i.funcIdx);
         if (p >= 0 && p < callerCount.length) callerCount[p]++;
@@ -1066,10 +946,6 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   for (let round = 0; round < 2; round++) {
     const next = Float64Array.from(hot);
     for (let ci = 0; ci < mod.functions.length; ci++) {
-      // Loop depth is an incoming-context property. A multiply-parented array
-      // can have incompatible depths, so leave the whole caller opaque rather
-      // than selecting an arbitrary parent.
-      if (sharedFunctionPositions.has(ci)) continue;
       const walk = (body: Instr[], depth: number): void => {
         for (const instr of body) {
           if (instr.op === "call") {
@@ -1097,8 +973,6 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     opts,
     callerCount,
     addressTaken,
-    sharedFunctionPositions,
-    singleCallerIneligible,
   );
   // Per-callee analysis cache — see the comment at its use in the site loop.
   const calleeFacts = new Map<number, CalleeFacts>();
@@ -1125,9 +999,6 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   let growth = 0;
 
   for (const ci of callerOrder) {
-    // Rewriting a multiply-parented array would apply one caller/local context
-    // to every incoming occurrence. Keep the original graph untouched.
-    if (sharedFunctionPositions.has(ci)) continue;
     const caller = mod.functions[ci];
     const callerType = funcTypeOf(caller);
     if (!callerType) continue;
@@ -1153,10 +1024,6 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
           continue;
         }
         const callee = mod.functions[cp];
-        if (sharedFunctionPositions.has(cp)) {
-          declined(callee.name, "unsafe:shared-ir");
-          continue;
-        }
         const calleeType = funcTypeOf(callee);
         if (!calleeType) {
           bump(stats.declines, "unsafe:empty-body");
@@ -1240,13 +1107,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         let rule: string | null = null;
         if (opts.adapters && isAdapter(callee.name)) rule = "adapter";
         else if (opts.specialise && specSize <= siteCost) rule = "specialised";
-        else if (
-          opts.single &&
-          callerCount[cp] === 1 &&
-          !addressTaken[cp] &&
-          !singleCallerIneligible.has(cp) &&
-          effSize <= opts.singleMax
-        )
+        else if (opts.single && callerCount[cp] === 1 && !addressTaken[cp] && effSize <= opts.singleMax)
           rule = "single-caller";
         else if (loopLeafFits && !facts.loops) rule = "loop-leaf";
         // (#4157 entry 48) `hot` — the no-rule hole. Same hotness bar and
@@ -1344,7 +1205,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     rewriteBody(caller.body, 0);
   }
 
-  report(stats, opts, mod, sharedFunctionPositions);
+  report(stats, opts, mod);
 }
 
 function hasCall(body: Instr[]): boolean {
@@ -1367,20 +1228,13 @@ function hasLoop(body: Instr[]): boolean {
   return found;
 }
 
-function report(
-  stats: Stats,
-  opts: InlineOptions,
-  mod: WasmModule,
-  sharedFunctionPositions: ReadonlySet<number>,
-): void {
+function report(stats: Stats, opts: InlineOptions, mod: WasmModule): void {
   // Three dense lines per compile is a diagnostic, not a compiler message.
   // Printed when the operator asked for the flag (including `report`, whose
   // whole purpose is the print) — silent on a plain default build.
   if (!opts.report && !opts.verbose && !tunedFlagExplicit(process.env.JS2WASM_IR_INLINE)) return;
   const w = (s: string): void => void process.stderr.write(s);
-  const sizes = mod.functions
-    .map((f, index) => (sharedFunctionPositions.has(index) ? countInstrsDag(f.body) : countInstrs(f.body)))
-    .sort((a, b) => a - b);
+  const sizes = mod.functions.map((f) => countInstrs(f.body)).sort((a, b) => a - b);
   const pct = (p: number): number =>
     sizes.length ? sizes[Math.min(sizes.length - 1, Math.floor(sizes.length * p))] : 0;
   const total = sizes.reduce((a, b) => a + b, 0);
