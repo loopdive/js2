@@ -312,7 +312,11 @@ import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157)
 import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default ON
 import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
-import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
+import {
+  fillProtoIteratorDriver,
+  rootArrayProtoIteratorDeletedSlot,
+  rootArrayProtoIteratorOverrideSlots,
+} from "./expressions/proto-override.js";
 import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
 import { fillObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
@@ -5205,6 +5209,8 @@ export function generateModule(
     if (sourceOverridesArrayIterator(ast.sourceFile)) {
       ctx.arrayIteratorMaybeOverridden = true;
     }
+    rootArrayProtoIteratorOverrideSlots(ctx, ast.sourceFile);
+    rootArrayProtoIteratorDeletedSlot(ctx, ast.sourceFile);
 
     // (#2023) Detect any `new.target` use up front so class collection assigns
     // class-ids and `new`/comparison sites emit the threading global. Off by
@@ -9362,6 +9368,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.arrayIteratorMaybeOverridden = true;
         }
         recordSourceGlobalEnvironment(ctx, sf);
+      }
+      for (const sf of multiAst.sourceFiles) {
+        rootArrayProtoIteratorOverrideSlots(ctx, sf);
+        rootArrayProtoIteratorDeletedSlot(ctx, sf);
       }
     });
 

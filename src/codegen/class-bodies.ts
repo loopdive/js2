@@ -41,8 +41,13 @@ import {
   structHintForBindingPattern,
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, emitThrowTypeError, getFuncParamTypes } from "./expressions/helpers.js";
+import { findTdzViolatingParamRef } from "./param-tdz.js";
 import { pushDefaultValue } from "./type-coercion.js";
-import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import {
+  bodyNeedsArgumentsObject,
+  bodyUsesArguments,
+  needsImplicitArgumentsObject,
+} from "./helpers/body-uses-arguments.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -2748,6 +2753,26 @@ function compileClassBodiesInner(
 
       ctx.currentFunc = fctx;
 
+      // (#5139) When a parameter DEFAULT reads `arguments`, the object must
+      // exist before the defaults run — the block that materializes it sits
+      // after the destructure loop below, so such a method read `null`.
+      // Materializing it here is also the spec order: `arguments` reflects the
+      // values actually passed, never the defaulted ones.
+      const emitMethodArgumentsObject = (): void => {
+        const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
+        const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
+        // Class bodies are always strict code → unmapped arguments (#779e).
+        emitArgumentsObject(ctx, fctx, methodParamTypes, paramOffset, true);
+      };
+      const defaultsReadArguments = member.parameters.some(
+        (param) => param.initializer !== undefined && bodyUsesArguments(param.initializer),
+      );
+      let methodArgumentsObjectEmitted = false;
+      if (defaultsReadArguments && needsImplicitArgumentsObject(member)) {
+        emitMethodArgumentsObject();
+        methodArgumentsObjectEmitted = true;
+      }
+
       // Emit default-value initialization for method parameters with initializers.
       const defaultArgcLocal = member.parameters.some((param, i) => {
         if (!param.initializer) return false;
@@ -2778,9 +2803,17 @@ function compileClassBodiesInner(
           (ts.isObjectBindingPattern(param.name) || ts.isArrayBindingPattern(param.name)) &&
           isNullOrUndefinedLiteral(param.initializer);
 
+        // (#5139) Same §10.2.11 param TDZ rule the plain-function lane has had
+        // since #2121: `m(x = x)` / `m(x = y, y)` must throw ReferenceError
+        // when the default fires, not read the still-zeroed local.
+        const methTdzViolatingName = findTdzViolatingParamRef(member, pi);
+
         // Build the "then" block: compile default expression, local.set
         const savedBody = pushBody(fctx);
-        if (dstrNullDefault) {
+        if (methTdzViolatingName !== undefined) {
+          emitThrowReferenceError(ctx, fctx, `Cannot access '${methTdzViolatingName}' before initialization`);
+          fctx.body.push({ op: "unreachable" });
+        } else if (dstrNullDefault) {
           for (const ins of buildDestructureNullThrow(ctx, fctx)) fctx.body.push(ins);
         } else {
           // (#1451) For array binding patterns with externref param, force the
@@ -2850,11 +2883,8 @@ function compileClassBodiesInner(
       // Set up `arguments` object if the method body references it (#820).
       // Class methods (like standalone functions) need an arguments vec struct
       // so that `arguments.length` and `arguments[n]` work at runtime.
-      if (needsImplicitArgumentsObject(member)) {
-        const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
-        const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
-        // Class bodies are always strict code → unmapped arguments (#779e).
-        emitArgumentsObject(ctx, fctx, methodParamTypes, paramOffset, true);
+      if (!methodArgumentsObjectEmitted && needsImplicitArgumentsObject(member)) {
+        emitMethodArgumentsObject();
       }
 
       if (isGeneratorMethod && member.body && nativeGenInfo) {

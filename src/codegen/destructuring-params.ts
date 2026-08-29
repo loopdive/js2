@@ -59,7 +59,7 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 // (#4768) Recover a native generator state after it crosses a known closure
 // parameter's externref ABI, then drain only the binding pattern's steps.
 import { emitNativeGeneratorToVec } from "./generators-native.js";
-import { arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
+import { arrayIteratorOverrideGlobalIdx, arrayProtoIteratorDeletedGlobalIdx } from "./expressions/proto-override.js";
 // (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
 // `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
 // already imports `destructureParamArray` from here — a module cycle. ESM
@@ -617,8 +617,11 @@ function boxToExternref(
   return [{ op: "extern.convert_any" }];
 }
 
-export function buildDestructureNullThrow(ctx: CodegenContext, fctx?: FunctionContext): Instr[] {
-  const msg = "Cannot destructure 'null' or 'undefined'";
+export function buildDestructureNullThrow(
+  ctx: CodegenContext,
+  fctx?: FunctionContext,
+  msg = "Cannot destructure 'null' or 'undefined'",
+): Instr[] {
   addStringConstantGlobal(ctx, msg);
   // #1623 — in nativeStrings mode (wasi / standalone) `stringGlobalMap` holds a
   // `-1` sentinel rather than a real import-global index, so a bare
@@ -1133,6 +1136,12 @@ export function structHintForBindingPattern(
   ctx: CodegenContext,
   pattern: ts.ObjectBindingPattern,
 ): ValType | undefined {
+  // (#5139) An EMPTY pattern (`method({} = obj)`) binds nothing, so it gains
+  // nothing from a struct hint — and it actively loses: the hint materializes
+  // the default under a zero-field anonymous struct, whose `ref.test` fails for
+  // the real object and yields `ref.null`, so the destructure then reports
+  // "Cannot destructure 'null' or 'undefined'". Let it take the externref hint.
+  if (pattern.elements.length === 0) return undefined;
   if (pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken)) return undefined;
   const tsType = ctx.checker.getTypeAtLocation(pattern);
   if (!tsType) return undefined;
@@ -1552,6 +1561,24 @@ export function destructureParamArray(
   // externref-decl lanes. Strictly gated behind the brand + a captured override
   // (both clear in the common case ⇒ byte-identical). The value lives in
   // `paramIdx`, so feed the shared decl read-drive that local.
+  // (#5139) §7.4.2 GetIterator: after `delete Array.prototype[Symbol.iterator]`
+  // the method lookup yields undefined, so Call throws TypeError BEFORE any
+  // element is read. The flag global is rooted only when the source contains
+  // such a delete, so every other program stays byte-identical.
+  {
+    const deletedIdx = arrayProtoIteratorDeletedGlobalIdx(ctx);
+    if (deletedIdx !== undefined) {
+      fctx.body.push(
+        { op: "global.get", index: deletedIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildDestructureNullThrow(ctx, fctx, "Array.prototype[Symbol.iterator] is not a function"),
+        },
+      );
+    }
+  }
+
   if (arrayDstrNeedsIdentity(ctx, false) && arrayIteratorOverrideGlobalIdx(ctx) !== undefined) {
     ensureBindingLocals(ctx, fctx, pattern);
     if (tryEmitArrayProtoIteratorReadDrive(ctx, fctx, pattern, paramType, paramIdx)) {

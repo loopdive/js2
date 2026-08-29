@@ -35,7 +35,14 @@ export function needsImplicitArgumentsObject(
   return (
     body !== undefined &&
     !formalParametersBindArguments(declaration.parameters) &&
-    (bodyUsesArguments(body) || reachesDirectEval)
+    // (#5139) A parameter DEFAULT is evaluated inside the function's own
+    // parameter scope, so `m(x = arguments[2])` observes the arguments object
+    // exactly like the body does. Scanning only the body left such a function
+    // with no object at all AND unregistered in `ctx.funcUsesArguments`, so
+    // callers never published the overflow args through `__extras_argv`.
+    (bodyUsesArguments(body) ||
+      declaration.parameters.some((p) => p.initializer !== undefined && bodyUsesArguments(p.initializer)) ||
+      reachesDirectEval)
   );
 }
 

@@ -56,6 +56,16 @@ function bumpBranches(instrs: Instr[], delta: number, includeLegacyTryLabel: boo
       if (targetsLegacyTryOrOuter(instr.defaultDepth)) instr.defaultDepth += delta;
     }
 
+    // (#5139) A raw `try_table`'s catch clauses carry a `depth`, not a `body`,
+    // so `walkChildren` cannot see them. Their label indices resolve in the
+    // context OUTSIDE the try_table (same reference frame as a `br` sitting
+    // where the instruction sits), so they shift exactly like one.
+    if (op === "try_table") {
+      for (const clause of (instr as Instr & { catches?: TryTableCatch[] }).catches ?? []) {
+        if (typeof clause.depth === "number" && targetsLegacyTryOrOuter(clause.depth)) clause.depth += delta;
+      }
+    }
+
     const childDepth = isLabelOp(op) ? localDepth + 1 : localDepth;
     walkChildren(instr, (children) => bumpBranches(children, delta, includeLegacyTryLabel, childDepth));
   }

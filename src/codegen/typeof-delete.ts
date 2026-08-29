@@ -57,6 +57,7 @@ import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
+import { arrayProtoIteratorDeletedGlobalIdx, isArrayProtoIteratorDeleteTarget } from "./expressions/proto-override.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -387,6 +388,20 @@ export function compileDeleteExpression(
   ) {
     emitDeleteThrow(ctx, fctx, "ReferenceError", "'super' property cannot be deleted");
     return { kind: "i32" };
+  }
+
+  // (#5139) `delete Array.prototype[Symbol.iterator]` has no compiled landing
+  // spot (the LHS is a builtin with no struct), so it used to be a silent
+  // no-op and later array destructuring kept reading the backing store. Raise
+  // the rooted flag instead; the array-pattern lanes read it and throw the
+  // §7.4.2 GetIterator TypeError before any element read.
+  {
+    const deletedIdx = arrayProtoIteratorDeletedGlobalIdx(ctx);
+    if (deletedIdx !== undefined && isArrayProtoIteratorDeleteTarget(inner)) {
+      fctx.body.push({ op: "i32.const", value: 1 }, { op: "global.set", index: deletedIdx });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      return { kind: "i32" };
+    }
   }
   if (ts.isIdentifier(inner)) {
     // (#2663 Slice 3) `delete name` inside a dynamic `with`: if the with-object
