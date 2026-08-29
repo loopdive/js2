@@ -118,10 +118,12 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  type IrNestedClassFieldCallAdmission,
   type IrSourceId,
   type IrUnitKind,
   type IrUnitId,
 } from "../ir/identity.js";
+import { planIrNestedClassFieldCalls } from "../ir/class-field-call-planning.js";
 import {
   buildIrPlanningIdentityContext,
   requireIrPlanningSourceId,
@@ -448,6 +450,7 @@ import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { reportModuleScale } from "./module-scale-profile.js"; // (#4645) scale checkpoints
 import { frameSnapshotAtCompile } from "./function-body.js";
 import { describeInternalError } from "./internal-error.js";
 import {
@@ -470,6 +473,7 @@ import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
+import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
 import {
   buildIsUndefinedExternBody,
   emitWrapperValueOfFunctions,
@@ -1471,6 +1475,8 @@ function buildIrClassShapes(
   topLevelAccessorEvidence:
     | { readonly kind: "selection-candidate" }
     | { readonly kind: "selected"; readonly unitIds: ReadonlySet<IrUnitId> },
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed here. */
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrClassShapeSidecar {
   const out = new Map<IrClassId, IrClassShapeEntry>();
   const lookup: IrClassShapeLookup = { identityContext, byClassId: out };
@@ -1960,7 +1966,7 @@ function buildIrClassShapes(
     const entry = out.get(classId);
     if (entry) published.set(classId, entry);
   }
-  return createIrClassShapeSidecar(published, identityContext);
+  return createIrClassShapeSidecar(published, identityContext, fieldCallAdmission);
 }
 
 /**
@@ -2672,6 +2678,20 @@ function planIrOverlay(
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  // (#3522 F2/F4) ONE exact resolver per source, constructed before identity
+  // selection and reused by direct-call projection and the field-call proof.
+  const identityResolver = makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions);
+  // (#3522 F4) Validate the complete dormant F3 proof and derive the single
+  // immutable admitted-class marker BEFORE local class-expression resolution
+  // and identity selection. Every downstream consumer carries this object; none
+  // recomputes it.
+  const nestedClassFieldCallProofs = planIrNestedClassFieldCalls({ identityContext, resolver: identityResolver });
+  const nestedClassFieldCallAdmission: IrNestedClassFieldCallAdmission =
+    irOverlayIdentity.computeIrNestedClassFieldCallAdmission({
+      identityContext,
+      resolver: identityResolver,
+      proofs: nestedClassFieldCallProofs,
+    });
   const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
@@ -2784,9 +2804,13 @@ function planIrOverlay(
       : undefined;
   const timerShim = irTimerShim.timerShimResolver(ast.checker, ctx, options.resolveModuleBindings);
   // Selection gets a provisional descriptor population; lowering rebuilds it from exact selected UnitIds.
-  const selectionClassShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
-    kind: "selection-candidate",
-  });
+  const selectionClassShapeSidecar = buildIrClassShapes(
+    ctx,
+    ast.sourceFile,
+    identityContext,
+    { kind: "selection-candidate" },
+    nestedClassFieldCallAdmission,
+  );
   const selectionClassShapes = selectionClassShapeSidecar.legacyProjection;
   const selectionClassShapesById = new Map(
     [...selectionClassShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
@@ -2796,6 +2820,7 @@ function planIrOverlay(
     ast.sourceFile,
     selectionClassShapes,
     identityContext,
+    nestedClassFieldCallAdmission,
   );
   // (#3053 U2) Fast host-js-string (`fast && !standalone && !wasi`) has the carrier in
   // the gc `$AnyValue` but strings are host js-string externrefs, so the native
@@ -2917,6 +2942,8 @@ function planIrOverlay(
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
+      nestedClassFieldCallProofs,
+      nestedClassFieldCallAdmission,
       ...(options.enableCountedStringAppendProof || options.countedStringAppendProof
         ? {
             planCountedStringAppend: (loop: ts.ForStatement) => {
@@ -3018,10 +3045,13 @@ function planIrOverlay(
   const recordPreparationFailure = (legacyName: string, failure: IrPreparationFailure): void =>
     recordIrOverlayPreparationFailure({ identityPlan, preparationFailuresByUnitId }, legacyName, failure);
   const selection = identityPlan.selectionProjection.selection;
-  const classShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
-    kind: "selected",
-    unitIds: selection.classMemberUnitIds ?? new Set(),
-  });
+  const classShapeSidecar = buildIrClassShapes(
+    ctx,
+    ast.sourceFile,
+    identityContext,
+    { kind: "selected", unitIds: selection.classMemberUnitIds ?? new Set() },
+    nestedClassFieldCallAdmission,
+  );
   const classShapes = classShapeSidecar.legacyProjection;
   const classShapesById = new Map(
     [...classShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
@@ -3279,7 +3309,7 @@ function planIrOverlay(
     ...calendarLoweringPlans,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
-    directCallResolver: makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
+    directCallResolver: identityResolver,
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
     ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
     ...(fnctorParameterPreselection?.nativeStringBoundaries
@@ -4585,6 +4615,8 @@ function compileIrRoutedDeclarations(input: {
   readonly sourceFile: ts.SourceFile;
   readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed. */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly preparedModuleInit?: PreparedIrModuleInitBody;
   readonly irSkipBodies?: ReadonlySet<string>;
   readonly irPreserveBodies?: ReadonlySet<string>;
@@ -4609,6 +4641,9 @@ function compileIrRoutedDeclarations(input: {
           skippedUnitIds: classMemberUnitIds,
           skipImplicitConstructorUnitIds: input.preparedImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
           skippedImplicitConstructorUnitIds: implicitConstructorUnitIds,
+          ...(input.nestedClassFieldCallAdmission
+            ? { nestedClassFieldCallAdmission: input.nestedClassFieldCallAdmission }
+            : {}),
         }
       : undefined;
   const moduleInitBodyRouting = input.preparedModuleInit
@@ -5378,15 +5413,22 @@ export function generateModule(
       classMemberUnitIds: actuallySkippedClassMemberUnitIds,
       implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
       moduleInitNames: actuallySkippedModuleInit,
-    } = compileIrRoutedDeclarations({
-      ctx: standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext, !irFirst),
-      sourceFile: ast.sourceFile,
-      preparedClassMembers,
-      preparedImplicitConstructorUnitIds,
-      preparedModuleInit,
-      irSkipBodies,
-      irPreserveBodies,
-    });
+    } = profilePhase("bodies", () =>
+      compileIrRoutedDeclarations({
+        ctx: standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext, !irFirst),
+        sourceFile: ast.sourceFile,
+        preparedClassMembers,
+        preparedImplicitConstructorUnitIds,
+        // (#3522 F4) Admission plan threaded through from main; the #4645
+        // `profilePhase` wrapper around this call is orthogonal to it.
+        ...(irPlan?.identityPlan.nestedClassFieldCallAdmission
+          ? { nestedClassFieldCallAdmission: irPlan.identityPlan.nestedClassFieldCallAdmission }
+          : {}),
+        preparedModuleInit,
+        irSkipBodies,
+        irPreserveBodies,
+      }),
+    );
     if (irFirst) {
       const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
@@ -5598,10 +5640,14 @@ export function generateModule(
     // Emit exported struct field getter helpers for the runtime.
     // These allow JS host imports to read WasmGC struct fields that are
     // otherwise opaque to JS (V8 returns undefined for direct property access).
-    emitStructFieldGetters(ctx);
-    emitStructFieldBooleanMarkers(ctx);
-    emitStructFieldPresenceGetters(ctx);
-    emitStructFieldSetters(ctx);
+    // (#4645) Named: each helper registers a string-constant import, and the
+    // per-add global-index fixup made this a top cost centre on large modules.
+    profilePhase("struct-field-accessors", () => {
+      emitStructFieldGetters(ctx);
+      emitStructFieldBooleanMarkers(ctx);
+      emitStructFieldPresenceGetters(ctx);
+      emitStructFieldSetters(ctx);
+    });
 
     // Emit __vec_get / __vec_len exports for runtime iterator fallback on WasmGC arrays
     emitVecAccessExports(ctx);
@@ -6312,14 +6358,19 @@ export function generateModule(
     emitSharedRuntimeProviderExports(ctx);
 
     // Dead import and type elimination pass
+    // (#4645) Every whole-module finalize pass below is named so a pathological
+    // compile is attributable: before this, `module-init-pass2` was the last
+    // marker to close and the remaining (majority) of the time was one opaque
+    // window. See `plan/issues/4645-superlinear-compile-time-large-modules.md`.
+    reportModuleScale("before-finalize", mod);
     validateFinalStructHierarchies(ctx);
-    eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
+    profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    repairStructTypeMismatches(mod, ctx.errors);
+    profilePhase("finalize/repair-struct-types", () => repairStructTypeMismatches(mod, ctx.errors));
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
-    peepholeOptimize(mod);
+    profilePhase("finalize/peephole", () => peepholeOptimize(mod));
 
     // (#3921) Allocation census — no-op unless JS2WASM_ALLOC_CENSUS=1. Placed
     // here because dead-type elimination has already remapped every `typeIdx`,
@@ -6330,7 +6381,7 @@ export function generateModule(
     // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
-    inlineUserFunctions(ctx);
+    profilePhase("finalize/ir-inline", () => inlineUserFunctions(ctx));
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -6349,15 +6400,16 @@ export function generateModule(
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    repairCrossHierarchyOperands(mod, ctx.errors);
+    profilePhase("finalize/cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod, ctx.errors));
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
-    stackBalance(mod, ctx.errors);
+    reportModuleScale("before-stack-balance", mod);
+    profilePhase("finalize/stack-balance", () => stackBalance(mod, ctx.errors));
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     drainStackBalanceTelemetry(ctx, ast.sourceFile.fileName);
 
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
-    fixupExternConvertAny(ctx);
+    profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
@@ -6996,13 +7048,46 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
           if (classArity !== undefined && funcType.params.length - 1 !== classArity) continue;
           if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
         }
-        // Class-method rest metadata uses the Wasm parameter index, including
-        // the receiver at slot 0. The rest vector therefore lives at
-        // `restIndex`; fixed user parameters occupy slots 1..restIndex-1.
-        // Slicing through `1 + restIndex` treated the vector itself as a fixed
-        // argument, which made the vararg bridge pass three values to a
-        // `(receiver, vector)` method and produced invalid Wasm.
-        const extraParams = restInfo ? funcType.params.slice(1, restInfo.restIndex) : funcType.params.slice(1);
+        // (#4644) Locate the rest vector by its TYPE in the emitted signature,
+        // not by arithmetic on `restInfo.restIndex`.
+        //
+        // `restIndex` is written as `member.parameters.indexOf(param)` — a
+        // SOURCE parameter index, with no receiver slot — while these params
+        // are the Wasm signature, whose slot 0 is the receiver. The two
+        // conventions differ by one, and the comment that used to sit here
+        // asserted the opposite ("the Wasm parameter index, including the
+        // receiver at slot 0"). The off-by-one is invisible for the common
+        // `m(...args)` (restIndex 0, no fixed params, both readings agree) and
+        // wrong for every method with a fixed param before the rest:
+        // `formatToParts(e, ...t)` on @js-temporal/polyfill's
+        // `DateTimeFormatImpl` yielded ZERO fixed params, so the bridge called
+        // a 3-param method with 2 operands — clean at `compile()`, rejected by
+        // `WebAssembly.compile()`.
+        //
+        // The vector is always the LAST parameter (JS forbids anything after a
+        // rest param), so scan from the end for `vecTypeIdx`. Scanning from the
+        // end also disambiguates `m(a: number[], ...rest: number[])`, where a
+        // fixed param shares the vector's type. If it is not found the
+        // signature is not the shape this bridge assumes — skip the entry
+        // rather than emit a call whose arity we are guessing at.
+        let extraParams: ValType[];
+        if (restInfo) {
+          let restSlot = -1;
+          for (let p = funcType.params.length - 1; p > 0; p--) {
+            const param = funcType.params[p]!;
+            if (
+              (param.kind === "ref" || param.kind === "ref_null") &&
+              (param as { typeIdx: number }).typeIdx === restInfo.vecTypeIdx
+            ) {
+              restSlot = p;
+              break;
+            }
+          }
+          if (restSlot < 0) continue;
+          extraParams = funcType.params.slice(1, restSlot);
+        } else {
+          extraParams = funcType.params.slice(1);
+        }
         entries.push({ structName, typeIdx, funcIdx, resultType, extraParams, restInfo });
         continue;
       }
@@ -7216,18 +7301,23 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             ...coercion,
           );
         }
-        // The legacy shape starts with the receiver cast, so fixed arguments
-        // were inserted at offset 2. Vararg bridges now build their arguments
-        // before loading/casting the receiver; prepend those fixed arguments
-        // instead of splitting the length result from its local.set.
-        testAndCall.splice(classMember && classArity === -1 ? 0 : 2, 0, ...fixedInstrs);
-        // Reload both operands immediately before the target call. In
-        // particular, do not carry the receiver through the host helper calls
-        // above: the target ABI is `(receiver, rest-vector)`, not just the
-        // vector produced by the packing loop.
+        // Reload the operands immediately before the target call, in ABI
+        // order. In particular, do not carry the receiver through the host
+        // helper calls above: the target ABI is
+        // `(receiver, ...fixed, rest-vector)`, not just the vector produced by
+        // the packing loop.
+        //
+        // (#4644) The fixed arguments belong HERE, between the receiver and the
+        // vector — not spliced to the front of the bridge body. Prepending them
+        // pushed them *before* the receiver, so a method with a fixed param
+        // ahead of its rest param would have been called as
+        // `(fixed, receiver, vector)`. The packing prologue above is
+        // stack-neutral, so reading the host argument array a second time here
+        // is safe.
         testAndCall.push(
           { op: "local.get", index: receiverAnyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
+          ...fixedInstrs,
           { op: "local.get", index: 6 },
           { op: "ref.cast", typeIdx: restInfo.vecTypeIdx },
         );
@@ -7982,6 +8072,34 @@ function toPrimitiveNeedsBoxing(ctx: CodegenContext, methodSuffix: string): bool
  */
 function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   const mod = ctx.mod;
+  // (#4644) A `toString(hint)` / `valueOf(hint)` reached ONLY through
+  // ToPrimitive needs the host `undefined` for its padded argument, and
+  // nothing else in such a module necessarily imports it — `__get_undefined`
+  // was absent and `canonicalUndefinedExternInstrs` fell back to
+  // `ref.null.extern`, which surfaces in JS as **null**, not `undefined`.
+  // Measured: `new N() + 1` with `valueOf(hint){return hint===undefined?41:7}`
+  // answered 8 instead of 42. Register it here — before any funcIdx below is
+  // captured, and well before the #1984 index-space freeze — so the pad is the
+  // real `undefined`.
+  if (!ctx.standalone && !ctx.nativeStrings && ctx.funcMap.get("__get_undefined") === undefined) {
+    let needsUndefinedPad = false;
+    outer: for (const [structName] of ctx.structFields) {
+      for (const methodName of ["toString", "valueOf"]) {
+        const idx = ctx.funcMap.get(`${structName}_${methodName}`);
+        if (idx === undefined) continue;
+        const def = definedFuncAt(ctx, idx);
+        const ft = def ? mod.types[def.typeIdx] : undefined;
+        if (ft?.kind === "func" && ft.params.slice(1).some((p) => p.kind === "externref")) {
+          needsUndefinedPad = true;
+          break outer;
+        }
+      }
+    }
+    if (needsUndefinedPad) {
+      ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
+  }
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_toPrim_type");
 
   const emitDispatchForMethod = (methodName: string, exportName: string) => {
@@ -7992,6 +8110,18 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           mode: "standalone";
           funcIdx: number;
           resultType: ValType;
+          /**
+           * (#4644) Operands for the callee's params BEYOND `this`. ToPrimitive
+           * invokes `toString`/`valueOf` with ZERO arguments, but the method may
+           * still DECLARE parameters — `toString(e = void 0)` on
+           * `@js-temporal/polyfill`'s `PlainMonthDay` compiles to a 2-param Wasm
+           * func. The arm used to push only the receiver, so the module was
+           * clean at `compile()` and rejected by `WebAssembly.compile()` with
+           * `not enough arguments on the stack for call (need 2, got 1)`.
+           * Padding with `undefined` is also the correct JS answer: an omitted
+           * argument IS `undefined`, so a defaulted param takes its default.
+           */
+          padInstrs: Instr[];
         }
       | {
           structName: string;
@@ -8177,7 +8307,13 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           funcType && funcType.kind === "func" && funcType.results.length > 0
             ? funcType.results[0]!
             : { kind: "externref" };
-        entries.push({ structName, typeIdx, mode: "standalone", funcIdx, resultType });
+        // (#4644) Pad the declared-but-unpassed params. A method whose extra
+        // params we cannot supply a value for (a non-nullable GC ref) is
+        // skipped entirely rather than emitted short — an arm that cannot be
+        // built correctly must not be built at all.
+        const padInstrs = zeroArgCallPadInstrs(ctx, funcIdx);
+        if (!padInstrs) continue;
+        entries.push({ structName, typeIdx, mode: "standalone", funcIdx, resultType, padInstrs });
       }
     }
 
@@ -8225,6 +8361,9 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         thenInstrs.push(
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
+          // (#4644) `this`, then one operand per DECLARED param — the callee's
+          // arity, not the zero arguments ToPrimitive passes.
+          ...entry.padInstrs,
           {
             op: "call",
             funcIdx: entry.funcIdx,
@@ -9789,6 +9928,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Emit exported struct field getter helpers for the runtime (mirrors
     // generateModule path — #1308 surfaced that multi-source projects
     // were missing these export emits).
+    // Kept as four separately-named phases (main's shape) rather than #4645's
+    // single grouped one: the finer split is what makes a pathological compile
+    // attributable, which is the whole point of the #4645 instrumentation.
     profilePhase("emit-struct-field-getters", () => emitStructFieldGetters(ctx));
     profilePhase("emit-struct-field-boolean-markers", () => emitStructFieldBooleanMarkers(ctx));
     profilePhase("emit-struct-field-presence-getters", () => emitStructFieldPresenceGetters(ctx));
@@ -10240,6 +10382,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-shared-runtime-provider-exports", () => emitSharedRuntimeProviderExports(ctx));
 
     // Dead import and type elimination pass
+    // (#4645) Module-scale marker, then main's phase names/signatures.
+    reportModuleScale("before-finalize", mod);
     profilePhase("validate-final-struct-hierarchies", () => validateFinalStructHierarchies(ctx));
     profilePhase("eliminate-dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
@@ -10277,6 +10421,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // position-guessing repairs inside stackBalance. See its own header.
     profilePhase("repair-cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod, ctx.errors));
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
+    reportModuleScale("before-stack-balance", mod);
     profilePhase("stack-balance", () => stackBalance(mod, ctx.errors));
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     profilePhase("drain-stack-balance-telemetry", () => drainStackBalanceTelemetry(ctx, multiAst.entryFile.fileName));

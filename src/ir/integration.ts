@@ -6207,8 +6207,52 @@ function preregisterForInSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]
   }
 }
 
+/**
+ * (#5164 S3) Register the `in` operator's HasProperty probe before Phase 3.
+ *
+ * The `in` slice emits a direct symbolic `call` to `__extern_has`, which on
+ * main is registered only as a side effect of LEGACY compiling the same
+ * function (`binary-ops-in.ts`'s own `ensureLateImport`). IR-first skips that
+ * body, and then the resolver's `funcMap` lookup finds nothing — an
+ * `unknown-function-ref` invariant, i.e. a HARD compile error rather than a
+ * demote. Same class of dual-compile dependency #3143 fixed for
+ * `__extern_is_undefined`, so it gets the same treatment.
+ *
+ * Deliberately separate from `preregisterForInSupport`: for-in's host-mode
+ * liveness helper is `__for_in_has`, a DIFFERENT import, so neither
+ * registration can stand in for the other when a function uses both.
+ */
+function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+  let used = false;
+  for (const entry of fns) {
+    for (const block of entry.fn.blocks) {
+      for (const root of block.instrs) {
+        forEachInstrDeep(root, (instr) => {
+          if (
+            instr.kind === "call" &&
+            instr.target.binding.kind === "runtime" &&
+            instr.target.binding.symbol === "__extern_has"
+          ) {
+            used = true;
+          }
+        });
+      }
+    }
+    if (used) break;
+  }
+  if (!used) return;
+  if (ctx.standalone || ctx.wasi) {
+    ensureObjectRuntime(ctx);
+  } else {
+    const externref: ValType = { kind: "externref" };
+    ensureLateImport(ctx, "__extern_has", [externref, externref], [{ kind: "i32" }]);
+  }
+  flushLateImportShifts(ctx, null);
+}
+
 function preregisterDynamicAndForInSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
   preregisterForInSupport(ctx, fns);
+  preregisterInOperatorSupport(ctx, fns);
   preregisterDynamicSupport(ctx, fns);
 }
 
