@@ -101,7 +101,7 @@ export function resolveMultiPreparedFunctionValueImportTarget(input: {
   return target.name && oracle.valueDeclarationOf(target.name) === target ? target : undefined;
 }
 
-interface MultiPreparedFunctionValueUseReceipt {
+export interface MultiPreparedFunctionValueUseReceipt {
   readonly sourceFile: ts.SourceFile;
   readonly declaration: ts.FunctionDeclaration;
   readonly unitId: IrUnitId;

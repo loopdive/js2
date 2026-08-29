@@ -60,7 +60,12 @@ interface PreparedFunctionSlotReceipt {
   readonly preparedInstructions: readonly Instr[];
 }
 
-export type MultiPreparedFibonacciPairRoute = Omit<MultiPreparedFunctionValueLeafRoute, "routeKind"> & {
+// The Fibonacci pair keeps its pre-#4617 live-oracle declaration authority;
+// only the exact bench_loop leaf carries a replayed declaration snapshot.
+export type MultiPreparedFibonacciPairRoute = Omit<
+  MultiPreparedFunctionValueLeafRoute,
+  "routeKind" | "declarationReplay"
+> & {
   readonly routeKind: "fibonacci-pair";
   readonly recursiveDeclaration: ts.FunctionDeclaration;
   readonly recursiveUnitId: IrUnitId;
