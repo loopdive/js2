@@ -81,6 +81,7 @@ import {
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
+import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -848,6 +849,33 @@ function compileNestedFunctionDeclarationInScope(
   }
   const writtenAfterDeclaration = collectOwnerBindingsWrittenAfterDeclaration(stmt);
 
+  // (#5148 checkpoint) Resolve the VariableDeclaration a captured NAME refers
+  // to, scanning outward from the nested declaration through its enclosing
+  // function-like scopes (stopping at the first hit — inner shadows win).
+  // Purely syntactic on purpose: this runs during hoisting, when the checker
+  // symbol for the not-yet-compiled binding is the only alternative and the
+  // oracle has no identifier NODE to resolve from.
+  const findScopedVariableDeclaration = (from: ts.Node, name: string): ts.VariableDeclaration | undefined => {
+    let scope: ts.Node | undefined = from.parent;
+    while (scope !== undefined) {
+      let found: ts.VariableDeclaration | undefined;
+      const scan = (node: ts.Node): void => {
+        if (found) return;
+        if (node !== scope && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+          found = node;
+          return;
+        }
+        ts.forEachChild(node, scan);
+      };
+      scan(scope);
+      if (found) return found;
+      if (ts.isFunctionLike(scope) || ts.isSourceFile(scope)) return undefined;
+      scope = scope.parent;
+    }
+    return undefined;
+  };
+
   const captures: {
     name: string;
     type: ValType;
@@ -910,10 +938,37 @@ function compileNestedFunctionDeclarationInScope(
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
-    const type =
+    let type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
+    // (#5148 checkpoint) Function declarations hoist, so captures are
+    // collected BEFORE the captured binding's declaration statement compiles —
+    // and the pre-allocated local can still carry the closed anonymous-shape
+    // struct for an object literal that the declaration will PROMOTE to the
+    // open `$Object` (externref) representation (`{ __proto__: null }`,
+    // accessor literals, runtime-computed keys …). Freezing the stale struct
+    // type into the lifted signature makes the reify site `ref.cast` the
+    // widened externref value to that struct — an illegal-cast trap (Deno's
+    // primordials `state = { __proto__: null }` + nested `write`). Apply the
+    // same literal checks the declaration path applies and capture as
+    // externref when the promotion will happen.
+    if (
+      (type.kind === "ref" || type.kind === "ref_null") &&
+      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx)
+    ) {
+      const capturedDecl = findScopedVariableDeclaration(stmt, name);
+      const capturedInit = capturedDecl?.initializer;
+      if (
+        capturedInit !== undefined &&
+        ts.isObjectLiteralExpression(capturedInit) &&
+        (ctx.dynamicProtoLiteralNodes.has(capturedInit) ||
+          objectLiteralForcesHostPath(ctx, capturedInit) ||
+          objectLiteralSpreadTakesHostPath(ctx, capturedInit))
+      ) {
+        type = { kind: "externref" };
+      }
+    }
     // #1205 Stage 3: detect TDZ flag in outer scope (mirrors closures.ts:1326-1336
     // for the arrow path). The `__tdz_<name>` slot scan is the fallback for the
     // case where a block-scope shadow cleared `tdzFlagLocals` but the underlying

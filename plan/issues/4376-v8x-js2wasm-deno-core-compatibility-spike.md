@@ -24,6 +24,7 @@ loc-budget-allow:
   # follow-up work under this issue.
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/statements/nested-declarations.ts
   - src/codegen/declarations.ts
   - src/codegen/dataview-native.ts
   - src/codegen/async-scheduler.ts
@@ -57,6 +58,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
   # 2026-08-28: PR #5148 checkpoint (same rationale as the loc grants above).
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/index.ts::generateModule

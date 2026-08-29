@@ -3246,7 +3246,16 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
       // realm-exposed TypedArray constructor fully usable even when the source
       // never contains a syntactic dynamic-new site.
       getOrRegisterTaDynViewType(ctx);
-      valueType = emitTaCtorValue(ctx, fctx, name);
+      // (#5148 checkpoint) A TypedArray constructor migrated to the #4490
+      // identity carrier (Int8Array today) must seed THAT carrier: the bare
+      // identifier read resolves to `__builtin_ctor_<Name>`, so seeding the
+      // `$__ta_ctor` singleton here made `globalThis[name] !== <Name>` —
+      // exactly the identity Deno's primordials snapshot compares. The view
+      // glue above still registers so the realm-exposed constructor stays
+      // usable either way.
+      valueType = isBuiltinConstructorIdentityName(name)
+        ? emitBuiltinConstructorIdentity(ctx, fctx, name)
+        : emitTaCtorValue(ctx, fctx, name);
     } else if (isBuiltinConstructorIdentityName(name)) {
       valueType = emitBuiltinConstructorIdentity(ctx, fctx, name);
     }
