@@ -79,6 +79,7 @@ import {
   addUnionImports,
   ensureExnTag,
   getOrRegisterVecType,
+  hostMapCarrierClassName,
   nativeStringType,
   reserveVecMethodHelper,
   resolveWasmType,
@@ -934,7 +935,7 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker)) {
+  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
@@ -2019,7 +2020,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: receiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+            then: receiverWasCast ? [] : typeErrorThrowInstrs(ctx, expr.expression),
             else: elseInstrs,
           });
           return VOID_RESULT;
@@ -2032,7 +2033,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val" as const, type: resultType },
-            then: receiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+            then: receiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx, expr.expression),
             else: elseInstrs,
           });
           return resultType;
@@ -2242,7 +2243,7 @@ export function compileReceiverMethodCall(
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: smReceiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+              then: smReceiverWasCast ? [] : typeErrorThrowInstrs(ctx, expr.expression),
               else: elseInstrs,
             });
             return VOID_RESULT;
@@ -2258,7 +2259,7 @@ export function compileReceiverMethodCall(
             fctx.body.push({
               op: "if",
               blockType: { kind: "val" as const, type: resultType },
-              then: smReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+              then: smReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx, expr.expression),
               else: elseInstrs,
             });
             return resultType;

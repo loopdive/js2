@@ -740,29 +740,37 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       // two objects with different field names can share a Wasm heap type.
       // Check the collision stamp before reading a slot, and keep searching on
       // a shape mismatch just like the generated __sget_* dispatcher does.
-      const shapeGuardedReadInstrs: Instr[] =
-        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
-          ? [
+      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
+        return [
+          { op: "local.get", index: 1 }, // __any
+          { op: "ref.test", typeIdx: cand.structTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
               { op: "local.get", index: 1 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },
               { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
               { op: "i32.const", value: cand.shapeId },
               { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "externref" } as ValType },
-                then: readInstrs,
-                else: next,
-              },
-            ]
-          : readInstrs;
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } as ValType },
+            then: readInstrs,
+            else: next,
+          },
+        ];
+      }
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: shapeGuardedReadInstrs,
+          then: readInstrs,
           else: next,
         },
       ];
@@ -978,29 +986,37 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
             ]
           : readValue;
       const next = buildChain(idx + 1);
-      const shapeGuardedArmBody: Instr[] =
-        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
-          ? [
+      if (cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined) {
+        return [
+          { op: "local.get", index: 1 }, // __any
+          { op: "ref.test", typeIdx: cand.structTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
               { op: "local.get", index: 1 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },
               { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
               { op: "i32.const", value: cand.shapeId },
               { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "f64" } as ValType },
-                then: armBody,
-                else: next,
-              },
-            ]
-          : armBody;
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } as ValType },
+            then: armBody,
+            else: next,
+          },
+        ];
+      }
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "f64" } as ValType },
-          then: shapeGuardedArmBody,
+          then: armBody,
           else: next,
         },
       ];

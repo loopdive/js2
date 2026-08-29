@@ -18,7 +18,13 @@ import { HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
-import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
+import {
+  emitAnyAdd,
+  emitHostTypedArrayElementCoercion,
+  emitModulo,
+  emitToInt32,
+  emitToUint8Clamp,
+} from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
@@ -170,6 +176,38 @@ import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
+
+/** Numeric and BigInt TypedArray view name for the native vec element lane. */
+function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
+  const numericName = elementAccessTypedArrayName(ctx, receiver);
+  if (numericName !== undefined) return numericName;
+  const type = ctx.checker.getTypeAtLocation(receiver);
+  let name = type.getSymbol()?.name ?? type.aliasSymbol?.name;
+  if (
+    name !== "BigInt64Array" &&
+    name !== "BigUint64Array" &&
+    ts.isNewExpression(receiver) &&
+    ts.isIdentifier(receiver.expression)
+  ) {
+    name = receiver.expression.text;
+  }
+  return name === "BigInt64Array" || name === "BigUint64Array" ? name : undefined;
+}
+
+/**
+ * Apply TypedArray's ToBigInt conversion without losing the source value's
+ * JavaScript domain. A branded i64 is already a BigInt and stays entirely on
+ * the native carrier. Every other representation first becomes externref so
+ * the branded externref -> i64 coercion reaches `__to_bigint`: strings parse,
+ * booleans convert, and Number values throw instead of being truncated.
+ */
+export function coerceVecBigIntElementStoreValue(ctx: CodegenContext, fctx: FunctionContext, from: ValType): ValType {
+  const bigintI64: ValType = { kind: "i64", bigint: true };
+  if (from.kind === "i64" && from.bigint === true) return bigintI64;
+  if (from.kind !== "externref") coerceType(ctx, fctx, from, { kind: "externref" });
+  coerceType(ctx, fctx, { kind: "externref" }, bigintI64);
+  return bigintI64;
+}
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -2833,7 +2871,14 @@ export function emitAssignToTarget(
 
     // Static struct-field fast path: when the receiver resolves to a registered
     // struct that statically owns the field, write the SLOT directly.
-    const typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+    const receiverType = ctx.checker.getTypeAtLocation(target.expression);
+    const typeName = resolveStructNameForExpr(
+      ctx,
+      fctx,
+      target.expression,
+      target.name,
+      resolveWasmType(ctx, receiverType),
+    );
     const structTypeIdx = typeName !== undefined ? ctx.structMap.get(typeName) : undefined;
     const fields = typeName !== undefined ? ctx.structFields.get(typeName) : undefined;
     const fieldName = ts.isPrivateIdentifier(target.name) ? undefined : target.name.text;
@@ -4055,6 +4100,28 @@ function compilePropertyAssignment(
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
 
+  // An interface that extends Array (TypeScript's `NodeArray<T>` is the
+  // production case) keeps a vec as its physical runtime carrier. Its added
+  // named properties therefore live in the dynamic sidecar; the separately
+  // registered interface struct is only a checker shape and cannot be the
+  // receiver of a `struct.set`. Casting the vec to that struct yields null and
+  // traps on the first `array.pos = ...` initialization.
+  if (!ts.isPrivateIdentifier(target.name) && target.name.text !== "length") {
+    const receiverWasm = resolveWasmType(ctx, objType);
+    const receiverTypeIdx =
+      receiverWasm.kind === "ref" || receiverWasm.kind === "ref_null" ? receiverWasm.typeIdx : undefined;
+    const checkerStructName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, receiverWasm);
+    if (
+      receiverTypeIdx !== undefined &&
+      getArrTypeIdxFromVec(ctx, receiverTypeIdx) >= 0 &&
+      checkerStructName !== undefined &&
+      ctx.structMap.has(checkerStructName) &&
+      ctx.structMap.get(checkerStructName) !== receiverTypeIdx
+    ) {
+      return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
+    }
+  }
+
   // (#671 W1) The direct-DeleteBinding `with` planner selected one canonical
   // open object for this exact declaration. A checker-derived struct.set here
   // would split it from the raw member-read MOP (and can silently retain a
@@ -4679,7 +4746,7 @@ function compilePropertyAssignment(
     if (dynSet !== undefined) return dynSet;
   }
 
-  let typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  let typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (ts.isPrivateIdentifier(target.name)) {
     typeName = resolvePrivateThisFieldCarrier(ctx, fctx, target.name, target.expression) ?? typeName;
   }
@@ -5654,7 +5721,7 @@ function compileElementAssignment(
     // the legacy path (mapped-args reverse sync #849); TA views keep theirs.
     if (
       overlayRouteActive(ctx) &&
-      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      vecElementTypedArrayName(ctx, target.expression) === undefined &&
       !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
     ) {
       const routed = emitOverlayRoutedElementSet(
@@ -5689,7 +5756,7 @@ function compileElementAssignment(
     // numeric element or the vec expando/prototype path selected by the
     // runtime (`S15.4_A1.1_T9`).
     if (
-      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      vecElementTypedArrayName(ctx, target.expression) === undefined &&
       !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
       isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression)
     ) {
@@ -5718,46 +5785,69 @@ function compileElementAssignment(
     // (#2593) `Uint8ClampedArray` write is NOT modulo — it is ToUint8Clamp
     // (clamp to [0,255] + round-half-even). Detect the view by name so the value
     // routes through `emitToUint8Clamp` below instead of the plain i32 truncation.
-    const taViewName = elementAccessTypedArrayName(ctx, target.expression);
+    const taViewName = vecElementTypedArrayName(ctx, target.expression);
     const isUint8Clamped = taViewName === "Uint8ClampedArray";
-    // (#2729) On the WasmGC host/gc backend a `new Uint8Array(n)` element is
-    // stored in an `f64` vec (the i8 packed storage is wasi/standalone-only —
-    // see `typedArrayVecStorage`). The f64 store path applied NO conversion, so
-    // out-of-range / non-integer values read back raw (`u[0]=257`→257,
-    // `u[0]=-1`→-1, `u[0]=NaN`→NaN). When the backing element is f64 we must
-    // apply ToUint8 (§7.1.10) explicitly before the store. The wasi/standalone
-    // i8-packed path is handled by the `array.set` re-truncation branch below.
-    const isHostUint8 = taViewName === "Uint8Array" && arrDef.element.kind === "f64";
+    const isBigIntTypedArray = taViewName === "BigInt64Array" || taViewName === "BigUint64Array";
+    // (#4757) Host/gc keeps numeric TypedArray elements in f64 vec storage.
+    // Unlike the packed standalone/WASI arrays, that representation does not
+    // apply the view's width or signedness at `array.set`; retain the f64
+    // representation but perform the generic integer-view conversion explicitly.
+    // The packed path below continues to rely on the array element width.
+    const isHostTypedArray = arrDef.element.kind === "f64" && taViewName !== undefined;
     const valueHint: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
         ? isUint8Clamped
           ? { kind: "f64" } // keep f64 for the clamp helper
           : { kind: "i32" }
         : arrDef.element;
-    const elemValResult = compileExpression(ctx, fctx, value, valueHint);
+    const isTypedArray = taViewName !== undefined;
+    // Assignment evaluates to the unconverted RHS, even though a TypedArray
+    // applies ToNumber/ToBigInt and its lane conversion before storing. Compile
+    // every TypedArray RHS in its natural representation and save that value;
+    // a storage hint here would irreversibly turn (ta[0] = "65537") into 65537.
+    const elemValResult = compileExpression(ctx, fctx, value, isTypedArray ? undefined : valueHint);
     if (!elemValResult) {
       reportError(ctx, target, "Failed to compile element value");
       return null;
     }
-    if (isUint8Clamped) {
-      // ToUint8Clamp: f64 → clamped i32 in [0,255], round-half-even. Ensure the
-      // value is f64 first (a literal/i32 may have compiled to i32).
-      if (elemValResult.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
-      emitToUint8Clamp(fctx);
-    } else if (isHostUint8) {
-      // (#2729) ToUint8 for the f64-backed host store: ToInt32 (NaN/±Inf→0,
-      // truncate toward zero, reduce mod 2^32) then mask the low byte (& 0xFF),
-      // then widen back to f64 for the f64 vec element. This matches the linear
-      // backend's ToUint8 (#2715) and the wasi/standalone i8-packed truncation.
+    let assignmentResultLocal: number | undefined;
+    const assignmentResultType = elemValResult;
+    if (isTypedArray) {
+      assignmentResultLocal = allocLocal(fctx, `__assignment_value_${fctx.locals.length}`, elemValResult);
+      fctx.body.push({ op: "local.tee", index: assignmentResultLocal });
+    }
+    if (isHostTypedArray) {
       if (elemValResult.kind !== "f64") coerceType(ctx, fctx, elemValResult, { kind: "f64" });
-      emitToInt32(fctx); // f64 → i32
-      fctx.body.push({ op: "i32.const", value: 0xff });
-      fctx.body.push({ op: "i32.and" });
-      fctx.body.push({ op: "f64.convert_i32_u" });
-    } else if ((arrDef.element.kind === "i8" || arrDef.element.kind === "i16") && elemValResult.kind === "f64") {
-      // (#2593) Other packed i8/i16 views: truncate the f64 store value to i32
-      // (ToInt32 modulo); `array.set` re-packs to the element width.
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      // Host/gc f64 storage needs the same width/signedness conversion that
+      // packed i8/i16/i32 array.set applies in standalone/WASI.
+      emitHostTypedArrayElementCoercion(fctx, taViewName!);
+    } else if (isUint8Clamped) {
+      // ToUint8Clamp: f64 → clamped i32 in [0,255], round-half-even. Ensure the
+      // value is f64 first (a literal/i32 or dynamic/string RHS may have a
+      // different natural representation).
+      if (elemValResult.kind !== "f64") coerceType(ctx, fctx, elemValResult, { kind: "f64" });
+      emitToUint8Clamp(fctx);
+    } else if (
+      isTypedArray &&
+      (arrDef.element.kind === "i8" || arrDef.element.kind === "i16" || arrDef.element.kind === "i32")
+    ) {
+      // Packed integer views still need ECMAScript ToInt32 modulo semantics
+      // before array.set applies the final lane width. `trunc_sat` is not
+      // equivalent for NaN, infinity, or values outside the signed i32 range.
+      if (elemValResult.kind !== "f64") coerceType(ctx, fctx, elemValResult, { kind: "f64" });
+      emitToInt32(fctx);
+    } else if (isBigIntTypedArray) {
+      // A BigInt typed-array store applies ToBigInt before reducing the value
+      // modulo 2^64. The `bigint` brand is compiler-only, but it selects the
+      // precision-preserving __to_bigint conversion for externref/string RHS
+      // values instead of the legacy Number -> f64 -> i64 route. Non-BigInt
+      // scalar carriers must pass through externref as well so ToBigInt throws
+      // for Number rather than silently truncating it.
+      coerceVecBigIntElementStoreValue(ctx, fctx, elemValResult);
+    } else if (isTypedArray && elemValResult.kind !== arrDef.element.kind) {
+      // Float views use their backing value representation directly after
+      // preserving the original RHS above.
+      coerceType(ctx, fctx, elemValResult, arrDef.element);
     }
     // #2159 — `i8`/`i16` are *packed storage* types, valid only inside array
     // elements / struct fields. The value temp holds the unpacked Wasm value
@@ -5767,8 +5857,11 @@ function compileElementAssignment(
     // standalone Uint8Array/Int8Array/Int16Array/Uint16Array element-write CE.
     // The matching read path already unpacks via array.get_u/_s → i32
     // (property-access.ts). Mirror it here for the store value local.
-    const valLocalType: ValType =
-      arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
+    const valLocalType: ValType = isBigIntTypedArray
+      ? { kind: "i64", bigint: true }
+      : arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
+        ? { kind: "i32" }
+        : arrDef.element;
     const valLocal = allocLocal(fctx, `__val_${fctx.locals.length}`, valLocalType);
     fctx.body.push({ op: "local.set", index: valLocal });
 
@@ -5788,8 +5881,8 @@ function compileElementAssignment(
       if (fctx.mappedArgsInfo && ts.isIdentifier(target.expression) && target.expression.text === "arguments") {
         emitMappedArgReverseSync(ctx, fctx, idxLocal, valLocal);
       }
-      fctx.body.push({ op: "local.get", index: valLocal });
-      return elemValResult;
+      fctx.body.push({ op: "local.get", index: assignmentResultLocal ?? valLocal });
+      return assignmentResultType;
     }
 
     // Get data array into a local so we can update it after potential grow
@@ -5984,8 +6077,8 @@ function compileElementAssignment(
     }
 
     // Return the assigned value (assignment expression result)
-    fctx.body.push({ op: "local.get", index: valLocal });
-    return elemValResult;
+    fctx.body.push({ op: "local.get", index: assignmentResultLocal ?? valLocal });
+    return assignmentResultType;
   }
 
   // Plain struct (non-vec): resolve string/numeric literal index to struct.set
