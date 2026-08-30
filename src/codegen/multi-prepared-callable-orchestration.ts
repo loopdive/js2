@@ -51,6 +51,20 @@ interface CallableAttemptCensus {
   readonly componentIndexByUnitId: ReadonlyMap<IrUnitId, number>;
 }
 
+/**
+ * The graph-first census deliberately carries no source overlay plan. Plans
+ * are cached before the census is published and are never used to define its
+ * denominator; callable candidates are reconciled against those exact plans
+ * only after the graph population has been frozen.
+ */
+interface CallablePreflightMember {
+  readonly sourceFile: ts.SourceFile;
+  readonly sourceId: IrSourceId;
+  readonly unitId: IrUnitId;
+  readonly legacyName: string;
+  readonly declaration: ts.FunctionDeclaration;
+}
+
 type NestedCallableDeclarationMutation = "nested-return-expression" | "nested-binary-right";
 type CallableDeclarationBodyMutation = "1" | NestedCallableDeclarationMutation | "nested-last-return-expression";
 
@@ -391,59 +405,185 @@ function ownerIsEligible(
 function preflightMultiPreparedCallableComponents(
   input: MultiPreparedCallableOrchestrationInput,
   graph: IrProgramCallableBindingGraph,
-  plans: ReadonlyMap<ts.SourceFile, IrOverlayPlan>,
-): readonly (readonly MultiPreparedCallableCandidate[])[] {
-  const members = new Map<IrUnitId, MultiPreparedCallableCandidate>();
-  for (const sourceFile of input.multiAst.sourceFiles) {
-    if (!ts.isExternalModule(sourceFile)) continue;
-    const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile);
-    const plan = plans.get(sourceFile);
-    if (!sourceId || !plan) {
+): readonly (readonly CallablePreflightMember[])[] {
+  const activeSourceFiles = new Set(input.multiAst.sourceFiles);
+  const records = new Map<IrBindingId, ProgramCallableRecord>();
+  for (const record of graph.records) {
+    if (records.has(record.bindingId)) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `callable preflight lost source planning identity for ${sourceFile.fileName}`,
+        `callable preflight found duplicate graph binding ${record.bindingId}`,
       );
     }
-    for (const [unitId, claim] of plan.functionClaimsByUnitId) {
-      const terminal = input.identityContext.terminalByUnitId.get(unitId);
-      if (
-        terminal?.sourceId !== sourceId ||
-        terminal.kind !== "top-level-function" ||
-        terminal.observedKind !== "function" ||
-        terminal.terminalOwnerId !== unitId ||
-        input.identityContext.unitByUnitId.get(unitId) !== terminal ||
-        input.identityContext.declarationByUnitId.get(unitId) !== claim.declaration ||
-        input.identityContext.unitIdByDeclaration.get(claim.declaration) !== unitId ||
-        claim.declaration.parent !== sourceFile ||
-        claim.declaration.name?.text !== claim.legacyName ||
-        !claim.declaration.body
-      ) {
-        continue;
-      }
-      if (members.has(unitId)) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          `callable preflight found duplicate exact unit ${unitId}`,
-        );
-      }
-      members.set(
-        unitId,
+    records.set(record.bindingId, record);
+  }
+
+  const canonicalSourceRecord = (record: ProgramCallableRecord): ProgramCallableRecord | undefined => {
+    const seen = new Set<IrBindingId>();
+    let current: ProgramCallableRecord | undefined = record;
+    for (let depth = 0; current && depth < records.size + 1; depth++) {
+      if (seen.has(current.bindingId)) return undefined;
+      seen.add(current.bindingId);
+      if (current.kind === "source") return current;
+      current = records.get(current.targetBindingId);
+    }
+    return undefined;
+  };
+
+  const sourceMembersByUnitId = new Map<IrUnitId, CallablePreflightMember>();
+  const sourceRecordByUnitId = new Map<IrUnitId, ProgramCallableRecord>();
+  for (const record of graph.records) {
+    const sourceFile = input.identityContext.sourceFileBySourceId.get(record.sourceId);
+    if (!sourceFile || !activeSourceFiles.has(sourceFile)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight graph record ${record.bindingId} is outside the exact source set`,
+      );
+    }
+    const targetRecord = records.get(record.targetBindingId);
+    const canonicalRecord = records.get(record.canonicalBindingId);
+    const targetUnit = input.identityContext.unitByUnitId.get(record.targetUnitId);
+    const targetTerminal = input.identityContext.terminalByUnitId.get(record.targetUnitId);
+    const targetDeclaration = input.identityContext.declarationByUnitId.get(record.targetUnitId);
+    const sourceCanonicalRecord = canonicalSourceRecord(record);
+    if (
+      !targetRecord ||
+      targetRecord.targetUnitId !== record.targetUnitId ||
+      !canonicalRecord ||
+      canonicalRecord.targetUnitId !== record.targetUnitId ||
+      !sourceCanonicalRecord ||
+      sourceCanonicalRecord.bindingId !== record.canonicalBindingId ||
+      sourceCanonicalRecord.targetUnitId !== record.targetUnitId ||
+      !targetUnit ||
+      targetTerminal !== targetUnit ||
+      input.identityContext.sourceFileBySourceId.get(targetUnit.sourceId) === undefined
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight graph record ${record.bindingId} has a dangling target join`,
+      );
+    }
+    if (record.kind !== "source") continue;
+    if (record.targetBindingId !== record.bindingId || record.canonicalBindingId !== record.bindingId) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight source record ${record.bindingId} has an alias target`,
+      );
+    }
+    const declaration = targetDeclaration;
+    if (
+      !declaration ||
+      !ts.isFunctionDeclaration(declaration) ||
+      !declaration.body ||
+      !targetTerminal ||
+      targetTerminal.sourceId !== record.sourceId ||
+      targetTerminal.kind !== "top-level-function" ||
+      targetTerminal.observedKind !== "function" ||
+      targetTerminal.terminalOwnerId !== record.targetUnitId ||
+      input.identityContext.unitByUnitId.get(record.targetUnitId) !== targetTerminal ||
+      input.identityContext.declarationByUnitId.get(record.targetUnitId) !== declaration ||
+      input.identityContext.unitIdByDeclaration.get(declaration) !== record.targetUnitId ||
+      declaration.parent !== sourceFile ||
+      declaration.getSourceFile() !== sourceFile ||
+      !sourceFile.statements.includes(declaration)
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight source record ${record.bindingId} is not its exact declaration/terminal join`,
+      );
+    }
+    if (sourceRecordByUnitId.has(record.targetUnitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight found duplicate source record for ${record.targetUnitId}`,
+      );
+    }
+    sourceRecordByUnitId.set(record.targetUnitId, record);
+    const legacyName = declaration.name?.text;
+    // The M1A.4a census is deliberately named-only. Anonymous defaults remain
+    // in the graph oracle and are validated as exact joins above, but cannot
+    // enter the compatibility namespace until the pure propagation/lowerer
+    // seams land in their owning lanes.
+    if (legacyName === undefined) continue;
+    if (targetTerminal.legacyMatchName !== legacyName || record.localName !== legacyName) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight source record ${record.bindingId} has a non-canonical compatibility name`,
+      );
+    }
+    // Keep all exact source records for use validation. The component census
+    // itself admits only external-module members with a stable compatibility
+    // name, so global-script and anonymous non-default units remain outside.
+    if (ts.isExternalModule(sourceFile)) {
+      sourceMembersByUnitId.set(
+        record.targetUnitId,
         Object.freeze({
           sourceFile,
-          sourceId,
-          unitId,
-          legacyName: claim.legacyName,
-          declaration: claim.declaration,
-          plan,
+          sourceId: record.sourceId,
+          unitId: record.targetUnitId,
+          legacyName,
+          declaration,
         }),
       );
     }
   }
-  if (members.size < 2) return [];
 
-  const parent = new Map<IrUnitId, IrUnitId>([...members.keys()].map((unitId) => [unitId, unitId]));
+  const callBelongsToDeclaration = (call: ts.CallExpression, declaration: ts.FunctionDeclaration): boolean => {
+    let current: ts.Node | undefined = call;
+    while (current && current !== declaration) {
+      if (current !== call && ts.isFunctionLike(current)) return false;
+      current = current.parent;
+    }
+    return current === declaration;
+  };
+  const crossSourceEdges: Array<readonly [IrUnitId, IrUnitId]> = [];
+  for (const use of graph.uses) {
+    const ownerRecord = sourceRecordByUnitId.get(use.ownerUnitId);
+    const targetRecord = sourceRecordByUnitId.get(use.targetUnitId);
+    const owner = sourceMembersByUnitId.get(use.ownerUnitId);
+    const target = sourceMembersByUnitId.get(use.targetUnitId);
+    const record = records.get(use.bindingId);
+    const ownerSourceFile = ownerRecord
+      ? input.identityContext.sourceFileBySourceId.get(ownerRecord.sourceId)
+      : undefined;
+    const ownerDeclaration = input.identityContext.declarationByUnitId.get(use.ownerUnitId);
+    if (
+      !ownerRecord ||
+      !targetRecord ||
+      !record ||
+      !ownerSourceFile ||
+      !ownerDeclaration ||
+      !ts.isFunctionDeclaration(ownerDeclaration) ||
+      ownerDeclaration.parent !== ownerSourceFile ||
+      use.sourceId !== ownerRecord.sourceId ||
+      record.sourceId !== ownerRecord.sourceId ||
+      record.sourceId !== use.sourceId ||
+      use.node.getSourceFile() !== ownerSourceFile ||
+      !callBelongsToDeclaration(use.node, ownerDeclaration) ||
+      graph.resolveCall(use.node, use.ownerUnitId) !== use ||
+      record.targetUnitId !== targetRecord.targetUnitId ||
+      record.canonicalBindingId !== use.canonicalBindingId ||
+      targetRecord.targetUnitId !== use.targetUnitId
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable preflight found a non-exact graph edge ${use.ownerUnitId} -> ${use.targetUnitId}`,
+      );
+    }
+    if (!owner || !target) continue;
+    if (owner.sourceId !== target.sourceId) crossSourceEdges.push([owner.unitId, target.unitId]);
+  }
+
+  if (sourceMembersByUnitId.size < 2) return [];
+  const parent = new Map<IrUnitId, IrUnitId>([...sourceMembersByUnitId.keys()].map((unitId) => [unitId, unitId]));
   const find = (unitId: IrUnitId): IrUnitId => {
     const parentId = parent.get(unitId);
     if (!parentId) {
@@ -465,51 +605,24 @@ function preflightMultiPreparedCallableComponents(
     if (leftRoot < rightRoot) parent.set(rightRoot, leftRoot);
     else parent.set(leftRoot, rightRoot);
   };
-
-  // Close every source-local call component before attaching the authenticated
-  // cross-source anchors. Unanchored local components are discarded below.
-  for (const member of members.values()) {
-    for (const targetUnitId of member.plan.identityPlan.identitySelection.localCallees?.get(member.unitId) ?? []) {
-      const target = members.get(targetUnitId);
-      if (target?.sourceId === member.sourceId) union(member.unitId, targetUnitId);
-    }
-  }
-
-  const records = new Map(graph.records.map((record) => [record.bindingId, record] as const));
-  const crossSourceEdges: Array<readonly [IrUnitId, IrUnitId]> = [];
+  for (const [owner, target] of crossSourceEdges) union(owner, target);
+  // Local callable uses are graph evidence too. Closing them from the same
+  // frozen use list avoids reintroducing a plan-derived identity authority.
   for (const use of graph.uses) {
-    const owner = members.get(use.ownerUnitId);
-    const target = members.get(use.targetUnitId);
-    const record = records.get(use.bindingId);
-    if (!owner || !target || owner.sourceId === target.sourceId) continue;
-    if (
-      use.sourceId !== owner.sourceId ||
-      use.node.getSourceFile() !== owner.sourceFile ||
-      graph.resolveCall(use.node, use.ownerUnitId) !== use ||
-      !record ||
-      record.sourceId !== owner.sourceId ||
-      record.targetUnitId !== target.unitId ||
-      record.canonicalBindingId !== use.canonicalBindingId
-    ) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `callable preflight found a non-exact graph edge ${use.ownerUnitId} -> ${use.targetUnitId}`,
-      );
-    }
-    union(owner.unitId, target.unitId);
-    crossSourceEdges.push([owner.unitId, target.unitId]);
+    const owner = sourceMembersByUnitId.get(use.ownerUnitId);
+    const target = sourceMembersByUnitId.get(use.targetUnitId);
+    if (owner && target && owner.sourceId === target.sourceId) union(owner.unitId, target.unitId);
   }
 
-  const groupsByRoot = new Map<IrUnitId, MultiPreparedCallableCandidate[]>();
-  for (const member of members.values()) {
+  const groupsByRoot = new Map<IrUnitId, CallablePreflightMember[]>();
+  for (const member of sourceMembersByUnitId.values()) {
     const root = find(member.unitId);
     const group = groupsByRoot.get(root) ?? [];
     group.push(member);
     groupsByRoot.set(root, group);
   }
   const order = new Map(input.identityContext.inventory.terminalUnits.map((unit, index) => [unit.id, index] as const));
-  const compare = (left: MultiPreparedCallableCandidate, right: MultiPreparedCallableCandidate): number =>
+  const compare = (left: CallablePreflightMember, right: CallablePreflightMember): number =>
     (order.get(left.unitId) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.unitId) ?? Number.MAX_SAFE_INTEGER) ||
     left.unitId.localeCompare(right.unitId);
   return Object.freeze(
@@ -527,22 +640,17 @@ function preflightMultiPreparedCallableComponents(
   );
 }
 
-export function planMultiPreparedCallableComponents(input: MultiPreparedCallableOrchestrationInput): void {
-  const graph = input.ctx.irProgramCallableBindingGraph;
-  if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
-  // Dedicated Prepared owners freeze graph-wide allocator/support identity.
-  // Generic component composition remains fail-closed until that shared
-  // transaction is certified rather than shifting an established route.
-  if (input.owner.existingRouteUnitIds.size > 0) return;
-  const records = new Map(graph.records.map((record) => [record.bindingId, record] as const));
-  const plans = new Map<ts.SourceFile, IrOverlayPlan>();
-  for (const sourceFile of input.multiAst.sourceFiles) {
-    const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile);
-    if (!sourceId) throw new IrInvariantError("selection-preparation-mismatch", "resolve", "missing source identity");
-    plans.set(sourceFile, input.planSource(sourceFile));
-  }
-  const preflightComponents = preflightMultiPreparedCallableComponents(input, graph, plans);
-  if (preflightComponents.length === 0) return;
+interface CallableAttemptCensusPublication {
+  readonly attempted: ReadonlySet<IrUnitId>;
+  readonly preflightDeclarationNodesByUnitId: ReadonlyMap<IrUnitId, readonly ts.Node[]>;
+}
+
+/** Publish the graph denominator and capture the exact declaration prefix. */
+function publishCallableAttemptCensus(
+  input: MultiPreparedCallableOrchestrationInput,
+  graph: IrProgramCallableBindingGraph,
+  preflightComponents: readonly (readonly CallablePreflightMember[])[],
+): CallableAttemptCensusPublication {
   if (input.ctx.irProgramCallableAttemptedUnitIds !== undefined) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -572,6 +680,18 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
     publicAttemptedProjection.delete([...authoritativeAttempted][0]!);
   } else if (censusMutation === "foreign") {
     publicAttemptedProjection.add("ir-unit:v1:test-foreign-callable" as IrUnitId);
+  } else if (censusMutation === "include-unanchored") {
+    const unanchored = graph.records.find(
+      (record) => record.kind === "source" && !authoritativeAttempted.has(record.targetUnitId),
+    );
+    if (!unanchored) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "callable include-unanchored mutation found no exact unanchored source unit",
+      );
+    }
+    publicAttemptedProjection.add(unanchored.targetUnitId);
   } else if (censusMutation === "under-covered-neighbor") {
     const crossSourceEndpoints = new Set(
       graph.uses.flatMap((use) => {
@@ -588,9 +708,9 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
         "callable census under-coverage mutation found no source-local neighbor",
       );
     }
-    attempted.delete(underCovered);
-    authoritativeAttempted.delete(underCovered);
-    componentIndexByUnitId.delete(underCovered);
+    // Keep the private authority and component index immutable. The public
+    // projection is the only mutation seam; the next exact census check must
+    // reject it before any callable plan can be accepted.
     publicAttemptedProjection.delete(underCovered);
   } else if (censusMutation !== undefined) {
     throw new IrInvariantError(
@@ -621,7 +741,186 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
       "callable attempted census under-covered its immutable preflight component population",
     );
   }
+  if (censusMutation === "under-covered-neighbor") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "callable attempted census under-covered its immutable preflight component population",
+    );
+  }
   currentCallableAttemptCensus(input.ctx, "callable aggregate planning");
+  return Object.freeze({ attempted, preflightDeclarationNodesByUnitId });
+}
+
+/** Reconcile every selected graph edge against its source overlay evidence. */
+function assertCallableGraphUsesMatchCachedPlans(
+  input: MultiPreparedCallableOrchestrationInput,
+  graph: IrProgramCallableBindingGraph,
+  records: ReadonlyMap<IrBindingId, ProgramCallableRecord>,
+  plans: ReadonlyMap<ts.SourceFile, IrOverlayPlan>,
+  preflightComponents: readonly (readonly CallablePreflightMember[])[],
+): void {
+  const selected = new Map(
+    preflightComponents.flatMap((group) => group.map((member) => [member.unitId, member] as const)),
+  );
+  const localCalleesBySource = new Map<ts.SourceFile, ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>>();
+  const importedCallsBySource = new Map<ts.SourceFile, ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>>();
+  for (const [sourceFile, plan] of plans) {
+    localCalleesBySource.set(sourceFile, plan.identityPlan.identitySelection.localCallees ?? new Map());
+    importedCallsBySource.set(sourceFile, plan.importedCalls);
+  }
+  const mutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_PLAN;
+  let mutationApplied = false;
+  for (const use of graph.uses) {
+    const owner = selected.get(use.ownerUnitId);
+    const target = selected.get(use.targetUnitId);
+    if (!owner || !target) continue;
+    const plan = plans.get(owner.sourceFile);
+    if (!plan) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable graph use owner ${owner.unitId} has no exact cached source plan`,
+      );
+    }
+    if (owner.sourceId === target.sourceId) {
+      let localCallees = localCalleesBySource.get(owner.sourceFile);
+      let targetUnitIds = localCallees?.get(owner.unitId);
+      if (mutation === "missing-local-plan" && !mutationApplied) {
+        if (!targetUnitIds?.has(target.unitId)) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "resolve",
+            `callable missing-local-plan mutation found no selected same-source edge ${owner.unitId} -> ${target.unitId}`,
+          );
+        }
+        const projected = new Map(localCallees ?? []);
+        const projectedTargets = new Set(targetUnitIds);
+        projectedTargets.delete(target.unitId);
+        projected.set(owner.unitId, projectedTargets);
+        localCalleesBySource.set(owner.sourceFile, projected);
+        localCallees = projected;
+        targetUnitIds = projectedTargets;
+        mutationApplied = true;
+      }
+      if (!targetUnitIds?.has(target.unitId)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `callable graph use ${owner.unitId} -> ${target.unitId} is missing its exact cached local call plan`,
+        );
+      }
+      continue;
+    }
+    let importedCalls = importedCallsBySource.get(owner.sourceFile);
+    const originalCallPlan = importedCalls?.get(use.node);
+    if (mutation === "missing-imported-plan" && !mutationApplied) {
+      if (!originalCallPlan) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `callable missing-imported-plan mutation found no selected cross-source call ${owner.unitId} -> ${target.unitId}`,
+        );
+      }
+      const projected = new Map(importedCalls ?? []);
+      projected.delete(use.node);
+      importedCallsBySource.set(owner.sourceFile, projected);
+      importedCalls = projected;
+      mutationApplied = true;
+    }
+    const callPlan = importedCalls?.get(use.node);
+    const plannedUse = callPlan
+      ? aggregateProgramCallableUse(graph, records, use.node, owner.unitId, callPlan)
+      : undefined;
+    if (
+      !callPlan ||
+      callPlan.source !== "module-import" ||
+      callPlan.ownerUnitId !== owner.unitId ||
+      callPlan.target.binding.kind !== "unit" ||
+      callPlan.target.binding.unitId !== target.unitId ||
+      !plannedUse ||
+      plannedUse.ownerUnitId !== use.ownerUnitId ||
+      plannedUse.targetUnitId !== use.targetUnitId ||
+      plannedUse.bindingId !== use.bindingId ||
+      plannedUse.canonicalBindingId !== use.canonicalBindingId
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `callable graph use ${owner.unitId} -> ${target.unitId} is missing its exact cached imported call plan`,
+      );
+    }
+  }
+  if (mutation === "missing-local-plan" && !mutationApplied) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "callable missing-local-plan mutation found no selected same-source graph use",
+    );
+  }
+  if (mutation === "missing-imported-plan" && !mutationApplied) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "callable missing-imported-plan mutation found no selected cross-source graph use",
+    );
+  }
+  if (mutation !== undefined && mutation !== "missing-local-plan" && mutation !== "missing-imported-plan") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `unknown callable cached-plan mutation ${JSON.stringify(mutation)}`,
+    );
+  }
+}
+
+export function planMultiPreparedCallableComponents(input: MultiPreparedCallableOrchestrationInput): void {
+  const graph = input.ctx.irProgramCallableBindingGraph;
+  if (!graph || input.ctx.irProgramCallableCutoverEnabled !== true) return;
+  // Dedicated Prepared owners freeze graph-wide allocator/support identity.
+  // Generic component composition remains fail-closed until that shared
+  // transaction is certified rather than shifting an established route.
+  if (input.owner.existingRouteUnitIds.size > 0) return;
+  const records = new Map(graph.records.map((record) => [record.bindingId, record] as const));
+  const plans = new Map<ts.SourceFile, IrOverlayPlan>();
+  for (const sourceFile of input.multiAst.sourceFiles) {
+    const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile);
+    if (!sourceId) throw new IrInvariantError("selection-preparation-mismatch", "resolve", "missing source identity");
+    plans.set(sourceFile, input.planSource(sourceFile));
+  }
+  // The graph and identity inventory are the attempted census authority. The
+  // cached overlay plans above are consulted only after this immutable graph
+  // population has been published below.
+  const preflightComponents = preflightMultiPreparedCallableComponents(input, graph);
+  if (preflightComponents.length === 0) return;
+  const { attempted, preflightDeclarationNodesByUnitId } = publishCallableAttemptCensus(
+    input,
+    graph,
+    preflightComponents,
+  );
+  assertCallableGraphUsesMatchCachedPlans(input, graph, records, plans, preflightComponents);
+
+  // Dedicated planning runs before the aggregate census and can project a
+  // same-spelled function out of its source selection. Re-open only the exact
+  // graph-member claim that remains override-ready and has no preparation
+  // failure. This preserves M1.3's name-invariant reconciliation without
+  // making the source plan define the graph-first attempted denominator.
+  for (const group of preflightComponents) {
+    for (const member of group) {
+      const plan = plans.get(member.sourceFile);
+      const claim = plan?.functionClaimsByUnitId.get(member.unitId);
+      if (
+        plan &&
+        claim?.declaration === member.declaration &&
+        claim.legacyName === member.legacyName &&
+        plan.overrideMapByUnitId.has(member.unitId) &&
+        plan.identityPlan.identitySelection.funcs.has(member.unitId) &&
+        !plan.preparationFailuresByUnitId.has(member.unitId)
+      ) {
+        plan.identityPlan.safeFunctionUnitIds.add(member.unitId);
+      }
+    }
+  }
   const assertPreflightCurrent = (): void => {
     const bodyMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_DECLARATION_BODY;
     if (
@@ -637,6 +936,18 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
         `unknown callable declaration-body mutation ${JSON.stringify(bodyMutation)}`,
       );
     }
+    const stagedBodyMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_STAGED_BODY;
+    if (stagedBodyMutation !== undefined && stagedBodyMutation !== "1") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `unknown staged callable body mutation ${JSON.stringify(stagedBodyMutation)}`,
+      );
+    }
+    const stagedBodyDeclaration = stagedBodyMutation === "1" ? preflightComponents[0]?.[0]?.declaration : undefined;
+    const stagedBodyTarget = stagedBodyDeclaration as { body: ts.Block | undefined } | undefined;
+    const originalStagedBody = stagedBodyTarget?.body;
+    if (stagedBodyTarget && originalStagedBody) stagedBodyTarget.body = undefined;
     const mutationTarget = bodyMutation === "1" ? preflightComponents[0]?.[0]?.declaration : undefined;
     const mutableMutationTarget = mutationTarget as { body: ts.Block | undefined } | undefined;
     const originalMutationBody = mutableMutationTarget?.body;
@@ -684,6 +995,7 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
             input.identityContext.unitIdByDeclaration.get(member.declaration) !== member.unitId ||
             member.declaration.parent !== member.sourceFile ||
             member.declaration.name?.text !== member.legacyName ||
+            !member.declaration.body ||
             stagedNodes === undefined ||
             currentNodes.length !== stagedNodes.length ||
             currentNodes.some((node, index) => node !== stagedNodes[index])
@@ -698,39 +1010,26 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
       }
     } finally {
       if (mutableMutationTarget && originalMutationBody) mutableMutationTarget.body = originalMutationBody;
+      if (stagedBodyTarget && originalStagedBody) stagedBodyTarget.body = originalStagedBody;
       restoreNestedMutation?.();
     }
   };
 
-  // Dedicated planning runs first and intentionally cannot observe the
-  // aggregate census. Its conservative name projection can therefore remove
-  // an exact same-spelled unit from the cached plan even when no dedicated
-  // route was accepted. Re-open only preflight-authenticated, override-ready
-  // units with no recorded preparation failure; the callable safe-selection
-  // pass below immediately reapplies every non-name safety gate.
-  for (const group of preflightComponents) {
-    for (const member of group) {
-      if (
-        member.plan.functionClaimsByUnitId.get(member.unitId)?.declaration === member.declaration &&
-        member.plan.overrideMapByUnitId.has(member.unitId) &&
-        member.plan.identityPlan.identitySelection.funcs.has(member.unitId) &&
-        !member.plan.preparationFailuresByUnitId.has(member.unitId)
-      ) {
-        member.plan.identityPlan.safeFunctionUnitIds.add(member.unitId);
-      }
-    }
-  }
-
+  const preflightMemberByUnitId = new Map(
+    preflightComponents.flatMap((group) => group.map((member) => [member.unitId, member] as const)),
+  );
   const candidates = new Map<IrUnitId, MultiPreparedCallableCandidate>();
-  for (const sourceFile of input.multiAst.sourceFiles) {
+  for (const [sourceFile, plan] of plans) {
     const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile)!;
-    const plan = plans.get(sourceFile)!;
     const safeSelection = input.safeSelection(plan, sourceFile);
     for (const [unitId, claim] of plan.functionClaimsByUnitId) {
-      if (!attempted.has(unitId)) continue;
+      const member = preflightMemberByUnitId.get(unitId);
+      if (!attempted.has(unitId) || !member || member.sourceFile !== sourceFile) continue;
       const terminal = input.identityContext.terminalByUnitId.get(unitId);
       if (
         input.owner.existingRouteUnitIds.has(unitId) ||
+        claim.declaration !== member.declaration ||
+        claim.legacyName !== member.legacyName ||
         !plan.identityPlan.safeFunctionUnitIds.has(unitId) ||
         !safeSelection.funcs.has(claim.legacyName) ||
         terminal?.sourceId !== sourceId ||
