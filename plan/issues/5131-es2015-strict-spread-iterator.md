@@ -801,3 +801,26 @@ compile_error, 0 timeout, 0 skip**. Host Wasm hashes remain `f41aeebb8d8f`
 and `7695ae27ead5`; standalone hashes remain `cf6d1afe5b12` and
 `5f023b070e86`. Full normal hooks and current-upstream integration remain
 required before publication.
+
+### Final current-main integration replay (2026-08-30)
+
+Root merged upstream main `77ac45d08afd350e60875c401d75e56c8f50f631`,
+which contains the exact merged PR 5300 head, without conflicts or a force
+update. Normal merge-commit hooks completed on integrated commit
+`724ca41005`: the changed-root matrix passed 52/52 #3525 callable-binding
+tests, 2/2 #5131 strict-spread tests, and 59/59 #5194 TypedArray tests. Vitest
+reported one tolerated RPC `onTaskUpdate` timeout after all 59 TypedArray tests
+had passed; the existing hook invocation used
+`--dangerouslyIgnoreUnhandledErrors`, and no test failure was hidden.
+
+The exact focused suite was then replayed with one fork and the pinned QuickJS
+artifact: **2/2 host/standalone tests passed**, covering all 31 controls in
+each lane; reported durations were 3351 ms host and 2437 ms standalone, 38.81 s
+total. The two issue-owned Test262 rows were also replayed sequentially in both
+targets: **4/4 pass, 0 fail, 0 compile_error, 0 timeout, 0 skip**. Host Wasm
+hashes remain `f41aeebb8d8f` and `7695ae27ead5`. The integrated TypedArray
+mainline changes legitimately alter the standalone module bytes; the new
+passing standalone hashes are `ac2af3ffa2bf` and `54271b4fb43b`. The branch is
+now behaviorally validated on current main and ready for the remaining normal
+pre-push gate, exact-head push, and PR shepherd handoff. No GitHub issue was
+created.
