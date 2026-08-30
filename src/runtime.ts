@@ -10935,9 +10935,46 @@ function resolveImport(
           }
           let callArgs = args;
           if (hasStructArg) {
+            // (#5211) A struct argument was marshalled with `_wrapForHost`
+            // ALONE, so a compiled CLOSURE crossed as a data facade with no
+            // [[Call]] — `n.sort(cmp)` on an `any` receiver (first-matched to
+            // `Uint8ClampedArray_sort`) reached native `Array.prototype.sort`
+            // as `[object Object]` and threw "The comparison function must be
+            // either a function or undefined". Unlike the rest of the
+            // init-window series this was NOT a timing bug: it reproduced
+            // identically before and after instantiation, because
+            // `_wrapForHost` never builds a callable for a closure struct.
+            // Apply the same two-step marshalling every other host-dispatch
+            // path already uses (`wrapHostValue` in `__extern_method_call`,
+            // the keyed-collection arm above, `wrapLinkedProviderValue`):
+            // callable bridge first, host facade otherwise.
+            //
+            // HOT PATH: this shim is the DOM lane's, and the added work is
+            // entirely inside `hasStructArg`. The DOM benchmarks pass strings
+            // and host `MockElement` handles, never WasmGC structs, so they
+            // take the untouched `callArgs = args` path — and the fixed-arity
+            // wrappers below still short-circuit before `invokeMethod` runs at
+            // all. A NON-closure struct argument keeps exactly its previous
+            // `_wrapForHost` result: `_maybeWrapCallableUnknownArity` asks the
+            // module's own `__is_closure` discriminator and returns the value
+            // unchanged for anything else.
+            //
+            // `marshalExports` (not the strict `exports` local) is the #5209
+            // marshalling-only view: wrapping a compiled value into its host
+            // facade may use the `ref.func` helpers the module registered on
+            // itself during its start section, while `exports` stays the
+            // post-instantiation set that the arms below read as "init has
+            // finished".
+            const marshalExp = marshalExports(callbackState, exports);
             callArgs = new Array(args.length);
             for (let i = 0; i < args.length; i++) {
-              callArgs[i] = _isWasmStruct(args[i]) ? _wrapForHost(args[i], exports) : args[i];
+              const a = args[i];
+              if (!_isWasmStruct(a)) {
+                callArgs[i] = a;
+                continue;
+              }
+              const callable = _maybeWrapCallableUnknownArity(a, callbackState);
+              callArgs[i] = callable !== a ? callable : _wrapForHost(a, marshalExp);
             }
           }
           // (#3903) Arity switch instead of `fn.call(self, ...callArgs)` — same
