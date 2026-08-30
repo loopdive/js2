@@ -566,6 +566,11 @@ exception. The required values are still:
   fields, sibling loop layouts, and the exact four-module literal/parser
   diamond that previously trapped.
 
+Post-sync validation on `3e89b5f95318b45fd69c9cf8209da84a7a06351a`
+is green: all **52** `tests/issue-1058-*.test.ts` files pass (**175 tests**),
+TS5 and TS7 typechecks pass, repository Biome lint checks 4,994 files with a
+zero exit status, and `check:ir-fallbacks` reports no gated increase.
+
 ### Artifact size note
 
 The 83.5 MB output is not a 100 KB hand-written parser translated directly.
@@ -582,9 +587,10 @@ a separate follow-up from this correctness-first compile milestone.
 1. Add a host-boundary diagnostic around `runCase` traversal to locate the
    common null property read now reached by all three sources.
 2. Make all three invocations return the expected fingerprints above.
-3. Rerun every `tests/issue-1058-*.test.ts` regression, the strict 11-callback
-   upstream suite, TS5/TS7 typechecks, lint/Prettier, `check:ir-fallbacks`, and
-   the oracle ratchet before claiming runtime parser equivalence.
+3. After the runtime fix, rerun the canonical fingerprints, the strict
+   11-callback upstream suite, and the oracle ratchet before claiming runtime
+   parser equivalence. The focused suite, typechecks, lint, and IR ratchet are
+   already green at this handoff.
 
 This is a real-package compile/validation milestone, not a claim that the
 three AST fingerprints or the whole TypeScript unit suite pass yet.
