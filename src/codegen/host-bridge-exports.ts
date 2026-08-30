@@ -25,6 +25,11 @@
 
 import type { WasmModule } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import {
+  finalizeCtorClosureHostBridgeExports,
+  isCompilerOwnedCtorClosureHostBridgeExport,
+  isCoreCtorClosureHostBridgePublicName,
+} from "./closure-exports.js";
 import { isCompilerOwnedVecHostBridgeExport, isCoreVecHostBridgePublicName } from "./vec-access-exports.js";
 
 /**
@@ -97,15 +102,29 @@ export function isHostBridgeExportName(name: string): boolean {
  * pure-Wasm host still needs to catch), and every user export.
  */
 export function stripHostBridgeExports(ctx: CodegenContext): number {
+  // The internal policy sink runs before index-space freeze. Validate the
+  // recorded constructor descriptors there, while allowing post-generation
+  // callers to exercise the provenance sink with copied descriptors.
+  if (!ctx.indexSpaceFrozen) finalizeCtorClosureHostBridgeExports(ctx);
   if (ctx.emitHostBridge) return 0;
   const mod: WasmModule = ctx.mod;
   const before = mod.exports.length;
   mod.exports = mod.exports.filter((ex) => {
+    // Authenticate recorded provenance before consulting either shared public
+    // namespace. A recorded constructor descriptor can be copied or renamed
+    // into the vec family by a late mutation; its identity must still win over
+    // the vec name-retention rule. The same ordering keeps the two sinks
+    // symmetric for cross-namespace descriptor mutations.
+    if (isCompilerOwnedCtorClosureHostBridgeExport(ctx, ex)) return false;
     if (isCompilerOwnedVecHostBridgeExport(ctx, ex)) return false;
     // Core vec names are a shared public namespace: only exact compiler
     // provenance authorizes removal. A user export with a matching spelling
     // must survive standalone/WASI stripping.
     if (isCoreVecHostBridgePublicName(ex.name)) return true;
+    // Constructor-closure names are a separate shared namespace: only the
+    // recorded bit-17 descriptor or an exact allocator join authorizes
+    // removal. A same-spelled user export must survive standalone/WASI.
+    if (isCoreCtorClosureHostBridgePublicName(ex.name)) return true;
     return !isHostBridgeExportName(ex.name);
   });
   return before - mod.exports.length;

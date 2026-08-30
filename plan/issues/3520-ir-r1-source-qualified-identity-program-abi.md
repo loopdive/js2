@@ -3838,3 +3838,110 @@ strictly below `logical cores - 2`; keep complete precommit and prepush hooks
 enabled. No baseline, LOC, function-size, binary-size, size-ceiling, or hook
 exception is authorized. The stacked PR remains draft until an independent Sol
 approves its exact pushed SHA; any later push invalidates that approval.
+
+## 2026-08-30 C38 implementation lock — constructor-closure export provenance
+
+This Sol-authored checkpoint is stacked only on the current signed C37 head
+`a75f7d6d3c9364039268f64ad1ede5ab4cb4101b` (draft PR #5295). Develop it on
+`codex/3520-c38-ctor-closure-export-provenance`; never amend or push C37, C36,
+or their queued parents. Re-anchor to refreshed main and repeat the complete
+validation/review cycle only after every parent is an exact ancestor. The
+unchanged #4035 size ceiling remains a control, not a new regression claim.
+
+### Deterministic false-pass
+
+#4661 added closure-host-bridge availability bit 17 with logical export
+`__is_ctor_closure` and compact family `$ch`. `stripHostBridgeExports(...)`
+still recognizes only `$c0` through `$cg`; none of its prefixes matches
+`__is_ctor_closure`. When `constructibleClosureTypeIdxs` is populated, both
+compiler-owned exports therefore survive `emitHostBridge=false` in standalone
+and WASI, retaining the classifier and its types through DCE. The closure ABI
+test also stops its physical census at `$cg`, and #4035's marker list omits both
+names, so the leak currently passes every control.
+
+Do not repair this by adding the two spellings to the legacy strip table. That
+would delete genuine user exports and repeat the ownership bug C37 just closed.
+
+### Exact ownership and provenance contract
+
+Own only:
+
+- this issue record;
+- `src/codegen/closure-exports.ts`;
+- `src/codegen/host-bridge-exports.ts`; and
+- `tests/issue-3520-closure-host-bridge-abi.test.ts`.
+
+At bit 17 publication, retain each compiler-published `WasmExport` descriptor
+beside the exact `WasmFunction` already captured for the availability manifest.
+Export one predicate for the bounded shared namespace: exact
+`__is_ctor_closure`, or `$ch` followed by zero or more literal `$` characters.
+Near spellings such as `$ch0`, `$chi`, `$ch_extra`, and
+`__is_ctor_closure_extra` are not in this namespace.
+
+Authenticate an entry as compiler-owned when it is one recorded bit-17
+descriptor, regardless of later spelling, or when a replacement/copy in the
+exact namespace is a function descriptor resolving to the captured allocator
+object. Resolve live descriptors using the current module function-import
+prefix; resolve stable handles with `definedFuncAt`. Never fall through from an
+invalid live lookup to the stable regime, repair an index, consult `funcMap`, or
+infer ownership from spelling alone. A same-spelled descriptor targeting a
+different user allocator remains user-owned. A near-spelled descriptor is not
+inferred compiler-owned merely because it targets the classifier.
+
+`stripHostBridgeExports(...)` must remove authenticated bit-17 entries first,
+then retain noncompiler entries in the exact constructor-closure namespace,
+then apply the existing legacy host-bridge name policy unchanged. This order
+must coexist with C37's vec provenance branch without coupling the two
+registries. Do not change closure allocation, manifest bits/table layout,
+Program ABI role/ordinal 14, runtime lookup, collision suffix allocation, any
+other closure family, direct/IR routing, or fallback.
+
+### Required focused matrix
+
+1. In host mode and `hostBridge: "always"`, prove the logical and terminal
+   physical compiler descriptors resolve to the same exact allocator, the
+   availability manifest binds bit 17, and the Program ABI entry remains
+   closure-host-bridge derived ordinal 14.
+2. In standalone and WASI, with tracking disabled and enabled, compile a
+   constructible-closure fixture and require compiler `__is_ctor_closure` and
+   every `$ch` family member to be absent, host imports empty, tracked/untracked
+   binaries byte-identical, the complete public-name census exact, and the
+   fixture's runtime value unchanged.
+3. Add user collisions for `__is_ctor_closure`, `$ch`, and sparse `$ch$$`.
+   Standalone/WASI must preserve their exact values while removing generated
+   gap/terminal aliases. Host mode must preserve all user values and publish
+   the compiler classifier only at free suffixes, with exact allocator joins.
+4. In a fixture with no constructible closure, exact user logical/physical
+   spoof exports survive standalone/WASI and no ordinal-14 Program ABI row or
+   constructor-classifier family is created.
+5. Direct mutations must prove: a copied descriptor targeting the classifier
+   remains removable; the same spelling targeting a different user allocator
+   survives; a near-prefix targeting the classifier is not reclassified; and
+   recorded name/kind/target/lost-function/duplicate mutations still fail
+   closed before final publication.
+6. Preserve the complete C31 closure suite, C37 vec suite, and #4035 policy
+   suite as controls. Update a marker/census only if required to make the
+   existing test truthful; do not change #4035's ceiling or characterize the
+   already-present leak as a new size regression.
+
+Every target/tracking comparison must publish exact names, descriptor targets,
+runtime values, import census, and binary parity where specified. Prefix-only
+absence and compact counts are not acceptance evidence.
+
+### Dependencies and acceptance
+
+The open-PR and worktree audit found no other owner of `closure-exports.ts` or
+the focused closure ABI test; the visible Claude lane is confined to #3521.
+This intentional child overlaps only `host-bridge-exports.ts` in its C37 base.
+Any newly observed overlap is a stop-and-report condition.
+
+Acceptance requires the focused closure and vec suites, #4035 policy controls,
+TypeScript 7, Prettier/Biome and `git diff --check`, IR fallback and issue
+integrity, IR layering/readiness, and applicable oracle/coercion/dead-export
+ratchets. Run every heavy command only after a finite, non-negative one-minute
+load sample is strictly below `logical cores - 2`. Immediately before every
+signed commit run both LOC and function regrowth ratchets, then let all
+precommit and prepush hooks run without bypass. No baseline, size, LOC,
+function, or hook exception is authorized. A Luna implementation remains draft
+until a separate Sol approves the exact pushed SHA; any later push invalidates
+that approval.
