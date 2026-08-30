@@ -765,6 +765,12 @@ export function emitHostTaBufferConstruct(
     [{ kind: "externref" }],
   );
   addStringConstantGlobal(ctx, className);
+  // (#5193) This bridge hands a compiled ArrayBuffer/array-like to a HOST
+  // constructor, and the runtime can only decode it through the module's
+  // exported vec/byte helpers. At module top level those exports do not exist
+  // yet (the `start` section runs inside `WebAssembly.instantiate`), so ask for
+  // the funcref self-registration prologue on `__module_init`.
+  ctx.needsInitMarshalHelpers = true;
   flushLateImportShifts(ctx, fctx);
   const finalGt = ctx.funcMap.get("__get_globalThis") ?? gtIdx;
   const finalGet = ctx.funcMap.get("__extern_get") ?? getIdx;

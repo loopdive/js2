@@ -3755,6 +3755,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  runs it after `setExports` (symmetric with the standalone `_start` model).
    *  Default false. WASI is unaffected. */
   deferTopLevelInit: boolean;
+  /** (#5193) A host-lane call site needs compiled→host MARSHALLING to work while
+   *  the wasm `start` section runs — where `instance.exports` does not exist yet.
+   *  Set by `emitHostTaBufferConstruct`; consumed by
+   *  `emitInitMarshalHelperRegistration`, which emits the funcref self-registration
+   *  prologue on `__module_init`. Unset ⇒ byte-identical output. */
+  needsInitMarshalHelpers?: boolean;
   /** (#2179/#4745) True when the module body contains any `delete` of a
    *  property or element access (e.g. `delete o.a` / `delete o[k]`) or
    *  `Reflect.deleteProperty(o, k)`. Pre-scanned once at module setup. When
