@@ -824,3 +824,25 @@ passing standalone hashes are `ac2af3ffa2bf` and `54271b4fb43b`. The branch is
 now behaviorally validated on current main and ready for the remaining normal
 pre-push gate, exact-head push, and PR shepherd handoff. No GitHub issue was
 created.
+
+### Final pre-push TS7 narrowing blocker and repair plan (2026-08-30)
+
+The first normal push attempt stopped before updating the fork because the
+TS7 typecheck found three static regressions in the newly added marker
+finalization code:
+
+- line 713 reads `field.type.typeIdx` without independently narrowing the
+  second `ValType` union;
+- line 721 copies optional `field.mutable` into registry metadata whose field
+  is a required boolean;
+- line 838 reads `instr.typeIdx` in a helper whose parameter is the full
+  `Instr` union rather than the already-selected `struct.new` variant.
+
+No remote ref moved and no gate was bypassed. The bounded Terra Max repair is
+to make both reference-type discriminants explicit, normalize missing
+mutability to the repository's immutable default, and narrow the marker helper
+parameter (or guard it locally) to `struct.new`. It must not change emitted IR
+or marker allocation behavior. Acceptance requires TS7 typecheck, the exact
+2/2 host/standalone focused suite, the 4/4 owned Test262 rows, and the complete
+normal pre-push gate on the repaired integrated head. The repair stays in PR
+5272 and this markdown issue; no GitHub issue was created.
