@@ -576,6 +576,58 @@ function resolvesToLateAssignedConstructSignatureValue(ctx: CodegenContext, call
 }
 
 /**
+ * Recover the late-assigned constructor slot from either `new C(...)` or the
+ * lazy-cache spelling used by TypeScript's base-node factory:
+ *
+ *   new (C || (C = allocator.getConstructor()))(...)
+ *
+ * Keeping this syntactic proof narrow is important. Arbitrary constructable
+ * expressions still belong to the established class/fnctor/native fallbacks;
+ * this helper only admits the same uninitialized construct-signature binding
+ * that `resolvesToLateAssignedConstructSignatureValue` already owns, plus an
+ * assignment back to that exact binding in the short-circuit RHS.
+ */
+function lateAssignedConstructSignatureSlot(ctx: CodegenContext, calleeExpr: ts.Expression): ts.Identifier | undefined {
+  const unwrap = (expression: ts.Expression): ts.Expression => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  const current = unwrap(calleeExpr);
+  if (ts.isIdentifier(current)) {
+    return resolvesToLateAssignedConstructSignatureValue(ctx, current) ? current : undefined;
+  }
+  if (
+    !ts.isBinaryExpression(current) ||
+    (current.operatorToken.kind !== ts.SyntaxKind.BarBarToken &&
+      current.operatorToken.kind !== ts.SyntaxKind.QuestionQuestionToken)
+  ) {
+    return undefined;
+  }
+
+  const slot = unwrap(current.left);
+  const assignment = unwrap(current.right);
+  if (
+    !ts.isIdentifier(slot) ||
+    !resolvesToLateAssignedConstructSignatureValue(ctx, slot) ||
+    !ts.isBinaryExpression(assignment) ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  ) {
+    return undefined;
+  }
+  const assignedSlot = unwrap(assignment.left);
+  return ts.isIdentifier(assignedSlot) && assignedSlot.text === slot.text ? slot : undefined;
+}
+
+/**
  * A typed late-bound constructor allocates the construct signature's declared
  * result before invoking the runtime function value. The concrete function may
  * declare a wider explicit `this` type: TypeScript's SourceFile slot contains
@@ -3202,7 +3254,7 @@ function emitDynamicNewFallback(
   // boxing it; the caller's later externref→interface coercion can then retain
   // the value instead of turning a nominal cast miss into null. Concrete class
   // result types retain their identity-bearing class struct unchanged.
-  const lateAssignedResultType = resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
+  const lateAssignedResultType = lateAssignedConstructSignatureSlot(ctx, calleeExpr)
     ? ctx.checker.getTypeAtLocation(expr)
     : undefined;
   const lateAssignedResultSymbolName = lateAssignedResultType?.getSymbol()?.name;
@@ -5827,11 +5879,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // class descriptors in both lanes; its host no-match base handles genuine
   // JS constructors. In a host-free classless module it declines, leaving the
   // native construct driver immediately below to own ordinary callable values.
-  if (
-    calleeIdent &&
-    resolvesToLateAssignedConstructSignatureValue(ctx, calleeIdent) &&
-    emitDynamicNewFallback(ctx, fctx, expr, calleeIdent, calleeIdent.text)
-  ) {
+  const lateAssignedCtorSlot = lateAssignedConstructSignatureSlot(ctx, expr.expression);
+  if (lateAssignedCtorSlot && emitDynamicNewFallback(ctx, fctx, expr, expr.expression, lateAssignedCtorSlot.text)) {
     return { kind: "externref" };
   }
 

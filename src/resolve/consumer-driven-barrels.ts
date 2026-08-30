@@ -247,7 +247,8 @@ function namespaceMemberNames(statement: ts.Statement): Set<string> {
 }
 
 /**
- * Visit identifiers that can affect emitted runtime code.
+ * Visit identifiers that can affect emitted runtime code or emitted WasmGC
+ * type relationships.
  *
  * `ts.isTypeNode` covers annotations and type queries, but it also classifies
  * `ExpressionWithTypeArguments` as a type node. A class `extends` expression
@@ -256,11 +257,18 @@ function namespaceMemberNames(statement: ts.Statement): Set<string> {
  */
 function forEachRuntimeIdentifier(node: ts.Node, callback: (identifier: ts.Identifier) => void): void {
   const visit = (current: ts.Node): void => {
-    if (
-      ts.isInterfaceDeclaration(current) ||
-      ts.isTypeAliasDeclaration(current) ||
-      ts.isTypeParameterDeclaration(current)
-    ) {
+    if (ts.isInterfaceDeclaration(current)) {
+      // Interfaces are erased by JavaScript, but this compiler materializes
+      // them as WasmGC struct types. A retained derived interface therefore
+      // needs its complete `extends` chain even when those bases are declared
+      // later in the source (as in TypeScript's Identifier hierarchy).
+      for (const clause of current.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const type of clause.types) visit(type.expression);
+      }
+      return;
+    }
+    if (ts.isTypeAliasDeclaration(current) || ts.isTypeParameterDeclaration(current)) {
       return;
     }
     if (ts.isHeritageClause(current)) {
