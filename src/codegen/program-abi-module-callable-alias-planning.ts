@@ -5,8 +5,7 @@ import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import { createIrBindingId } from "../ir/identity.js";
 import type { IrProgramCallableBindingGraph, IrProgramCallableBindingRecord } from "../ir/program-callable-bindings.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
-import type { FuncTypeDef, WasmFunction } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { WasmFunction } from "../ir/types.js";
 import type {
   PreparedProgramAbiDescriptorLifecycle,
   PreparedProgramAbiDescriptorPart,
@@ -23,15 +22,6 @@ import {
 /** Structural role ordinals owned by internal module import/export aliases. */
 const MODULE_IMPORT_ALIAS_ROLE_ORDINAL = 20;
 const MODULE_EXPORT_ALIAS_ROLE_ORDINAL = 21;
-
-export interface ProgramAbiModuleCallableAliasPlan {
-  /** Exact immutable graph record being materialized in the Program ABI. */
-  readonly record: IrProgramCallableBindingRecord;
-  /** Binding ID of the next exact alias/source target in the graph chain. */
-  readonly aliasOf: IrBindingId;
-  /** Allocator-owned callable signature of the canonical source unit. */
-  readonly signature: FuncTypeDef;
-}
 
 /** Input used to derive one opaque descriptor from the frozen callable graph. */
 export interface PreparedModuleCallableAliasDescriptorInput {
@@ -529,95 +519,4 @@ export function preparedModuleCallableAliasBindings(
   const payload = preparedModuleCallableAliasDescriptors.get(descriptor);
   if (!payload) aliasError("context-session-mismatch", "prepared module callable alias descriptor is forged");
   return payload.aliases;
-}
-
-/**
- * Legacy one-shot compatibility planner. New aggregate code must use the
- * opaque descriptor and a prepared scope; this function remains only for
- * direct callers that have not crossed the aggregate transaction boundary.
- */
-export function planProgramAbiModuleCallableAlias(
-  ctx: CodegenContext,
-  plan: ProgramAbiModuleCallableAliasPlan,
-): IrBindingId | undefined {
-  const session = ctx.programAbiSession;
-  if (!session) return undefined;
-  const { record, aliasOf } = plan;
-  if (record.kind === "source") {
-    aliasError("invalid-callable-provenance", "module callable alias planning requires an import/export alias record");
-  }
-  if (
-    !validOrdinal(record.declarationOrdinal) ||
-    !validOrdinal(record.bindingOrdinal) ||
-    record.sourceId.length === 0 ||
-    record.localName.length === 0 ||
-    record.targetUnitId.length === 0 ||
-    record.canonicalBindingId !== irUnitCallableBindingId(record.targetUnitId) ||
-    aliasOf !== record.targetBindingId
-  ) {
-    aliasError("invalid-binding-reference", `module callable alias ${record.bindingId} has incomplete graph identity`);
-  }
-  const expectedBindingId = createIrBindingId({
-    ownerId: record.sourceId,
-    domain: "callable",
-    role: aliasRole(record),
-    ordinal: record.bindingOrdinal,
-  });
-  if (record.bindingId !== expectedBindingId)
-    aliasError("invalid-binding-reference", `module callable alias ${record.bindingId} has the wrong identity`);
-  if (!session.hasKnownUnit(record.targetUnitId))
-    aliasError("unknown-inventory-unit", `module callable alias ${record.bindingId} targets unknown unit`);
-  if (aliasOf === record.bindingId)
-    aliasError("alias-cycle", `module callable alias ${record.bindingId} targets itself`);
-  const target = session.getDraft(aliasOf);
-  if (!target || target.intent.kind !== "callable")
-    aliasError(
-      "missing-alias-target",
-      `module callable alias ${record.bindingId} targets unplanned callable ${aliasOf}`,
-    );
-  if (
-    (target.intent.origin === "source" && target.intent.unitId !== record.targetUnitId) ||
-    (target.intent.origin === "module-alias" && target.intent.targetUnitId !== record.targetUnitId) ||
-    target.intent.origin === "support" ||
-    target.intent.origin === "import" ||
-    target.intent.origin === "runtime" ||
-    target.intent.origin === "intrinsic"
-  )
-    aliasError(
-      "invalid-callable-provenance",
-      `module callable alias ${record.bindingId} does not target its source unit`,
-    );
-  const contract = cloneProgramAbiCallableTypeContract(plan.signature);
-  if (!programAbiCallableSignaturesEqual(target.intent.signature, canonicalProgramAbiCallableTypeContract(contract))) {
-    aliasError(
-      "alias-signature-mismatch",
-      `module callable alias ${record.bindingId} disagrees with target ${aliasOf}`,
-    );
-  }
-  const draft: ProgramAbiDraft = Object.freeze({
-    id: record.bindingId,
-    structuralOrder: session.structuralOrder.forSource(record.sourceId, {
-      domain: "callable",
-      roleOrdinal: aliasRoleOrdinal(record),
-      derivedOrdinal: record.bindingOrdinal,
-    }),
-    structuralReferenceKey: moduleCallableAliasStructuralReferenceKey(record, aliasOf),
-    displayName: record.localName,
-    slotPolicy: "alias",
-    aliasOf,
-    intent: Object.freeze({
-      kind: "callable" as const,
-      origin: "module-alias" as const,
-      sourceId: record.sourceId,
-      aliasKind: record.kind,
-      targetUnitId: record.targetUnitId,
-      signature: canonicalProgramAbiCallableTypeContract(contract),
-    }),
-  });
-  session.ensurePlan(draft);
-  if (session.hasLocator(record.bindingId))
-    aliasError("locator-not-required", `module callable alias ${record.bindingId} owns a locator`);
-  session.registerCallableTypeContract(record.bindingId, contract);
-  session.registerStructuralReference(record.bindingId, draft.structuralReferenceKey!);
-  return record.bindingId;
 }

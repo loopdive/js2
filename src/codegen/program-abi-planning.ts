@@ -18,12 +18,6 @@ import {
   programAbiCallableSignaturesEqual,
   type ProgramAbiCallableTypeContract,
 } from "./program-abi-signatures.js";
-// Kept as a compatibility export for direct legacy callers while aggregate
-// code uses the opaque descriptor in the dedicated alias-planning module.
-export {
-  planProgramAbiModuleCallableAlias,
-  type ProgramAbiModuleCallableAliasPlan,
-} from "./program-abi-module-callable-alias-planning.js";
 export { PROGRAM_ABI_CALLABLE_ROLE, programAbiCallableRoleOrdinalsAreDistinct } from "./program-abi-callable-roles.js";
 
 export const PROGRAM_ABI_GLOBAL_ROLE = Object.freeze({

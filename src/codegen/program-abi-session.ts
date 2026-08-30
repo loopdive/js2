@@ -46,7 +46,6 @@ import {
   PreparedProgramAbiScopeTransaction,
   preparedProgramAbiPlanningOverlayForBatch,
   rebasePreparedProgramAbiComponentBatch,
-  markPreparedProgramAbiPendingScopeAborted,
   stagePreparedProgramAbiComponentBatch,
   type PreparedProgramAbiBorrowedBindingEvidence,
   type PreparedProgramAbiComponentBatchInput,

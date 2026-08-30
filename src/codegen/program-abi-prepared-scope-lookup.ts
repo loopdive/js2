@@ -336,15 +336,3 @@ export function registerPreparedProgramAbiPendingScopeTransaction(
 ): void {
   preparedProgramAbiPendingScopeTransactionHooks.set(pending, hooks);
 }
-
-/** @internal Mark an opaque pending scope consumed by the session publisher. */
-export function markPreparedProgramAbiPendingScopeCommitted(pending: PreparedProgramAbiPendingScope): void {
-  const actions = preparedProgramAbiPendingScopeTransactionHooks.get(pending);
-  if (actions) actions.cell.state = actions.committedState;
-}
-
-/** @internal Close an opaque pending scope after a pre-write failure. */
-export function markPreparedProgramAbiPendingScopeAborted(pending: PreparedProgramAbiPendingScope): void {
-  const actions = preparedProgramAbiPendingScopeTransactionHooks.get(pending);
-  if (actions) actions.cell.state = actions.abortedState;
-}

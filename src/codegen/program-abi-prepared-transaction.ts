@@ -48,8 +48,6 @@ import type {
 } from "./program-abi-session.js";
 
 export {
-  markPreparedProgramAbiPendingScopeAborted,
-  markPreparedProgramAbiPendingScopeCommitted,
   PreparedProgramAbiScopeTransaction,
   preparedProgramAbiPendingScopeTransactionActions,
   registerPreparedProgramAbiPendingScopeTransaction,
