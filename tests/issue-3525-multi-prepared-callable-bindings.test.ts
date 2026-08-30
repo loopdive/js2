@@ -11,6 +11,7 @@ import {
   type MultiPreparedProgramCallableComponent,
 } from "../src/codegen/multi-prepared-callable-publication.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
+import { moduleCallableAliasStructuralReferenceKey } from "../src/codegen/program-abi-module-callable-alias-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compileMulti } from "../src/index.js";
 import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
@@ -88,6 +89,31 @@ const ALIAS_FILES = {
     export function same(value: number): number { return value + 100; }
     export function invoke(value: number): number {
       return localSame(value) + defaultFn(value) + ns.same(value) + reexported(value);
+    }
+  `,
+  "./entry.ts": `
+    import { invoke as call, chained, same as entrySame } from "./b";
+    export function entry(value: number): number {
+      return call(value) + chained(value) + entrySame(value);
+    }
+  `,
+} as const;
+
+const NAMED_DEFAULT_ALIAS_FILES = {
+  "./a.ts": `
+    export function same(value: number): number { return value; }
+    export function only(value: number): number { return value + 1; }
+    function defaultFn(value: number): number { return value + 2; }
+    export { defaultFn as default };
+    export { same as renamed };
+  `,
+  "./b.ts": `
+    import defaultFn, { same as localSame, renamed as reexported } from "./a";
+    export { renamed as chained } from "./a";
+    export * from "./a";
+    export function same(value: number): number { return value + 100; }
+    export function invoke(value: number): number {
+      return localSame(value) + defaultFn(value) + reexported(value);
     }
   `,
   "./entry.ts": `
@@ -642,16 +668,20 @@ describe("#3525 whole-program callable binding graph", () => {
     expect(useSignature(reversedFixture)).toEqual(useSignature(fixture));
     const reversedGenerated = generateMultiModule(analyzeMultiSource(reversedFiles, "./entry.ts"), options);
     expect(reversedGenerated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+    expect(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.terminalUnitIds).toEqual(
+      audit?.bodyPlan.terminalUnitIds,
+    );
+    expect(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(({ unitId }) => unitId)).toEqual(
+      reservations.map(({ unitId }) => unitId),
+    );
+    expect(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(({ sourceId }) => sourceId)).toEqual(
+      reservations.map(({ sourceId }) => sourceId),
+    );
     expect(
-      new Set(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(({ unitId }) => unitId)),
-    ).toEqual(expectedUnitIds);
-    expect(
-      new Set(
-        reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(
-          ({ preparedComponentId }) => preparedComponentId,
-        ),
+      reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(
+        ({ preparedComponentId }) => preparedComponentId,
       ),
-    ).toEqual(new Set(reservations.map(({ preparedComponentId }) => preparedComponentId)));
+    ).toEqual(reservations.map(({ preparedComponentId }) => preparedComponentId));
     const reversedPrepared = await compileMulti(reversedFiles, "./entry.ts", options);
     expect(reversedPrepared.success, reversedPrepared.errors.map((error) => error.message).join("\n")).toBe(true);
     const reversedExports = (await instantiateWithRuntime(reversedPrepared)).exports as unknown as {
@@ -659,6 +689,333 @@ describe("#3525 whole-program callable binding graph", () => {
     };
     expect(reversedExports.run(5)).toBe(preparedExports.run(5));
   }, 120_000);
+
+  it("prepares the named-default alias matrix with exact five-unit ownership", async () => {
+    const fixture = makeGraph(NAMED_DEFAULT_ALIAS_FILES, "./entry.ts");
+    const aSame = functionUnitId(fixture, "/a.ts", "same");
+    const aOnly = functionUnitId(fixture, "/a.ts", "only");
+    const aDefault = functionUnitId(fixture, "/a.ts", "defaultFn");
+    const bSame = functionUnitId(fixture, "/b.ts", "same");
+    const bInvoke = functionUnitId(fixture, "/b.ts", "invoke");
+    const entry = functionUnitId(fixture, "/entry.ts", "entry");
+    const expectedUnitIds = new Set([aSame, aDefault, bSame, bInvoke, entry]);
+    const sourceIdFor = (fileName: string): string => {
+      const normalizedFileName = fileName.replace(/^\/+/, "");
+      const source = fixture.ast.sourceFiles.find(
+        (candidate) =>
+          candidate.fileName === fileName || candidate.fileName.replace(/^\.?\//, "") === normalizedFileName,
+      );
+      expect(source).toBeDefined();
+      const sourceId = fixture.identity.sourceIdBySourceFile.get(source!);
+      expect(sourceId).toBeDefined();
+      return sourceId!;
+    };
+    const aSourceId = sourceIdFor("/a.ts");
+    const bSourceId = sourceIdFor("/b.ts");
+    const entrySourceId = sourceIdFor("/entry.ts");
+
+    expect(
+      fixture.graph.records.filter((record) => record.kind === "source").map((record) => record.targetUnitId),
+    ).toEqual([aSame, aOnly, aDefault, bSame, bInvoke, entry]);
+    const bUses = fixture.graph.uses.filter((use) => use.ownerUnitId === bInvoke);
+    expect(bUses.map((use) => [use.node.expression.getText(), use.targetUnitId])).toEqual([
+      ["localSame", aSame],
+      ["defaultFn", aDefault],
+      ["reexported", aSame],
+    ]);
+    const entryUses = fixture.graph.uses.filter((use) => use.ownerUnitId === entry);
+    expect(entryUses.map((use) => [use.node.expression.getText(), use.targetUnitId])).toEqual([
+      ["call", bInvoke],
+      ["chained", aSame],
+      ["entrySame", bSame],
+    ]);
+    expect(Object.isFrozen(fixture.graph)).toBe(true);
+    expect(Object.isFrozen(fixture.graph.records)).toBe(true);
+    expect(Object.isFrozen(fixture.graph.uses)).toBe(true);
+
+    const generated = generateMultiModule(analyzeMultiSource(NAMED_DEFAULT_ALIAS_FILES, "./entry.ts"), {
+      ...CALLABLE_OPTIONS,
+    });
+    expect(generated.errors.filter(({ severity }) => severity !== "warning")).toEqual([]);
+    const audit = generated.multiPreparedProgramAudit;
+    expect(audit).toBeDefined();
+    const reservations = audit?.bodyPlan.reservations ?? [];
+    expect(reservations).toHaveLength(5);
+    expect(new Set(reservations.map(({ unitId }) => unitId))).toEqual(expectedUnitIds);
+    expect(new Set(reservations.map(({ sourceId }) => sourceId))).toEqual(
+      new Set([aSourceId, bSourceId, entrySourceId]),
+    );
+    expect(new Set(reservations.map(({ routeKind }) => routeKind))).toEqual(new Set(["cross-source-callable"]));
+    expect(
+      reservations.every(
+        (reservation) =>
+          reservation.routeKind === "cross-source-callable" &&
+          reservation.stagedBeforeDirectBodies &&
+          reservation.committedAfterExactBodySkips &&
+          reservation.publicationPhase === "after-exact-body-skips" &&
+          !("preparedBeforeDirectBodies" in reservation),
+      ),
+    ).toBe(true);
+    expect(audit?.bodyPlan.terminalUnitIds).toEqual([aSame, aOnly, aDefault, bSame, bInvoke, entry]);
+    expect(audit?.bodyPlan.unreservedTerminalUnitIds).toEqual([aOnly]);
+    expect(new Set(reservations.map(({ preparedComponentId }) => preparedComponentId))).toHaveLength(1);
+
+    const aliases =
+      generated.programAbi?.abi
+        .entries()
+        .filter((entry) => entry.intent.kind === "callable" && entry.intent.origin === "module-alias") ?? [];
+    expect(aliases).toHaveLength(15);
+    const aliasRows = aliases.map(({ displayName, intent }) => [
+      intent.sourceId,
+      displayName,
+      intent.aliasKind,
+      intent.targetUnitId,
+    ]);
+    expect(aliasRows).toEqual([
+      [aSourceId, "same", "export-alias", aSame],
+      [aSourceId, "default", "export-alias", aDefault],
+      [aSourceId, "renamed", "export-alias", aSame],
+      [bSourceId, "defaultFn", "import-alias", aDefault],
+      [bSourceId, "localSame", "import-alias", aSame],
+      [bSourceId, "reexported", "import-alias", aSame],
+      [bSourceId, "chained", "export-alias", aSame],
+      [bSourceId, "renamed", "export-alias", aSame],
+      [bSourceId, "same", "export-alias", aSame],
+      [bSourceId, "same", "export-alias", bSame],
+      [bSourceId, "invoke", "export-alias", bInvoke],
+      [entrySourceId, "call", "import-alias", bInvoke],
+      [entrySourceId, "chained", "import-alias", aSame],
+      [entrySourceId, "entrySame", "import-alias", bSame],
+      [entrySourceId, "entry", "export-alias", entry],
+    ]);
+    const graphRecordsById = new Map(fixture.graph.records.map((record) => [record.bindingId, record]));
+    const aliasById = new Map(aliases.map((alias) => [alias.id, alias]));
+    const sourceRoots = new Map(
+      generated.programAbi?.abi
+        .entries()
+        .filter(
+          (entry) =>
+            entry.intent.kind === "callable" && entry.intent.origin === "source" && entry.intent.unitId !== undefined,
+        )
+        .map((entry) => [entry.intent.unitId!, entry]),
+    );
+    for (const alias of aliases) {
+      const record = graphRecordsById.get(alias.id);
+      expect(record).toBeDefined();
+      expect(alias.slotPolicy).toBe("alias");
+      expect(alias.structuralReferenceKey).toBe(moduleCallableAliasStructuralReferenceKey(record!, alias.aliasOf!));
+      expect(alias.aliasOf).toBeDefined();
+      expect(alias.intent.targetUnitId).toBe(record?.targetUnitId);
+      const root = sourceRoots.get(alias.intent.targetUnitId!);
+      expect(root).toBeDefined();
+      const aliasFinalIndex = generated.programAbi?.abi.resolveFinalIndex(alias.id);
+      const rootFinalIndex = generated.programAbi?.abi.resolveFinalIndex(root!.id);
+      expect(aliasFinalIndex).toEqual(rootFinalIndex);
+      expect(aliasFinalIndex).toEqual(expect.objectContaining({ space: "function" }));
+      if (aliasFinalIndex?.space !== "function" || rootFinalIndex?.space !== "function") {
+        throw new Error(`callable alias ${alias.id} did not resolve to a function allocator`);
+      }
+      expect(generated.module.functions[aliasFinalIndex.index]).toBe(generated.module.functions[rootFinalIndex.index]);
+      let currentId = alias.aliasOf!;
+      const seen = new Set<string>();
+      while (aliasById.has(currentId)) {
+        expect(seen.has(currentId)).toBe(false);
+        seen.add(currentId);
+        currentId = aliasById.get(currentId)!.aliasOf!;
+      }
+      expect(currentId).toBe(record?.canonicalBindingId);
+      expect(alias.structuralReferenceKey).toEqual(expect.any(String));
+    }
+    expect(aliases.some(({ displayName, intent }) => displayName === "only" || intent.targetUnitId === aOnly)).toBe(
+      false,
+    );
+
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "same,defaultFn,invoke,entry");
+    const prepared = await compileMulti(NAMED_DEFAULT_ALIAS_FILES, "./entry.ts", CALLABLE_OPTIONS);
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "");
+    const direct = await compileMulti(NAMED_DEFAULT_ALIAS_FILES, "./entry.ts", {
+      experimentalIR: false,
+      nativeStrings: true,
+      target: "standalone",
+    });
+    expect(prepared.success, prepared.errors.map(({ message }) => message).join("\n")).toBe(true);
+    expect(direct.success, direct.errors.map(({ message }) => message).join("\n")).toBe(true);
+    expect([...(prepared.irCompiledFuncs ?? [])].sort()).toEqual(["defaultFn", "entry", "invoke", "same", "same"]);
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    const preparedOutcomes = exactOutcomes(prepared, expectedUnitIds);
+    expect(preparedOutcomes).toHaveLength(5);
+    expect(new Set(preparedOutcomes.map(({ unitId }) => unitId))).toEqual(expectedUnitIds);
+    expect(preparedOutcomes.map(({ displayName }) => displayName).sort()).toEqual(
+      ["defaultFn", "entry", "invoke", "same", "same"].sort(),
+    );
+    expect(new Set(preparedOutcomes.map(({ preparedComponentId }) => preparedComponentId))).toHaveLength(1);
+    expect(preparedOutcomes.every(({ kind, irBodyEmitted }) => kind === "emitted" && irBodyEmitted)).toBe(true);
+    expect(prepared.irOutcomes?.some(({ unitId, irBodyEmitted }) => unitId === aOnly && irBodyEmitted)).toBe(false);
+    expect(prepared.irCompiledFuncs ?? []).not.toContain("only");
+    expect(
+      prepared.irBodyRouteAudit?.legacyEntries.filter(
+        ({ unitId }) => unitId !== undefined && expectedUnitIds.has(unitId),
+      ),
+    ).toEqual([]);
+    expect(
+      prepared.irBodyRouteAudit?.dispositions
+        .filter(({ unitId }) => unitId !== undefined && expectedUnitIds.has(unitId))
+        .every(({ disposition }) => disposition === "terminal-ir"),
+    ).toBe(true);
+    const preparedExports = (await instantiateWithRuntime(prepared)).exports as unknown as {
+      entry(value: number): number;
+    };
+    const directExports = (await instantiateWithRuntime(direct)).exports as unknown as {
+      entry(value: number): number;
+    };
+    expect(preparedExports.entry(5)).toBe(directExports.entry(5));
+    expect(preparedExports.entry(5)).toBe(127);
+
+    const reversedFiles = {
+      "./entry.ts": NAMED_DEFAULT_ALIAS_FILES["./entry.ts"],
+      "./b.ts": NAMED_DEFAULT_ALIAS_FILES["./b.ts"],
+      "./a.ts": NAMED_DEFAULT_ALIAS_FILES["./a.ts"],
+    } as const;
+    const reversedFixture = makeGraph(reversedFiles, "./entry.ts");
+    expect(reversedFixture.graph.records).toEqual(fixture.graph.records);
+    expect(useSignature(reversedFixture)).toEqual(useSignature(fixture));
+    const reversedGenerated = generateMultiModule(analyzeMultiSource(reversedFiles, "./entry.ts"), {
+      ...CALLABLE_OPTIONS,
+    });
+    expect(reversedGenerated.errors.filter(({ severity }) => severity !== "warning")).toEqual([]);
+    expect(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.terminalUnitIds).toEqual(
+      audit?.bodyPlan.terminalUnitIds,
+    );
+    expect(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(({ unitId }) => unitId)).toEqual(
+      reservations.map(({ unitId }) => unitId),
+    );
+    expect(reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(({ sourceId }) => sourceId)).toEqual(
+      reservations.map(({ sourceId }) => sourceId),
+    );
+    expect(
+      reversedGenerated.multiPreparedProgramAudit?.bodyPlan.reservations.map(
+        ({ preparedComponentId }) => preparedComponentId,
+      ),
+    ).toEqual(reservations.map(({ preparedComponentId }) => preparedComponentId));
+    const reversedAliases =
+      reversedGenerated.programAbi?.abi
+        .entries()
+        .filter((entry) => entry.intent.kind === "callable" && entry.intent.origin === "module-alias") ?? [];
+    expect(
+      reversedAliases.map(({ displayName, intent, aliasOf, structuralReferenceKey, slotPolicy }) => [
+        displayName,
+        intent.sourceId,
+        intent.aliasKind,
+        intent.targetUnitId,
+        aliasOf,
+        structuralReferenceKey,
+        slotPolicy,
+      ]),
+    ).toEqual(
+      aliases.map(({ displayName, intent, aliasOf, structuralReferenceKey, slotPolicy }) => [
+        displayName,
+        intent.sourceId,
+        intent.aliasKind,
+        intent.targetUnitId,
+        aliasOf,
+        structuralReferenceKey,
+        slotPolicy,
+      ]),
+    );
+    const reversedPrepared = await compileMulti(reversedFiles, "./entry.ts", CALLABLE_OPTIONS);
+    expect(reversedPrepared.success, reversedPrepared.errors.map(({ message }) => message).join("\n")).toBe(true);
+    expect(reversedPrepared.irBodyRouteAudit).toEqual(prepared.irBodyRouteAudit);
+    const reversedExports = (await instantiateWithRuntime(reversedPrepared)).exports as unknown as {
+      entry(value: number): number;
+    };
+    expect(reversedExports.entry(5)).toBe(127);
+  }, 120_000);
+
+  it.each(["drop", "foreign", "include-unanchored"] as const)(
+    "fails closed before any callable publication when the named census is %s",
+    (mutation) => {
+      const fixture = makeGraph(NAMED_DEFAULT_ALIAS_FILES, "./entry.ts");
+      const aSame = functionUnitId(fixture, "/a.ts", "same");
+      const aOnly = functionUnitId(fixture, "/a.ts", "only");
+      const aDefault = functionUnitId(fixture, "/a.ts", "defaultFn");
+      const bSame = functionUnitId(fixture, "/b.ts", "same");
+      const bInvoke = functionUnitId(fixture, "/b.ts", "invoke");
+      const entry = functionUnitId(fixture, "/entry.ts", "entry");
+      const allUnitIds = new Set([aSame, aOnly, aDefault, bSame, bInvoke, entry]);
+      vi.stubEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_CENSUS", mutation);
+      const generated = generateMultiModule(analyzeMultiSource(NAMED_DEFAULT_ALIAS_FILES, "./entry.ts"), {
+        ...CALLABLE_OPTIONS,
+      });
+      expect(
+        generated.errors
+          .filter(({ severity }) => severity !== "warning")
+          .map(({ message }) => message)
+          .join("\n"),
+      ).toMatch(
+        /mutated callable preflight authority|callable attempted census (under-covered|foreign|changed|mutated)/i,
+      );
+      expectNoCallablePublication(generated, allUnitIds, new Set(["same", "only", "defaultFn", "invoke", "entry"]));
+      expect(
+        generated.programAbi?.abi
+          .entries()
+          .filter((entry) => entry.intent.kind === "callable" && entry.intent.origin === "module-alias") ?? [],
+      ).toEqual([]);
+    },
+  );
+
+  it("fails closed with a zero publication prefix when a staged callable body is removed", () => {
+    const fixture = makeGraph(SAME_SPELLING_COMPONENT_FILES, "./entry.ts");
+    const unitIds = new Set<IrUnitId>([
+      functionUnitId(fixture, "/a.ts", "same") as IrUnitId,
+      functionUnitId(fixture, "/a.ts", "call") as IrUnitId,
+      functionUnitId(fixture, "/b.ts", "same") as IrUnitId,
+      functionUnitId(fixture, "/b.ts", "call") as IrUnitId,
+      functionUnitId(fixture, "/entry.ts", "run") as IrUnitId,
+    ]);
+    vi.stubEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_STAGED_BODY", "1");
+
+    const generated = generateMultiModule(
+      analyzeMultiSource(SAME_SPELLING_COMPONENT_FILES, "./entry.ts"),
+      CALLABLE_OPTIONS,
+    );
+
+    expect(generated.errors.filter(({ severity }) => severity !== "warning")).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        message: expect.stringContaining("changed before final publication"),
+      }),
+    ]);
+    expectNoCallablePublication(generated, unitIds, new Set(["same", "call", "run"]));
+  });
+
+  it.each(["missing-local-plan", "missing-imported-plan"] as const)(
+    "fails closed before callable preparation when a selected %s is hidden",
+    (mutation) => {
+      const fixture = makeGraph(SAME_SPELLING_COMPONENT_FILES, "./entry.ts");
+      const unitIds = new Set<IrUnitId>([
+        functionUnitId(fixture, "/a.ts", "same") as IrUnitId,
+        functionUnitId(fixture, "/a.ts", "call") as IrUnitId,
+        functionUnitId(fixture, "/b.ts", "same") as IrUnitId,
+        functionUnitId(fixture, "/b.ts", "call") as IrUnitId,
+        functionUnitId(fixture, "/entry.ts", "run") as IrUnitId,
+      ]);
+      vi.stubEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_PLAN", mutation);
+
+      const generated = generateMultiModule(
+        analyzeMultiSource(SAME_SPELLING_COMPONENT_FILES, "./entry.ts"),
+        CALLABLE_OPTIONS,
+      );
+
+      const evidence = mutation === "missing-local-plan" ? "local call plan" : "imported call plan";
+      expect(generated.errors.filter(({ severity }) => severity !== "warning")).toEqual([
+        expect.objectContaining({
+          severity: "error",
+          message: expect.stringContaining(`is missing its exact cached ${evidence}`),
+        }),
+      ]);
+      expectNoCallablePublication(generated, unitIds, new Set(["same", "call", "run"]));
+    },
+  );
 
   it("keeps unanchored local same-spelling declarations outside the exact component census", () => {
     const options = {

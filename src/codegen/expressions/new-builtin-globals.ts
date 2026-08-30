@@ -20,7 +20,13 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
 import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
-import { emitTaViewConstruct, emitTaViewConstructWindowed, nativeBufferBuiltinOf } from "../dataview-native.js";
+import {
+  emitDynamicUint8ArrayBufferAlias,
+  emitDynamicTypedArrayConstructFromAny,
+  emitTaViewConstruct,
+  emitTaViewConstructWindowed,
+  nativeBufferBuiltinOf,
+} from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper, ensureNativeStringBoundaryBridge } from "../native-strings.js";
@@ -2048,6 +2054,31 @@ export function tryCompileBuiltinGlobalNew(
           );
           if (viewResult) return viewResult;
         }
+        // (#5194) `copyIntoArrayBuffer(destBuffer, srcBuffer)` from the
+        // Test262 resizable-buffer harness intentionally erases both buffer
+        // parameters.  A boxed native `$__vec_i32_byte` therefore misses the
+        // static provenance oracle and would enter the numeric-length arm
+        // (`ToNumber(buffer) -> NaN -> 0`).  The helper keeps the existing
+        // count fallback for non-buffer any/unknown values while aliasing the
+        // packed bytes when the runtime value is an ArrayBuffer carrier.
+        const dynamicAnyArg =
+          (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && argSymName === undefined;
+        if (noJsHost(ctx) && typedArrayName === "Uint8Array" && dynamicAnyArg) {
+          const dynamicBufferResult = emitDynamicUint8ArrayBufferAlias(ctx, fctx, args[0]!, (e, h) =>
+            compileExpression(ctx, fctx, e, h),
+          );
+          if (dynamicBufferResult) return finishNativeTypedArray();
+        }
+        if (noJsHost(ctx) && typedArrayName !== "Uint8Array" && dynamicAnyArg) {
+          const dynamicTypedArrayResult = emitDynamicTypedArrayConstructFromAny(
+            ctx,
+            fctx,
+            typedArrayName,
+            args[0]!,
+            (e, h) => compileExpression(ctx, fctx, e, h),
+          );
+          if (dynamicTypedArrayResult) return dynamicTypedArrayResult;
+        }
         const isArrayLike =
           argSym?.name === "Array" ||
           ((argType.flags & ts.TypeFlags.Object) !== 0 &&
@@ -2250,6 +2281,30 @@ export function tryCompileBuiltinGlobalNew(
         fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
         fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
         return finishNativeTypedArray();
+      }
+
+      // (#5194) An erased ArrayBuffer argument can also use the windowed
+      // `(buffer, byteOffset[, length])` form.  Keep every argument evaluated
+      // once and let the existing runtime-kind constructor dispatcher select
+      // the shared-buffer arm after its byte-vector carrier test; the static
+      // provenance gate below cannot identify `same.buffer` when `same` is
+      // itself `any`.
+      if (noJsHost(ctx) && args.length >= 2 && !ts.isNumericLiteral(args[0]!)) {
+        const multiArgFact = ctx.oracle.typeFactOf(args[0]!);
+        const multiArgSymName = nativeBufferBuiltinOf(ctx, args[0]!);
+        const dynamicMultiArg =
+          (multiArgFact.kind === "any" || multiArgFact.kind === "unknown") && multiArgSymName === undefined;
+        if (dynamicMultiArg) {
+          const dynamicWindowResult = emitDynamicTypedArrayConstructFromAny(
+            ctx,
+            fctx,
+            typedArrayName,
+            args[0]!,
+            (e, h) => compileExpression(ctx, fctx, e, h),
+            args.slice(1),
+          );
+          if (dynamicWindowResult) return dynamicWindowResult;
+        }
       }
 
       // (#3054 B2) `new <TA>(buffer, byteOffset[, length])` — windowed
