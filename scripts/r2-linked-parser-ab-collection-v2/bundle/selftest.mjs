@@ -11,7 +11,7 @@
 // PROOF OBLIGATION
 // ----------------
 // For each of the five defects the 2026-08-28 independent audit proved to be a
-// FALSE PASS, the mutation must:
+// FALSE PASS, and each production-evidence relock mutation, the mutation must:
 //   1. PASS the reconstructed pre-repair baseline (reproducing the false pass);
 //   2. FAIL the repaired collector with the specific expected failure code; and
 //   3. differ from the canonical report ONLY in that mutation -- established by
@@ -20,7 +20,13 @@
 
 import { computeDigests, validate } from "./contract.mjs";
 import { validateNaive } from "./baseline-naive.mjs";
-import { DEFECT_MUTATIONS, STRUCTURAL_MUTATIONS, buildCanonicalReport, reorderReport } from "./fixtures.mjs";
+import {
+  DEFECT_MUTATIONS,
+  PRODUCTION_MUTATIONS,
+  STRUCTURAL_MUTATIONS,
+  buildCanonicalReport,
+  reorderReport,
+} from "./fixtures.mjs";
 
 let failed = 0;
 const lines = [];
@@ -85,7 +91,32 @@ for (const defect of DEFECT_MUTATIONS) {
   });
 }
 
-// --- 2. structural selftests (repaired collector only) ---------------------
+// --- 2. production-evidence relock mutations, two-sided --------------------
+// The reconstructed baseline intentionally keeps the old hash/presence-only
+// shapes, so these mutations must still pass there. The relocked model must
+// reject each exact wrong host ABI, route, physical row, or terminal outcome.
+lines.push("");
+lines.push("production-evidence relock mutations (baseline must PASS, repaired must FAIL):");
+for (const mutation of PRODUCTION_MUTATIONS) {
+  const mutated = mutation.mutate(canonical);
+  const naive = validateNaive(mutated);
+  const repaired = validate(mutated);
+  const reproduced = naive.status === "PASS";
+  record(
+    reproduced,
+    `${mutation.id} remains permissive on the reconstructed baseline`,
+    `${mutation.title} → ${naive.status}`,
+  );
+  const rejected = repaired.status === "FAILED-DIAGNOSTIC-NOT-ACCEPTANCE";
+  const hasCode = codes(repaired).includes(mutation.repairedCode);
+  record(
+    rejected && hasCode,
+    `${mutation.id} fails closed on the relocked collector`,
+    `${repaired.status} [${codes(repaired).join(", ")}]`,
+  );
+}
+
+// --- 3. structural selftests (repaired collector only) ---------------------
 lines.push("");
 lines.push("structural selftests (repaired collector must FAIL each):");
 for (const mutation of STRUCTURAL_MUTATIONS) {
@@ -94,7 +125,7 @@ for (const mutation of STRUCTURAL_MUTATIONS) {
   record(ok, `${mutation.id} ${mutation.title}`, `${result.status} [${codes(result).join(", ")}]`);
 }
 
-// --- 3. multiple accumulated oracle failures --------------------------------
+// --- 4. multiple accumulated oracle failures --------------------------------
 // The plan requires a semantic failure to publish EVERY oracle failure, not the
 // first one. Compose four independent mutations and require all four codes.
 lines.push("");
@@ -119,7 +150,7 @@ record(
   `${composedResult.failures.length} failures`,
 );
 
-// --- 4. canonical reorder must not change the digest -----------------------
+// --- 5. canonical reorder must not change the digest -----------------------
 lines.push("");
 const reordered = reorderReport(canonical);
 const digestA = computeDigests(canonical.children);

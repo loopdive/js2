@@ -63,18 +63,15 @@ import { emitUndefinedExtern, undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
-  ensureBuiltinFnMetaType,
+  ensureStandaloneSpeciesGetterClosure,
   pushBuiltinFnSingletonValueInstrs,
 } from "./builtin-fn-meta.js";
-import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import {
   BUILTIN_CTOR_ARITY,
   ensureStandaloneBuiltinStaticMethodClosure,
-  makeBuiltinClosureFctx,
   MATH_CONSTANT_VALUES,
   NUMBER_CONSTANT_VALUES,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
@@ -413,69 +410,6 @@ export function isSymbolSpeciesKeyExpression(fctx: FunctionContext, expr: ts.Exp
     e.expression.text === "Symbol" &&
     !(fctx.localMap.has("Symbol") || (fctx.boxedCaptures?.has("Symbol") ?? false))
   );
-}
-
-/**
- * (#2984 "builtin receiver + non-literal key") The per-constructor
- * `get [Symbol.species]` accessor closure — spec `get <Ctor> [ @@species ]`
- * (§23.1.2.5, §25.1.5.3, §24.1.2.2, §24.2.2.2, §27.2.4.4, §22.2.6.2): the body
- * is exactly "Return the this value" (param 1, the lifted receiver slot).
- *
- * The value struct is the UNIQUE per-ctor meta subtype (`species:<Ctor>`), so
- * (a) `pushBuiltinFnSingletonValueInstrs`' per-typeIdx singleton global gives
- * identity-stable reads (`gOPD(Array, Symbol.species).get` is the SAME object
- * across calls) while Array's getter stays distinct from Map's (each ctor owns
- * its OWN accessor function per spec), and (b) the reflective `__builtinfn_*`
- * natives answer `name`/`length` at runtime — `"get [Symbol.species]"` / 0
- * (§10.2.9 accessor spelling) — which is what the test262 propertyHelper reads
- * (`verifyProperty(desc.get, "name"|"length", …)`).
- *
- * The meta type is registered in `nativeProtoReceiverClosureStructTypes`
- * (#2193 PR-B): the getter's FIRST user param IS the receiver, so a statically
- * resolvable `g.call(thisVal)` threads `thisVal` into param 1 (→ returns it)
- * instead of dropping it. Only the meta subtype is registered — the shared
- * signature-wrapper base is left alone (other closures of the same signature
- * take a plain first ARG there, not a receiver).
- */
-function ensureStandaloneSpeciesGetterClosure(
-  ctx: CodegenContext,
-  builtinName: string,
-): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
-  const userParams: ValType[] = [{ kind: "externref" }]; // param 1 = `this`
-  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, [{ kind: "externref" }]);
-  if (!wrapperTypes) return null;
-
-  const funcName = `__builtin_species_get_${builtinName}`;
-  let funcIdx = ctx.funcMap.get(funcName);
-  if (funcIdx === undefined) {
-    const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.liftedSelfTypeIdx };
-    const closureFctx = makeBuiltinClosureFctx(funcName, selfType, userParams, { kind: "externref" });
-    // Step 1 (the whole algorithm): Return the this value.
-    closureFctx.body.push({ op: "local.get", index: 1 });
-    funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, {
-      name: funcName,
-      typeIdx: wrapperTypes.liftedFuncTypeIdx,
-      locals: closureFctx.locals,
-      body: closureFctx.body,
-      exported: false,
-    });
-    ctx.funcMap.set(funcName, funcIdx);
-    if (!ctx.nativeClosureMeta) ctx.nativeClosureMeta = new Map();
-    ctx.nativeClosureMeta.set(funcIdx, { name: "get [Symbol.species]", length: 0 });
-  }
-
-  const metaTypeIdx = ensureBuiltinFnMetaType(
-    ctx,
-    wrapperTypes.structTypeIdx,
-    wrapperTypes.closureInfo,
-    `species:${builtinName}`,
-    "get [Symbol.species]",
-    0,
-  );
-  if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();
-  ctx.nativeProtoReceiverClosureStructTypes.add(metaTypeIdx);
-  return { type: { kind: "ref", typeIdx: metaTypeIdx }, funcIdx };
 }
 
 /**

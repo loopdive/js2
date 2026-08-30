@@ -81,7 +81,39 @@ import { isDeclaredStructRefSubtypeAssignable } from "../struct-hierarchy-layout
  * element call: the concrete closure struct type, its lifted funcref type, and
  * the wasm return type that funcref yields.
  */
-type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: ValType | null };
+type FuncCandidate = {
+  funcTypeIdx: number;
+  structTypeIdx: number;
+  returnType: ValType | null;
+  paramTypes: ValType[];
+};
+
+/**
+ * Import-free ABI bridge for a callable property's erased generic reference.
+ *
+ * A generic implementation such as `identity<T>(value: T): T` lowers to
+ * `(externref) -> externref`, while a concrete interface field holding it can
+ * be called as `(ref Box) -> ref Box`. Both crossings preserve the same GC
+ * reference: export the concrete argument and narrow the declared concrete
+ * result at the field boundary. `$AnyValue` is a tagged carrier rather than a
+ * raw object reference, so it must keep its semantic projection path.
+ */
+function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
+  const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
+  if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
+  if (ctx.standalone || ctx.wasi) return null;
+
+  if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
+    return [{ op: "extern.convert_any" }];
+  }
+  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null")) {
+    return [
+      { op: "any.convert_extern" },
+      { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },
+    ];
+  }
+  return null;
+}
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
 const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
@@ -214,6 +246,7 @@ function buildClosureFuncCandidates(
         funcTypeIdx: alt.closureInfo.funcTypeIdx,
         structTypeIdx: alt.closureInfo.structTypeIdx,
         returnType: alt.closureInfo.returnType,
+        paramTypes: alt.closureInfo.paramTypes,
       });
     }
   };
@@ -233,7 +266,7 @@ function buildClosureFuncCandidates(
     if (seen.has(info.funcTypeIdx)) continue;
     let paramsMatch = true;
     for (let pi = 0; pi < sigParamCount; pi++) {
-      if (!valTypesMatch(info.paramTypes[pi]!, sigParamWasmTypes[pi]!)) {
+      if (callablePropertyRefBridge(ctx, sigParamWasmTypes[pi]!, info.paramTypes[pi]!) === null) {
         paramsMatch = false;
         break;
       }
@@ -244,6 +277,7 @@ function buildClosureFuncCandidates(
         funcTypeIdx: info.funcTypeIdx,
         structTypeIdx: info.structTypeIdx,
         returnType: info.returnType,
+        paramTypes: info.paramTypes,
       });
     }
   }
@@ -312,6 +346,7 @@ function emitRootFuncrefDispatch(
   rootIdx: number,
   funcCandidates: FuncCandidate[],
   argLocals: number[],
+  argTypes: ValType[],
   expectedReturn: ValType | null,
 ): void {
   // Fetch the funcref off the ROOT (field 0 is the root's own field, present on
@@ -338,7 +373,14 @@ function emitRootFuncrefDispatch(
     if (candidateSelfTypeIdx !== rootIdx) {
       fcCallBody.push({ op: "ref.cast", typeIdx: candidateSelfTypeIdx });
     }
-    for (const al of argLocals) fcCallBody.push({ op: "local.get", index: al });
+    for (let index = 0; index < argLocals.length; index++) {
+      fcCallBody.push({ op: "local.get", index: argLocals[index]! });
+      const bridge = callablePropertyRefBridge(ctx, argTypes[index]!, fc.paramTypes[index]!);
+      if (bridge === null) {
+        throw new Error("callable-property candidate admitted without an argument ABI bridge");
+      }
+      fcCallBody.push(...bridge);
+    }
     fcCallBody.push({ op: "local.get", index: funcrefLocal });
     fcCallBody.push({ op: "ref.cast", typeIdx: fc.funcTypeIdx });
     fcCallBody.push({ op: "call_ref", typeIdx: fc.funcTypeIdx });
@@ -348,6 +390,10 @@ function emitRootFuncrefDispatch(
     // padding, so the coercion MUST be import-free (a late import would shift
     // indices and corrupt already-baked ref.func operands — the #2174 hazard).
     const matchedDispatch = expectedReturn !== null && fc.returnType !== null;
+    const referenceReturnBridge =
+      matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)
+        ? callablePropertyRefBridge(ctx, fc.returnType!, expectedReturn!)
+        : null;
     if (expectedReturn === null && fc.returnType !== null) {
       fcCallBody.push({ op: "drop" });
     } else if (expectedReturn !== null && fc.returnType === null) {
@@ -362,6 +408,8 @@ function emitRootFuncrefDispatch(
       // defaulting here would turn a SourceFile-returning NodeFactory closure
       // into null before its caller can narrow the same object back to
       // SourceFile.
+    } else if (referenceReturnBridge !== null) {
+      fcCallBody.push(...referenceReturnBridge);
     } else if (
       matchedDispatch &&
       !valTypesMatch(fc.returnType!, expectedReturn!) &&
@@ -1438,6 +1486,7 @@ export function compileCallablePropertyCall(
           funcTypeIdx: matchedClosureInfo.funcTypeIdx,
           structTypeIdx: wrapperStructIdx,
           returnType: matchedClosureInfo.returnType,
+          paramTypes: matchedClosureInfo.paramTypes,
         },
         sigParamCount,
         sigParamWasmTypes,
@@ -1549,7 +1598,16 @@ export function compileCallablePropertyCall(
 
       // After the args (they may read the caller's `this`), before the ladder.
       if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
-      emitRootFuncrefDispatch(ctx, fctx, closureLocal, rootIdx, funcCandidates, argLocals, expectedReturn);
+      emitRootFuncrefDispatch(
+        ctx,
+        fctx,
+        closureLocal,
+        rootIdx,
+        funcCandidates,
+        argLocals,
+        matchedClosureInfo.paramTypes,
+        expectedReturn,
+      );
 
       // A target that does not itself read `arguments` leaves the module
       // globals untouched. Clear them after the indirect call while preserving
@@ -1802,7 +1860,12 @@ export function compileCallableElementAccessCall(
   // externref). See buildClosureFuncCandidates + compileCallablePropertyCall.
   const funcCandidates = buildClosureFuncCandidates(
     ctx,
-    { funcTypeIdx: closureInfo.funcTypeIdx, structTypeIdx: wrapperStructIdx, returnType: closureInfo.returnType },
+    {
+      funcTypeIdx: closureInfo.funcTypeIdx,
+      structTypeIdx: wrapperStructIdx,
+      returnType: closureInfo.returnType,
+      paramTypes: closureInfo.paramTypes,
+    },
     sigParamCount,
     sigParamWasmTypes,
   );
@@ -1901,7 +1964,16 @@ export function compileCallableElementAccessCall(
 
   const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, closureInfo.paramTypes);
   if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
-  emitRootFuncrefDispatch(ctx, fctx, closureLocal, rootIdx, funcCandidates, argLocals, expectedReturn);
+  emitRootFuncrefDispatch(
+    ctx,
+    fctx,
+    closureLocal,
+    rootIdx,
+    funcCandidates,
+    argLocals,
+    closureInfo.paramTypes,
+    expectedReturn,
+  );
   return finishObjectLiteralMethodCall(ctx, fctx, bind, expectedReturn ?? VOID_RESULT);
 }
 
