@@ -2,6 +2,7 @@
 id: 5194
 title: "ES2015 standalone typedarray — r2 residual pass (post-#5188 clustering)"
 status: in-progress
+pr: 5300
 sprint: current
 created: 2026-08-29
 updated: 2026-08-30
@@ -436,6 +437,17 @@ when the branch is mergeable and the exact 25-row standalone cohort plus
 regression controls are green. If interrupted or still non-mergeable, push the
 checkpoint, record the precise remaining rows and root cause here, and use a
 draft PR.
+
+The completed slice was published as non-draft upstream PR
+[#5300](https://github.com/loopdive/js2/pull/5300) from
+`ttraenkler:codex/5194-typedarray-set-r2-final` into `loopdive/js2:main`.
+The exact remotely verified pre-back-reference checkpoint was
+`28f510eda5dcd8a47a9102257aa752699b3fbccd`; GitHub reported that head
+mergeable, with the PR blocked only while required checks were pending. This
+PR-number back-reference is the sole planned publication follow-up on the
+head. A dedicated Luna Max shepherd owns verification of the final pushed SHA,
+the required body and CLA format, conflicts, checks, and the one-shot merge
+queue handoff. No GitHub issue was created.
 
 Completing slice A does not close the r2 umbrella: update the measured residual
 count here and keep this issue `in-progress` until the remaining TypedArray
