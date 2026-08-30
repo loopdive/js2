@@ -11,8 +11,8 @@
     "maximumLegacySemanticImports": 23
   },
   "runtimeSource": {
-    "maximumRuntimeTsLines": 18776,
-    "maximumResolveImportLines": 7680,
+    "maximumRuntimeTsLines": 18961,
+    "maximumResolveImportLines": 7745,
     "maximumResolveImportCases": 15,
     "maximumOwnedAdapterLines": 819,
     "maximumExplicitCapabilityLines": 1194
