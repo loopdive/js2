@@ -1,10 +1,9 @@
 ---
 id: 1231
 title: "perf: struct field type inference — eliminate boxing in object properties"
-status: done
+status: in-progress
 created: 2026-05-02
-updated: 2026-05-02
-completed: 2026-05-02
+updated: 2026-08-30
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -13,10 +12,10 @@ area: ir
 language_feature: object-literal, property-access
 goal: performance
 sprint: 47
-depends_on: [1169n, 1169o, 1169p]
-required_by: [1269, 1270]
+depends_on: [1169n, 1169o, 1169p, 3518, 4522]
+required_by: [1269, 1270, 4584]
 es_edition: ES2015+
-related: [1169, 1195]
+related: [1169, 1195, 3518, 4522, 4584]
 ---
 # #1229 — Struct field type inference: eliminate boxing in object properties
 
@@ -890,3 +889,167 @@ This ensures future refactors don't accidentally re-introduce boxing.
    object-heavy test categories)
 5. MLIR seam: `propagate()` returns explicit `TypeMap` as specified — confirm
    in code review before merge
+
+## 2026-08-30 Sol implementation plan — retire the object-shape rollback
+
+### Why this issue is open again
+
+Phase 2 did graduate typed object-shape inference to the default route, but it
+left one live emergency rollback that changes frontend type facts back to
+`dynamic` and thereby resurrects the boxed legacy representation. That is not
+a diagnostic or an IR-pass tuning knob: it crosses the frontend/backend seam
+and is explicitly R9 debt in #4522. The feature work remains complete; this
+checkpoint removes only the obsolete rollback and proves that its performance
+win cannot silently disappear.
+
+Ground the work on exact `loopdive/js2` main
+`275216c74c7299ea07a72c8d5479f7e1a477000c`. At that commit the rollback name
+occurs 24 times in exactly seven files. `src/ir/propagate.ts` contains three
+textual occurrences—two rollout comments and one environment read—but only one
+live reader/helper, `objectShapesEnabled()`. That helper controls three
+semantically distinct consumers: fnctor `NewExpression` admission in the
+propagation extension, checker-known object seeding, and object-literal
+inference. The focused test contributes nine references; five plans contribute
+the remaining twelve historical/inventory references. No open pull request
+claims this retirement. The active ProgramABI/#3525 publication work does not
+edit the owned source or focused test; do not widen into those files.
+
+### Exact production change
+
+1. Delete `objectShapesEnabled()` and its environment read. The frontend must
+   produce the same bounded lattice facts regardless of ambient process
+   configuration.
+2. In `buildIrUnitTypeMap`, keep the exact source-local fnctor-admission proof
+   and the `NewExpression` requirement; remove only the rollback predicate.
+   This preserves the linked-parser `{input: string}` projection rather than
+   weakening or generalising it.
+3. In `tsTypeToLattice`, always seed checker-known object types at `UNKNOWN` so
+   the body walk may refine them. All concrete primitive, `any`/`unknown`,
+   `never`, union, enum, and fallback rules remain byte-for-byte unchanged.
+4. In `inferExpr`, always run the existing bounded object-literal inference.
+   Preserve every refusal: empty, spread, method/accessor, computed or
+   duplicate keys; non-atom fields; polymorphic unions; dynamic receivers; and
+   recursive depth greater than three still widen to `dynamic`.
+5. Do not modify the selector, object lowering, WasmGC emitter, linear emitter,
+   ProgramABI, or direct frontend. This is a frontend inference cleanup whose
+   backend-visible output must equal the already-default route.
+
+### Closed evidence matrix
+
+- First repair the test harness: the current generic `withoutObjectShapes`
+  helper restores the environment synchronously, so its async caller resets
+  the flag before the first awaited compile and its runtime rollback row is
+  vacuous. The grounded focused file contains 16 literal `it(...)` rows and
+  exactly three rollback rows: its lattice and selector rows are genuine
+  synchronous withdrawals, while the final runtime row is the vacuous async
+  case. Remove that helper and every rollback expectation without losing the
+  remaining 13 positive/conservative controls.
+- Ground the main `=0` withdrawal in an isolated child process, or keep the
+  computed environment key set across `await fn()` inside `try/finally`. The
+  callback must assert that the computed key still equals `"0"` immediately
+  before and after every awaited compile. Restore the exact prior value only
+  after the promise settles. This proof must fail if the old synchronous
+  restore bug is reintroduced.
+- Add a computed stale-key control (construct the retired name from literal
+  fragments so repository grep can still prove exact textual zero). Close the
+  logical four-arm matrix at both `optimize: false` and `optimize: true` in
+  host and standalone for every positive fixture: A = grounded main/key
+  absent; B = grounded main/key `"0"`; C = candidate/key absent; D =
+  candidate/key `"0"`, `"1"`, and `"false"` in separate runs. Main A is the
+  independent acceptance oracle; B must show the expected withdrawal.
+  Candidate D must equal C, and C must equal A on every promised semantic and
+  artifact projection. At each fixture/target/optimization point, A/C/all D
+  runs must have exact-equal TypeMap, selection, outcomes, imports, exports,
+  WAT, binary bytes/SHA-256, validity, and runtime. B is intentionally not an
+  artifact-equality arm: it must match an independent literal withdrawal
+  projection (dynamic/boxed ownership and body shape) while preserving exact
+  public imports/exports, host-free standalone validity, and runtime behavior.
+- Run the simple numeric point, mixed string/number user, and chained
+  `vec2/add` fixtures over that complete target × optimization × arm matrix.
+  Compare against literal, source-qualified expected projections rather than
+  `.has(...)`, `arrayContaining`, module-global `f64` regexes, or cross-arm
+  equality alone. Require exact TypeMap rows and atoms; the exact intended
+  selection set with no extra unit; exactly one outcome per expected unit with
+  exact identity, kind/reason/stage and body flags; empty post-claim errors;
+  exact import/export sets; WAT struct-field identity and body-to-struct
+  linkage; byte-identical binary hashes where promised; `WebAssembly.validate`;
+  and exact exported runtime results. The standalone projection must remain
+  host-free, every positive body must remain IR-only, and its exact body must
+  contain no box/unbox call.
+- Make the oracle reject a wrong TypeMap atom/source/unit, missing/duplicate or
+  foreign selected unit/outcome, wrong outcome identity/reason/stage/body flag,
+  import/export drift, WAT body/struct reassociation, binary drift, and runtime
+  drift. Direct-body poison remains necessary but is not a substitute for
+  these independent mutations.
+- Keep the full conservative matrix non-vacuous: polymorphic call sites,
+  open-world exported input, empty/spread/method/accessor/computed/duplicate
+  object literals, missing fields, optional property access, optional element
+  access, union/dynamic receivers, and depth-four shapes must retain their
+  exact current `dynamic` or unclaimed projection and refusal reason. Preserve
+  accepted identifier, string-literal, and numeric-literal object keys; accept
+  only string-literal or no-substitution-template element access; and refuse
+  numeric, dynamic, computed, or other nonliteral element keys independently.
+  Preserve every primitive, `any`, `unknown`, `never`, union, enum, and fallback
+  branch byte-for-byte. Poison the direct body for positive fixtures so a
+  hidden legacy compilation cannot satisfy the runtime oracle.
+- Ground the third consumer independently through the production adapter chain
+  `makeIrFnctorPropagationAdmissionResolver` →
+  `buildIrOverlayIdentityMaps` → `buildIrUnitTypeMap`; ordinary #1231 map calls
+  and selection-only fnctor tests do not exercise it. For the exact linked
+  Parser constructor, baseline A must produce the source-qualified
+  `{ input: string }` parameter atom and exact TypeMap/selection/outcomes in
+  host and standalone, while baseline B must withdraw that projection.
+  Candidate C and every stale-key D run must reproduce A at both optimization
+  settings. Mutate the `NewExpression` form, source ID, constructor identity,
+  same-source proof, fixed `input: string` field shape, reservation, alias,
+  reassignment, escape, collision, and argument-count/spread proof separately;
+  each must refuse with its exact projection and no foreign admission. Run
+  `tests/issue-3521-linked-string-parser-abi.test.ts`,
+  `tests/ir/fnctor-admission.test.ts`, and a new/extended production-adapter
+  propagation control; do not claim
+  `tests/ir/fnctor-argument-projection.test.ts` as coverage because its current
+  unit-map helper omits propagation options.
+- Repository-wide tracked-file grep for the retired environment identifier must
+  be exactly zero. Also require zero `objectShapesEnabled` and
+  `withoutObjectShapes` identifiers, including rollout comments that would
+  survive a mechanical helper/call deletion. The only retained stale-key
+  representation is a computed literal-fragment assembly in the focused
+  retirement test. Update this record, #1235, #1574, sprint 47, #4522, and
+  #3518 by paraphrasing historical rollout facts without preserving a usable
+  configuration name.
+
+### Files and dependency order
+
+The implementation owns only `src/ir/propagate.ts`,
+`tests/issue-1231.test.ts`, an optional new focused retirement test if needed,
+this issue, `plan/issues/1235-ci-prevent-baseline-drift-false.md`,
+`plan/issues/1574-ir-improvement-spec.md`, `plan/issues/sprints/47.md`, and the
+single #4522 inventory row/summary plus
+`plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`. The
+shared documents land in this exact order:
+
+1. the approved Math retirement lands with a live 15-switch
+   `JS2WASM_IR_*`/R9 denominator that still includes object shapes;
+2. #1231 rebases onto it, removes only the object-shape row, and records
+   15→14 in both #4522 and #3518;
+3. #4584 rebases onto #1231 and records the next R9 14→13 transition.
+
+This branch remains plan-only until the Math checkpoint lands; then merge
+current main normally and preserve both inventories. Do not duplicate or
+conflict with the parallel Claude ProgramABI, multi-prepared publication, or
+mixed-conditional work.
+
+### Validation and landing
+
+Run the focused #1231 suite, the exact linked-parser/fnctor production-adapter
+controls, and every target × optimization × arm projection above, followed by
+TS7 and TS5, IR layering, fallback and IR-only policy gates, targeted Biome,
+Prettier, diff-check, and host/standalone equivalence. The protected merge
+queue supplies the full Test262 regression verdict; the branch must not lower
+the standalone host-free high-water mark. Every heavy command requires a
+finite, non-negative one-minute load strictly below logical cores minus two
+and an archive-backed temporary directory. Immediately before commit, run LOC
+and function-growth ratchets; keep the full precommit and prepush hooks
+enabled. Terra implements after the Math checkpoint; a fresh independent Sol
+review must approve the exact pushed SHA before the regular PR is marked ready
+or enqueued. No admin or direct merge is permitted.
