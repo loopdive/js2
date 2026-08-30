@@ -12,6 +12,9 @@
 import {
   EXPECTED_WAT_ABI,
   HOST_OPTIONS,
+  OWNED_MODULE_INIT,
+  OWNED_MODULE_INIT_OUTCOME,
+  OWNED_MODULE_INIT_PHYSICAL,
   PHASE_SIDES,
   PHASE_RANK,
   PINS,
@@ -26,21 +29,14 @@ import {
 // Frozen at relock time; a synthetic 40-hex stand-in for the static fixture.
 export const FIXTURE_LIVE_REVISION = "1111111111111111111111111111111111111111";
 
-const OWNED_UNIT = Object.freeze({
-  unit: "empty.mjs::__module_init",
-  source: "empty.mjs",
-  file: "empty.mjs",
-  kind: "module-init",
-  selfOwner: "inventory",
-  disposition: "owned-terminal",
-});
-
-function watCarriers() {
+function watCarriers(host) {
+  const abiByHost = EXPECTED_WAT_ABI[host];
+  if (!abiByHost) throw new Error(`fixture invariant broken: unknown host ${host}`);
   const out = {};
   for (const name of WAT_CARRIERS) {
-    const abi = EXPECTED_WAT_ABI[name];
-    const carrier = { name: abi.name, params: [...abi.params], results: [...abi.results] };
-    carrier.sha256 = sha256(canonicalWatText(carrier));
+    const abi = abiByHost[name];
+    const carrier = { params: [...abi.params], results: [...abi.results] };
+    carrier.sha256 = sha256(canonicalWatText(name, carrier));
     out[name] = carrier;
   }
   return out;
@@ -52,37 +48,19 @@ function watManifest(carriers) {
   return out;
 }
 
-function physicalRows(route) {
-  const rows = [];
-  if (route === "prepared") {
-    rows.push({
-      fn: "compileModuleInitBody",
-      unit: OWNED_UNIT.unit,
-      source: OWNED_UNIT.source,
-      file: OWNED_UNIT.file,
-      kind: OWNED_UNIT.kind,
-      selfOwner: OWNED_UNIT.selfOwner,
-      disposition: OWNED_UNIT.disposition,
-      structurallyComplete: true,
-    });
-  }
-  // The one immutable v1 graph-global exception, retained verbatim.
-  rows.push({ ...SANCTIONED_EXCEPTION });
-  return rows;
+function physicalRows() {
+  // The owned empty.mjs initializer remains a direct legacy physical root in
+  // BOTH tuple routes. The second row is the sole immutable graph-global
+  // exception, also once per child.
+  return [{ ...OWNED_MODULE_INIT, ...OWNED_MODULE_INIT_PHYSICAL }, { ...SANCTIONED_EXCEPTION }];
 }
 
-function irOutcomes(route) {
-  if (route !== "prepared") return [];
+function irOutcomes() {
   return [
     {
-      key: OWNED_UNIT.unit,
-      unit: OWNED_UNIT.unit,
-      source: OWNED_UNIT.source,
-      file: OWNED_UNIT.file,
-      kind: OWNED_UNIT.kind,
-      selfOwner: OWNED_UNIT.selfOwner,
-      disposition: OWNED_UNIT.disposition,
-      outcome: "prepared-terminal",
+      key: OWNED_MODULE_INIT.unit,
+      ...OWNED_MODULE_INIT,
+      ...OWNED_MODULE_INIT_OUTCOME,
     },
   ];
 }
@@ -93,18 +71,22 @@ function diagnostics(side, host, route) {
   // compile warning are mandatory; the caller cascade is absent here, which is
   // permitted only because BOTH of its rows are absent together.
   return [
-    { kind: "post-claim", carrier: "parser" },
-    { kind: "compile-warning", carrier: "parser" },
+    { kind: "post-claim", carrier: "stringToNumber" },
+    { kind: "compile-warning", carrier: "stringToNumber" },
   ];
 }
 
 function accounting(side, host, route) {
   if (!(side === "candidate" && host === "standalone" && route === "prepared")) return {};
-  return { parser: { direct: 1, ir: 1 }, caller: { direct: 1, ir: 1 } };
+  return {
+    stringToNumber: { direct: 1, ir: 1 },
+    readNumber: { direct: 1, ir: 1 },
+    run: { direct: 1, ir: 0 },
+  };
 }
 
 function buildChild(phase, side, tuple, ordinal) {
-  const carriers = watCarriers();
+  const carriers = watCarriers(tuple.host);
   return {
     ordinal,
     phase,
@@ -126,9 +108,9 @@ function buildChild(phase, side, tuple, ordinal) {
     signal: null,
     timedOut: false,
     record: {
-      inventory: { units: [{ ...OWNED_UNIT }] },
-      physicalRows: physicalRows(tuple.route),
-      irOutcomes: irOutcomes(tuple.route),
+      inventory: { units: [{ ...OWNED_MODULE_INIT }] },
+      physicalRows: physicalRows(),
+      irOutcomes: irOutcomes(),
       watCarriers: carriers,
       watManifest: watManifest(carriers),
       diagnostics: diagnostics(side, tuple.host, tuple.route),
@@ -197,7 +179,7 @@ export function mutateExtraUnitlessDeclaration(report) {
   return next;
 }
 
-// D2: a prepared module-init outcome recorded against the WRONG FILE.
+// D2: a direct-legacy module-init outcome recorded against the WRONG FILE.
 export function mutateWrongFileOutcome(report) {
   const next = clone(report);
   const child = findChild(next, preparedStandaloneCandidate);
@@ -210,19 +192,19 @@ export function mutateDuplicateOutcomeKey(report) {
   const next = clone(report);
   const child = findChild(next, preparedStandaloneCandidate);
   const first = child.record.irOutcomes[0];
-  child.record.irOutcomes.push({ ...first, outcome: "direct-legacy" });
+  child.record.irOutcomes.push({ ...first, outcome: "unexpected-terminal" });
   return next;
 }
 
-// D4: the parser's SECOND WAT PARAMETER changed i32 -> f32, with every hash
-// recomputed so the report stays self-consistent.
+// D4: stringToNumber's SECOND WAT PARAMETER changed i32 -> f32, with every
+// hash recomputed so the report stays self-consistent.
 export function mutateParserSecondParamType(report) {
   const next = clone(report);
   const child = findChild(next, preparedStandaloneCandidate);
-  const parser = child.record.watCarriers.parser;
-  parser.params[1] = "f32";
-  parser.sha256 = sha256(canonicalWatText(parser));
-  child.record.watManifest.parser = parser.sha256;
+  const stringToNumber = child.record.watCarriers.stringToNumber;
+  stringToNumber.params[1] = "f32";
+  stringToNumber.sha256 = sha256(canonicalWatText("stringToNumber", stringToNumber));
+  child.record.watManifest.stringToNumber = stringToNumber.sha256;
   return next;
 }
 
@@ -251,7 +233,7 @@ export const DEFECT_MUTATIONS = Object.freeze([
   },
   {
     id: "D2",
-    title: "wrong-file prepared module-init outcome",
+    title: "wrong-file direct-legacy module-init outcome",
     mutate: mutateWrongFileOutcome,
     repairedCode: "outcome/join-mismatch",
   },
@@ -263,7 +245,7 @@ export const DEFECT_MUTATIONS = Object.freeze([
   },
   {
     id: "D4",
-    title: "parser second WAT parameter i32 -> f32, hashes recomputed",
+    title: "stringToNumber second WAT parameter i32 -> f32, hashes recomputed",
     mutate: mutateParserSecondParamType,
     repairedCode: "wat/abi-mismatch",
   },
@@ -272,6 +254,70 @@ export const DEFECT_MUTATIONS = Object.freeze([
     title: "attempted/spawned/completed collapse when spawn throws",
     mutate: mutateCollapsedSpawnCensus,
     repairedCode: "census/state-collapse",
+  },
+]);
+
+// --- production-evidence relock mutations -----------------------------------
+// These records are not claims about the lost collector. They prove that the
+// reconstructed hash/presence baseline remains permissive while the relocked
+// production model rejects the host, route, physical-row, and terminal drift.
+
+export function mutateWrongHostAbi(report) {
+  const next = clone(report);
+  const child = findChild(next, preparedStandaloneCandidate);
+  const carriers = watCarriers("host");
+  child.record.watCarriers = carriers;
+  child.record.watManifest = watManifest(carriers);
+  return next;
+}
+
+export function mutateWrongModuleInitRoute(report) {
+  const next = clone(report);
+  const child = findChild(next, preparedStandaloneCandidate);
+  child.record.irOutcomes[0].bodyRoute = "prepared";
+  return next;
+}
+
+export function mutateWrongPhysicalRow(report) {
+  const next = clone(report);
+  const child = findChild(next, preparedStandaloneCandidate);
+  const row = child.record.physicalRows.find((candidate) => candidate.unit === OWNED_MODULE_INIT.unit);
+  if (!row) throw new Error("fixture invariant broken: owned physical row not found");
+  row.fn = "compileDeclarations";
+  return next;
+}
+
+export function mutateWrongModuleInitOutcome(report) {
+  const next = clone(report);
+  const child = findChild(next, preparedStandaloneCandidate);
+  child.record.irOutcomes[0].outcome = "prepared-terminal";
+  return next;
+}
+
+export const PRODUCTION_MUTATIONS = Object.freeze([
+  {
+    id: "P1",
+    title: "standalone child carrying the host physical ABI, hashes recomputed",
+    mutate: mutateWrongHostAbi,
+    repairedCode: "wat/abi-mismatch",
+  },
+  {
+    id: "P2",
+    title: "prepared outer tuple inventing a prepared module-init route",
+    mutate: mutateWrongModuleInitRoute,
+    repairedCode: "outcome/terminal-mismatch",
+  },
+  {
+    id: "P3",
+    title: "owned module-init physical row using compileDeclarations",
+    mutate: mutateWrongPhysicalRow,
+    repairedCode: "declaration/physical-row-mismatch",
+  },
+  {
+    id: "P4",
+    title: "owned module-init terminal outcome rewritten as prepared-terminal",
+    mutate: mutateWrongModuleInitOutcome,
+    repairedCode: "outcome/terminal-mismatch",
   },
 ]);
 
@@ -413,7 +459,7 @@ export const STRUCTURAL_MUTATIONS = Object.freeze([
   },
   {
     id: "S14",
-    title: "missing prepared terminal outcome",
+    title: "missing direct-legacy module-init terminal outcome",
     code: "outcome/missing-terminal",
     mutate: (r) => {
       const next = clone(r);
@@ -443,7 +489,7 @@ export const STRUCTURAL_MUTATIONS = Object.freeze([
         next,
         (c) => c.side === "base" && c.host === "standalone" && c.route === "prepared" && c.fixture === "decimal",
       );
-      child.record.diagnostics.push({ kind: "post-claim", carrier: "caller" });
+      child.record.diagnostics.push({ kind: "post-claim", carrier: "readNumber" });
       return next;
     },
   },

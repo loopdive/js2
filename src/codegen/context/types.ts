@@ -643,6 +643,13 @@ export interface FunctionContext {
    * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
   mixedAssignmentCarrierVars?: Set<string>;
   /**
+   * Concrete object shapes whose values were written to a standalone RegExp's
+   * raw `lastIndex` slot in this function. Later ref→externref coercions in
+   * the same expression frame must retain that exact GC identity instead of
+   * making the normal ToPrimitive `$Object` value copy.
+   */
+  regexpLastIndexIdentityStructTypes?: Set<number>;
+  /**
    * Callback captures whose ABI deliberately remains externref.  Their
    * checker type may be a concrete array/object, but the value crossed a host
    * callback boundary and must stay dynamically dispatched rather than being

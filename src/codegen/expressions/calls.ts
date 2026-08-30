@@ -3798,14 +3798,33 @@ export function isGlobalBuiltinIdentifier(ctx: CodegenContext, fctx: FunctionCon
  * function-valued declarations.
  */
 export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.SourceFile): void {
-  const registrationState = ctx as unknown as { __funcValueWrapperSourcesRegistered?: Set<string> };
+  const registrationState = ctx as unknown as {
+    __funcValueWrapperSourcesRegistered?: Set<string>;
+    __funcValueWrapperDiscoverySources?: Set<string>;
+    __funcValueWrapperNamedDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperFunctionExpressions?: Set<ts.FunctionExpression | ts.ArrowFunction>;
+  };
   const registeredSources =
     registrationState.__funcValueWrapperSourcesRegistered ??
     (registrationState.__funcValueWrapperSourcesRegistered = new Set<string>());
   if (registeredSources.has(sf.fileName)) return;
   registeredSources.add(sf.fileName);
 
-  const usedAsValue = new Set<ts.FunctionDeclaration>();
+  // Cross-source discovery is graph-global and purely syntactic. Cache its
+  // result instead of walking the complete TypeScript compiler graph once per
+  // source file. Registration below intentionally still runs per source: a
+  // declaration can acquire its exact funcMap/capture ABI after an earlier
+  // source's conservative registration, and getOrCreate is idempotent.
+  const discoverySources =
+    registrationState.__funcValueWrapperDiscoverySources ??
+    (registrationState.__funcValueWrapperDiscoverySources = new Set<string>());
+  const usedAsValue =
+    registrationState.__funcValueWrapperNamedDeclarations ??
+    (registrationState.__funcValueWrapperNamedDeclarations = new Set<ts.FunctionDeclaration>());
+  const usedAsValueFunctions =
+    registrationState.__funcValueWrapperFunctionExpressions ??
+    (registrationState.__funcValueWrapperFunctionExpressions = new Set<ts.FunctionExpression | ts.ArrowFunction>());
+
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
       const p = node.parent;
@@ -3825,7 +3844,37 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     }
     ts.forEachChild(node, visit);
   };
-  visit(sf);
+  const visitFns = (node: ts.Node): void => {
+    if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+      const p = node.parent;
+      const isCallArg = p && ts.isCallExpression(p) && p.arguments.some((a) => a === node);
+      const isVarInit = p && ts.isVariableDeclaration(p) && p.initializer === node;
+      // A reassigned mutable callable is another dynamic-dispatch value
+      // producer. Its call site may compile before the assignment RHS's
+      // wrapper is materialized, so pre-register the same conservative
+      // all-reference wrapper shape used for callback values.
+      const isAssignmentValue =
+        p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.right === node;
+      // A generator function-expression's value is a Generator object, not a
+      // plain closure the inline dispatcher marshals; skip (its wrapper type
+      // is externref-returning and harmless, but leave it to the value site).
+      const isGen = ts.isFunctionExpression(node) && node.asteriskToken !== undefined;
+      if ((isCallArg || isVarInit || isAssignmentValue) && !isGen) usedAsValueFunctions.add(node);
+    }
+    ts.forEachChild(node, visitFns);
+  };
+  // The generic dispatcher can be compiled in an EARLIER source file than the
+  // named callback values passed to it. TypeScript's scanner is the production
+  // witness: scanner.ts emits `speculationHelper<T>(callback: () => T)` before
+  // parser.ts passes nested `nextToken*`/`parse*` declarations through it.
+  // Arrow pre-registration below already scans the complete callable program;
+  // named declarations need the same order-independent visibility.
+  for (const sourceFile of ctx.callableSourceFiles ?? [sf]) {
+    if (discoverySources.has(sourceFile.fileName)) continue;
+    discoverySources.add(sourceFile.fileName);
+    visit(sourceFile);
+    visitFns(sourceFile);
+  }
 
   for (const declaration of usedAsValue) {
     const name = declaration.name!.text;
@@ -3866,6 +3915,7 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
       params.length === 0 &&
       returnType !== null &&
       ((returnType.kind === "i32" && returnType.boolean === true) ||
+        (returnType.kind === "f64" && returnType.undefSentinel !== true) ||
         returnType.kind === "ref" ||
         returnType.kind === "ref_null");
     if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) continue;
@@ -3916,10 +3966,7 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   //     is signature-cached, so the value site reuses the same funcTypeIdx —
   //     no index inconsistency (the declaration loop already relies on this).
   {
-    const seenFnNodes = new Set<ts.Node>();
     const usedAsValueFn = (node: ts.FunctionExpression | ts.ArrowFunction): void => {
-      if (seenFnNodes.has(node)) return;
-      seenFnNodes.add(node);
       const { params, returnType } = computeClosureWrapperSig(ctx, node);
       // (#2939) Restrict pre-registration to the ALL-EXTERNREF callback shape
       // (externref params + externref/void return). This is exactly the harness
@@ -3940,31 +3987,13 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
         params.length === 0 &&
         returnType !== null &&
         ((returnType.kind === "i32" && returnType.boolean === true) ||
+          (returnType.kind === "f64" && returnType.undefSentinel !== true) ||
           returnType.kind === "ref" ||
           returnType.kind === "ref_null");
       if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) return;
       getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
     };
-    const visitFns = (node: ts.Node): void => {
-      if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
-        const p = node.parent;
-        const isCallArg = p && ts.isCallExpression(p) && p.arguments.some((a) => a === node);
-        const isVarInit = p && ts.isVariableDeclaration(p) && p.initializer === node;
-        // A reassigned mutable callable is another dynamic-dispatch value
-        // producer. Its call site may compile before the assignment RHS's
-        // wrapper is materialized, so pre-register the same conservative
-        // all-reference wrapper shape used for callback values.
-        const isAssignmentValue =
-          p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.right === node;
-        // A generator function-expression's value is a Generator object, not a
-        // plain closure the inline dispatcher marshals; skip (its wrapper type
-        // is externref-returning and harmless, but leave it to the value site).
-        const isGen = ts.isFunctionExpression(node) && node.asteriskToken !== undefined;
-        if ((isCallArg || isVarInit || isAssignmentValue) && !isGen) usedAsValueFn(node);
-      }
-      ts.forEachChild(node, visitFns);
-    };
-    for (const sourceFile of ctx.callableSourceFiles ?? [sf]) visitFns(sourceFile);
+    for (const node of usedAsValueFunctions) usedAsValueFn(node);
   }
 }
 

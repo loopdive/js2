@@ -39,7 +39,7 @@ function fixture(): Fixture {
   const inventory = buildIrUnitInventory([sourceFile], { entrySource: sourceFile });
   const context = buildIrPlanningIdentityContext(inventory);
   const terminalByName = new Map(inventory.terminalUnits.map((terminal) => [terminal.legacyMatchName, terminal]));
-  const projectedNames = ["run", "Box_new", "Box_read", MODULE_INIT_UNIT_NAME] as const;
+  const projectedNames = ["run", "Box_new", "Box_read", "Box_plus", MODULE_INIT_UNIT_NAME] as const;
   const ownerProjection = buildIrLegacyUnitProjection(
     projectedNames.map((legacyName) => ({ unitId: terminalByName.get(legacyName)!.id, legacyName })),
   );
@@ -99,7 +99,30 @@ describe("#3520 integration AST population identity", () => {
     }
     expect(validated.moduleInitUnitId).toBe(current.terminalByName.get(MODULE_INIT_UNIT_NAME)!.id);
     expect(validated.moduleInitPopulation).toEqual([current.sourceFile.statements[0]]);
-    expect(current.plans.ownerProjection.getByLegacyName("Box_plus")).toBeUndefined();
+    expect(current.plans.ownerProjection.getByLegacyName("Box_plus")?.unitId).toBe(
+      current.terminalByName.get("Box_plus")!.id,
+    );
+  });
+
+  it("rejects a selected declaration missing from the owner projection", () => {
+    const current = fixture();
+    const incompleteProjection = buildIrLegacyUnitProjection(
+      current.plans.ownerProjection.entries.filter(({ legacyName }) => legacyName !== "Box_plus"),
+    );
+    const incompletePlans: IdentityPlans = {
+      ...current.plans,
+      ownerProjection: incompleteProjection,
+      ownerUnitIdByLegacyName: new Map(
+        incompleteProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId] as [string, IrUnitId]),
+      ),
+    };
+
+    expect(() => validateIrIntegrationPopulation(current.sourceFile, current.selection, incompletePlans)).toThrowError(
+      expect.objectContaining<Partial<IrInvariantError>>({
+        name: "IrInvariantError",
+        code: "selection-preparation-mismatch",
+      }),
+    );
   });
 
   it("rejects a cloned SourceFile even when its text and selected names are identical", () => {
