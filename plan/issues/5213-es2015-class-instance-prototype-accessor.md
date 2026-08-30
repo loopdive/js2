@@ -1,10 +1,11 @@
 ---
 id: 5213
 title: "ES2015 class instance accessors named prototype stay on C.prototype"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-30
 updated: 2026-08-30
+completed: 2026-08-30
 priority: high
 horizon: s
 feasibility: medium
@@ -12,6 +13,7 @@ task_type: conformance
 area: codegen
 es_edition: ES2015
 goal: standalone-mode
+pr: 5288
 assignee: ttraenkler/codex-luna-class-prototype-accessor
 requested_by: codex/es2015-closeout
 loc-budget-allow:
@@ -106,14 +108,28 @@ matrix); TS5/TS7, targeted formatting/lint, LOC/function budgets,
 oracle/coercion ratchets, `git diff --check`, issue IDs, done-status, issue
 spec-coverage, and issue-integrity checks passed. The direct package-manager
 shim refused the typecheck subcommands, so the exact TypeScript compiler
-commands from those scripts were invoked directly and passed. The branch is
-still based on `a62aacba5ccc154f6fc378235aaaeeb4a7204231`; root will integrate
-current upstream main (`c243892c7f`) and rerun numeric-local parity plus the
-complete publication hooks before landing. No PR or remote state was changed.
+commands from those scripts were invoked directly and passed. Root then
+integrated current upstream main `c243892c7f`, and the complete commit hook
+passed without a skip: lint-staged formatting/lint, budgets, the changed-root
+focused suite (3/3), and the oracle ratchet. The complete pre-push hook passed
+typecheck plus lint, repository Prettier, oracle/coercion ratchets,
+numeric-local parity (18/18), conformance synchronization, and issue integrity.
+Implementation commit `10f056cd549c9768851649a06880c0614c43c19e` was
+published to the fork and read back at that exact SHA without rewriting
+history.
 A completed, current, mergeable fix gets one separate non-draft PR from
 `ttraenkler/js2` to `loopdive/js2:main`. Only a genuinely incomplete/non-mergeable
 checkpoint may be draft. The dedicated PR shepherd must verify the exact head,
 body/CLA format, CI, mergeability, and ready/queue state before landing.
+
+The single completed-fix PR is
+<https://github.com/loopdive/js2/pull/5288>. It is non-draft, targets current
+`loopdive/js2:main`, uses the exact repository Description/CLA format, and names
+this markdown issue; no GitHub issue was created. A dedicated Luna Max PR
+shepherd owns exact-head, body, readiness, conflict, review, CI, and queue
+verification. Any later documentation-only handoff commit does not change the
+validated code at implementation head
+`10f056cd549c9768851649a06880c0614c43c19e`.
 
 ## Acceptance criteria
 
