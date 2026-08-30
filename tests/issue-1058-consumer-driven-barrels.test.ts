@@ -113,6 +113,29 @@ describe("#1058 consumer-driven pure barrels", () => {
     expect(provider).not.toContain("function unused");
   });
 
+  it("retains the transitive heritage of a demanded interface", () => {
+    const root = fixture({
+      "entry.ts": `
+        import { run, type Leaf } from "./provider.js";
+        const retainedType: Leaf | undefined = undefined;
+        export function test(): number { return retainedType ? 0 : run(); }
+      `,
+      "provider.ts": `
+        export interface Leaf extends Middle { text: string; }
+        interface Unrelated { dead: number; }
+        interface Middle extends Root { middle: number; }
+        interface Root { kind: number; }
+        export function run(): number { return 42; }
+      `,
+    });
+
+    const provider = graphContent(graph(root, true), "provider.ts");
+    expect(provider).toContain("interface Leaf");
+    expect(provider).toContain("interface Middle");
+    expect(provider).toContain("interface Root");
+    expect(provider).not.toContain("interface Unrelated");
+  });
+
   it("specializes a static namespace member and drops its now-unused import", () => {
     const root = fixture({
       "entry.ts": `import { Debug } from "./provider.js"; export const test = Debug.assert;`,

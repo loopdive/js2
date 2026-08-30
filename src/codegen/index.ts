@@ -11,6 +11,7 @@ import {
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
+import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
@@ -495,6 +496,7 @@ import {
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
+import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
@@ -572,6 +574,8 @@ import {
   emitNewVecF64Export,
   emitDataViewByteExports,
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
+import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
+import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -2438,6 +2442,10 @@ function recordObservedIrOutcomes(
 ): void {
   if (ctx.irOutcomes === undefined) return;
   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+  const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  const existingOutcomes = preparedCallableUnitIds
+    ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
+    : ctx.irOutcomes;
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2446,10 +2454,9 @@ function recordObservedIrOutcomes(
     preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
     skippedBodyUnitIds,
     report,
-    existingOutcomes: ctx.irOutcomes,
+    existingOutcomes,
     target,
   });
-  const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
   const preparedModuleInitUnitId = ctx.irProgramPreparedModuleInitUnitId;
   ctx.irOutcomes.push(
     ...reconciled.outcomes.filter(
@@ -3593,6 +3600,7 @@ function makeMultiIrSafeSelection(
           (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary)))) ||
       functionBodyHasUnsupportedImportUse(declaration, plan) ||
       functionBodyContainsNestedRuntimeDeclaration(declaration, plan) ||
+      functionTreeRequiresLegacyStructMaterialization(ctx, declaration) ||
       (declaration.typeParameters?.length ?? 0) > 0
     ) {
       blocked.add(unitId);
@@ -3618,6 +3626,31 @@ function makeMultiIrSafeSelection(
     classMembers: new Set<string>(),
     moduleInit: undefined,
   };
+}
+
+/**
+ * IR direct-call plans do not yet represent the result bridge required when a
+ * proven generic factory returns its constraint struct and the instantiated
+ * call site needs a fresh concrete extension. Detect that syntax before the
+ * prepared-program route can skip legacy bodies, and keep the selected owner
+ * on the direct frontend until IR carries the same materialization plan.
+ */
+function functionTreeRequiresLegacyStructMaterialization(ctx: CodegenContext, root: ts.Node): boolean {
+  let required = false;
+  const visit = (node: ts.Node): void => {
+    if (required) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer !== undefined &&
+      genericStructFactoryExpression(ctx, node.initializer) !== null
+    ) {
+      required = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return required;
 }
 
 function importedMissingArgNeedsUndefined(type: IrType): boolean {
@@ -4588,9 +4621,9 @@ function planIrFirstBodyRouting(
 
   // Free-function components outside the bounded R2 population retain the
   // established post-direct overlay order and its compile-once allowlist.
-  // This keeps fast numeric, structured ABI, cross-policy call components,
-  // and late support discovery byte-compatible until their state moves into
-  // preparation.
+  // This keeps unproven fast scalar ABI, structured ABI, cross-policy call
+  // components, and late support discovery byte-compatible until their state
+  // moves into preparation.
   const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
   const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
     requestedSkipUnitIds,
@@ -6312,6 +6345,20 @@ export function generateModule(
     // (before dead-elim/freeze) so the helper funcIdx values are stable.
     ensureDynMemberGet(ctx);
 
+    // (#5193) Hand the JS runtime the module's own marshalling helpers as
+    // `ref.func` values from the top of `__module_init` — the wasm `start`
+    // section runs before `instance.exports` exists, so without this EVERY
+    // compiled→host marshal during module init fails. Placement contract in the
+    // module header. No-op unless a host-construct call site asked for it.
+    emitInitMarshalHelperRegistration(ctx);
+
+    // (#5202) The same window's METHOD-DISPATCH facet: a compiled class's
+    // prototype is bare during module init, and the runtime answers `obj.m()`
+    // from the `__class_call_*` / `__member_kind_*` EXPORTS — unreachable for
+    // the whole of the start section. Register them through the same funcref
+    // channel. No-op unless the module has top-level code AND dispatch exports.
+    emitInitClassDispatchRegistration(ctx);
+
     // (#2800) Allocate + wire the `__in_module_init` flag global now that every
     // import global has settled (final absolute index), patching the recorded
     // delete-aware read `global.get` placeholders and wrapping `__module_init`.
@@ -6646,6 +6693,10 @@ function finalizeMultiPreparedModuleInitStartup(
   owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
 ): void {
   owner?.assertPreparedModuleInitCurrent();
+  // (#5193) Same placement as the single-module pipeline: before the flag wrap.
+  emitInitMarshalHelperRegistration(ctx, owner?.preparedModuleInitUnitId);
+  // (#5202) Method-dispatch facet of the same window, same placement.
+  emitInitClassDispatchRegistration(ctx, owner?.preparedModuleInitUnitId);
   finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
   owner?.finalizePreparedModuleInitStartup();
 }
@@ -6841,13 +6892,19 @@ function addWasiStartExport(ctx: CodegenContext): void {
           ]
         : body;
 
-    ctx.mod.functions.push({
+    const wasiStartAdapter: WasmFunction = {
       name: "_start",
       typeIdx: startTypeIdx,
       locals: [],
       body: startBody,
       exported: true,
-    });
+    };
+    ctx.mod.functions.push(wasiStartAdapter);
+    // Record the exact allocator objects selected for this adapter before
+    // later import/layout passes can shift its numeric call handles. The
+    // Program ABI finalizer authenticates the resulting `_start` export and
+    // call path by object identity, never by a function-array position/name.
+    ctx.programAbiModuleInitCallables?.observeWasiStartAdapter(wasiStartAdapter, targetIdx);
 
     ctx.mod.exports.push({
       name: "_start",
@@ -11211,6 +11268,11 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       return { kind: "ref_null", typeIdx: templateVecTypeIdx };
     }
 
+    // (#5201) An externref-backed user class outranks every structural /
+    // intrinsic-spelling arm below — see externref-backed-class-rep.ts.
+    const externrefBacked = externrefBackedClassValType(ctx, sym);
+    if (externrefBacked !== undefined) return externrefBacked;
+
     // (#5096) The intrinsic-name arms below (`Array`, the wrapper objects,
     // `Promise`, the TypedArrays, `Date`, `Map`/`Set`/`WeakMap`/`WeakSet`)
     // decide a value's Wasm REPRESENTATION from the symbol's spelling. A user
@@ -13020,6 +13082,16 @@ function inferLetConstInitializerWasmType(
   if (taViewCallResultType !== null) return taViewCallResultType;
   const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, initializer);
   if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
+
+  const genericFactory = genericStructFactoryExpression(ctx, initializer);
+  if (genericFactory) {
+    const target = resolveWasmType(ctx, genericFactory.target);
+    if (target.kind === "ref" || target.kind === "ref_null") {
+      // Wasm locals must be defaultable. The call emitter materializes the
+      // concrete target before the initializer is stored into this slot.
+      return { kind: "ref_null", typeIdx: target.typeIdx };
+    }
+  }
 
   const unwrapped = stripRegExpInferenceWrapper(initializer);
   if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) {

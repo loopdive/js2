@@ -68,7 +68,12 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { definedFuncAt } from "./func-space.js";
-import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getFuncRefWrapperRootTypeIdx } from "./closures.js";
+import {
+  emitCachedMethodClosureAccess,
+  emitFuncRefAsClosure,
+  genBodyReferencesThis,
+  getFuncRefWrapperRootTypeIdx,
+} from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
@@ -2432,9 +2437,31 @@ export function tryPrototypeMethodAndArityReads(
     const className = ctx.classExprNameMap.get(rawName) ?? rawName;
     if (ctx.classSet.has(className)) {
       const fullName = `${className}_${propName}`;
+      // A class instance accessor literally named `prototype` lives on the
+      // prototype object and is distinct from the constructor's own
+      // `C.prototype` data property. The receiver expression here is that
+      // `$Object` prototype carrier, not a `$C` instance, so the generic class
+      // accessor path cannot pass it to a typed `(ref $C)` getter. A synthetic
+      // `$C` is valid only when the getter body is proven not to observe its
+      // receiver; `genBodyReferencesThis` follows lexical arrows and rejects
+      // both `this` and `super` uses. Receiver-sensitive getters deliberately
+      // decline this arm and continue through the ordinary path, so this
+      // optimization never fabricates a receiver-visible value.
+      if (ctx.classAccessorSet.has(fullName) && !ctx.staticAccessorSet.has(fullName)) {
+        const getterName = `${className}_get_${propName}`;
+        const getterFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
+        const getterDecl = ctx.fnMetaMemberDecls?.get(getterName);
+        const getterBody =
+          getterDecl !== undefined && ts.isGetAccessorDeclaration(getterDecl) ? getterDecl.body : undefined;
+        const receiverIndependent = getterBody !== undefined && !genBodyReferencesThis(getterBody);
+        if (getterFuncIdx !== undefined && receiverIndependent) {
+          const retType = emitGetterCallWithDummy(ctx, fctx, className, getterName, getterFuncIdx);
+          return retType ?? { kind: "externref" };
+        }
+      }
       // Only intercept actual instance methods. Skip static methods
       // (they live on the constructor, not the prototype) and
-      // accessors (handled by the existing accessor path below).
+      // receiver-sensitive accessors (handled by the ordinary path below).
       if (ctx.classMethodSet.has(fullName) && !ctx.staticMethodSet.has(fullName)) {
         const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
         const structTypeIdx = ctx.structMap.get(className);

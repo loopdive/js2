@@ -4,7 +4,7 @@ title: "Core-wasm module linking (shared store + canonical rec-group) for host-A
 status: in-progress
 sprint: 67
 created: 2026-06-20
-updated: 2026-08-25
+updated: 2026-08-27
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -15,6 +15,7 @@ goal: architecture
 reconcile_note: "2026-06-24 (PO reconcile vs upstream/main): GENUINELY OPEN, actively in-flight — open PR #1997 (feat: canonical runtime rec-group identity primitive for core-wasm linking, senior-dev). Phase 0 spike is GREEN; the linking implementation has NOT merged yet (no feat commit on main; only docs #2524/#2512/#2514). Senior-dev/architecture lane — NOT a routine dev pull. → in-progress (was ready; TaskList #56 'completed' was premature — impl not on main)."
 related: [2512, 2514, 2525, 2523]
 loc-budget-allow:
+  - src/index.ts
   - src/compiler.ts
   - src/cli.ts
   - src/codegen/index.ts
@@ -318,6 +319,59 @@ React DOM dogfood artifacts use package-derived identities (`react`,
 `react-dom-fizz`) rather than exposing the linker's internal “provider” role in
 their package or module names. “Provider” remains terminology for a module that
 satisfies another module's imports, not part of the user-facing filename ABI.
+
+## Strict consumer failures and bounded adapters (2026-08-27)
+
+The first full React DOM run exposed a fallback that defeated compile-once
+semantics after the provider cache had succeeded. A linked consumer (the small
+root module containing the lifted tests) could fail quickly with an ordinary
+compiler diagnostic; `compileLinkedProject` then discarded that result and
+retried the complete project monolithically, recompiling all cached provider
+sources. A preserved `ReactDOMSelect` batch measured 18.6 seconds for the
+authoritative linked-consumer refusal but 516.7 seconds when the bundled retry
+was allowed to run to the same refusal.
+
+Explicit `packageLinking: "separate"` is therefore strict at the consumer
+compile boundary: it preserves that consumer result and provider-cache plan
+without a bundled retry. Automatic API linking (`true`/omitted) retains the
+compatibility fallback because a generated declaration/import adapter can fail
+even when the original monolithic graph remains compilable. Planner failures
+such as package cycles, type-position identity, ambiguous boundaries, and
+signature validation continue to fall back explicitly in both modes.
+
+The React DOM dogfood worker opts into strict separate mode. Its client adapter
+batches are bounded to the exact generated `entry.ts` length (220,000 characters
+by default) and 32 tests; the same entry builder sizes the batch and writes the
+artifact, so generated setup and export scaffolding cannot escape the limit.
+This is separate from provider caching: two historical ~870 KB consumers still
+needed 308–478 seconds and one emitted a 462 MB invalid module even with four
+warm provider hits.
+
+A remaining compile-stage watchdog timeout is subdivided as a stable binary
+tree, to at most six levels/127 attempts per original batch. Only a timeout
+reported specifically during compilation triggers this recovery; diagnostics,
+invalid Wasm, execution timeouts, and singleton timeouts remain terminal. The
+terminal leaves alone own tests and native-oracle rows, while every attempted
+parent and child remains in `compile.attempts` so recovered timeout cost and
+provider-cache telemetry stay visible. Each retry links the same cached provider
+modules from a unique consumer root rather than recompiling package sources.
+
+The cold end-to-end control on 2026-08-30 took 9,584.84 seconds. Its 400,000
+raw-character estimate produced four `ReactDOMFizzServer` entries between
+453,639 and 466,648 generated characters; all four exhausted the 300-second
+compile watchdog. The other 120 client batches recorded seven provider compiles
+and 473 cache hits, and the legacy-server/browser-Fizz/node-Fizz/edge-Fizz lanes
+recorded no timeout, isolating the remaining failure to oversized client roots.
+
+With exact 220,000-character partitioning, a real focused rerun admitted all
+166 client-side `ReactDOMFizzServer` tests as 18 batches and completed in 168.01
+seconds. No attempt timed out or split; the largest entry was 219,029
+characters, the slowest compile was 21.418 seconds, and all 72 provider
+resolutions were cache hits in strict separate mode. Summed compiler work for
+that file fell from 1,722.203 seconds in the 400,000-character control to
+283.283 seconds, a 6.1x reduction. Ordinary async-shape/codegen diagnostics and
+the existing emitted-Wasm validation failures remain visible as separate
+correctness work rather than being mislabeled as timeouts.
 
 ## Measurement rule for whoever packages the runtime-eval provider (#2928 E7)
 

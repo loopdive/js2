@@ -57,6 +57,19 @@ export TEST262_INCLUDE_PROPOSALS="$INCLUDE_PROPOSALS"
 export TEST262_TARGET
 export TEST262_RESULT_PREFIX="$RESULT_PREFIX"
 
+# The runner's matching semantics are OR when both filters are supplied, but
+# the completeness gate cannot safely reconstruct a substring-selected union
+# from an exact-path file alone. Fail closed with an explicit diagnostic rather
+# than comparing only the file and rejecting valid substring-selected rows.
+if [ -n "${TEST262_PATH_FILTER:-}" ] && [ -n "${TEST262_PATH_FILTER_FILE:-}" ]; then
+  echo "ERROR: TEST262_PATH_FILTER and TEST262_PATH_FILTER_FILE cannot be combined by the completeness gate; use one filter source so its exact expected set is auditable."
+  exit 2
+fi
+if [ -n "${TEST262_PATH_FILTER_FILE:-}" ] && [ ! -f "$TEST262_PATH_FILTER_FILE" ]; then
+  echo "ERROR: TEST262_PATH_FILTER_FILE does not exist: $TEST262_PATH_FILTER_FILE"
+  exit 2
+fi
+
 resolve_esbuild() {
   if [ -n "${ESBUILD_BIN:-}" ] && [ -x "${ESBUILD_BIN:-}" ]; then
     echo "$ESBUILD_BIN"
@@ -316,11 +329,47 @@ else
       --reporter="$TEST262_REPORTER" 2>&1 | tee /tmp/test262-vitest-run.log || true
   fi
 fi
-# Generate report.json from JSONL (atomic — no fork race condition)
+# A JSONL can be syntactically valid and still be missing verdict callbacks.
+# Validate each durable, shard-keyed completion manifest before constructing a
+# report. This runs after Vitest so ordinary conformance failures (exit 1) stay
+# valid data, while abandoned callbacks become an infrastructure failure.
 JSONL_FILE="$RESULTS_DIR/${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl"
 REPORT_FILE="$RESULTS_DIR/${RESULT_PREFIX}-report-${RUN_TIMESTAMP}.json"
 COMPLETED=false
-if [ -f "$JSONL_FILE" ] && [ -s "$JSONL_FILE" ]; then
+COMPLETENESS_OK=false
+COMPLETENESS_REASON="missing JSONL or shard completion manifest"
+if [ -f "$JSONL_FILE" ]; then
+  if [ -n "$CHUNKS" ]; then
+    EXPECTED_SHARDS="$CHUNK_COUNT"
+  else
+    EXPECTED_SHARDS=1
+  fi
+  shard_manifests=( "$RESULTS_DIR"/${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json )
+  if [ -e "${shard_manifests[0]}" ]; then
+    completeness_args=(
+      --input "$JSONL_FILE"
+      --expected-shards "$EXPECTED_SHARDS"
+    )
+    if [ -n "${TEST262_PATH_FILTER_FILE:-}" ]; then
+      completeness_args+=(--expected-paths-file "$TEST262_PATH_FILTER_FILE")
+    fi
+    for manifest in "${shard_manifests[@]}"; do
+      completeness_args+=(--manifest "$manifest")
+    done
+    if node "$MAIN_DIR/scripts/validate-test262-completeness.mjs" "${completeness_args[@]}"; then
+      COMPLETENESS_OK=true
+    else
+      COMPLETENESS_REASON="validator rejected one or more shard manifests or verdict identities"
+    fi
+  else
+    echo "INCOMPLETE: no durable per-shard completion manifest was produced."
+  fi
+fi
+
+# Generate report.json from JSONL only after completeness has passed (atomic —
+# no fork race condition). A partial timestamped JSONL is intentionally left in
+# place for diagnosis; no canonical report/symlink/history update is allowed.
+if [ "$COMPLETENESS_OK" = true ]; then
   report_args=(
     scripts/build-test262-report.mjs
     --input "$JSONL_FILE"
@@ -439,8 +488,10 @@ print('Appended to index: %d pass / %d total' % (entry['pass'], entry['total']))
 " 2>/dev/null || echo "Warning: failed to update historical index"
   fi
 else
-  echo "INCOMPLETE: Report generation failed or no results."
+  echo "INCOMPLETE: $COMPLETENESS_REASON"
+  echo "Timestamped JSONL preserved for diagnosis: $JSONL_FILE"
   echo "Check /tmp/test262-vitest-run.log for errors."
+  exit 2
 fi
 
 # ── Cleanup ──────────────────────────────────────────────────────
