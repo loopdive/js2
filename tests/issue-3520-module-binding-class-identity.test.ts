@@ -301,9 +301,11 @@ describe("#3520 module-binding and local-class identity", () => {
       const alias = propertyReceiver(readA, "alias");
       const parameterA = propertyReceiver(readA, "parameter");
       const parameterB = propertyReceiver(readB, "parameter");
+      const resolveAbsent = makeIrIdentityLocalClassExpressionResolver(graph.checker, a, new Map(), graph.context);
       for (const expression of [conditional, alias, parameterA]) {
         expect(resolveA(expression)).toEqual({ classId: expectedA, legacyName: "Value" });
       }
+      expect(resolveAbsent(alias)).toBeUndefined();
       expect(resolveB(parameterB)).toEqual({ classId: expectedB, legacyName: "Value" });
       expect(expectedA).not.toBe(expectedB);
       expect(projectIrLocalClassExpressionResolverToLegacy(resolveA)(alias)).toBe("Value");

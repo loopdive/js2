@@ -6862,13 +6862,19 @@ function addWasiStartExport(ctx: CodegenContext): void {
           ]
         : body;
 
-    ctx.mod.functions.push({
+    const wasiStartAdapter: WasmFunction = {
       name: "_start",
       typeIdx: startTypeIdx,
       locals: [],
       body: startBody,
       exported: true,
-    });
+    };
+    ctx.mod.functions.push(wasiStartAdapter);
+    // Record the exact allocator objects selected for this adapter before
+    // later import/layout passes can shift its numeric call handles. The
+    // Program ABI finalizer authenticates the resulting `_start` export and
+    // call path by object identity, never by a function-array position/name.
+    ctx.programAbiModuleInitCallables?.observeWasiStartAdapter(wasiStartAdapter, targetIdx);
 
     ctx.mod.exports.push({
       name: "_start",
