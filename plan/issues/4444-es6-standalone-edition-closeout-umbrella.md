@@ -236,12 +236,16 @@ numerator.
 The selection authority is the frozen 11,704-path artifact
 `/private/tmp/js2-es2015-11704-pr5008.txt`, whose LF-normalized SHA-256 is
 `45de809c6bfce7371cee1d20e327758246b0524ecd75481a08b8c03344fced8a`.
-Every entry has a leading `test/`; removing only that prefix produces 11,704
-unique `test262/test`-relative paths with SHA-256
-`90d5e85a13e3721c8e53734e21c01ec894f736412048cf4d8b15ca7ecc47c2cd`.
-Before execution, regenerate that normalized file in this worktree's temporary
-area, require exact set equality and 11,704 existing files, and record the
-Test262 gitlink/checkout `b363f29d3c43c626dc852744ad64a0b48a003693`.
+Every entry intentionally retains the leading `test/`: the maintained shard
+runner computes each filter key with `relative(TEST262_ROOT, filePath)`, where
+`TEST262_ROOT` is the Test262 checkout rather than its `test/` child. Removing
+the prefix would therefore register zero selected rows. Before execution, copy
+the authoritative bytes unchanged into this worktree's temporary area,
+require the same hash, 11,704 physical and unique entries, exact set equality,
+and 11,704 files existing below the Test262 checkout. Record the Test262
+gitlink/checkout `b363f29d3c43c626dc852744ad64a0b48a003693`. A no-prefix
+derivative is valid only for helpers that explicitly resolve relative to
+`test262/test`; it is not the maintained sharded-runner filter.
 
 Execution uses the maintained `scripts/run-test262-vitest.sh` path, not a
 hand-written verdict approximation: `TEST262_TARGET=standalone`,
