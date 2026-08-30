@@ -1,10 +1,12 @@
 ---
 id: 5215
 title: "test262 runner silently publishes an incomplete verdict set after queued Vitest timeouts"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-30
 updated: 2026-08-30
+completed: 2026-08-30
+pr: 5290
 assignee: ttraenkler/codex-es6-census
 priority: high
 horizon: m
@@ -142,19 +144,19 @@ without validating per-shard completion or the expected unique identity set.
 
 ## Acceptance criteria
 
-- [ ] A shard that registers 731 tests and records 712 cannot be overwritten by
+- [x] A shard that registers 731 tests and records 712 cannot be overwritten by
       a later completion file and cannot produce a completed report.
-- [ ] The runner diagnoses the incomplete shard and exact 19-row deficit before
+- [x] The runner diagnoses the incomplete shard and exact 19-row deficit before
       updating canonical report/result symlinks.
-- [ ] A complete run containing ordinary fail/compile_error verdicts still
+- [x] A complete run containing ordinary fail/compile_error verdicts still
       builds a report; conformance red is not confused with infrastructure red.
-- [ ] Exact filters reconcile to their unique selected path set, with zero
+- [x] Exact filters reconcile to their unique selected path set, with zero
       missing, extra, malformed, or duplicate verdict identities.
-- [ ] Official proposal exclusions are explicit and do not weaken the selected
+- [x] Official proposal exclusions are explicit and do not weaken the selected
       path completeness invariant.
-- [ ] Test262 concurrency is bounded by the active compiler-pool capacity while
+- [x] Test262 concurrency is bounded by the active compiler-pool capacity while
       the general unit suite retains its current parallelism.
-- [ ] Focused regression tests, typecheck, formatting, lint, and issue-integrity
+- [x] Focused regression tests, typecheck, formatting, lint, and issue-integrity
       gates pass.
 
 ## Handoff
@@ -207,9 +209,9 @@ TypeScript config was attempted but reports the repository's existing
 thousands of untyped JavaScript/test diagnostics rather than providing a
 meaningful change-local gate. The bounded controls below verify publication
 gating for incomplete evidence and acceptance of ordinary `fail`/`compile_error`
-rows; the remaining handoff is for the repository's normal typecheck,
-issue-integrity, and workflow-review gates. No commit, push, PR, or GitHub
-mutation has been made.
+rows. The repository's normal typecheck, lint, formatting, ratchet,
+numeric-local parity, and issue-integrity gates subsequently passed on current
+main, as recorded in the publication checkpoint below.
 
 ## Bounded acceptance validation (2026-08-30)
 
@@ -307,7 +309,22 @@ construction (line 374), `COMPLETED=true` (line 389), symlink updates (lines
 428–429), and history publication (line 467 onward); therefore the nonzero
 incomplete control cannot reach report/symlink/history publication.
 
-The full 11,704-row census remains intentionally unrun. Root still needs to
-integrate current main `c243892c7f` non-destructively and run the repository's
-normal final hooks/issue-integrity checks before publication. No commit, push,
-PR, or remote mutation was made.
+The full 11,704-row census remains intentionally unrun. It is the umbrella's
+final integrated acceptance run, not a prerequisite for publishing this
+runner-integrity fix.
+
+## Publication checkpoint (2026-08-30)
+
+The implementation checkpoint was rebased cleanly onto current upstream main
+`c243892c7f3a757bdecf6215626b08586ce72c58`. Commit
+`3ff0bf1b020620891195c3f180b400a0ab33c378` passed the repository's real
+pre-push chain without bypasses: typecheck, lint, Prettier format check, oracle
+and coercion-site ratchets, all 18 numeric-local IR parity tests, and committed
+issue integrity. The commit hooks also passed the 17 focused #5215/#3522 tests,
+LOC/function budgets, formatting/lint, and the oracle ratchet.
+
+The completed fix is published as non-draft upstream PR
+https://github.com/loopdive/js2/pull/5290 from
+`ttraenkler:codex/5215-test262-verdict-completeness` to `loopdive/js2:main`.
+No GitHub issue was created. The dedicated PR shepherd owns exact-head, body,
+review, check, conflict, readiness, and merge-queue follow-through.
