@@ -187,15 +187,15 @@ describe("#5211 — invokeMethod callable-wraps compiled closure arguments", () 
     }
   }
 
-  // A SEPARATE, pre-existing defect found while building the rows above, kept
-  // here as the pin that this fix did not touch that path: an OMITTED optional
-  // argument is lowered to `null`, and native `Array.prototype.sort` accepts
-  // only `undefined`. Measured identical before and after the fix. When that
-  // defect is fixed this assertion flips and should become `.toBe(123)`.
-  it("known-unfixed: `.sort()` with no comparator passes `null`, not `undefined` [host]", async () => {
-    await expect(run(atInit(SORT_BODY("n.sort();")), "host")).rejects.toThrow(
-      /comparison function must be either a function or undefined/,
-    );
+  // A SEPARATE defect found while building the rows above, and recorded here as
+  // a `known-unfixed` pin with the note "when that defect is fixed this
+  // assertion flips and should become `.toBe(123)`". It has been fixed —
+  // #5221 pads an omitted extern-class argument with `undefined` rather than
+  // `ref.null.extern`, which is what §23.1.3.30 requires (native
+  // `Array.prototype.sort` accepts `undefined`, not `null`). Flipped, as the
+  // note instructed; the row now guards the fix instead of the defect.
+  it("fixed by #5221: `.sort()` with no comparator passes `undefined`, not `null` [host]", async () => {
+    expect(await run(atInit(SORT_BODY("n.sort();")), "host")).toBe(123);
   });
 });
 

@@ -214,6 +214,52 @@ Measured on the single-module polyfill compile (no provider, no linking),
 | `Temporal.PlainTime.from("12:34:56")` | trap | works |
 | `Temporal.Duration.from({hours: 2})` | trap | works |
 
+## Through the PROVIDER (#4628 seam), measured
+
+`.tmp/provider-probe.mts` — `buildTemporalProvider` + `compileWithTemporalGlobal`
++ `instantiateLinkedProject`, i.e. the real seam, not a single-module compile:
+
+| probe | result |
+| --- | --- |
+| `typeof Temporal` | `"object"` |
+| `Temporal.PlainDate.from("2020-03-04")` | works (was: null-deref trap) |
+| `Temporal.PlainDate.compare(from(a), from(b))` | `-1` |
+| `Temporal.PlainDate.from(JSON.parse('{"year":…}'))` — a HOST object | works |
+| `Temporal.PlainDate.from({year, month, day})` — a CONSUMER-MODULE literal | `TypeError: year is required` |
+| `Temporal.PlainDate.from(…).year` | `undefined` (#5223) |
+| `e instanceof RangeError` on a provider-thrown error | false, `e.name` undefined |
+
+**⚠ The provider artifact cache is not invalidated by a compiler change.** The
+first provider run of this session reported `cacheHit=true` and reproduced the
+old null-deref exactly, from an artifact built by the previous compiler. Passing
+a fresh `JS2WASM_TEMPORAL_CACHE` produced a different content hash and the
+correct behaviour. Anyone measuring the provider after a codegen change must
+clear the cache or the measurement is of the old compiler.
+
+## test262 slice — 256 deterministic `built-ins/Temporal` rows
+
+Sorted over all 4,603 files under `test262/test/built-ins/Temporal`, fixed
+stride 17, run through the real `runTest262File`:
+
+| | base | after |
+| --- | --- | --- |
+| pass | 37 | 37 |
+| fail | 219 | 219 |
+| flips | — | **0** |
+
+**Zero delta, and that is the expected result, not a disappointment.** The
+test262 runner is deliberately NOT wired to the provider — that wiring is what
+this issue gates — so 77 of the 256 rows still fail with `ReferenceError:
+Temporal is not defined` and the rest fail for their own reasons. The slice
+measures the runner's Temporal lane, which this change does not touch; the
+measurement that DOES move is the provider/single-module one above.
+
+Wiring one row by hand confirms the direction: on base,
+`built-ins/Temporal/PlainDate/from/*` through the provider trapped with
+`dereferencing a null pointer`; after, they get through `.from` and fail at the
+harness (`Test262Error` / the #5223 getter gap) instead — a real failure with a
+readable cause rather than a trap.
+
 ## Residual — NOT fixed here, reported
 
 - **Instance getters / `toString` on a `.from()` result still answer
@@ -235,3 +281,17 @@ Measured on the single-module polyfill compile (no provider, no linking),
   `0`** for any shape, with no shadowing anywhere in the program (measured on a
   three-line file). Unrelated to this issue's mechanisms; it is why the #3
   repro has no standalone row.
+- **NEW, provider seam: a CONSUMER-MODULE object literal is opaque to the
+  provider module.** `Temporal.PlainDate.from({year, month, day})` throws
+  "year is required" through the provider while the identical call works
+  single-module, and `Temporal.PlainDate.from(JSON.parse('{"year":…}'))` — a
+  host object — works through the provider. So the compiled WasmGC struct
+  crosses the seam as a value the provider cannot index. Same family as #5222
+  (`Now.*` methods lost across the boundary), not a #5221 mechanism.
+- **NEW, provider seam: error identity does not cross.** A `RangeError` thrown
+  inside the provider is caught in the consumer as an object with
+  `instanceof RangeError === false` and `name === undefined`. Every test262
+  `assert.throws(RangeError, …)` row depends on this.
+- **NEW, provider cache staleness** — see the ⚠ above. Worth a guard: key the
+  artifact on the compiler revision, or the next person to measure the provider
+  after a codegen change will measure the previous compiler and believe it.
