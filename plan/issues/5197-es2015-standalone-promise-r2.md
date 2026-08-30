@@ -141,6 +141,96 @@ non-draft PR on `loopdive/js2`. A semantically incomplete/non-mergeable
 checkpoint may remain draft with explicit blockers. No GitHub issue is to be
 created.
 
+#### Slice A implementation checkpoint (validated in the dedicated worktree)
+
+This worker owns exactly these three rows, as recorded in
+`/private/tmp/js2-promise-symbol-object-model3.txt`:
+
+- `test/built-ins/Promise/Symbol.species/prop-desc.js`
+- `test/built-ins/Promise/Symbol.species/symbol-species.js`
+- `test/built-ins/Promise/prototype/Symbol.toStringTag.js`
+
+The provider invariant is one object model in standalone: the identity-stable
+`Promise` constructor `$Object` carrier owns the `Symbol.species` accessor
+entry, and both runtime reflection and the compile-time gOPD arm use the same
+canonical `get [Symbol.species]` singleton (receiver-preserving, setter
+`undefined`, enumerable `false`, configurable `true`). `Promise.prototype`
+uses the existing native-prototype companion seeder with `symbolTag: "Promise"`
+and the standard non-writable, non-enumerable, configurable descriptor. No
+Promise-specific fake object or host fallback is introduced. Exact-row host
+invocations are wrapped in `restoreHostBuiltins()` because the Test262
+descriptor helpers destructively probe configurable properties. The shared
+species closure now lives in `src/codegen/builtin-fn-meta.ts`, the neutral
+metadata seam consumed by both the ctor carrier and static gOPD synthesis; this
+keeps `builtin-ctor-own-props.ts` from importing `builtin-static-gopd.ts` and
+avoids the `builtin-static-globals -> builtin-ctor-own-props ->
+builtin-static-gopd -> property-access -> builtin-static-globals` ESM cycle.
+
+Validation was run after integrating the exact fetched
+`upstream/main` head `c243892c7f3a757bdecf6215626b08586ce72c58` in this
+worktree. The worktree currently has no publication commit; root owns
+transplanting this diff onto a fresh c243-based branch.
+
+Focused exact matrix (one Vitest fork; 8/8):
+
+```text
+PATH=/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:$PATH \
+node node_modules/vitest/dist/cli.js run tests/issue-5197-es2015-promise-r2.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=verbose
+```
+
+`3/3` exact host rows passed, `3/3` exact standalone rows passed, and the
+host/standalone descriptor controls passed `2/2`. The standalone control
+asserted `result.imports?.length === 0`.
+
+The standalone 152-row regression sweep used the provisioned QuickJS artifact:
+
+```text
+JS2WASM_QUICKJS_ARTIFACT_DIR=/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda \
+node --import tsx scripts/harness-flip-probe.ts \
+  --files /private/tmp/js2-promise-r2-baseline152.txt --target standalone \
+  --timeout 120000 --out /private/tmp/js2-promise-r2-sliceA-after-standalone-quickjs.jsonl
+```
+
+The run completed with `15 pass / 135 fail / 2 compile_error` (`152` total;
+controls `must-pass -> pass`, `must-fail -> fail`). Against
+`/private/tmp/js2-promise-r2-fresh-main-standalone.jsonl` (`12 pass / 138 fail /
+2 compile_error`), the partition is `149 unchanged`, exactly three
+fail-to-pass rows (the three owned rows above), `0 pass-to-fail`, and `0 other
+status changes`.
+
+The ordinary host sweep initially aborted after row 9 because
+`harness-flip-probe.ts` does not install an unhandled-rejection handler; the
+row itself returned `fail`, then the process exited on `TypeError: undefined is
+not a function`. The same authentic 152-row run was completed with a
+process-level observer that only swallowed those existing unhandled rejections
+(no repository file change): `75 pass / 77 fail`, `152` total. Compared with
+`/private/tmp/js2-promise-r2-fresh-main-host.jsonl` (`75 pass / 77 fail`), all
+`152` statuses were unchanged (`0` flips in either direction). This runner
+limitation is the only corpus measurement blocker.
+
+Additional one-worker controls:
+
+- `tests/issue-4167-test262.test.ts tests/reflected-symbol-promise-statics.test.ts tests/promise-expando-standalone.test.ts`: `12/12` passed.
+- `tests/issue-3765-numeric-locals.test.ts`: `18/18` passed.
+- `tests/issue-2984-species.test.ts tests/issue-2984-ctor-carrier-own-props.test.ts tests/issue-4746.test.ts tests/issue-3319.test.ts tests/issue-5116-map-set-prototype-tostringtag.test.ts`: `51/52` passed. The sole failure is the test's explicitly labeled pre-existing `KNOWN GAP (pre-existing): a dynamic write bypasses the non-writable flag`; all 51 other controls, including both #4746 Promise-order rows and all #5116 Map/Set tag rows, passed.
+
+Quality evidence (all completed without history mutation): TS5 and TS7 direct
+typechecks passed; full Prettier check passed; full Biome lint exited 0;
+host-import policy reported `legacySemanticImports=0` and `unknownImports=0`;
+oracle/coercion ratchets reported no net growth; stack-balance buckets had
+zero deltas; codegen-fallback, any-box, speculative-rollback, IR dialect,
+IR-kind-neutrality, IR-layering, and issue-integrity/ID checks passed. The
+issue checker reports only its existing ready-issue probe warnings and no
+changed done-status violation.
+
+Remaining Slice-A handoff: the three owned rows are green in both lanes, with
+no standalone regression in the 152-row comparison. Root should transplant
+the changed files onto a fresh c243-based publication branch, retain the host
+runner limitation and the unrelated #2984 known-gap failure as explicit
+follow-up notes, and perform final review/history/publication. No commit,
+push, GitHub issue, or PR was created by this worker.
+
 ## Acceptance criteria
 
 - All 152 exact rows pass standalone with zero host imports; interim PRs pass
