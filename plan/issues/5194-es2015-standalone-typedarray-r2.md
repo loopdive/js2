@@ -138,7 +138,7 @@ constructor coercion/liveness helpers and retire these allowances; this slice
 keeps them scoped to the three owned functions/files rather than changing
 global baselines.
 
-### 2026-08-30 static handoff (validation pending)
+### 2026-08-30 historical static handoff (validation was pending)
 
 The unpublished local merge `9f56dedb6b` was removed before delivery. The
 working branch is now based directly on the authoritative fetched
@@ -345,7 +345,9 @@ constructor boundary also required `new-builtin-globals.ts`, so that file and
 `tryCompileBuiltinGlobalNew` are explicitly added to the bounded allowance
 metadata above.
 
-No broad Test262 residual-list sweep was run in this worktree. The serial
+The following paragraph records the historical pre-publication state; it is
+superseded by the clean publication replay below. No broad Test262
+residual-list sweep was run in that worktree. The serial
 120-program differential check above is the only broader behavioral gate. The
 branch remains dirty and based on `a62aacba5ccc154f6fc378235aaaeeb4a7204231`;
 current upstream `main` is `c882d1b110` (including #5290 at `4b715bada1`). A
@@ -353,14 +355,87 @@ clean current-main transplant followed by exact25, controls, and proportionate
 gate revalidation is required before publication. No commit, push, rebase, or
 PR action was performed here.
 
+### 2026-08-30 clean current-main publication replay
+
+The clean publication worktree is
+`/private/tmp/js2-typedarray-5194-pr-20260830`, branch
+`codex/5194-typedarray-set-r2-final`. It was created directly from fetched
+upstream `main` at `b916fae2a360988cbe9f26c090ddcd9158d461d4`; the Luna Max
+checkpoint replayed without conflict as `959ac678627e8d2f096ea4e082f287a46d1ab912`.
+
+Before replaying the implementation, the publication lane ran
+`tests/typed-array-basic.test.ts` on pristine `b916fae2a3` with one worker.
+All 11 tests failed with the identical pre-existing harness error
+`WebAssembly.instantiate(): Import #0 "string_constants": module is not an
+object or function`. This proves the same 11 failures observed in the adjacent
+checkpoint are a current-main baseline rather than a #5194 regression.
+
+After replay, an exact-row-only run completed in 206.87s with **50/50 pass**:
+25/25 host and 25/25 standalone, with zero row failures, compile errors,
+timeouts, or skips. The unfiltered focused file completed 59/60; its sole
+failure was the broader host mixed-`$AnyValue` constructor probe already
+documented above. It exercises generic host `Reflect.construct` marshalling,
+not the standalone native carrier selected by this slice, and every exact host
+row remains green.
+
+The final test-harness plan is deliberately scope-accurate and was recorded
+before the edit:
+
+1. Give each focused control an explicit lane list. Keep the four parity
+   controls in host and standalone, and run the mixed-`$AnyValue` constructor
+   probe in standalone only, where it exercises the owned native carrier.
+2. Do not add a skip, xfail, conditional assertion, or weaker expectation.
+   The complete focused file must exit green, while this issue continues to
+   state the observed 4/5 host-control limitation explicitly.
+3. Re-run the full focused file, the exact 25-row host/standalone cohort, the
+   four adjacent green TypedArray suites, and the `typed-array-basic` baseline
+   comparison before normal repository gates and publication.
+
+The lane-scoped test edit then completed the full focused file in 230.75s with
+**59/59 pass**. That result contains all 50 exact Test262 classifications plus
+nine focused controls; no test in the file is skipped. The adjacent one-worker
+rerun completed in 98.94s with **76 pass and 11 fail** across five files. All
+76 assertions in #5137, #3054, #2593, and #1787 passed. The only failures were
+the same 11 `typed-array-basic.test.ts` cases with the same `string_constants`
+instantiation error reproduced on pristine `b916fae2a3`; there were no new
+failures or changed signatures.
+
+An independent Luna Max static review of `959ac67862` found no source-code
+publication blocker: the dynamic constructor/set paths remain gated to the
+standalone, erased-carrier boundary; offset/source ordering, string handling,
+snapshot copying, and target validation remain bounded; no debug, fallback
+host-import, or target-name markers were introduced. The review requested the
+historical/current handoff clarification recorded in this section and the
+scope-accurate control-lane metadata now validated above.
+
+Publication gates on the clean replay are green:
+
+- TypeScript 5 and TypeScript 7 no-emit checks passed;
+- full Biome lint and full Prettier check passed;
+- LOC and function budgets passed with only the explicit #5194 allowances;
+- oracle, coercion-site, pushRaw, any-box, IR-kind-neutrality, host-import,
+  stack-balance, codegen-fallback, Test262 hard-error, and verdict-oracle
+  ratchets passed;
+- numeric-local parity passed **18/18**;
+- duplicate-ID, issue integrity, issue-spec coverage, and done-status checks
+  passed (the coverage command reported only unrelated pre-existing warnings).
+
+The two TypeScript-based ratchets were invoked through
+`node --import tsx` after the sandbox rejected the `tsx` CLI's local IPC socket;
+the underlying stack-balance and codegen-fallback scripts both completed with
+their normal zero-growth verdicts.
+
+No GitHub issue was created; this markdown issue remains the sole tracker.
+
 ### Slice A completion and handoff
 
-This slice is owned in isolated worktree
-`/private/tmp/js2-es2015-typedarray-set-r2-20260830` on branch
-`codex/5194-typedarray-set-r2`. It may open one non-draft upstream PR only when
-the branch is mergeable and the exact 25-row standalone cohort plus regression
-controls are green. If interrupted or still non-mergeable, push the checkpoint,
-record the precise remaining rows and root cause here, and use a draft PR.
+The publication slice is owned in isolated worktree
+`/private/tmp/js2-typedarray-5194-pr-20260830` on branch
+`codex/5194-typedarray-set-r2-final`. It may open one non-draft upstream PR only
+when the branch is mergeable and the exact 25-row standalone cohort plus
+regression controls are green. If interrupted or still non-mergeable, push the
+checkpoint, record the precise remaining rows and root cause here, and use a
+draft PR.
 
 Completing slice A does not close the r2 umbrella: update the measured residual
 count here and keep this issue `in-progress` until the remaining TypedArray
