@@ -2888,6 +2888,128 @@ function _resolveIterProp(target: any, key: string, exports: Record<string, Func
 }
 
 /**
+ * (#5131) Host-side copy of the strict GetIterator/IteratorNext contract used
+ * by the standalone provider.  The compatibility iterator bridge deliberately
+ * accepts flattenable carriers and degrades malformed records; these helpers
+ * are kept separate so strict spread and dynamic Proxy argument evaluation do
+ * not change that internal policy.
+ */
+function _hostIsCallable(value: any, exports: Record<string, Function> | undefined): boolean {
+  if (typeof value === "function") return true;
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value)) return false;
+  const isClosure = exports?.__is_closure as ((candidate: any) => number) | undefined;
+  if (typeof isClosure !== "function") return false;
+  try {
+    return isClosure(value) === 1;
+  } catch {
+    return false;
+  }
+}
+
+function _hostIsObjectValue(value: any, exports: Record<string, Function> | undefined): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "function") return true;
+  if (typeof value !== "object") return false;
+  // Native dynamic carriers are represented as WasmGC structs at this
+  // boundary, even when their language-level value is a primitive. Recover
+  // those primitives before applying the ECMAScript Object test.
+  if (_isWasmStruct(value)) return _nativePrimitiveToHost(value, exports) === _MISS;
+  return true;
+}
+
+function _hostInvokeCallable(
+  receiver: any,
+  callable: any,
+  args: readonly any[],
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any {
+  if (typeof callable === "function") return callable.apply(receiver, args);
+  const exports = callbackState?.getExports();
+  if (!_hostIsCallable(callable, exports)) throw new TypeError("value is not callable");
+  const arity = args.length;
+  const methodCall = exports?.[`__call_fn_method_${arity}`];
+  if (typeof methodCall === "function") return methodCall(receiver, callable, ...args);
+  const plainCall = exports?.[`__call_fn_${arity}`];
+  if (typeof plainCall === "function") return plainCall(callable, ...args);
+  const wrapped = _maybeWrapCallable(callable, arity, callbackState);
+  if (typeof wrapped === "function") return wrapped.apply(receiver, args);
+  throw new TypeError("value is not callable");
+}
+
+function _hostStrictGetIterator(
+  value: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any {
+  if (value === null || value === undefined) throw new TypeError(`${value} is not iterable`);
+  const exports = callbackState?.getExports();
+  let method = _safeGet(value, Symbol.iterator, callbackState);
+  if (method === undefined) method = _safeGet(value, "@@iterator", callbackState);
+  if (method === undefined && _isWasmStruct(value)) {
+    const hostView = _wrapForHost(value, exports);
+    method = _safeGet(hostView, Symbol.iterator, callbackState) ?? _safeGet(hostView, "@@iterator", callbackState);
+  }
+
+  // A closed compiled object may not expose its symbol field through the
+  // generic host reader. The generated dispatcher is the authoritative
+  // receiver-aware fallback in that representation and invokes the method
+  // exactly once.
+  if (method === undefined || method === null) {
+    const dispatch = exports?.["__call_@@iterator"];
+    if (_isWasmStruct(value) && typeof dispatch === "function") {
+      const iterator = dispatch(value);
+      if (!_hostIsObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+      return iterator;
+    }
+    throw new TypeError("value is not iterable");
+  }
+  if (!_hostIsCallable(method, exports)) throw new TypeError("@@iterator is not callable");
+  const iterator = _hostInvokeCallable(value, method, [], callbackState);
+  if (!_hostIsObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+  return iterator;
+}
+
+function _hostStrictIteratorNext(
+  iterator: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): [number, any] {
+  const exports = callbackState?.getExports();
+  let next = _safeGet(iterator, "next", callbackState);
+  let result: any;
+  if (next !== undefined && next !== null) {
+    if (!_hostIsCallable(next, exports)) throw new TypeError("iterator.next is not a function");
+    // This is the single poll. A null/primitive result is validated below and
+    // must never trigger a second dispatcher call.
+    result = _hostInvokeCallable(iterator, next, [], callbackState);
+  } else {
+    const dispatch = exports?.["__call_next"];
+    if (!_isWasmStruct(iterator) || typeof dispatch !== "function") {
+      throw new TypeError("iterator.next is not a function");
+    }
+    result = dispatch(iterator);
+  }
+  if (!_hostIsObjectValue(result, exports)) throw new TypeError("iterator result is not an object");
+  const doneValue = _safeGet(result, "done", callbackState);
+  const donePrimitive = _nativePrimitiveToHost(doneValue, exports);
+  const done = donePrimitive === _MISS ? !!doneValue : !!donePrimitive;
+  const value = done ? undefined : _safeGet(result, "value", callbackState);
+  return [done ? 1 : 0, value];
+}
+
+function _hostStrictDrainIterator(
+  iterator: any,
+  limit: number,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any[] {
+  const out: any[] = [];
+  while (out.length < limit) {
+    const [done, value] = _hostStrictIteratorNext(iterator, callbackState);
+    if (done) break;
+    out.push(value);
+  }
+  return out;
+}
+
+/**
  * (#3195) The single closure-iterator step loop shared by the three drainers
  * (`_drainClosureIterableToArray`, `_drainWasmClosureIterable`, and the nested
  * `_walkWasmIterator`). Given an already-obtained `iteratorObj`, step it through
@@ -3125,12 +3247,10 @@ function _drainWasmClosureIterable(
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): any[] | null {
   if (obj == null || typeof obj !== "object") return null;
-  let iterFn: any;
-  try {
-    iterFn = obj[Symbol.iterator];
-  } catch {
-    return null;
-  }
+  // A compiled object literal is an opaque WasmGC struct at this boundary;
+  // resolve its computed `@@iterator` field through the callback-aware reader
+  // so host and standalone lanes observe the same method.
+  const iterFn = _safeGet(obj, Symbol.iterator, callbackState) ?? _safeGet(obj, "@@iterator", callbackState);
   const iterWrapper = typeof iterFn === "function" ? _wasmClosureWrapperSource.get(iterFn) : undefined;
   const iterIsRawClosure = iterFn != null && typeof iterFn === "object" && _isWasmStruct(iterFn);
   // Only handle the broken case: an @@iterator that came from a Wasm closure.
@@ -12877,12 +12997,17 @@ assert._isSameValue = isSameValue;
             if (ownIter !== _origArrayIter) {
               // Non-default iterator: fall through to the protocol path below
               // by treating the array as a generic iterable (bounded by limit).
+              if (strictIterator)
+                return _hostStrictDrainIterator(_hostStrictGetIterator(obj, callbackState), limit, callbackState);
               return _drainIterable(obj, limit, strictIterator, ownIter);
             }
             // Default array iterator: a finite bound just slices the prefix;
             // the iterator protocol on a default array is side-effect-free so
             // slicing is observationally identical to stepping `limit` times.
             return limit < obj.length ? obj.slice(0, limit) : obj;
+          }
+          if (strictIterator) {
+            return _hostStrictDrainIterator(_hostStrictGetIterator(obj, callbackState), limit, callbackState);
           }
           // Compiled sources that do `iter[Symbol.iterator] = fn` often land the
           // function under a stringified "Symbol(Symbol.iterator)" key rather
@@ -12894,7 +13019,7 @@ assert._isSameValue = isSameValue;
           // present, fall back to array-like index enumeration so plain non-
           // iterable objects don't error out.
           if (typeof obj === "object") {
-            const iterFn = (obj as any)[Symbol.iterator];
+            const iterFn = _safeGet(obj, Symbol.iterator, callbackState) ?? _safeGet(obj, "@@iterator", callbackState);
             if (iterFn !== undefined && typeof iterFn !== "function") {
               // Wasm closures land here as opaque externref objects (typeof
               // 'object'). Try to invoke them through the closure-call exports
@@ -12943,7 +13068,8 @@ assert._isSameValue = isSameValue;
         // / the .value getter propagate unchanged (#1150/#1454). With
         // limit === Infinity this matches Array.from's full drain.
         function _drainIterable(obj: any, limit: number, strictIterator = false, knownIterFn?: any): any[] {
-          const itFn = knownIterFn ?? (obj as any)?.[Symbol.iterator];
+          const itFn =
+            knownIterFn ?? _safeGet(obj, Symbol.iterator, callbackState) ?? _safeGet(obj, "@@iterator", callbackState);
           // No callable @@iterator — let Array.from handle array-likes / the
           // legacy unbounded shapes exactly as before.
           if (typeof itFn !== "function") {
@@ -16236,6 +16362,12 @@ assert._isSameValue = isSameValue;
           }
           return done ? 1 : 0;
         };
+      // (#5131) Strict spread iterator provider. Keep it separate from the
+      // compatibility bridge below: internal GetIteratorFlattenable users
+      // intentionally retain their permissive bare-next/degrade behavior.
+      if (name === "__iterator_strict") return (obj: any) => _hostStrictGetIterator(obj, callbackState);
+      if (name === "__iterator_next_strict")
+        return (iter: any): [number, any] => _hostStrictIteratorNext(iter, callbackState);
       // Iterator protocol: host-delegated iteration for non-array types
       if (name === "__iterator")
         return (obj: any) => {

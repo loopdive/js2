@@ -456,11 +456,6 @@ interface StrictSpreadRuntime {
 
 const strictSpreadRuntimeByCtx = new WeakMap<CodegenContext, StrictSpreadRuntime>();
 
-interface StrictObjCarrierDeps extends ObjCarrierDeps {
-  typeofObjectIdx: number;
-  typeofFunctionIdx: number;
-}
-
 function iterRuntimeTypes(ctx: CodegenContext): IterRuntimeTypes {
   const iterRecTypeIdx = getOrRegisterIterRecType(ctx);
   const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
@@ -1921,7 +1916,11 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         })()
       : [];
 
-  const strictStringArm: Instr[] = [...stringArm];
+  // The compatibility and strict dispatchers are separate Wasm functions.
+  // Clone the compatibility string arm before embedding it in the strict
+  // body: finalize-time repair walks instructions in place and upstream's
+  // ownership guard rejects one instruction object reached from two bodies.
+  const strictStringArm: Instr[] = strictRuntime ? (structuredClone(stringArm) as Instr[]) : [];
   if (strictRuntime && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     // `new String(…)` is represented by the open `$Object` wrapper, not by a
     // primitive `$AnyString`.  Its intrinsic string slot is nevertheless a
@@ -2962,7 +2961,13 @@ function buildIteratorBody(
                   then: throwBad,
                   else: [],
                 },
-                { op: "i32.const", value: ITER_KIND_OBJ },
+                ...objCarrierTest(od, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }]),
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [{ op: "i32.const", value: ITER_KIND_OBJ }],
+                  else: [{ op: "i32.const", value: ITER_KIND_USER }],
+                },
                 { op: "ref.null", typeIdx: vecTypeIdx },
                 { op: "i32.const", value: 0 },
                 { op: "local.get", index: 2 },
@@ -3276,7 +3281,8 @@ function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes, strict
         ];
       }
       if (arrDef.element.kind === "externref" && ctx.usesArrayHoles) {
-        const holeTypeIdx = ensureHoleType(ctx);
+        ensureHoleType(ctx);
+        const holeTypeIdx = ctx.holeTypeIdx!;
         const undef = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
         return [
           { op: "any.convert_extern" },
@@ -3448,7 +3454,8 @@ function buildIteratorNextBody(
         { op: "array.get", typeIdx: arrTypeIdx },
         ...(strictProtocol && strictCtx?.usesArrayHoles
           ? (() => {
-              const holeTypeIdx = ensureHoleType(strictCtx);
+              ensureHoleType(strictCtx);
+              const holeTypeIdx = strictCtx.holeTypeIdx!;
               const undef = undefinedExternInstrs(strictCtx) ?? [{ op: "ref.null.extern" }];
               return [
                 { op: "local.tee", index: 6 } satisfies Instr,
@@ -3897,6 +3904,15 @@ function buildIteratorNextBody(
           { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
           { op: "i32.const", value: ITER_KIND_OBJ },
           { op: "i32.eq" },
+          ...(strictProtocol && !deps
+            ? ([
+                { op: "local.get", index: 1 },
+                { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+                { op: "i32.const", value: ITER_KIND_USER },
+                { op: "i32.eq" },
+                { op: "i32.or" },
+              ] satisfies Instr[])
+            : []),
           { op: "if", blockType: { kind: "empty" }, then: strictObjStep, else: vecStep },
         ] satisfies Instr[])
       : vecStep;

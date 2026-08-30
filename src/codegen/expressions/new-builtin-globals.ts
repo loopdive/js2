@@ -38,7 +38,7 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
-import { ensureNativeIteratorRuntime } from "../iterator-native.js";
+import { ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
@@ -213,6 +213,7 @@ function emitExpandedProxyArguments(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
   compileValue: (arg: ts.Expression) => void,
+  strictIterator = false,
 ): ExpandedProxyArgumentLocals {
   const targetLocal = allocTempLocal(fctx, { kind: "externref" });
   const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
@@ -284,8 +285,8 @@ function emitExpandedProxyArguments(
     fctx.body.push({ op: "local.set", index: sourceLocal });
     flushLateImportShifts(ctx, fctx);
 
-    const iterIdx = ctx.funcMap.get("__iterator");
-    const nextIdx = ctx.funcMap.get("__iterator_next");
+    const iterIdx = ctx.funcMap.get(strictIterator ? "__iterator_strict" : "__iterator");
+    const nextIdx = ctx.funcMap.get(strictIterator ? "__iterator_next_strict" : "__iterator_next");
     if (iterIdx === undefined || nextIdx === undefined) {
       // The iterator runtime/imports are registered before this helper. Keep a
       // defensive index-space-frozen fallback that still evaluates the source
@@ -1196,12 +1197,12 @@ export function tryCompileBuiltinGlobalNew(
 
       if (args.some((arg) => ts.isSpreadElement(arg))) {
         const proxyArgs = flattenProxyArguments(args) ?? args;
-        // Standalone/native-first uses the native GetIterator bridge for
+        // Standalone/native-first uses the strict GetIterator provider for
         // non-literal sources (and for nested spreads retained by the
         // canonical one-level flattener). Register it before compiling any
         // such source so late helper registration cannot stale its calls.
-        if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) ensureNativeIteratorRuntime(ctx);
-        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileToExternref(arg));
+        if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) ensureNativeStrictSpreadRuntime(ctx);
+        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileToExternref(arg), true);
         flushLateImportShifts(ctx, fctx);
         const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
         if (proxyCreateIdx !== undefined) {
@@ -1291,15 +1292,26 @@ export function tryCompileBuiltinGlobalNew(
 
       if (args.some((arg) => ts.isSpreadElement(arg))) {
         const proxyArgs = flattenProxyArguments(args) ?? args;
-        // The host provider exposes the same iterator protocol as for-of. Do
+        // The host provider exposes the strict spread iterator protocol. Do
         // the registration up front for any source that remains dynamic, then
         // resolve its indices after each source expression adds late imports.
         if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) {
+          // The method-dispatch export is emitted when the compatibility
+          // iterator bridge is present. Keep that export available for closed
+          // WasmGC iterables while the consumer itself calls only the strict
+          // aliases below; the legacy import remains intentionally unused by
+          // this path and preserves its existing flattenable semantics.
           ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
-          ensureLateImport(ctx, "__iterator_next", [{ kind: "externref" }], [{ kind: "i32" }, { kind: "externref" }]);
+          ensureLateImport(ctx, "__iterator_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
+          ensureLateImport(
+            ctx,
+            "__iterator_next_strict",
+            [{ kind: "externref" }],
+            [{ kind: "i32" }, { kind: "externref" }],
+          );
           flushLateImportShifts(ctx, fctx);
         }
-        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileHostProxyArg(arg));
+        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileHostProxyArg(arg), true);
 
         // Emit the provider only after ArgumentListEvaluation has completed.
         let proxyIdx = ensureLateImport(
