@@ -44,6 +44,7 @@
  * IteratorClose). See plan/issues/2038-standalone-iterator-next-illegal-cast-async-dstr.md.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { addFuncType } from "./registry/types.js";
@@ -85,12 +86,14 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs as throwMsgExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, addUnionImports, ensureExnTag } from "./registry/imports.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
+import { zeroArgPadInstrs } from "./zero-arg-method-pad.js";
 // (#3164) The GENSTATE step's f64 value read canonicalizes the UNDEF_F64
 // sentinel (a done/valueless yield) to the null externref — the standalone
 // canonical `undefined` — before boxing (same recipe as
 // `sentinelAwareF64BoxInstrs`, generators-native.ts; inlined here to avoid a
 // module-init-order-sensitive import back into that cycle-heavy module).
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
+import { walkChildren } from "./walk-instructions.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. */
 const ITER_KIND_VEC = 3;
@@ -456,6 +459,731 @@ interface StrictSpreadRuntime {
 
 const strictSpreadRuntimeByCtx = new WeakMap<CodegenContext, StrictSpreadRuntime>();
 
+/**
+ * Per-literal method dispatch used by the strict native provider.
+ *
+ * `emitIteratorMethodExport` is intentionally a structural dispatcher because
+ * it serves the older compatibility bridge.  Two object literals whose only
+ * field is a computed `Symbol.iterator` method can therefore canonicalize to
+ * the same WasmGC struct type, even though their method bodies are different.
+ * The strict spread lane cannot use that first-match dispatcher: doing so
+ * invokes a sibling literal's method.  Finalization stamps those construction
+ * sites with a small hidden identity and this provider dispatches the exact
+ * per-literal method body.
+ */
+interface StrictMethodDispatchEntry {
+  typeIdx: number;
+  fieldIdx: number;
+  methodId: number;
+  funcIdx: number;
+  params: ValType[];
+  result?: ValType;
+}
+
+interface StrictMethodDispatchDeps {
+  iterator: StrictMethodDispatchEntry[];
+  next: StrictMethodDispatchEntry[];
+  typeofObjectIdx?: number;
+  typeofFunctionIdx?: number;
+}
+
+const strictMethodDispatchByCtx = new WeakMap<CodegenContext, StrictMethodDispatchDeps>();
+const strictMethodDispatchFinalizedByCtx = new WeakSet<CodegenContext>();
+const strictMethodLiteralIdsByCtx = new WeakMap<CodegenContext, WeakMap<object, number>>();
+const strictMethodNextIdByTypeByCtx = new WeakMap<CodegenContext, Map<number, number>>();
+/**
+ * The strict-method identity slot is compiler-owned state, not a property
+ * lookup. A source object is allowed to own any string, including the old
+ * `$strict_method_id` spelling, so discovering the slot by name lets a user
+ * field become the i32 marker and makes the standalone module invalid. Keep
+ * the physical slot index in a per-context/per-type side table instead.
+ */
+interface StrictMethodIdField {
+  fieldIdx: number;
+  fieldName: string;
+}
+
+const strictMethodIdFieldByCtx = new WeakMap<CodegenContext, Map<number, StrictMethodIdField>>();
+const strictMethodMarkerByCtx = new WeakMap<CodegenContext, WeakMap<Instr, number>>();
+const strictMethodMarkerInstrByCtx = new WeakMap<CodegenContext, WeakMap<Instr, Instr>>();
+/**
+ * Compiler-private provenance for the exact object-literal allocation site.
+ *
+ * A canonical struct type is not an allocation identity: a PropertyAssignment,
+ * a copied carrier, or an unrelated compiler allocation may share it with a
+ * MethodDeclaration literal. Keep a primitive token directly on the IR
+ * instruction so normal shallow IR cloning preserves the association without
+ * retaining or cloning a TypeScript AST node into the instruction graph.
+ */
+interface StrictMethodAllocationProvenance {
+  nextToken: number;
+  tokenByLiteral: WeakMap<object, number>;
+  literalByToken: Map<number, ts.ObjectLiteralExpression>;
+}
+
+type StrictMethodProvenanceInstr = Instr & { strictMethodLiteralToken?: number };
+
+const strictMethodAllocationProvenanceByCtx = new WeakMap<CodegenContext, StrictMethodAllocationProvenance>();
+const strictHostSpreadByCtx = new WeakSet<CodegenContext>();
+const strictHostSpreadDispatchByCtx = new WeakMap<CodegenContext, Set<string>>();
+
+const STRICT_METHOD_ID_FIELD_PREFIX = "$__strict_method_id_";
+
+/**
+ * Record the source object literal that emitted one closed-struct allocation.
+ *
+ * This is deliberately called at construction, rather than reconstructed from
+ * a final body walk. Only method-bearing literals can become strict protocol
+ * records, so ordinary PropertyAssignments remain untagged and can never
+ * consume a strict method identity merely because their structural type matches.
+ */
+export function recordStrictMethodLiteralAllocation(
+  ctx: CodegenContext,
+  instr: Instr,
+  literal: ts.ObjectLiteralExpression,
+): void {
+  if (!literal.properties.some((property) => ts.isMethodDeclaration(property))) return;
+  let provenance = strictMethodAllocationProvenanceByCtx.get(ctx);
+  if (provenance === undefined) {
+    provenance = {
+      nextToken: 1,
+      tokenByLiteral: new WeakMap(),
+      literalByToken: new Map(),
+    };
+    strictMethodAllocationProvenanceByCtx.set(ctx, provenance);
+  }
+  let token = provenance.tokenByLiteral.get(literal);
+  if (token === undefined) {
+    token = provenance.nextToken++;
+    provenance.tokenByLiteral.set(literal, token);
+    provenance.literalByToken.set(token, literal);
+  }
+  (instr as StrictMethodProvenanceInstr).strictMethodLiteralToken = token;
+}
+
+type StrictMethodKind = "iterator" | "next";
+
+function strictMethodKind(name: string): StrictMethodKind | undefined {
+  if (/(?:^|_)@@iterator(?:__lit\d+)?$/.test(name)) return "iterator";
+  if (/(?:^|_)next(?:__lit\d+)?$/.test(name)) return "next";
+  return undefined;
+}
+
+interface StrictMethodLiteral {
+  typeIdx: number;
+  iterator?: StrictMethodDispatchEntry;
+  next?: StrictMethodDispatchEntry;
+}
+
+interface StrictMethodDispatchReservation {
+  iterator: StrictMethodDispatchEntry[];
+  next: StrictMethodDispatchEntry[];
+  literalIds: WeakMap<object, number>;
+}
+
+interface StrictMethodMarkerState {
+  markerByInstruction: WeakMap<Instr, number>;
+  markerInstrByInstruction: WeakMap<Instr, Instr>;
+}
+
+function collectStrictMethodReverseHandles(ctx: CodegenContext): WeakMap<object, number> {
+  const reverseHandles = new WeakMap<object, number>();
+  for (const [name, declaration] of ctx.funcMapOwnerDecl) {
+    const handle = ctx.funcMap.get(name);
+    if (handle !== undefined) reverseHandles.set(declaration, handle);
+  }
+  for (const [name, declaration] of ctx.topLevelFunctionDeclarations) {
+    const handle = ctx.funcMap.get(name);
+    if (handle !== undefined) reverseHandles.set(declaration, handle);
+  }
+  return reverseHandles;
+}
+
+function collectStrictMethodLiterals(ctx: CodegenContext): Map<object, StrictMethodLiteral> {
+  const byLiteral = new Map<object, StrictMethodLiteral>();
+  for (const [declaration, funcIdx] of ctx.objectLiteralMethodFuncIdx) {
+    const func = definedFuncAt(ctx, funcIdx);
+    if (!func) continue;
+    const kind = strictMethodKind(func.name);
+    if (kind === undefined) continue;
+    const funcType = ctx.mod.types[func.typeIdx];
+    if (!funcType || funcType.kind !== "func" || funcType.params.length < 1 || funcType.results.length > 1) continue;
+    const receiver = funcType.params[0];
+    if (!receiver || (receiver.kind !== "ref" && receiver.kind !== "ref_null")) continue;
+    const parent = (declaration as unknown as { parent?: object }).parent;
+    if (parent === undefined || (typeof parent !== "object" && typeof parent !== "function")) continue;
+
+    let literal = byLiteral.get(parent);
+    if (literal === undefined) {
+      literal = { typeIdx: receiver.typeIdx };
+      byLiteral.set(parent, literal);
+    }
+    // A declaration's receiver is the authoritative type for its body.  A
+    // malformed checker result should not make an unrelated sibling share an
+    // identity slot, so discard this literal if its methods disagree.
+    if (literal.typeIdx !== receiver.typeIdx) continue;
+    const entry: StrictMethodDispatchEntry = {
+      typeIdx: receiver.typeIdx,
+      fieldIdx: -1,
+      methodId: 0,
+      funcIdx,
+      params: [...funcType.params],
+      result: funcType.results[0],
+    };
+    // Duplicate method names obey ordinary object-literal last-definition
+    // semantics; the final declaration is the callable that must win.
+    literal[kind] = entry;
+  }
+  return byLiteral;
+}
+
+function markStrictMethodTypes(
+  ctx: CodegenContext,
+  byLiteral: Map<object, StrictMethodLiteral>,
+  reverseHandles: WeakMap<object, number>,
+): Map<number, StrictMethodLiteral[]> {
+  const byType = new Map<number, StrictMethodLiteral[]>();
+  for (const literal of byLiteral.values()) {
+    if (!literal.iterator && !literal.next) continue;
+    let group = byType.get(literal.typeIdx);
+    if (group === undefined) {
+      group = [];
+      byType.set(literal.typeIdx, group);
+    }
+    group.push(literal);
+  }
+
+  // Stamp every known protocol-literal type in the host-free lane, not only
+  // shapes that already collide. The native provider can be registered while
+  // source bodies are still being compiled; a later sibling literal may then
+  // reuse a singleton shape. Reserving the marker field up front lets that
+  // later allocation be patched at finalization without changing the struct
+  // arity after its body (or an inline copy) has already been emitted. Host
+  // dispatch remains collision-only so singleton object shapes stay on the
+  // canonical structural path.
+  const markedByType = new Map<number, StrictMethodLiteral[]>();
+  for (const [typeIdx, literals] of byType) {
+    if (ctx.standalone || ctx.wasi || literals.length > 1) markedByType.set(typeIdx, literals);
+  }
+
+  // Call-site inlining can retain a template before finalization appends the
+  // hidden operand. The primitive construction-site token is clone-stable, but
+  // keep the existing bounded guard for the function that owns a marked
+  // protocol literal so no pre-finalization template bypasses marker mirroring.
+  for (const [parent, literal] of byLiteral) {
+    if (!markedByType.has(literal.typeIdx)) continue;
+    const owner = strictOwningFunction(parent as ts.Node);
+    const handle = owner === undefined ? undefined : strictSourceFunctionHandle(ctx, owner, reverseHandles);
+    const func = handle === undefined ? undefined : definedFuncAt(ctx, handle);
+    if (func !== undefined) ctx.inlinableFunctions.delete(func.name);
+  }
+  return markedByType;
+}
+
+function reserveStrictMethodDispatchEntries(
+  ctx: CodegenContext,
+  markedByType: Map<number, StrictMethodLiteral[]>,
+): StrictMethodDispatchReservation {
+  const iterator: StrictMethodDispatchEntry[] = [];
+  const next: StrictMethodDispatchEntry[] = [];
+  const literalIds = strictMethodLiteralIdsByCtx.get(ctx) ?? new WeakMap<object, number>();
+  const nextIds = strictMethodNextIdByTypeByCtx.get(ctx) ?? new Map<number, number>();
+  const ownedFields = strictMethodIdFieldByCtx.get(ctx) ?? new Map<number, StrictMethodIdField>();
+
+  const ensureRegisteredFieldAlignment = (
+    typeIdx: number,
+    fields: { name: string; type: ValType; mutable?: boolean }[],
+  ): void => {
+    const structName = ctx.typeIdxToStructName.get(typeIdx);
+    const registeredFields = structName === undefined ? undefined : ctx.structFields.get(structName);
+    if (!registeredFields || registeredFields === fields) return;
+    // A few compiler-owned carriers historically registered a distinct
+    // metadata array. The emitted type is authoritative: a metadata tail with
+    // no physical field must be discarded before the hidden slot is chosen,
+    // otherwise `fields.length` would point at an already-registered field
+    // and the side-table index would no longer be exact.
+    if (registeredFields.length > fields.length) registeredFields.length = fields.length;
+    for (let index = 0; index < fields.length; index++) {
+      const field = fields[index]!;
+      const registered = registeredFields[index];
+      const sameType =
+        registered !== undefined &&
+        registered.type.kind === field.type.kind &&
+        (registered.type.kind === "ref" || registered.type.kind === "ref_null"
+          ? registered.type.typeIdx === field.type.typeIdx
+          : true);
+      if (
+        registered === undefined ||
+        registered.name !== field.name ||
+        registered.mutable !== field.mutable ||
+        !sameType
+      ) {
+        registeredFields[index] = { name: field.name, type: field.type, mutable: field.mutable };
+      }
+    }
+  };
+
+  const reserveOwnedField = (typeIdx: number, fields: { name: string; type: ValType; mutable?: boolean }[]): number => {
+    const existing = ownedFields.get(typeIdx);
+    if (existing !== undefined) {
+      ensureRegisteredFieldAlignment(typeIdx, fields);
+      const physical = fields[existing.fieldIdx];
+      if (physical?.name !== existing.fieldName || physical.type.kind !== "i32" || physical.mutable !== false) {
+        throw new Error(`strict method marker slot lost for struct type ${typeIdx} at field ${existing.fieldIdx}`);
+      }
+      return existing.fieldIdx;
+    }
+
+    const structName = ctx.typeIdxToStructName.get(typeIdx);
+    const registeredFields = structName === undefined ? undefined : ctx.structFields.get(structName);
+    let serial = 0;
+    let fieldName = `${STRICT_METHOD_ID_FIELD_PREFIX}${typeIdx}`;
+    const occupied = (): boolean =>
+      fields.some((field) => field.name === fieldName) ||
+      (registeredFields !== undefined && registeredFields.some((field) => field.name === fieldName));
+    while (occupied()) fieldName = `${STRICT_METHOD_ID_FIELD_PREFIX}${typeIdx}_${++serial}`;
+
+    const fieldIdx = fields.length;
+    const field = { name: fieldName, type: { kind: "i32" as const }, mutable: false };
+    fields.push(field);
+    ensureRegisteredFieldAlignment(typeIdx, fields);
+    ownedFields.set(typeIdx, { fieldIdx, fieldName });
+    return fieldIdx;
+  };
+
+  for (const [typeIdx, literals] of markedByType) {
+    const typeDef = ctx.mod.types[typeIdx];
+    if (!typeDef || typeDef.kind !== "struct") continue;
+    const fields = typeDef.fields;
+    const fieldIdx = reserveOwnedField(typeIdx, fields);
+    for (let index = 0; index < literals.length; index++) {
+      const literal = literals[index]!;
+      const methodId =
+        literalIds.get(literal) ??
+        (() => {
+          const id = (nextIds.get(typeIdx) ?? 0) + 1;
+          nextIds.set(typeIdx, id);
+          literalIds.set(literal, id);
+          return id;
+        })();
+      if (literal.iterator) {
+        literal.iterator.fieldIdx = fieldIdx;
+        literal.iterator.methodId = methodId;
+        iterator.push(literal.iterator);
+      }
+      if (literal.next) {
+        literal.next.fieldIdx = fieldIdx;
+        literal.next.methodId = methodId;
+        next.push(literal.next);
+      }
+    }
+  }
+  strictMethodLiteralIdsByCtx.set(ctx, literalIds);
+  strictMethodNextIdByTypeByCtx.set(ctx, nextIds);
+  strictMethodIdFieldByCtx.set(ctx, ownedFields);
+  return { iterator, next, literalIds };
+}
+
+function setStrictMethodMarker(
+  body: Instr[],
+  index: number,
+  instr: Instr,
+  marker: number,
+  state: StrictMethodMarkerState,
+): void {
+  const markedInstr = instr as Instr & { strictMethodId?: number };
+  const hadKnownMarker = state.markerByInstruction.has(instr) || markedInstr.strictMethodId !== undefined;
+  markedInstr.strictMethodId = marker;
+  state.markerByInstruction.set(instr, marker);
+  const markerInstr = state.markerInstrByInstruction.get(instr);
+  if (markerInstr !== undefined && body.includes(markerInstr)) {
+    if (markerInstr.op === "i32.const") markerInstr.value = marker;
+    return;
+  }
+  // Shape-brand finalization may append its own `ref.null` operand after our
+  // marker.  The side table is authoritative; this narrow look-behind only
+  // recognizes an already-materialized marker in a copied inline body.  A
+  // first-time root allocation must always insert a fresh operand — a nearby
+  // source `i32.const` may be an unrelated local initializer.
+  if (hadKnownMarker) {
+    const candidate =
+      body[index - 1]?.op === "i32.const"
+        ? body[index - 1]
+        : body[index - 2]?.op === "i32.const" && body[index - 1]?.op === "ref.null"
+          ? body[index - 2]
+          : undefined;
+    if (candidate?.op === "i32.const") {
+      candidate.value = marker;
+      state.markerInstrByInstruction.set(instr, candidate);
+      return;
+    }
+  }
+  const inserted: Instr = { op: "i32.const", value: marker };
+  body.splice(index, 0, inserted);
+  state.markerInstrByInstruction.set(instr, inserted);
+}
+
+function strictMethodMarkerForAllocation(
+  instr: Instr,
+  byLiteral: ReadonlyMap<object, StrictMethodLiteral>,
+  literalIds: WeakMap<object, number>,
+  provenance: StrictMethodAllocationProvenance | undefined,
+): number {
+  const token = (instr as StrictMethodProvenanceInstr).strictMethodLiteralToken;
+  const node = token === undefined ? undefined : provenance?.literalByToken.get(token);
+  const literal = node === undefined ? undefined : byLiteral.get(node);
+  // A token is authoritative only for the exact source literal and its
+  // canonical allocation type. A missing/mismatched token is deliberately the
+  // generic structural path (marker 0), never a nearby literal by ordinal.
+  return literal !== undefined && literal.typeIdx === instr.typeIdx ? (literalIds.get(literal) ?? 0) : 0;
+}
+
+function patchStrictMethodRootBody(
+  body: Instr[],
+  markedByType: Map<number, StrictMethodLiteral[]>,
+  byLiteral: ReadonlyMap<object, StrictMethodLiteral>,
+  literalIds: WeakMap<object, number>,
+  provenance: StrictMethodAllocationProvenance | undefined,
+  state: StrictMethodMarkerState,
+  visited: WeakSet<Instr[]>,
+): void {
+  const pending: Instr[][] = [body];
+  while (pending.length > 0) {
+    const instructions = pending.pop()!;
+    if (visited.has(instructions)) continue;
+    visited.add(instructions);
+    for (let index = 0; index < instructions.length; index++) {
+      const instr = instructions[index]!;
+      if (instr.op === "struct.new" && markedByType.has(instr.typeIdx)) {
+        // Every allocation of an augmented type needs the hidden i32 operand
+        // to keep its Wasm struct.new arity valid. Only a construction-site
+        // token resolving to this exact strict MethodDeclaration literal earns
+        // a non-zero identity; PropertyAssignments, copies, and manual
+        // allocations receive 0 and cannot consume a method ID.
+        const marker = strictMethodMarkerForAllocation(instr, byLiteral, literalIds, provenance);
+        setStrictMethodMarker(instructions, index, instr, marker, state);
+      }
+      const children: Instr[][] = [];
+      walkChildren(instr, (nested) => children.push(nested));
+      for (let childIndex = children.length - 1; childIndex >= 0; childIndex--) {
+        pending.push(children[childIndex]!);
+      }
+    }
+  }
+}
+
+function patchStrictMethodInlineBody(body: Instr[], state: StrictMethodMarkerState, visited: WeakSet<Instr[]>): void {
+  const pending: Instr[][] = [body];
+  while (pending.length > 0) {
+    const instructions = pending.pop()!;
+    if (visited.has(instructions)) continue;
+    visited.add(instructions);
+    for (let index = 0; index < instructions.length; index++) {
+      const instr = instructions[index]!;
+      const marker =
+        instr.op === "struct.new"
+          ? (state.markerByInstruction.get(instr) ?? (instr as Instr & { strictMethodId?: number }).strictMethodId)
+          : undefined;
+      if (marker !== undefined) {
+        setStrictMethodMarker(instructions, index, instr, marker, state);
+      }
+      const children: Instr[][] = [];
+      walkChildren(instr, (nested) => children.push(nested));
+      for (let childIndex = children.length - 1; childIndex >= 0; childIndex--) {
+        pending.push(children[childIndex]!);
+      }
+    }
+  }
+}
+
+function patchStrictMethodAllocationMarkers(
+  ctx: CodegenContext,
+  markedByType: Map<number, StrictMethodLiteral[]>,
+  byLiteral: ReadonlyMap<object, StrictMethodLiteral>,
+  literalIds: WeakMap<object, number>,
+): void {
+  const state: StrictMethodMarkerState = {
+    markerByInstruction: strictMethodMarkerByCtx.get(ctx) ?? new WeakMap<Instr, number>(),
+    markerInstrByInstruction: strictMethodMarkerInstrByCtx.get(ctx) ?? new WeakMap<Instr, Instr>(),
+  };
+  const provenance = strictMethodAllocationProvenanceByCtx.get(ctx);
+  const allocationVisited = new WeakSet<Instr[]>();
+  for (const func of ctx.mod.functions) {
+    patchStrictMethodRootBody(func.body, markedByType, byLiteral, literalIds, provenance, state, allocationVisited);
+  }
+  for (const global of ctx.mod.globals) {
+    patchStrictMethodRootBody(global.init, markedByType, byLiteral, literalIds, provenance, state, allocationVisited);
+  }
+  strictMethodMarkerByCtx.set(ctx, state.markerByInstruction);
+  strictMethodMarkerInstrByCtx.set(ctx, state.markerInstrByInstruction);
+
+  // Mirror construction-site markers into any retained inline templates.
+  const inlineVisited = new WeakSet<Instr[]>();
+  for (const inline of ctx.inlinableFunctions.values()) {
+    patchStrictMethodInlineBody(inline.body, state, inlineVisited);
+  }
+}
+
+function strictSourceFunctionHandle(
+  ctx: CodegenContext,
+  declaration: ts.FunctionLikeDeclaration,
+  reverseHandles: WeakMap<object, number>,
+): number | undefined {
+  if (ts.isMethodDeclaration(declaration)) {
+    const methodHandle = ctx.objectLiteralMethodFuncIdx.get(declaration);
+    if (methodHandle !== undefined) return methodHandle;
+  }
+  if (ts.isFunctionDeclaration(declaration)) {
+    const sourceHandle = ctx.sourceFunctionHandleByDeclaration.get(declaration);
+    if (sourceHandle !== undefined) return sourceHandle;
+    if (declaration.name) {
+      const name = declaration.name.text;
+      if (
+        ctx.topLevelFunctionDeclarations.get(name) === declaration ||
+        ctx.funcMapOwnerDecl.get(name) === declaration
+      ) {
+        return ctx.funcMap.get(name);
+      }
+    }
+  }
+  return reverseHandles.get(declaration);
+}
+
+function strictOwningFunction(node: ts.Node): ts.FunctionLikeDeclaration | undefined {
+  let owner = node.parent;
+  while (owner && !ts.isSourceFile(owner)) {
+    if (ts.isFunctionLike(owner)) return owner as ts.FunctionLikeDeclaration;
+    owner = owner.parent;
+  }
+  return undefined;
+}
+
+/**
+ * Collect the exact object-literal methods that the strict native lane may
+ * need to call.  The ordinary closed-struct dispatchers intentionally match
+ * by physical shape; that is sufficient for one method per shape, but it is
+ * not sufficient when sibling literals have the same computed
+ * `Symbol.iterator` slot and different bodies.  Keep this repair local to the
+ * strict provider and stamp only the allocations of the affected shapes.
+ */
+function collectStrictMethodDispatch(ctx: CodegenContext, patchAllocations = true): StrictMethodDispatchDeps {
+  if (patchAllocations && strictMethodDispatchFinalizedByCtx.has(ctx)) {
+    return strictMethodDispatchByCtx.get(ctx) ?? { iterator: [], next: [] };
+  }
+  const reverseHandles = collectStrictMethodReverseHandles(ctx);
+  const byLiteral = collectStrictMethodLiterals(ctx);
+  const markedByType = markStrictMethodTypes(ctx, byLiteral, reverseHandles);
+
+  // Reservation only needs to prevent protocol-producing factories from being
+  // inlined. Defer both the hidden field and the instruction walk until the
+  // finalization pass so source struct.new sites retain their original arity
+  // throughout ordinary body compilation.
+  if (!patchAllocations) {
+    const deps: StrictMethodDispatchDeps = {
+      iterator: [],
+      next: [],
+      typeofObjectIdx: ctx.funcMap.get("__typeof_object"),
+      typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
+    };
+    strictMethodDispatchByCtx.set(ctx, deps);
+    return deps;
+  }
+
+  const reservation = reserveStrictMethodDispatchEntries(ctx, markedByType);
+
+  patchStrictMethodAllocationMarkers(ctx, markedByType, byLiteral, reservation.literalIds);
+
+  const deps: StrictMethodDispatchDeps = {
+    iterator: reservation.iterator,
+    next: reservation.next,
+    typeofObjectIdx: ctx.funcMap.get("__typeof_object"),
+    typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
+  };
+  strictMethodDispatchByCtx.set(ctx, deps);
+  strictMethodDispatchFinalizedByCtx.add(ctx);
+  return deps;
+}
+
+/** Build a fresh receiver load in the `externref` domain. */
+function strictMethodReceiverExternref(receiver: number | (() => Instr[])): Instr[] {
+  return typeof receiver === "number" ? [{ op: "local.get", index: receiver }] : receiver();
+}
+
+/**
+ * Push the no-argument default required by an iterator protocol call.
+ *
+ * `zeroArgPadInstrs` deliberately returns `null` for a non-nullable GC ref:
+ * `ref.null` + `ref.as_non_null` would only turn a valid module into a
+ * guaranteed runtime trap. A null result is therefore a real dispatch
+ * refusal, not an instruction sequence to flatten into the call.
+ */
+function strictMethodMissingArg(ctx: CodegenContext, type: ValType): Instr[] | null {
+  // The shared helper currently has no f32 arm, while a zero f32 is safe and
+  // preserves the old bounded primitive padding for this ABI.
+  if (type.kind === "f32") return [{ op: "f32.const", value: 0 }];
+  return zeroArgPadInstrs(ctx, type);
+}
+
+/** Convert one direct method result to the strict provider's externref slot. */
+function strictMethodResultExternref(result: ValType | undefined): Instr[] {
+  if (result === undefined) return [{ op: "ref.null.extern" }];
+  if (result.kind === "externref") return [];
+  if (result.kind === "ref" || result.kind === "ref_null" || result.kind === "eqref" || result.kind === "anyref") {
+    return [{ op: "extern.convert_any" }];
+  }
+  // A numeric protocol method result is still a result value, but it cannot be
+  // an Iterator or IteratorResult object.  Drop it and let the caller's
+  // strict object predicate produce the mandated TypeError.
+  return [{ op: "drop" }, { op: "ref.null.extern" }];
+}
+
+/**
+ * Emit the per-literal method selector. `statusLocal` is 0 for no marked
+ * carrier, 1 for an exact method match, and 2 for a marked carrier whose
+ * identity has no matching method. The caller decides whether status 2 throws
+ * and whether status 0 falls back to the structural dispatcher.
+ */
+function strictMethodDispatch(
+  ctx: CodegenContext,
+  entries: readonly StrictMethodDispatchEntry[],
+  receiver: number | (() => Instr[]),
+  resultLocal: number,
+  statusLocal: number,
+): Instr[] {
+  if (entries.length === 0) return [];
+  const byType = new Map<number, StrictMethodDispatchEntry[]>();
+  for (const entry of entries) {
+    let group = byType.get(entry.typeIdx);
+    if (group === undefined) {
+      group = [];
+      byType.set(entry.typeIdx, group);
+    }
+    group.push(entry);
+  }
+  const out: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: statusLocal },
+  ];
+  for (const [typeIdx, group] of byType) {
+    const fieldIdx = group[0]!.fieldIdx;
+    const exactArms: Instr[] = [];
+    for (const entry of group) {
+      const pads = entry.params.slice(1).map((param) => strictMethodMissingArg(ctx, param));
+      const invoke: Instr[] = pads.some((pad) => pad === null)
+        ? // There is no sound value for a non-nullable GC ref that JavaScript
+          // omitted. Mark the exact arm as an intentional TypeError route;
+          // callers must not fall through to a typed call that traps.
+          [
+            { op: "i32.const", value: 2 },
+            { op: "local.set", index: statusLocal },
+          ]
+        : [
+            ...strictMethodReceiverExternref(receiver),
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx },
+            ...pads.flatMap((pad) => pad!),
+            { op: "call", funcIdx: entry.funcIdx },
+            ...strictMethodResultExternref(entry.result),
+            { op: "local.set", index: resultLocal },
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: statusLocal },
+          ];
+      exactArms.push(
+        ...strictMethodReceiverExternref(receiver),
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx },
+        { op: "struct.get", typeIdx, fieldIdx },
+        { op: "i32.const", value: entry.methodId },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: invoke, else: [] },
+      );
+    }
+    out.push(
+      ...strictMethodReceiverExternref(receiver),
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 2 }, { op: "local.set", index: statusLocal }, ...exactArms],
+        else: [],
+      },
+    );
+  }
+  return out;
+}
+
+/**
+ * Reserve the host-side strict method surface.  The canonical host materializer
+ * remains the provider for the host lane; this flag only asks finalization to
+ * expose an exact receiver-aware fallback for closed WasmGC object literals.
+ * It is deliberately separate from `ensureNativeStrictSpreadRuntime`, which
+ * is standalone/WASI-only and owns the native provider bodies.
+ */
+export function ensureHostStrictSpreadDispatch(ctx: CodegenContext): void {
+  strictHostSpreadByCtx.add(ctx);
+  // `fillNativeIteratorLateArms` is the existing post-dispatch finalization
+  // seam. Mark the work pending without registering the native compatibility
+  // quartet; the host branch below returns after emitting only these helpers.
+  ctx.nativeIteratorUserArmPending = true;
+}
+
+/** Emit one host-visible exact method dispatcher with structural fallback. */
+function emitHostStrictMethodDispatcher(
+  ctx: CodegenContext,
+  exportName: string,
+  entries: readonly StrictMethodDispatchEntry[],
+  fallbackName: string,
+): void {
+  if (entries.length === 0) return;
+  const emitted = strictHostSpreadDispatchByCtx.get(ctx) ?? new Set<string>();
+  if (emitted.has(exportName)) return;
+  const fallbackIdx = ctx.funcMap.get(fallbackName);
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], `$${exportName}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  const body: Instr[] = [
+    ...strictMethodDispatch(ctx, entries, 0, 1, 2),
+    { op: "local.get", index: 2 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: 1 }],
+      else: [
+        { op: "local.get", index: 2 },
+        { op: "i32.const", value: 2 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [{ op: "ref.null.extern" }],
+          else:
+            fallbackIdx === undefined
+              ? [{ op: "ref.null.extern" }]
+              : [
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: fallbackIdx },
+                ],
+        },
+      ],
+    },
+  ];
+  pushDefinedFunc(ctx, funcIdx, {
+    name: exportName,
+    typeIdx,
+    locals: [
+      { name: "result", type: { kind: "externref" } },
+      { name: "status", type: { kind: "i32" } },
+    ],
+    body,
+    exported: true,
+  });
+  ctx.mod.exports.push({ name: exportName, desc: { kind: "func", index: funcIdx } });
+  emitted.add(exportName);
+  strictHostSpreadDispatchByCtx.set(ctx, emitted);
+}
+
 function iterRuntimeTypes(ctx: CodegenContext): IterRuntimeTypes {
   const iterRecTypeIdx = getOrRegisterIterRecType(ctx);
   const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
@@ -627,6 +1355,12 @@ export function ensureNativeStrictSpreadRuntime(ctx: CodegenContext): number | u
   if (existing !== undefined) return existing.materializeIdx;
 
   ensureNativeIteratorRuntime(ctx);
+  // Register the exact-literal identities before later source bodies can use
+  // call-site inlining.  The inline compiler copies the provider's marker
+  // prefix along with a small callee body; discovering the same literals only
+  // at finalization would leave those copies indistinguishable from an
+  // unpaired allocation.
+  collectStrictMethodDispatch(ctx, false);
   const types = iterRuntimeTypes(ctx);
   const iterRecRef: ValType = { kind: "ref", typeIdx: types.iterRecTypeIdx };
   const vecRefNull: ValType = { kind: "ref_null", typeIdx: types.vecTypeIdx };
@@ -658,6 +1392,7 @@ export function ensureNativeStrictSpreadRuntime(ctx: CodegenContext): number | u
       { name: "len", type: { kind: "i32" } },
       { name: "out", type: arrRef },
       { name: "f64tmp", type: { kind: "f64" } },
+      { name: "methodStatus", type: { kind: "i32" } },
     ],
     buildIteratorBody(
       types,
@@ -670,6 +1405,7 @@ export function ensureNativeStrictSpreadRuntime(ctx: CodegenContext): number | u
       undefined,
       nonIterableThrow,
       true,
+      undefined,
     ),
   );
 
@@ -1631,18 +2367,47 @@ function externSgetIdx(ctx: CodegenContext, name: string): number | undefined {
  *     family arms normalize INTO the canonical vec), so the vec-only next/rest
  *     bodies stay correct as-is.
  *
- * No-op when the native runtime was never registered
- * (`!nativeIteratorUserArmPending`) or when neither arm set applies — the
- * carrier stays vec-only and byte-identical.
+ * When the native runtime was never registered (`!nativeIteratorUserArmPending`)
+ * the compatibility bodies stay byte-identical; the only possible work is the
+ * host strict materializer's concrete empty-tuple discriminator. When neither
+ * arm set applies, the carrier stays vec-only.
  *
  * MUST be called AFTER `emitStructFieldGetters` + `emitIteratorMethodExport` in
  * the finalize sequence. Storing the carrier funcIdx in `funcMap` (and looking it
  * up post-shift here) keeps it in lockstep with any late-import index shift.
  */
 export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
-  if (!ctx.nativeIteratorUserArmPending) return;
+  if (!ctx.nativeIteratorUserArmPending) {
+    // Ordinary host call-spread lowering registers the strict materializer
+    // directly from `nested-declarations.ts`, without reserving the native
+    // iterator quartet. Still emit the exact empty-tuple discriminator for
+    // that host import at the shared finalize boundary, once all tuple types
+    // are known. Standalone/WASI never consults this host-side export.
+    if (!ctx.standalone && !ctx.wasi && ctx.funcMap.has("__array_from_iter_strict")) {
+      emitEmptyTuplePredicate(ctx);
+    }
+    return;
+  }
+  // Finalization is a single-shot boundary. Clear the reservation before any
+  // body walk or helper registration so an accidental second invocation cannot
+  // rescan and mutate the whole instruction graph again. All late consumers
+  // below read the filled bodies; none needs this reservation to remain set.
+  ctx.nativeIteratorUserArmPending = false;
 
   const strictRuntime = strictSpreadRuntimeByCtx.get(ctx);
+  if (strictHostSpreadByCtx.has(ctx)) {
+    // The host lane keeps `__array_from_iter_strict` as its canonical provider.
+    // Only closed object-literal methods need an exact receiver-aware export;
+    // all other values continue through the ordinary host/runtime fallback.
+    emitEmptyTuplePredicate(ctx);
+    const strictMethods = collectStrictMethodDispatch(ctx);
+    if (strictMethods !== undefined) {
+      emitHostStrictMethodDispatcher(ctx, "__call_@@iterator_strict", strictMethods.iterator, "__call_@@iterator");
+      emitHostStrictMethodDispatcher(ctx, "__call_next_strict", strictMethods.next, "__call_next");
+    }
+    strictHostSpreadByCtx.delete(ctx);
+    return;
+  }
   // The strict provider validates callable iterator methods and Object-valued
   // results.  Native union helpers are the canonical standalone predicates;
   // register them before capturing their final funcIdxs.
@@ -1653,6 +2418,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   ) {
     addUnionImports(ctx);
   }
+
+  const strictMethods = strictRuntime && (ctx.standalone || ctx.wasi) ? collectStrictMethodDispatch(ctx) : undefined;
 
   const callIteratorIdx = ctx.funcMap.get("__call_@@iterator");
   const callNextIdx = ctx.funcMap.get("__call_next");
@@ -1839,7 +2606,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     }
   }
 
-  const familyArms = [...stringArm, ...buildVecFamilyArms(ctx, types)];
+  const familyArms = [...stringArm, ...buildVecFamilyArms(ctx, types), ...buildEmptyTupleFamilyArms(ctx, types)];
   // The strict spread provider is an independent dispatcher and must still
   // be rebuilt in a module whose legacy iterator has no late arms.  Without
   // this guard the vec-only early return leaves `__iterator_strict` unable to
@@ -1954,7 +2721,12 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     }
   }
   const strictFamilyArms = strictRuntime
-    ? [...strictMapArm, ...strictStringArm, ...buildVecFamilyArms(ctx, types, true)]
+    ? [
+        ...strictMapArm,
+        ...strictStringArm,
+        ...buildVecFamilyArms(ctx, types, true),
+        ...buildEmptyTupleFamilyArms(ctx, types),
+      ]
     : [];
   if (iteratorFn)
     iteratorFn.body = buildIteratorBody(
@@ -1999,6 +2771,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         sgDeps,
         nonIterableThrowInstrs(ctx),
         true,
+        strictMethods,
+        ctx,
       );
     }
     if (strictIteratorNextFn) {
@@ -2018,6 +2792,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         true,
         nonIterableThrowInstrs(ctx),
         ctx,
+        strictMethods,
       );
     }
     const strictMaterializeFn = definedFuncAt(ctx, strictRuntime.materializeIdx);
@@ -2686,6 +3461,10 @@ function buildIteratorBody(
   nonIterableThrow?: Instr[],
   /** (#5131) Use the strict GetIterator contract for the spread provider. */
   strictProtocol = false,
+  /** (#5131) Exact per-literal method dispatch for native strict spread. */
+  strictMethods?: StrictMethodDispatchDeps,
+  /** (#5131) Context used to build no-argument defaults for direct calls. */
+  strictCtx?: CodegenContext,
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx } = types;
 
@@ -2912,7 +3691,7 @@ function buildIteratorBody(
     strictProtocol && objDeps && objDeps.typeofObjectIdx !== undefined && objDeps.typeofFunctionIdx !== undefined
       ? (() => {
           const od = objDeps;
-          const throwBad = (nonIterableThrow ?? buildVecArm()).map((instr) => ({ ...instr }));
+          const throwBad = (): Instr[] => (nonIterableThrow ?? buildVecArm()).map((instr) => ({ ...instr }));
           const objectResultTest = (load: () => Instr[]): Instr[] => [
             ...load(),
             { op: "ref.is_null" },
@@ -2943,7 +3722,7 @@ function buildIteratorBody(
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: throwBad,
+                  then: throwBad(),
                   else: [],
                 },
                 // iterObj = iterFn.call(obj, …)
@@ -2958,7 +3737,7 @@ function buildIteratorBody(
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: throwBad,
+                  then: throwBad(),
                   else: [],
                 },
                 ...objCarrierTest(od, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }]),
@@ -3081,51 +3860,92 @@ function buildIteratorBody(
 
   const strictTail: Instr[] =
     strictProtocol &&
-    (deps?.callIteratorIdx !== undefined || tailCallIteratorIdx !== undefined) &&
-    objDeps &&
-    objDeps.typeofObjectIdx !== undefined &&
-    objDeps.typeofFunctionIdx !== undefined
+    ((strictMethods?.iterator.length ?? 0) > 0 ||
+      deps?.callIteratorIdx !== undefined ||
+      tailCallIteratorIdx !== undefined)
       ? (() => {
-          const callIterator = deps?.callIteratorIdx ?? tailCallIteratorIdx!;
-          const throwBad = (nonIterableThrow ?? buildVecArm()).map((instr) => ({ ...instr }));
+          const callIterator = deps?.callIteratorIdx ?? tailCallIteratorIdx;
+          const typeofObjectIdx = objDeps?.typeofObjectIdx ?? strictMethods?.typeofObjectIdx;
+          const typeofFunctionIdx = objDeps?.typeofFunctionIdx ?? strictMethods?.typeofFunctionIdx;
+          const throwBad = (): Instr[] => (nonIterableThrow ?? buildVecArm()).map((instr) => ({ ...instr }));
           const iteratorLoad = (): Instr[] => [{ op: "local.get", index: 2 }];
-          return [
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: callIterator },
-            { op: "local.set", index: 2 },
-            // A missing @@iterator or a method returning null is a TypeError;
-            // the old tail's identity fallback is intentionally absent.
+          const resultIsObject = (): Instr[] => [
             ...iteratorLoad(),
             { op: "ref.is_null" },
             { op: "i32.eqz" },
             ...iteratorLoad(),
-            { op: "call", funcIdx: objDeps.typeofObjectIdx },
+            { op: "call", funcIdx: typeofObjectIdx! },
             ...iteratorLoad(),
-            { op: "call", funcIdx: objDeps.typeofFunctionIdx },
+            { op: "call", funcIdx: typeofFunctionIdx! },
             { op: "i32.or" },
             { op: "i32.and" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: throwBad,
-              else: [],
-            },
-            // An open object iterator uses property reads; all other iterator
-            // objects go through the closed-struct dispatcher.
-            ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }]),
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [{ op: "i32.const", value: ITER_KIND_OBJ }],
-              else: [{ op: "i32.const", value: ITER_KIND_USER }],
-            },
-            { op: "ref.null", typeIdx: vecTypeIdx },
-            { op: "i32.const", value: 0 },
-            { op: "local.get", index: 2 },
-            { op: "struct.new", typeIdx: iterRecTypeIdx },
-            { op: "extern.convert_any" },
           ];
+          const finish = (): Instr[] =>
+            [
+              // A missing @@iterator or a method returning null is a TypeError;
+              // the old tail's identity fallback is intentionally absent.
+              ...resultIsObject(),
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: throwBad(),
+                else: [],
+              },
+              // An open object iterator uses property reads; all other iterator
+              // objects go through the closed-struct dispatcher.
+              ...(objDeps
+                ? objCarrierTest(objDeps, () => [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }])
+                : ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: ITER_KIND_OBJ }],
+                else: [{ op: "i32.const", value: ITER_KIND_USER }],
+              },
+              { op: "ref.null", typeIdx: vecTypeIdx },
+              { op: "i32.const", value: 0 },
+              { op: "local.get", index: 2 },
+              { op: "struct.new", typeIdx: iterRecTypeIdx },
+              { op: "extern.convert_any" },
+            ] as Instr[];
+          const fallback = (): Instr[] =>
+            callIterator === undefined
+              ? throwBad()
+              : [
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: callIterator },
+                  { op: "local.set", index: 2 },
+                  ...finish(),
+                ];
+          const direct =
+            strictMethods && strictCtx ? strictMethodDispatch(strictCtx, strictMethods.iterator, 0, 2, 7) : [];
+          return [
+            ...direct,
+            ...(direct.length > 0
+              ? [
+                  { op: "local.get", index: 7 },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "externref" } },
+                    then: finish(),
+                    else: [
+                      { op: "local.get", index: 7 },
+                      { op: "i32.const", value: 2 },
+                      { op: "i32.eq" },
+                      {
+                        op: "if",
+                        blockType: { kind: "val", type: { kind: "externref" } },
+                        then: throwBad(),
+                        else: fallback(),
+                      },
+                    ],
+                  },
+                ]
+              : fallback()),
+          ] as Instr[];
         })()
       : (nonIterableThrow ?? buildVecArm());
 
@@ -3382,6 +4202,103 @@ function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes, strict
 }
 
 /**
+ * (#5131) Build the zero-length tuple arms for the native iterator ladder.
+ *
+ * An empty array literal is represented as a compiler-owned `__tuple_*` struct
+ * when its element type cannot be sampled. It therefore has no `__vec_*`
+ * carrier entry for `collectVecFamilyCarriers` to discover, even though its
+ * language-level value is still an array and must contribute zero iterator
+ * elements. Admit every zero-field tuple type registered by this module
+ * independently of element sampling, and normalize it to a fresh canonical
+ * empty `$Vec` cursor. This is deliberately separate from
+ * `buildVecFamilyArms`: a zero-field tuple has no length/data fields to load.
+ *
+ * All instructions are fresh per call so compatibility and strict bodies can
+ * each be walked/remapped without sharing instruction ownership.
+ */
+function buildEmptyTupleFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes): Instr[] {
+  const emptyTupleTypeIdxs: number[] = [];
+  for (let typeIdx = 0; typeIdx < ctx.mod.types.length; typeIdx++) {
+    const def = ctx.mod.types[typeIdx];
+    if (def?.kind !== "struct" || !def.name?.startsWith("__tuple_") || def.fields.length !== 0) continue;
+    emptyTupleTypeIdxs.push(typeIdx);
+  }
+
+  return emptyTupleTypeIdxs.flatMap((tupleTypeIdx): Instr[] => [
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: tupleTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: ITER_KIND_VEC },
+        { op: "i32.const", value: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "array.new_default", typeIdx: types.arrTypeIdx },
+        { op: "struct.new", typeIdx: types.vecTypeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "ref.null.extern" },
+        { op: "struct.new", typeIdx: types.iterRecTypeIdx },
+        { op: "extern.convert_any" },
+        { op: "return" },
+      ],
+      else: [],
+    },
+  ]);
+}
+
+/**
+ * (#5131) Emit the host-side positive discriminator for empty tuple carriers.
+ *
+ * `__struct_field_names` intentionally has no entry for a zero-field tuple,
+ * so the host cannot distinguish it from an ordinary fieldless data struct by
+ * metadata alone. Keep that distinction in Wasm where the concrete type index
+ * is available, and expose the result as a tiny receiver-aware predicate for
+ * the strict host materializer. This is an exported helper rather than a host
+ * import: it adds no host capability and remains exact after type-index DCE
+ * remapping.
+ */
+function emitEmptyTuplePredicate(ctx: CodegenContext): void {
+  if (ctx.funcMap.has("__is_empty_tuple")) return;
+
+  const emptyTupleTypeIdxs: number[] = [];
+  for (let typeIdx = 0; typeIdx < ctx.mod.types.length; typeIdx++) {
+    const def = ctx.mod.types[typeIdx];
+    if (def?.kind !== "struct" || !def.name?.startsWith("__tuple_") || def.fields.length !== 0) continue;
+    emptyTupleTypeIdxs.push(typeIdx);
+  }
+  if (emptyTupleTypeIdxs.length === 0) return;
+
+  const body: Instr[] = [];
+  for (const typeIdx of emptyTupleTypeIdxs) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+        else: [],
+      },
+    );
+  }
+  body.push({ op: "i32.const", value: 0 });
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$__is_empty_tuple_type");
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__is_empty_tuple", funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__is_empty_tuple",
+    typeIdx,
+    locals: [],
+    body,
+    exported: true,
+  });
+  ctx.mod.exports.push({ name: "__is_empty_tuple", desc: { kind: "func", index: funcIdx } });
+}
+
+/**
  * Build the `__iterator_next(recExt) -> (i32 done, externref value)` body. With
  * `deps === undefined` only the vec arm is reachable (USER kind is never produced
  * without the fill). With `deps` the USER arm dispatches (§7.4.4 IteratorNext +
@@ -3414,6 +4331,7 @@ function buildIteratorNextBody(
   strictProtocol = false,
   strictError?: Instr[],
   strictCtx?: CodegenContext,
+  strictMethods?: StrictMethodDispatchDeps,
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
 
@@ -3669,7 +4587,7 @@ function buildIteratorNextBody(
     strictProtocol && objDeps && objDeps.typeofObjectIdx !== undefined && objDeps.typeofFunctionIdx !== undefined
       ? (() => {
           const od = objDeps;
-          const throwBad = (strictError ?? [{ op: "unreachable" }]).map((instr) => ({ ...instr }));
+          const throwBad = (): Instr[] => (strictError ?? [{ op: "unreachable" }]).map((instr) => ({ ...instr }));
           const resultIsObject = (load: () => Instr[]): Instr[] => [
             ...load(),
             { op: "ref.is_null" },
@@ -3755,11 +4673,11 @@ function buildIteratorNextBody(
             ...nextRead,
             { op: "local.tee", index: 6 },
             { op: "ref.is_null" },
-            { op: "if", blockType: { kind: "empty" }, then: throwBad, else: [] },
+            { op: "if", blockType: { kind: "empty" }, then: throwBad(), else: [] },
             { op: "local.get", index: 6 },
             { op: "call", funcIdx: od.typeofFunctionIdx! },
             { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: throwBad, else: [] },
+            { op: "if", blockType: { kind: "empty" }, then: throwBad(), else: [] },
             { op: "local.get", index: 6 },
             { op: "local.get", index: 1 },
             { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
@@ -3768,13 +4686,13 @@ function buildIteratorNextBody(
             { op: "local.set", index: 6 },
             ...resultIsObject(() => [{ op: "local.get", index: 6 }]),
             { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: throwBad, else: [] },
+            { op: "if", blockType: { kind: "empty" }, then: throwBad(), else: [] },
             ...objCarrierTest(od, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: readObjResult,
-              else: readClosedResult,
+              then: structuredClone(readObjResult),
+              else: structuredClone(readClosedResult),
             },
           ] satisfies Instr[];
         })()
@@ -3786,7 +4704,7 @@ function buildIteratorNextBody(
   const strictUserStep: Instr[] =
     strictProtocol && deps && deps.typeofObjectIdx !== undefined && deps.typeofFunctionIdx !== undefined
       ? (() => {
-          const throwBad = (strictError ?? [{ op: "unreachable" }]).map((instr) => ({ ...instr }));
+          const throwBad = (): Instr[] => (strictError ?? [{ op: "unreachable" }]).map((instr) => ({ ...instr }));
           const resultIsObject = (load: () => Instr[]): Instr[] => [
             ...load(),
             { op: "ref.is_null" },
@@ -3847,7 +4765,23 @@ function buildIteratorNextBody(
                   { op: "ref.null.extern" },
                   { op: "local.set", index: 5 },
                 ];
-          return [
+          const readResult = (): Instr[] => [
+            ...resultIsObject(() => [{ op: "local.get", index: 6 }]),
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: throwBad(), else: [] },
+            ...(objDeps
+              ? ([
+                  ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: structuredClone(readObjResult),
+                    else: structuredClone(readStructResult),
+                  } satisfies Instr,
+                ] satisfies Instr[])
+              : structuredClone(readStructResult)),
+          ];
+          const fallback: Instr[] = [
             // Validate the closed iterator's `next` field before entering the
             // type-switch dispatcher.  `__call_next` must invoke a funcref
             // field and therefore cannot be used as the probe itself: a
@@ -3861,27 +4795,50 @@ function buildIteratorNextBody(
                   { op: "local.tee", index: 6 },
                   { op: "call", funcIdx: deps.typeofFunctionIdx! },
                   { op: "i32.eqz" },
-                  { op: "if", blockType: { kind: "empty" }, then: throwBad, else: [] },
+                  { op: "if", blockType: { kind: "empty" }, then: throwBad(), else: [] },
                 ] satisfies Instr[])
-              : [...throwBad]),
+              : [...throwBad()]),
             { op: "local.get", index: 1 },
             { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
             { op: "call", funcIdx: deps.callNextIdx },
             { op: "local.set", index: 6 },
-            ...resultIsObject(() => [{ op: "local.get", index: 6 }]),
-            { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: throwBad, else: [] },
-            ...(objDeps
-              ? ([
-                  ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: readObjResult,
-                    else: readStructResult,
-                  } satisfies Instr,
-                ] satisfies Instr[])
-              : readStructResult),
+            ...readResult(),
+          ];
+          const direct =
+            strictMethods && strictCtx
+              ? strictMethodDispatch(
+                  strictCtx,
+                  strictMethods.next,
+                  () => [
+                    { op: "local.get", index: 1 },
+                    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+                  ],
+                  6,
+                  4,
+                )
+              : [];
+          if (direct.length === 0) return fallback;
+          return [
+            ...direct,
+            { op: "local.get", index: 4 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: readResult(),
+              else: [
+                { op: "local.get", index: 4 },
+                { op: "i32.const", value: 2 },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: throwBad(),
+                  else: fallback,
+                },
+              ],
+            },
           ] satisfies Instr[];
         })()
       : [];

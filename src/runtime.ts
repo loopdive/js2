@@ -2958,11 +2958,33 @@ function _hostStrictGetIterator(
     method = _safeGet(hostView, Symbol.iterator, callbackState) ?? _safeGet(hostView, "@@iterator", callbackState);
   }
 
+  // A closed WasmGC object-literal iterator has a real `@@iterator` field, but
+  // a module-wide `__sget_@@iterator` export may have a different ABI because
+  // a sibling literal stores a non-callable value in the same logical slot.
+  // In that case `_safeGet` returns a numeric ABI default rather than the
+  // callable closure.  The strict provider is the receiver-aware authority
+  // for every non-callable WasmGC read, so consult it before the generic host
+  // closure bridge.  Callable/open-object values retain their ordinary host
+  // property semantics; the provider remains available below for a genuine
+  // missing method.
+  const strictDispatch = exports?.["__call_@@iterator_strict"];
+  if (_isWasmStruct(value) && typeof strictDispatch === "function" && !_hostIsCallable(method, exports)) {
+    const iterator = strictDispatch(value);
+    if (!_hostIsObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+    return iterator;
+  }
+
   // A closed compiled object may not expose its symbol field through the
   // generic host reader. The generated dispatcher is the authoritative
   // receiver-aware fallback in that representation and invokes the method
   // exactly once.
   if (method === undefined || method === null) {
+    const strictDispatch = exports?.["__call_@@iterator_strict"];
+    if (_isWasmStruct(value) && typeof strictDispatch === "function") {
+      const iterator = strictDispatch(value);
+      if (!_hostIsObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+      return iterator;
+    }
     const dispatch = exports?.["__call_@@iterator"];
     if (_isWasmStruct(value) && typeof dispatch === "function") {
       const iterator = dispatch(value);
@@ -2983,6 +3005,22 @@ function _hostStrictIteratorNext(
 ): [number, any] {
   const exports = callbackState?.getExports();
   let next = _safeGet(iterator, "next", callbackState);
+
+  // As with acquisition, a sibling with a non-callable `next` field can make
+  // the generic getter return an ABI default instead of the closure belonging
+  // to this receiver.  Consult the exact strict provider for every
+  // non-callable WasmGC read before falling back to the ordinary host bridge.
+  const strictDispatch = exports?.["__call_next_strict"];
+  if (_isWasmStruct(iterator) && typeof strictDispatch === "function" && !_hostIsCallable(next, exports)) {
+    const result = strictDispatch(iterator);
+    if (!_hostIsObjectValue(result, exports)) throw new TypeError("iterator result is not an object");
+    const doneValue = _safeGet(result, "done", callbackState);
+    const donePrimitive = _nativePrimitiveToHost(doneValue, exports);
+    const done = donePrimitive === _MISS ? !!doneValue : !!donePrimitive;
+    const value = done ? undefined : _safeGet(result, "value", callbackState);
+    return [done ? 1 : 0, value];
+  }
+
   let result: any;
   if (next !== undefined && next !== null) {
     if (!_hostIsCallable(next, exports)) throw new TypeError("iterator.next is not a function");
@@ -2990,11 +3028,15 @@ function _hostStrictIteratorNext(
     // must never trigger a second dispatcher call.
     result = _hostInvokeCallable(iterator, next, [], callbackState);
   } else {
-    const dispatch = exports?.["__call_next"];
-    if (!_isWasmStruct(iterator) || typeof dispatch !== "function") {
-      throw new TypeError("iterator.next is not a function");
+    if (_isWasmStruct(iterator) && typeof strictDispatch === "function") {
+      result = strictDispatch(iterator);
+    } else {
+      const dispatch = exports?.["__call_next"];
+      if (!_isWasmStruct(iterator) || typeof dispatch !== "function") {
+        throw new TypeError("iterator.next is not a function");
+      }
+      result = dispatch(iterator);
     }
-    result = dispatch(iterator);
   }
   if (!_hostIsObjectValue(result, exports)) throw new TypeError("iterator result is not an object");
   const doneValue = _safeGet(result, "done", callbackState);
@@ -4425,6 +4467,61 @@ function _tupleFieldCount(obj: any, exports: Record<string, Function> | undefine
   if (!names || names.length === 0) return undefined;
   for (const n of names) if (!/^_\d+$/.test(n)) return undefined;
   return names.length;
+}
+
+/**
+ * (#5131) Positive host-boundary discriminator for an empty array carrier.
+ *
+ * Empty tuple structs have no field-name CSV entry, so inferring this shape
+ * from `__struct_field_names === null` would misclassify fieldless classes and
+ * other internal data structs as arrays. The iterator-native finalizer emits
+ * `__is_empty_tuple`, whose concrete `ref.test` chain is the only authority for
+ * this classification. Keep protocol overrides observable: a user-installed
+ * iterator, accessor, or explicit prototype must fall through to ordinary
+ * strict GetIterator rather than being silently replaced by the empty fast
+ * path.
+ */
+function _isEmptyTupleCarrier(
+  obj: any,
+  exports: Record<string, Function> | undefined,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): boolean {
+  if (!exports || !_isWasmStruct(obj)) return false;
+  const isEmptyTuple = exports.__is_empty_tuple as ((value: any) => number) | undefined;
+  if (typeof isEmptyTuple !== "function") return false;
+  try {
+    if (isEmptyTuple(obj) !== 1) return false;
+  } catch {
+    return false;
+  }
+
+  // A tuple's default prototype is opaque/null. Any recorded prototype is a
+  // user semantic change, so let strict GetIterator observe it normally.
+  if (_wasmStructProto.has(obj) || _fnctorInstanceCtor.has(obj as object)) return false;
+  if (_prototypeMethodNames.has(obj) || _staticMethodNames.has(obj)) return false;
+
+  // `_safeGet` intentionally stores well-known symbols under both the real
+  // Symbol and its `@@name` alias. Check presence separately so an explicitly
+  // installed `undefined`/`null` iterator is not mistaken for a missing one.
+  const sidecar = _wasmStructProps.get(obj);
+  if (
+    sidecar &&
+    (_hasOwn(sidecar, Symbol.iterator) ||
+      _hasOwn(sidecar, "@@iterator") ||
+      _hasOwn(sidecar, "__get_@@iterator") ||
+      _hasOwn(sidecar, "__set_@@iterator"))
+  ) {
+    return false;
+  }
+  const accessors = _wasmStructAccessors.get(obj);
+  if (accessors?.has(Symbol.iterator) || accessors?.has("@@iterator")) return false;
+
+  // Probe inherited/recorded protocol values as the final guard. A getter is
+  // deliberately allowed to throw here: strict GetIterator must propagate that
+  // abrupt completion, not retry it through a second path.
+  if (_safeGet(obj, Symbol.iterator, callbackState) !== undefined) return false;
+  if (_safeGet(obj, "@@iterator", callbackState) !== undefined) return false;
+  return true;
 }
 
 function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
@@ -12993,6 +13090,19 @@ assert._isSameValue = isSameValue;
                    guard above; `__vec_len` returns 0 instead of throwing. Only
                    a genuine element-read trap reaches here. */
               }
+            }
+            // (#5131) A zero-length array literal may be a compiler-owned
+            // `__tuple_0` struct when no element was available for carrier
+            // sampling. Its exact Wasm-side discriminator keeps this path
+            // separate from fieldless objects/classes, while the protocol
+            // guards preserve user-installed iterator overrides.
+            if (strictIterator && _isEmptyTupleCarrier(obj, exps, callbackState)) {
+              // The tuple has the ordinary Array iterator only while the host
+              // intrinsic remains untouched. If user code replaced that
+              // intrinsic, re-enter the native-array branch so its iterator
+              // (including any yielded values or throws) stays observable.
+              if ((Array.prototype as any)[Symbol.iterator] === _origArrayIter) return [];
+              return _arrayFromIter([], limit, true);
             }
           }
           if (_nativeIsArray(obj)) {

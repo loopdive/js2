@@ -38,7 +38,7 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
-import { ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
+import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
@@ -414,6 +414,8 @@ function emitHostCanonicalExpandedProxyArguments(
   // Reserve all canonical provider imports before compiling any argument.
   // Later source expressions can register additional imports; the terminal
   // flush and name lookups below keep every emitted call index current.
+  ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+  ensureHostStrictSpreadDispatch(ctx);
   const iterFn = ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
   const lengthFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
   const getFn = ensureLateImport(
