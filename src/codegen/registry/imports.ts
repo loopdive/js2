@@ -154,6 +154,7 @@ export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<s
   if (ctx.nativeStrings) {
     for (const value of pending) {
       // Sentinel: no host import, materialize inline at use sites.
+      ctx.stringGlobalMap.set(value, -1);
       ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
       ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
       ctx.stringLiteralCounter++;

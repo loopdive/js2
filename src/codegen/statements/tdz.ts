@@ -7,7 +7,7 @@ import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitThrowReferenceError, noJsHost } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
-import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import { addHostStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 
 // (#4601 route 1) `collectPatternBindingNames` is a pure-AST walk with no
 // CodegenContext in sight; it moved below the IR (`ir/analysis/ast-scope.ts`)
@@ -116,9 +116,13 @@ export function emitTdzCheckAtGlobal(
   flushLateImportShifts(ctx, fctx);
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    } else {
+      const tagIdx = ensureExnTag(ctx);
+      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
+    }
   } else {
     const tagIdx = ensureExnTag(ctx);
     then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];

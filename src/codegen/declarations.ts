@@ -43,12 +43,22 @@ import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#449
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
-import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
+import {
+  ASYNC_CPS_ENABLED,
+  analyzeAsyncBody,
+  asyncFnNeedsCps,
+  isEmitOperand,
+  planAsyncCfg,
+  type AsyncCfgPlan,
+  type AsyncCfgState,
+} from "./async-cps.js";
 import {
   asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
+  buildAsyncFrameInfo,
   emitAsyncFrameStateMachine,
+  emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
@@ -4299,6 +4309,254 @@ export function moduleInitHasTopLevelAwait(statements: readonly ts.Statement[]):
   return found;
 }
 
+type ModuleStaticInitEntry = CodegenContext["staticInitExprs"][number];
+
+function moduleStaticInitNode(entry: ModuleStaticInitEntry): ts.Node | undefined {
+  return entry.staticBlock ?? entry.initializer;
+}
+
+/**
+ * `staticInitExprs` is a collector-wide list and includes class declarations
+ * nested in an `if`/loop/try. Those entries do not carry their enclosing
+ * control-flow owner, so only source-file-direct declarations can be threaded
+ * through this module-level timeline. Nested declarations emit their statics
+ * from their owning statement lowering, preserving branch and catch ownership.
+ */
+function isGraphTimelineStaticEntry(entry: ModuleStaticInitEntry): boolean {
+  const node = moduleStaticInitNode(entry);
+  if (!node) return false;
+  let owner: ts.Node | undefined = node.parent;
+  while (owner !== undefined && !ts.isClassDeclaration(owner) && !ts.isClassExpression(owner)) {
+    owner = owner.parent;
+  }
+  return owner !== undefined && ts.isClassDeclaration(owner) && ts.isSourceFile(owner.parent);
+}
+
+/**
+ * Emit one declaration-class field or static-block evaluation at its exact
+ * module timeline position. The caller owns the timeline; this helper owns
+ * only the class-static receiver and backing-global mechanics.
+ */
+function emitModuleStaticInitialization(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  entry: ModuleStaticInitEntry,
+): void {
+  const { initializer, staticBlock, className } = entry;
+  // (#1395) Static field/block `this` is the class-object singleton. Keep the
+  // context scoped to this one entry: the shared async resume frame also emits
+  // ordinary module statements whose top-level `this` has different semantics.
+  const savedEnclosing = fctx.enclosingClassName;
+  const savedIsStatic = fctx.isStaticContext;
+  if (className !== undefined) {
+    fctx.enclosingClassName = className;
+    fctx.isStaticContext = true;
+  }
+  try {
+    if (staticBlock) {
+      for (const statement of staticBlock.body.statements) {
+        compileStatement(ctx, fctx, statement);
+      }
+    } else if (initializer && entry.globalIdx !== undefined) {
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, entry.globalIdx)];
+      compileExpression(ctx, fctx, initializer, globalDef?.type);
+      // A static initializer can register late imports. Read the mutable entry
+      // again after expression lowering so its shifted global index is the one
+      // emitted into this newly-created instruction.
+      if (entry.globalIdx !== undefined) {
+        fctx.body.push({ op: "global.set", index: entry.globalIdx });
+      }
+    }
+  } finally {
+    fctx.enclosingClassName = savedEnclosing;
+    fctx.isStaticContext = savedIsStatic;
+  }
+}
+
+interface GraphStaticTimelineEntry {
+  readonly entry: ModuleStaticInitEntry;
+  readonly sourceOrdinal: number;
+  readonly position: number;
+}
+
+interface GraphSourceAnchor {
+  readonly sourceOrdinal: number;
+  readonly position: number;
+  readonly stateIndex: number;
+  /** Static entries inserted at this slot run before `lead[slot]`; `lead.length` is before the terminator. */
+  readonly slot: number;
+}
+
+function graphNodeTimelinePosition(ctx: CodegenContext, node: ts.Node): { sourceOrdinal: number; position: number } {
+  return {
+    sourceOrdinal: moduleInitSourceOrdinal(ctx, node.getSourceFile()),
+    position: node.pos,
+  };
+}
+
+function compareGraphTimelinePosition(
+  left: Pick<GraphStaticTimelineEntry, "sourceOrdinal" | "position">,
+  right: Pick<GraphStaticTimelineEntry, "sourceOrdinal" | "position">,
+): number {
+  return left.sourceOrdinal - right.sourceOrdinal || left.position - right.position;
+}
+
+type AsyncGraphStateUnit =
+  | { readonly kind: "lead"; readonly lead: AsyncCfgState["lead"][number] }
+  | { readonly kind: "static"; readonly entry: ModuleStaticInitEntry }
+  | { readonly kind: "emit"; readonly emit: NonNullable<AsyncCfgState["emit"]> };
+
+/**
+ * Thread declaration-class static evaluation through an already-planned async
+ * module graph. `staticInitExprs` is intentionally separate from
+ * `moduleInitStatements`, so a top-level-await frame would otherwise have no
+ * state in which to run it. Split only the affected straight-line states and
+ * preserve every original branch/suspension edge through a dense-id remap.
+ */
+function scheduleGraphStaticInitializers(
+  ctx: CodegenContext,
+  cfg: AsyncCfgPlan,
+  staticEntries: readonly ModuleStaticInitEntry[],
+): AsyncCfgPlan {
+  const timeline = staticEntries.flatMap((entry): GraphStaticTimelineEntry[] => {
+    const node = moduleStaticInitNode(entry);
+    return node === undefined ? [] : [{ entry, ...graphNodeTimelinePosition(ctx, node) }];
+  });
+  if (timeline.length === 0) return cfg;
+  timeline.sort(compareGraphTimelinePosition);
+
+  const anchors: GraphSourceAnchor[] = [];
+  const addAnchor = (node: ts.Node, stateIndex: number, slot: number): void => {
+    anchors.push({ ...graphNodeTimelinePosition(ctx, node), stateIndex, slot });
+  };
+  for (let stateIndex = 0; stateIndex < cfg.states.length; stateIndex++) {
+    const state = cfg.states[stateIndex]!;
+    for (let leadIndex = 0; leadIndex < state.lead.length; leadIndex++) {
+      addAnchor(state.lead[leadIndex]!.stmt, stateIndex, leadIndex);
+    }
+    const terminator = state.terminator;
+    if (terminator.kind === "suspend" && !isEmitOperand(terminator.awaited)) {
+      addAnchor(terminator.awaited, stateIndex, state.lead.length);
+    } else if (terminator.kind === "condGoto" && !isEmitOperand(terminator.cond)) {
+      addAnchor(terminator.cond, stateIndex, state.lead.length);
+    }
+  }
+  anchors.sort(compareGraphTimelinePosition);
+
+  const staticAtStateSlot = new Map<number, Map<number, ModuleStaticInitEntry[]>>();
+  const addStaticAt = (stateIndex: number, slot: number, entry: ModuleStaticInitEntry): void => {
+    let slots = staticAtStateSlot.get(stateIndex);
+    if (!slots) {
+      slots = new Map();
+      staticAtStateSlot.set(stateIndex, slots);
+    }
+    const entries = slots.get(slot) ?? [];
+    entries.push(entry);
+    slots.set(slot, entries);
+  };
+  for (const staticEntry of timeline) {
+    const nextAnchor = anchors.find((anchor) => compareGraphTimelinePosition(staticEntry, anchor) < 0);
+    if (nextAnchor) {
+      addStaticAt(nextAnchor.stateIndex, nextAnchor.slot, staticEntry.entry);
+      continue;
+    }
+    // A declaration class after the last ordinary module statement belongs to
+    // the terminal state, after its leads and before graph settlement.
+    const terminalStateIndex = cfg.states.length - 1;
+    addStaticAt(terminalStateIndex, cfg.states[terminalStateIndex]!.lead.length, staticEntry.entry);
+  }
+
+  const unitsByState = cfg.states.map((state, stateIndex): AsyncGraphStateUnit[] => {
+    const slots = staticAtStateSlot.get(stateIndex);
+    const units: AsyncGraphStateUnit[] = [];
+    for (let leadIndex = 0; leadIndex < state.lead.length; leadIndex++) {
+      for (const entry of slots?.get(leadIndex) ?? []) units.push({ kind: "static", entry });
+      units.push({ kind: "lead", lead: state.lead[leadIndex]! });
+    }
+    for (const entry of slots?.get(state.lead.length) ?? []) units.push({ kind: "static", entry });
+    if (state.emit) units.push({ kind: "emit", emit: state.emit });
+    return units;
+  });
+
+  // Every original state retains at least one carrier state, even when it had
+  // no leads or static work. The first carrier receives all incoming edges;
+  // later units are internal goto states with no resume prelude.
+  const firstStateId = new Map<number, number>();
+  let nextStateId = 0;
+  for (let index = 0; index < cfg.states.length; index++) {
+    firstStateId.set(index, nextStateId);
+    nextStateId += Math.max(1, unitsByState[index]!.length);
+  }
+  const remapTarget = (target: number): number => firstStateId.get(target) ?? target;
+  const remapTerminator = (terminator: AsyncCfgState["terminator"]): AsyncCfgState["terminator"] => {
+    switch (terminator.kind) {
+      case "suspend":
+        return { ...terminator, resumeState: remapTarget(terminator.resumeState) };
+      case "goto":
+        return { ...terminator, target: remapTarget(terminator.target) };
+      case "condGoto":
+        return {
+          ...terminator,
+          whenTrue: remapTarget(terminator.whenTrue),
+          whenFalse: remapTarget(terminator.whenFalse),
+        };
+      case "settleYield":
+        return { ...terminator, resumeState: remapTarget(terminator.resumeState) };
+      case "settleReturn":
+        return { ...terminator, resumeState: remapTarget(terminator.resumeState) };
+      default:
+        return terminator;
+    }
+  };
+
+  const states: AsyncCfgState[] = [];
+  for (let stateIndex = 0; stateIndex < cfg.states.length; stateIndex++) {
+    const original = cfg.states[stateIndex]!;
+    const units = unitsByState[stateIndex]!;
+    const unitCount = Math.max(1, units.length);
+    for (let unitIndex = 0; unitIndex < unitCount; unitIndex++) {
+      const unit = units[unitIndex];
+      const isFirst = unitIndex === 0;
+      const isLast = unitIndex === unitCount - 1;
+      const stateId = states.length;
+      const internalNext = stateId + 1;
+      states.push({
+        id: stateId,
+        resumeFrom: isFirst ? original.resumeFrom : null,
+        ...(isFirst && original.restoreSpillNames !== undefined
+          ? { restoreSpillNames: original.restoreSpillNames }
+          : {}),
+        // Aliases are compile-time scope bindings, so every split carrier that
+        // emits a piece of this source state needs the same view. In contrast,
+        // restore/delivery belongs only to the incoming carrier above.
+        ...(original.lexicalAliases !== undefined ? { lexicalAliases: original.lexicalAliases } : {}),
+        lead: unit?.kind === "lead" ? [unit.lead] : [],
+        ...(isFirst && original.postDeliverEmit !== undefined ? { postDeliverEmit: original.postDeliverEmit } : {}),
+        ...(unit?.kind === "static"
+          ? {
+              emit: (emitCtx: CodegenContext, fctx: FunctionContext) =>
+                emitModuleStaticInitialization(emitCtx, fctx, unit.entry),
+            }
+          : unit?.kind === "emit"
+            ? { emit: unit.emit }
+            : {}),
+        terminator: isLast ? remapTerminator(original.terminator) : { kind: "goto", target: internalNext },
+      });
+    }
+  }
+  return {
+    states,
+    handlers: cfg.handlers.map((handler) =>
+      handler.catchState === undefined
+        ? handler
+        : {
+            ...handler,
+            catchState: remapTarget(handler.catchState),
+          },
+    ),
+  };
+}
+
 function graphAsyncSynthetic(statements: readonly ts.Statement[]): ts.FunctionDeclaration {
   return ts.factory.createFunctionDeclaration(
     [ts.factory.createModifier(ts.SyntaxKind.AsyncKeyword)],
@@ -4341,6 +4599,7 @@ interface AsyncGraphModuleInit {
 function compileAsyncGraphModuleInit(
   ctx: CodegenContext,
   statements: readonly ts.Statement[],
+  staticEntries: readonly ModuleStaticInitEntry[],
   emitPrelude: (fctx: FunctionContext) => void,
 ): AsyncGraphModuleInit {
   const runtime = ensureAsyncDriveRuntime(ctx);
@@ -4360,6 +4619,7 @@ function compileAsyncGraphModuleInit(
 
   const decl = graphAsyncSynthetic(statements);
   const plan = analyzeAsyncBody(ctx, decl);
+  const graphStaticEntries = staticEntries.filter(isGraphTimelineStaticEntry);
   const startFuncIdx = mintDefinedFunc(ctx);
   const startFunc: WasmFunction = {
     name: "__v8x_graph_eval_start",
@@ -4384,37 +4644,63 @@ function compileAsyncGraphModuleInit(
     labelMap: new Map(),
     savedBodies: [],
   };
-  emitAsyncFrameStateMachine(ctx, startFctx, decl, plan, false, {
-    // ES module evaluation always resumes an await on a later microtask, even
-    // when its operand is already fulfilled or is a plain value.
-    alwaysAsyncAwait: true,
-    moduleInit: true,
-    entryPrelude: (resumeFctx) => {
-      const savedBody = resumeFctx.body;
-      const preludeBody: Instr[] = [
-        { op: "i32.const", value: 1 },
-        { op: "global.set", index: preludeDoneGlobalIdx },
-      ];
-      ctx.liveBodies.add(preludeBody);
-      resumeFctx.body = preludeBody;
-      try {
-        emitPrelude(resumeFctx);
-      } finally {
-        resumeFctx.body = savedBody;
-        ctx.liveBodies.delete(preludeBody);
-      }
-      const currentPreludeDoneGlobalIdx = ctx.numImportGlobals + preludeDoneLocalGlobalIdx;
-      savedBody.push(
-        { op: "global.get", index: currentPreludeDoneGlobalIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [],
-          else: preludeBody,
-        },
-      );
-    },
-  });
+  const entryPrelude = (resumeFctx: FunctionContext): void => {
+    const savedBody = resumeFctx.body;
+    const preludeBody: Instr[] = [
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index: preludeDoneGlobalIdx },
+    ];
+    ctx.liveBodies.add(preludeBody);
+    resumeFctx.body = preludeBody;
+    try {
+      emitPrelude(resumeFctx);
+    } finally {
+      resumeFctx.body = savedBody;
+      ctx.liveBodies.delete(preludeBody);
+    }
+    const currentPreludeDoneGlobalIdx = ctx.numImportGlobals + preludeDoneLocalGlobalIdx;
+    savedBody.push(
+      { op: "global.get", index: currentPreludeDoneGlobalIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [],
+        else: preludeBody,
+      },
+    );
+  };
+
+  const cfg = graphStaticEntries.length
+    ? planAsyncCfg(ctx, decl, plan, {
+        allowLoops: true,
+        allowTryCatch: true,
+        allowReturnInTry: true,
+      })
+    : null;
+  if (cfg !== null) {
+    // Declaration-class statics are not ordinary source statements, so pass a
+    // source-order-expanded CFG to the same frame engine. This keeps fields and
+    // blocks on the correct side of each top-level await without making the
+    // declaration-instantiation prelude evaluate a later module early.
+    const info = buildAsyncFrameInfo(ctx, decl, plan, [], [], promiseTypeIdx, undefined, undefined, startFctx, true);
+    info.alwaysAsyncAwait = true;
+    info.entryPrelude = entryPrelude;
+    info.moduleInit = true;
+    emitPreparedAsyncFrameStateMachine(
+      ctx,
+      startFctx,
+      info,
+      scheduleGraphStaticInitializers(ctx, cfg, graphStaticEntries),
+    );
+  } else {
+    emitAsyncFrameStateMachine(ctx, startFctx, decl, plan, false, {
+      // ES module evaluation always resumes an await on a later microtask, even
+      // when its operand is already fulfilled or is a plain value.
+      alwaysAsyncAwait: true,
+      moduleInit: true,
+      entryPrelude,
+    });
+  }
   startFunc.locals = startFctx.locals;
   startFunc.body = startFctx.body;
 
@@ -5369,19 +5655,30 @@ export function compileDeclarations(
       }
     }
 
+    // The async graph frame enters this helper once for declaration
+    // instantiation and then again through its state-machine segments for
+    // evaluation.  The prelude must seed hoisted bindings, but must not run a
+    // later module's lexical initializer before an earlier dependency's
+    // top-level await settles: that would make the later binding escape its
+    // temporal dead zone while its module is still waiting to evaluate.
+    if (!includeModuleStatements) {
+      ctx.currentFunc = previousFunc;
+      return initFctx;
+    }
+
     // Class evaluation and ordinary module statements share one source-order
     // timeline. The two collectors retain separate payloads, so merge them by
     // linked-source ordinal and AST position before emitting `__module_init`.
     // This is observable whenever a static field reads an earlier module
     // binding (or a later statement reads the static field), and across files
     // because dependencies must finish evaluation before their importers.
-    type StaticInitEntry = (typeof ctx.staticInitExprs)[number];
     type OrderedInitEntry =
-      | { readonly kind: "static"; readonly node: ts.Node; readonly entry: StaticInitEntry }
+      | { readonly kind: "static"; readonly node: ts.Node; readonly entry: ModuleStaticInitEntry }
       | { readonly kind: "statement"; readonly node: ts.Statement; readonly statement: ts.Statement };
     const orderedInitEntries: OrderedInitEntry[] = [];
     for (const entry of ctx.staticInitExprs) {
-      const node = entry.staticBlock ?? entry.initializer;
+      if (!isGraphTimelineStaticEntry(entry)) continue;
+      const node = moduleStaticInitNode(entry);
       if (node) orderedInitEntries.push({ kind: "static", node, entry });
     }
     for (const statement of ctx.moduleInitStatements) {
@@ -5400,30 +5697,7 @@ export function compileDeclarations(
 
     for (const initEntry of orderedInitEntries) {
       if (initEntry.kind === "static") {
-        const { globalIdx, initializer, staticBlock, className } = initEntry.entry;
-        // (#1395) Scope each static initializer to its owning class so `this`
-        // resolves to the class-object singleton. Toggle the shared init frame
-        // per entry because every initializer contributes to one function.
-        const savedEnclosing = initFctx.enclosingClassName;
-        const savedIsStatic = initFctx.isStaticContext;
-        if (className !== undefined) {
-          initFctx.enclosingClassName = className;
-          initFctx.isStaticContext = true;
-        }
-        try {
-          if (staticBlock) {
-            for (const statement of staticBlock.body.statements) {
-              compileStatement(ctx, initFctx, statement);
-            }
-          } else if (initializer && globalIdx !== undefined) {
-            const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-            compileExpression(ctx, initFctx, initializer, globalDef?.type);
-            initFctx.body.push({ op: "global.set", index: globalIdx });
-          }
-        } finally {
-          initFctx.enclosingClassName = savedEnclosing;
-          initFctx.isStaticContext = savedIsStatic;
-        }
+        emitModuleStaticInitialization(ctx, initFctx, initEntry.entry);
         continue;
       }
 
@@ -5636,7 +5910,7 @@ export function compileDeclarations(
     restorePropOrderState();
     compiledInitFctx = profilePhase("module-init-pass2", () => {
       if (!hasAsyncGraphInit) return compileModuleInitBody();
-      return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
+      return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, (resumeFctx) => {
         compileModuleInitBody(resumeFctx, false);
       }).fctx;
     });

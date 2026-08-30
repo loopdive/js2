@@ -138,6 +138,58 @@ function extendsOwnClass(ctx: CodegenContext, decl: ts.ClassDeclaration | ts.Cla
   return false;
 }
 
+type ModuleStaticInitEntry = CodegenContext["staticInitExprs"][number];
+
+function staticInitOwner(entry: ModuleStaticInitEntry): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  let node: ts.Node | undefined = entry.staticBlock ?? entry.initializer;
+  while (node !== undefined && !ts.isClassDeclaration(node) && !ts.isClassExpression(node)) {
+    node = node.parent;
+  }
+  return node;
+}
+
+/**
+ * Class-declaration statics are collected globally for their storage setup,
+ * but a declaration nested in a statement must evaluate its fields/blocks at
+ * that statement's runtime point. In particular this keeps them under the
+ * enclosing if/loop/try instead of letting a module-level queue flatten them.
+ */
+function emitNestedDeclarationStaticInitializers(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+): void {
+  if (!ts.isClassDeclaration(decl) || ts.isSourceFile(decl.parent)) return;
+  for (const entry of ctx.staticInitExprs) {
+    if (staticInitOwner(entry) !== decl) continue;
+    const savedEnclosing = fctx.enclosingClassName;
+    const savedIsStatic = fctx.isStaticContext;
+    if (entry.className !== undefined) {
+      fctx.enclosingClassName = entry.className;
+      fctx.isStaticContext = true;
+    }
+    try {
+      if (entry.staticBlock) {
+        for (const statement of entry.staticBlock.body.statements) {
+          compileStatement(ctx, fctx, statement);
+        }
+        continue;
+      }
+      if (!entry.initializer || entry.globalIdx === undefined) continue;
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, entry.globalIdx)];
+      compileExpression(ctx, fctx, entry.initializer, globalDef?.type);
+      // Lowering the initializer may add late imports. Consult the mutable
+      // collector entry after it runs so this new store uses the shifted index.
+      if (entry.globalIdx !== undefined) {
+        fctx.body.push({ op: "global.set", index: entry.globalIdx });
+      }
+    } finally {
+      fctx.enclosingClassName = savedEnclosing;
+      fctx.isStaticContext = savedIsStatic;
+    }
+  }
+}
+
 /**
  * Emit the runtime evaluation of computed names whose accessor bodies are
  * owned by the exact prepared-IR route.
@@ -293,6 +345,7 @@ export function compileNestedClassDeclaration(
       }
     }
     emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
     return;
   }
 
@@ -356,6 +409,7 @@ export function compileNestedClassDeclaration(
 
     // Mark as no longer deferred
     if (isDeferred) ctx.deferredClassBodies.delete(className);
+    emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     reportError(ctx, decl, `Internal error compiling nested class '${className}': ${msg}`);

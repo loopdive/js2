@@ -10213,6 +10213,28 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch.
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
 
+    // Multi-source parity with generateModule: rebuild the reserved native
+    // iterator ladders only after every graph carrier and receiver dispatcher
+    // is known. In particular, Reflect.ownKeys returns an $ObjVec whose late
+    // normalization arm does not exist in the eager placeholder body.
+    if (
+      ctx.nativeIteratorUserArmPending &&
+      !ctx.funcMap.has("__is_truthy") &&
+      ((ctx.funcMap.has("__call_@@iterator") &&
+        ctx.funcMap.has("__call_next") &&
+        ctx.funcMap.has("__sget_value") &&
+        ctx.funcMap.has("__sget_done")) ||
+        (ctx.funcMap.has("__extern_get") && ctx.funcMap.has("__box_symbol") && ctx.objectRuntimeTypes !== undefined))
+    ) {
+      addUnionImports(ctx);
+    }
+    profilePhase("fill-native-iterator-late-arms", () => fillNativeIteratorLateArms(ctx));
+    profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
+    profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
+    profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
+    profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
+
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).
     profilePhase("emit-closure-call-export-0", () => emitClosureCallExport(ctx));
 
