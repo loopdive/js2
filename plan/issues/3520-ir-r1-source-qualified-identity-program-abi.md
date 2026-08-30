@@ -193,6 +193,18 @@ loc-budget-allow:
   - src/codegen/struct-field-exports.ts
   - src/codegen/index.ts
   - src/codegen/expressions/builtins.ts
+  # R1-A (2026-08-29): the vec host-bridge export family gains exact descriptor
+  # ownership — the published-entry records plus the fail-closed finalization
+  # invariants — so standalone/WASI stripping authenticates a compiler-owned
+  # entry by identity instead of by name (a `$v0$$` collision alias matched no
+  # reserved name and survived the strip). Allocation, publication and
+  # finalization of that family all live in this module; splitting the
+  # ownership record away from the allocator it authenticates would reintroduce
+  # exactly the name-matching seam this slice removes. The 1500 threshold is
+  # crossed only after merging main (1492 at the slice tip, 1503 after the
+  # merge), so the grant is restated in a file this PR touches rather than left
+  # stranded.
+  - src/codegen/vec-access-exports.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/context/types.ts
@@ -206,6 +218,14 @@ loc-budget-allow:
   - src/emit/binary.ts
   - src/emit/object.ts
   - src/emit/wat.ts
+  # R1-B (2026-08-29): `currentCallableSignature` — the read accessor returning
+  # a callable binding's contract rebased by every type-layout remap. A draft's
+  # `intent.signature` is frozen at plan time, so an inherited class alias
+  # (raised during class-body compilation, the only point its prepared scope is
+  # open) and its canonical (raised after dead-type elimination) carry different
+  # `typeIdx` numbering for one contract. The rebased contracts are this
+  # module's private state, so the accessor cannot live anywhere else.
+  - src/codegen/program-abi-session.ts
 # R1 must resolve exact checker declarations to the one authoritative identity
 # inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
 # so these two structural joins remain reviewed raw-checker boundaries until
@@ -3530,6 +3550,66 @@ cannot see — and that the generic bucket is empty corpus-wide.
 the 4 that stay green are the pure table/helper assertions, which correctly do
 not depend on the wiring.
 
+### 2026-08-29 Sol review repair: authenticate every graph-global invocation policy
+
+Independent Sol review of draft PR #5210 at `0ccfd486ae5750` found one
+remaining false-pass. `ProgramAbiModuleInitCallableRegistry.planRetained()`
+currently requires a graph-global pass only when `deferTopLevelInit && !wasi`.
+Clearing the registry observation therefore fails closed for the deferred
+public-export policy, but silently succeeds for the default Wasm `start`
+section and WASI `_start` policies even though the physical initializer remains
+live. The post-export check has the same blind spot: it returns for both
+non-public policies, so a rogue `__module_init` alias or a retargeted startup
+adapter is not reconciled. Normal-output tests prove only that the unmutated
+compiler happens to emit zero public aliases; they do not prove the invariant
+can reject a corrupted policy.
+
+Implement the repair as one bounded continuation on the existing #3520 draft:
+
+1. Ground the need for the unitless graph-global pass in an independent
+   production fact, `ctx.mod.hasTopLevelStatements === true`, together with the
+   absence of a reserved exact Prepared unit. Do not infer body existence from
+   the export surface or from the observation list that the invariant is meant
+   to validate. With top-level code present, require exactly one raw and one
+   live observation, the same allocator object, ordinal zero, and the canonical
+   `legacy-module-init-pass` binding/locator. With no emitted initializer, keep
+   the established empty path valid.
+2. Retain the exact current handle/allocator identity of pass zero and replace
+   the public-only final check with invocation-policy reconciliation after
+   export planning. For deferred initialization, require exactly one
+   `__module_init` Program-ABI export alias whose `aliasOf`, `intent.targetId`,
+   and physical target are pass zero. For the default policy, require no
+   compiler module-init alias and require `mod.startFuncIdx` to resolve to that
+   exact pass. For WASI, require no compiler module-init alias, exactly one
+   `_start` export/adapter, and an exact physical call path from that adapter to
+   pass zero (directly for an init-only graph, or through the already-guarded
+   exported `main`). Reject missing, duplicate, and retargeted wiring. Resolve
+   handles through `func-space` helpers; do not introduce positional function
+   arithmetic or display-name ownership.
+3. Extend the existing real multi-source mutation harness to parameterize all
+   three policies. Each policy must reject a cleared observation. Deferred must
+   reject missing/duplicate/retargeted `__module_init`; Wasm start must reject a
+   missing or retargeted `startFuncIdx` and an injected module-init alias; WASI
+   must reject a missing/duplicate/retargeted `_start` adapter or call path and
+   an injected module-init alias. Keep an unmutated positive control for every
+   policy and assert the exact Program-ABI invariant family/message so an
+   earlier generic guard cannot satisfy the test vacuously.
+4. Keep this continuation file-disjoint from parallel #3523 R4 work: do not
+   edit `src/codegen/declarations.ts` or its new call-free module-init helper.
+   The intended ownership is
+   `src/codegen/program-abi-module-init-planning.ts`, the finalization call name
+   if needed, the smallest WASI adapter observation seam in
+   `src/codegen/index.ts`, and
+   `tests/issue-3520-module-init-callable-abi.test.ts` only. Preserve the
+   already-approved canonical-locator and remapped inherited-alias repairs.
+
+Acceptance requires the focused #3520 module-init and class-alias suites,
+typecheck, LOC/function/coercion/oracle/dead-export/IR-fallback gates, and the
+full unskipped precommit/prepush hooks under the strict finite, non-negative
+one-minute load gate `< logical cores - 2`. Luna Max may implement the draft;
+an independent Sol review of the exact pushed head must return **APPROVE** before
+the PR is marked ready or re-enqueued.
+
 **Suite delta.** Across all 61 `tests/issue-3520-*.test.ts` files: 22 failing
 tests in 17 files on `81edcbcaa`, **20 in 15** after C35. C35 converts the
 data-struct and date-civil census assertions (2 tests fixed) and touches nothing
@@ -3555,3 +3635,90 @@ on this corpus, not that no program can produce one. Items 1–3 of the resume
 checkpoint (`LegacyAbiAdapter` routing, exports as ABI aliases, session
 notification from allocator replacement / dead-type elimination / compaction)
 are untouched, and R1 acceptance still requires the red suite above to clear.
+
+## 2026-08-30 C36 implementation lock — fail-closed vec export provenance
+
+This Sol-authored checkpoint is grounded on protected `origin/main`
+`c243892c7f3a757bdecf6215626b08586ce72c58`. PRs #5210 and #5233 are already
+merged; their startup-policy and source-qualified vec-export work is not a
+pending task and must not be reimplemented. No open PR, assignment, or parallel
+Claude lane owns the three files below.
+
+### Current false-pass
+
+`finalizeVecHostBridgeExports(...)` authenticates each compiler-owned export
+descriptor against the exact allocator object before rebasing its public Wasm
+index. Its descriptors still cross the dual handle regime: a live absolute
+index is resolved against the final live import prefix, while a value at or
+above `STABLE_FUNC_BASE` is an allocator-stable handle resolved through
+`definedFuncAt(...)`. The current truthiness check conflates a valid stable
+handle (whose raw subtraction is intentionally outside `mod.functions`) with
+an invalid live index. A live index exactly one past the defined-function
+population therefore returns `undefined`, bypasses the ownership error, and is
+silently rewritten to the expected allocator slot. That is a fail-open
+provenance repair: malformed state becomes valid output at the freeze boundary.
+
+The same function already contains the correct disabled-host-bridge invariant:
+standalone/WASI must remove every recorded compiler-owned vec descriptor, and a
+single survivor is fatal. Its focused mutation table does not exercise that
+branch, so a later deletion of the guard could pass all current tests. The
+function comment still describes the operation as a generic late-import
+"rebase" even though the post-#5233 authority is the captured descriptor and
+allocator identity; update the wording to name the authentication/freeze
+boundary without changing behavior.
+
+### Exact repair and ownership
+
+Own only:
+
+- `plan/issues/3520-ir-r1-source-qualified-identity-program-abi.md`;
+- `src/codegen/vec-access-exports.ts`; and
+- `tests/issue-3520-vec-support-callable-abi.test.ts`.
+
+Resolve the observed allocator through two explicit, non-overlapping regimes:
+for `entry.desc.index < STABLE_FUNC_BASE`, use the existing final live-import
+prefix and direct `mod.functions[currentPosition]` lookup; for a stable handle,
+use `definedFuncAt(...)`. Then apply one unconditional object-identity
+assertion: `currentAllocation !== allocation.func` is fatal whether the
+observed value is another function or `undefined`. Do not choose the stable
+resolver merely because a live lookup is out of range, clamp the index, infer
+ownership from an export name, consult `funcMap`, or repair a malformed
+descriptor before the assertion. Preserve the subsequent assignment as a
+position-only rebase for an already-authenticated descriptor.
+
+Extend the existing table-driven mutation test with an exact live-regime
+out-of-range case whose index is
+`live function-import count + module.functions.length` and is asserted below
+`STABLE_FUNC_BASE`. It must reach `finalizeVecHostBridgeExports(...)` and fail
+with the same different-allocator invariant as an in-range retarget, proving
+`undefined` cannot bypass the guard while genuine stable descriptors still
+resolve. Add a separate disabled-policy mutation that starts
+from a real generated host-bridge descriptor, changes only the policy to
+disabled, retains that exact descriptor in `mod.exports`, and requires the
+existing survivor invariant. The test must restore any captured context state
+even when an assertion fails.
+
+Do not replace the existing semantic corpus anti-vacuity
+`corpusOwnedFunctions > 0` with the historical raw `24` count. The plan's
+current-main drift record deliberately rejects brittle corpus-number pins; C36
+closes the concrete descriptor false-pass and records the remaining denominator
+decision without pretending to finish R1.
+
+### Boundaries and acceptance
+
+This slice changes no normal output, callable allocation, export naming,
+standalone/WASI stripping policy, Program-ABI schema, legacy fallback, or route
+selection. It is file-disjoint from queued #5275, open #5218/#5238/#5269, and
+the dirty shared #3521/#4617 checkout. Larger `LegacyAbiAdapter`, ABI-driven
+export publication, allocator-replacement notification, and red-suite work
+remain separate R1 continuations after their active dependencies land.
+
+Acceptance requires the focused vec support callable-ABI suite, TypeScript
+typecheck, formatting/lint, IR fallback and issue-integrity controls, plus the
+LOC and function regrowth ratchets immediately before every commit. Run every
+heavy command only when the one-minute load is finite, non-negative, and
+strictly below `logical cores - 2`. Let the complete precommit and prepush hooks
+run without bypass. No baseline, LOC, function-size, binary-size, or hook
+exception is authorized. A Luna implementation remains draft until an
+independent Sol review approves the exact pushed SHA; any later push invalidates
+that approval.

@@ -8,7 +8,7 @@ import type { FuncTypeDef, Import, WasmFunction, WasmModule } from "../ir/types.
 import { definedFuncAt, definedFuncHandleOf, isImportFuncIdx } from "./func-space.js";
 import { programAbiIntentsEqual } from "./program-abi-intent-equality.js";
 import type { ProgramAbiCallableImportRegistry } from "./program-abi-import-planning.js";
-import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-callable-roles.js";
 import type { CodegenContext } from "./context/types.js";
 import type {
   PreparedProgramAbiDescriptorLifecycle,

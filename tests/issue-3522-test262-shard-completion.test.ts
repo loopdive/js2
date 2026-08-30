@@ -36,10 +36,15 @@ describe("#3522 Test262 shard completion evidence", () => {
   it("writes the completion marker only from the shard afterAll hook", () => {
     const afterAllStart = runner.indexOf("  afterAll(() => {");
     expect(afterAllStart).toBeGreaterThan(-1);
-    expect(runner.slice(0, afterAllStart)).not.toContain("writeFileSync(\n      SHARD_COMPLETION_PATH");
-    expect(runner.slice(afterAllStart)).toContain("writeFileSync(\n      SHARD_COMPLETION_PATH");
-    expect(runner).toContain("registeredTests: myTests.length");
-    expect(runner).toContain("recordedRows: summary.total");
+    expect(runner.slice(0, afterAllStart)).not.toContain("writeFileSync(shardCompletionPath");
+    expect(runner.slice(afterAllStart)).toContain("writeFileSync(shardCompletionPath");
+    expect(runner).toContain("getTest262ShardCompletionPath(JSONL_PATH, chunkIndex, totalChunks)");
+    expect(runner).toContain('schema: "test262-shard-completion-v2"');
+    expect(runner).toContain("registeredTests: registeredPaths.length");
+    expect(runner).toContain("recordedRows: canonicalVerdicts");
+    expect(runner).toContain("canonicalVerdicts,");
+    expect(runner).toContain("allCallbacksSettled");
+    expect(runner).toContain('{ flag: "wx" }');
   });
 
   it("rejects a missing marker before any shard workflow accepts exit code 1", () => {
@@ -49,11 +54,11 @@ describe("#3522 Test262 shard completion evidence", () => {
       ["refresh", job(refresh, "test262-shard")],
     ] as const) {
       expect(workflowJob, label).toContain(
-        'completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"',
+        'find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json"',
       );
-      expect(workflowJob, label).toContain('if [ ! -s "$completion_marker" ]');
+      expect(workflowJob, label).toContain('if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]');
       expect(workflowJob, label).toContain("refusing partial JSONL evidence");
-      expect(workflowJob, label).toContain(".jsonl.complete.json");
+      expect(workflowJob, label).toContain(".shard-*.complete.json");
     }
   });
 });

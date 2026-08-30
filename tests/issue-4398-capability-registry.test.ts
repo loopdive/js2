@@ -1,8 +1,162 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
+import { isValidatedPlatformCapabilityImport, type CapabilityProviderId } from "../src/capability-registry.js";
+import { scanForLeakedHostImports } from "../src/codegen/host-import-allowlist.js";
 import { compile, formatCompileExplanation, validatePlatformCapabilityRequirements } from "../src/index.js";
+import { createEmptyModule, type ValType, type WasmModule } from "../src/ir/types.js";
 import { buildCompiledAdapterImports, buildCompiledImports } from "../src/runtime.js";
+
+const AUTHENTICATION_CASES = [
+  {
+    capabilityId: "timers",
+    name: "__timer_set_timeout",
+    params: ["externref", "externref"],
+    results: ["externref"],
+  },
+  {
+    capabilityId: "dom",
+    name: "global_document",
+    params: [],
+    results: ["externref"],
+  },
+  {
+    capabilityId: "dom-interaction",
+    name: "CSSStyleDeclaration_set_background",
+    params: ["externref", "externref"],
+    results: [],
+  },
+] as const satisfies ReadonlyArray<{
+  capabilityId: "timers" | "dom" | "dom-interaction";
+  name: string;
+  params: readonly string[];
+  results: readonly string[];
+}>;
+
+function wasmValType(name: string): ValType {
+  if (name === "externref") return { kind: "externref" };
+  if (name === "i32") return { kind: "i32" };
+  throw new Error(`unsupported test value type: ${name}`);
+}
+
+function moduleWithCapabilityImports(
+  capabilityCase: (typeof AUTHENTICATION_CASES)[number],
+  occurrences: ReadonlyArray<"exact" | "malformed">,
+  siblingName?: string,
+): WasmModule {
+  const module = createEmptyModule();
+  module.types.push({
+    kind: "func",
+    params: capabilityCase.params.map(wasmValType),
+    results: capabilityCase.results.map(wasmValType),
+  });
+  module.imports.push(
+    ...occurrences.map((occurrence) => ({
+      module: "env",
+      name: capabilityCase.name,
+      desc:
+        occurrence === "exact"
+          ? ({ kind: "func", typeIdx: 0 } as const)
+          : ({ kind: "global", type: { kind: "i32" } as const, mutable: false } as const),
+    })),
+  );
+  if (siblingName) {
+    module.imports.push({
+      module: "env",
+      name: siblingName,
+      desc: { kind: "func", typeIdx: 0 },
+    });
+  }
+  return module;
+}
+
+function importShape(module: WasmModule): unknown[] {
+  return module.imports.map((entry, index) => ({
+    index,
+    module: entry.module,
+    name: entry.name,
+    kind: entry.desc.kind,
+    ...(entry.desc.kind === "func" ? { typeIdx: entry.desc.typeIdx } : { type: entry.desc.type }),
+  }));
+}
+
+describe("#4398 duplicate platform-capability import authentication", () => {
+  for (const capabilityCase of AUTHENTICATION_CASES) {
+    const providerId: CapabilityProviderId = "embedder";
+    const validate = (module: WasmModule, importIndex: number): boolean =>
+      isValidatedPlatformCapabilityImport(module, importIndex, capabilityCase.capabilityId, providerId, "none");
+
+    it(`${capabilityCase.capabilityId}: authenticates one exact Wasm import and its ABI`, () => {
+      const module = moduleWithCapabilityImports(capabilityCase, ["exact"]);
+      expect(importShape(module)).toEqual([
+        { index: 0, module: "env", name: capabilityCase.name, kind: "func", typeIdx: 0 },
+      ]);
+      expect(module.types).toEqual([
+        {
+          kind: "func",
+          params: capabilityCase.params.map(wasmValType),
+          results: capabilityCase.results.map(wasmValType),
+        },
+      ]);
+      expect(validate(module, 0)).toBe(true);
+    });
+
+    it(`${capabilityCase.capabilityId}: rejects exact plus malformed same-name imports`, () => {
+      const module = moduleWithCapabilityImports(capabilityCase, ["exact", "malformed"]);
+      expect(importShape(module)).toEqual([
+        { index: 0, module: "env", name: capabilityCase.name, kind: "func", typeIdx: 0 },
+        { index: 1, module: "env", name: capabilityCase.name, kind: "global", type: { kind: "i32" } },
+      ]);
+      expect([0, 1].map((index) => validate(module, index))).toEqual([false, false]);
+    });
+
+    it(`${capabilityCase.capabilityId}: rejects two exact same-name imports`, () => {
+      const module = moduleWithCapabilityImports(capabilityCase, ["exact", "exact"]);
+      expect(importShape(module)).toEqual([
+        { index: 0, module: "env", name: capabilityCase.name, kind: "func", typeIdx: 0 },
+        { index: 1, module: "env", name: capabilityCase.name, kind: "func", typeIdx: 0 },
+      ]);
+      expect([0, 1].map((index) => validate(module, index))).toEqual([false, false]);
+    });
+
+    it(`${capabilityCase.capabilityId}: rejects a malformed-only import`, () => {
+      const module = moduleWithCapabilityImports(capabilityCase, ["malformed"]);
+      expect(importShape(module)).toEqual([
+        { index: 0, module: "env", name: capabilityCase.name, kind: "global", type: { kind: "i32" } },
+      ]);
+      expect(validate(module, 0)).toBe(false);
+    });
+
+    it(`${capabilityCase.capabilityId}: scopes uniqueness to the exact module/name pair`, () => {
+      const siblingName = `${capabilityCase.name}_different`;
+      const module = moduleWithCapabilityImports(capabilityCase, ["exact"], siblingName);
+      expect(importShape(module)).toEqual([
+        { index: 0, module: "env", name: capabilityCase.name, kind: "func", typeIdx: 0 },
+        { index: 1, module: "env", name: siblingName, kind: "func", typeIdx: 0 },
+      ]);
+      expect(validate(module, 0)).toBe(true);
+      expect(validate(module, 1)).toBe(false);
+    });
+  }
+
+  it("retains a deduplicated timer leak when exact-name authentication is ambiguous", () => {
+    const timer = AUTHENTICATION_CASES[0]!;
+    const module = moduleWithCapabilityImports(timer, ["exact", "malformed"]);
+    const leaks = scanForLeakedHostImports(module.imports);
+    expect(leaks).toEqual([{ module: "env", name: timer.name, reason: "env-not-on-allowlist" }]);
+
+    const retainedLeaks = leaks.filter(
+      ({ module: leakModule, name: leakName }) =>
+        !module.imports.some(
+          (entry, index) =>
+            entry.module === leakModule &&
+            entry.name === leakName &&
+            isValidatedPlatformCapabilityImport(module, index, timer.capabilityId, "embedder", "none"),
+        ),
+    );
+    expect(retainedLeaks).toEqual(leaks);
+  });
+});
 
 describe("#4398 explicit platform capability requirements", () => {
   it("selects the target-specific timer provider and records its exact ABI", async () => {

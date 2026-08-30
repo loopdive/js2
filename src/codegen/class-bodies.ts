@@ -487,8 +487,75 @@ function computeImplicitDerivedCtorPrefix(
   return { implicitBuiltinParent, implicitForwarderArity, implicitStructCtorParams, prefixParams };
 }
 
-function compileExternrefArgument(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
-  const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
+/**
+ * A standalone Map/Set subclass constructor's first parameter is the parent
+ * iterable boundary. Keep that boundary open as externref even when a user
+ * annotation (for example `ReadonlyArray<readonly [K, V]>`) would otherwise
+ * register a `vec<tuple>` ABI. The native subclass provider consumes the
+ * already-evaluated carrier through its dynamic array readers; preserving the
+ * typed tuple ABI here would force a real `vec<externref>` carrier back through
+ * an incompatible tuple conversion before the constructor call.
+ */
+function standaloneCollectionCtorFirstArgType(
+  ctx: CodegenContext,
+  className: string,
+  paramIndex: number,
+  wasmType: ValType,
+): ValType {
+  const parentName = ctx.classBuiltinParentMap.get(className);
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    paramIndex === 0 &&
+    (parentName === "Map" || parentName === "Set") &&
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    [...ctx.vecTypeMap.values()].includes(wasmType.typeIdx)
+  ) {
+    return { kind: "externref" };
+  }
+  return wasmType;
+}
+
+function compileExternrefArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  forceArrayLiteralVec = false,
+): void {
+  // A Map/Set iterable is an actual JavaScript array value at this boundary.
+  // TypeScript may contextually type its nested `[key, value]` elements as
+  // tuples, but the standalone subclass provider receives only the boxed
+  // value and reads it through `__extern_get_idx`. Reuse the established
+  // `_arrayLiteralForceVec` seam plus its collection-only nested-carrier mode
+  // so both the outer iterable and nested pair literals stay native vector
+  // carriers; do not reconstruct or re-evaluate the AST in the provider.
+  let carrier = arg;
+  while (
+    ts.isParenthesizedExpression(carrier) ||
+    ts.isAsExpression(carrier) ||
+    ts.isTypeAssertionExpression(carrier) ||
+    ts.isSatisfiesExpression(carrier) ||
+    ts.isNonNullExpression(carrier)
+  ) {
+    carrier = carrier.expression;
+  }
+  const shouldForceVec = forceArrayLiteralVec && (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(carrier);
+  const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+  const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+    ._arrayLiteralForceCollectionVec;
+  if (shouldForceVec) {
+    (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+    (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec = true;
+  }
+  let argResult: ValType | null;
+  try {
+    argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
+  } finally {
+    if (shouldForceVec) {
+      (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = previousForceVec;
+      (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec =
+        previousCollectionForceVec;
+    }
+  }
   if (argResult === null) {
     emitUndefined(ctx, fctx);
     return;
@@ -1253,6 +1320,7 @@ export function collectClassDeclaration(
         const paramType = ctx.checker.getTypeAtLocation(param);
         // (#3673) explicit native annotation pins the constructor parameter type
         let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
+        wasmType = standaloneCollectionCtorFirstArgType(ctx, className, i, wasmType);
         // Widen ref to ref_null for params with defaults
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -2185,6 +2253,7 @@ function compileClassBodiesInner(
         const paramName = ts.isIdentifier(param.name) ? param.name.text : `__param${pi}`;
         const paramType = ctx.checker.getTypeAtLocation(param);
         let wasmType = resolveWasmType(ctx, paramType);
+        wasmType = standaloneCollectionCtorFirstArgType(ctx, className, pi, wasmType);
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
@@ -2381,16 +2450,43 @@ function compileClassBodiesInner(
         // default's array literals to compile as vec (not tuple) — same
         // rationale as the method site below. See function-body.ts:701.
         const ctorIsArrayPatternExternref = ts.isArrayBindingPattern(param.name) && paramType.kind === "externref";
+        let defaultCarrier = param.initializer;
+        while (
+          defaultCarrier &&
+          (ts.isParenthesizedExpression(defaultCarrier) ||
+            ts.isAsExpression(defaultCarrier) ||
+            ts.isTypeAssertionExpression(defaultCarrier) ||
+            ts.isSatisfiesExpression(defaultCarrier) ||
+            ts.isNonNullExpression(defaultCarrier))
+        ) {
+          defaultCarrier = defaultCarrier.expression;
+        }
+        const collectionParent = ctx.classBuiltinParentMap.get(className);
+        const ctorIsCollectionArrayDefault =
+          (ctx.standalone || ctx.wasi) &&
+          paramIdx === 0 &&
+          (collectionParent === "Map" || collectionParent === "Set") &&
+          defaultCarrier !== undefined &&
+          ts.isArrayLiteralExpression(defaultCarrier);
         const ctorPrevForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
-        if (ctorIsArrayPatternExternref) {
+        const ctorPrevCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+          ._arrayLiteralForceCollectionVec;
+        if (ctorIsArrayPatternExternref || ctorIsCollectionArrayDefault) {
           (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+        }
+        if (ctorIsCollectionArrayDefault) {
+          (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec = true;
         }
         let ctorDfltType: ValType | null;
         try {
           ctorDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
         } finally {
-          if (ctorIsArrayPatternExternref) {
+          if (ctorIsArrayPatternExternref || ctorIsCollectionArrayDefault) {
             (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = ctorPrevForceVec;
+          }
+          if (ctorIsCollectionArrayDefault) {
+            (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec =
+              ctorPrevCollectionForceVec;
           }
         }
         if (ctorDfltType && !valTypesMatch(ctorDfltType, paramType)) {
@@ -3792,11 +3888,14 @@ export function compileSuperCall(
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     const importName = getParentConstructorImportName(ctx, builtinParent);
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
+    const forceCollectionArrayVec = builtinParent === "Map" || builtinParent === "Set";
     const forwardParams = externrefParams(forwardArity);
     // Standalone / WASI: explicit `super(...)` routes through the same shared
     // native-`__new_<Parent>` dispatch ladder as the implicit forwarder
     // (`resolveStandaloneBuiltinSuperCtorIdx`). Args are still evaluated below
-    // and forwarded (Array honors them; Object/vec builtins ignore them).
+    // and forwarded: Array honors them, Map/Set consume their first native
+    // array carrier, and Object/identity/vec/Weak* providers keep their
+    // existing bounded behavior.
     // JS-host mode / parents with no native ctor yet keep the host import.
     let funcIdx: number | undefined;
     const nativeCtorIdx = resolveStandaloneBuiltinSuperCtorIdx(ctx, builtinParent, forwardArity);
@@ -3811,7 +3910,11 @@ export function compileSuperCall(
       if (flatArgs) {
         for (let i = 0; i < forwardArity; i++) {
           if (i < flatArgs.length) {
-            compileExternrefArgument(ctx, fctx, flatArgs[i]!);
+            // Map/Set consume only the first parent argument as their iterable;
+            // keep any later constructor arguments on their ordinary lowering
+            // path so a tuple-typed second argument is not widened by this
+            // collection-specific carrier hint.
+            compileExternrefArgument(ctx, fctx, flatArgs[i]!, forceCollectionArrayVec && i === 0);
           } else {
             emitUndefined(ctx, fctx);
           }
