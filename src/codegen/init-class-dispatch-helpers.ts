@@ -65,6 +65,12 @@
 //     global "now that every import global has settled" — the pooled CSV string
 //     is an imported global, so it must land first.
 //
+// (#5205) The same channel now also carries the STRUCT-READ family
+// (`__sget_*`, `__struct_field_names`, `__is_data_struct`) — see
+// `STRUCT_READ_EXPORT_PREFIXES` below. Per-field getter names are module
+// dependent, so they cannot live in #5193's fixed positional ABI; this CSV
+// exists for exactly that reason.
+//
 // Gated on the module having BOTH a compiler-created module initializer (i.e.
 // top-level code — no init, no window) and at least one dispatch export, so
 // every other module's bytes are unchanged. Standalone/WASI never reach here.
@@ -90,8 +96,86 @@ export const CLASS_DISPATCH_EXPORT_PREFIXES: readonly string[] = [
   "__call_get_",
 ];
 
+/**
+ * (#5203) The CLOSURE-dispatch family — the third facet of the same window.
+ *
+ * #5202 closed instance-method dispatch, which resolves a method by EXPORT
+ * NAME. A STATIC method never goes through that surface: the compiler hands
+ * the host the raw closure struct via `__register_class_static_method`, and
+ * the host turns it into a callable in `_wrapWasmClosureUnknownArity` — which
+ * bails on `if (!exports) return null`, because it needs the `__call_fn_*`
+ * dispatchers to actually invoke the closure. So `c.clz()` on a class VALUE
+ * threw "clz is not a function" at init while the identical call after init
+ * returned. jsbi's `JSBI.__clz30(t)` is exactly this shape.
+ *
+ * Registering the closure dispatchers on the same start-export channel is the
+ * "route init-window closure wrapping through the registered funcrefs" arm of
+ * the issue, and it deliberately does NOT widen what `_wrapForHost` is given:
+ * its `exports` argument feeds a large amount of unrelated behaviour, so only
+ * the closure-bridge's own export source moves.
+ *
+ * Prefix-matched so a new arity is covered automatically:
+ *   `__call_fn_<N>`, `__call_fn_method_<N>`, and the NUL-named
+ *   `__\0js2_call_fn_method_argc_<N>` argc wrappers.
+ */
+const CLOSURE_DISPATCH_EXPORT_PREFIXES: readonly string[] = ["__call_fn_", "__\0js2_call_fn_method_argc_"];
+
+/** Exact closure-bridge names the host wrapper probes (arity / discriminators). */
+const CLOSURE_DISPATCH_EXPORT_NAMES: ReadonlySet<string> = new Set([
+  "__closure_arity",
+  "__is_closure",
+  "__closure_has_rest",
+  "__is_ctor_closure",
+]);
+
+/**
+ * (#5205) The STRUCT-READ family — the fourth facet of the same window.
+ *
+ * A compiled `[key, value]` pair of mixed types is a TUPLE struct whose fields
+ * are `_0`, `_1`; the host reads them through `__struct_field_names` plus the
+ * per-field `__sget_*` getters (`src/runtime.ts` `_convertIterableForHost` /
+ * `__make_iterable`'s `convertToJS`). Those are exports too, so during init a
+ * tuple pair decoded to `undefined` — measured on the Temporal bundle, where
+ * `Object.fromEntries(nt.map((e) => [e[0], e[1]]))` at module top level built
+ * `{ undefined: undefined }` instead of the ten-key table. Silently-wrong data,
+ * not a throw, which is why it is worth registering rather than detecting.
+ *
+ * `__vec_*` already comes through #5193's positional registry; this covers the
+ * heterogeneous-tuple half that has per-field, module-dependent names.
+ */
+const STRUCT_READ_EXPORT_PREFIXES: readonly string[] = ["__sget_"];
+
+/** Exact struct-read discriminator names the host probes. */
+const STRUCT_READ_EXPORT_NAMES: ReadonlySet<string> = new Set(["__struct_field_names", "__is_data_struct"]);
+
+/**
+ * (#5209) The CALLBACK-BRIDGE family — the fifth facet of the same window.
+ *
+ * `__make_callback(id, caps)` hands the host a JS function whose body is
+ * `exports.__cb_<id>(caps, …args)`. During init that export was unreachable, so
+ * `createNativeFunctionCallbackBridge` took its "park it until exports exist"
+ * arm: the bridge returned `undefined` IMMEDIATELY and ran the real callback
+ * later, out of order.
+ *
+ * For an ASYNCHRONOUS consumer (a settled-promise reaction — the case that arm
+ * was written for) that is fine. For a SYNCHRONOUS one it is silently wrong:
+ * `t.filter(cb)` at module top level saw `undefined` for every element, kept
+ * nothing, and returned `[]` — the Temporal polyfill's
+ * `n.filter((e) => null != e.reverseOf).length > 1` era guard read an empty
+ * table. Registering `__cb_*` here lets the bridge dispatch for real, in order,
+ * and leaves the defer as the fallback for a callback whose export genuinely is
+ * not reachable yet.
+ */
+const CALLBACK_BRIDGE_EXPORT_PREFIXES: readonly string[] = ["__cb_"];
+
 function isClassDispatchExport(name: string | undefined): name is string {
-  return name !== undefined && CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix));
+  if (name === undefined) return false;
+  if (CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (CLOSURE_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (STRUCT_READ_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (CALLBACK_BRIDGE_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (STRUCT_READ_EXPORT_NAMES.has(name)) return true;
+  return CLOSURE_DISPATCH_EXPORT_NAMES.has(name);
 }
 
 /**
