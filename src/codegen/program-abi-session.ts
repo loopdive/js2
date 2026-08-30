@@ -2320,11 +2320,18 @@ export class ProgramAbiSession {
   ): PreparedProgramAbiPendingScope | readonly PreparedProgramAbiPendingScope[] {
     if (!Array.isArray(scopes)) return (scopes as PreparedProgramAbiScopeTransaction).prepareSeal();
     const pending: PreparedProgramAbiPendingScope[] = [];
+    const recognized: PreparedProgramAbiScopeTransaction[] = [];
     try {
-      for (const scope of scopes) pending.push(scope.prepareSeal());
+      for (const scope of scopes) {
+        // Record each yielded transaction before invoking user-visible
+        // preparation. The caller's iterator may throw on its next advance,
+        // and cleanup must not re-read that untrusted collection.
+        recognized.push(scope);
+        pending.push(scope.prepareSeal());
+      }
       return Object.freeze(pending);
     } catch (error) {
-      for (const scope of scopes) {
+      for (const scope of recognized) {
         try {
           scope.abort();
         } catch {

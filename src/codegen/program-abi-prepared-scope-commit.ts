@@ -623,8 +623,8 @@ function commitError(message: string): ProgramAbiInvariantError {
 function authenticatePendingScopes(
   host: PreparedProgramAbiCommitHost,
   pendingScopes: readonly PreparedProgramAbiPendingScope[],
+  recognized: PreparedScopeEntry[],
 ): { readonly entries: readonly PreparedScopeEntry[]; readonly failed: boolean; readonly error?: unknown } {
-  const entries: PreparedScopeEntry[] = [];
   const seenTokens = new Set<PreparedProgramAbiPendingScope>();
   const seenScopeIds = new Set<string>();
   let firstError: unknown;
@@ -657,14 +657,18 @@ function authenticatePendingScopes(
     seenTokens.add(pending);
     seenScopeIds.add(payload.scopeId);
     const entry = { pending, payload };
-    entries.push(entry);
+    // Keep the caller-owned cleanup state live while the untrusted collection
+    // is still being advanced. Its iterator may throw after yielding this
+    // authenticated receipt, in which case this helper cannot return to hand
+    // the entry back to the caller.
+    recognized.push(entry);
     try {
       host.assertScopeOpen(payload.scopeId, payload.terminalUnitIds);
     } catch (error) {
       remember(error);
     }
   }
-  return { entries, failed: hadError, error: firstError };
+  return { entries: recognized, failed: hadError, error: firstError };
 }
 
 function abortRecognizedPendingScopes(
@@ -696,17 +700,16 @@ export function commitPreparedProgramAbiScopes(
   pendingScopes: readonly PreparedProgramAbiPendingScope[],
 ): readonly SealedPreparedProgramAbiScope[] {
   host.assertPlanning("commit prepared ABI scopes");
-  if (pendingScopes.length === 0) {
-    throw new ProgramAbiInvariantError("duplicate-session-draft", "prepared ABI commit requires at least one scope");
-  }
-  let recognized: readonly PreparedScopeEntry[] = [];
+  const recognized: PreparedScopeEntry[] = [];
   let lifecycleEntries: readonly PreparedScopeLifecycleEntry[] = [];
   let liveWritesStarted = false;
   let commitScopeIds = "";
   try {
-    const authenticated = authenticatePendingScopes(host, pendingScopes);
-    recognized = authenticated.entries;
+    const authenticated = authenticatePendingScopes(host, pendingScopes, recognized);
     if (authenticated.failed) throw authenticated.error;
+    if (recognized.length === 0) {
+      throw new ProgramAbiInvariantError("duplicate-session-draft", "prepared ABI commit requires at least one scope");
+    }
     const ordered = [...recognized].sort((left, right) => left.payload.scopeId.localeCompare(right.payload.scopeId));
     const committedOverlay: PreparedProgramAbiPlanningOverlay = {
       drafts: new Map(host.committed.drafts),

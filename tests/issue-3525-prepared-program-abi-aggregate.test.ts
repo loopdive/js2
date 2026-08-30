@@ -261,6 +261,21 @@ describe("#3525 aggregate prepared Program-ABI publication", () => {
     expect(scope.abi.get(aliases.importBindingId)).toBeDefined();
     expect(scope.abi.getLocator(aliases.importBindingId)).toBe(scope.abi.getLocator(aliases.rootBindingId));
     expect(scope.abi.locatorObject(aliases.importBindingId)).toBe(aliases.rootFunction);
+    const importAlias = aliasBindings.find(({ record }) => record.kind === "import-alias");
+    const rootKey = f.session.getDraft(aliases.rootBindingId)?.structuralReferenceKey;
+    if (!importAlias || !rootKey) throw new Error("missing exact module-alias structural keys");
+    expect(importAlias.structuralReferenceKey).not.toBe(rootKey);
+    const rootIndex = scope.abi.resolveCurrentIndex(aliases.rootBindingId, "function", rootKey);
+    expect(scope.abi.resolveCurrentIndex(aliases.importBindingId, "function", importAlias.structuralReferenceKey)).toBe(
+      rootIndex,
+    );
+    expect(() =>
+      scope.abi.resolveCurrentIndex(
+        aliases.importBindingId,
+        "function",
+        `${importAlias.structuralReferenceKey}:mismatch`,
+      ),
+    ).toThrowError(expect.objectContaining<ProgramAbiInvariantError>({ code: "binding-reference-mismatch" }));
 
     const pending = scope.prepareSeal();
     expect(sessionState(f.session)).toEqual(before);
@@ -380,6 +395,114 @@ describe("#3525 aggregate prepared Program-ABI publication", () => {
     expect(duplicateStaged.scope.publicationState).toBe("aborted");
     expect(sessionState(duplicate.session)).toEqual(duplicateBefore);
     expect(registryState(duplicate)).toEqual(duplicateRegistries);
+  });
+
+  it("aborts a valid pending scope when its caller iterator throws after yielding it", () => {
+    const f = fixture();
+    const before = sessionState(f.session);
+    const beforeRegistries = registryState(f);
+    const staged = stageProviderBatch(f, "iterator-failure");
+    staged.scope.includeBinding(staged.providerId);
+    const pending = staged.scope.prepareSeal();
+    const iteratorError = new Error("pending scope iterator failed after the valid receipt");
+    const pendingCollection = {
+      [Symbol.iterator](): Iterator<typeof pending> {
+        let yielded = false;
+        return {
+          next(): IteratorResult<typeof pending> {
+            if (!yielded) {
+              yielded = true;
+              return { done: false, value: pending };
+            }
+            throw iteratorError;
+          },
+        };
+      },
+    } as unknown as Parameters<ProgramAbiSession["commitPreparedScopes"]>[0];
+
+    expect(() => f.session.commitPreparedScopes(pendingCollection)).toThrowError(iteratorError);
+    expect(staged.scope.publicationState).toBe("aborted");
+    expect(sessionState(f.session)).toEqual(before);
+    expect(registryState(f)).toEqual(beforeRegistries);
+    expect(() => f.session.commitPreparedScopes([pending])).toThrowError(ProgramAbiInvariantError);
+    expect(() => staged.scope.seal()).toThrowError(ProgramAbiInvariantError);
+  });
+
+  it("does not inspect a pending collection length before protected cleanup", () => {
+    const f = fixture();
+    const before = sessionState(f.session);
+    const beforeRegistries = registryState(f);
+    const staged = stageProviderBatch(f, "length-trap");
+    staged.scope.includeBinding(staged.providerId);
+    const pending = staged.scope.prepareSeal();
+    const lengthError = new Error("pending scope length was inspected");
+    const pendingCollection = new Proxy([pending], {
+      get(target, property, receiver) {
+        if (property === "length") throw lengthError;
+        if (property === Symbol.iterator) {
+          return () => {
+            let yielded = false;
+            return {
+              next(): IteratorResult<typeof pending> {
+                if (!yielded) {
+                  yielded = true;
+                  return { done: false, value: pending };
+                }
+                throw lengthError;
+              },
+            };
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as unknown as Parameters<ProgramAbiSession["commitPreparedScopes"]>[0];
+
+    expect(() => f.session.commitPreparedScopes(pendingCollection)).toThrowError(lengthError);
+    expect(staged.scope.publicationState).toBe("aborted");
+    expect(sessionState(f.session)).toEqual(before);
+    expect(registryState(f)).toEqual(beforeRegistries);
+    expect(() => f.session.commitPreparedScopes([pending])).toThrowError(ProgramAbiInvariantError);
+    expect(() => staged.scope.seal()).toThrowError(ProgramAbiInvariantError);
+  });
+
+  it("cleans prepared scopes without reacquiring a stateful caller iterator", () => {
+    const f = fixture();
+    const staged = stageProviderBatch(f, "prepare-iterator-failure");
+    staged.scope.includeBinding(staged.providerId);
+    const firstError = new Error("prepare-seal iterator failed after scope A");
+    const secondError = new Error("cleanup must not acquire the iterator again");
+    let acquisitions = 0;
+    const scopes = new Proxy([staged.scope], {
+      get(target, property, receiver) {
+        if (property !== Symbol.iterator) return Reflect.get(target, property, receiver);
+        return () => {
+          acquisitions += 1;
+          if (acquisitions === 1) {
+            let yielded = false;
+            return {
+              next(): IteratorResult<typeof staged.scope> {
+                if (!yielded) {
+                  yielded = true;
+                  return { done: false, value: staged.scope };
+                }
+                throw firstError;
+              },
+            };
+          }
+          return {
+            next(): IteratorResult<typeof staged.scope> {
+              throw secondError;
+            },
+          };
+        };
+      },
+    }) as unknown as Parameters<ProgramAbiSession["prepareSeal"]>[0];
+
+    expect(() => f.session.prepareSeal(scopes)).toThrowError(firstError);
+    expect(acquisitions).toBe(1);
+    expect(staged.scope.publicationState).toBe("aborted");
+    expect(() => staged.scope.prepareSeal()).toThrowError(ProgramAbiInvariantError);
+    expect(() => staged.scope.seal()).toThrowError(ProgramAbiInvariantError);
   });
 
   it("rejects a stale overlapping scope after an intervening scope claims its unit", () => {

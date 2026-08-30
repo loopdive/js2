@@ -77,9 +77,29 @@ export function createPreparedProgramAbiScopeLookup(
           ),
     getLocator: (id: IrBindingId) => planning.locators.get(canonical(id).id),
     resolveCurrentIndex: (id: IrBindingId, expectedSpace: ProgramAbiSlotSpace, structuralReferenceKey: string) => {
+      // Authenticate the exact requested binding before following an alias.
+      // Alias drafts own their edge-specific structural key even though their
+      // slot is resolved through the canonical target. Canonicalizing first
+      // would compare that alias key with the target's key and reject a valid
+      // prepared lookup.
+      const requested = planning.drafts.get(id);
+      if (!requested) {
+        throw new ProgramAbiInvariantError("unknown-binding", `prepared ABI lookup references ${id}`);
+      }
+      const requestedKey = planning.structuralReferenceKeys.get(requested.id);
+      if (requested.structuralReferenceKey !== structuralReferenceKey || requestedKey !== structuralReferenceKey) {
+        throw new ProgramAbiInvariantError(
+          "binding-reference-mismatch",
+          `prepared ABI key does not belong to ${requested.id}`,
+        );
+      }
       const draft = canonical(id);
-      const currentKey = planning.structuralReferenceKeys.get(draft.id);
-      if (currentKey !== structuralReferenceKey && draft.structuralReferenceKey !== structuralReferenceKey) {
+      const canonicalKey = planning.structuralReferenceKeys.get(draft.id);
+      if (
+        draft.structuralReferenceKey !== canonicalKey ||
+        typeof canonicalKey !== "string" ||
+        canonicalKey.length === 0
+      ) {
         throw new ProgramAbiInvariantError(
           "binding-reference-mismatch",
           `prepared ABI key does not belong to ${draft.id}`,
@@ -94,7 +114,7 @@ export function createPreparedProgramAbiScopeLookup(
       const locator = planning.locators.get(draft.id);
       if (!locator)
         throw new ProgramAbiInvariantError("missing-required-locator", `prepared ABI lookup ${id} has no locator`);
-      return host.resolveCurrentIndex(draft.id, expectedSpace, structuralReferenceKey, locator);
+      return host.resolveCurrentIndex(draft.id, expectedSpace, canonicalKey, locator);
     },
     currentCallableSignature: (id: IrBindingId) => {
       const contract = planning.callableTypeContracts.get(canonical(id).id);

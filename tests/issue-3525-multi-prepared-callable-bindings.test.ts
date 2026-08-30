@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { analyzeMultiSource } from "../src/checker/index.js";
+import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { generateMultiModule } from "../src/codegen/index.js";
 import { resolvePreparedFunctionBodyRoute } from "../src/codegen/declarations.js";
 import {
@@ -10,15 +11,23 @@ import {
   type MultiPreparedProgramCallableComponent,
 } from "../src/codegen/multi-prepared-callable-publication.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
+import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compileMulti } from "../src/index.js";
 import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
 import type { IrIntegrationReport } from "../src/ir/integration-report.js";
+import { compilePreparedProgramComponent, type IrIntegrationLoweringPlans } from "../src/ir/integration.js";
 import type { PendingPreparedProgramComponentReceipt } from "../src/ir/prepared-component-publication.js";
 import {
   buildIrProgramCallableBindingGraph,
   IrProgramCallableBindingInvariantError,
 } from "../src/ir/program-callable-bindings.js";
-import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "../src/ir/planning-identity.js";
+import {
+  buildIrLegacyUnitProjection,
+  buildIrPlanningIdentityContext,
+  type IrPlanningIdentityContext,
+} from "../src/ir/planning-identity.js";
+import { irVal, type IrClosureSignature } from "../src/ir/nodes.js";
+import { createEmptyModule } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
@@ -155,6 +164,44 @@ const ARRAY_BEARING_COMPONENT_FILES = {
   `,
 } as const;
 
+const GLOBAL_NUMERIC_BINDING_SOURCE = `
+  const shared = 1;
+  export function same(value: number): number { return value + shared; }
+`;
+
+const MIXED_PRIMITIVE_CONDITIONAL_SOURCE = `
+  export function same(value: number): number {
+    const mixed = value > 0 ? 7 : true;
+    return +mixed;
+  }
+`;
+
+const NULLISH_COMPONENT_FILES = {
+  "./a.ts": `
+    export function same(value: number): number {
+      const fallback = value ?? 1;
+      return value;
+    }
+    export function call(value: number): number { return same(value) + 10; }
+  `,
+  "./b.ts": `
+    export function same(value: number, delta: number): number {
+      const fallback = value ?? delta;
+      return value + delta;
+    }
+    export function call(value: number): number { return same(value, 20) + 20; }
+  `,
+  "./entry.ts": `
+    import { call as callA } from "./a";
+    import { call as callB } from "./b";
+    export function run(value: number): number {
+      const left = callA(value);
+      const right = callB(value);
+      return left * 1000 + right;
+    }
+  `,
+} as const;
+
 const SAME_SPELLING_WITH_UNANCHORED_FILES = {
   ...SAME_SPELLING_COMPONENT_FILES,
   "./c.ts": `
@@ -205,6 +252,70 @@ const CALLABLE_OPTIONS = {
   trackIrOutcomes: true,
   irCutoverRoute: "compileMulti" as const,
 };
+
+function compileDirectAtomicPreflight(source: string, expectedFailureDetail: string): void {
+  const ast = analyzeMultiSource({ "./preflight.ts": source }, "./preflight.ts");
+  const inventory = buildIrUnitInventory(ast.sourceFiles, {
+    checker: ast.checker,
+    entrySource: ast.entryFile,
+  });
+  const identityContext = buildIrPlanningIdentityContext(inventory);
+  const owner = inventory.terminalUnits.find(
+    (candidate) => candidate.kind === "top-level-function" && candidate.displayName === "same",
+  );
+  expect(owner).toBeDefined();
+  const ownerProjection = buildIrLegacyUnitProjection([{ unitId: owner!.id, legacyName: "same" }]);
+  const signature: IrClosureSignature = {
+    params: [irVal({ kind: "f64" })],
+    returnType: irVal({ kind: "f64" }),
+  };
+  const loweringPlans: IrIntegrationLoweringPlans = {
+    identityContext,
+    ownerProjection,
+    ownerUnitIdByLegacyName: new Map([["same", owner!.id]]),
+    signaturesByUnitId: new Map([[owner!.id, signature]]),
+    directCalls: new Map(),
+    importedCalls: new Map(),
+    topLevelFunctionValues: new Map(),
+    hostVoidCallbacks: new Map(),
+    hostDateSnapshots: new Map(),
+    hostDateGetters: new Map(),
+    promiseDelays: {
+      constructions: new Map(),
+      timers: new Map(),
+      resolves: new Map(),
+    },
+    suspendingAsyncUnitIds: new Set(),
+  };
+  const module = createEmptyModule();
+  const session = new ProgramAbiSession(inventory, module);
+  const ctx = createCodegenContext(module, ast.checker, CALLABLE_OPTIONS, session, identityContext);
+  vi.stubEnv("JS2WASM_TEST_ASSERT_MULTI_PREPARED_PREFLIGHT_READ_ONLY", "1");
+
+  const result = compilePreparedProgramComponent(
+    ctx,
+    ast.entryFile,
+    { funcs: new Set(["same"]) },
+    undefined,
+    undefined,
+    loweringPlans,
+  );
+
+  expect(result.pendingReceipt).toBeUndefined();
+  expect(result.report.compiled).toEqual([]);
+  expect(result.report.errors).toEqual([
+    expect.objectContaining({
+      func: "same",
+      outcome: expect.objectContaining({
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail: expect.stringContaining(expectedFailureDetail),
+      }),
+    }),
+  ]);
+  expect(ctx.allocRegistry).toBeUndefined();
+  expect((session as unknown as { openPreparedScopeIds: ReadonlySet<string> }).openPreparedScopeIds.size).toBe(0);
+}
 
 function exactFunctionUnitIds(
   files: Record<string, string>,
@@ -654,6 +765,42 @@ describe("#3525 whole-program callable binding graph", () => {
         (outcome) => outcome.code === "late-preparation-unsupported" && outcome.stage === "resolve",
       ),
     ).toBe(true);
+  });
+
+  it("declines a checker-resolved module global before allocator-bearing lowering", () => {
+    // A real top-level value is deliberately exercised through the exact
+    // prepared-component boundary: normal multi-source route planning owns
+    // module-init declarations first and would otherwise make this control
+    // vacuous by disabling callable cutover.
+    compileDirectAtomicPreflight(GLOBAL_NUMERIC_BINDING_SOURCE, "non-local identifier shared");
+  });
+
+  it("declines a mixed primitive conditional before allocator-bearing lowering", () => {
+    compileDirectAtomicPreflight(MIXED_PRIMITIVE_CONDITIONAL_SOURCE, "mixed or unresolved conditional value");
+  });
+
+  it("declines a nullish scalar before allocator-bearing lowering", () => {
+    const files = NULLISH_COMPONENT_FILES;
+    const fixture = makeGraph(files, "./entry.ts");
+    const unitIds = new Set<IrUnitId>([
+      functionUnitId(fixture, "/a.ts", "same") as IrUnitId,
+      functionUnitId(fixture, "/a.ts", "call") as IrUnitId,
+      functionUnitId(fixture, "/b.ts", "same") as IrUnitId,
+      functionUnitId(fixture, "/b.ts", "call") as IrUnitId,
+      functionUnitId(fixture, "/entry.ts", "run") as IrUnitId,
+    ]);
+    vi.stubEnv("JS2WASM_TEST_ASSERT_MULTI_PREPARED_PREFLIGHT_READ_ONLY", "1");
+
+    const generated = generateMultiModule(fixture.ast, CALLABLE_OPTIONS);
+
+    expect(generated.errors.filter(({ severity }) => severity !== "warning")).toEqual([]);
+    expectDirectOwnedCallablePopulation(generated, unitIds, new Set(["same", "call", "run"]));
+    expect(
+      exactOutcomes(generated, unitIds).every(
+        (outcome) => outcome.code === "late-preparation-unsupported" && outcome.stage === "resolve",
+      ),
+    ).toBe(true);
+    expect(generated.multiPreparedProgramAudit?.bodyPlan.reservations).toEqual([]);
   });
 
   it("declines an armed pending late-import shift before aggregate preparation", () => {

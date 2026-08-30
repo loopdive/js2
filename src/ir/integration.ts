@@ -906,7 +906,6 @@ const atomicDeferredNeutralBinaryOperators = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
   ts.SyntaxKind.AmpersandAmpersandToken,
   ts.SyntaxKind.BarBarToken,
-  ts.SyntaxKind.QuestionQuestionToken,
 ]);
 
 const atomicDeferredNeutralUnaryOperators = new Set<ts.SyntaxKind>([
@@ -928,6 +927,7 @@ function atomicDeferredComponentPreflightFailure(
   selection: IrSelection,
   loweringPlans: IrIntegrationLoweringPlans | undefined,
   identityContext: IrPlanningIdentityContext,
+  checker: ts.TypeChecker,
   pendingLateImportShift: CodegenContext["pendingLateImportShift"],
 ): string | undefined {
   if (pendingLateImportShift !== null) {
@@ -954,6 +954,60 @@ function atomicDeferredComponentPreflightFailure(
     }
     declarationsByUnitId.set(unitId, declaration);
   }
+
+  const localIdentifierIn = (node: ts.Identifier, ownerUnitId: IrUnitId): boolean => {
+    const owner = declarationsByUnitId.get(ownerUnitId);
+    if (!owner) return false;
+    let valueDeclaration: ts.Declaration | undefined;
+    try {
+      const symbol = checker.getSymbolAtLocation(node);
+      valueDeclaration = symbol?.valueDeclaration;
+    } catch {
+      return false;
+    }
+    if (!valueDeclaration) return false;
+    for (let current: ts.Node | undefined = valueDeclaration; current; current = current.parent) {
+      if (current === owner) return true;
+      if (
+        current !== valueDeclaration &&
+        (ts.isFunctionLike(current) || ts.isSourceFile(current) || ts.isModuleBlock(current))
+      ) {
+        return false;
+      }
+    }
+    return false;
+  };
+
+  type AtomicDeferredPrimitiveFamily = "number" | "boolean" | "string";
+  const primitiveFamilyAt = (node: ts.Expression): AtomicDeferredPrimitiveFamily | undefined => {
+    try {
+      const type = checker.getTypeAtLocation(node);
+      if (type.isUnion()) {
+        const families = new Set<AtomicDeferredPrimitiveFamily>();
+        for (const member of type.types) {
+          if ((member.flags & ts.TypeFlags.Never) !== 0) continue;
+          if ((member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0) return undefined;
+          const family =
+            (member.flags & ts.TypeFlags.NumberLike) !== 0
+              ? ("number" as const)
+              : (member.flags & ts.TypeFlags.BooleanLike) !== 0
+                ? ("boolean" as const)
+                : (member.flags & ts.TypeFlags.StringLike) !== 0
+                  ? ("string" as const)
+                  : undefined;
+          if (family === undefined) return undefined;
+          families.add(family);
+        }
+        return families.size === 1 ? families.values().next().value : undefined;
+      }
+      if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "number";
+      if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return "boolean";
+      if ((type.flags & ts.TypeFlags.StringLike) !== 0) return "string";
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   const visit = (node: ts.Node, ownerUnitId: IrUnitId): string | undefined => {
     if (ts.isCallExpression(node)) {
@@ -996,12 +1050,29 @@ function atomicDeferredComponentPreflightFailure(
     }
     if (ts.isParenthesizedExpression(node)) return visit(node.expression, ownerUnitId);
     if (ts.isConditionalExpression(node)) {
+      const trueFamily = primitiveFamilyAt(node.whenTrue);
+      const falseFamily = primitiveFamilyAt(node.whenFalse);
+      if (trueFamily === undefined || trueFamily !== falseFamily) {
+        return `owner ${ownerUnitId} contains a mixed or unresolved conditional value`;
+      }
       return (
         visit(node.condition, ownerUnitId) ?? visit(node.whenTrue, ownerUnitId) ?? visit(node.whenFalse, ownerUnitId)
       );
     }
+    // Labels are control-flow metadata, not value references.  Their
+    // identifiers have no checker valueDeclaration, so do not mistake a
+    // `break label` / `continue label` or the declaration label itself for a
+    // non-local value.  The surrounding statement remains in the same
+    // default-deny syntax walk below.
+    if (ts.isLabeledStatement(node)) return visit(node.statement, ownerUnitId);
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) return undefined;
+    if (ts.isIdentifier(node)) {
+      if (!localIdentifierIn(node, ownerUnitId)) {
+        return `owner ${ownerUnitId} contains non-local identifier ${node.text}`;
+      }
+      return undefined;
+    }
     if (
-      ts.isIdentifier(node) ||
       ts.isNumericLiteral(node) ||
       node.kind === ts.SyntaxKind.TrueKeyword ||
       node.kind === ts.SyntaxKind.FalseKeyword ||
@@ -2033,6 +2104,7 @@ export function compileIrPathFunctions(
       selected,
       loweringPlans,
       moduleBindingIdentityContext,
+      ctx.checker,
       ctx.pendingLateImportShift,
     );
     if (preflightDetail) {

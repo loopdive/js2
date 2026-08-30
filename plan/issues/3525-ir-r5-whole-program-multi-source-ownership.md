@@ -1142,7 +1142,11 @@ Use one late-sealed, one-shot aggregate transaction instead:
    `makeResolver(...)`. Unit refs keep their exact allocator-slot resolver;
    support/global/type/import refs resolve against the claimed overlay, never
    by querying only the live session. The lookup must reject a locator or
-   structural key outside its overlay and must not publish while resolving.
+   structural key outside its overlay and must not publish while resolving. A
+   provisional module alias authenticates with its own in-overlay structural
+   key before canonical-target resolution; the alias ID/key and canonical root
+   ID/key must resolve the same current function index, while a crossed or
+   foreign key remains fatal.
 4. Lower every exact top-level terminal into detached pending patches while
    the scope remains open. Before commit, prove one patch per expected terminal
    and no foreign, duplicate, derived, or missing artifact; exact allocator
@@ -1373,6 +1377,23 @@ An array/non-neutral mutation must prove unchanged module types, vector maps,
 feature flags, imports/providers, and zero prepared publication before direct
 fallback; do not implement this with rollback.
 
+That preflight must classify every `Identifier` by its exact declaration and
+binding identity. Local variables, parameters, and authenticated unit-bound
+call targets may be admitted; a module/global binding may not pass merely
+because its syntax is an identifier, since the builder would lower it to a
+`global.get` only after allocator setup. Exercise this boundary through a
+direct prepared-component harness when the ordinary multi-source route would
+be suppressed by module-init population, and prove typed
+`late-preparation-unsupported` with the complete live-context snapshot and
+publication prefix unchanged.
+
+Likewise, syntax being scalar-looking is not sufficient when lowering needs a
+dynamic carrier. Reject a conditional whose two arm types do not normalize to
+the same admitted primitive before either arm can be boxed, and reject nullish
+coalescing on this lane rather than relying on its post-build non-reference
+demotion. Non-vacuous controls must show both forms decline before allocator
+site or helper/type creation and leave the complete publication prefix empty.
+
 Final callable currentness must cover the full declaration subtree, not only
 the `Block` and top-level `Statement` objects. Snapshot the deterministic
 preorder identity of every descendant node for each exact declaration and
@@ -1506,6 +1527,23 @@ zero-write rejection, and explicit second-stage/second-prepare/second-abort/
 post-consumption replay failures. Drop or alter the export hop's provisional
 contract independently of the root and import hops; both mutations must reject
 against the canonical root before publication.
+
+Treat the pending-scope collection itself as untrusted input. Authentication
+must record each recognized scope in caller-owned cleanup state before it
+advances to the next iterator element or array property. If iteration or
+property access throws after yielding one valid scope, the outer failure path
+must abort that scope and make a later commit impossible. Add a throwing
+iterator/array-proxy mutation that yields one valid pending scope before the
+fault; a forged-token-only mutation does not cover this collection boundary.
+No `length` or other caller-controlled collection property may be read before
+that protected one-pass authentication; pair the iterator fault with a proxy
+whose `length` getter throws but whose explicit iterator yields the valid
+scope.
+The public `prepareSeal(scopes)` adapter has the same rule: it may not re-read
+the caller collection to discover what its first pass prepared. A stateful
+iterator that yields and prepares one scope before throwing must still leave
+that exact scope aborted even when a second iterator acquisition would throw
+again.
 
 An unsupported member may make the component ineligible before integration;
 that is acceptable only when every would-be member retains one direct terminal
