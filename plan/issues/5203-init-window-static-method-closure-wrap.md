@@ -1,7 +1,9 @@
 ---
 id: 5203
 title: Dynamic static-method dispatch during module init — `_wrapForHost` needs exports, so `JSBI.__clz30(t)` throws in the init window
-status: ready
+status: done
+assignee: ttraenkler/opus-dev-5203
+completed: 2026-08-29
 sprint: current
 priority: high
 horizon: m
@@ -76,3 +78,119 @@ measurement; keep the late path untouched and standalone/WASI out of scope.
 - Id #5203 reserved with a degraded PR scan (gh offline); manually verified
   against open PR head branches 2026-08-29. `check:issue-ids:against-main`
   arbitrates.
+
+## Implementation notes (2026-08-29, opus-dev-5203)
+
+### Which mechanism, and why not the other one
+
+The issue offered two arms: widen the start-exports channel to what
+`_wrapForHost` needs, or **route init-window closure wrapping through the
+registered funcrefs**. This takes the second, and dev-5202's caution is the
+reason: `_wrapForHost`'s `exports` argument is read by a large amount of
+unrelated behaviour (vec/DataView/primitive decoding, own-key enumeration,
+prototype vivification), so a module-init `exports` view reaching it would
+change many paths at once for one symptom. Nothing in `_wrapForHost` moved.
+
+### Root cause (measured, not inferred)
+
+The throw comes from `__extern_method_call`'s `typeof fn !== "function"`
+tail (`src/runtime.ts` ~L14057, reached via
+`src/runtime/fixed-extern-method-call.ts:19`). A static reaches the host as a
+RAW closure struct in the `__register_class_static_method` sidecar, and every
+recovery arm on that tail ends in `_maybeWrapCallableUnknownArity` →
+`_wrapWasmClosureUnknownArity`, both of which open with
+
+```js
+const exports = callbackState.getExports();
+if (!exports) return null;      // ← the whole of module init
+```
+
+They need exports not to *find* the method but to *invoke* it: the closure is
+called through the `__call_fn_<N>` / `__call_fn_method_<N>` dispatchers, with
+`__is_closure` as the discriminator and `__closure_arity` for arity choice.
+All exports, all unreachable while the `start` section runs.
+
+So this is the CLOSURE facet, not the dispatch-export facet #5202 closed:
+`__class_call_*` is never consulted for a static.
+
+### Fix
+
+1. `src/codegen/init-class-dispatch-helpers.ts` — the #5202 registration now
+   also enumerates the closure-bridge family: prefixes `__call_fn_` and
+   `__\0js2_call_fn_method_argc_`, plus the exact names `__closure_arity`,
+   `__is_closure`, `__closure_has_rest`, `__is_ctor_closure`. Prefix-matched so
+   a new arity is covered without another edit.
+2. `src/runtime.ts` — `_wrapWasmClosureUnknownArity` and
+   `_maybeWrapCallableUnknownArity` read `marshalExports(callbackState)`
+   instead of bare `getExports()`.
+
+### Downstream effects considered
+
+- **Snapshot vs. live exports.** `_wrapWasmClosureUnknownArity` captures the
+  `exports` object once and the dispatch closure keeps reading it, and the
+  bridge is cached permanently in `_wasmClosureDynamicWrapperCache` — so a
+  bridge built at init is used after init too. That is safe *only* because the
+  dispatch body reads exactly four things from the snapshot
+  (`__call_fn_<n>`, `__call_fn_method_<n>`, the argc wrapper, `__closure_arity`),
+  and all four are now in the registered set — and because a `ref.func` passed
+  to a JS import materializes as the SAME function object the export later
+  yields. Adding a new export to the dispatch body without adding it to the
+  registration list would reintroduce a partial snapshot; the prefix match
+  makes that hard for the arity families and impossible to miss for a new one.
+- **The NUL-named argc wrappers round-trip.** `__\0js2_call_fn_method_argc_<N>`
+  goes into the pooled CSV; verified by intercepting the import that all 19
+  names (6 argc + 5 direct + 6 method + 2 discriminators) arrive intact, NUL
+  included. Without them the bridge silently falls back to the plain method
+  dispatcher and the callee's `arguments.length` would be the dispatcher's
+  arity, not the caller's.
+- **Emitted bytes change for more modules than #5202 did.** The prologue is
+  gated on "has a module initializer AND at least one registerable export";
+  the closure family is present in nearly every JS-host module with top-level
+  code, so those modules gain ~19 registrations (4 instructions each). #5202's
+  byte-identity claim does not carry over and is not claimed here.
+- **Init-window closures are now wrapped where they used to stay raw.** This
+  is the intended behaviour change and it is broader than statics — e.g. the
+  `__extern_set` store path that #4149 documents as "saved unwrapped because
+  `_maybeWrapCallableUnknownArity` had no exports at store time" now wraps.
+  The equivalence gate is the check on that.
+- Standalone/WASI unreachable (`ctx.wasi || noJsHost(ctx)` guard, unchanged);
+  the late `__setInstance` path untouched.
+
+### Test results
+
+- `tests/issue-5203-init-window-static-dispatch.test.ts` — 5 cases; **3 fail on
+  base** (any-typed class value, static with arguments, plain-class static),
+  2 pass on base and are deliberate controls (statically-resolved `D.clz()`,
+  and a bare function value through an `any` alias — that one already worked,
+  which is what pins the failure to the class-value route). All 5 pass with
+  the fix.
+### Temporal harness (acceptance criterion 2) — measured, both sides
+
+`node --import tsx tests/dogfood/temporal-polyfill-harness.mjs` on a LOCAL
+probe tree (`#5252 + #5256 + #5258` and, in the second row, `+ this`; #5256
+merged for measurement only, not part of this PR):
+
+| probe tree | `moduleInitError` |
+| --- | --- |
+| #5252 + #5256 + #5258 (base) | `TypeError: __clz30 is not a function` |
+| + #5203 | `TypeError: object is not iterable (cannot read property Symbol(Symbol.iterator))` |
+
+Both runs executed here on 2026-08-29, not inherited from the issue text.
+`moduleInitRuns` is **still false** — the polyfill advances past `__clz30` and
+stops at a NEW, later blocker.
+
+**Next blocker, located.** The stack is
+`Object.fromEntries → src/runtime.ts:14436 → __module_init`:
+
+```js
+if (name === "__object_fromEntries") return (iterable: any): any => Object.fromEntries(iterable);
+```
+
+The handler passes the compiled value straight to the host `Object.fromEntries`,
+which needs `Symbol.iterator` — but an opaque WasmGC vec has none. Its immediate
+neighbour `__object_assign` does marshal (`_isWasmStruct(s) ? _wrapForHost(s, exports) : s`);
+this one does not. Reported to the coordinator for id allocation.
+
+- `tests/issue-5202-init-window-class-dispatch.test.ts` 5/5,
+  `tests/issue-5193-init-marshal-host-typedarray.test.ts` +
+  `tests/issue-5191-builtin-derived-class-value.test.ts` 34/34 — unchanged.

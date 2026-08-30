@@ -49,3 +49,22 @@ export function marshalExports(
 ): Record<string, Function> | undefined {
   return exports ?? callbackState?.getExports() ?? callbackState?.getStartExports?.();
 }
+
+/**
+ * (#5202) Split a `__register_init_class_export` name list exactly once per
+ * distinct CSV. The module passes the SAME pooled string on every call — one
+ * per dispatch export — so splitting per call would be quadratic on a bundle
+ * with hundreds of methods.
+ */
+const _classDispatchNameLists = new Map<string, string[]>();
+
+/** Resolve the `index`-th name of a `__register_init_class_export` CSV. */
+export function classDispatchExportName(csv: unknown, index: number): string | undefined {
+  if (typeof csv !== "string" || !Number.isInteger(index) || index < 0) return undefined;
+  let names = _classDispatchNameLists.get(csv);
+  if (names === undefined) {
+    names = csv.length > 0 ? csv.split(",") : [];
+    _classDispatchNameLists.set(csv, names);
+  }
+  return names[index];
+}

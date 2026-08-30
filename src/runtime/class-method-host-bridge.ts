@@ -71,8 +71,21 @@ export function createClassMemberResolver(
       // the receiver is the real host object, not a WasmGC struct. The codegen
       // emits a class-qualified bridge for each such method, so resolve it
       // directly before consulting the historical fnctor/struct surface.
+      // (#5204) A GETTER on an externref-backed class. The generic
+      // `__call_get_<key>` is reached only after `__member_kind_<key>`'s
+      // ref.test cascade classifies the receiver, and a host-object receiver
+      // never passes that test — so `get g()` read `NaN` with no error. The
+      // class-qualified export is unambiguous; check it before the method
+      // candidates, since a key is either an accessor or a method.
+      const classGetFn = exports[`__call_get_${className}_${key}`] as unknown as ((value: any) => any) | undefined;
+      if (typeof classGetFn === "function") {
+        return deps.marshalBridgeResult(classGetFn(obj), callbackState);
+      }
       const prefix = `__class_call_${className}_${key}_`;
       const candidates: Array<{ arity: number; fn: Function }> = [];
+      // (#5204) A rest-parameter method publishes ONE `_vararg` bridge taking
+      // the whole argument array, not an arity-suffixed family.
+      let varargFn: ((value: any, args: any[]) => any) | undefined;
       // `callbackState.getExports()` may be the host-bridge projection whose
       // generated helpers live on a prototype. Walk the full export view, not
       // only its enumerable own keys, so class-qualified bridges remain
@@ -84,11 +97,32 @@ export function createClassMemberResolver(
           if (seenNames.has(name) || !name.startsWith(prefix)) continue;
           seenNames.add(name);
           const suffix = name.slice(prefix.length);
-          if (!/^\d+$/.test(suffix)) continue;
           const fn = exports[name];
+          if (suffix === "vararg") {
+            if (typeof fn === "function") varargFn = fn as (value: any, args: any[]) => any;
+            continue;
+          }
+          if (!/^\d+$/.test(suffix)) continue;
           if (typeof fn === "function") candidates.push({ arity: Number(suffix), fn });
         }
         exportView = Object.getPrototypeOf(exportView) as Record<string, any> | null;
+      }
+      if (varargFn !== undefined) {
+        const restFn = varargFn;
+        let bridges = classMethodHostBridges.get(obj);
+        if (!bridges) {
+          bridges = new Map();
+          classMethodHostBridges.set(obj, bridges);
+        }
+        let fn = bridges.get(key);
+        if (!fn) {
+          fn = function externrefClassVarargHostBridge(this: any, ...args: any[]) {
+            return deps.marshalBridgeResult(restFn(obj, args), callbackState);
+          };
+          Object.defineProperty(fn, "name", { value: key, configurable: true });
+          bridges.set(key, fn);
+        }
+        return fn;
       }
       if (candidates.length > 0) {
         candidates.sort((a, b) => a.arity - b.arity);

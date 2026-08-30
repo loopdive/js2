@@ -1,7 +1,9 @@
 ---
 id: 5209
 title: An array-literal constructor argument reaches the host extern-method dispatcher as a compiled vec — `.filter` throws "filter is not a function"
-status: ready
+status: done
+completed: 2026-08-30
+assignee: ttraenkler/dev-5209
 sprint: current
 priority: high
 horizon: m
@@ -71,3 +73,92 @@ compiled path (order-preservation, no host round-trip).
   time.
 - Id #5209 reserved with a degraded PR scan; manually verified against open
   PR head branches 2026-08-30. `check:issue-ids:against-main` arbitrates.
+
+## Implementation notes (dev-5209, 2026-08-30)
+
+### The throw was one of THREE defects on the same statement
+
+`t.filter((x) => x.code)` inside a constructor running at module top level
+failed three separate ways, each masking the next. All three are the same
+window — in the JS-host lane top-level code runs in the wasm `start` section,
+so `callbackState.getExports()` is `undefined` for the whole of module init —
+and each is the next facet of the series #5193 → #5202 → #5203 → #5205 opened.
+
+The order matters, because fixing only the reported one makes the bug WORSE:
+
+1. **Dispatch (the reported throw).** `_wrapForHost` gated its vec→host Array
+   facade on `getExports()`. During init the vec became the *generic object
+   proxy* instead, which has no `filter`, so the extern-method dispatcher fell
+   through every arm and threw `filter is not a function` (`src/runtime.ts`
+   "no arm matched"). Fixed by giving the dispatcher's marshalling path
+   (`wrapHostValue`, and the `_VEC_PRIMITIVE_READ_METHODS` arm) the
+   `marshalExports()` view — the strict `exports` local is untouched, because
+   most arms below read it as "init has finished".
+
+2. **The callback never ran.** With (1) fixed, `filter` resolved and returned
+   `[]`. `__make_callback` builds a bridge whose body is `exports.__cb_<id>`;
+   `__cb_*` was not on the start-export channel, so
+   `createNativeFunctionCallbackBridge` took its "park until exports exist"
+   arm — **returning `undefined` to the caller on the spot**. That is right for
+   an async reaction and silently wrong for `filter`/`map`/`some`. Fixed by
+   registering `__cb_*` on the #5202 CSV channel and parking only when the
+   compiled body is genuinely unreachable.
+
+3. **The field read answered `undefined`.** `x.code` off an untyped callback
+   parameter is a dynamic `__extern_get`, which needs `__sget_<field>`. #5205
+   already registers that family at init, but `_safeGet`'s probe still asked
+   `getExports()`. Fixed to `marshalExports()`.
+
+Defects 2 and 3 are silent. That is why the new tests assert VALUES and why two
+rows pin that init and post-init give the SAME answer for the same expression —
+"answers differently depending on when it ran" is the actual bug.
+
+### Why the host path, not the compiled path
+
+The issue suggested preferring the compiled path. The evidence says the routing
+is not the defect: `t` is an untyped constructor parameter, so `t.filter(cb)` is
+a dynamic member call that codegen cannot resolve statically, and the identical
+statement AFTER init already went through the host Array facade and was correct.
+Only the timing differed. Keeping the value on the compiled path would have
+required a new runtime `__is_vec` discriminator at every dynamic member call
+site — a much larger change that would not have fixed defects 2 or 3.
+
+### Also worth knowing
+
+- `_wrapVecForHost` now reads exports through a **live slot** shared via
+  `_hostProxyExportSlots`, not a captured snapshot. Views are cached for the
+  lifetime of the vec, so a view born during init with the partial helper set
+  would otherwise have kept it forever.
+- The registration gate is decided from the module's IMPORT LIST (any
+  `__extern_method_call*`) rather than from each of ~20 emitting call sites.
+- `JS2WASM_DOGFOOD_STACK=1` now makes the Temporal harness print the init stack
+  for a host-side TypeError. That stack names the polyfill function chain and is
+  how the next blocker below was pinned in one run instead of by bisection.
+
+### Measured
+
+| | before (pristine origin/main + stack) | after |
+|---|---|---|
+| Temporal harness ESM init | `TypeError: filter is not a function` | `TypeError: The comparison function must be either a function or undefined: [object Object]` |
+| `moduleInitRuns` | false | false |
+| new test file, host lane | 8 of 18 assertions fail | 18/18 pass |
+
+### Next blocker (for filing — id to be allocated by the coordinator)
+
+Same function, one statement further:
+
+```
+TypeError: The comparison function must be either a function or undefined: [object Object]
+    at Array.sort (<anonymous>)
+    at invokeMethod                 src/runtime.ts:10952
+    at GregorianBaseHelper_init ← OrthodoxBaseHelper_init ← EthiopicHelper_init ← __module_init
+```
+
+`invokeMethod` wraps struct arguments with `_wrapForHost(args[i], exports)`
+where `exports = callbackState?.getExports()` — undefined at init — and it never
+applies `_maybeWrapCallableUnknownArity` to arguments at all. So a compiled
+COMPARATOR closure crosses as an opaque struct and V8's `Array.prototype.sort`
+rejects it. Fix direction: `marshalExports` plus callable-wrapping of arguments
+on that path. Deliberately NOT done here: `invokeMethod` is the DOM lane's hot
+path and adding callable-wrapping semantics to arguments is a behaviour change
+that deserves its own issue and its own regression run.
