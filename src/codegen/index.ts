@@ -11,6 +11,7 @@ import {
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
+import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
@@ -13026,6 +13027,16 @@ function inferLetConstInitializerWasmType(
   if (taViewCallResultType !== null) return taViewCallResultType;
   const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, initializer);
   if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
+
+  const genericFactory = genericStructFactoryExpression(ctx, initializer);
+  if (genericFactory) {
+    const target = resolveWasmType(ctx, genericFactory.target);
+    if (target.kind === "ref" || target.kind === "ref_null") {
+      // Wasm locals must be defaultable. The call emitter materializes the
+      // concrete target before the initializer is stored into this slot.
+      return { kind: "ref_null", typeIdx: target.typeIdx };
+    }
+  }
 
   const unwrapped = stripRegExpInferenceWrapper(initializer);
   if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) {

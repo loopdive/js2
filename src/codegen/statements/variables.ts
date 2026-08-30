@@ -41,6 +41,7 @@ import {
 } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
+import { genericStructFactoryExpression } from "../generic-struct-factory.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
 import {
   inferNativeTaViewCallResultType,
@@ -1906,6 +1907,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (#3054 B1) `new <TA>(buffer)` → shared-backing `$__ta_view` local type.
     const taViewType = inferTaViewType(ctx, decl.initializer);
     const taViewCallResultType = inferNativeTaViewCallResultType(ctx, decl.initializer);
+    const genericFactory = decl.initializer ? genericStructFactoryExpression(ctx, decl.initializer) : null;
+    const genericFactoryTarget = genericFactory ? resolveWasmType(ctx, genericFactory.target) : null;
+    const genericFactoryInitializerType: ValType | null =
+      genericFactoryTarget?.kind === "ref" || genericFactoryTarget?.kind === "ref_null"
+        ? { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx }
+        : null;
     // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
     // slots so dynamic MOP/result-object reads do not become struct.get on the
     // checker-inferred target/revocable shapes.
@@ -2050,7 +2057,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                             !noJsHost(ctx) &&
                                             isBindCarrierCall(decl.initializer)
                                           ? { kind: "externref" as const }
-                                          : localTypeForDeclaration(ctx, varType, decl))));
+                                          : (genericFactoryInitializerType ??
+                                            localTypeForDeclaration(ctx, varType, decl)))));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused

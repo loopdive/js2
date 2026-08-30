@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-08-29
+updated: 2026-08-30
 priority: high
 feasibility: hard
 model: fable
@@ -53,6 +53,13 @@ loc-budget-allow:
   # guard with main's funcMap identity guard, crossing the 1500-line god-file
   # threshold in the closure capture-analysis phase file.
   - src/codegen/closures/arrow-phases.ts
+  # 2026-08-30: the runtime parser follow-up adds narrow module-scale,
+  # constructor-ABI, nullable-result, and fresh generic-factory handling at the
+  # compiler frontiers documented in the current handoff below.
+  - src/codegen/expressions.ts
+  - src/codegen/generic-struct-factory.ts
+  - src/codegen/module-scale-profile.ts
+  - src/codegen/native-construct.ts
 func-budget-allow:
   # 2026-08-29: same change — the deferred install lives at the end of this
   # function, where the literal's method funcIdxs are finally resolvable.
@@ -94,6 +101,7 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/native-construct.ts::fillNativeConstructDrivers
   - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
+  - src/codegen/expressions.ts::compileExpressionInner
 oracle-ratchet-allow:
   # The parser stress harvest predates the ctx.oracle migration and exposes
   # TypeScript checker queries across these existing codegen paths.
@@ -110,6 +118,7 @@ oracle-ratchet-allow:
   - src/codegen/literals.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/property-access.ts
+  - src/codegen/generic-struct-factory.ts
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
 
@@ -505,6 +514,68 @@ errors, all 45 issue-1058 test files pass (151 tests), and the merge-sensitive
 main regressions pass (8 files, 94 tests). The runtime `createIdentifier` null
 deref above remains the only known Tier-3 fingerprint blocker; this refresh
 does not claim it is resolved.
+
+## Runtime parser handoff (2026-08-30)
+
+Branch: `codex/1058-typescript5-runtime`, synchronized to `origin/main` at
+`c914ccb19727c28b09d2cb7f132f6586a833960f`.
+
+The canonical consumer-driven TypeScript 5.9.3 parser graph still compiles and
+validates. The latest authoritative artifact is
+`/private/tmp/ts2wasm-typescript-parser-latest.wasm`: **82,028,926 bytes**, with
+284,224 ms worker time / 285,061 ms wall time and **3,492.6 MiB peak RSS**.
+Compilation succeeds and `WebAssembly.validate` returns true. Tier 3 remains
+open because none of the three runtime fingerprints has returned yet; the
+current shared frontier is TypeScript's generic base-node factory chain.
+
+### Focused fixes implemented in the working branch
+
+- Module-scale measurement now walks shared type/instruction graphs as a DAG,
+  preventing repeated traversal and `Set` growth on the parser-sized module.
+- Native constructors erase an explicit TypeScript `this` pseudo-parameter
+  from source arity while still receiving the runtime receiver through the
+  dispatcher channel; focused `Identifier` and `SourceFile` constructor
+  factories exercise this ABI.
+- Exact generic identity returns (`T -> T`) preserve their externref carrier,
+  including the `finishNode<T extends Node>` shape.
+- Proven asserted structural extensions can default missing erased
+  `_...Brand` / `__...Brand` fields without weakening ordinary coercion.
+- Nullable generic call results are projected into widened local and assignment
+  targets, covering optional-token initialization and loop reassignment.
+- Dynamic `new` recognizes the exact lazy constructor-cache idiom
+  `new (C || (C = getter()))(...)` (and `??`) only for an existing
+  uninitialized construct-signature-only binding.
+- A narrow fresh generic-factory path now materializes admitted structural
+  extensions, with focused coverage for direct `Node -> Identifier`, chained
+  `Node -> Declaration -> NumericLiteral`, generic identity, asserted nested
+  identity, nullable results, and module-scale behavior.
+
+The focused generic base-node regression is not green yet. Direct Identifier
+and chained Declaration/NumericLiteral materialization work, but
+`createExpressionStatement` still reaches `node.expression = expression` with
+an unmaterialized base-node layout. Separately, an object-literal method whose
+result is a constructor/callable can currently drop that result and substitute
+null. Both defects meet in TypeScript's lazy `getNodeConstructor` / base-node
+factory path, so the branch does not claim runtime parser correctness yet.
+
+### Exact remaining validation
+
+1. Make the fresh-factory layout proof admit the valid
+   `Node -> ExpressionStatement` extension without becoming a general
+   structural-coercion fallback, and preserve callable constructor results from
+   object-literal methods.
+2. Run every `tests/issue-1058-*.test.ts` regression and require all files and
+   tests to pass.
+3. Rerun the canonical source probe with consumer-driven barrels and require
+   all three runtime results: `builderStatePublic.ts=13386537220945`,
+   `corePublic.ts=40098163538143`, and
+   `performanceCore.ts=49645738923599`.
+4. Run `pnpm run dogfood:typescript-upstream-suite` (the strict 11-callback
+   suite), TypeScript 5 and TypeScript 7 typechecks, repository lint/Prettier,
+   `pnpm run check:ir-fallbacks`, and the oracle-ratchet gate.
+
+Until step 3 returns all three expected values, the valid 82 MB module is a
+compile/validation milestone, not a parser-pass claim.
 
 ## Acceptance criteria
 

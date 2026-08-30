@@ -12,7 +12,11 @@ import type { FieldDef, StructTypeDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-type.js";
-import { hasStructPrefix, sealNominalStructParent } from "../struct-hierarchy-layout.js";
+import {
+  hasStructPrefix,
+  linkCompatibleDeclaredStructAncestor,
+  sealNominalStructParent,
+} from "../struct-hierarchy-layout.js";
 
 interface RegisteredInterface {
   decl: ts.InterfaceDeclaration;
@@ -26,6 +30,7 @@ interface RegisteredInterface {
 }
 
 const registeredInterfaces = new WeakMap<CodegenContext, RegisteredInterface[]>();
+const collectedInterfaceDeclarations = new WeakMap<CodegenContext, WeakSet<ts.InterfaceDeclaration>>();
 
 function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDef["type"] {
   // `mapTsTypeToWasm` intentionally models BigInt as the host-free i64
@@ -39,10 +44,38 @@ function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDe
 }
 
 export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclaration): void {
+  let collected = collectedInterfaceDeclarations.get(ctx);
+  if (!collected) {
+    collected = new WeakSet<ts.InterfaceDeclaration>();
+    collectedInterfaceDeclarations.set(ctx, collected);
+  }
+  if (collected.has(decl)) return;
+  collected.add(decl);
+
+  const interfaceType = ctx.checker.getTypeAtLocation(decl);
+  // WasmGC supertypes must precede their subtypes in the type section. Source
+  // order does not have that restriction, and TypeScript's own `types.ts`
+  // declares `Identifier` before its `PrimaryExpression -> ... -> Expression`
+  // base chain. Precollect only same-source, unmerged, property-only bases:
+  // their physical layout is complete and recursion cannot pull in a host
+  // declaration or a late method field. The declaration WeakSet makes the
+  // ordinary source-order pass idempotent and also breaks invalid cycles.
+  for (const base of interfaceBaseTypes(ctx, interfaceType)) {
+    const stable = interfaceHasStablePhysicalLayout(ctx, base);
+    const baseDeclarations = base
+      .getSymbol()
+      ?.getDeclarations()
+      ?.filter((declaration): declaration is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(declaration));
+    if (!stable) continue;
+    if (baseDeclarations?.length !== 1) continue;
+    const baseDeclaration = baseDeclarations[0]!;
+    if (baseDeclaration.getSourceFile() !== decl.getSourceFile()) continue;
+    collectInterface(ctx, baseDeclaration);
+  }
+
   const name = decl.name.text;
   const fields: FieldDef[] = [];
 
-  const interfaceType = ctx.checker.getTypeAtLocation(decl);
   const properties = orderedInterfaceProperties(ctx, interfaceType);
   const baseTypes = interfaceBaseTypes(ctx, interfaceType);
   const baseNames = baseTypes
@@ -198,10 +231,43 @@ function wouldCreateStructCycle(ctx: CodegenContext, childIdx: number, parentIdx
  */
 function linkInterfaceStructHierarchies(ctx: CodegenContext): void {
   for (const registration of registeredInterfaces.get(ctx) ?? []) {
-    if (!registration.canLinkNominally) continue;
     if (ctx.structMap.get(registration.name) !== registration.typeIdx) continue;
     const child = ctx.mod.types[registration.typeIdx];
     if (!child || child.kind !== "struct") continue;
+
+    if (!registration.canLinkNominally) {
+      // WasmGC has only one nominal parent, but a flattened multiple-heritage
+      // interface can still have one unambiguous physical ancestor. This is
+      // common in TypeScript's syntax hierarchy: `Identifier` extends the
+      // brand-only `PrimaryExpression` chain plus several marker/container
+      // interfaces. Keeping Identifier flat makes the runtime value fail an
+      // otherwise-valid Identifier -> Expression argument cast.
+      //
+      // Admit only stable, unmerged declared bases and let the shared layout
+      // helper require an exact mutable-field prefix. The largest compatible
+      // prefix wins; other TypeScript bases continue to use structural
+      // projection, so no multiple-inheritance relationship is invented.
+      const interfaceType = ctx.checker.getTypeAtLocation(registration.decl);
+      const declarations = interfaceType
+        .getSymbol()
+        ?.getDeclarations()
+        ?.filter((declaration) => ts.isInterfaceDeclaration(declaration));
+      if (registration.baseNames.length > 1 && declarations?.length === 1) {
+        const candidateParentIdxs = interfaceBaseTypes(ctx, interfaceType)
+          .filter((base) => {
+            const baseDeclarations = base
+              .getSymbol()
+              ?.getDeclarations()
+              ?.filter((declaration) => ts.isInterfaceDeclaration(declaration));
+            return baseDeclarations?.length === 1 && interfaceHasStablePhysicalLayout(ctx, base);
+          })
+          .map((base) => base.getSymbol()?.name)
+          .map((baseName) => (baseName === undefined ? undefined : ctx.structMap.get(baseName)))
+          .filter((parentIdx): parentIdx is number => parentIdx !== undefined);
+        linkCompatibleDeclaredStructAncestor(ctx, registration.typeIdx, candidateParentIdxs);
+      }
+      continue;
+    }
 
     if (registration.linkedParentIdx !== undefined) {
       const oldParentIdx = registration.linkedParentIdx;

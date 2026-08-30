@@ -39,6 +39,7 @@ import {
 import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
+import { samePhysicalValType } from "./struct-hierarchy-layout.js";
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -1687,12 +1688,16 @@ function getTupleFields(ctx: CodegenContext, typeIdx: number): ValType[] | null 
  * where the destination fields are a subset of the source fields. If so, emit
  * field-by-field extraction to construct the narrower struct.
  */
+function erasedTypeBrandFieldCanDefault(field: { name: string; type: ValType }): boolean {
+  return /^_{1,2}[A-Za-z0-9_$]+Brand$/.test(field.name) && field.type.kind !== "ref";
+}
+
 function getStructNarrowInfo(
   ctx: CodegenContext,
   fromTypeIdx: number,
   toTypeIdx: number,
 ): {
-  srcFields: { name: string; type: ValType; fieldIdx: number }[];
+  srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
   dstFields: { name: string; type: ValType }[];
 } | null {
   const fromDef = ctx.mod.types[fromTypeIdx];
@@ -1709,10 +1714,19 @@ function getStructNarrowInfo(
   }
 
   // Check if all destination fields exist in the source
-  const srcFields: { name: string; type: ValType; fieldIdx: number }[] = [];
+  const srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[] = [];
   for (const field of dstStruct.fields) {
     const srcField = srcFieldMap.get(field.name);
-    if (!srcField) return null; // field not found in source
+    if (!srcField) {
+      // TypeScript's `_...Brand` members are compile-time-only nominal markers.
+      // They do not exist on JavaScript objects and an `as Derived` assertion
+      // does not materialize them. Permit a structural projection to complete
+      // only these erased fields with their null/zero default; every ordinary
+      // missing field still rejects the projection.
+      if (!erasedTypeBrandFieldCanDefault(field)) return null;
+      srcFields.push(undefined);
+      continue;
+    }
     srcFields.push({ name: field.name, type: srcField.type, fieldIdx: srcField.fieldIdx });
   }
 
@@ -1724,9 +1738,10 @@ function getStructNarrowInfo(
 
 /**
  * Whether the existing typed-ref coercion can materialize `to` from `from`
- * with a field-preserving structural projection. Callers that synthesize
- * detached dispatch arms use this pure probe before asking `coercionInstrs`
- * to emit the conversion (and its temporary locals).
+ * with a field-preserving structural projection (plus default completion for
+ * TypeScript's erased `_...Brand` markers). Callers that synthesize detached
+ * dispatch arms use this pure probe before asking `coercionInstrs` to emit the
+ * conversion (and its temporary locals).
  */
 export function canStructurallyProjectRef(ctx: CodegenContext, from: ValType, to: ValType): boolean {
   if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
@@ -2067,7 +2082,7 @@ function emitStructNarrowBody(
   fromTypeIdx: number,
   toTypeIdx: number,
   info: {
-    srcFields: { name: string; type: ValType; fieldIdx: number }[];
+    srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
     dstFields: { name: string; type: ValType }[];
   },
   fromNullable: boolean,
@@ -2105,8 +2120,13 @@ function emitStructNarrowBody(
 
   // For each destination field, get the corresponding source field
   for (let i = 0; i < info.dstFields.length; i++) {
-    const srcField = info.srcFields[i]!;
+    const srcField = info.srcFields[i];
     const dstField = info.dstFields[i]!;
+
+    if (!srcField) {
+      fctx.body.push(...defaultValueInstrs(dstField.type));
+      continue;
+    }
 
     fctx.body.push({ op: "local.get", index: tmpLocal });
     fctx.body.push({ op: "struct.get", typeIdx: fromTypeIdx, fieldIdx: srcField.fieldIdx });
@@ -2131,6 +2151,171 @@ function emitStructNarrowBody(
 
   releaseTempLocal(fctx, tmpLocal);
   return true;
+}
+
+/**
+ * Materialize an asserted fresh structural extension without weakening normal
+ * ref coercions.
+ *
+ * TypeScript's node factory allocates a base `Node`, exposes it through a
+ * generic `Mutable<T>` result, and immediately initializes the additional
+ * fields of the concrete `T`. JavaScript objects grow in place; WasmGC structs
+ * cannot, so that exact factory boundary needs a fresh destination struct.
+ *
+ * This helper is intentionally not wired into `coerceType`: ordinary `Base as
+ * Derived` casts must retain their established guarded-cast behavior. Callers
+ * must first prove that the value comes from a fresh generic factory. We then
+ * require the destination to be a by-name physical superset (or an equal-width
+ * nominal refinement) and preserve every source field. Equal-width refinement
+ * is required for TypeScript's `Token<TKind>`, which narrows `Node.kind`
+ * semantically without adding a physical field. Destination-only non-null refs
+ * are widened to nullable when emitted: the asserted JS object may not have
+ * initialized that property yet, and null is the GC carrier for that
+ * initially-missing value.
+ */
+interface AssertedStructExtensionInfo {
+  fromTypeIdx: number;
+  toTypeIdx: number;
+  srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
+  dstFields: { name: string; type: ValType }[];
+}
+
+function assertedStructExtensionInfo(
+  ctx: CodegenContext,
+  from: ValType,
+  to: ValType,
+): AssertedStructExtensionInfo | undefined {
+  if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
+    return undefined;
+  }
+
+  const fromDef = ctx.mod.types[from.typeIdx];
+  const toDef = ctx.mod.types[to.typeIdx];
+  if (!fromDef || fromDef.kind !== "struct" || !toDef || toDef.kind !== "struct") return undefined;
+  if (toDef.fields.length < fromDef.fields.length) return undefined;
+
+  const destinationFields = new Map(toDef.fields.map((field) => [field.name, field]));
+  for (const sourceField of fromDef.fields) {
+    const destinationField = destinationFields.get(sourceField.name);
+    if (
+      !destinationField ||
+      destinationField.mutable !== sourceField.mutable ||
+      !samePhysicalValType(destinationField.type, sourceField.type)
+    ) {
+      return undefined;
+    }
+  }
+
+  const sourceFields = new Map(
+    fromDef.fields.map((field, fieldIdx) => [field.name, { name: field.name, type: field.type, fieldIdx }]),
+  );
+  const projectedSources: ({ name: string; type: ValType; fieldIdx: number } | undefined)[] = [];
+  for (const destinationField of toDef.fields) {
+    const sourceField = sourceFields.get(destinationField.name);
+    projectedSources.push(sourceField);
+  }
+
+  return {
+    fromTypeIdx: from.typeIdx,
+    toTypeIdx: to.typeIdx,
+    srcFields: projectedSources,
+    dstFields: toDef.fields.map((field) => ({ name: field.name, type: field.type })),
+  };
+}
+
+/** Pure preflight for callers that must choose a stack conversion first. */
+export function canEmitAssertedStructExtension(ctx: CodegenContext, from: ValType, to: ValType): boolean {
+  return assertedStructExtensionInfo(ctx, from, to) !== undefined;
+}
+
+/**
+ * Keep WasmGC's invariant mutable-field prefix exact when a freshly asserted
+ * parent gains a nullable default. Only the actual nominal descendant graph is
+ * traversed; unrelated flat structs with the same field spelling are untouched.
+ */
+function widenAssertedExtensionFieldThroughNominalDescendants(
+  ctx: CodegenContext,
+  ancestorTypeIdx: number,
+  fieldIdx: number,
+  fieldName: string,
+  fieldTypeIdx: number,
+): ValType {
+  const nullable: ValType = { kind: "ref_null", typeIdx: fieldTypeIdx };
+  const children = new Map<number, number[]>();
+  for (let typeIdx = 0; typeIdx < ctx.mod.types.length; typeIdx++) {
+    const candidate = ctx.mod.types[typeIdx];
+    if (!candidate || candidate.kind !== "struct" || candidate.superTypeIdx === undefined) continue;
+    const siblings = children.get(candidate.superTypeIdx) ?? [];
+    siblings.push(typeIdx);
+    children.set(candidate.superTypeIdx, siblings);
+  }
+
+  const pending = [ancestorTypeIdx];
+  const visited = new Set<number>();
+  while (pending.length > 0) {
+    const typeIdx = pending.pop()!;
+    if (visited.has(typeIdx)) continue;
+    visited.add(typeIdx);
+
+    const typeDef = ctx.mod.types[typeIdx];
+    if (typeDef?.kind === "struct") {
+      const field = typeDef.fields[fieldIdx];
+      if (
+        field?.name === fieldName &&
+        (field.type.kind === "ref" || field.type.kind === "ref_null") &&
+        field.type.typeIdx === fieldTypeIdx
+      ) {
+        field.type = nullable;
+        const publishedField = ctx.structFields.get(typeDef.name)?.[fieldIdx];
+        if (
+          publishedField?.name === fieldName &&
+          (publishedField.type.kind === "ref" || publishedField.type.kind === "ref_null") &&
+          publishedField.type.typeIdx === fieldTypeIdx
+        ) {
+          publishedField.type = nullable;
+        }
+      }
+    }
+
+    pending.push(...(children.get(typeIdx) ?? []));
+  }
+  return nullable;
+}
+
+export function emitAssertedStructExtension(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  from: ValType,
+  to: ValType,
+): boolean {
+  const info = assertedStructExtensionInfo(ctx, from, to);
+  if (!info) return false;
+
+  const destination = ctx.mod.types[info.toTypeIdx];
+  if (!destination || destination.kind !== "struct") return false;
+  for (let fieldIdx = 0; fieldIdx < info.dstFields.length; fieldIdx++) {
+    if (info.srcFields[fieldIdx] !== undefined) continue;
+    const field = destination.fields[fieldIdx];
+    if (!field || field.type.kind !== "ref") continue;
+    const nullable = widenAssertedExtensionFieldThroughNominalDescendants(
+      ctx,
+      info.toTypeIdx,
+      fieldIdx,
+      field.name,
+      field.type.typeIdx,
+    );
+    info.dstFields[fieldIdx]!.type = nullable;
+  }
+
+  return emitStructNarrowBody(
+    ctx,
+    fctx,
+    info.fromTypeIdx,
+    info.toTypeIdx,
+    info,
+    from.kind === "ref_null",
+    to.kind === "ref_null",
+  );
 }
 
 /**
