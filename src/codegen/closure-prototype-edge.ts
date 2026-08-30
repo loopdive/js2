@@ -169,6 +169,25 @@ function hasModuleBindingAssignment(ctx: CodegenContext, name: string): boolean 
   return reassigned;
 }
 
+/** Return the canonical function-value global for an approved fnctor name. */
+function fnctorPrototypeValueGlobalIdx(ctx: CodegenContext, name: string): number | undefined {
+  if (hasModuleBindingAssignment(ctx, name)) return undefined;
+  return ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name);
+}
+
+/**
+ * The value globals represented by fnctor prototype edges, excluding class
+ * object globals and mutable bindings that no longer identify their fnctor.
+ */
+export function fnctorPrototypeValueGlobalIdxs(ctx: CodegenContext): number[] {
+  const out: number[] = [];
+  for (const [name] of ctx.fnctorPrototypeObject) {
+    const valueGlobalIdx = fnctorPrototypeValueGlobalIdx(ctx, name);
+    if (valueGlobalIdx !== undefined) out.push(valueGlobalIdx);
+  }
+  return out;
+}
+
 /**
  * The edges that exist in this module, in a deterministic order (fnctors by
  * registration order, then classes). Both halves of every pair must be present:
@@ -182,9 +201,7 @@ function collectPrototypeEdges(ctx: CodegenContext): PrototypeEdge[] {
     // while `var F = function(){}` publishes the same callable through its
     // module binding global. Both are canonical values for the fnctor edge;
     // the latter is the only value available for expression-backed fnctors.
-    const valueGlobalIdx = hasModuleBindingAssignment(ctx, name)
-      ? undefined
-      : (ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name));
+    const valueGlobalIdx = fnctorPrototypeValueGlobalIdx(ctx, name);
     if (valueGlobalIdx === undefined) continue;
     edges.push({ valueGlobalIdx, protoGlobalIdx, vivify: true, name });
   }
