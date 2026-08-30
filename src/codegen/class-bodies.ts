@@ -3302,8 +3302,15 @@ function compileClassBodiesInner(
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
+      // (#5204) Mirror the METHOD rule three hundred lines above: a host-backed
+      // subclass's instance is a real JS object, not a WasmGC `$Class` value,
+      // so its accessor ABI must take the receiver as externref. This site
+      // hardcoded the struct ref, which is why the getter of a
+      // `class D extends Array` could not be bridged at all — the emitted
+      // signature was uncallable with the actual receiver, so `a.g` read NaN
+      // at init AND after init.
       const params: { name: string; type: ValType }[] = [
-        { name: "this", type: { kind: "ref", typeIdx: structTypeIdx } },
+        { name: "this", type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx } },
       ];
 
       // (#1681) Static accessor bodies reach `this` as the class-constructor
@@ -3408,9 +3415,10 @@ function compileClassBodiesInner(
       }
       assertDirectClassBodyAllowed(ctx, setterName, member);
 
-      // First param is self, remaining are the setter parameters
+      // First param is self, remaining are the setter parameters.
+      // (#5204) Same externref-backed receiver rule as the getter above.
       const params: { name: string; type: ValType }[] = [
-        { name: "this", type: { kind: "ref", typeIdx: structTypeIdx } },
+        { name: "this", type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx } },
       ];
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;
