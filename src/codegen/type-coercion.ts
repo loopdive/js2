@@ -3025,6 +3025,7 @@ export function coerceType(
       (ctx.standalone === true || ctx.wasi === true) &&
       name !== undefined &&
       structMustReifyAtExternrefBoundary(ctx, name) &&
+      !fctx.regexpLastIndexIdentityStructTypes?.has(typeIdx) &&
       materializeStructAsObject(ctx, fctx, typeIdx)
     ) {
       return;

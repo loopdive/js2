@@ -13,6 +13,14 @@ area: codegen
 es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/native-regex.ts
+  - src/codegen/context/types.ts
+  - src/codegen/type-coercion.ts
+func-budget-allow:
+  - src/codegen/native-regex.ts::ensureRegexSearch
+  - src/codegen/type-coercion.ts::coerceType
 ---
 
 # #5198 — regexp r2: cluster and fix the residual regexp-bucket failures
@@ -24,11 +32,12 @@ second pass that yielded only +8 (PR #5213). The stopped r2 planning pass has
 now been completed against exact upstream `main`
 `4881206ab3001505fcfca875589aff8daf375ff9`.
 
-The implementation branch was rebased onto upstream `main`
-`02b7a33b58362ef16c703f29d687842066beaae1` on 2026-08-30 before fanout.
-The intervening upstream changes are host-init marshalling, issue metadata, and
-npm-compat artifacts; they do not replace the isolated evidence below. The
-implementer must rerun Slice A on the rebased head before claiming a fix.
+The implementation branch is now based directly on upstream `main`
+`a62aacba5ccc154f6fc378235aaaeeb4a7204231`, after a normal migration of the
+static checkpoint on 2026-08-30. The earlier planning/census snapshots remain
+isolated evidence below; the intervening upstream changes do not replace them.
+The implementer must rerun Slice A on this integrated head before claiming a
+fix.
 
 The force-refreshed maintained artifacts supplied 165 ES2015 rows under
 `built-ins/RegExp/**` and the String
@@ -144,6 +153,114 @@ Exact candidate list: `/private/tmp/js2-regexp-r2-baseline165.txt`.
 Exact owned Slice-A list: `/private/tmp/js2-regexp-lastindex9.txt`.
 Fresh isolated results:
 `/private/tmp/js2-regexp-r2-fresh-main-{standalone,host}.jsonl`.
+
+### Slice A implementation checkpoint (pre-validation)
+
+The implementation work is limited to the following nine rows, each pinned by
+`tests/issue-5198-es2015-regexp-r2.test.ts` in both host and standalone lanes:
+
+1. `built-ins/RegExp/prototype/exec/failure-lastindex-access.js`
+2. `built-ins/RegExp/prototype/exec/success-lastindex-access.js`
+3. `built-ins/RegExp/prototype/exec/u-lastindex-adv.js`
+4. `built-ins/RegExp/prototype/exec/y-fail-lastindex-no-write.js`
+5. `built-ins/RegExp/prototype/exec/y-fail-lastindex.js`
+6. `built-ins/RegExp/prototype/exec/y-fail-return.js`
+7. `built-ins/RegExp/prototype/test/y-fail-lastindex-no-write.js`
+8. `built-ins/RegExp/prototype/test/y-fail-lastindex.js`
+9. `built-ins/RegExp/prototype/test/y-fail-return.js`
+
+The fresh isolated baseline recorded in
+`/private/tmp/js2-regexp-r2-fresh-main-{standalone,host}.jsonl` is standalone
+0/9 and host 9/9 for this exact slice. Static diagnosis identifies two
+observable-exec gaps: non-g/y `exec`/`test` skipped the mandated
+`Get(R, "lastIndex")` + `ToLength`, and g/y writeback bypassed the ordinary
+non-writable descriptor state. The implementation centralizes one deferred
+raw-aware read around `emitRegexSearchCall` (and the recovered-local test
+helper), preserves raw values until execution-time coercion, and consults the
+existing `ctx.nonWritableExternKeys` descriptor companion before strict g/y
+writeback. The proof is intentionally narrow: it fires only for a statically
+resolved identifier receiver whose explicit `writable: false` define was
+recorded; a dynamic/recovered externref receiver has no expression-scoped
+companion and declines this guard for the later common-substrate slices. No
+matcher was added.
+
+`src/codegen/regex/parse.ts` is intentionally part of this nine-row slice only
+for `exec/u-lastindex-adv.js`: a lone BMP surrogate atom in `/u` mode must not
+match the trail half of a valid input surrogate pair. It now lowers that atom
+through the existing `CPCLASS` code-point boundary guard; the astral and
+ordinary regex paths are otherwise unchanged. This is not ownership of the
+broader runtime Unicode-syntax slice.
+
+Validation and after-evidence remain pending while the authoritative census
+holds both test-worker slots. The owner must rerun the exact nine rows on the
+integrated current-main head, then append the measured standalone/host result
+and regression evidence before claiming Slice A complete.
+
+## Slice A completion evidence (2026-08-30)
+
+Slice A is complete on the dedicated checkpoint worktree. The implementation
+worktree is based on upstream/main `3e89b5f95318b45fd69c9cf8209da84a7a06351a`
+(planning commit `3c89d8815cc9dd8fb1777de299218d33920ea1ac`, transplanted as
+`05b08dff3e`), with the implementation and validation changes described below.
+The umbrella issue remains `in-progress`; Slices B-H are still open.
+
+Implementation summary:
+
+- `emitRegexSearchCall` and the recovered-local test path now perform one
+  deferred `Get(lastIndex)`/`ToLength` read for every exec/test call, including
+  non-global/non-sticky expressions, and reuse that value for g/y starts.
+- g/y writeback retains the raw assignment until execution and consults the
+  existing statically-known non-writable descriptor companion before Set,
+  preserving the required TypeError and evaluation order.
+- Ref-like raw assignments use direct `extern.convert_any` so the exact RHS
+  object survives `lastIndex` identity checks. A per-FunctionContext nominal-shape
+  marker prevents only the later same-frame identity coercion from materializing
+  a fresh `$Object`; it is not a module-wide context flag.
+- The native-regex leading-literal prefilter is disabled for sticky searches,
+  so it cannot advance past the sole permitted start position.
+- Lone BMP surrogate atoms in `/u` patterns use the existing CPCLASS
+  code-point-boundary guard and no longer match the trail half of a valid pair.
+
+Exact nine-row command and result:
+
+```text
+PATH=/private/tmp/codex-npx2:/private/tmp/codex-pnpm10/node_modules/.bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/Users/thomas/Code/js2/node_modules/.bin:/opt/homebrew/opt/llvm@18/bin:$PATH \
+JS2WASM_QUICKJS_ARTIFACT_DIR=/private/tmp/js2-quickjs-artifact-2e2d7736713beeda \
+pnpm exec vitest run tests/issue-5198-es2015-regexp-r2.test.ts --pool=forks --maxWorkers=1 --minWorkers=1 --reporter=dot
+```
+
+`20 passed (20)`: host `9/9`, standalone `9/9`, plus two standalone
+same-shape identity/reification controls. The standalone rows emitted zero
+host imports and had zero compile errors, timeouts, or skips. The two focused
+controls were also run A/B with and without the raw lastIndex assignment; both
+returned the expected `8`.
+
+The one-worker 165-row before/after sweep used the exact candidate list
+`/private/tmp/js2-regexp-r2-baseline165.txt` and `runTest262File` in sequential
+host and standalone lanes. Before: standalone `3/165 pass, 158/165 fail,
+4/165 compile_error, 0 timeout, 0 skip`; host `126/165 pass, 39/165 fail`.
+After: standalone `24/165 pass, 137/165 fail, 4/165 compile_error, 0 timeout,
+0 skip`; host `126/165 pass, 39/165 fail`. There were 21 standalone
+`fail -> pass` transitions (including all nine owned rows), zero
+`pass -> non-pass` transitions in either lane, and zero host regressions. The
+four unchanged standalone compile errors and all remaining failures belong to
+Slices B-H; none are claimed by Slice A.
+
+The existing focused controls also passed in one worker: `tests/issue-1525.test.ts`,
+`tests/issue-1917-any-param-toprimitive.test.ts`,
+`tests/issue-4208-ordinary-to-primitive-ir.test.ts`,
+`tests/issue-3481-step3-toprimitive-field-number-hint.test.ts`, and
+`tests/issue-3481-toprimitive-wrapper-unwrap.test.ts` — `5 files, 82 tests`.
+
+Publication handoff: the implementation checkpoint is the branch tip on
+`/private/tmp/js2-es2015-regexp-lastindex-slice-a-20260830`, branch
+`codex/5198-regexp-lastindex-slice-a`; this owner does not push or open a PR.
+Upstream/main advanced to `c882d1b110` (including merged #5290 at
+`4b715bada1`) while this dirty checkpoint was being validated. Root must
+transplant the implementation and issue/test evidence onto a clean current-main
+worktree, rerun the focused rows and controls there, then publish the single
+completed Slice A change upstream. Do not mark the umbrella issue done until
+Slices B-H close.
 
 The implementation owner must use a separately provisioned worktree, update
 this markdown issue with exact before/after evidence and remaining rows, push
