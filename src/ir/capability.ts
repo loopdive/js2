@@ -358,17 +358,39 @@ export function collectStringLiteralLens(
 
 /**
  * (#2972) Is this string element read LOWERABLE by the IR's
- * proven-in-bounds charAt arm? True iff the receiver is an identifier with a
- * literal-known length in `lens` AND the index proof holds. The from-ast arm
- * and gate 5 both route through this — one predicate, two consumers.
+ * proven-in-bounds charAt arm? The receiver must be an identifier, and the
+ * index must be proven in `[0, s.length)` by EITHER of two independent
+ * proofs — from-ast's `lowerElementAccess` arm and the tests route through
+ * this one predicate:
+ *
+ *   - LITERAL-LENGTH proof (#2972): the receiver has a statically known
+ *     length in `lens` and the index is provably below it
+ *     (`stringIndexProvenBelow`) — e.g. `hex[(n >> 4) & 0xf]` on a 16-char
+ *     literal.
+ *   - COUNTED-LOOP proof (#5167): `countedLoopProven` is the caller's
+ *     witness that `detectCountedLoopSafeIndex` recorded this exact
+ *     `receiver:index` pair for the enclosing `for` — i.e.
+ *     `for (let i = <k ≥ 0>; i < s.length; i += <step ≥ 1>)` with a body that
+ *     neither reassigns `i`/`s` nor calls a method on `s`. That pins
+ *     `0 ≤ i < s.length` at every body point, which is what makes typing the
+ *     result `string` sound. This proof needs NO literal length, so it
+ *     covers a string PARAM, which `lens` never can. The witness only counts
+ *     for an identifier index — the induction variable itself — since that
+ *     is the only thing the loop proof ranges over.
+ *
+ * Neither proof holding → false, and the caller demotes to legacy (sound
+ * default: an UNPROVEN index could be out of bounds, where JS `s[i]` is
+ * `undefined` but charAt is `""`).
  */
 export function stringElementReadLowerable(
   expr: ts.ElementAccessExpression,
-  lens: ReadonlyMap<string, number>,
+  lens: ReadonlyMap<string, number> | undefined,
+  countedLoopProven = false,
 ): boolean {
   if (expr.questionDotToken) return false;
   if (!ts.isIdentifier(expr.expression)) return false;
-  const len = lens.get(expr.expression.text);
+  if (countedLoopProven && ts.isIdentifier(expr.argumentExpression)) return true;
+  const len = lens?.get(expr.expression.text);
   if (len === undefined) return false;
   return stringIndexProvenBelow(expr.argumentExpression, len);
 }

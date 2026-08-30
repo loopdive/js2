@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-29T15:48:32.093Z",
+  "generatedAt": "2026-08-30T02:04:49.679Z",
   "measuredRange": {
-    "oldest": "2026-08-28T23:29:17.293Z",
-    "newest": "2026-08-29T15:47:44.004Z"
+    "oldest": "2026-08-29T21:38:52.619Z",
+    "newest": "2026-08-30T02:04:08.721Z"
   },
   "correctness": {
     "definition": {
@@ -13,8 +13,8 @@
     "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
     "counts": {
       "verified": 8,
-      "divergent": 16,
-      "unverified": 0
+      "divergent": 15,
+      "unverified": 1
     },
     "verified": [
       "clsx",
@@ -39,12 +39,13 @@
       "moment",
       "prettier",
       "react",
-      "react-dom",
       "redux",
       "three",
       "webpack"
     ],
-    "unverified": []
+    "unverified": [
+      "react-dom"
+    ]
   },
   "note": "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   "popularity": {
@@ -83,11 +84,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 5919,
+        "durationMs": 7809,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 143113,
+        "binaryBytes": 143193,
         "categories": {}
       },
       "validation": {
@@ -537,7 +538,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6165.630115,
+            "compileDurationMs": 7739.813468,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -547,7 +548,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6420.9249020000025,
+            "compileDurationMs": 7932.219057000002,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -557,13 +558,13 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5821.687103000004,
+            "compileDurationMs": 7276.5761950000015,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:30:28.439Z",
+      "measuredAt": "2026-08-30T01:42:24.225Z",
       "weeklyDownloads": 275892096
     },
     {
@@ -574,7 +575,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600059,
+        "durationMs": 600121,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -2002,7 +2003,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:40:28.306Z",
+      "measuredAt": "2026-08-30T01:52:10.804Z",
       "weeklyDownloads": 250686863
     },
     {
@@ -2013,9 +2014,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 20673,
+        "durationMs": 19034,
         "errorCount": 0,
-        "binaryBytes": 716288,
+        "binaryBytes": 716314,
         "categories": {}
       },
       "validation": {
@@ -2231,54 +2232,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.03569565192067429,
-            "nodeUs": 12770.794913043654,
-            "wasmStdUs": 0.0419095951887443,
-            "nodeStdUs": 425.0333455576251,
-            "ratio": 365920.24376528413,
-            "ratioStd": 514384.5285292696,
+            "wasmUs": 0.04509090980387885,
+            "nodeUs": 12972.160818180948,
+            "wasmStdUs": 0.037891933769572686,
+            "nodeStdUs": 896.7529889941338,
+            "ratio": 294274.286677625,
+            "ratioStd": 359433.8467631144,
             "ratioSamples": [
-              365920.24376528413,
-              138476.6554535755,
-              1170232.1123247754,
-              145305.49868511927,
-              1129899.8350492716,
-              113395.02098583219,
-              1409456.0826174598,
-              131388.75737060048,
-              1042703.9974035146
+              294274.286677625,
+              155695.14250106574,
+              984600.6125215319,
+              130292.02744657398,
+              857534.048947568,
+              137484.3189495813,
+              846551.0223289072,
+              119159.72270948421,
+              829096.6525178379
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 23,
+            "iters": 22,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.03569565192067429,
-              0.0923478257153993,
-              0.010913044325602445,
-              0.0884347828105092,
-              0.010478260937025367,
-              0.11239130348574533,
-              0.009130434710127505,
-              0.09713043413205963,
-              0.01134782644879559
+              0.04509090980387885,
+              0.08199999997900291,
+              0.013181818014180119,
+              0.09154545444868167,
+              0.017727272775532172,
+              0.09427272677633233,
+              0.014136364122598685,
+              0.10886363716880706,
+              0.015954545233398676
             ],
             "nodeSamplesUs": [
-              13061.76165217387,
-              12788.01804347819,
-              12770.794913043654,
-              12850.060217391254,
-              11839.385304348189,
-              12744.614217391127,
-              12868.946739130795,
-              12761.847043478274,
-              11832.42400000049
+              13269.095318181577,
+              12767.001681818245,
+              12978.826090909108,
+              11927.64286363672,
+              15201.740000000096,
+              12961.021636364007,
+              11967.153499999602,
+              12972.160818180948,
+              13227.860045455269
             ],
-            "compileDurationMs": 103252.356674,
-            "moduleCompileDurationMs": 9.958496999985073,
-            "instantiateDurationMs": 0.035115000006044284,
-            "firstBatchDurationMs": 0.06653499999083579,
+            "compileDurationMs": 101077.29199200001,
+            "moduleCompileDurationMs": 10.011464000010164,
+            "instantiateDurationMs": 0.03048700001090765,
+            "firstBatchDurationMs": 0.05191799998283386,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2296,8 +2297,8 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 368.9701059999934,
-              "stageBinaryBytes": 2185231,
+              "stageDurationMs": 346.36150699999416,
+              "stageBinaryBytes": 2185621,
               "stageModuleImportCount": 0
             }
           },
@@ -2306,22 +2307,22 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 111810.54333333547,
-            "nodeUs": 10922.677666666763,
-            "wasmStdUs": 3614.504780293369,
-            "nodeStdUs": 1690.4945703682642,
-            "ratio": 0.09768915650560342,
-            "ratioStd": 0.016954137239009424,
+            "wasmUs": 113195.62499999302,
+            "nodeUs": 10942.427999999685,
+            "wasmStdUs": 1942.4696680186378,
+            "nodeStdUs": 2217.6191063836945,
+            "ratio": 0.09632892319527916,
+            "ratioStd": 0.021019994304845722,
             "ratioSamples": [
-              0.09287795837504301,
-              0.10544559028970536,
-              0.0967298527335881,
-              0.09517000622915164,
-              0.13763505814363228,
-              0.09866266965376765,
-              0.09768915650560342,
-              0.1376879534819749,
-              0.09673498256546628
+              0.11371288093077198,
+              0.09719814531360421,
+              0.09455517505357763,
+              0.16253461100004504,
+              0.0944861931382205,
+              0.09595117333869017,
+              0.09720519810181917,
+              0.09537216538230393,
+              0.09632892319527916
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
@@ -2329,33 +2330,33 @@
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              117813.66133332874,
-              118734.3946666612,
-              112241.3060000011,
-              112459.93800001452,
-              108485.68333334212,
-              108430.75066667127,
-              111810.54333333547,
-              108344.47233334261,
-              111666.37666667036
+              112931.68866667354,
+              111928.3600000005,
+              116449.08200000646,
+              110513.75800000581,
+              117033.55766667907,
+              113740.31833332265,
+              112570.39966667071,
+              113271.19699999457,
+              113195.62499999302
             ],
             "nodeSamplesUs": [
-              10942.29233332832,
-              12520.018333316935,
-              10857.085000005705,
-              10702.812999991389,
-              14931.433333336221,
-              10698.067333335834,
-              10922.677666666763,
-              14917.728666662393,
-              10802.044999999149
+              12841.787666664459,
+              10879.228999993453,
+              11010.863333339026,
+              17962.31066668406,
+              11058.055333346905,
+              10913.516999998441,
+              10942.427999999685,
+              10802.919333335012,
+              10904.012666665949
             ],
-            "compileDurationMs": 95804.75656400001,
-            "moduleCompileDurationMs": 11.94629900000291,
-            "instantiateDurationMs": 7.052289000013843,
-            "moduleInitDurationMs": 27.156443999963813,
-            "firstBatchDurationMs": 326.7067580000148,
-            "binaryBytes": 2187451,
+            "compileDurationMs": 94269.77381799999,
+            "moduleCompileDurationMs": 11.868956000020262,
+            "instantiateDurationMs": 6.987281999958213,
+            "moduleInitDurationMs": 26.96427500003483,
+            "firstBatchDurationMs": 328.6357629999984,
+            "binaryBytes": 2187841,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -2416,7 +2417,7 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "measuredAt": "2026-08-29T15:34:32.715Z",
+      "measuredAt": "2026-08-30T01:46:17.257Z",
       "weeklyDownloads": 240886853
     },
     {
@@ -2427,7 +2428,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 1158,
+        "durationMs": 1143,
         "errorCount": 9,
         "binaryBytes": 21283,
         "categories": {
@@ -2652,54 +2653,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.000955386124579679,
-            "nodeUs": 0.6261981597707353,
-            "wasmStdUs": 0.000026014935951938665,
-            "nodeStdUs": 0.001819873616657569,
-            "ratio": 658.3826646664334,
-            "ratioStd": 18.738336694655157,
+            "wasmUs": 0.0010801630372882143,
+            "nodeUs": 0.5763499833681907,
+            "wasmStdUs": 0.00004205379236676762,
+            "nodeStdUs": 0.002481329917915984,
+            "ratio": 533.5768430061602,
+            "ratioStd": 21.365545719252033,
             "ratioSamples": [
-              647.4524329763453,
-              619.6953959544066,
-              658.3826646664334,
-              659.5003910916643,
-              659.8138195497583,
-              627.6590427805189,
-              676.9564907865794,
-              642.3946178702511,
-              677.106577004877
+              540.6214696258475,
+              490.7904312031299,
+              505.75085927896873,
+              522.0696922588853,
+              540.8215404485774,
+              533.5768430061602,
+              550.7810429186828,
+              501.190705236741,
+              552.9257002563962
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 389408,
+            "iters": 438918,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009648825910119056,
-              0.0010079479620417706,
-              0.0009502680992745038,
-              0.000955386124579679,
-              0.0009515289875943996,
-              0.0009943401265478534,
-              0.0009268813172738384,
-              0.0009747873695560958,
-              0.0009267760292486103
+              0.0010670877020315696,
+              0.0011644042850901101,
+              0.001132824354443722,
+              0.0010937851717219562,
+              0.0010662447199675691,
+              0.0010801630372882143,
+              0.0010455734328619938,
+              0.0011500530850924314,
+              0.001046256931829221
             ],
             "nodeSamplesUs": [
-              0.6247155810871782,
-              0.6246207114389123,
-              0.6256400433478546,
-              0.6300775228038478,
-              0.6278319757169754,
-              0.6241065720272857,
-              0.6274583239173398,
-              0.6261981597707353,
-              0.6275261448146983
+              0.5768905216919755,
+              0.5714784811741473,
+              0.5729268906720554,
+              0.5710320879982137,
+              0.5766481119480227,
+              0.5763499833681907,
+              0.5758820257997963,
+              0.5763959167771654,
+              0.5785023466797806
             ],
-            "compileDurationMs": 543.8803860000044,
-            "moduleCompileDurationMs": 0.27918200000567595,
-            "instantiateDurationMs": 0.028001999999105465,
-            "firstBatchDurationMs": 0.07140300000173738,
+            "compileDurationMs": 543.2971709999983,
+            "moduleCompileDurationMs": 0.434214000000793,
+            "instantiateDurationMs": 0.0283320000016829,
+            "firstBatchDurationMs": 0.07375000000320142,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2720,55 +2721,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 4.086399449035741,
-            "nodeUs": 0.8319016053956626,
-            "wasmStdUs": 0.02393811806195011,
-            "nodeStdUs": 0.0070675876634678425,
-            "ratio": 0.2033401782505672,
-            "ratioStd": 0.002622932592455661,
+            "wasmUs": 3.5284851053809176,
+            "nodeUs": 0.7571176262805175,
+            "wasmStdUs": 0.01888113338954683,
+            "nodeStdUs": 0.011194352201906703,
+            "ratio": 0.21472099242854523,
+            "ratioStd": 0.0034007712536723244,
             "ratioSamples": [
-              0.20095327532079804,
-              0.20473024987710778,
-              0.20165677585327899,
-              0.20550266354152447,
-              0.19944784708256488,
-              0.2033401782505672,
-              0.20503052326473872,
-              0.198265650635642,
-              0.20582137983650706
+              0.21237164108030573,
+              0.21867302504195454,
+              0.21472099242854523,
+              0.21159842684864297,
+              0.2162543282292166,
+              0.21427034377225626,
+              0.21303929894007842,
+              0.21549954789503967,
+              0.22326345950611176
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 52635,
+            "iters": 59451,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              4.098498261613063,
-              4.0833796523225985,
-              4.086399449035741,
-              4.082006687565253,
-              4.105452645578008,
-              4.091181647192945,
-              4.078393787403902,
-              4.155641113327551,
-              4.068665526740773
+              3.518776017224326,
+              3.498882255975462,
+              3.4963335183595916,
+              3.5523218953423745,
+              3.5434815225984737,
+              3.5334690417318924,
+              3.5284851053809176,
+              3.546512876150155,
+              3.5182332509125285
             ],
             "nodeSamplesUs": [
-              0.823606649567742,
-              0.8359913365631031,
-              0.8240501377411632,
-              0.8388632468889751,
-              0.8188236914599539,
-              0.8319016053956626,
-              0.8361952123110816,
-              0.8239208891421106,
-              0.8374183528070147
+              0.7472882373719523,
+              0.7651111671797727,
+              0.7507362029233587,
+              0.7516657247144362,
+              0.7662932162621746,
+              0.7571176262805175,
+              0.7517059931708594,
+              0.7642719214142952,
+              0.7854929269481652
             ],
-            "compileDurationMs": 3900.2768240000005,
-            "moduleCompileDurationMs": 0.8783019999973476,
-            "instantiateDurationMs": 0.24127099999896018,
-            "moduleInitDurationMs": 0.09633000000030734,
-            "firstBatchDurationMs": 2.2193200000037905,
+            "compileDurationMs": 3870.4581210000033,
+            "moduleCompileDurationMs": 0.8811159999968368,
+            "instantiateDurationMs": 0.25360599999839906,
+            "moduleInitDurationMs": 0.1058469999989029,
+            "firstBatchDurationMs": 1.8118560000002617,
             "binaryBytes": 71372,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2794,7 +2795,7 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "measuredAt": "2026-08-29T15:30:58.132Z",
+      "measuredAt": "2026-08-30T01:42:42.909Z",
       "weeklyDownloads": 173435452
     },
     {
@@ -2805,7 +2806,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 47220,
+        "durationMs": 57799,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 60,
@@ -3578,7 +3579,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:30:51.651Z",
+      "measuredAt": "2026-08-30T01:42:53.002Z",
       "weeklyDownloads": 164859858
     },
     {
@@ -3589,7 +3590,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 4707,
+        "durationMs": 6322,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -4627,7 +4628,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3474.446824000217,
+            "compileDurationMs": 4341.50981399999,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -4637,9 +4638,9 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 3760.2575629998464,
-            "moduleCompileDurationMs": 0.9502799999900162,
-            "binaryBytes": 146725,
+            "compileDurationMs": 4693.301388000138,
+            "moduleCompileDurationMs": 1.2493549999780953,
+            "binaryBytes": 146855,
             "moduleImportCount": 1,
             "functionImportCount": 1,
             "optimizationLevel": 4
@@ -4651,9 +4652,9 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 3557.1033449999522,
-            "moduleCompileDurationMs": 6.06089899991639,
-            "binaryBytes": 146911,
+            "compileDurationMs": 4411.908815000206,
+            "moduleCompileDurationMs": 3.9187870000023395,
+            "binaryBytes": 147041,
             "moduleImportCount": 1,
             "functionImportCount": 1,
             "optimizationLevel": 4
@@ -4661,7 +4662,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:47:44.004Z",
+      "measuredAt": "2026-08-30T02:04:08.721Z",
       "weeklyDownloads": 162687688
     },
     {
@@ -4672,7 +4673,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180057,
+        "durationMs": 180176,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -4798,7 +4799,7 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "measuredAt": "2026-08-29T15:33:04.210Z",
+      "measuredAt": "2026-08-30T01:44:50.858Z",
       "weeklyDownloads": 152308132
     },
     {
@@ -4809,112 +4810,112 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 5595400,
+        "durationMs": 5014553,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 60749640,
+        "binaryBytes": 62833484,
         "categories": {},
-        "error": null
+        "error": "CompileError: WebAssembly.compile(): Compiling function #488:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 142)) @+143384"
       },
       "validation": {
         "validates": false,
-        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+        "firstError": "CompileError: WebAssembly.compile(): Compiling function #488:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 142)) @+143384"
       },
       "capabilities": {
         "nodeFs": false
       },
       "tests": {
         "kind": "upstream-suite",
-        "status": "measured",
-        "reason": null,
-        "passed": 82,
-        "total": 338,
-        "passRatePct": 24.26,
+        "status": "blocked",
+        "reason": "react-dom implementation did not produce a valid Wasm module; no upstream test executed in Wasm",
+        "passed": 0,
+        "total": 0,
+        "passRatePct": 0,
         "admitted": 1923,
         "upstreamTestsSeen": 2003,
         "harnessIncompatible": 984,
         "unavailableInfra": 0,
-        "implementationInvalidTests": 389,
-        "implementationError": null,
+        "implementationInvalidTests": 727,
+        "implementationError": "CompileError: WebAssembly.compile(): Compiling function #488:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 142)) @+143384",
         "server": {
           "passed": 0,
-          "total": 79,
+          "total": 0,
           "passRatePct": 0,
           "admitted": 115,
           "selected": 115,
           "upstreamTestsSeen": 115,
           "harnessIncompatible": 36,
-          "implementationInvalidTests": 0,
+          "implementationInvalidTests": 79,
           "compile": {
             "success": true,
-            "durationMs": 114810,
-            "binaryBytes": 5107902,
-            "invalidBatches": 1
+            "durationMs": 1135198,
+            "binaryBytes": 26625140,
+            "invalidBatches": 115
           },
           "validation": {
             "validates": false,
-            "firstError": "CompileError: WebAssembly.compile(): Compiling function #601:\"__async_resume_fanon_61915\" failed: struct.set[1] expected type externref, found local.get of type (ref null 81) @+251968"
+            "firstError": "CompileError: WebAssembly.compile(): Compiling function #440:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 109)) @+127505"
           }
         },
         "fizz": {
           "passed": 0,
-          "total": 14,
+          "total": 0,
           "passRatePct": 0,
           "admitted": 60,
           "selected": 60,
           "upstreamTestsSeen": 60,
           "harnessIncompatible": 46,
-          "implementationInvalidTests": 0,
+          "implementationInvalidTests": 14,
           "compile": {
             "success": false,
-            "durationMs": 1332445,
-            "binaryBytes": 3729855,
-            "invalidBatches": 16
+            "durationMs": 1571258,
+            "binaryBytes": 12910595,
+            "invalidBatches": 60
           },
           "validation": {
             "validates": false,
-            "firstError": "__JS2WASM_COMPILE_COMPLETE__:5748\n/home/runner/work/js2/js2/src/runtime.ts:10540\n          return new Ctor(...args);\n                 ^\n\nTypeError: Cannot access property on null or undefined\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10540:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18161:20)\n    at startWork (wasm://wasm/004394aa:wasm-function[303]:0x762bc)\n    at __closure_187 (wasm://wasm/004394aa:wasm-function[821]:0x8fde6)\n    at __call_fn_2 (wasm://wasm/004394aa:wasm-function[1332]:0xa124b)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at wasmClosureDispatch (/home/runner/work/js2/js2/src/runtime.ts:1907:17)\n    at wasmClosureBridge (/home/runner/work/js2/js2/src/runtime.ts:1912:22)\n    at new Promise (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:15954:35)\n\nNode.js v25.9.0"
+            "firstError": "CompileError: WebAssembly.compile(): Compiling function #443:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 109)) @+128636"
           }
         },
         "nodeFizz": {
           "passed": 0,
-          "total": 17,
+          "total": 0,
           "passRatePct": 0,
           "admitted": 35,
           "selected": 35,
           "upstreamTestsSeen": 35,
           "harnessIncompatible": 18,
-          "implementationInvalidTests": 0,
+          "implementationInvalidTests": 17,
           "compile": {
             "success": false,
-            "durationMs": 386755,
-            "binaryBytes": 1552725,
-            "invalidBatches": 3
+            "durationMs": 666280,
+            "binaryBytes": 7567144,
+            "invalidBatches": 35
           },
           "validation": {
             "validates": false,
-            "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+            "firstError": "CompileError: WebAssembly.compile(): Compiling function #421:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 109)) @+129998"
           }
         },
         "edgeFizz": {
           "passed": 0,
-          "total": 2,
+          "total": 0,
           "passRatePct": 0,
           "admitted": 2,
           "selected": 2,
           "upstreamTestsSeen": 2,
           "harnessIncompatible": 0,
-          "implementationInvalidTests": 0,
+          "implementationInvalidTests": 2,
           "compile": {
             "success": true,
-            "durationMs": 21981,
-            "binaryBytes": 252101,
-            "invalidBatches": 0
+            "durationMs": 35022,
+            "binaryBytes": 469704,
+            "invalidBatches": 2
           },
           "validation": {
-            "validates": true,
-            "firstError": null
+            "validates": false,
+            "firstError": "CompileError: WebAssembly.compile(): Compiling function #445:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 110)) @+128708"
           }
         },
         "sourceIssue": 3982
@@ -4929,13 +4930,12 @@
         "files": [
           {
             "path": "packages/react-dom/src/__tests__/CSSPropertyOperations-test.js",
-            "status": "fail",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 3,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -4953,219 +4953,217 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/CSSPropertyOperations-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/DOMPropertyOperations-test.js",
-            "status": "fail",
-            "passed": 2,
+            "status": "skip",
+            "passed": 0,
             "total": 44,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/DOMPropertyOperations-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/InvalidEventListeners-test.js",
-            "status": "pass",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 1,
             "tests": [
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/InvalidEventListeners-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactBrowserEventEmitter-test.js",
-            "status": "fail",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 9,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactBrowserEventEmitter-test.js"
@@ -5196,50 +5194,45 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactClassComponentPropResolutionFizz-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "Objects are not valid as a React child (found: object with keys {}). If you meant to render a collection of children, use an array instead.",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactClassComponentPropResolutionFizz-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactComponent-test.js",
-            "status": "fail",
-            "passed": 2,
+            "status": "skip",
+            "passed": 0,
             "total": 8,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -5266,7 +5259,10 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -5276,49 +5272,42 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactComponentLifeCycle-test.js",
-            "status": "fail",
-            "passed": 2,
+            "status": "skip",
+            "passed": 0,
             "total": 12,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "pass"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "pass"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
                 "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -5339,16 +5328,22 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -5499,57 +5494,54 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactCompositeComponentDOMMinimalism-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 3,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactCompositeComponentDOMMinimalism-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactCompositeComponentNestedState-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactCompositeComponentNestedState-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactCompositeComponentState-test.js",
-            "status": "fail",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 5,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -5631,37 +5623,36 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMAttribute-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 6,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -6133,19 +6124,18 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMComponentTree-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 3,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -6155,25 +6145,24 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMConsoleErrorReporting-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 3,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -6294,10 +6283,9 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMEventPropagation-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 83,
-            "error": "expected toEqual to match",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6309,184 +6297,184 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "skipped"
@@ -6775,34 +6763,33 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMFizzForm-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 11,
-            "error": "Objects are not valid as a React child (found: object with keys {}). If you meant to render a collection of children, use an array instead.",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
-              },
-              {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
+              },
+              {
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -6811,19 +6798,19 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMFizzForm-test.js"
@@ -7352,37 +7339,36 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMFizzShellHydration-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 7,
-            "error": "renderToPipeableStream is not a function",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -7443,19 +7429,15 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMFizzSuppressHydrationWarning-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 3,
-            "error": "renderToPipeableStream is not a function",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -7476,7 +7458,10 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -7555,10 +7540,9 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMFloat-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 3,
-            "error": "Minified React error #299; visit https://react.dev/errors/299 for the full message or use the non-minified dev environment for full errors and additional helpful warnings.",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -7921,7 +7905,7 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMFloat-test.js"
@@ -8066,8 +8050,8 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMFragmentRefs-test.js",
-            "status": "pass",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 1,
             "tests": [
               {
@@ -8077,7 +8061,7 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -8251,25 +8235,24 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMIframe-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMIframe-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMInReactServer-test.js",
-            "status": "pass",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 1,
             "tests": [
               {
-                "status": "pass"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMInReactServer-test.js"
@@ -8639,16 +8622,15 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMInvalidARIAHook-test.js",
-            "status": "fail",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 2,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -8808,73 +8790,69 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMLegacyFloat-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "Objects are not valid as a React child (found: object with keys {}). If you meant to render a collection of children, use an array instead.",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMLegacyFloat-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMNativeEventHeuristic-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 6,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMNativeEventHeuristic-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMNestedEvents-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMNestedEvents-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMOption-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 6,
-            "error": "Minified React error #299; visit https://react.dev/errors/299 for the full message or use the non-minified dev environment for full errors and additional helpful warnings.",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -8883,28 +8861,28 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -8914,10 +8892,9 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMRoot-test.js",
-            "status": "fail",
-            "passed": 6,
+            "status": "skip",
+            "passed": 0,
             "total": 9,
-            "error": "Cannot access property on null or undefined at 2231:8",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -8938,7 +8915,7 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -8953,31 +8930,31 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -9005,38 +8982,36 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMSVG-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 4,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMSVG-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMSafariMicrotaskBug-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 2,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMSafariMicrotaskBug-test.js"
@@ -9253,28 +9228,27 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMServerIntegrationHooks-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 5,
-            "error": "expected toEqual to match",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMServerIntegrationHooks-test.js"
@@ -9306,193 +9280,192 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMServerIntegrationReconnecting-test.js",
-            "status": "pass",
-            "passed": 54,
+            "status": "skip",
+            "passed": 0,
             "total": 54,
             "tests": [
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMServerIntegrationReconnecting-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMServerIntegrationRefs-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 4,
-            "error": "hydrateRoot is not a function",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMServerIntegrationRefs-test.js"
@@ -9514,16 +9487,15 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMServerIntegrationUntrustedURL-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 2,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactDOMServerIntegrationUntrustedURL-test.js"
@@ -9814,25 +9786,24 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMTextComponent-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 3,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -9998,10 +9969,9 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactDOMUseId-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "renderToPipeableStream is not a function",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -10016,7 +9986,7 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10099,22 +10069,18 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactFunctionComponent-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 7,
-            "error": "module init: [object WebAssembly.Exception] payload=TypeError: Cannot access property on null or undefined at 1522:23",
             "tests": [
               {
-                "status": "trapped"
+                "status": "skipped"
               },
               {
-                "status": "trapped"
+                "status": "skipped"
               },
               {
-                "status": "trapped"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10123,7 +10089,10 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "trapped"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10132,53 +10101,52 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "trapped"
+                "status": "skipped"
               },
               {
-                "status": "trapped"
+                "status": "skipped"
               },
               {
-                "status": "trapped"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactFunctionComponent-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactIdentity-test.js",
-            "status": "fail",
-            "passed": 7,
+            "status": "skip",
+            "passed": 0,
             "total": 10,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10188,10 +10156,9 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactLegacyCompositeComponent-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 2,
-            "error": "module init: [object WebAssembly.Exception] payload=TypeError: Cannot access property on null or undefined at 1460:22",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -10233,10 +10200,10 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "trapped"
+                "status": "skipped"
               },
               {
-                "status": "trapped"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10447,29 +10414,27 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactMockedComponent-test.js",
-            "status": "fail",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 2,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactMockedComponent-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactMountDestruction-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 1,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10482,25 +10447,21 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactMultiChild-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 9,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10509,7 +10470,10 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
+              },
+              {
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10518,16 +10482,16 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactMultiChild-test.js"
@@ -10651,34 +10615,33 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactRenderDocument-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 8,
-            "error": "Objects are not valid as a React child (found: object with keys {}). If you meant to render a collection of children, use an array instead.",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/ReactRenderDocument-test.js"
@@ -10801,16 +10764,15 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/ReactTestUtilsActUnmockedScheduler-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 2,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
@@ -10928,8 +10890,8 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/refs-destruction-test.js",
-            "status": "pass",
-            "passed": 1,
+            "status": "skip",
+            "passed": 0,
             "total": 1,
             "tests": [
               {
@@ -10942,53 +10904,52 @@
                 "status": "harness-incompatible"
               },
               {
-                "status": "pass"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/refs-destruction-test.js"
           },
           {
             "path": "packages/react-dom/src/__tests__/refs-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 10,
-            "error": "Cannot access property on null or undefined",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
-              },
-              {
-                "status": "harness-incompatible"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
-                "status": "fail"
+                "status": "skipped"
+              },
+              {
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/refs-test.js"
@@ -11007,37 +10968,34 @@
           },
           {
             "path": "packages/react-dom/src/__tests__/validateDOMNesting-test.js",
-            "status": "fail",
+            "status": "skip",
             "passed": 0,
             "total": 2,
-            "error": "Cannot read properties of null (reading 'createRoot')",
             "tests": [
               {
-                "status": "fail"
+                "status": "skipped"
               },
               {
                 "status": "harness-incompatible"
               },
               {
-                "status": "fail"
+                "status": "skipped"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/facebook/react/eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401/packages/react-dom/src/__tests__/validateDOMNesting-test.js"
           }
         ],
         "summary": {
-          "pass": 82,
-          "fail": 281,
+          "pass": 0,
+          "fail": 0,
           "compile_error": 0,
-          "skip": 392,
+          "skip": 755,
           "total": 755
         }
       },
       "correctness": {
-        "status": "divergent",
-        "passed": 82,
-        "total": 338,
-        "reason": "256 of 338 operations diverged from native node"
+        "status": "unverified",
+        "reason": "react-dom implementation did not produce a valid Wasm module; no upstream test executed in Wasm"
       },
       "perf": {
         "sampleOp": "react-dom package import + text.length",
@@ -11046,7 +11004,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "CompileError: WebAssembly.compile(): Compiling function #488:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 142)) @+143384",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -11055,7 +11013,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "CompileError: WebAssembly.compile(): Compiling function #488:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 142)) @+143384",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -11064,7 +11022,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "CompileError: WebAssembly.compile(): Compiling function #488:\"expectMarkupMatch\" failed: type error in fallthru[0] (expected externref, got (ref null 142)) @+143384",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -11072,12 +11030,12 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-28T23:29:17.293Z",
+      "measuredAt": "2026-08-29T23:38:39.708Z",
       "weeklyDownloads": 139740993,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-28T23:29:17.293Z"
+        "lastMeasuredAt": "2026-08-29T23:38:39.708Z"
       }
     },
     {
@@ -11088,7 +11046,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 33739,
+        "durationMs": 33738,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 5,
@@ -11213,7 +11171,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:34:48.386Z",
+      "measuredAt": "2026-08-30T01:46:48.879Z",
       "weeklyDownloads": 117242232
     },
     {
@@ -11224,7 +11182,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120150,
+        "durationMs": 120173,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -11586,7 +11544,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:32:12.103Z",
+      "measuredAt": "2026-08-30T01:44:01.198Z",
       "weeklyDownloads": 117155768
     },
     {
@@ -11597,7 +11555,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 42935,
+        "durationMs": 57351,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -11730,7 +11688,7 @@
             "status": "fail",
             "passed": 2,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_427 (wasm://wasm/001e4b36:wasm-function[922]:0x5b526)\n    at __closure_462 (wasm://wasm/001e4b36:wasm-function[971]:0x5e590)\n    at __closure_346 (wasm://wasm/001e4b36:wasm-function[820]:0x44bb3)\n    at __call_fn_method_1 (wasm://wasm/001e4b36:wasm-function[1412]:0x698e0)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001e4b36:wasm-function[1413]:0x69e4e)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18207:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_427 (wasm://wasm/001e4bca:wasm-function[922]:0x5b54b)\n    at __closure_462 (wasm://wasm/001e4bca:wasm-function[971]:0x5e5b5)\n    at __closure_346 (wasm://wasm/001e4bca:wasm-function[820]:0x44bd8)\n    at __call_fn_method_1 (wasm://wasm/001e4bca:wasm-function[1412]:0x69905)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001e4bca:wasm-function[1413]:0x69e73)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)",
             "tests": [
               {
                 "name": "should abort when any of the signals abort",
@@ -11912,7 +11870,7 @@
             "status": "fail",
             "passed": 0,
             "total": 57,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1708:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1692861",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1708:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1692868",
             "tests": [
               {
                 "name": "accepts undefined for second argument",
@@ -12208,7 +12166,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1580:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1530202",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1580:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1530209",
             "tests": [
               {
                 "name": "supports a single transformer",
@@ -12263,7 +12221,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1510:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1394642",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1510:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1394679",
             "tests": [
               {
                 "name": "should return buffer from data uri",
@@ -12334,7 +12292,7 @@
             "status": "fail",
             "passed": 0,
             "total": 20,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1585:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1505734",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1585:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1505771",
             "tests": [
               {
                 "name": "should support null params",
@@ -12644,7 +12602,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: Cannot redefine property: beforeEach\nTypeError: Cannot redefine property: beforeEach\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13213:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18219:20)\n    at __module_init (wasm://wasm/005d7aea:wasm-function[1077]:0x10a5c0)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
+            "error": "module init: TypeError: Cannot redefine property: beforeEach\nTypeError: Cannot redefine property: beforeEach\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13221:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18242:20)\n    at __module_init (wasm://wasm/005d7b7e:wasm-function[1077]:0x10a5e5)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "should generate a string of the specified length using the default alphabet",
@@ -12687,7 +12645,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1585:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1521700",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1585:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1521707",
             "tests": [
               {
                 "name": "parses json",
@@ -13012,7 +12970,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:35:23.970Z",
+      "measuredAt": "2026-08-30T01:49:28.654Z",
       "weeklyDownloads": 112353408
     },
     {
@@ -13023,7 +12981,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 690,
+        "durationMs": 757,
         "errorCount": 0,
         "binaryBytes": 8679,
         "categories": {}
@@ -13216,54 +13174,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0010625287962128737,
-            "nodeUs": 0.01612228318699971,
-            "wasmStdUs": 0.0000053082786921936096,
-            "nodeStdUs": 0.00008404208279610282,
-            "ratio": 15.138971698028946,
-            "ratioStd": 0.08541916723541301,
+            "wasmUs": 0.0009694908409747172,
+            "nodeUs": 0.01649569794749067,
+            "wasmStdUs": 0.000001339920539874543,
+            "nodeStdUs": 0.0003051411850781835,
+            "ratio": 17.040039743176095,
+            "ratioStd": 0.31285239768341255,
             "ratioSamples": [
-              15.138971698028946,
-              15.052463657769984,
-              15.036614047181487,
-              15.213791281699883,
-              15.059953771107866,
-              15.09549963626818,
-              15.305442956651595,
-              15.139199542178138,
-              15.218171206913768
+              17.040039743176095,
+              16.93312187257268,
+              17.261567551335144,
+              17.882439672275186,
+              17.033292668623112,
+              16.872905974722528,
+              17.13201645588236,
+              16.772863205241325,
+              17.351107656807947
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4614322,
+            "iters": 4427654,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0010625266290480964,
-              0.0010737668502553744,
-              0.0010688077251650374,
-              0.0010698297604723045,
-              0.0010731548426835416,
-              0.0010614545322153947,
-              0.0010625287962128737,
-              0.0010603562126792693,
-              0.0010594100281691662
+              0.0009678978980734755,
+              0.0009725773513460438,
+              0.0009684702101826166,
+              0.0009699366752695563,
+              0.0009684385907298628,
+              0.0009694908409747172,
+              0.0009703960607584328,
+              0.000969264536027556,
+              0.0009705726779908372
             ],
             "nodeSamplesUs": [
-              0.016085560565561232,
-              0.016162836490387168,
-              0.01607124925395269,
-              0.01627616668277662,
-              0.01616166232005467,
-              0.0160231865049727,
-              0.016262473880235825,
-              0.01605294428953974,
-              0.01612228318699971
+              0.016493018650508628,
+              0.0164687708208465,
+              0.016717313954522982,
+              0.017344834081435008,
+              0.01649569794749067,
+              0.016358127803121073,
+              0.01662484128163689,
+              0.0162573414724819,
+              0.01684051102457541
             ],
-            "compileDurationMs": 564.3133210000015,
-            "moduleCompileDurationMs": 0.43654400000013993,
-            "instantiateDurationMs": 0.030535000001691515,
-            "firstBatchDurationMs": 0.07462999999916065,
+            "compileDurationMs": 555.7066919999997,
+            "moduleCompileDurationMs": 0.5394710000000487,
+            "instantiateDurationMs": 0.03169900000284542,
+            "firstBatchDurationMs": 0.062387000001763226,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -13284,55 +13242,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.34119553917082407,
-            "nodeUs": 0.05488321154748862,
-            "wasmStdUs": 0.0008176986804327657,
-            "nodeStdUs": 0.0006020172884930046,
-            "ratio": 0.1605928006605536,
-            "ratioStd": 0.002039438146706458,
+            "wasmUs": 0.37496151087325263,
+            "nodeUs": 0.05629706911091478,
+            "wasmStdUs": 0.001505701429848976,
+            "nodeStdUs": 0.001164603972602986,
+            "ratio": 0.14957780942030385,
+            "ratioStd": 0.003233895845810147,
             "ratioSamples": [
-              0.1663442669246443,
-              0.15917008713180383,
-              0.16163851952037323,
-              0.1604298979994904,
-              0.1605928006605536,
-              0.16014666634966787,
-              0.16145036516986153,
-              0.1597438334607868,
-              0.16283407498500543
+              0.15780901832997896,
+              0.15596269966609558,
+              0.15183887031695717,
+              0.14804223507195627,
+              0.1492854646055166,
+              0.14913009491637774,
+              0.1485928993749176,
+              0.14957780942030385,
+              0.15152476129784015
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 833567,
+            "iters": 698457,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.34027706711037925,
-              0.3427420639252806,
-              0.3402373582447532,
-              0.34210089410929473,
-              0.3413448780961806,
-              0.34119553917082407,
-              0.3408597149359249,
-              0.3417833815398151,
-              0.3404409471584134
+              0.3737475635579601,
+              0.37496151087325263,
+              0.3729742689957999,
+              0.3730407684367113,
+              0.3744420787535904,
+              0.3761741682021904,
+              0.37731982212219084,
+              0.37637313535407985,
+              0.3763984525890681
             ],
             "nodeSamplesUs": [
-              0.05660313927974403,
-              0.05455428417872119,
-              0.054995462872204755,
-              0.05488321154748862,
-              0.054817529964600896,
-              0.054641328171585,
-              0.055031925448099976,
-              0.054597787580360775,
-              0.05543538671755936
+              0.0589807361083031,
+              0.05848000950667053,
+              0.05663199166161516,
+              0.05522578913233082,
+              0.05589875969458517,
+              0.0560988894090821,
+              0.05606704636076451,
+              0.05629706911091478,
+              0.05703368568143495
             ],
-            "compileDurationMs": 2464.630029,
-            "moduleCompileDurationMs": 3.532489999997779,
-            "instantiateDurationMs": 0.3681129999968107,
-            "moduleInitDurationMs": 0.0687919999982114,
-            "firstBatchDurationMs": 1.3996639999968465,
+            "compileDurationMs": 2465.4705170000016,
+            "moduleCompileDurationMs": 0.8185749999975087,
+            "instantiateDurationMs": 0.20650700000260258,
+            "moduleInitDurationMs": 0.04711899999529123,
+            "firstBatchDurationMs": 0.7749230000044918,
             "binaryBytes": 57209,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -13355,7 +13313,7 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "measuredAt": "2026-08-29T15:30:29.527Z",
+      "measuredAt": "2026-08-30T01:42:18.578Z",
       "weeklyDownloads": 104930549
     },
     {
@@ -13366,7 +13324,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180154,
+        "durationMs": 180155,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -13571,7 +13529,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:33:08.531Z",
+      "measuredAt": "2026-08-30T01:44:47.638Z",
       "weeklyDownloads": 89317829
     },
     {
@@ -13582,9 +13540,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 5780,
+        "durationMs": 7794,
         "errorCount": 0,
-        "binaryBytes": 534273,
+        "binaryBytes": 537783,
         "categories": {}
       },
       "validation": {
@@ -13706,7 +13664,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 16651.085355999996,
+            "compileDurationMs": 22122.09265,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -13716,7 +13674,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5585.607764,
+            "compileDurationMs": 7253.6103340000045,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -13726,7 +13684,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4191.978431000003,
+            "compileDurationMs": 5656.578959999992,
             "optimizationLevel": 4
           }
         }
@@ -13737,7 +13695,7 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "measuredAt": "2026-08-29T15:30:41.489Z",
+      "measuredAt": "2026-08-30T01:42:51.255Z",
       "weeklyDownloads": 60496071
     },
     {
@@ -13748,7 +13706,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120149,
+        "durationMs": 120217,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -14408,7 +14366,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:32:17.708Z",
+      "measuredAt": "2026-08-30T01:44:23.804Z",
       "weeklyDownloads": 55617769
     },
     {
@@ -14419,11 +14377,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 11447,
+        "durationMs": 9408,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 439121,
+        "binaryBytes": 439135,
         "categories": {}
       },
       "validation": {
@@ -14646,7 +14604,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #336:\"getColorEnabledAsync\" failed: type error in return[0] (expected i32, got externref) @+271569",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #336:\"getColorEnabledAsync\" failed: type error in return[0] (expected i32, got externref) @+271577",
             "tests": [
               {
                 "name": "should return correct data",
@@ -14738,7 +14696,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/0037f3d6:wasm-function[267]:0x23506)\n    at __closure_201 (wasm://wasm/0037f3d6:wasm-function[817]:0x652e3)\n    at __closure_200 (wasm://wasm/0037f3d6:wasm-function[818]:0x65436)\n    at __call_fn_method_2 (wasm://wasm/0037f3d6:wasm-function[1846]:0xc9ddd)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/0037f3d6:wasm-function[1847]:0xcb941)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18207:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/0037f59a:wasm-function[268]:0x23537)\n    at __closure_201 (wasm://wasm/0037f59a:wasm-function[818]:0x65323)\n    at __closure_200 (wasm://wasm/0037f59a:wasm-function[819]:0x65476)\n    at __call_fn_method_2 (wasm://wasm/0037f59a:wasm-function[1847]:0xc9e35)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/0037f59a:wasm-function[1848]:0xcb999)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)",
             "tests": [
               {
                 "name": "Should return the correct search result",
@@ -15194,7 +15152,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 36,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:7526\n/home/runner/work/js2/js2/src/runtime.ts:14041\n            throw new TypeError(method + \" is not a function\");\n                  ^\n\nTypeError: text is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14041:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18195:20)\n    at __closure_363 (wasm://wasm/00238886:wasm-function[914]:0x6716e)\n    at __async_resume_fanon_57346 (wasm://wasm/00238886:wasm-function[1069]:0x74bd7)\n    at __cb_158 (wasm://wasm/00238886:wasm-function[1070]:0x758c8)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n    at dispatch (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:105:42)\n    at body (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:114:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:131:34)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:6780\n/home/runner/work/js2/js2/src/runtime.ts:14049\n            throw new TypeError(method + \" is not a function\");\n                  ^\n\nTypeError: text is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14049:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18218:20)\n    at __closure_363 (wasm://wasm/00238c7a:wasm-function[917]:0x6721b)\n    at __async_resume_fanon_57346 (wasm://wasm/00238c7a:wasm-function[1072]:0x74c8e)\n    at __cb_158 (wasm://wasm/00238c7a:wasm-function[1073]:0x7597f)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n    at dispatch (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:105:42)\n    at body (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:114:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:131:34)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "req.query() and req.queries()",
@@ -15548,7 +15506,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 37,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:6338\nwasm://wasm/001df452:1\n\n\nRuntimeError: dereferencing a null pointer\n    at __closure_362 (wasm://wasm/001df452:wasm-function[957]:0x5b3bc)\n    at __call_fn_method_1 (wasm://wasm/001df452:wasm-function[1395]:0x6b1ad)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001df452:wasm-function[1396]:0x6b84c)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18207:20)\n    at __async_resume_fparseFormData (wasm://wasm/001df452:wasm-function[542]:0x32f12)\n    at __cb_57 (wasm://wasm/001df452:wasm-function[543]:0x32fe8)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:5664\nwasm://wasm/001df5ce:1\n\n\nRuntimeError: dereferencing a null pointer\n    at __closure_362 (wasm://wasm/001df5ce:wasm-function[958]:0x5b406)\n    at __call_fn_method_1 (wasm://wasm/001df5ce:wasm-function[1396]:0x6b1f9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001df5ce:wasm-function[1397]:0x6b898)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_fparseFormData (wasm://wasm/001df5ce:wasm-function[543]:0x32f55)\n    at __cb_57 (wasm://wasm/001df5ce:wasm-function[544]:0x33032)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "should parse `multipart/form-data`",
@@ -15706,7 +15664,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 10,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:4191\n/home/runner/work/js2/js2/src/runtime.ts:10562\n          return new Ctor(...args);\n                 ^\n\nTypeError: TextEncoder is not a constructor\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10562:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18183:20)\n    at __async_resume_fanon_494 (wasm://wasm/00152a12:wasm-function[619]:0x3b04d)\n    at __closure_233 (wasm://wasm/00152a12:wasm-function[624]:0x3b4ca)\n    at __async_resume_fanon_35 (wasm://wasm/00152a12:wasm-function[607]:0x3aae7)\n    at __closure_230 (wasm://wasm/00152a12:wasm-function[610]:0x3abd9)\n    at __closure_238 (wasm://wasm/00152a12:wasm-function[627]:0x3bf99)\n    at __closure_239 (wasm://wasm/00152a12:wasm-function[628]:0x3ceed)\n    at __async_resume_fanon_43343 (wasm://wasm/00152a12:wasm-function[683]:0x41510)\n    at __closure_277 (wasm://wasm/00152a12:wasm-function[686]:0x41de7)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:4019\n/home/runner/work/js2/js2/src/runtime.ts:10570\n          return new Ctor(...args);\n                 ^\n\nTypeError: TextEncoder is not a constructor\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10570:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18206:20)\n    at __async_resume_fanon_494 (wasm://wasm/0015453e:wasm-function[622]:0x3b4ce)\n    at __closure_233 (wasm://wasm/0015453e:wasm-function[627]:0x3b94b)\n    at __async_resume_fanon_35 (wasm://wasm/0015453e:wasm-function[610]:0x3af68)\n    at __closure_230 (wasm://wasm/0015453e:wasm-function[613]:0x3b05a)\n    at __closure_238 (wasm://wasm/0015453e:wasm-function[630]:0x3c41a)\n    at __closure_239 (wasm://wasm/0015453e:wasm-function[631]:0x3d36e)\n    at __async_resume_fanon_43343 (wasm://wasm/0015453e:wasm-function[686]:0x41b59)\n    at __closure_277 (wasm://wasm/0015453e:wasm-function[689]:0x42430)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "should return true for identical ArrayBuffers",
@@ -16475,7 +16433,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 15452.27195200001,
+            "compileDurationMs": 12347.418510000018,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -16485,7 +16443,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4831.109418000007,
+            "compileDurationMs": 3990.832792000001,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -16495,13 +16453,13 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3484.076671000017,
+            "compileDurationMs": 3063.0603980000014,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:33:40.770Z",
+      "measuredAt": "2026-08-30T01:44:55.235Z",
       "weeklyDownloads": 53123258
     },
     {
@@ -16512,7 +16470,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6617,
+        "durationMs": 6531,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -17941,7 +17899,7 @@
             "status": "fail",
             "passed": 1,
             "total": 7,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_523 (wasm://wasm/00249e96:wasm-function[968]:0x71035)\n    at __closure_391 (wasm://wasm/00249e96:wasm-function[807]:0x500f7)\n    at __call_fn_method_1 (wasm://wasm/00249e96:wasm-function[1466]:0x7eda8)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00249e96:wasm-function[1467]:0x7f4fc)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18207:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/00249e96:wasm-function[830]:0x634bc)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_523 (wasm://wasm/0024a066:wasm-function[968]:0x7109c)\n    at __closure_391 (wasm://wasm/0024a066:wasm-function[807]:0x5015e)\n    at __call_fn_method_1 (wasm://wasm/0024a066:wasm-function[1466]:0x7ee1c)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0024a066:wasm-function[1467]:0x7f570)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0024a066:wasm-function[830]:0x63523)",
             "tests": [
               {
                 "name": "returns the result if passed.",
@@ -18208,7 +18166,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #965:\"__call_fn_0\" failed: not enough arguments on the stack for call_ref (need 2, got 1) @+314570",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #965:\"__call_fn_0\" failed: not enough arguments on the stack for call_ref (need 2, got 1) @+314607",
             "tests": [
               {
                 "name": "runs every function in the queue.",
@@ -18273,7 +18231,7 @@
             "status": "fail",
             "passed": 15,
             "total": 17,
-            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at Replaceable_forEach (wasm://wasm/00125eea:wasm-function[118]:0xbfaa)\n    at __closure_264 (wasm://wasm/00125eea:wasm-function[622]:0x38bdc)\n    at __closure_197 (wasm://wasm/00125eea:wasm-function[530]:0x2aec8)\n    at __call_fn_method_1 (wasm://wasm/00125eea:wasm-function[877]:0x4097f)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00125eea:wasm-function[878]:0x40dcd)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18207:20)",
+            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at Replaceable_forEach (wasm://wasm/00125f7e:wasm-function[118]:0xbfc8)\n    at __closure_264 (wasm://wasm/00125f7e:wasm-function[622]:0x38c01)\n    at __closure_197 (wasm://wasm/00125f7e:wasm-function[530]:0x2aeed)\n    at __call_fn_method_1 (wasm://wasm/00125f7e:wasm-function[877]:0x409a4)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00125f7e:wasm-function[878]:0x40df2)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)",
             "tests": [
               {
                 "name": "init with object",
@@ -18819,7 +18777,7 @@
             "status": "fail",
             "passed": 7,
             "total": 12,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_249 (wasm://wasm/001290f6:wasm-function[632]:0x38707)\n    at __closure_198 (wasm://wasm/001290f6:wasm-function[552]:0x2b3bf)\n    at __call_fn_method_1 (wasm://wasm/001290f6:wasm-function[906]:0x413b7)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001290f6:wasm-function[907]:0x41803)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18207:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/001290f6:wasm-function[575]:0x3456b)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_249 (wasm://wasm/0012918a:wasm-function[632]:0x3872c)\n    at __closure_198 (wasm://wasm/0012918a:wasm-function[552]:0x2b3e4)\n    at __call_fn_method_1 (wasm://wasm/0012918a:wasm-function[906]:0x413dc)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0012918a:wasm-function[907]:0x41828)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0012918a:wasm-function[575]:0x34590)",
             "tests": [
               {
                 "name": "returns the same value for primitive or function values",
@@ -19174,7 +19132,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at __closure_63 (wasm://wasm/001135de:wasm-function[321]:0x1e1fe)\n    at Prompt_enter (wasm://wasm/001135de:wasm-function[110]:0xbc69)\n    at __closure_209 (wasm://wasm/001135de:wasm-function[561]:0x33979)\n    at __closure_160 (wasm://wasm/001135de:wasm-function[484]:0x26995)\n    at __call_fn_method_1 (wasm://wasm/001135de:wasm-function[899]:0x3b8d8)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001135de:wasm-function[900]:0x3bd29)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1738:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2057:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2076:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14052:31)",
+            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at __closure_63 (wasm://wasm/00113672:wasm-function[321]:0x1e223)\n    at Prompt_enter (wasm://wasm/00113672:wasm-function[110]:0xbc87)\n    at __closure_209 (wasm://wasm/00113672:wasm-function[561]:0x3399e)\n    at __closure_160 (wasm://wasm/00113672:wasm-function[484]:0x269ba)\n    at __call_fn_method_1 (wasm://wasm/00113672:wasm-function[899]:0x3b8fd)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00113672:wasm-function[900]:0x3bd4e)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)",
             "tests": [
               {
                 "name": "calls handler on change value",
@@ -19382,7 +19340,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:33:49.778Z",
+      "measuredAt": "2026-08-30T01:45:18.284Z",
       "weeklyDownloads": 46631732
     },
     {
@@ -19393,7 +19351,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120135,
+        "durationMs": 120126,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -19744,7 +19702,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:32:09.555Z",
+      "measuredAt": "2026-08-30T01:44:01.090Z",
       "weeklyDownloads": 42294984
     },
     {
@@ -19755,7 +19713,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 5947,
+        "durationMs": 7171,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -20240,7 +20198,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5061.443153,
+            "compileDurationMs": 6054.989357999992,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -20250,7 +20208,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 8467.20998700001,
+            "compileDurationMs": 10903.038268000004,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -20260,13 +20218,13 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7934.09580499999,
+            "compileDurationMs": 10095.932121999998,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:31:21.276Z",
+      "measuredAt": "2026-08-30T01:43:36.456Z",
       "weeklyDownloads": 40344956
     },
     {
@@ -20277,7 +20235,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 12711,
+        "durationMs": 15644,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 4,
@@ -21420,7 +21378,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:31:28.706Z",
+      "measuredAt": "2026-08-30T01:43:45.541Z",
       "weeklyDownloads": 34294671
     },
     {
@@ -21431,7 +21389,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180115,
+        "durationMs": 180147,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -22761,7 +22719,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:33:18.872Z",
+      "measuredAt": "2026-08-30T01:45:06.504Z",
       "weeklyDownloads": 12487515
     },
     {
@@ -22772,7 +22730,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 12250,
+        "durationMs": 14884,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -23130,7 +23088,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:30:29.753Z",
+      "measuredAt": "2026-08-30T01:42:24.534Z",
       "weeklyDownloads": 11029759
     },
     {
@@ -23141,7 +23099,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120115,
+        "durationMs": 120142,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -25190,7 +25148,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T15:34:52.070Z",
+      "measuredAt": "2026-08-30T01:46:38.298Z",
       "weeklyDownloads": 10427988
     },
     {
@@ -25201,16 +25159,16 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 8137,
+        "durationMs": 8178,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 199309,
+        "binaryBytes": 200761,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #129:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 108), found global.get of type i32 @+52458"
+        "firstError": "WebAssembly.Module(): Compiling function #130:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 108), found global.get of type i32 @+52485"
       },
       "capabilities": {
         "nodeFs": false
@@ -25621,7 +25579,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Failed to execute 'define' on 'CustomElementRegistry': parameter 2 is not a function",
+            "error": "This name has already been registered in the registry.",
             "tests": [
               {
                 "status": "fail"
@@ -27454,51 +27412,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.4590233984794763,
-            "nodeUs": 0.005236517670850405,
-            "wasmStdUs": 0.004340163711790577,
-            "nodeStdUs": 0.00006694300116739238,
-            "ratio": 0.011392293177464218,
-            "ratioStd": 0.0001440874701752992,
+            "wasmUs": 0.3506196152081366,
+            "nodeUs": 0.003077725151718916,
+            "wasmStdUs": 0.0024582961260544,
+            "nodeStdUs": 0.00006596306771985943,
+            "ratio": 0.008785535029524191,
+            "ratioStd": 0.00020099557725227344,
             "ratioSamples": [
-              0.011524217572764433,
-              0.011392293177464218,
-              0.011354580629392706,
-              0.011417070747549503,
-              0.011216449111693769,
-              0.011610015678190963,
-              0.011307987752855,
-              0.01133376672765521,
-              0.01169190025054114
+              0.009027770518052267,
+              0.008712274748873686,
+              0.008777960553895141,
+              0.008501480555556287,
+              0.008581375143857773,
+              0.009200747468230597,
+              0.008785535029524191,
+              0.008842049488441618,
+              0.00887199432203
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 506144,
+            "iters": 655991,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.451597124533725,
-              0.45965439874818853,
-              0.4542994582569285,
-              0.4592720391825383,
-              0.45745969328887226,
-              0.46281275486818413,
-              0.4648029829455636,
-              0.4590233984794763,
-              0.4516816558133853
+              0.3508441762158338,
+              0.3560395645671915,
+              0.3506196152081366,
+              0.3510091357960818,
+              0.350809389153209,
+              0.34838729799646007,
+              0.3469214897765266,
+              0.34804911805193023,
+              0.34991564365975103
             ],
             "nodeSamplesUs": [
-              0.005204303518361442,
-              0.005236517670850405,
-              0.005158379828667721,
-              0.005243541363718367,
-              0.005131073370425675,
-              0.0053732633400863684,
-              0.005255986438638905,
-              0.005202464120901908,
-              0.005281016864769356
+              0.003167340710471639,
+              0.003101914507978725,
+              0.003077725151718916,
+              0.0029840973427930056,
+              0.0030104269723112763,
+              0.0032054235500046284,
+              0.003047890900926393,
+              0.003077467526223626,
+              0.0031044496037387834
             ],
-            "compileDurationMs": 3980.9686289999954,
+            "compileDurationMs": 3548.2960699999967,
             "binaryBytes": 1532,
             "moduleImportCount": 6,
             "functionImportCount": 6,
@@ -27523,58 +27481,58 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.4590233984794763,
-        "nodeUs": 0.005236517670850405,
-        "wasmStdUs": 0.004340163711790577,
-        "nodeStdUs": 0.00006694300116739238,
-        "ratio": 0.011392293177464218,
-        "ratioStd": 0.0001440874701752992,
+        "wasmUs": 0.3506196152081366,
+        "nodeUs": 0.003077725151718916,
+        "wasmStdUs": 0.0024582961260544,
+        "nodeStdUs": 0.00006596306771985943,
+        "ratio": 0.008785535029524191,
+        "ratioStd": 0.00020099557725227344,
         "ratioSamples": [
-          0.011524217572764433,
-          0.011392293177464218,
-          0.011354580629392706,
-          0.011417070747549503,
-          0.011216449111693769,
-          0.011610015678190963,
-          0.011307987752855,
-          0.01133376672765521,
-          0.01169190025054114
+          0.009027770518052267,
+          0.008712274748873686,
+          0.008777960553895141,
+          0.008501480555556287,
+          0.008581375143857773,
+          0.009200747468230597,
+          0.008785535029524191,
+          0.008842049488441618,
+          0.00887199432203
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 506144,
+        "iters": 655991,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.451597124533725,
-          0.45965439874818853,
-          0.4542994582569285,
-          0.4592720391825383,
-          0.45745969328887226,
-          0.46281275486818413,
-          0.4648029829455636,
-          0.4590233984794763,
-          0.4516816558133853
+          0.3508441762158338,
+          0.3560395645671915,
+          0.3506196152081366,
+          0.3510091357960818,
+          0.350809389153209,
+          0.34838729799646007,
+          0.3469214897765266,
+          0.34804911805193023,
+          0.34991564365975103
         ],
         "nodeSamplesUs": [
-          0.005204303518361442,
-          0.005236517670850405,
-          0.005158379828667721,
-          0.005243541363718367,
-          0.005131073370425675,
-          0.0053732633400863684,
-          0.005255986438638905,
-          0.005202464120901908,
-          0.005281016864769356
+          0.003167340710471639,
+          0.003101914507978725,
+          0.003077725151718916,
+          0.0029840973427930056,
+          0.0030104269723112763,
+          0.0032054235500046284,
+          0.003047890900926393,
+          0.003077467526223626,
+          0.0031044496037387834
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T07:11:03.931Z",
+      "measuredAt": "2026-08-29T21:38:52.619Z",
       "weeklyDownloads": 6829692,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-29T07:11:03.931Z"
+        "lastMeasuredAt": "2026-08-29T21:38:52.619Z"
       }
     }
   ]

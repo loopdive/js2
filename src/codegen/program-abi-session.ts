@@ -18,6 +18,7 @@ import {
   LegacyAbiAdapter,
   ProgramAbiInvariantError,
   ProgramAbiMap,
+  type ProgramAbiCallableSignature,
   type ProgramAbiDerivedUnitRecord,
   type ProgramAbiFinalIndex,
   type ProgramAbiPlanEntry,
@@ -999,6 +1000,18 @@ export class ProgramAbiSession {
 
   getDraft(id: IrBindingId): ProgramAbiDraft | undefined {
     return this.drafts.get(id);
+  }
+
+  /**
+   * Callable signature of `id` in the module's CURRENT type epoch, rebased by
+   * every {@link applyTypeLayoutRemap}. A draft's `intent.signature` is frozen
+   * when the draft is raised and never rewritten, so two drafts planned across
+   * dead-type elimination carry different `typeIdx` numbering for one contract:
+   * compare through here, not through `intent.signature`.
+   */
+  currentCallableSignature(id: IrBindingId): ProgramAbiCallableSignature | undefined {
+    const contract = this.callableTypeContracts.get(id);
+    return contract ? canonicalProgramAbiCallableTypeContract(contract) : undefined;
   }
 
   /** Resolve every exact pre-publication ABI identity in structural plan order. */

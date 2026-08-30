@@ -57,7 +57,7 @@ import {
   taCtorKindOf,
 } from "./registry/types.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
-import { undefinedExternInstrs } from "./any-helpers.js"; // (#3177) OOB read = undefined, not null
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2864) semantic undefined vs null
 import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
@@ -1824,8 +1824,8 @@ export function emitDataViewAccessor(
  * Sequence (§24.3.1.1 GetViewValue / §24.3.1.2 SetViewValue):
  *   brand TypeError → ToIndex(requestIndex) RangeError → [ToNumber(value)] →
  *   ToBoolean(littleEndian) → detached TypeError → bounds RangeError → op.
- * Getters box the f64 result (`__box_number`); setters return undefined
- * (null extern). noJsHost lane only; idempotent per member.
+ * Getters box the f64 result (`__box_number`); setters return the canonical
+ * semantic `undefined` externref. noJsHost lane only; idempotent per member.
  *
  * IMPORT DISCIPLINE: every reachable helper (`__to_primitive`/`__unbox_number`
  * via the externref→f64 coercion, `__is_truthy`, `__box_number`, the error
@@ -1971,9 +1971,11 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
     coerceType(ctx, fctx, acc.int64 ? { kind: "i64", bigint: true } : { kind: "f64" }, { kind: "externref" });
   } else {
     emitWriteBytes(ctx, fctx, acc, arrLocal, offLocal, valLocal, leLocal, arrTypeIdx);
-    // Setters return undefined — standalone lowers `undefined` to the null
-    // externref (`x === undefined` is `ref.is_null`), so this IS undefined.
-    fctx.body.push({ op: "ref.null.extern" });
+    // Setters return the semantic `undefined` value. The helper returns an
+    // externref, so use the canonical lane-correct producer: standalone's
+    // tag-1 singleton is distinct from `null`, while host mode obtains the
+    // real host `undefined` when this helper is used there.
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
   }
 
   pushDefinedFunc(ctx, funcIdx, {
@@ -2484,6 +2486,29 @@ function emitStoreByte(
  * convert to the integer/bit representation then store each byte with an
  * endianness branch.
  */
+function integerToI64Instrs(valLocal: number): Instr[] {
+  // ToIntN/ToUintN first apply ToIntegerOrInfinity. The saturating Wasm
+  // conversion already maps NaN to zero, but it maps ±Infinity to the i64
+  // extrema. ECMAScript's modulo conversion maps both infinities to zero,
+  // so handle them before truncating; finite values keep the existing exact
+  // path used for the conformance range (|value| <= 2^53).
+  return [
+    { op: "local.get", index: valLocal },
+    { op: "f64.const", value: Infinity },
+    { op: "f64.eq" },
+    { op: "local.get", index: valLocal },
+    { op: "f64.const", value: -Infinity },
+    { op: "f64.eq" },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i64" } },
+      then: [{ op: "i64.const", value: 0n }],
+      else: [{ op: "local.get", index: valLocal }, { op: "i64.trunc_sat_f64_s" }],
+    },
+  ];
+}
+
 function emitWriteBytes(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2504,13 +2529,7 @@ function emitWriteBytes(
       arrLocal,
       offLocal,
       0,
-      [
-        { op: "local.get", index: valLocal },
-        { op: "i64.trunc_sat_f64_s" },
-        { op: "i32.wrap_i64" },
-        { op: "i32.const", value: 0xff },
-        { op: "i32.and" },
-      ],
+      [...integerToI64Instrs(valLocal), { op: "i32.wrap_i64" }, { op: "i32.const", value: 0xff }, { op: "i32.and" }],
       arrTypeIdx,
     );
     fctx.body.push(...out);
@@ -2522,8 +2541,11 @@ function emitWriteBytes(
     // bits = i64.trunc_sat_f64_s(val) — the numeric-rep BigInt value truncated
     // toward zero (exact for |v| < 2^53); store 8 bytes either way.
     const bitsLocal = allocLocal(fctx, `__dvn_bits64_${fctx.locals.length}`, { kind: "i64" });
-    fctx.body.push({ op: "local.get", index: valLocal });
-    fctx.body.push({ op: acc.int64 ? "i64.trunc_sat_f64_s" : "i64.reinterpret_f64" });
+    if (acc.int64) {
+      fctx.body.push(...integerToI64Instrs(valLocal));
+    } else {
+      fctx.body.push({ op: "local.get", index: valLocal }, { op: "i64.reinterpret_f64" });
+    }
     fctx.body.push({ op: "local.set", index: bitsLocal });
     const storeAll = (little: boolean): Instr[] => {
       const out: Instr[] = [];
@@ -2553,8 +2575,8 @@ function emitWriteBytes(
 
   // 2 or 4 byte integers (or Float32/Float16) — derive an i32 bit pattern.
   const bitsLocal = allocLocal(fctx, `__dvn_bits32_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: valLocal });
   if (acc.f16) {
+    fctx.body.push({ op: "local.get", index: valLocal });
     // (#3173) Float16: encode via the minted `__f16_encode` helper
     // (roundTiesToEven directly from the f64 bits — single rounding).
     const encIdx = ctx.funcMap.get("__f16_encode");
@@ -2565,6 +2587,7 @@ function emitWriteBytes(
       fctx.body.push({ op: "i32.const", value: 0 });
     }
   } else if (acc.float) {
+    fctx.body.push({ op: "local.get", index: valLocal });
     // Float32: demote f64→f32, reinterpret to i32 bits.
     fctx.body.push({ op: "f32.demote_f64" });
     fctx.body.push({ op: "i32.reinterpret_f32" });
@@ -2577,7 +2600,7 @@ function emitWriteBytes(
     // `acc.bytes` of those are stored below, giving the correct modular result
     // for 2- and 4-byte signed/unsigned setters across the ±2^53 integer range
     // that conformance exercises.
-    fctx.body.push({ op: "i64.trunc_sat_f64_s" });
+    fctx.body.push(...integerToI64Instrs(valLocal));
     fctx.body.push({ op: "i32.wrap_i64" });
   }
   fctx.body.push({ op: "local.set", index: bitsLocal });

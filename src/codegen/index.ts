@@ -495,6 +495,7 @@ import {
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
+import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
@@ -6861,13 +6862,19 @@ function addWasiStartExport(ctx: CodegenContext): void {
           ]
         : body;
 
-    ctx.mod.functions.push({
+    const wasiStartAdapter: WasmFunction = {
       name: "_start",
       typeIdx: startTypeIdx,
       locals: [],
       body: startBody,
       exported: true,
-    });
+    };
+    ctx.mod.functions.push(wasiStartAdapter);
+    // Record the exact allocator objects selected for this adapter before
+    // later import/layout passes can shift its numeric call handles. The
+    // Program ABI finalizer authenticates the resulting `_start` export and
+    // call path by object identity, never by a function-array position/name.
+    ctx.programAbiModuleInitCallables?.observeWasiStartAdapter(wasiStartAdapter, targetIdx);
 
     ctx.mod.exports.push({
       name: "_start",
@@ -11230,6 +11237,11 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       const templateVecTypeIdx = getOrRegisterTemplateVecType(ctx);
       return { kind: "ref_null", typeIdx: templateVecTypeIdx };
     }
+
+    // (#5201) An externref-backed user class outranks every structural /
+    // intrinsic-spelling arm below — see externref-backed-class-rep.ts.
+    const externrefBacked = externrefBackedClassValType(ctx, sym);
+    if (externrefBacked !== undefined) return externrefBacked;
 
     // (#5096) The intrinsic-name arms below (`Array`, the wrapper objects,
     // `Promise`, the TypedArrays, `Date`, `Map`/`Set`/`WeakMap`/`WeakSet`)
