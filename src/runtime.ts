@@ -6240,6 +6240,31 @@ function _registerClassCtorHandler(
   _hostProxyCache.delete(classObj);
 }
 
+/**
+ * (#4628) The prototype singleton of a registered class OBJECT, or undefined
+ * when `obj` is not one.
+ *
+ * A class object is a `$ClassName` WasmGC struct, not a closure struct, so
+ * `_getOrVivifyFnPrototype` declines it (its `__is_closure` gate is exact and
+ * correct) and a dynamic `.prototype` read answered `undefined` — while the
+ * STATIC lane (`emitLazyProtoGet`) answers the real singleton. The split is
+ * invisible until a class crosses a function boundary as a value: `class C {}`
+ * then `f(C)` with `function f(e) { return e.prototype; }` read `undefined`,
+ * which is how `@js-temporal/polyfill`'s
+ * `ae(Instant, "Temporal.Instant") → Object.defineProperty(e.prototype, …)`
+ * died with "Object.defineProperty called on non-object".
+ *
+ * Returns the RAW struct, deliberately, not a `_wrapForHost` proxy: the static
+ * lane hands compiled code that same externref, so a proxy here would break
+ * `C.prototype === C.prototype` across the two lanes, and host descriptor
+ * writes already have a raw-struct arm (`__defineProperty_*`'s opaque branch).
+ */
+function _classObjectPrototypeStruct(obj: any): any {
+  if (obj == null || typeof obj !== "object") return undefined;
+  const proto = _classProtoStructs.get(obj);
+  return proto == null ? undefined : proto;
+}
+
 /** (#4618) `__register_class_parent` import: dynamic `extends <value>`
  * parent, registered by name at the class declaration statement (see
  * emitRegisterDynamicClassParent). */
@@ -11680,6 +11705,11 @@ assert._isSameValue = isSameValue;
           // prototype-method writes, Object.defineProperties, and
           // `var pp = P.prototype` aliasing all see one live object.
           if (key === "prototype") {
+            // (#4628) A registered class object first — see
+            // `_classObjectPrototypeStruct`. It is not a closure, so the
+            // vivify call below declines it and the read answered undefined.
+            const classProto = _classObjectPrototypeStruct(obj);
+            if (classProto !== undefined) return classProto;
             const proto = _getOrVivifyFnPrototype(obj, callbackState);
             if (proto !== undefined) return proto;
           }
@@ -17892,6 +17922,10 @@ assert._isSameValue = isSameValue;
         // identity-stable real JS object in the closure's sidecar (mirrors
         // the by-name __extern_get binding).
         if (key === "prototype") {
+          // (#4628) Registered class object first, mirroring the by-name
+          // __extern_get binding.
+          const classProto = _classObjectPrototypeStruct(obj);
+          if (classProto !== undefined) return classProto;
           const proto = _getOrVivifyFnPrototype(obj, callbackState);
           if (proto !== undefined) return proto;
         }

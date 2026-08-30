@@ -1,0 +1,177 @@
+// #4628 step 3 — the `Temporal` runtime global, end to end.
+//
+// The spike harness next door (`temporal-polyfill-harness.mjs`) answers
+// "does the polyfill compile / validate / initialise?". This one answers the
+// question that follows: "with the compiled polyfill published as a linked
+// provider, what does a USER program that says `Temporal` actually observe?"
+//
+// Runs as a child process (same rationale as the spike harness and the
+// clsx/acorn adapters): the provider compile is tens of seconds of synchronous
+// work and must never block a vitest worker's RPC heartbeat.
+//
+// Loop:
+//   1. ACQUIRE + LINK — the pinned tarball contract, unchanged
+//      (setup-temporal-polyfill.mjs).
+//   2. PROVIDER — `buildTemporalProvider` compiles the bundle ONCE into a
+//      content-addressed provider binary (`src/temporal-provider.ts`).
+//   3. CONSUME — each probe is compiled with `compileWithTemporalGlobal`,
+//      which binds bare `Temporal` to the provider's export, then instantiated
+//      through the ordinary linked-project path.
+//
+// Every probe records what it OBSERVED, never a pass/fail verdict. Two probe
+// sets, and the split is the point:
+//
+//   * `supported` — shapes that work today. The vitest wrapper asserts these.
+//   * `knownGaps`  — shapes that do NOT work today, WITH the measurement that
+//     says why they are not this change's fault. `Temporal.PlainDate.from(...)`
+//     fails identically when the polyfill is compiled as ONE module with no
+//     provider and no linking at all (measured 2026-08-30), so it is a
+//     pre-existing compiler gap on the polyfill's own internals, not a
+//     regression introduced by the provider seam. Recording them here — rather
+//     than omitting them — is what keeps the next reader from re-deriving that.
+//
+// Invoke:  node --import tsx tests/dogfood/temporal-global-harness.mjs [--json]
+
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { instantiateLinkedProject } from "../../src/index.ts";
+import { buildTemporalProvider, compileWithTemporalGlobal } from "../../src/temporal-provider.ts";
+import { setupTemporalPolyfill, linkPolyfillSource } from "./setup-temporal-polyfill.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPORT_PATH = join(HERE, "report", "temporal-global.json");
+
+/** Shapes that work today — the vitest wrapper asserts every one of these. */
+const SUPPORTED = {
+  // The headline: `Temporal` is an OBJECT at run time, not a ReferenceError.
+  // On `main` this same program answers "undefined" / throws
+  // "Temporal is not defined" — the 1,589-row test262 bucket.
+  typeofTemporal: `export function run() { return typeof Temporal; }`,
+  // Issue acceptance criterion 1: the class names are enumerable own keys.
+  ownPropertyNames: `export function run() { return Object.getOwnPropertyNames(Temporal).sort().join(","); }`,
+  // Issue acceptance criterion 1: a Temporal class survives being passed as a
+  // VALUE through a function boundary — the thing the #661 syntactic lowering
+  // structurally cannot do.
+  classAsValue: `
+    function nameOf(K) { return typeof K; }
+    export function run() { return nameOf(Temporal.PlainDate); }
+  `,
+  classHasStatics: `export function run() { return Object.getOwnPropertyNames(Temporal.PlainDate).sort().join(","); }`,
+  // A constructed instance carries real field values from the polyfill.
+  constructAndReadFields: `
+    export function run() {
+      const d = new Temporal.PlainDate(2020, 3, 4);
+      return d.year + "/" + d.month + "/" + d.day;
+    }
+  `,
+  // `Temporal` is a plain value: aliasing it must not disturb anything.
+  aliasable: `
+    export function run() { const T = Temporal; return typeof T.ZonedDateTime; }
+  `,
+};
+
+/**
+ * Shapes that do NOT work today. Recorded, not hidden. `note` states what was
+ * measured about each, so the next reader does not have to re-derive whether
+ * the provider seam caused it.
+ */
+const KNOWN_GAPS = {
+  staticFrom: {
+    source: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
+    note:
+      "fails IDENTICALLY (RuntimeError: dereferencing a null pointer) when the polyfill is compiled as ONE " +
+      "module with no provider and no linking — a pre-existing compiler gap inside the polyfill's own " +
+      "intrinsic/Object.create machinery, not a provider-seam defect (measured 2026-08-30, .tmp/probe-ab.mts)",
+  },
+  nowInstant: {
+    source: `export function run() { return typeof Temporal.Now.instant; }`,
+    note:
+      'answers "function" in the single-module shape but "undefined" through the provider — the polyfill\'s ' +
+      "`Now` is a plain object whose methods do not survive the cross-module value crossing. This one IS " +
+      "linking-specific and is the strongest candidate for the next follow-up",
+  },
+  instanceToString: {
+    source: `export function run() { return new Temporal.PlainDate(2020, 3, 4).toString(); }`,
+    note: 'returns "[object Object]" — the class\'s Symbol.toStringTag / prototype-method dispatch is not wired',
+  },
+};
+
+async function observe(source, provider, fileName) {
+  const started = Date.now();
+  try {
+    const result = await compileWithTemporalGlobal(source, provider, { fileName });
+    const errors = (result.errors ?? []).filter((e) => e.severity !== "warning");
+    if (!result.success) {
+      return { status: "compile-failed", errors: errors.slice(0, 3).map((e) => e.message), ms: Date.now() - started };
+    }
+    const { instance } = await instantiateLinkedProject(result);
+    const value = instance.exports.run?.();
+    return { status: "ok", value: value === undefined ? null : value, ms: Date.now() - started };
+  } catch (error) {
+    return {
+      status: "threw",
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      ms: Date.now() - started,
+    };
+  }
+}
+
+export async function runTemporalGlobalHarness({ quiet = false, cacheDir } = {}) {
+  const log = quiet ? () => {} : (...a) => console.log(...a);
+
+  const setup = setupTemporalPolyfill();
+  const linked = linkPolyfillSource(setup);
+  log(`[temporal-global] @js-temporal/polyfill@${setup.version} linked to ${linked.source.length} B`);
+
+  const providerCacheDir = cacheDir ?? process.env.JS2WASM_TEMPORAL_CACHE ?? join(tmpdir(), "js2wasm-temporal-cache");
+  const provider = await buildTemporalProvider({ polyfillSource: linked.source, cacheDir: providerCacheDir });
+  log(
+    `[temporal-global] provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +
+      `built in ${provider.buildMs}ms cacheHit=${provider.cacheHit}`,
+  );
+
+  const report = {
+    issue: 4628,
+    generatedAt: new Date().toISOString(),
+    polyfillVersion: setup.version,
+    provider: {
+      namespace: provider.namespace,
+      getterField: provider.getterField,
+      binaryBytes: provider.artifact.binary.length,
+      buildMs: provider.buildMs,
+      cacheHit: provider.cacheHit,
+    },
+    supported: {},
+    knownGaps: {},
+  };
+
+  for (const [label, source] of Object.entries(SUPPORTED)) {
+    report.supported[label] = await observe(source, provider, `/${label}.js`);
+    log(`[temporal-global] ${label}: ${JSON.stringify(report.supported[label])}`);
+  }
+  for (const [label, { source, note }] of Object.entries(KNOWN_GAPS)) {
+    report.knownGaps[label] = { ...(await observe(source, provider, `/${label}.js`)), note };
+    log(`[temporal-global] (gap) ${label}: ${report.knownGaps[label].status}`);
+  }
+
+  // The compile-once claim, measured rather than asserted: a SECOND consumer
+  // must not pay the provider's build cost again.
+  const secondConsumerStarted = Date.now();
+  await observe(`export function run() { return typeof Temporal; }`, provider, "/second-consumer.js");
+  report.secondConsumerMs = Date.now() - secondConsumerStarted;
+  log(`[temporal-global] second consumer compile+run: ${report.secondConsumerMs}ms`);
+
+  mkdirSync(dirname(REPORT_PATH), { recursive: true });
+  writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  return report;
+}
+
+const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (invokedDirectly) {
+  const json = process.argv.includes("--json");
+  const report = await runTemporalGlobalHarness({ quiet: json });
+  if (json) process.stdout.write(`${JSON.stringify(report)}\n`);
+}
