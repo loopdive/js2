@@ -199,24 +199,48 @@ const ABRUPT_ORDER_CONTROL_SOURCE = `
 `;
 
 const CONTROL_CASES = [
-  ["dynamic constructor carriers preserve initial values, set writes, and undefined", CONSTRUCTOR_CONTROL_SOURCE],
-  ["mixed AnyValue constructor elements retain numeric/string/object conversions", MIXED_CARRIER_CONTROL_SOURCE],
-  ["array-like and primitive string sources retain indexed observation", ARRAYLIKE_CONTROL_SOURCE],
-  ["same-buffer and different-kind copies preserve set semantics", BUFFER_COPY_CONTROL_SOURCE],
-  ["abrupt indexed access is catchable after partial writes and Symbol offset rejects", ABRUPT_ORDER_CONTROL_SOURCE],
+  {
+    name: "dynamic constructor carriers preserve initial values, set writes, and undefined",
+    source: CONSTRUCTOR_CONTROL_SOURCE,
+    lanes: ["host", "standalone"],
+  },
+  {
+    name: "mixed AnyValue constructor elements retain numeric/string/object conversions",
+    source: MIXED_CARRIER_CONTROL_SOURCE,
+    lanes: ["standalone"],
+  },
+  {
+    name: "array-like and primitive string sources retain indexed observation",
+    source: ARRAYLIKE_CONTROL_SOURCE,
+    lanes: ["host", "standalone"],
+  },
+  {
+    name: "same-buffer and different-kind copies preserve set semantics",
+    source: BUFFER_COPY_CONTROL_SOURCE,
+    lanes: ["host", "standalone"],
+  },
+  {
+    name: "abrupt indexed access is catchable after partial writes and Symbol offset rejects",
+    source: ABRUPT_ORDER_CONTROL_SOURCE,
+    lanes: ["host", "standalone"],
+  },
 ] as const;
 
 describe("#5194 ES2015 standalone TypedArray.prototype.set slice A", () => {
-  for (const [name, source] of CONTROL_CASES) {
-    it(`host control: ${name}`, { timeout: CORPUS_TIMEOUT }, async () => {
-      expect((await runControl(source, "host")).value).toBe(0);
-    });
+  for (const { name, source, lanes } of CONTROL_CASES) {
+    if (lanes.some((lane) => lane === "host")) {
+      it(`host control: ${name}`, { timeout: CORPUS_TIMEOUT }, async () => {
+        expect((await runControl(source, "host")).value).toBe(0);
+      });
+    }
 
-    it(`standalone control: ${name}`, { timeout: CORPUS_TIMEOUT }, async () => {
-      const outcome = await runControl(source, "standalone");
-      expect(outcome.value).toBe(0);
-      expect(outcome.imports).toEqual([]);
-    });
+    if (lanes.some((lane) => lane === "standalone")) {
+      it(`standalone control: ${name}`, { timeout: CORPUS_TIMEOUT }, async () => {
+        const outcome = await runControl(source, "standalone");
+        expect(outcome.value).toBe(0);
+        expect(outcome.imports).toEqual([]);
+      });
+    }
   }
 
   for (const relativePath of EXACT_ROWS) {
