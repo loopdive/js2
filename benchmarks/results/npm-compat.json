@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-30T02:04:49.679Z",
+  "generatedAt": "2026-08-30T03:29:53.129Z",
   "measuredRange": {
-    "oldest": "2026-08-29T21:38:52.619Z",
-    "newest": "2026-08-30T02:04:08.721Z"
+    "oldest": "2026-08-30T00:42:32.669Z",
+    "newest": "2026-08-30T03:29:00.607Z"
   },
   "correctness": {
     "definition": {
@@ -84,7 +84,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7809,
+        "durationMs": 8458,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -538,7 +538,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7739.813468,
+            "compileDurationMs": 8043.561840000002,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -548,7 +548,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7932.219057000002,
+            "compileDurationMs": 8230.147016000003,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -558,13 +558,13 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7276.5761950000015,
+            "compileDurationMs": 7486.405504000002,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:42:24.225Z",
+      "measuredAt": "2026-08-30T03:07:29.221Z",
       "weeklyDownloads": 275892096
     },
     {
@@ -575,7 +575,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600121,
+        "durationMs": 600223,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -2003,7 +2003,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:52:10.804Z",
+      "measuredAt": "2026-08-30T03:17:13.304Z",
       "weeklyDownloads": 250686863
     },
     {
@@ -2014,7 +2014,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 19034,
+        "durationMs": 14502,
         "errorCount": 0,
         "binaryBytes": 716314,
         "categories": {}
@@ -2232,54 +2232,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.04509090980387885,
-            "nodeUs": 12972.160818180948,
-            "wasmStdUs": 0.037891933769572686,
-            "nodeStdUs": 896.7529889941338,
-            "ratio": 294274.286677625,
-            "ratioStd": 359433.8467631144,
+            "wasmUs": 0.025620690049153978,
+            "nodeUs": 10266.946413793105,
+            "wasmStdUs": 0.03673018467311641,
+            "nodeStdUs": 332.214396873494,
+            "ratio": 417579.35293262807,
+            "ratioStd": 757733.9012643145,
             "ratioSamples": [
-              294274.286677625,
-              155695.14250106574,
-              984600.6125215319,
-              130292.02744657398,
-              857534.048947568,
-              137484.3189495813,
-              846551.0223289072,
-              119159.72270948421,
-              829096.6525178379
+              417579.35293262807,
+              128726.10600866814,
+              1575351.699936403,
+              116810.05344486293,
+              2034264.848785222,
+              113792.46403440688,
+              1620527.5910620734,
+              116411.260018466,
+              1417012.0160907463
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 22,
+            "iters": 29,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.04509090980387885,
-              0.08199999997900291,
-              0.013181818014180119,
-              0.09154545444868167,
-              0.017727272775532172,
-              0.09427272677633233,
-              0.014136364122598685,
-              0.10886363716880706,
-              0.015954545233398676
+              0.025620690049153978,
+              0.07568965445208396,
+              0.00651724082578359,
+              0.08662068987554261,
+              0.005068965978792001,
+              0.08589655144846645,
+              0.006448275786985098,
+              0.08368965515320928,
+              0.00737931033403709
             ],
             "nodeSamplesUs": [
-              13269.095318181577,
-              12767.001681818245,
-              12978.826090909108,
-              11927.64286363672,
-              15201.740000000096,
-              12961.021636364007,
-              11967.153499999602,
-              12972.160818180948,
-              13227.860045455269
+              10698.67117241314,
+              9743.23448275842,
+              10266.946413793105,
+              10118.16741379303,
+              10311.619310344746,
+              9774.380241379198,
+              10449.608827586855,
+              9742.418206895998,
+              10456.571413793175
             ],
-            "compileDurationMs": 101077.29199200001,
-            "moduleCompileDurationMs": 10.011464000010164,
-            "instantiateDurationMs": 0.03048700001090765,
-            "firstBatchDurationMs": 0.05191799998283386,
+            "compileDurationMs": 84440.172203,
+            "moduleCompileDurationMs": 10.439505999995163,
+            "instantiateDurationMs": 0.047703999996883795,
+            "firstBatchDurationMs": 0.05806400001165457,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2297,7 +2297,7 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 346.36150699999416,
+              "stageDurationMs": 267.5621960000135,
               "stageBinaryBytes": 2185621,
               "stageModuleImportCount": 0
             }
@@ -2307,22 +2307,22 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 113195.62499999302,
-            "nodeUs": 10942.427999999685,
-            "wasmStdUs": 1942.4696680186378,
-            "nodeStdUs": 2217.6191063836945,
-            "ratio": 0.09632892319527916,
-            "ratioStd": 0.021019994304845722,
+            "wasmUs": 67693.08999999582,
+            "nodeUs": 8941.55866667279,
+            "wasmStdUs": 1514.4443158972226,
+            "nodeStdUs": 1592.6473654187082,
+            "ratio": 0.1318580030348527,
+            "ratioStd": 0.026161047761355066,
             "ratioSamples": [
-              0.11371288093077198,
-              0.09719814531360421,
-              0.09455517505357763,
-              0.16253461100004504,
-              0.0944861931382205,
-              0.09595117333869017,
-              0.09720519810181917,
-              0.09537216538230393,
-              0.09632892319527916
+              0.1797111963967308,
+              0.13918682371566274,
+              0.12865138996456876,
+              0.1949122002379125,
+              0.12548392551880544,
+              0.12445501868697192,
+              0.1318580030348527,
+              0.1255243300937458,
+              0.17410480967102876
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
@@ -2330,32 +2330,32 @@
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              112931.68866667354,
-              111928.3600000005,
-              116449.08200000646,
-              110513.75800000581,
-              117033.55766667907,
-              113740.31833332265,
-              112570.39966667071,
-              113271.19699999457,
-              113195.62499999302
+              67323.3290000062,
+              66305.79500000265,
+              69502.23133333687,
+              66109.48066666606,
+              69217.95199999663,
+              68822.16099999884,
+              67693.08999999582,
+              69530.62666666422,
+              65273.251333332155
             ],
             "nodeSamplesUs": [
-              12841.787666664459,
-              10879.228999993453,
-              11010.863333339026,
-              17962.31066668406,
-              11058.055333346905,
-              10913.516999998441,
-              10942.427999999685,
-              10802.919333335012,
-              10904.012666665949
+              12098.756000001837,
+              9228.89299999224,
+              8941.55866667279,
+              12885.54433332562,
+              8685.740333331827,
+              8565.263333332647,
+              8925.875666658007,
+              8727.785333331363,
+              11364.386999999018
             ],
-            "compileDurationMs": 94269.77381799999,
-            "moduleCompileDurationMs": 11.868956000020262,
-            "instantiateDurationMs": 6.987281999958213,
-            "moduleInitDurationMs": 26.96427500003483,
-            "firstBatchDurationMs": 328.6357629999984,
+            "compileDurationMs": 73502.944304,
+            "moduleCompileDurationMs": 11.461534000001848,
+            "instantiateDurationMs": 6.697179000009783,
+            "moduleInitDurationMs": 22.87941199998022,
+            "firstBatchDurationMs": 259.6930580000044,
             "binaryBytes": 2187841,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2417,7 +2417,7 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "measuredAt": "2026-08-30T01:46:17.257Z",
+      "measuredAt": "2026-08-30T03:10:25.064Z",
       "weeklyDownloads": 240886853
     },
     {
@@ -2428,7 +2428,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 1143,
+        "durationMs": 1092,
         "errorCount": 9,
         "binaryBytes": 21283,
         "categories": {
@@ -2653,54 +2653,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0010801630372882143,
-            "nodeUs": 0.5763499833681907,
-            "wasmStdUs": 0.00004205379236676762,
-            "nodeStdUs": 0.002481329917915984,
-            "ratio": 533.5768430061602,
-            "ratioStd": 21.365545719252033,
+            "wasmUs": 0.0009576733787348872,
+            "nodeUs": 0.616613348055645,
+            "wasmStdUs": 0.00001926763755605469,
+            "nodeStdUs": 0.0026625411236324303,
+            "ratio": 642.2486326564957,
+            "ratioStd": 12.337479960627688,
             "ratioSamples": [
-              540.6214696258475,
-              490.7904312031299,
-              505.75085927896873,
-              522.0696922588853,
-              540.8215404485774,
-              533.5768430061602,
-              550.7810429186828,
-              501.190705236741,
-              552.9257002563962
+              642.2486326564957,
+              657.6861391889461,
+              630.8382863781908,
+              620.4274251473616,
+              648.9655163423085,
+              646.091664054179,
+              636.3763658491494,
+              632.3690839083929,
+              660.5703627877755
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 438918,
+            "iters": 402111,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0010670877020315696,
-              0.0011644042850901101,
-              0.001132824354443722,
-              0.0010937851717219562,
-              0.0010662447199675691,
-              0.0010801630372882143,
-              0.0010455734328619938,
-              0.0011500530850924314,
-              0.001046256931829221
+              0.0009516700612552805,
+              0.0009344260664447117,
+              0.0009758126487442383,
+              0.0009976648238870399,
+              0.0009501480934318261,
+              0.0009576733787348872,
+              0.0009731939688276077,
+              0.0009701326250642988,
+              0.0009360226405226684
             ],
             "nodeSamplesUs": [
-              0.5768905216919755,
-              0.5714784811741473,
-              0.5729268906720554,
-              0.5710320879982137,
-              0.5766481119480227,
-              0.5763499833681907,
-              0.5758820257997963,
-              0.5763959167771654,
-              0.5785023466797806
+              0.6112087955813275,
+              0.614559071997536,
+              0.6155799791599786,
+              0.6189786178443322,
+              0.616613348055645,
+              0.6187447868872112,
+              0.6193176411488233,
+              0.6134818793815551,
+              0.6183088152276306
             ],
-            "compileDurationMs": 543.2971709999983,
-            "moduleCompileDurationMs": 0.434214000000793,
-            "instantiateDurationMs": 0.0283320000016829,
-            "firstBatchDurationMs": 0.07375000000320142,
+            "compileDurationMs": 564.5515569999989,
+            "moduleCompileDurationMs": 0.3816850000002887,
+            "instantiateDurationMs": 0.027571999999054242,
+            "firstBatchDurationMs": 0.05946099999709986,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2721,55 +2721,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 3.5284851053809176,
-            "nodeUs": 0.7571176262805175,
-            "wasmStdUs": 0.01888113338954683,
-            "nodeStdUs": 0.011194352201906703,
-            "ratio": 0.21472099242854523,
-            "ratioStd": 0.0034007712536723244,
+            "wasmUs": 4.117576363216344,
+            "nodeUs": 0.8393290973505115,
+            "wasmStdUs": 0.012495793959690095,
+            "nodeStdUs": 0.00833422234857335,
+            "ratio": 0.2041954425542507,
+            "ratioStd": 0.002054799155249991,
             "ratioSamples": [
-              0.21237164108030573,
-              0.21867302504195454,
-              0.21472099242854523,
-              0.21159842684864297,
-              0.2162543282292166,
-              0.21427034377225626,
-              0.21303929894007842,
-              0.21549954789503967,
-              0.22326345950611176
+              0.2041954425542507,
+              0.2063071989549901,
+              0.20200583994553328,
+              0.20497150234633615,
+              0.2035423556736126,
+              0.206958576808857,
+              0.20252709839922517,
+              0.20821927797814535,
+              0.2026058014393993
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 59451,
+            "iters": 51936,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              3.518776017224326,
-              3.498882255975462,
-              3.4963335183595916,
-              3.5523218953423745,
-              3.5434815225984737,
-              3.5334690417318924,
-              3.5284851053809176,
-              3.546512876150155,
-              3.5182332509125285
+              4.110420325015424,
+              4.132761148336449,
+              4.124912392174971,
+              4.1431828981824035,
+              4.104719558687666,
+              4.1082134742759395,
+              4.126273528958727,
+              4.106793707640242,
+              4.117576363216344
             ],
             "nodeSamplesUs": [
-              0.7472882373719523,
-              0.7651111671797727,
-              0.7507362029233587,
-              0.7516657247144362,
-              0.7662932162621746,
-              0.7571176262805175,
-              0.7517059931708594,
-              0.7642719214142952,
-              0.7854929269481652
+              0.8393290973505115,
+              0.8526183764633012,
+              0.833256392483044,
+              0.8492344231360943,
+              0.835484288354839,
+              0.8502300138631183,
+              0.8356822050215422,
+              0.8551136206100417,
+              0.8342448590573744
             ],
-            "compileDurationMs": 3870.4581210000033,
-            "moduleCompileDurationMs": 0.8811159999968368,
-            "instantiateDurationMs": 0.25360599999839906,
-            "moduleInitDurationMs": 0.1058469999989029,
-            "firstBatchDurationMs": 1.8118560000002617,
+            "compileDurationMs": 3823.5954779999956,
+            "moduleCompileDurationMs": 0.8448659999994561,
+            "instantiateDurationMs": 0.22841799999878276,
+            "moduleInitDurationMs": 0.09169100000144681,
+            "firstBatchDurationMs": 1.6835429999991902,
             "binaryBytes": 71372,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2795,7 +2795,7 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "measuredAt": "2026-08-30T01:42:42.909Z",
+      "measuredAt": "2026-08-30T03:07:38.223Z",
       "weeklyDownloads": 173435452
     },
     {
@@ -2806,7 +2806,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 57799,
+        "durationMs": 54692,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 60,
@@ -3579,7 +3579,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:42:53.002Z",
+      "measuredAt": "2026-08-30T03:07:47.422Z",
       "weeklyDownloads": 164859858
     },
     {
@@ -3590,7 +3590,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 6322,
+        "durationMs": 6228,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -4628,7 +4628,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4341.50981399999,
+            "compileDurationMs": 4250.324329000199,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -4638,8 +4638,8 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 4693.301388000138,
-            "moduleCompileDurationMs": 1.2493549999780953,
+            "compileDurationMs": 4675.60083700018,
+            "moduleCompileDurationMs": 1.3794789998792112,
             "binaryBytes": 146855,
             "moduleImportCount": 1,
             "functionImportCount": 1,
@@ -4652,8 +4652,8 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 4411.908815000206,
-            "moduleCompileDurationMs": 3.9187870000023395,
+            "compileDurationMs": 4435.041167999851,
+            "moduleCompileDurationMs": 3.8032140000723302,
             "binaryBytes": 147041,
             "moduleImportCount": 1,
             "functionImportCount": 1,
@@ -4662,7 +4662,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T02:04:08.721Z",
+      "measuredAt": "2026-08-30T03:29:00.607Z",
       "weeklyDownloads": 162687688
     },
     {
@@ -4673,7 +4673,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180176,
+        "durationMs": 180199,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -4799,7 +4799,7 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "measuredAt": "2026-08-30T01:44:50.858Z",
+      "measuredAt": "2026-08-30T03:09:48.603Z",
       "weeklyDownloads": 152308132
     },
     {
@@ -4810,7 +4810,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 5014553,
+        "durationMs": 4869132,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -4849,7 +4849,7 @@
           "implementationInvalidTests": 79,
           "compile": {
             "success": true,
-            "durationMs": 1135198,
+            "durationMs": 1074435,
             "binaryBytes": 26625140,
             "invalidBatches": 115
           },
@@ -4869,7 +4869,7 @@
           "implementationInvalidTests": 14,
           "compile": {
             "success": false,
-            "durationMs": 1571258,
+            "durationMs": 1521362,
             "binaryBytes": 12910595,
             "invalidBatches": 60
           },
@@ -4889,7 +4889,7 @@
           "implementationInvalidTests": 17,
           "compile": {
             "success": false,
-            "durationMs": 666280,
+            "durationMs": 644655,
             "binaryBytes": 7567144,
             "invalidBatches": 35
           },
@@ -4909,7 +4909,7 @@
           "implementationInvalidTests": 2,
           "compile": {
             "success": true,
-            "durationMs": 35022,
+            "durationMs": 31769,
             "binaryBytes": 469704,
             "invalidBatches": 2
           },
@@ -11030,12 +11030,12 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T23:38:39.708Z",
+      "measuredAt": "2026-08-30T02:32:00.907Z",
       "weeklyDownloads": 139740993,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-29T23:38:39.708Z"
+        "lastMeasuredAt": "2026-08-30T02:32:00.907Z"
       }
     },
     {
@@ -11046,7 +11046,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 33738,
+        "durationMs": 35486,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 5,
@@ -11171,7 +11171,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:46:48.879Z",
+      "measuredAt": "2026-08-30T03:11:51.622Z",
       "weeklyDownloads": 117242232
     },
     {
@@ -11182,7 +11182,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120173,
+        "durationMs": 120152,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -11544,7 +11544,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:44:01.198Z",
+      "measuredAt": "2026-08-30T03:08:53.818Z",
       "weeklyDownloads": 117155768
     },
     {
@@ -11555,7 +11555,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 57351,
+        "durationMs": 54603,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -11688,7 +11688,7 @@
             "status": "fail",
             "passed": 2,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_427 (wasm://wasm/001e4bca:wasm-function[922]:0x5b54b)\n    at __closure_462 (wasm://wasm/001e4bca:wasm-function[971]:0x5e5b5)\n    at __closure_346 (wasm://wasm/001e4bca:wasm-function[820]:0x44bd8)\n    at __call_fn_method_1 (wasm://wasm/001e4bca:wasm-function[1412]:0x69905)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001e4bca:wasm-function[1413]:0x69e73)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_427 (wasm://wasm/001e6336:wasm-function[923]:0x5b95a)\n    at __closure_462 (wasm://wasm/001e6336:wasm-function[972]:0x5e9c4)\n    at __closure_346 (wasm://wasm/001e6336:wasm-function[821]:0x44fe7)\n    at __call_fn_method_1 (wasm://wasm/001e6336:wasm-function[1413]:0x69ec1)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001e6336:wasm-function[1414]:0x6a42f)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18254:20)",
             "tests": [
               {
                 "name": "should abort when any of the signals abort",
@@ -11870,7 +11870,7 @@
             "status": "fail",
             "passed": 0,
             "total": 57,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1708:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1692868",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1709:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1694352",
             "tests": [
               {
                 "name": "accepts undefined for second argument",
@@ -12166,7 +12166,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1580:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1530209",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1581:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1531693",
             "tests": [
               {
                 "name": "supports a single transformer",
@@ -12221,7 +12221,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1510:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1394679",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1511:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1396163",
             "tests": [
               {
                 "name": "should return buffer from data uri",
@@ -12292,7 +12292,7 @@
             "status": "fail",
             "passed": 0,
             "total": 20,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1585:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1505771",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1586:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1507255",
             "tests": [
               {
                 "name": "should support null params",
@@ -12602,7 +12602,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: Cannot redefine property: beforeEach\nTypeError: Cannot redefine property: beforeEach\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13221:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18242:20)\n    at __module_init (wasm://wasm/005d7b7e:wasm-function[1077]:0x10a5e5)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
+            "error": "module init: TypeError: Cannot redefine property: beforeEach\nTypeError: Cannot redefine property: beforeEach\n    at Object.defineProperty (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13222:20)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18266:20)\n    at __module_init (wasm://wasm/005d7b7e:wasm-function[1077]:0x10a5e5)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:285:39)",
             "tests": [
               {
                 "name": "should generate a string of the specified length using the default alphabet",
@@ -12645,7 +12645,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #1585:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1521707",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #1586:\"__module_init\" failed: global.set[0] expected type i32, found local.get of type externref @+1523191",
             "tests": [
               {
                 "name": "parses json",
@@ -12970,7 +12970,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:49:28.654Z",
+      "measuredAt": "2026-08-30T03:13:24.893Z",
       "weeklyDownloads": 112353408
     },
     {
@@ -12981,7 +12981,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 757,
+        "durationMs": 722,
         "errorCount": 0,
         "binaryBytes": 8679,
         "categories": {}
@@ -13174,54 +13174,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0009694908409747172,
-            "nodeUs": 0.01649569794749067,
-            "wasmStdUs": 0.000001339920539874543,
-            "nodeStdUs": 0.0003051411850781835,
-            "ratio": 17.040039743176095,
-            "ratioStd": 0.31285239768341255,
+            "wasmUs": 0.000970468393574169,
+            "nodeUs": 0.016301875433491868,
+            "wasmStdUs": 9.199017933166095e-7,
+            "nodeStdUs": 0.0000424121487753747,
+            "ratio": 16.786435937062297,
+            "ratioStd": 0.04417007385605371,
             "ratioSamples": [
-              17.040039743176095,
-              16.93312187257268,
-              17.261567551335144,
-              17.882439672275186,
-              17.033292668623112,
-              16.872905974722528,
-              17.13201645588236,
-              16.772863205241325,
-              17.351107656807947
+              16.904925037708352,
+              16.83400080648497,
+              16.77150020190306,
+              16.786219473919793,
+              16.83072254561667,
+              16.813110317034827,
+              16.786435937062297,
+              16.74667065832987,
+              16.776946640327445
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4427654,
+            "iters": 4292181,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009678978980734755,
-              0.0009725773513460438,
-              0.0009684702101826166,
-              0.0009699366752695563,
-              0.0009684385907298628,
-              0.0009694908409747172,
-              0.0009703960607584328,
-              0.000969264536027556,
-              0.0009705726779908372
+              0.0009707484376821566,
+              0.0009700692957733456,
+              0.000970468393574169,
+              0.000971801282378569,
+              0.0009687690244183178,
+              0.0009695930810003083,
+              0.0009708651615580275,
+              0.0009712293120908188,
+              0.0009692731970067981
             ],
             "nodeSamplesUs": [
-              0.016493018650508628,
-              0.0164687708208465,
-              0.016717313954522982,
-              0.017344834081435008,
-              0.01649569794749067,
-              0.016358127803121073,
-              0.01662484128163689,
-              0.0162573414724819,
-              0.01684051102457541
+              0.016410429569489356,
+              0.016330147307394807,
+              0.01627621085876971,
+              0.016312869611043362,
+              0.01630508266077245,
+              0.016301875433491868,
+              0.016297365838019464,
+              0.016264857423301218,
+              0.016261444706082644
             ],
-            "compileDurationMs": 555.7066919999997,
-            "moduleCompileDurationMs": 0.5394710000000487,
-            "instantiateDurationMs": 0.03169900000284542,
-            "firstBatchDurationMs": 0.062387000001763226,
+            "compileDurationMs": 554.2751100000023,
+            "moduleCompileDurationMs": 0.3986880000011297,
+            "instantiateDurationMs": 0.03262100000210921,
+            "firstBatchDurationMs": 0.056616000001668,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -13242,55 +13242,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.37496151087325263,
-            "nodeUs": 0.05629706911091478,
-            "wasmStdUs": 0.001505701429848976,
-            "nodeStdUs": 0.001164603972602986,
-            "ratio": 0.14957780942030385,
-            "ratioStd": 0.003233895845810147,
+            "wasmUs": 0.37835004800798333,
+            "nodeUs": 0.05517781142801413,
+            "wasmStdUs": 0.0019897335748360412,
+            "nodeStdUs": 0.0032956974484931087,
+            "ratio": 0.14597230125711824,
+            "ratioStd": 0.008153460696585553,
             "ratioSamples": [
-              0.15780901832997896,
-              0.15596269966609558,
-              0.15183887031695717,
-              0.14804223507195627,
-              0.1492854646055166,
-              0.14913009491637774,
-              0.1485928993749176,
-              0.14957780942030385,
-              0.15152476129784015
+              0.14521923871921183,
+              0.1471087704141259,
+              0.14634497969947885,
+              0.1443805341298518,
+              0.14564188882040763,
+              0.14634685856821408,
+              0.14597230125711824,
+              0.17155404099852495,
+              0.14483860271267593
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 698457,
+            "iters": 709257,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.3737475635579601,
-              0.37496151087325263,
-              0.3729742689957999,
-              0.3730407684367113,
-              0.3744420787535904,
-              0.3761741682021904,
-              0.37731982212219084,
-              0.37637313535407985,
-              0.3763984525890681
+              0.3791149865281552,
+              0.37835004800798333,
+              0.377039318610877,
+              0.38017863059512136,
+              0.3772340280039509,
+              0.37728051467944446,
+              0.37676820249922865,
+              0.3824759487745705,
+              0.38163049078120176
             ],
             "nodeSamplesUs": [
-              0.0589807361083031,
-              0.05848000950667053,
-              0.05663199166161516,
-              0.05522578913233082,
-              0.05589875969458517,
-              0.0560988894090821,
-              0.05606704636076451,
-              0.05629706911091478,
-              0.05703368568143495
+              0.05505478973066295,
+              0.05565861034857993,
+              0.05517781142801413,
+              0.05489039375007924,
+              0.05494107636582595,
+              0.055213818122335674,
+              0.05499772155932034,
+              0.0656152945970224,
+              0.055274827037302014
             ],
-            "compileDurationMs": 2465.4705170000016,
-            "moduleCompileDurationMs": 0.8185749999975087,
-            "instantiateDurationMs": 0.20650700000260258,
-            "moduleInitDurationMs": 0.04711899999529123,
-            "firstBatchDurationMs": 0.7749230000044918,
+            "compileDurationMs": 2411.772840000005,
+            "moduleCompileDurationMs": 0.7826189999977942,
+            "instantiateDurationMs": 0.20563599999877624,
+            "moduleInitDurationMs": 0.03928300000552554,
+            "firstBatchDurationMs": 0.7302300000010291,
             "binaryBytes": 57209,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -13313,7 +13313,7 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "measuredAt": "2026-08-30T01:42:18.578Z",
+      "measuredAt": "2026-08-30T03:07:18.060Z",
       "weeklyDownloads": 104930549
     },
     {
@@ -13324,7 +13324,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180155,
+        "durationMs": 180205,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -13529,7 +13529,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:44:47.638Z",
+      "measuredAt": "2026-08-30T03:09:50.375Z",
       "weeklyDownloads": 89317829
     },
     {
@@ -13540,9 +13540,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 7794,
+        "durationMs": 6037,
         "errorCount": 0,
-        "binaryBytes": 537783,
+        "binaryBytes": 542871,
         "categories": {}
       },
       "validation": {
@@ -13664,7 +13664,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 22122.09265,
+            "compileDurationMs": 17575.44869,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -13674,7 +13674,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7253.6103340000045,
+            "compileDurationMs": 5618.977189999998,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -13684,7 +13684,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5656.578959999992,
+            "compileDurationMs": 4416.678461999996,
             "optimizationLevel": 4
           }
         }
@@ -13695,7 +13695,7 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "measuredAt": "2026-08-30T01:42:51.255Z",
+      "measuredAt": "2026-08-30T03:07:23.504Z",
       "weeklyDownloads": 60496071
     },
     {
@@ -13706,7 +13706,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120217,
+        "durationMs": 120152,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -14366,7 +14366,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:44:23.804Z",
+      "measuredAt": "2026-08-30T03:09:01.902Z",
       "weeklyDownloads": 55617769
     },
     {
@@ -14377,11 +14377,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9408,
+        "durationMs": 12594,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 439135,
+        "binaryBytes": 440324,
         "categories": {}
       },
       "validation": {
@@ -14604,7 +14604,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #336:\"getColorEnabledAsync\" failed: type error in return[0] (expected i32, got externref) @+271577",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #337:\"getColorEnabledAsync\" failed: type error in return[0] (expected i32, got externref) @+272368",
             "tests": [
               {
                 "name": "should return correct data",
@@ -14696,7 +14696,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/0037f59a:wasm-function[268]:0x23537)\n    at __closure_201 (wasm://wasm/0037f59a:wasm-function[818]:0x65323)\n    at __closure_200 (wasm://wasm/0037f59a:wasm-function[819]:0x65476)\n    at __call_fn_method_2 (wasm://wasm/0037f59a:wasm-function[1847]:0xc9e35)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/0037f59a:wasm-function[1848]:0xcb999)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/003806ea:wasm-function[269]:0x2384e)\n    at __closure_201 (wasm://wasm/003806ea:wasm-function[819]:0x6563a)\n    at __closure_200 (wasm://wasm/003806ea:wasm-function[820]:0x6578d)\n    at __call_fn_method_2 (wasm://wasm/003806ea:wasm-function[1848]:0xca26a)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/003806ea:wasm-function[1849]:0xcbdce)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18254:20)",
             "tests": [
               {
                 "name": "Should return the correct search result",
@@ -15152,7 +15152,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 36,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:6780\n/home/runner/work/js2/js2/src/runtime.ts:14049\n            throw new TypeError(method + \" is not a function\");\n                  ^\n\nTypeError: text is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14049:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18218:20)\n    at __closure_363 (wasm://wasm/00238c7a:wasm-function[917]:0x6721b)\n    at __async_resume_fanon_57346 (wasm://wasm/00238c7a:wasm-function[1072]:0x74c8e)\n    at __cb_158 (wasm://wasm/00238c7a:wasm-function[1073]:0x7597f)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n    at dispatch (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:105:42)\n    at body (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:114:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:131:34)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:8019\n/home/runner/work/js2/js2/src/runtime.ts:14057\n            throw new TypeError(method + \" is not a function\");\n                  ^\n\nTypeError: text is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14057:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18242:20)\n    at __closure_363 (wasm://wasm/002394e2:wasm-function[918]:0x6739d)\n    at __async_resume_fanon_57346 (wasm://wasm/002394e2:wasm-function[1073]:0x74e10)\n    at __cb_158 (wasm://wasm/002394e2:wasm-function[1074]:0x75b01)\n    at invokeNativeFunctionCallback (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:84:54)\n    at dispatch (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:105:42)\n    at body (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:114:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/native-function-source.ts:131:34)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "req.query() and req.queries()",
@@ -15506,7 +15506,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 37,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:5664\nwasm://wasm/001df5ce:1\n\n\nRuntimeError: dereferencing a null pointer\n    at __closure_362 (wasm://wasm/001df5ce:wasm-function[958]:0x5b406)\n    at __call_fn_method_1 (wasm://wasm/001df5ce:wasm-function[1396]:0x6b1f9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001df5ce:wasm-function[1397]:0x6b898)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_fparseFormData (wasm://wasm/001df5ce:wasm-function[543]:0x32f55)\n    at __cb_57 (wasm://wasm/001df5ce:wasm-function[544]:0x33032)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:7029\nwasm://wasm/001dfc5e:1\n\n\nRuntimeError: dereferencing a null pointer\n    at __closure_362 (wasm://wasm/001dfc5e:wasm-function[959]:0x5b53b)\n    at __call_fn_method_1 (wasm://wasm/001dfc5e:wasm-function[1397]:0x6b37e)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001dfc5e:wasm-function[1398]:0x6ba1d)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18254:20)\n    at __async_resume_fparseFormData (wasm://wasm/001dfc5e:wasm-function[544]:0x33088)\n    at __cb_57 (wasm://wasm/001dfc5e:wasm-function[545]:0x33165)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "should parse `multipart/form-data`",
@@ -15664,7 +15664,7 @@
             "status": "compile_error",
             "passed": 0,
             "total": 10,
-            "error": "__JS2WASM_COMPILE_COMPLETE__:4019\n/home/runner/work/js2/js2/src/runtime.ts:10570\n          return new Ctor(...args);\n                 ^\n\nTypeError: TextEncoder is not a constructor\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10570:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18206:20)\n    at __async_resume_fanon_494 (wasm://wasm/0015453e:wasm-function[622]:0x3b4ce)\n    at __closure_233 (wasm://wasm/0015453e:wasm-function[627]:0x3b94b)\n    at __async_resume_fanon_35 (wasm://wasm/0015453e:wasm-function[610]:0x3af68)\n    at __closure_230 (wasm://wasm/0015453e:wasm-function[613]:0x3b05a)\n    at __closure_238 (wasm://wasm/0015453e:wasm-function[630]:0x3c41a)\n    at __closure_239 (wasm://wasm/0015453e:wasm-function[631]:0x3d36e)\n    at __async_resume_fanon_43343 (wasm://wasm/0015453e:wasm-function[686]:0x41b59)\n    at __closure_277 (wasm://wasm/0015453e:wasm-function[689]:0x42430)\n\nNode.js v25.9.0",
+            "error": "__JS2WASM_COMPILE_COMPLETE__:4174\n/home/runner/work/js2/js2/src/runtime.ts:10571\n          return new Ctor(...args);\n                 ^\n\nTypeError: TextEncoder is not a constructor\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:10571:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_fanon_494 (wasm://wasm/0015453e:wasm-function[622]:0x3b4ce)\n    at __closure_233 (wasm://wasm/0015453e:wasm-function[627]:0x3b94b)\n    at __async_resume_fanon_35 (wasm://wasm/0015453e:wasm-function[610]:0x3af68)\n    at __closure_230 (wasm://wasm/0015453e:wasm-function[613]:0x3b05a)\n    at __closure_238 (wasm://wasm/0015453e:wasm-function[630]:0x3c41a)\n    at __closure_239 (wasm://wasm/0015453e:wasm-function[631]:0x3d36e)\n    at __async_resume_fanon_43343 (wasm://wasm/0015453e:wasm-function[686]:0x41b59)\n    at __closure_277 (wasm://wasm/0015453e:wasm-function[689]:0x42430)\n\nNode.js v25.9.0",
             "tests": [
               {
                 "name": "should return true for identical ArrayBuffers",
@@ -16433,7 +16433,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 12347.418510000018,
+            "compileDurationMs": 15892.880222000007,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -16443,7 +16443,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3990.832792000001,
+            "compileDurationMs": 5188.941310999973,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -16453,13 +16453,13 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3063.0603980000014,
+            "compileDurationMs": 3705.7115690000064,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:44:55.235Z",
+      "measuredAt": "2026-08-30T03:10:34.611Z",
       "weeklyDownloads": 53123258
     },
     {
@@ -16470,7 +16470,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6531,
+        "durationMs": 6155,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -17899,7 +17899,7 @@
             "status": "fail",
             "passed": 1,
             "total": 7,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_523 (wasm://wasm/0024a066:wasm-function[968]:0x7109c)\n    at __closure_391 (wasm://wasm/0024a066:wasm-function[807]:0x5015e)\n    at __call_fn_method_1 (wasm://wasm/0024a066:wasm-function[1466]:0x7ee1c)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0024a066:wasm-function[1467]:0x7f570)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0024a066:wasm-function[830]:0x63523)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_523 (wasm://wasm/0024a362:wasm-function[969]:0x7111b)\n    at __closure_391 (wasm://wasm/0024a362:wasm-function[808]:0x501dd)\n    at __call_fn_method_1 (wasm://wasm/0024a362:wasm-function[1467]:0x7eebc)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0024a362:wasm-function[1468]:0x7f610)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18254:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0024a362:wasm-function[831]:0x635a2)",
             "tests": [
               {
                 "name": "returns the result if passed.",
@@ -18231,7 +18231,7 @@
             "status": "fail",
             "passed": 15,
             "total": 17,
-            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at Replaceable_forEach (wasm://wasm/00125f7e:wasm-function[118]:0xbfc8)\n    at __closure_264 (wasm://wasm/00125f7e:wasm-function[622]:0x38c01)\n    at __closure_197 (wasm://wasm/00125f7e:wasm-function[530]:0x2aeed)\n    at __call_fn_method_1 (wasm://wasm/00125f7e:wasm-function[877]:0x409a4)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00125f7e:wasm-function[878]:0x40df2)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)",
+            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at Replaceable_forEach (wasm://wasm/001265aa:wasm-function[119]:0xc0cd)\n    at __closure_264 (wasm://wasm/001265aa:wasm-function[623]:0x38d13)\n    at __closure_197 (wasm://wasm/001265aa:wasm-function[531]:0x2affd)\n    at __call_fn_method_1 (wasm://wasm/001265aa:wasm-function[878]:0x40b10)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/001265aa:wasm-function[879]:0x40f5e)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18254:20)",
             "tests": [
               {
                 "name": "init with object",
@@ -18777,7 +18777,7 @@
             "status": "fail",
             "passed": 7,
             "total": 12,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_249 (wasm://wasm/0012918a:wasm-function[632]:0x3872c)\n    at __closure_198 (wasm://wasm/0012918a:wasm-function[552]:0x2b3e4)\n    at __call_fn_method_1 (wasm://wasm/0012918a:wasm-function[906]:0x413dc)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0012918a:wasm-function[907]:0x41828)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18230:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0012918a:wasm-function[575]:0x34590)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_249 (wasm://wasm/0012918a:wasm-function[632]:0x3872c)\n    at __closure_198 (wasm://wasm/0012918a:wasm-function[552]:0x2b3e4)\n    at __call_fn_method_1 (wasm://wasm/0012918a:wasm-function[906]:0x413dc)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0012918a:wasm-function[907]:0x41828)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:18254:20)\n    at __async_resume_frunUpstreamTest (wasm://wasm/0012918a:wasm-function[575]:0x34590)",
             "tests": [
               {
                 "name": "returns the same value for primitive or function values",
@@ -19132,7 +19132,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at __closure_63 (wasm://wasm/00113672:wasm-function[321]:0x1e223)\n    at Prompt_enter (wasm://wasm/00113672:wasm-function[110]:0xbc87)\n    at __closure_209 (wasm://wasm/00113672:wasm-function[561]:0x3399e)\n    at __closure_160 (wasm://wasm/00113672:wasm-function[484]:0x269ba)\n    at __call_fn_method_1 (wasm://wasm/00113672:wasm-function[899]:0x3b8fd)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00113672:wasm-function[900]:0x3bd4e)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1746:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2065:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2084:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14060:31)",
+            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at __closure_63 (wasm://wasm/00113672:wasm-function[321]:0x1e223)\n    at Prompt_enter (wasm://wasm/00113672:wasm-function[110]:0xbc87)\n    at __closure_209 (wasm://wasm/00113672:wasm-function[561]:0x3399e)\n    at __closure_160 (wasm://wasm/00113672:wasm-function[484]:0x269ba)\n    at __call_fn_method_1 (wasm://wasm/00113672:wasm-function[899]:0x3b8fd)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00113672:wasm-function[900]:0x3bd4e)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1747:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2066:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2085:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:14068:31)",
             "tests": [
               {
                 "name": "calls handler on change value",
@@ -19340,7 +19340,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:45:18.284Z",
+      "measuredAt": "2026-08-30T03:10:20.912Z",
       "weeklyDownloads": 46631732
     },
     {
@@ -19351,7 +19351,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120126,
+        "durationMs": 120081,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -19702,7 +19702,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:44:01.090Z",
+      "measuredAt": "2026-08-30T03:09:03.874Z",
       "weeklyDownloads": 42294984
     },
     {
@@ -19713,7 +19713,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7171,
+        "durationMs": 6937,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -20198,7 +20198,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6054.989357999992,
+            "compileDurationMs": 6004.131896999999,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -20208,7 +20208,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 10903.038268000004,
+            "compileDurationMs": 10755.638624999992,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -20218,13 +20218,13 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 10095.932121999998,
+            "compileDurationMs": 10049.940094999998,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:43:36.456Z",
+      "measuredAt": "2026-08-30T03:08:24.133Z",
       "weeklyDownloads": 40344956
     },
     {
@@ -20235,7 +20235,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 15644,
+        "durationMs": 17327,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 4,
@@ -21378,7 +21378,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:43:45.541Z",
+      "measuredAt": "2026-08-30T03:08:53.093Z",
       "weeklyDownloads": 34294671
     },
     {
@@ -21389,7 +21389,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180147,
+        "durationMs": 180109,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -22719,7 +22719,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:45:06.504Z",
+      "measuredAt": "2026-08-30T03:10:08.015Z",
       "weeklyDownloads": 12487515
     },
     {
@@ -22730,7 +22730,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 14884,
+        "durationMs": 12460,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -22738,12 +22738,12 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1448},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)"
+            "sample": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1449},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1356},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1448},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
+            "message": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1449},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1356},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
             "line": 5,
             "column": 4077,
             "severity": "error",
@@ -22753,7 +22753,7 @@
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1448},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)"
+        "firstError": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1449},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1356},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)"
       },
       "capabilities": {
         "nodeFs": false
@@ -23062,7 +23062,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1448},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
+            "diagnostic": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1449},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1356},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -23071,7 +23071,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1448},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
+            "diagnostic": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1449},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1356},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -23080,7 +23080,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1448},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
+            "diagnostic": "Codegen error: stack-balance invariant (entry): 'R' references local 7, but only 1 params + 6 locals are declared (locals: 1:__nullchk_0, 2:__nullchk_1, 3:__tmp_2, 4:__nullchk_3, 5:__tmp_4, 6:__nullchk_5; body: [{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":84},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1449},{\"op\":\"i32.eqz\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.null.extern\"},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"global.get\",\"index\":1356},{\"op\":\"local.set\",\"index\":2}]},{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":980},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":981},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":4},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"i32.eqz\"},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":982},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":6},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}],\"else\":[{\"op\":\"local.get\",\"index\":5},{\"op\":\"call\",\"funcIdx\":21}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":1}]},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":17},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":7}],\"else\":[{\"op\":\"local.get\",\"index\":2},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":983},{\"op\":\"call\",\"funcIdx\":79},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":8},{\"op\":\"global.get\",\"index\":337},{\"op\":\"call\",\"funcIdx\":25}]},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:278:13)",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -23088,7 +23088,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:42:24.534Z",
+      "measuredAt": "2026-08-30T03:07:19.976Z",
       "weeklyDownloads": 11029759
     },
     {
@@ -23099,7 +23099,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120142,
+        "durationMs": 120165,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -25148,7 +25148,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-30T01:46:38.298Z",
+      "measuredAt": "2026-08-30T03:11:59.073Z",
       "weeklyDownloads": 10427988
     },
     {
@@ -25159,7 +25159,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 8178,
+        "durationMs": 6599,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -27412,51 +27412,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.3506196152081366,
-            "nodeUs": 0.003077725151718916,
-            "wasmStdUs": 0.0024582961260544,
-            "nodeStdUs": 0.00006596306771985943,
-            "ratio": 0.008785535029524191,
-            "ratioStd": 0.00020099557725227344,
+            "wasmUs": 0.3917814472685449,
+            "nodeUs": 0.004370667559723364,
+            "wasmStdUs": 0.0008124348956647415,
+            "nodeStdUs": 0.000009404900423395614,
+            "ratio": 0.01113872068542184,
+            "ratioStd": 0.00003508860900578821,
             "ratioSamples": [
-              0.009027770518052267,
-              0.008712274748873686,
-              0.008777960553895141,
-              0.008501480555556287,
-              0.008581375143857773,
-              0.009200747468230597,
-              0.008785535029524191,
-              0.008842049488441618,
-              0.00887199432203
+              0.011190428186005429,
+              0.011175668419305177,
+              0.011165989294277822,
+              0.011077154300860995,
+              0.01113872068542184,
+              0.011134296418292593,
+              0.011165259381120349,
+              0.011119650124566309,
+              0.011100492680060345
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 655991,
+            "iters": 594209,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.3508441762158338,
-              0.3560395645671915,
-              0.3506196152081366,
-              0.3510091357960818,
-              0.350809389153209,
-              0.34838729799646007,
-              0.3469214897765266,
-              0.34804911805193023,
-              0.34991564365975103
+              0.3911984857179751,
+              0.39184630491966693,
+              0.3917814472685449,
+              0.39288759005671203,
+              0.39139408188027697,
+              0.3919171924356493,
+              0.3914523980619607,
+              0.39164686499195267,
+              0.39390797682295997
             ],
             "nodeSamplesUs": [
-              0.003167340710471639,
-              0.003101914507978725,
-              0.003077725151718916,
-              0.0029840973427930056,
-              0.0030104269723112763,
-              0.0032054235500046284,
-              0.003047890900926393,
-              0.003077467526223626,
-              0.0031044496037387834
+              0.004377678560901071,
+              0.0043791443751121486,
+              0.0043746274458972435,
+              0.004352076457951619,
+              0.004359629355991531,
+              0.004363722192003539,
+              0.004370667559723364,
+              0.0043549761110937705,
+              0.004372572613340647
             ],
-            "compileDurationMs": 3548.2960699999967,
+            "compileDurationMs": 3293.819810000001,
             "binaryBytes": 1532,
             "moduleImportCount": 6,
             "functionImportCount": 6,
@@ -27481,58 +27481,58 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.3506196152081366,
-        "nodeUs": 0.003077725151718916,
-        "wasmStdUs": 0.0024582961260544,
-        "nodeStdUs": 0.00006596306771985943,
-        "ratio": 0.008785535029524191,
-        "ratioStd": 0.00020099557725227344,
+        "wasmUs": 0.3917814472685449,
+        "nodeUs": 0.004370667559723364,
+        "wasmStdUs": 0.0008124348956647415,
+        "nodeStdUs": 0.000009404900423395614,
+        "ratio": 0.01113872068542184,
+        "ratioStd": 0.00003508860900578821,
         "ratioSamples": [
-          0.009027770518052267,
-          0.008712274748873686,
-          0.008777960553895141,
-          0.008501480555556287,
-          0.008581375143857773,
-          0.009200747468230597,
-          0.008785535029524191,
-          0.008842049488441618,
-          0.00887199432203
+          0.011190428186005429,
+          0.011175668419305177,
+          0.011165989294277822,
+          0.011077154300860995,
+          0.01113872068542184,
+          0.011134296418292593,
+          0.011165259381120349,
+          0.011119650124566309,
+          0.011100492680060345
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 655991,
+        "iters": 594209,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.3508441762158338,
-          0.3560395645671915,
-          0.3506196152081366,
-          0.3510091357960818,
-          0.350809389153209,
-          0.34838729799646007,
-          0.3469214897765266,
-          0.34804911805193023,
-          0.34991564365975103
+          0.3911984857179751,
+          0.39184630491966693,
+          0.3917814472685449,
+          0.39288759005671203,
+          0.39139408188027697,
+          0.3919171924356493,
+          0.3914523980619607,
+          0.39164686499195267,
+          0.39390797682295997
         ],
         "nodeSamplesUs": [
-          0.003167340710471639,
-          0.003101914507978725,
-          0.003077725151718916,
-          0.0029840973427930056,
-          0.0030104269723112763,
-          0.0032054235500046284,
-          0.003047890900926393,
-          0.003077467526223626,
-          0.0031044496037387834
+          0.004377678560901071,
+          0.0043791443751121486,
+          0.0043746274458972435,
+          0.004352076457951619,
+          0.004359629355991531,
+          0.004363722192003539,
+          0.004370667559723364,
+          0.0043549761110937705,
+          0.004372572613340647
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-29T21:38:52.619Z",
+      "measuredAt": "2026-08-30T00:42:32.669Z",
       "weeklyDownloads": 6829692,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-29T21:38:52.619Z"
+        "lastMeasuredAt": "2026-08-30T00:42:32.669Z"
       }
     }
   ]
