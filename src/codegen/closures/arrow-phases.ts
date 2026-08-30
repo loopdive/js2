@@ -1391,7 +1391,7 @@ export function emitClosureConstruction(
     // Function value even when this closure never names it directly. Fill the
     // hoisted binding before the closure snapshots/passes its slot; otherwise
     // the lifted caller receives the preallocated null value.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
       if (fctx.boxedCaptures?.has(cap.name)) {

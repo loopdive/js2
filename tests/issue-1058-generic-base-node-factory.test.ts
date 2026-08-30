@@ -20,6 +20,48 @@ async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
 }
 
 describe("#1058 generic base-node factories", () => {
+  it("keeps a memoized callback's later factory capture live", async () => {
+    const result = await compileMulti(
+      {
+        "./core.ts": `
+          export function memoize<T>(callback: () => T): () => T {
+            let value: T;
+            return () => {
+              if (callback) {
+                value = callback();
+                callback = undefined!;
+              }
+              return value;
+            };
+          }
+        `,
+        "./factory.ts": `
+          import { memoize } from "./core.js";
+
+          interface Rules { value: number; }
+
+          export function createFactory() {
+            const rules = memoize((): Rules => ({ value: factory.seed }));
+            const factory = {
+              seed: 41,
+              create(): number { return rules().value + 1; },
+            };
+            return factory;
+          }
+        `,
+        "./entry.ts": `
+          import { createFactory } from "./factory.js";
+          const factory = createFactory();
+          export function test(): number { return factory.create(); }
+        `,
+      },
+      "./entry.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(42);
+  });
+
   it("dispatches a captured callable returned by a cross-module generic memoizer", async () => {
     const result = await compileMulti(
       {
