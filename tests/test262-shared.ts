@@ -23,6 +23,7 @@ import {
 import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+// oracle-version-exempt: #5215 changes callback-completeness evidence only; Test262 scoring is unchanged.
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { resolveTest262PoolSize } from "../scripts/test262-concurrency.mjs";
 import { getTest262ShardCompletionPath } from "../scripts/validate-test262-completeness.mjs";

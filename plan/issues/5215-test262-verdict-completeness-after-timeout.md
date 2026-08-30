@@ -328,3 +328,13 @@ https://github.com/loopdive/js2/pull/5290 from
 `ttraenkler:codex/5215-test262-verdict-completeness` to `loopdive/js2:main`.
 No GitHub issue was created. The dedicated PR shepherd owns exact-head, body,
 review, check, conflict, readiness, and merge-queue follow-through.
+
+The first PR CI run exposed one change-local gate false positive: moving the
+existing `negativeCompileErrorMatches` import while adding the completeness
+helpers matched the verdict-signal detector even though no scoring behavior
+changed. The branch now carries the detector's documented in-diff
+`oracle-version-exempt:` comment stating that #5215 changes callback evidence,
+not Test262 scoring. The same run's non-required QuickJS lane exhausted its
+512 MiB Node heap; it had no semantic assertion failure and is not coupled to
+the Test262-only concurrency path. The final checkpoint must re-run the
+verdict-oracle gate locally and let CI retry both jobs before queue admission.
