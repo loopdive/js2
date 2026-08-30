@@ -1266,7 +1266,13 @@ Accordingly the production and focused-test surface is:
 4. add `src/codegen/program-abi-module-callable-alias-planning.ts`, remove the
    live alias planner from `src/codegen/program-abi-planning.ts`, and add the
    opaque alias part to
-   `src/codegen/program-abi-prepared-transaction.ts`;
+   `src/codegen/program-abi-prepared-transaction.ts`; bounded extraction into
+   `src/codegen/program-abi-prepared-scope-lookup.ts` is authorized when needed
+   to keep the transaction facade below the LOC ratchet; the dependency-free
+   `src/codegen/program-abi-callable-roles.ts` leaf and the corresponding
+   import-only adjustment in `src/codegen/program-abi-provider-planning.ts`
+   are authorized so provider evaluation cannot re-enter the aggregate
+   transaction graph through the compatibility planner export;
 5. add `src/codegen/multi-prepared-callable-publication.ts` and narrow owner
    adapters in `src/codegen/multi-prepared-program.ts` for staged registration,
    body-plan/skip collection, last-source preflight, and the no-throw owner/
@@ -1274,7 +1280,10 @@ Accordingly the production and focused-test surface is:
    `src/codegen/multi-source-ir-integration.ts`;
 6. refactor `src/codegen/program-abi-session.ts` so ordinary single-scope seal
    and the aggregate all-scope commit share one side-effect-free prepare phase
-   and one prevalidated Map-set-only publisher;
+   and one prevalidated Map-set-only publisher; the pure aggregate validation
+   and write-set planner may live in
+   `src/codegen/program-abi-prepared-scope-commit.ts`, leaving the session as a
+   thin adapter over its private state;
 7. thread each open exact-component scope through
    `src/ir/prepared-component-sealing.ts` and
    `src/ir/compiler-timer-shim-preparation.ts`, and adapt
@@ -1285,9 +1294,10 @@ Accordingly the production and focused-test surface is:
    open-scope lookup rather than live-session-only support/global/type state;
 8. add the non-vacuous production and failure-atomic regressions to
    `tests/issue-3525-multi-prepared-callable-bindings.test.ts`; and
-9. extend `tests/issue-4260-prepared-provider-transaction.test.ts` for the new
-   alias descriptor and update `tests/issue-3520-lowering-plan-identity.test.ts`
-   so the structural
+9. add `tests/issue-3525-prepared-program-abi-aggregate.test.ts` for the new
+   alias descriptor, multi-scope commit, forged/duplicate token cleanup, and
+   intervening-owner currentness controls, and update
+   `tests/issue-3520-lowering-plan-identity.test.ts` so the structural
    collector proves both sides of the boundary: an ambiguous flat projection
    with the exact source-local target succeeds, while a foreign same-spelled
    target still fails on its exact retained-source mismatch; update
@@ -1295,9 +1305,90 @@ Accordingly the production and focused-test surface is:
    `tests/issue-3525-multi-prepared-module-init.test.ts` only for the v2
    publication-phase schema and unchanged existing-route behavior.
 
-`src/ir/imported-functions.ts`, `src/codegen/index.ts`, declarations,
-`from-ast.ts`, lowerers/selectors outside the named identity collector, module
-init, and unrelated Program-ABI registries are read-only for this checkpoint.
+The aggregate Program-ABI controls intentionally live in the new #3525 file,
+not as edits to `tests/issue-4260-prepared-provider-transaction.test.ts`.
+Exact pushed-checkpoint replay on `b545341d02373b` confirms that file already
+has two unrelated runtime failures (the GC setter returns `2` instead of `1`,
+and the standalone setter binary fails `WebAssembly.validate`) before this
+M1A.3 implementation. Leaving the existing file byte-exact prevents those
+known baseline defects from hiding or bypassing the changed-root hook while
+the six new aggregate controls remain a fully green, non-vacuous gate. The
+sixth control distinguishes a genuinely overlapping terminal claim from an
+intervening disjoint scope that shares one immutable provider: the former
+rejects with the exact duplicate-session-draft ownership diagnostic, while the
+latter rebases and commits successfully.
+
+The same detached-checkpoint replay attributes the seven broader route-control
+failures to `b545341d02373b`, not to the current M1A.3 bytes: #3214's imported
+HOF has the same `===` operand-type build error; #4589 has the same route hash;
+#4590 has the same two byte lengths and global index; and #4591 has the same
+size ceiling and global index. Current and pushed-checkpoint expected/actual
+values match exactly for all seven rows (0 current-slice regressions). Keep
+them as explicit upstream/baseline diagnostics, do not relock their hashes,
+sizes, or indices in this checkpoint, and rerun after the required main sync.
+
+The first integrated late-publication run exposed one necessary, narrower
+consumer adjustment that this lock now authorizes. Because callable terminal
+outcomes become public at the final body-source commit (before the unchanged
+late overlay audit), `recordObservedIrOutcomes(...)` in
+`src/codegen/index.ts` must exclude those exact
+`ctx.irProgramCallablePreparedUnitIds` from the `existingOutcomes` input passed
+to reconciliation as well as from the already-existing append filter. Without
+that input projection, reconciliation diagnoses the intentionally preexisting
+committed callable rows as duplicates before the output filter can discard its
+redundant rows. The adjustment is limited to that helper and exact unit set;
+it does not change selection, lowering, reporting for any unprepared unit, or
+the rest of `src/codegen/index.ts`.
+
+The detached-lowering audit also found that the shared integration pipeline
+can lazily materialize string/vector/dynamic/exception/runtime helpers,
+imports, types, globals, tags, or callable-provider observations before it
+creates the aggregate receipt. Those live compatibility writes cannot
+participate in M1A.3's rollback-free commit. Until those registries gain
+detached allocation, the exact `atomicComponent &&
+deferPreparedPublication` entry must perform a read-only preflight before the
+first global-preparation helper and admit only allocator-neutral scalar IR:
+primitive scalar types, allocation-free numeric/control operations, and exact
+unit-bound calls. The same preflight must decline when
+`ctx.pendingLateImportShift` is already armed: even a neutral component would
+otherwise let callable-provider preregistration flush that earlier live shift
+inside the aggregate transaction. Any pending shift, helper-, import-, type-,
+global-, tag-, runtime-,
+intrinsic-, string-, vector-, dynamic-, exception-, class-, closure-, or
+allocation-bearing component returns one typed
+`late-preparation-unsupported` failure for every member and remains wholly
+direct-owned. Add a `%`/`__fmod` negative control and prove the aggregate
+publishes no receipt, alias, body, owner row, reservation, skip, telemetry, or
+terminal outcome before that direct fallback.
+
+The allocator-neutral decision must precede AST-to-IR construction, not only
+the later global-preparation phase. The build resolver can register vector
+types and set codegen feature flags while lowering an array expression, so a
+post-build decline is already too late. Add a read-only, default-deny preflight
+over the exact selected declarations before `AllocSiteRegistry`, union/vector
+resolver, or builder setup mutates `ctx`; admit only the scalar syntax/type
+subset the later IR whitelist can lower without helper/type/provider
+allocation. Keep the post-build IR whitelist as an independent assertion.
+An array/non-neutral mutation must prove unchanged module types, vector maps,
+feature flags, imports/providers, and zero prepared publication before direct
+fallback; do not implement this with rollback.
+
+Final callable currentness must cover the full declaration subtree, not only
+the `Block` and top-level `Statement` objects. Snapshot the deterministic
+preorder identity of every descendant node for each exact declaration and
+compare it immediately before final publication. A nested mutation replacing
+a `ReturnStatement.expression` or `BinaryExpression.right` while retaining the
+same block/statement identities must fail fatally with a zero publication
+prefix. Finally, true `IrInvariantError` failures from prepared overlay lookup
+or scope validation remain fatal; only explicit `IrUnsupportedError` may
+decline the component to direct ownership. Never relabel an invariant as
+`late-preparation-unsupported`.
+
+Apart from the exact `recordObservedIrOutcomes(...)` input projection above,
+`src/ir/imported-functions.ts`, the rest of `src/codegen/index.ts`,
+declarations, `from-ast.ts`, lowerers/selectors outside the named identity
+collector, module init, and unrelated Program-ABI registries are read-only for
+this checkpoint.
 If the focused regression demonstrates that any other file must change, stop
 and amend this plan before editing; do not turn the bounded lifecycle repair
 into an opportunistic refactor.

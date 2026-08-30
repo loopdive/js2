@@ -2439,6 +2439,10 @@ function recordObservedIrOutcomes(
 ): void {
   if (ctx.irOutcomes === undefined) return;
   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+  const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  const existingOutcomes = preparedCallableUnitIds
+    ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
+    : ctx.irOutcomes;
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2447,10 +2451,9 @@ function recordObservedIrOutcomes(
     preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
     skippedBodyUnitIds,
     report,
-    existingOutcomes: ctx.irOutcomes,
+    existingOutcomes,
     target,
   });
-  const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
   const preparedModuleInitUnitId = ctx.irProgramPreparedModuleInitUnitId;
   ctx.irOutcomes.push(
     ...reconciled.outcomes.filter(

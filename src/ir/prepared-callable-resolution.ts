@@ -8,6 +8,7 @@ import type { IrBindingId, IrUnitId } from "./identity.js";
 import type { IrFuncRef, IrFunction } from "./nodes.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { WasmFunction } from "./types.js";
+import type { PreparedComponentScopeLookup } from "./prepared-component-sealing.js";
 
 /** Exact binding of one structural source unit to its settled Wasm slot. */
 export interface PreparedIrUnitCallableSlot {
@@ -32,8 +33,16 @@ export function preparedUnitProgramAbiBinding(
   ctx: CodegenContext,
   ref: IrFuncRef,
   func: WasmFunction,
+  preparedScopeLookup?: PreparedComponentScopeLookup,
 ): IrBindingId | undefined {
   if (ref.binding.kind !== "unit" || !ctx.programAbiSession) return undefined;
+  if (preparedScopeLookup) {
+    const bindingId = irUnitCallableBindingId(ref.binding.unitId);
+    if (preparedScopeLookup.get(bindingId) && preparedScopeLookup.locatorObject(bindingId) === func) {
+      return bindingId;
+    }
+    return undefined;
+  }
   const exact = exactPreparedUnitCallableBindingId(ctx.programAbiSession, ref.binding.unitId, func);
   if (exact) return exact;
   if (
@@ -66,6 +75,7 @@ export function resolvePreparedUnitCallable(
   ctx: CodegenContext,
   ref: IrFuncRef,
   slots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
+  preparedScopeLookup?: PreparedComponentScopeLookup,
 ): number {
   if (ref.binding.kind !== "unit") {
     throw new IrInvariantError("unknown-function-ref", "lower", `non-unit prepared callable ${ref.name}`);
@@ -81,11 +91,15 @@ export function resolvePreparedUnitCallable(
   if (!ctx.programAbiSession || !slot.programAbiBindingId) return slot.funcIdx;
   const exact = ctx.irUnitFuncMap.get(ref.binding.unitId);
   const handle = exact ? definedFuncHandleOf(ctx, exact) : undefined;
+  const locatorIsCurrent = preparedScopeLookup
+    ? preparedScopeLookup.locatorObject(slot.programAbiBindingId) === exact
+    : ctx.programAbiSession.hasLocator(slot.programAbiBindingId, exact);
   if (
     !exact ||
     handle === undefined ||
     exact !== definedFuncAt(ctx, slot.funcIdx) ||
-    !ctx.programAbiSession.hasLocator(slot.programAbiBindingId, exact)
+    !locatorIsCurrent ||
+    (preparedScopeLookup !== undefined && preparedScopeLookup.get(slot.programAbiBindingId) === undefined)
   ) {
     throw new IrInvariantError(
       "unknown-function-ref",
@@ -97,12 +111,16 @@ export function resolvePreparedUnitCallable(
 }
 
 /** Resolve a sealed support callable without trusting a shifted numeric index. */
-export function resolvePreparedSupportCallable(ctx: CodegenContext, ref: IrFuncRef): number {
+export function resolvePreparedSupportCallable(
+  ctx: CodegenContext,
+  ref: IrFuncRef,
+  preparedScopeLookup?: PreparedComponentScopeLookup,
+): number {
   if (ref.binding.kind !== "support") {
     throw new IrInvariantError("unknown-function-ref", "lower", `non-support prepared callable ${ref.name}`);
   }
   const session = ctx.programAbiSession;
-  if (!session?.hasPlan(ref.binding.bindingId)) {
+  if (!session?.hasPlan(ref.binding.bindingId) && !preparedScopeLookup?.get(ref.binding.bindingId)) {
     throw new IrInvariantError(
       "unknown-function-ref",
       "lower",
@@ -110,13 +128,31 @@ export function resolvePreparedSupportCallable(ctx: CodegenContext, ref: IrFuncR
     );
   }
   const bindingId = ref.binding.bindingId;
-  if (!session.hasLocator(bindingId)) {
-    return session.resolveCurrentIndex(bindingId, "function", irCallableBindingKey(ref.binding));
+  if (preparedScopeLookup) {
+    const locator = preparedScopeLookup.getLocator(bindingId);
+    if (!locator)
+      return preparedScopeLookup.resolveCurrentIndex(bindingId, "function", irCallableBindingKey(ref.binding));
+    const exact = preparedScopeLookup.locatorObject(bindingId);
+    const handle =
+      exact && ctx.mod.functions.includes(exact as WasmFunction)
+        ? definedFuncHandleOf(ctx, exact as WasmFunction)
+        : undefined;
+    if (handle === undefined) {
+      throw new IrInvariantError(
+        "unknown-function-ref",
+        "lower",
+        `support callable ${bindingId} lost its exact overlay allocator object`,
+      );
+    }
+    return handle;
   }
-  const matches = ctx.mod.functions.filter((candidate) => session.locatorBindingId(candidate) === bindingId);
+  if (!session!.hasLocator(bindingId)) {
+    return session!.resolveCurrentIndex(bindingId, "function", irCallableBindingKey(ref.binding));
+  }
+  const matches = ctx.mod.functions.filter((candidate) => session!.locatorBindingId(candidate) === bindingId);
   const exact = matches.length === 1 ? matches[0] : undefined;
   const handle = exact ? definedFuncHandleOf(ctx, exact) : undefined;
-  if (!exact || handle === undefined || !session.hasLocator(bindingId, exact)) {
+  if (!exact || handle === undefined || !session!.hasLocator(bindingId, exact)) {
     throw new IrInvariantError(
       "unknown-function-ref",
       "lower",

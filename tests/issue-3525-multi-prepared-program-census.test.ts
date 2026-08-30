@@ -61,6 +61,11 @@ const SAME_NAME_FILES = {
   `,
 } as const;
 
+const NON_CANDIDATE_FILES = {
+  "./dep.ts": `export function depOnly(): number { return 1; }`,
+  "./entry.ts": `export function entryOnly(): number { return 2; }`,
+} as const;
+
 const TRACK_ONLY_FILES = {
   "dep.ts": `export function inc(value: number): number { return value + 1; }`,
   "entry.ts": `import { inc } from "./dep"; export function run(): number { return inc(41); }`,
@@ -194,7 +199,14 @@ function generatedRoute(
   expect(new Set(audit?.bodyPlan.reservations.map((reservation) => reservation.routeKind))).toEqual(
     new Set([routeKind]),
   );
-  expect(audit?.bodyPlan.reservations.every((reservation) => reservation.preparedBeforeDirectBodies)).toBe(true);
+  expect(
+    audit?.bodyPlan.reservations.every(
+      (reservation) =>
+        reservation.routeKind !== "cross-source-callable" &&
+        reservation.preparedBeforeDirectBodies &&
+        reservation.publicationPhase === "before-direct-bodies",
+    ),
+  ).toBe(true);
   expect(audit?.bodySourceIds).toEqual(audit?.bodyPlan.semanticSourceIds);
   expect(audit?.overlaySourceIds).toEqual(audit?.bodyPlan.semanticSourceIds);
   expect(Object.isFrozen(audit)).toBe(true);
@@ -390,7 +402,7 @@ describe("#3525 whole-program Prepared ownership census", () => {
       TRACK_ONLY_OPTIONS,
       lateComponentFixture.ctx,
     )!;
-    expectInvariant(() => lateComponent.registerCallableComponents([]), "completion-order");
+    expectInvariant(() => lateComponent.stageCallableComponents([]), "completion-order");
 
     const lateModuleInitFixture = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
     const lateModuleInit = createMultiPreparedProgramOwner(
@@ -413,10 +425,10 @@ describe("#3525 whole-program Prepared ownership census", () => {
   it("freezes the exact denominator and separates canonical from semantic order", () => {
     const fixture = ownerFixture();
     const owner = ownerFor(fixture);
-    const plan = owner.sealBodyBoundary();
+    const plan = owner.sealBodyBoundary()!;
 
     expect(owner.state).toBe("body-boundary-sealed");
-    expect(plan.schema).toBe("multi-prepared-program-body-plan-v1");
+    expect(plan.schema).toBe("multi-prepared-program-body-plan-v2");
     expect(plan.entrySourceId).toBe(sourceIdFor(fixture, fixture.ast.entryFile));
     expect(plan.canonicalSourceIds).toEqual(fixture.inventory.sources.map((source) => source.id));
     expect(plan.semanticSourceIds).toEqual(fixture.ast.sourceFiles.map((source) => sourceIdFor(fixture, source)));
@@ -442,10 +454,10 @@ describe("#3525 whole-program Prepared ownership census", () => {
     const entries = fixture.ast.sourceFiles.map((sourceFile) => [sourceFile, emptyState(fixture.identity)] as const);
     const forward = ownerFor(fixture);
     forward.planEarlyRoutes(routeMaps(entries));
-    const forwardPlan = forward.sealBodyBoundary();
+    const forwardPlan = forward.sealBodyBoundary()!;
     const reverse = ownerFor(fixture);
     reverse.planEarlyRoutes(routeMaps([...entries].reverse()));
-    const reversePlan = reverse.sealBodyBoundary();
+    const reversePlan = reverse.sealBodyBoundary()!;
     expect(reversePlan.canonicalSourceIds).toEqual(forwardPlan.canonicalSourceIds);
     expect(reversePlan.semanticSourceIds).toEqual(forwardPlan.semanticSourceIds);
     expect(reversePlan.terminalUnitIds).toEqual(forwardPlan.terminalUnitIds);
@@ -775,8 +787,8 @@ describe("#3525 whole-program Prepared ownership census", () => {
   }, 120_000);
 
   it("completes a non-candidate multi-source graph with exact visits and no reservation", () => {
-    const fixture = ownerFixture(SAME_NAME_FILES);
-    const generated = generateMultiModule(analyzeMultiSource(SAME_NAME_FILES, "./entry.ts"), OPTIONS);
+    const fixture = ownerFixture(NON_CANDIDATE_FILES);
+    const generated = generateMultiModule(analyzeMultiSource(NON_CANDIDATE_FILES, "./entry.ts"), OPTIONS);
     expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
     const audit = generated.multiPreparedProgramAudit;
     expect(audit).toBeDefined();

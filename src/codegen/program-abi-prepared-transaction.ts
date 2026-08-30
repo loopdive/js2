@@ -19,6 +19,15 @@ import {
   prepareExportAliasDescriptorForScope,
   type PreparedExportAliasDescriptor,
 } from "./program-abi-export-planning.js";
+import {
+  consumePreparedModuleCallableAliasDescriptor,
+  prepareModuleCallableAliasDescriptorForScope,
+  type PreparedModuleCallableAliasDescriptor,
+} from "./program-abi-module-callable-alias-planning.js";
+import {
+  createPreparedProgramAbiScopeLookup,
+  type PreparedProgramAbiScopeLookup,
+} from "./program-abi-prepared-scope-lookup.js";
 import { programAbiIntentsEqual } from "./program-abi-intent-equality.js";
 import {
   canonicalProgramAbiCallableTypeContract,
@@ -36,8 +45,17 @@ import type {
   ProgramAbiSession,
   ProgramAbiSlotLocator,
   ProgramAbiTypeCell,
-  SealedPreparedProgramAbiScope,
 } from "./program-abi-session.js";
+
+export {
+  markPreparedProgramAbiPendingScopeAborted,
+  markPreparedProgramAbiPendingScopeCommitted,
+  PreparedProgramAbiScopeTransaction,
+  preparedProgramAbiPendingScopeTransactionActions,
+  registerPreparedProgramAbiPendingScopeTransaction,
+  type PreparedProgramAbiPendingScopeTransactionActions,
+  type PreparedProgramAbiScopeLookup,
+} from "./program-abi-prepared-scope-lookup.js";
 
 /** One prevalidated, side-effect-free binding contribution to a prepared batch. */
 export interface PreparedProgramAbiProvisionalBinding {
@@ -62,7 +80,12 @@ export interface PreparedProgramAbiMapWrite {
 
 /** Authenticated registry contribution consumed by one exact prepared scope. */
 export interface PreparedProgramAbiDescriptorPart {
-  readonly kind: "callable-imports" | "callable-providers" | "class-layouts" | "export-aliases";
+  readonly kind:
+    | "callable-imports"
+    | "callable-providers"
+    | "class-layouts"
+    | "export-aliases"
+    | "module-callable-aliases";
   readonly session: ProgramAbiSession;
   readonly descriptor: object;
   readonly lifecycle: PreparedProgramAbiDescriptorLifecycle;
@@ -72,6 +95,10 @@ export interface PreparedProgramAbiDescriptorPart {
   readonly requiredImportDescriptor?: PreparedCallableImportDescriptor;
   readonly requiredImportBindingIds?: readonly IrBindingId[];
   readonly registryWrites: readonly PreparedProgramAbiMapWrite[];
+  /** Binding identities that may not overlap another prepared scope. */
+  readonly exclusiveBindingIds?: readonly IrBindingId[];
+  /** Rebuild provisional bindings against a fresh committed overlay. */
+  readonly rebaseBindings?: () => readonly PreparedProgramAbiProvisionalBinding[];
   readonly projectBindings?: (
     resolveTargetId: (allocator: object) => IrBindingId | undefined,
     getDraft: (id: IrBindingId) => ProgramAbiDraft | undefined,
@@ -91,11 +118,7 @@ export interface PreparedProgramAbiComponentBatchInput {
   readonly callableProviders?: PreparedCallableProviderDescriptor;
   readonly classLayouts?: PreparedClassLayoutDescriptor;
   readonly exportAliases?: PreparedExportAliasDescriptor;
-}
-
-export interface PreparedProgramAbiScopeLookup {
-  get(id: IrBindingId): ProgramAbiDraft | undefined;
-  bindingIdsForStructuralReference(key: string): readonly IrBindingId[];
+  readonly moduleCallableAliases?: PreparedModuleCallableAliasDescriptor;
 }
 
 export interface PreparedProgramAbiPlanningOverlay {
@@ -119,6 +142,13 @@ export interface PreparedProgramAbiStagedBatch {
   readonly lookup: PreparedProgramAbiScopeLookup;
 }
 
+/** Opaque, side-effect-free scope preparation token. */
+export interface PreparedProgramAbiPendingScope {
+  readonly kind: "prepared-program-abi-pending-scope";
+  readonly scopeId: string;
+  readonly terminalUnitIds: readonly IrUnitId[];
+}
+
 export type PreparedProgramAbiBorrowedBindingEvidence =
   | {
       readonly kind: "nested-accessor-class-layout";
@@ -135,119 +165,6 @@ export type PreparedProgramAbiBorrowedBindingEvidence =
       readonly valueGlobalBindingId: IrBindingId;
     };
 
-type PreparedScopeTransactionState = "open" | "sealed" | "aborted";
-
-/** One-shot dependency transaction for one prepared executable component. */
-export class PreparedProgramAbiScopeTransaction {
-  readonly #bindingIds = new Set<IrBindingId>();
-  readonly #borrowedBindings = new Map<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>();
-  readonly #sealScope: (
-    bindingIds: ReadonlySet<IrBindingId>,
-    borrowedBindings: ReadonlyMap<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>,
-    batch: PreparedProgramAbiStagedBatch | undefined,
-  ) => SealedPreparedProgramAbiScope;
-  readonly #stageBatch: (input: PreparedProgramAbiComponentBatchInput) => PreparedProgramAbiStagedBatch;
-  readonly #abortScope: (batch: PreparedProgramAbiStagedBatch | undefined) => void;
-  readonly #baseLookup: PreparedProgramAbiScopeLookup;
-  #batch: PreparedProgramAbiStagedBatch | undefined;
-  #state: PreparedScopeTransactionState = "open";
-
-  constructor(
-    readonly scopeId: string,
-    readonly terminalUnitIds: readonly IrUnitId[],
-    sealScope: (
-      bindingIds: ReadonlySet<IrBindingId>,
-      borrowedBindings: ReadonlyMap<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>,
-      batch: PreparedProgramAbiStagedBatch | undefined,
-    ) => SealedPreparedProgramAbiScope,
-    stageBatch: (input: PreparedProgramAbiComponentBatchInput) => PreparedProgramAbiStagedBatch,
-    abortScope: (batch: PreparedProgramAbiStagedBatch | undefined) => void,
-    baseLookup: PreparedProgramAbiScopeLookup,
-  ) {
-    Object.freeze(this.terminalUnitIds);
-    this.#sealScope = sealScope;
-    this.#stageBatch = stageBatch;
-    this.#abortScope = abortScope;
-    this.#baseLookup = baseLookup;
-  }
-
-  get abi(): PreparedProgramAbiScopeLookup {
-    this.#assertOpen("read the prepared ABI overlay");
-    return this.#batch?.lookup ?? this.#baseLookup;
-  }
-
-  stagePreparedComponentBatch(input: PreparedProgramAbiComponentBatchInput): void {
-    this.#assertOpen("stage a prepared component batch");
-    if (this.#batch !== undefined) {
-      throw new ProgramAbiInvariantError(
-        "duplicate-session-draft",
-        `prepared ABI scope ${this.scopeId} already owns one complete batch`,
-      );
-    }
-    this.#batch = this.#stageBatch(input);
-  }
-
-  includeBinding(id: IrBindingId): void {
-    this.#assertOpen("include an ABI binding");
-    if (this.#bindingIds.has(id)) {
-      throw new ProgramAbiInvariantError(
-        "duplicate-session-draft",
-        `prepared ABI scope ${this.scopeId} included binding ${id} more than once`,
-      );
-    }
-    this.#bindingIds.add(id);
-  }
-
-  includeBorrowedBinding(id: IrBindingId, evidence: PreparedProgramAbiBorrowedBindingEvidence): void {
-    this.#assertOpen("include a borrowed ABI binding");
-    if (this.#bindingIds.has(id)) {
-      throw new ProgramAbiInvariantError(
-        "duplicate-session-draft",
-        `prepared ABI scope ${this.scopeId} included binding ${id} more than once`,
-      );
-    }
-    if (
-      evidence.consumerUnitIds.length === 0 ||
-      new Set(evidence.consumerUnitIds).size !== evidence.consumerUnitIds.length ||
-      evidence.consumerUnitIds.some((unitId) => !this.terminalUnitIds.includes(unitId))
-    ) {
-      throw new ProgramAbiInvariantError(
-        "invalid-callable-provenance",
-        `prepared ABI scope ${this.scopeId} borrowed binding ${id} without a unique exact component consumer set`,
-      );
-    }
-    this.#bindingIds.add(id);
-    this.#borrowedBindings.set(id, Object.freeze({ ...evidence }));
-  }
-
-  seal(): SealedPreparedProgramAbiScope {
-    this.#assertOpen("seal the prepared ABI scope");
-    try {
-      const sealed = this.#sealScope(this.#bindingIds, this.#borrowedBindings, this.#batch);
-      this.#state = "sealed";
-      return sealed;
-    } catch (error) {
-      this.#state = "aborted";
-      throw error;
-    }
-  }
-
-  abort(): void {
-    this.#assertOpen("abort the prepared ABI scope");
-    this.#state = "aborted";
-    this.#abortScope(this.#batch);
-  }
-
-  #assertOpen(action: string): void {
-    if (this.#state !== "open") {
-      throw new ProgramAbiInvariantError(
-        "session-closed",
-        `cannot ${action} after prepared ABI scope ${this.scopeId} ${this.#state}`,
-      );
-    }
-  }
-}
-
 export interface PreparedProgramAbiTransactionHost {
   readonly session: ProgramAbiSession;
   readonly sourceOrderById: ReadonlyMap<IrSourceId, number>;
@@ -257,6 +174,12 @@ export interface PreparedProgramAbiTransactionHost {
   readonly scopeOpen: (scopeId: string) => boolean;
   readonly scopeSealed: (scopeId: string) => boolean;
   readonly domainOrdinal: (kind: ProgramAbiDraft["intent"]["kind"]) => number;
+  readonly resolveCurrentIndex: (
+    id: IrBindingId,
+    expectedSpace: ProgramAbiSlotSpace,
+    structuralReferenceKey: string,
+    locator: ProgramAbiSlotLocator,
+  ) => number;
 }
 
 export interface PreparedClassLayoutObservation {
@@ -758,6 +681,15 @@ function preflightPreparedProvisionalBinding(
   }
 
   const existingReference = overlay.structuralReferenceKeys.get(draft.id);
+  const existingReferenceOwner = [...overlay.structuralReferenceKeys.entries()].find(
+    ([id, key]) => key === structuralReferenceKey && id !== draft.id,
+  )?.[0];
+  if (existingReferenceOwner !== undefined) {
+    throw new ProgramAbiInvariantError(
+      "duplicate-session-draft",
+      `prepared ABI binding ${draft.id} collides with structural reference owner ${existingReferenceOwner}`,
+    );
+  }
   if (isExportAlias) {
     if (existingReference !== undefined) {
       throw new ProgramAbiInvariantError(
@@ -1018,6 +950,9 @@ export function stagePreparedProgramAbiComponentBatch(
     if (input.exportAliases) {
       prepare(() => prepareExportAliasDescriptorForScope(input.exportAliases!, host.session, scopeId));
     }
+    if (input.moduleCallableAliases) {
+      prepare(() => prepareModuleCallableAliasDescriptorForScope(input.moduleCallableAliases!, host.session, scopeId));
+    }
     if (preparationFailed) throw preparationFailure;
     if (parts.length === 0 || new Set(parts.map(({ kind }) => kind)).size !== parts.length) {
       throw new ProgramAbiInvariantError(
@@ -1031,7 +966,10 @@ export function stagePreparedProgramAbiComponentBatch(
         `prepared ABI batch ${scopeId} contains a descriptor from another session`,
       );
     }
-    if (requestedStructuralReferenceKeys.length === 0 && !parts.some(({ kind }) => kind === "export-aliases")) {
+    if (
+      requestedStructuralReferenceKeys.length === 0 &&
+      !parts.some(({ kind }) => kind === "export-aliases" || kind === "module-callable-aliases")
+    ) {
       throw new ProgramAbiInvariantError(
         "invalid-binding-reference",
         `prepared ABI batch ${scopeId} has neither dependency requests nor export aliases`,
@@ -1055,7 +993,7 @@ export function stagePreparedProgramAbiComponentBatch(
     const directRequestKeys = new Set(requestedStructuralReferenceKeys);
     const requiredProviderAndClassKeys = new Set(
       parts
-        .filter(({ kind }) => kind !== "callable-imports")
+        .filter(({ kind }) => kind !== "callable-imports" && kind !== "module-callable-aliases")
         .flatMap(({ requestedStructuralReferenceKeys: keys }) => keys),
     );
     const importKeys = new Set(importPart?.requestedStructuralReferenceKeys ?? []);
@@ -1159,18 +1097,7 @@ export function stagePreparedProgramAbiComponentBatch(
     const registryWrites = Object.freeze(resolvedParts.flatMap(({ registryWrites }) => registryWrites));
     assertPreparedMapWritesUnique(scopeId, registryWrites, "registry");
     assertPreparedMapWritesUnique(scopeId, sessionWrites, "session");
-    const lookup: PreparedProgramAbiScopeLookup = Object.freeze({
-      get: (id: IrBindingId) => overlay.drafts.get(id),
-      bindingIdsForStructuralReference: (key: string) =>
-        typeof key !== "string" || key.length === 0
-          ? Object.freeze([])
-          : Object.freeze(
-              [...overlay.drafts.values()]
-                .filter(({ structuralReferenceKey }) => structuralReferenceKey === key)
-                .sort((left, right) => comparePreparedProgramAbiDrafts(host.sourceOrderById, left, right))
-                .map(({ id }) => id),
-            ),
-    });
+    const lookup = createPreparedProgramAbiScopeLookup(host, overlay);
     return Object.freeze({
       scopeId,
       terminalUnitIds: Object.freeze([...terminalUnitIds]),
@@ -1195,30 +1122,138 @@ export function stagePreparedProgramAbiComponentBatch(
   }
 }
 
+/**
+ * Replay a claimed batch over the session's latest committed maps. The first
+ * stage is intentionally only a preview: unrelated ABI work may be planned
+ * while an aggregate component is lowering. Rebase never reuses the stale
+ * cloned overlay and never changes descriptor lifecycle state.
+ */
+export function rebasePreparedProgramAbiComponentBatch(
+  host: PreparedProgramAbiTransactionHost,
+  batch: PreparedProgramAbiStagedBatch,
+): PreparedProgramAbiStagedBatch {
+  host.assertPlanning(`rebase prepared ABI batch for ${batch.scopeId}`);
+  if (!host.scopeOpen(batch.scopeId) || host.scopeSealed(batch.scopeId)) {
+    throw new ProgramAbiInvariantError(
+      "session-closed",
+      `prepared ABI scope ${batch.scopeId} is not an open session transaction`,
+    );
+  }
+  assertPreparedProgramAbiStagedBatchCurrent(batch, batch.scopeId, batch.terminalUnitIds);
+  const overlay: PreparedProgramAbiPlanningOverlay = {
+    drafts: new Map(host.committed.drafts),
+    draftOrderOwners: new Map(host.committed.draftOrderOwners),
+    locators: new Map(host.committed.locators),
+    locatorOwners: new Map(host.committed.locatorOwners),
+    structuralReferenceKeys: new Map(host.committed.structuralReferenceKeys),
+    callableTypeContracts: new Map(host.committed.callableTypeContracts),
+    globalTypeContracts: new Map(host.committed.globalTypeContracts),
+  };
+  const sessionWrites: PreparedProgramAbiMapWrite[] = [];
+  const provisionalIds = new Set<IrBindingId>();
+  const provisionalKeys = new Map<string, IrBindingId>();
+  const provisionalLocatorOwners = new Map<object, IrBindingId>();
+  const parts: PreparedProgramAbiDescriptorPart[] = [];
+  for (const part of batch.parts) {
+    const bindings = part.rebaseBindings?.() ?? part.bindings;
+    const projected = part.projectBindings
+      ? part.projectBindings(
+          (allocator) => overlay.locatorOwners.get(allocator),
+          (id) => overlay.drafts.get(id),
+        )
+      : bindings;
+    for (const binding of projected) {
+      preflightPreparedProvisionalBinding(
+        host,
+        batch.scopeId,
+        binding,
+        overlay,
+        sessionWrites,
+        provisionalIds,
+        provisionalKeys,
+        provisionalLocatorOwners,
+      );
+    }
+    parts.push(
+      Object.freeze({
+        ...part,
+        bindings: Object.freeze([...projected]),
+      }),
+    );
+  }
+  for (const part of parts) {
+    for (const closureKey of part.closureStructuralReferenceKeys) {
+      if (
+        typeof closureKey !== "string" ||
+        closureKey.length === 0 ||
+        ![...overlay.drafts.values()].some(({ structuralReferenceKey }) => structuralReferenceKey === closureKey)
+      ) {
+        throw new ProgramAbiInvariantError(
+          "invalid-binding-reference",
+          `prepared ABI batch ${batch.scopeId} has an unowned closure key ${closureKey || "<empty>"}`,
+        );
+      }
+    }
+  }
+  const registryWrites = Object.freeze(parts.flatMap(({ registryWrites }) => registryWrites));
+  assertPreparedMapWritesUnique(batch.scopeId, registryWrites, "registry");
+  assertPreparedMapWritesUnique(batch.scopeId, sessionWrites, "session");
+  return Object.freeze({
+    scopeId: batch.scopeId,
+    terminalUnitIds: Object.freeze([...batch.terminalUnitIds]),
+    requestedStructuralReferenceKeys: Object.freeze([...batch.requestedStructuralReferenceKeys]),
+    parts: Object.freeze(parts),
+    overlay,
+    sessionWrites: Object.freeze(sessionWrites),
+    registryWrites,
+    lookup: createPreparedProgramAbiScopeLookup(host, overlay),
+  });
+}
+
 /** Consume every descriptor in a staged batch exactly once. */
 export function consumePreparedProgramAbiComponentBatch(
   batch: PreparedProgramAbiStagedBatch,
   session: ProgramAbiSession,
 ): void {
+  let firstError: unknown;
+  let hadError = false;
   for (const part of batch.parts) {
-    if (part.kind === "callable-imports") {
-      consumePreparedCallableImportDescriptor(
-        part.descriptor as PreparedCallableImportDescriptor,
-        session,
-        batch.scopeId,
-      );
-    } else if (part.kind === "callable-providers") {
-      consumePreparedCallableProviderDescriptor(
-        part.descriptor as PreparedCallableProviderDescriptor,
-        session,
-        batch.scopeId,
-      );
-    } else if (part.kind === "class-layouts") {
-      consumePreparedClassLayoutDescriptor(part.descriptor as PreparedClassLayoutDescriptor, session, batch.scopeId);
-    } else {
-      consumePreparedExportAliasDescriptor(part.descriptor as PreparedExportAliasDescriptor, session, batch.scopeId);
+    try {
+      if (part.kind === "callable-imports") {
+        consumePreparedCallableImportDescriptor(
+          part.descriptor as PreparedCallableImportDescriptor,
+          session,
+          batch.scopeId,
+        );
+      } else if (part.kind === "callable-providers") {
+        consumePreparedCallableProviderDescriptor(
+          part.descriptor as PreparedCallableProviderDescriptor,
+          session,
+          batch.scopeId,
+        );
+      } else if (part.kind === "class-layouts") {
+        consumePreparedClassLayoutDescriptor(part.descriptor as PreparedClassLayoutDescriptor, session, batch.scopeId);
+      } else if (part.kind === "module-callable-aliases") {
+        consumePreparedModuleCallableAliasDescriptor(
+          part.descriptor as PreparedModuleCallableAliasDescriptor,
+          session,
+          batch.scopeId,
+        );
+      } else {
+        consumePreparedExportAliasDescriptor(part.descriptor as PreparedExportAliasDescriptor, session, batch.scopeId);
+      }
+    } catch (error) {
+      if (!hadError) firstError = error;
+      hadError = true;
+    } finally {
+      // Every staged part is one-shot even when an underlying registry
+      // validation observes a stale/partially-consumed lifecycle. The registry
+      // callbacks and this shared lifecycle cell intentionally agree here so
+      // replay cannot resurrect one remaining part after an abort failure.
+      part.lifecycle.state.set("state", "consumed");
     }
   }
+  if (hadError) throw firstError;
 }
 
 /** Re-authenticate a staged batch immediately before scope sealing. */
@@ -1240,12 +1275,21 @@ export function assertPreparedProgramAbiStagedBatchCurrent(
   }
   for (const part of batch.parts) part.assertCurrent();
   for (const write of batch.sessionWrites) {
-    if (write.target.has(write.key)) {
+    if (write.target.has(write.key) && !preparedTransactionWriteValuesEqual(write.target.get(write.key), write.value)) {
       throw new ProgramAbiInvariantError(
         "session-draft-mismatch",
         `prepared ABI batch ${scopeId} crossed intervening session publication`,
       );
     }
+  }
+}
+
+function preparedTransactionWriteValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
   }
 }
 
