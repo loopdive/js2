@@ -2072,9 +2072,18 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
             // regular attempt (a CHAR program fails there anyway, but keeping
             // the loop shape identical avoids reasoning about EOL/lookaround
             // interactions).
+            // A sticky search has exactly one permitted start position.  The
+            // leading-literal filter advances `I` over non-matching code
+            // units, which would silently turn `/b/y` at lastIndex 0 on
+            // `"ab"` into a match at index 1.  Keep the filter on the
+            // ordinary (non-sticky) scan only; the VM attempt itself must
+            // decide the sticky result at the requested position.
+            { op: "local.get", index: STICKY },
+            { op: "i32.eqz" },
             { op: "local.get", index: LEADCH },
             { op: "i32.const", value: 0 },
             { op: "i32.ge_s" },
+            { op: "i32.and" },
             {
               op: "if",
               blockType: { kind: "empty" },

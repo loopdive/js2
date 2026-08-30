@@ -190,8 +190,54 @@ export function isStringTypedArg(ctx: CodegenContext, arg: ts.Expression): boole
   }
 }
 
-function compileCtorArgument(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression, expected?: ValType): void {
-  const result = compileExpression(ctx, fctx, arg, expected);
+function compileCtorArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  expected?: ValType,
+  forceArrayLiteralVec = false,
+): void {
+  // A Map/Set subclass's implicit constructor eventually forwards this value to
+  // the native collection provider as externref. In that boundary a contextual
+  // `[key, value]` tuple must remain a real nested array carrier: the provider
+  // intentionally has no AST and consumes the already-evaluated value through
+  // `__extern_get_idx`. Reuse the established narrow force-vec seam (with its
+  // collection-only nested-carrier mode), but only for standalone/WASI and an
+  // actual array literal. The expected type may be either externref or the vec
+  // ref used by a typed array parameter; ordinary primitive argument lowering
+  // remains unchanged.
+  let carrier = arg;
+  while (
+    ts.isParenthesizedExpression(carrier) ||
+    ts.isAsExpression(carrier) ||
+    ts.isTypeAssertionExpression(carrier) ||
+    ts.isSatisfiesExpression(carrier) ||
+    ts.isNonNullExpression(carrier)
+  ) {
+    carrier = carrier.expression;
+  }
+  const shouldForceVec =
+    forceArrayLiteralVec &&
+    (expected?.kind === "externref" || expected?.kind === "ref" || expected?.kind === "ref_null") &&
+    (ctx.standalone || ctx.wasi) &&
+    ts.isArrayLiteralExpression(carrier);
+  const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+  const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+    ._arrayLiteralForceCollectionVec;
+  if (shouldForceVec) {
+    (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+    (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec = true;
+  }
+  let result: ValType | null;
+  try {
+    result = compileExpression(ctx, fctx, arg, expected);
+  } finally {
+    if (shouldForceVec) {
+      (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = previousForceVec;
+      (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec =
+        previousCollectionForceVec;
+    }
+  }
   if (result === null) {
     if (expected) pushDefaultValue(fctx, expected, ctx);
     return;
@@ -530,6 +576,58 @@ function resolvesToLateAssignedConstructSignatureValue(ctx: CodegenContext, call
 }
 
 /**
+ * Recover the late-assigned constructor slot from either `new C(...)` or the
+ * lazy-cache spelling used by TypeScript's base-node factory:
+ *
+ *   new (C || (C = allocator.getConstructor()))(...)
+ *
+ * Keeping this syntactic proof narrow is important. Arbitrary constructable
+ * expressions still belong to the established class/fnctor/native fallbacks;
+ * this helper only admits the same uninitialized construct-signature binding
+ * that `resolvesToLateAssignedConstructSignatureValue` already owns, plus an
+ * assignment back to that exact binding in the short-circuit RHS.
+ */
+function lateAssignedConstructSignatureSlot(ctx: CodegenContext, calleeExpr: ts.Expression): ts.Identifier | undefined {
+  const unwrap = (expression: ts.Expression): ts.Expression => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  const current = unwrap(calleeExpr);
+  if (ts.isIdentifier(current)) {
+    return resolvesToLateAssignedConstructSignatureValue(ctx, current) ? current : undefined;
+  }
+  if (
+    !ts.isBinaryExpression(current) ||
+    (current.operatorToken.kind !== ts.SyntaxKind.BarBarToken &&
+      current.operatorToken.kind !== ts.SyntaxKind.QuestionQuestionToken)
+  ) {
+    return undefined;
+  }
+
+  const slot = unwrap(current.left);
+  const assignment = unwrap(current.right);
+  if (
+    !ts.isIdentifier(slot) ||
+    !resolvesToLateAssignedConstructSignatureValue(ctx, slot) ||
+    !ts.isBinaryExpression(assignment) ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  ) {
+    return undefined;
+  }
+  const assignedSlot = unwrap(assignment.left);
+  return ts.isIdentifier(assignedSlot) && assignedSlot.text === slot.text ? slot : undefined;
+}
+
+/**
  * A typed late-bound constructor allocates the construct signature's declared
  * result before invoking the runtime function value. The concrete function may
  * declare a wider explicit `this` type: TypeScript's SourceFile slot contains
@@ -765,6 +863,12 @@ export function emitHostTaBufferConstruct(
     [{ kind: "externref" }],
   );
   addStringConstantGlobal(ctx, className);
+  // (#5193) This bridge hands a compiled ArrayBuffer/array-like to a HOST
+  // constructor, and the runtime can only decode it through the module's
+  // exported vec/byte helpers. At module top level those exports do not exist
+  // yet (the `start` section runs inside `WebAssembly.instantiate`), so ask for
+  // the funcref self-registration prologue on `__module_init`.
+  ctx.needsInitMarshalHelpers = true;
   flushLateImportShifts(ctx, fctx);
   const finalGt = ctx.funcMap.get("__get_globalThis") ?? gtIdx;
   const finalGet = ctx.funcMap.get("__extern_get") ?? getIdx;
@@ -3150,7 +3254,7 @@ function emitDynamicNewFallback(
   // boxing it; the caller's later externref→interface coercion can then retain
   // the value instead of turning a nominal cast miss into null. Concrete class
   // result types retain their identity-bearing class struct unchanged.
-  const lateAssignedResultType = resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
+  const lateAssignedResultType = lateAssignedConstructSignatureSlot(ctx, calleeExpr)
     ? ctx.checker.getTypeAtLocation(expr)
     : undefined;
   const lateAssignedResultSymbolName = lateAssignedResultType?.getSymbol()?.name;
@@ -5775,11 +5879,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // class descriptors in both lanes; its host no-match base handles genuine
   // JS constructors. In a host-free classless module it declines, leaving the
   // native construct driver immediately below to own ordinary callable values.
-  if (
-    calleeIdent &&
-    resolvesToLateAssignedConstructSignatureValue(ctx, calleeIdent) &&
-    emitDynamicNewFallback(ctx, fctx, expr, calleeIdent, calleeIdent.text)
-  ) {
+  const lateAssignedCtorSlot = lateAssignedConstructSignatureSlot(ctx, expr.expression);
+  if (lateAssignedCtorSlot && emitDynamicNewFallback(ctx, fctx, expr, expr.expression, lateAssignedCtorSlot.text)) {
     return { kind: "externref" };
   }
 
@@ -6364,6 +6465,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // Compile constructor arguments with type hints
     const paramTypes = getFuncParamTypes(ctx, funcIdx);
     const args = expr.arguments ?? [];
+    const forceCollectionArrayVec =
+      ctx.classBuiltinParentMap.get(className) === "Map" || ctx.classBuiltinParentMap.get(className) === "Set";
     const ctorRestInfo = ctx.funcRestParams.get(ctorName);
     let ctorActualArgCount = args.length;
 
@@ -6386,7 +6489,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (flatCtorArgs) {
         ctorActualArgCount = flatCtorArgs.length;
         for (let i = 0; i < flatCtorArgs.length && i < paramTypes.length; i++) {
-          compileCtorArgument(ctx, fctx, flatCtorArgs[i]!, paramTypes[i]);
+          compileCtorArgument(ctx, fctx, flatCtorArgs[i]!, paramTypes[i], forceCollectionArrayVec && i === 0);
         }
         for (let i = paramTypes.length; i < flatCtorArgs.length; i++) {
           evaluateCtorExtraArgument(ctx, fctx, flatCtorArgs[i]!);
@@ -6403,7 +6506,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // Calling a rest-param constructor: pack trailing args into a GC array
       for (let i = 0; i < ctorRestInfo.restIndex; i++) {
         if (i < args.length) {
-          compileCtorArgument(ctx, fctx, args[i]!, paramTypes?.[i]);
+          compileCtorArgument(ctx, fctx, args[i]!, paramTypes?.[i], forceCollectionArrayVec && i === 0);
         } else {
           pushDefaultValue(fctx, paramTypes?.[i] ?? { kind: "f64" }, ctx);
         }
@@ -6412,7 +6515,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const restArgCount = Math.max(0, args.length - ctorRestInfo.restIndex);
       fctx.body.push({ op: "i32.const", value: restArgCount });
       for (let i = ctorRestInfo.restIndex; i < args.length; i++) {
-        compileCtorArgument(ctx, fctx, args[i]!, ctorRestInfo.elemType);
+        compileCtorArgument(ctx, fctx, args[i]!, ctorRestInfo.elemType, forceCollectionArrayVec && i === 0);
       }
       fctx.body.push({
         op: "array.new_fixed",
@@ -6423,7 +6526,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     } else {
       const positionalParamCount = paramTypes?.length ?? args.length;
       for (let i = 0; i < args.length && i < positionalParamCount; i++) {
-        compileCtorArgument(ctx, fctx, args[i]!, paramTypes?.[i]);
+        compileCtorArgument(ctx, fctx, args[i]!, paramTypes?.[i], forceCollectionArrayVec && i === 0);
       }
       for (let i = positionalParamCount; i < args.length; i++) {
         evaluateCtorExtraArgument(ctx, fctx, args[i]!);

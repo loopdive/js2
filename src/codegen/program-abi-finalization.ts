@@ -38,5 +38,9 @@ export function eliminateDeadLayoutAndPlanProgramAbi(ctx: CodegenContext): void 
   ctx.programAbiCallables?.planRetained();
   ctx.programAbiGlobals?.planRetained();
   ctx.programAbiExports?.planRetained();
+  // Export/start/_start adapters exist only now, so the graph-global module-init
+  // pass reconciles its selected invocation policy here rather than inside its
+  // own planRetained.
+  ctx.programAbiModuleInitCallables?.assertGraphGlobalInvocationPolicy();
   ctx.programAbiTypes?.planRetained();
 }

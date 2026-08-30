@@ -936,10 +936,13 @@ export interface CompileOptions {
   link?: string[];
   /**
    * Compile bare npm package edges as cached core-Wasm providers when using
-   * {@link compileProject}. `true` and `"separate"` instantiate provider
-   * modules independently; `"merge"` asks Binaryen to statically combine safe
+   * {@link compileProject}. `true` automatically attempts independent provider
+   * modules while retaining the compatibility fallback to a monolithic source
+   * compile. `"separate"` also instantiates providers independently, but treats
+   * a linked consumer compiler failure as authoritative instead of recompiling
+   * cached provider sources. `"merge"` asks Binaryen to statically combine safe
    * direct-function providers and embeds `js2wasm.bundle.v1`. `false` retains
-   * monolithic source compilation. Unsupported boundaries report their
+   * monolithic source compilation. Unsupported package boundaries report their
    * explicit fallback through {@link CompileResult.linkPlan}. Defaults to
    * `true` for project compiles.
    */
@@ -1354,6 +1357,13 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     options: withIrCompileRoute(effectiveOptions, "compileProject"),
   });
   if (linkedAttempt.kind === "separate") {
+    // A strict separate-module attempt can return the consumer's authoritative
+    // compiler diagnostic. Keep its plan visible, but do not attach or
+    // instantiate provider artifacts when there is no consumer binary.
+    if (!linkedAttempt.result.success) {
+      linkedAttempt.result.linkPlan = linkedAttempt.plan;
+      return withImportObject(linkedAttempt.result);
+    }
     if (effectiveOptions?.packageLinking === "merge") {
       const merged = mergePackageProviders(linkedAttempt.result, linkedAttempt.artifacts, {
         optimize: effectiveOptions.optimize,

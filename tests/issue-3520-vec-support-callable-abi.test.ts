@@ -13,13 +13,16 @@ import { ProgramAbiCallableRegistry } from "../src/codegen/program-abi-callable-
 import {
   VEC_HOST_BRIDGE_ROLE,
   type VecHostBridgeKind,
+  finalizeVecHostBridgeExports,
   resolveVecHostBridgeHelper,
   vecHostBridgePhysicalExportBase,
 } from "../src/codegen/vec-access-exports.js";
+import { emitBinary } from "../src/emit/binary.js";
+import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { type CompileResult, compile } from "../src/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
-import type { WasmFunction } from "../src/ir/types.js";
+import type { WasmExport, WasmFunction } from "../src/ir/types.js";
 import { buildImports, instantiateWasm, wrapExports } from "../src/runtime.js";
 
 // Register the codegen expression/statement delegates used by generateModule.
@@ -111,6 +114,28 @@ const PREFIX_ONLY_COLLISION_SOURCE = `
   }
 `;
 
+const SPARSE_PHYSICAL_COLLISION_SOURCE = `
+  export function $v0(): number { return 301; }
+  export function $v0$$(): number { return 302; }
+  export function $v0$$$$(): number { return 304; }
+
+  export function dynamicPush(values: any, value: any): any {
+    return values.push(value);
+  }
+
+  export function returnedValues(): number[] {
+    return [7, 8];
+  }
+`;
+
+const HOST_FREE_PHYSICAL_COLLISION_SOURCE = `
+  export function $v0$(): number { return 811; }
+
+  export function returnedValues(): number[] {
+    return [7, 8];
+  }
+`;
+
 const ARRAY_FREE_PHYSICAL_SPOOF_SOURCE = `
   export function $v0(): number { return 701; }
 
@@ -132,6 +157,31 @@ function generate(source: string, fileName: string, trackIrOutcomes = true) {
       trackIrOutcomes,
     }),
   };
+}
+
+function generateWithCapturedRegistry(
+  source: string,
+  fileName: string,
+): {
+  readonly registry: ProgramAbiCallableRegistry;
+  readonly result: ReturnType<typeof generate>["result"];
+} {
+  let registry: ProgramAbiCallableRegistry | undefined;
+  const original = ProgramAbiCallableRegistry.prototype.observeEntrySourceSupports;
+  const observe = vi
+    .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
+    .mockImplementation(function (observations) {
+      registry = this;
+      return original.call(this, observations);
+    });
+  let result: ReturnType<typeof generate>["result"];
+  try {
+    result = generate(source, fileName).result;
+  } finally {
+    observe.mockRestore();
+  }
+  if (!registry) throw new Error(`missing vec Program ABI registry for ${fileName}`);
+  return { registry, result };
 }
 
 async function instantiate(result: CompileResult): Promise<Record<string, WebAssembly.ExportValue>> {
@@ -234,6 +284,47 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     }
   });
 
+  it("keeps collision-free GC, standalone, and WASI binaries byte-identical with tracking", async () => {
+    const source = `export function returnedValues(): number[] { return [7, 8]; }`;
+    for (const target of ["gc", "standalone", "wasi"] as const) {
+      const baseOptions = {
+        fileName: `vec-collision-free-${target}.ts`,
+        experimentalIR: true,
+        target,
+      } as const;
+      const untracked = await compile(source, baseOptions);
+      const tracked = await compile(source, { ...baseOptions, trackIrOutcomes: true });
+      expect(untracked.success, `${target}: ${untracked.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      expect(tracked.success, `${target}: ${tracked.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      expect(tracked.binary, target).toEqual(untracked.binary);
+      const module = await WebAssembly.compile(tracked.binary);
+      expect(
+        WebAssembly.Module.exports(module)
+          .map(({ name }) => name)
+          .filter(isVecHostBridgePhysicalExport),
+        target,
+      ).toEqual([]);
+    }
+  });
+
+  it("strips exact compiler-owned suffixed aliases without deleting standalone or WASI user collisions", async () => {
+    for (const target of ["standalone", "wasi"] as const) {
+      const result = await compile(HOST_FREE_PHYSICAL_COLLISION_SOURCE, {
+        fileName: `vec-host-free-physical-collision-${target}.ts`,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      });
+      expect(result.success, `${target}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      const module = await WebAssembly.compile(result.binary);
+      const exportNames = WebAssembly.Module.exports(module).map(({ name }) => name);
+      expect(exportNames, target).toContain("$v0$");
+      expect(exportNames, target).not.toContain("__vec_len");
+      expect(exportNames, target).not.toContain("$v0");
+      expect(exportNames, target).not.toContain("$v0$$");
+    }
+  });
+
   it("emits no vec bridge for an array-free module", () => {
     const arrayFree = generate(`export function main(): number { return 1; }`, "vec-array-free.ts").result;
     expect(
@@ -307,6 +398,26 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(wrapped.mkInstance()).toEqual({});
   });
 
+  it("fills sparse physical gaps without rebasing any occupied user descriptor", async () => {
+    const runtime = await compile(SPARSE_PHYSICAL_COLLISION_SOURCE, {
+      fileName: "vec-helper-sparse-physical-collisions.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
+    const rawExports = await instantiate(runtime);
+    expect((rawExports.$v0 as () => number)()).toBe(301);
+    expect((rawExports["$v0$$"] as () => number)()).toBe(302);
+    expect((rawExports["$v0$$$$"] as () => number)()).toBe(304);
+    expect(rawExports["$v0$"]).toBe(rawExports.__vec_len);
+    expect(rawExports["$v0$$$"]).toBe(rawExports.__vec_len);
+    expect(rawExports["$v0$$$$$"]).toBe(rawExports.__vec_len);
+    expect(rawExports["$v0$$$$$$"]).toBeUndefined();
+
+    const rawValues = (rawExports.returnedValues as () => unknown)();
+    expect((rawExports.dynamicPush as (values: unknown, value: number) => number)(rawValues, 3)).toBe(3);
+    expect(wrapExports(rawExports).returnedValues()).toEqual([7, 8]);
+  });
+
   it("does not project an array-free user physical prefix into a logical vec helper", async () => {
     const runtime = await compile(ARRAY_FREE_PHYSICAL_SPOOF_SOURCE, {
       fileName: "vec-helper-array-free-physical-spoof.ts",
@@ -340,10 +451,103 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     }
   });
 
+  it("fails closed when a compiler-owned export entry is replaced, duplicated, retargeted, or loses its function", () => {
+    const cases: readonly {
+      readonly name: string;
+      readonly mutate: (
+        registry: ProgramAbiCallableRegistry,
+        result: ReturnType<typeof generate>["result"],
+        entry: WasmExport,
+      ) => void;
+      readonly expected: RegExp;
+    }[] = [
+      {
+        name: "replaced",
+        mutate: (_registry, result, entry) => {
+          const index = result.module.exports.indexOf(entry);
+          result.module.exports[index] = { name: entry.name, desc: { ...entry.desc } };
+        },
+        expected: /disappeared before finalization/,
+      },
+      {
+        name: "duplicated",
+        mutate: (_registry, result, entry) => {
+          result.module.exports.push(entry);
+        },
+        expected: /appears more than once in the module/,
+      },
+      {
+        name: "retargeted",
+        mutate: (_registry, result, entry) => {
+          const other = result.module.exports.find(
+            (candidate) => candidate.name === "__vec_get" && candidate.desc.kind === "func",
+          );
+          if (!other || other.desc.kind !== "func") throw new Error("missing alternate vec helper export");
+          entry.desc.index = other.desc.index;
+        },
+        expected: /resolves to a different allocator function/,
+      },
+      {
+        name: "one-past-defined-functions",
+        mutate: (_registry, result, entry) => {
+          const liveImportCount = result.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+          entry.desc.index = liveImportCount + result.module.functions.length;
+          expect(entry.desc.index).toBeLessThan(STABLE_FUNC_BASE);
+        },
+        expected: /resolves to a different allocator function/,
+      },
+      {
+        name: "kind-changed",
+        mutate: (_registry, _result, entry) => {
+          entry.desc = { kind: "global", index: entry.desc.index };
+        },
+        expected: /changed kind to global/,
+      },
+      {
+        name: "allocator-removed",
+        mutate: (registry, result) => {
+          const handle = resolveVecHostBridgeHelper(registry.ctx, "len");
+          const func = handle === undefined ? undefined : definedFuncAt(registry.ctx, handle);
+          if (!func) throw new Error("missing vec len allocator");
+          result.module.functions.splice(result.module.functions.indexOf(func), 1);
+        },
+        expected: /lost its allocator function/,
+      },
+    ];
+
+    for (const mutation of cases) {
+      const { registry, result } = generateWithCapturedRegistry(ARRAY_SOURCE, `vec-export-${mutation.name}.ts`);
+      const entry = result.module.exports.find(
+        (candidate) => candidate.name === "__vec_len" && candidate.desc.kind === "func",
+      );
+      if (!entry) throw new Error(`missing compiler-owned vec export for ${mutation.name}`);
+      mutation.mutate(registry, result, entry);
+      expect(() => finalizeVecHostBridgeExports(registry.ctx), mutation.name).toThrow(mutation.expected);
+    }
+  });
+
+  it("fails closed when disabled host-bridge policy retains a compiler-owned descriptor", () => {
+    const { registry, result } = generateWithCapturedRegistry(ARRAY_SOURCE, "vec-export-disabled-policy-survivor.ts");
+    const entry = result.module.exports.find(
+      (candidate) => candidate.name === "__vec_len" && candidate.desc.kind === "func",
+    );
+    if (!entry) throw new Error("missing compiler-owned vec export for disabled-policy-survivor");
+
+    const originalEmitHostBridge = registry.ctx.emitHostBridge;
+    try {
+      registry.ctx.emitHostBridge = false;
+      expect(result.module.exports).toContain(entry);
+      expect(() => finalizeVecHostBridgeExports(registry.ctx)).toThrow(/survived disabled host-bridge policy/);
+    } finally {
+      registry.ctx.emitHostBridge = originalEmitHostBridge;
+    }
+  });
+
   it("keeps captured bridge objects through late-import shifts and dead-import compaction", () => {
     let registry: ProgramAbiCallableRegistry | undefined;
     let observedImportCount = -1;
     let reserved: readonly WasmFunction[] = [];
+    const userExports = new Map<string, { readonly entry: WasmExport; readonly func: WasmFunction }>();
     const handleImportCounts: number[] = [];
     const originalObserve = ProgramAbiCallableRegistry.prototype.observeEntrySourceSupports;
     const originalHandle = ProgramAbiCallableRegistry.prototype.handleForEntrySourceSupport;
@@ -352,6 +556,14 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
       .mockImplementation(function (observations) {
         registry = this;
         observedImportCount = this.ctx.numImportFuncs;
+        for (const name of ["__vec_len", "$v0", "$v0$$"] as const) {
+          const entry = this.ctx.mod.exports.find(
+            (candidate) => candidate.name === name && candidate.desc.kind === "func",
+          );
+          const func = entry?.desc.kind === "func" ? definedFuncAt(this.ctx, entry.desc.index) : undefined;
+          if (!entry || !func) throw new Error(`missing exact user export ${name} before vec publication`);
+          userExports.set(name, { entry, func });
+        }
         reserved = observations.map((observation) => {
           const func = definedFuncAt(this.ctx, observation.funcIdx);
           if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
@@ -369,6 +581,9 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     try {
       result = generate(
         `
+          export function __vec_len(): number { return 801; }
+          export function $v0(): number { return 802; }
+          export function $v0$$(): number { return 803; }
           export function first(values: any): number { return values.push(1); }
           export function later(value: any): any { return value.missing; }
           export function stringLater(value: string): boolean { return value.includes("x"); }
@@ -386,6 +601,13 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(finalImportCount).toBeLessThan(Math.max(...handleImportCounts));
     expect(reserved).toHaveLength(6);
     expect(registry).toBeDefined();
+    expect(userExports.size).toBe(3);
+    for (const [name, { entry, func }] of userExports) {
+      expect(result.module.exports, name).toContain(entry);
+      expect(entry.desc.kind, name).toBe("func");
+      if (entry.desc.kind !== "func") throw new Error(`${name} changed export kind`);
+      expect(definedFuncAt(registry!.ctx, entry.desc.index), name).toBe(func);
+    }
     const entrySource = registry!.session.inventory.sources.find((source) => source.kind === "entry");
     if (!entrySource) throw new Error("missing registry entry source");
     for (const [index, bridge] of VEC_BRIDGES.entries()) {
@@ -399,7 +621,7 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     }
   });
 
-  it("keeps tracked output and IR routing stable across the composed five-entry census", async () => {
+  it("keeps tracked output and structural ownership stable across the exact five-entry corpus", async () => {
     const untracked = await compile(ARRAY_SOURCE, {
       fileName: "vec-tracking-parity.ts",
       experimentalIR: true,
@@ -421,36 +643,103 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(unreported.irOutcomes).toBeUndefined();
     expect(unreported.module.functions).toHaveLength(routed.module.functions.length);
 
-    let definedFunctions = 0;
-    let genericRows = 0;
-    let vecRows = 0;
-    let closureRows = 0;
-    let dateRows = 0;
-    let dataRows = 0;
+    expect([...SINGLE_HOST_ENTRIES]).toEqual([
+      "website/playground/examples/dom/calendar.ts",
+      "website/playground/examples/js/algorithms.ts",
+      "website/playground/examples/js/async.ts",
+      "website/playground/examples/js/builtins.ts",
+      "website/playground/examples/js/classes.ts",
+    ]);
+
+    let corpusOwnedFunctions = 0;
+    let corpusRetainedFallbacks = 0;
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
-      const ast = analyzeSource(source, entry);
-      const result = generateModule(ast, {
+      const trackedAst = analyzeSource(source, entry);
+      const untrackedAst = analyzeSource(source, entry);
+      const tracked = generateModule(trackedAst, {
         experimentalIR: true,
         trackIrOutcomes: true,
       });
-      const hardErrors = result.errors.filter((error) => error.severity !== "warning");
-      expect(hardErrors, `${entry}\n${hardErrors.map((error) => error.message).join("\n")}`).toEqual([]);
-      definedFunctions += result.module.functions.length;
-      const entries = result.programAbi!.abi.entries();
-      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
-      vecRows += entries.filter((candidate) => candidate.id.includes(VEC_HOST_BRIDGE_ROLE)).length;
-      closureRows += entries.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
-      dateRows += entries.filter((candidate) => candidate.id.includes(":date-civil-support:")).length;
-      dataRows += entries.filter((candidate) => candidate.id.includes(":data-struct-host-bridge:")).length;
+      const untracked = generateModule(untrackedAst, {
+        experimentalIR: true,
+        trackIrOutcomes: false,
+      });
+      const trackedErrors = tracked.errors.filter((error) => error.severity !== "warning");
+      const untrackedErrors = untracked.errors.filter((error) => error.severity !== "warning");
+      expect(trackedErrors, `${entry}\n${trackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(untrackedErrors, `${entry}\n${untrackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(emitBinary(tracked.module), `${entry} binary`).toEqual(emitBinary(untracked.module));
+      expect(tracked.module.functions.length, `${entry} function population`).toBe(untracked.module.functions.length);
+      expect(tracked.irCompiledFuncs, `${entry} routing`).toEqual(untracked.irCompiledFuncs);
+      expect(
+        tracked.module.exports.map(({ name, desc }) => ({ name, kind: desc.kind, index: desc.index })),
+        `${entry} public exports`,
+      ).toEqual(untracked.module.exports.map(({ name, desc }) => ({ name, kind: desc.kind, index: desc.index })));
+      expect(untracked.irOutcomes, `${entry} untracked outcomes`).toBeUndefined();
+
+      const inventory = buildIrUnitInventory([trackedAst.sourceFile], {
+        entrySource: trackedAst.sourceFile,
+        checker: trackedAst.checker,
+      });
+      const outcomes = tracked.irOutcomes ?? [];
+      const outcomeIds = outcomes.map((outcome) => outcome.unitId);
+      expect(
+        outcomeIds.every((id) => id !== undefined),
+        `${entry} structural outcome ids`,
+      ).toBe(true);
+      expect(new Set(outcomeIds).size, `${entry} unique outcome ids`).toBe(outcomes.length);
+      expect([...outcomeIds].sort(), `${entry} terminal outcome closure`).toEqual(
+        inventory.terminalUnits.map((unit) => unit.id).sort(),
+      );
+      for (const outcome of outcomes) {
+        expect(outcome.kind === "emitted" ? outcome.irBodyEmitted : !outcome.irBodyEmitted, outcome.key).toBe(true);
+        if (outcome.kind === "unsupported") expect(outcome.legacyBodyEmitted, outcome.key).toBe(true);
+        expect(outcome.kind, outcome.key).not.toBe("invariant");
+      }
+
+      const entrySource = inventory.sources.find((candidate) => candidate.kind === "entry");
+      if (!entrySource) throw new Error(`missing entry source for ${entry}`);
+      const abiEntries = tracked.programAbi!.abi.entries();
+      const familyEntries = abiEntries.filter(
+        (candidate) => candidate.intent.kind === "callable" && candidate.id.includes(`:${VEC_HOST_BRIDGE_ROLE}:`),
+      );
+      const retainedFallbacks = abiEntries.filter(
+        (candidate) =>
+          candidate.intent.kind === "callable" &&
+          candidate.id.includes(":retained-module-function:") &&
+          VEC_BRIDGES.some((bridge) => bridge.name === candidate.displayName),
+      );
+      expect(retainedFallbacks, `${entry} vec retained-module-function fallbacks`).toEqual([]);
+      corpusRetainedFallbacks += retainedFallbacks.length;
+      const ownedFunctions = new Set<WasmFunction>();
+      for (const bridge of VEC_BRIDGES) {
+        const ref = irSupportFuncRef(entrySource.id, VEC_HOST_BRIDGE_ROLE, bridge.name, bridge.ordinal);
+        if (ref.binding.kind !== "support") throw new Error(`missing ${bridge.name} structural binding`);
+        const matchingEntries = familyEntries.filter((candidate) => candidate.id === ref.binding.bindingId);
+        const helperFunctions = tracked.module.functions.filter((candidate) => candidate.name === bridge.name);
+        expect(matchingEntries.length, `${entry} ${bridge.name} owner count`).toBe(helperFunctions.length);
+        if (matchingEntries.length === 0) continue;
+        expect(matchingEntries).toHaveLength(1);
+        const row = matchingEntries[0]!;
+        expect(row).toMatchObject({
+          slotPolicy: "required",
+          slotSpace: "function",
+          intent: { kind: "callable", origin: "support", sourceId: entrySource.id },
+        });
+        const slot = tracked.programAbi!.abi.resolveFinalIndex(row.id);
+        if (!slot || slot.space !== "function") throw new Error(`missing ${entry} ${bridge.name} final locator`);
+        const importCount = tracked.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+        const helper = tracked.module.functions[slot.index - importCount];
+        expect(helper, `${entry} ${bridge.name} exact helper`).toBe(helperFunctions[0]);
+        if (!helper) throw new Error(`missing ${entry} ${bridge.name} helper allocation`);
+        expect(ownedFunctions.has(helper), `${entry} duplicate vec helper owner`).toBe(false);
+        ownedFunctions.add(helper);
+      }
+      expect(familyEntries, `${entry} unbounded vec family rows`).toHaveLength(ownedFunctions.size);
+      corpusOwnedFunctions += ownedFunctions.size;
     }
-    expect({ definedFunctions, genericRows, vecRows, closureRows, dateRows, dataRows }).toEqual({
-      definedFunctions: 166,
-      genericRows: 45,
-      vecRows: 24,
-      closureRows: 26,
-      dateRows: 1,
-      dataRows: 5,
-    });
+    expect(corpusOwnedFunctions, "five-entry vec ownership anti-vacuity").toBeGreaterThan(0);
+    expect(corpusRetainedFallbacks, "five-entry vec retained-module-function fallback census").toBe(0);
   });
 });

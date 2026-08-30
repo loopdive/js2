@@ -2076,13 +2076,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     linkedPackageBindings: rootBindings,
   };
   const result = await compileMultiSource(rootFiles, input.entryKey, rootOptions, undefined, rootResolutions);
-  if (!result.success) return makeFallback("linked root compilation failed; using bundled project");
   const artifacts = topo.order.map((node) => artifactByRoot.get(node.root)!).filter(Boolean);
-  if (topo.order.some((node) => node.requiresSignatureValidation) && result.hasTopLevelStatements) {
-    return makeFallback("inferred/any package signatures require side-effect-free engine validation");
-  }
-  const signatureFailure = validateLinkedSignatures(result, artifacts);
-  if (signatureFailure) return makeFallback(`linked signature validation failed: ${signatureFailure}`);
   const plan: PackageLinkPlan = {
     mode: "separate",
     version: 1,
@@ -2090,5 +2084,21 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     compiledProviders,
     cachedProviders,
   };
+  // Explicit separate-module compilation treats the linked consumer result as
+  // authoritative. Recompiling the same graph monolithically cannot repair an
+  // inherently unsupported consumer shape and can turn a bounded diagnostic
+  // into an expensive provider-source retry. Automatic/default linking keeps
+  // its compatibility fallback for graphs whose generated adapter cannot be
+  // compiled even though the original monolithic graph might still work.
+  if (!result.success) {
+    return input.options.packageLinking === "separate"
+      ? { kind: "separate", result, artifacts, plan }
+      : makeFallback("linked root compilation failed; using bundled project");
+  }
+  if (topo.order.some((node) => node.requiresSignatureValidation) && result.hasTopLevelStatements) {
+    return makeFallback("inferred/any package signatures require side-effect-free engine validation");
+  }
+  const signatureFailure = validateLinkedSignatures(result, artifacts);
+  if (signatureFailure) return makeFallback(`linked signature validation failed: ${signatureFailure}`);
   return { kind: "separate", result, artifacts, plan };
 }

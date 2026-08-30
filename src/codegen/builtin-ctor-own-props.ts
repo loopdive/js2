@@ -78,12 +78,17 @@ import {
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./property-access.js";
-import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import {
+  BUILTIN_STATIC_METHOD_ARITY,
+  ensureStandaloneSpeciesGetterClosure,
+  pushBuiltinFnSingletonValueInstrs,
+} from "./builtin-fn-meta.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 
 /**
  * Spec `length` for ctors that DO get a runtime carrier but are absent from the
@@ -101,6 +106,11 @@ const EXTRA_CTOR_ARITY: Record<string, number> = { AggregateError: 2 };
  */
 const HOST_FLAG_CONFIGURABLE = 0x04;
 const HOST_FLAG_WRITABLE = 0x01;
+// Accessor descriptors carry the enumerable/configurable specified bits in
+// addition to the configurable value bit.  This is the native
+// `__defineProperty_accessor` encoding for `{ enumerable:false,
+// configurable:true }` (no writable bit for accessors).
+const HOST_ACCESSOR_CONFIGURABLE = (1 << 4) | (1 << 5) | HOST_FLAG_CONFIGURABLE;
 
 /**
  * (#4234) Per-ctor NUMERIC own data constants to seed alongside
@@ -283,6 +293,43 @@ export function pushBuiltinCtorOwnPropSeed(
       fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "f64.const", value: HOST_FLAG_WRITABLE | HOST_FLAG_CONFIGURABLE });
       fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
+      return { commit: true, value: undefined };
+    });
+  }
+
+  // Promise[@@species] is an own accessor whose getter returns the receiver
+  // (§27.2.4.4).  The static gOPD synthesis in builtin-static-gopd.ts already
+  // uses this canonical getter singleton, but a bare `Promise` value reaches
+  // this real `$Object` carrier at runtime.  Seed the same accessor there so
+  // direct computed reads and runtime descriptor/attribute queries observe one
+  // property model instead of a synthetic descriptor-only answer.
+  if (builtinName === "Promise") {
+    withSpeculativeCompile(ctx, fctx, () => {
+      const closure = ensureStandaloneSpeciesGetterClosure(ctx, builtinName);
+      if (!closure) return { commit: false, value: undefined };
+      // ensureObjectRuntime (the caller of this seeder) normally creates the
+      // native symbol carrier before entering here. Re-ensure it defensively;
+      // this is a defined helper in standalone and cannot introduce a late
+      // function-index shift.
+      // `ensureSymbolCarrier` returns the `$Symbol` *type* index. The boxing
+      // function is a defined helper registered by that call; resolve its
+      // function index from the map after registration (using the type index
+      // here makes the emitted `call` target an unrelated function).
+      ensureSymbolCarrier(ctx);
+      const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+      const defineAccessorIdx = ctx.funcMap.get("__defineProperty_accessor");
+      if (boxSymbolIdx === undefined || defineAccessorIdx === undefined) {
+        return { commit: false, value: undefined };
+      }
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "i32.const", value: 5 }); // Symbol.species
+      fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+      fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "ref.null.extern" }); // setter = undefined
+      fctx.body.push({ op: "f64.const", value: HOST_ACCESSOR_CONFIGURABLE });
+      fctx.body.push({ op: "call", funcIdx: defineAccessorIdx });
       fctx.body.push({ op: "drop" });
       return { commit: true, value: undefined };
     });

@@ -15,7 +15,7 @@ import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import type { IrSourceId, IrSourceKind, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
-import { IrInvariantError, type IrObservedOutcome } from "../ir/outcomes.js";
+import { IrInvariantError, PreparedProgramAbiCommitError, type IrObservedOutcome } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjectionEntry, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
@@ -49,6 +49,12 @@ import type { MultiPreparedModuleInitPreparation } from "./multi-prepared-module
 import type { ModuleInitMode } from "./declarations.js";
 import type { ProgramAbiSession, PublishedProgramAbi } from "./program-abi-session.js";
 import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
+import {
+  MultiPreparedCallablePublication,
+  type MultiPreparedProgramCallableComponent,
+} from "./multi-prepared-callable-publication.js";
+
+export type { MultiPreparedProgramCallableComponent } from "./multi-prepared-callable-publication.js";
 
 export type MultiPreparedProgramState =
   | "collecting"
@@ -75,17 +81,32 @@ export interface MultiPreparedProgramSourceCensus {
   readonly terminalUnitIds: readonly IrUnitId[];
 }
 
-export interface MultiPreparedProgramReservation {
+export interface MultiPreparedProgramEarlyReservation {
   readonly unitId: IrUnitId;
   readonly sourceId: IrSourceId;
-  readonly routeKind: MultiPreparedProgramRouteKind;
+  readonly routeKind: Exclude<MultiPreparedProgramRouteKind, "cross-source-callable">;
   readonly preparedComponentId: string;
   readonly preparedBeforeDirectBodies: true;
+  readonly publicationPhase: "before-direct-bodies";
 }
+
+export interface MultiPreparedProgramCallableReservation {
+  readonly unitId: IrUnitId;
+  readonly sourceId: IrSourceId;
+  readonly routeKind: "cross-source-callable";
+  readonly preparedComponentId: string;
+  readonly stagedBeforeDirectBodies: true;
+  readonly committedAfterExactBodySkips: true;
+  readonly publicationPhase: "after-exact-body-skips";
+}
+
+export type MultiPreparedProgramReservation =
+  | MultiPreparedProgramEarlyReservation
+  | MultiPreparedProgramCallableReservation;
 
 /** The frozen M0 source/unit/reservation denominator. */
 export interface MultiPreparedProgramBodyPlan<Plan = unknown> {
-  readonly schema: "multi-prepared-program-body-plan-v1";
+  readonly schema: "multi-prepared-program-body-plan-v2";
   readonly entrySourceId: IrSourceId;
   readonly canonicalSourceIds: readonly IrSourceId[];
   readonly semanticSourceIds: readonly IrSourceId[];
@@ -233,24 +254,6 @@ export type MultiPreparedProgramInvariantError = IrInvariantError & {
 
 type SourceFile = import("../ts-api.js").ts.SourceFile;
 type RouteState<Plan extends MultiPreparedScalarLeafPlan> = EarlyMultiPreparedScalarLeafState<Plan>;
-
-/**
- * Exact aggregate callable component prepared before any source body pass.
- * Names are local compatibility labels; unit/declaration/source joins are the
- * authoritative identity used by the owner.
- */
-export interface MultiPreparedProgramCallableComponent {
-  readonly preparedComponentId: string;
-  readonly units: readonly {
-    readonly sourceFile: SourceFile;
-    readonly sourceId: IrSourceId;
-    readonly unitId: IrUnitId;
-    readonly legacyName: string;
-    readonly declaration: import("../ts-api.js").ts.FunctionDeclaration;
-  }[];
-  /** Optional post-integration freshness assertion owned by the planner. */
-  readonly assertCurrent?: () => void;
-}
 
 interface RouteSlot {
   readonly declaration: import("../ts-api.js").ts.FunctionDeclaration;
@@ -413,11 +416,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   readonly #terminalMap: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>;
   readonly #unitMap: ReadonlyMap<IrUnitId, IrUnitInventory["allUnits"][number]>;
   readonly #states = new Map<SourceFile, RouteState<Plan>>();
-  readonly #callableComponents: MultiPreparedProgramCallableComponent[] = [];
-  readonly #callableComponentByUnitId = new Map<IrUnitId, MultiPreparedProgramCallableComponent>();
-  readonly #callableComponentsBySourceFile = new Map<SourceFile, MultiPreparedProgramCallableComponent[]>();
-  readonly #callableSkippedUnitIds = new Set<IrUnitId>();
-  readonly #callableSkippedUnitIdsBySourceFile = new Map<SourceFile, Set<IrUnitId>>();
+  #callablePublication: MultiPreparedCallablePublication<MultiPreparedProgramBodyPlan> | undefined;
+  #callableComponents: readonly MultiPreparedProgramCallableComponent[] = Object.freeze([]);
+  #callableComponentByUnitId: ReadonlyMap<IrUnitId, MultiPreparedProgramCallableComponent> = new Map();
+  #callableComponentsBySourceFile: ReadonlyMap<SourceFile, readonly MultiPreparedProgramCallableComponent[]> =
+    new Map();
+  #callableSkippedUnitIds: ReadonlySet<IrUnitId> = new Set();
+  #callableSkippedUnitIdsBySourceFile: ReadonlyMap<SourceFile, ReadonlySet<IrUnitId>> = new Map();
   #moduleInitPreparation: MultiPreparedModuleInitPreparation | undefined;
   readonly #moduleInitSkippedSourceFiles = new Set<SourceFile>();
   #moduleInitFinalized = false;
@@ -567,24 +572,20 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     }
   }
 
-  /**
-   * Register cross-source callable components after the legacy route planners
-   * have produced their source states, but before the body boundary is sealed.
-   */
-  registerCallableComponents(components: readonly MultiPreparedProgramCallableComponent[]): void {
-    this.#requireState("collecting");
-    if (!this.#routesPlanned)
-      this.#fail("completion-order", "callable components were registered before route planning");
-    if (this.#moduleInitPreparation !== undefined && components.length > 0) {
-      this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
-    }
-    if (this.#callableComponents.length > 0) {
-      this.#fail("duplicate-reservation-component", "callable components were registered more than once");
-    }
-    const componentIds = new Set<string>();
-    const componentUnitIds = new Set<IrUnitId>();
-    const sourceNames = new Map<SourceFile, Set<string>>();
+  /** Validate callable receipts into one private, zero-publication handle. */
+  stageCallableComponents(components: readonly MultiPreparedProgramCallableComponent[]): void {
     try {
+      this.#requireState("collecting");
+      if (!this.#routesPlanned) this.#fail("completion-order", "callable components were staged before route planning");
+      if (this.#moduleInitPreparation !== undefined && components.length > 0) {
+        this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
+      }
+      if (components.length === 0 || this.#callablePublication !== undefined) {
+        this.#fail("duplicate-reservation-component", "callable components were staged with an empty or prior batch");
+      }
+      const componentIds = new Set<string>();
+      const componentUnitIds = new Set<IrUnitId>();
+      const sourceNames = new Map<SourceFile, Set<string>>();
       for (const component of components) {
         if (!component.preparedComponentId || component.units.length === 0) {
           this.#fail("route-plan-mismatch", "callable component has no prepared ID or terminal units");
@@ -608,7 +609,6 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             unit.sourceId !== sourceId ||
             localUnitIds.has(unit.unitId) ||
             componentUnitIds.has(unit.unitId) ||
-            this.#callableComponentByUnitId.has(unit.unitId) ||
             routeUnits.includes(unit.unitId) ||
             !terminal ||
             terminal.sourceId !== sourceId ||
@@ -649,20 +649,27 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           localUnitIds.add(unit.unitId);
           componentUnitIds.add(unit.unitId);
         }
-        this.#callableComponents.push(component);
-        for (const unit of component.units) {
-          this.#callableComponentByUnitId.set(unit.unitId, component);
-          const sourceComponents = this.#callableComponentsBySourceFile.get(unit.sourceFile) ?? [];
-          if (!sourceComponents.includes(component)) sourceComponents.push(component);
-          this.#callableComponentsBySourceFile.set(unit.sourceFile, sourceComponents);
+      }
+      this.#callablePublication = new MultiPreparedCallablePublication({
+        ctx: this.#ctx,
+        sourceFiles: this.#sourceFiles,
+        terminalByUnitId: this.#terminalMap,
+        components,
+      });
+    } catch (error) {
+      for (const component of components) {
+        try {
+          component.pendingReceipt.abort();
+        } catch {
+          // A failing receipt constructor may already have closed its scope.
         }
       }
-      this.#ctx.irProgramCallablePreparedUnitIds = new Set(componentUnitIds);
-    } catch (error) {
-      this.#callableComponents.length = 0;
-      this.#callableComponentByUnitId.clear();
-      this.#callableComponentsBySourceFile.clear();
-      delete this.#ctx.irProgramCallablePreparedUnitIds;
+      try {
+        this.#callablePublication?.abort();
+      } catch {
+        // Preserve the incoming ownership-transfer failure.
+      }
+      this.#state = "failed";
       throw error;
     }
   }
@@ -691,7 +698,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     if (this.#moduleInitPreparation !== undefined) {
       this.#fail("module-init-reservation-mismatch", "Prepared module-init was registered more than once");
     }
-    if (this.#callableComponents.length > 0) {
+    if (this.#callablePublication !== undefined || this.#callableComponents.length > 0) {
       this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
     }
     const sourcePlans = preparation.sourcePlans;
@@ -779,10 +786,22 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   /** Freeze the exact denominator and the reservations made before bodies. */
-  sealBodyBoundary(): MultiPreparedProgramBodyPlan {
+  sealBodyBoundary(): MultiPreparedProgramBodyPlan | undefined {
     if (this.#state === "body-boundary-sealed" || this.#state === "routes-complete" || this.#state === "complete") {
-      this.#assertStable();
-      return this.#bodyPlan!;
+      const currentState = this.#state;
+      try {
+        this.#assertStable();
+        return this.#bodyPlan;
+      } catch (error) {
+        if (currentState === "body-boundary-sealed") {
+          try {
+            this.#callablePublication?.abort();
+          } catch {
+            // Preserve the original pre-publication currentness failure.
+          }
+        }
+        throw error;
+      }
     }
     this.#requireState("collecting");
     try {
@@ -814,11 +833,12 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             routeKind: snapshot.route.routeKind,
             preparedComponentId: snapshot.componentId,
             preparedBeforeDirectBodies: true,
+            publicationPhase: "before-direct-bodies",
           });
         }
       }
-      for (const component of this.#callableComponents) {
-        component.assertCurrent?.();
+      const callableComponents = this.#callablePublication?.stagedComponents() ?? this.#callableComponents;
+      for (const component of callableComponents) {
         for (const unit of component.units) {
           if (reservedUnits.has(unit.unitId)) {
             this.#fail("duplicate-reservation-unit", `terminal ${unit.unitId} was reserved twice`);
@@ -829,7 +849,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             sourceId: unit.sourceId,
             routeKind: "cross-source-callable",
             preparedComponentId: component.preparedComponentId,
-            preparedBeforeDirectBodies: true,
+            stagedBeforeDirectBodies: true,
+            committedAfterExactBodySkips: true,
+            publicationPhase: "after-exact-body-skips",
           });
         }
       }
@@ -845,12 +867,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           routeKind: "module-init",
           preparedComponentId: preparation.preparedComponentId,
           preparedBeforeDirectBodies: true,
+          publicationPhase: "before-direct-bodies",
         });
       }
       reservations.sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
       const terminalUnitIds = this.#terminalUnits.map((unit) => unit.id);
       const bodyPlan: MultiPreparedProgramBodyPlan = Object.freeze({
-        schema: "multi-prepared-program-body-plan-v1",
+        schema: "multi-prepared-program-body-plan-v2",
         entrySourceId: this.#entrySourceId(),
         canonicalSourceIds: Object.freeze(this.#sources.map((source) => source.id)),
         semanticSourceIds: Object.freeze(this.#sourceFiles.map((sourceFile) => this.#sourceId(sourceFile))),
@@ -878,11 +901,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         reservations: Object.freeze(reservations.map((reservation) => Object.freeze(reservation))),
         unreservedTerminalUnitIds: Object.freeze(terminalUnitIds.filter((unitId) => !reservedUnits.has(unitId))),
       });
-      this.#bodyPlan = bodyPlan;
+      this.#assertBodyPlan(bodyPlan, callableComponents);
+      if (this.#callablePublication) this.#callablePublication.sealBodyBoundary(bodyPlan);
+      else this.#bodyPlan = bodyPlan;
       this.#state = "body-boundary-sealed";
-      this.#assertBodyPlan();
-      return bodyPlan;
+      return this.#bodyPlan;
     } catch (error) {
+      this.#callablePublication?.abort();
       if (this.#state !== "failed") this.#state = "failed";
       throw error;
     }
@@ -890,8 +915,8 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   /** Compile one source through the existing direct-body consumer. */
   compileBodySource(sourceFile: SourceFile, moduleInitMode: ModuleInitMode): void {
-    const state = this.#stateForBodySource(sourceFile);
     try {
+      const state = this.#stateForBodySource(sourceFile);
       // Module-init mode is graph-owned. Once M2 admits one contributor, every
       // source pass uses prepared mode; the final semantic source must never
       // fall back to the old `full` pass and mint/replace a second slot.
@@ -939,9 +964,59 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       if (state && route?.routeKind === "string") route.tamperSkipReport(state.skippedFunctionUnitIds);
       this.#assertBodySkip(sourceFile, state);
       this.#assertCallableBodySkip(sourceFile);
+      if (this.#bodyCursor === this.#sourceFiles.length && this.#callablePublication) {
+        this.#commitCallablePublication();
+      }
     } catch (error) {
+      if (!(error instanceof PreparedProgramAbiCommitError)) this.#callablePublication?.abort();
       this.#state = "failed";
       throw error;
+    }
+  }
+
+  /** Publish the private callable batch after the final exact body skip. */
+  #commitCallablePublication(): void {
+    const publication = this.#callablePublication;
+    if (!publication) return;
+    if (
+      this.#bodyPlan !== undefined ||
+      this.#callableComponents.length !== 0 ||
+      this.#callableComponentByUnitId.size !== 0 ||
+      this.#ctx.irProgramCallablePreparedUnitIds !== undefined
+    ) {
+      this.#fail("completion-order", "callable state became public before the final-source commit");
+    }
+    let prepared: ReturnType<typeof publication.prepareCommit>;
+    let scopeId: string;
+    try {
+      this.#assertStable();
+      this.#assertAllBodySkips();
+      for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
+      prepared = publication.prepareCommit();
+      this.#assertBodyPlan(prepared.bodyPlan, prepared.ownerState.components);
+      scopeId = prepared.pendingScopes.map(({ scopeId }) => scopeId).join("+");
+      this.#programAbiSession.commitPreparedScopes(prepared.pendingScopes);
+    } catch (error) {
+      if (!(error instanceof PreparedProgramAbiCommitError)) publication.abort();
+      throw error;
+    }
+    try {
+      // From this point forward every value is precomputed. The sequence is
+      // deliberately assignment-only and has no component-local recovery.
+      prepared.publishBodies();
+      this.#callableComponents = prepared.ownerState.components;
+      this.#callableComponentByUnitId = prepared.ownerState.componentByUnitId;
+      this.#callableComponentsBySourceFile = prepared.ownerState.componentsBySourceFile;
+      this.#callableSkippedUnitIds = prepared.ownerState.skippedUnitIds;
+      this.#callableSkippedUnitIdsBySourceFile = prepared.ownerState.skippedUnitIdsBySourceFile;
+      this.#bodyPlan = prepared.bodyPlan;
+      this.#ctx.irProgramCallablePreparedUnitIds = prepared.ownerState.preparedUnitIds;
+      this.#ctx.irCompiledFuncs = prepared.finalCompiledFuncs;
+      if (prepared.finalOutcomes !== undefined) this.#ctx.irOutcomes = prepared.finalOutcomes;
+      publication.markPublishedNoThrow();
+    } catch (error) {
+      if (error instanceof PreparedProgramAbiCommitError) throw error;
+      throw new PreparedProgramAbiCommitError(scopeId, error);
     }
   }
 
@@ -975,9 +1050,6 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       if (state?.route?.routeKind === "string") state.route.sealAfterOverlayCurrentness();
       this.#assertBodySkip(sourceFile, state);
       this.#assertCallableBodySkip(sourceFile);
-      for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
-        component.assertCurrent?.();
-      }
       if (state?.route) {
         const snapshot = this.#routeSnapshots.find((candidate) => candidate.state === state);
         if (!snapshot) this.#fail("route-plan-mismatch", `overlay source ${sourceFile.fileName} lost its sealed route`);
@@ -1051,9 +1123,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       this.#assertBodyPlan();
       this.#assertAllBodySkips();
       this.#assertAllCallableBodySkips();
-      for (const component of this.#callableComponents) component.assertCurrent?.();
       for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
-      this.#recordCallableIrTelemetry();
       this.#assertAllModuleInitBodySkips();
       this.#recordModuleInitIrTelemetry();
       this.#state = "routes-complete";
@@ -1491,6 +1561,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   #callableSkipNames(sourceFile: SourceFile): ReadonlySet<string> {
+    if (this.#callablePublication) return this.#callablePublication.skipNamesForSource(sourceFile);
     const names = new Set<string>();
     for (const component of this.#callableComponentsBySourceFile.get(sourceFile) ?? []) {
       for (const unit of component.units) {
@@ -1501,6 +1572,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   #callableSkipUnitIds(sourceFile: SourceFile): ReadonlySet<IrUnitId> {
+    if (this.#callablePublication) return this.#callablePublication.skipUnitIdsForSource(sourceFile);
     return new Set(
       (this.#callableComponentsBySourceFile.get(sourceFile) ?? []).flatMap((component) =>
         component.units.filter((unit) => unit.sourceFile === sourceFile).map((unit) => unit.unitId),
@@ -1509,23 +1581,20 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   #recordCallableSkippedUnitIds(sourceFile: SourceFile, unitIds: readonly IrUnitId[]): void {
-    const expected = this.#callableSkipUnitIds(sourceFile);
-    if (expected.size === 0) {
-      if (unitIds.length !== 0) {
-        this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} reported foreign callable body skips`);
-      }
-      this.#callableSkippedUnitIdsBySourceFile.set(sourceFile, new Set());
+    if (this.#callablePublication) {
+      this.#callablePublication.recordSkippedUnitIds(sourceFile, unitIds);
       return;
     }
-    const observed = new Set(unitIds);
-    if (!sameSet(observed, [...expected])) {
-      this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} did not skip its exact callable units`);
+    if (unitIds.length !== 0) {
+      this.#fail("body-skip-mismatch", `source ${sourceFile.fileName} reported foreign callable body skips`);
     }
-    for (const unitId of observed) this.#callableSkippedUnitIds.add(unitId);
-    this.#callableSkippedUnitIdsBySourceFile.set(sourceFile, observed);
   }
 
   #assertCallableBodySkip(sourceFile: SourceFile): void {
+    if (this.#callablePublication) {
+      this.#callablePublication.assertSourceSkipped(sourceFile);
+      return;
+    }
     const expected = this.#callableSkipUnitIds(sourceFile);
     const observed = this.#callableSkippedUnitIdsBySourceFile.get(sourceFile) ?? new Set<IrUnitId>();
     if (!sameSet(observed, [...expected])) {
@@ -1538,45 +1607,6 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     const expected = new Set(this.#callableComponentByUnitId.keys());
     if (!sameSet(this.#callableSkippedUnitIds, [...expected])) {
       this.#fail("body-skip-mismatch", "callable component body skips do not cover the reserved unit population");
-    }
-  }
-
-  #recordCallableIrTelemetry(): void {
-    if (this.#callableComponents.length === 0) return;
-    const names = this.#callableComponents.flatMap((component) => component.units.map((unit) => unit.legacyName));
-    this.#ctx.irCompiledFuncs = [...(this.#ctx.irCompiledFuncs ?? []), ...names];
-    const outcomes = this.#ctx.irOutcomes;
-    if (!outcomes) return;
-    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
-    const existingUnitIds = new Set(outcomes.flatMap((outcome) => (outcome.unitId ? [outcome.unitId] : [])));
-    const existingKeys = new Set(outcomes.map((outcome) => outcome.key));
-    for (const component of this.#callableComponents) {
-      for (const unit of component.units) {
-        const terminal = this.#terminalMap.get(unit.unitId)!;
-        if (existingUnitIds.has(unit.unitId) || existingKeys.has(terminal.legacyKey)) {
-          this.#fail("route-report-mismatch", `callable component ${unit.unitId} already has a terminal outcome`);
-        }
-        outcomes.push({
-          key: terminal.legacyKey,
-          sourceId: terminal.sourceId,
-          unitId: terminal.id,
-          file: unit.sourceFile.fileName,
-          unitKind: terminal.observedKind,
-          displayName: terminal.displayName,
-          ordinal: terminal.legacyOrdinal,
-          line: terminal.line,
-          column: terminal.column,
-          backend: "wasmgc",
-          target,
-          legacyBodyEmitted: false,
-          irBodyEmitted: true,
-          preparedComponentId: component.preparedComponentId,
-          kind: "emitted",
-          stage: "patch",
-        });
-        existingUnitIds.add(unit.unitId);
-        existingKeys.add(terminal.legacyKey);
-      }
     }
   }
 
@@ -1694,8 +1724,10 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     return this.#states.get(sourceFile);
   }
 
-  #assertBodyPlan(): void {
-    const plan = this.#bodyPlan;
+  #assertBodyPlan(
+    plan: MultiPreparedProgramBodyPlan | undefined = this.#bodyPlan,
+    callableComponents: readonly MultiPreparedProgramCallableComponent[] = this.#callableComponents,
+  ): void {
     if (!plan) this.#fail("body-plan-mismatch", "body plan has not been sealed");
     const canonical = this.#sources.map((source) => source.id);
     const semantic = this.#sourceFiles.map((sourceFile) => this.#sourceId(sourceFile));
@@ -1709,17 +1741,20 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             routeKind: snapshot.route.routeKind,
             preparedComponentId: snapshot.componentId,
             preparedBeforeDirectBodies: true,
+            publicationPhase: "before-direct-bodies",
           }),
         ),
       ),
-      ...this.#callableComponents.flatMap((component) =>
+      ...callableComponents.flatMap((component) =>
         component.units.map(
           (unit): MultiPreparedProgramReservation => ({
             unitId: unit.unitId,
             sourceId: unit.sourceId,
             routeKind: "cross-source-callable",
             preparedComponentId: component.preparedComponentId,
-            preparedBeforeDirectBodies: true,
+            stagedBeforeDirectBodies: true,
+            committedAfterExactBodySkips: true,
+            publicationPhase: "after-exact-body-skips",
           }),
         ),
       ),
@@ -1731,6 +1766,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
               routeKind: "module-init" as const,
               preparedComponentId: this.#moduleInitPreparation.preparedComponentId,
               preparedBeforeDirectBodies: true as const,
+              publicationPhase: "before-direct-bodies" as const,
             },
           ]
         : []),
@@ -1751,7 +1787,14 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           reservation.sourceId !== expected.sourceId ||
           reservation.routeKind !== expected.routeKind ||
           reservation.preparedComponentId !== expected.preparedComponentId ||
-          reservation.preparedBeforeDirectBodies !== true
+          reservation.publicationPhase !== expected.publicationPhase ||
+          (reservation.routeKind === "cross-source-callable"
+            ? reservation.stagedBeforeDirectBodies !== true ||
+              reservation.committedAfterExactBodySkips !== true ||
+              "preparedBeforeDirectBodies" in reservation
+            : reservation.preparedBeforeDirectBodies !== true ||
+              "stagedBeforeDirectBodies" in reservation ||
+              "committedAfterExactBodySkips" in reservation)
         );
       }) ||
       !sameArray(

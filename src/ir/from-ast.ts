@@ -167,7 +167,7 @@ import {
   domSurfaceCapability,
   hostExternCapability,
   prefixOpCapability,
-  stringIndexProvenBelow,
+  stringElementReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
@@ -2183,6 +2183,30 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   //     throw-tail arm uses).
   if (ts.isSwitchStatement(stmt)) {
     lowerSwitchStatement(stmt, { ...cx, scope: new Map(cx.scope) });
+    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    return;
+  }
+  // #5165 S1 — a function ENDING in a C-style loop. Identical
+  // `{while,for,do}.loop` lowering to the non-tail form; only the block
+  // terminator differs. The selector proved one of:
+  //   - void return → control may fall out of the loop into the implicit
+  //     empty return (mirrors the `tail-if-noelse` / tail-switch void arms);
+  //   - non-void → `loopNeverFallsThrough` proved the loop has no normal
+  //     completion (no falsifiable condition, no `break` binding it), so the
+  //     instruction after it is unreachable.
+  if (ts.isWhileStatement(stmt) || ts.isForStatement(stmt) || ts.isDoStatement(stmt)) {
+    const loopCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
+    if (ts.isWhileStatement(stmt)) lowerWhileStatement(stmt, loopCx);
+    else if (ts.isForStatement(stmt)) lowerForStatement(stmt, loopCx);
+    else lowerDoStatement(stmt, loopCx);
+    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    return;
+  }
+  // #5165 S3 — a function ENDING in a `try`. Same `emitTry` lowering as the
+  // non-tail form; the selector proved void (fall out into the implicit empty
+  // return) or `tryAllPathsTerminate` (nothing falls out at all).
+  if (ts.isTryStatement(stmt)) {
+    lowerTryStatement(stmt, { ...cx, scope: new Map(cx.scope) });
     cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
     return;
   }
@@ -6141,9 +6165,20 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
   // `stringMethodNeeded`, whose finalize loop registers the `string_charAt`
   // env import (host lane) or calls `ensureNativeStringHelpers` for
   // `__str_charAt` (native lane) — no late-import shift at IR lower time.
+  //
+  // (#5167) SECOND proof, same delegation: the counted-loop witness
+  // (`isProvenInBoundsIr` — `detectCountedLoopSafeIndex` recorded this
+  // `receiver:index` pair for the enclosing `for`) pins 0 ≤ i < s.length at
+  // every body point WITHOUT a statically known length, which is the only way
+  // a string PARAM can be proven — `cx.stringLiteralLens` is empty for one by
+  // construction. `detectCountedLoopSafeIndex` is purely syntactic and already
+  // records string receivers, so this adds no new analysis, no new read
+  // primitive, and no OOB decision (OOB is unreachable under the proof). The
+  // pre-registration above already covers it: the collector's element-access
+  // arm keys off a string-typed receiver with a non-string-literal index, so
+  // an identifier index registers charAt exactly the same way.
   if (recvType.kind === "string" && ts.isIdentifier(expr.expression)) {
-    const litLen = cx.stringLiteralLens?.get(expr.expression.text);
-    if (litLen !== undefined && stringIndexProvenBelow(arg, litLen)) {
+    if (stringElementReadLowerable(expr, cx.stringLiteralLens, isProvenInBoundsIr(expr, cx))) {
       const r = lowerStringMethodCall("charAt", recv, expr.expression, ts.factory.createNodeArray([arg]), cx);
       if (r !== null) return r;
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -15040,9 +15075,18 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
   // stale ASCII evidence cannot cross an exceptional edge.
   const tryMayWriteScope = conservativeStringEncodingScope(stmt.tryBlock, cx);
 
+  // (#5165 S2) The try/catch region bars early returns ONLY when a `finally`
+  // is present — that is the sole thing a Wasm `return` would skip (an
+  // exception handler does not intercept it). Mirrors the selector's
+  // `earlyReturnBarrierDepth`-vs-`earlyReturnLoopDepth` split in
+  // `isPhase1TryStatementInScope`. An enclosing barrier (a for-of iterator
+  // body, an outer finally-bearing try) still propagates through
+  // `cx.noEarlyReturn`, so a nested finally-less try inherits the bar.
+  const regionBarsEarlyReturn = cx.noEarlyReturn === true || stmt.finallyBlock !== undefined;
+
   // ── Try body ────────────────────────────────────────────────────────
   const tryScope = new Map(cx.scope);
-  const tryCx: LowerCtx = { ...cx, scope: tryScope, noEarlyReturn: true };
+  const tryCx: LowerCtx = { ...cx, scope: tryScope, noEarlyReturn: regionBarsEarlyReturn };
   const tryBody = cx.builder.collectBodyInstrs(() => {
     for (const s of stmt.tryBlock.statements) {
       lowerStmt(s, tryCx);
@@ -15072,7 +15116,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       // Destructuring catch — selector should have rejected this.
       demoteToLegacy("body-shape-rejected", `ir/from-ast: destructuring catch param not in slice 9 (${cx.funcName})`);
     }
-    const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: true };
+    const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: regionBarsEarlyReturn };
     const catchBody = cx.builder.collectBodyInstrs(() => {
       for (const s of stmt.catchClause!.block.statements) {
         lowerStmt(s, catchCx);

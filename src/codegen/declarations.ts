@@ -586,6 +586,27 @@ function isDirectObjectTypeParameter(
   return constraint !== undefined && (constraint.flags & ts.TypeFlags.Object) !== 0;
 }
 
+/** Parameter index when a generic function returns one direct type parameter unchanged by contract. */
+function directIdentityReturnParamIndex(stmt: ts.FunctionDeclaration): number | undefined {
+  if (
+    !stmt.type ||
+    !ts.isTypeReferenceNode(stmt.type) ||
+    !ts.isIdentifier(stmt.type.typeName) ||
+    (stmt.type.typeArguments?.length ?? 0) !== 0
+  ) {
+    return undefined;
+  }
+  const returnedTypeParameterName = stmt.type.typeName.text;
+  const returnedTypeParameter = stmt.typeParameters?.find(
+    (candidate) => candidate.name.text === returnedTypeParameterName,
+  );
+  if (!returnedTypeParameter) return undefined;
+  const index = stmt.parameters.findIndex(
+    (parameter) => directFunctionTypeParameter(parameter, stmt) === returnedTypeParameter,
+  );
+  return index >= 0 ? index : undefined;
+}
+
 interface AssertedMutableStructuralParamCarrier {
   open: true;
 }
@@ -1534,24 +1555,39 @@ function resolveGenericDeclarationCallSiteTypes(
     lowerParamType(ctx, param, name, index, stmt, sourceFile),
   );
   if (!resolved) return null;
+  const params = resolved.params.map((wasmType, index) => {
+    const param = stmt.parameters[index];
+    if (
+      !param ||
+      !stmt.body ||
+      !ts.isIdentifier(param.name) ||
+      noJsHost(ctx) ||
+      !directFunctionTypeParameter(param, stmt) ||
+      !parameterHasAssertedPropertyWrite(ctx, param, stmt) ||
+      nativeTypeOfDeclaration(ctx.checker, param) !== null
+    ) {
+      return wasmType;
+    }
+    const paramType = ctx.checker.getTypeAtLocation(param);
+    return preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
+  });
+  const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
+  const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
+  // (#1058) `finishNode<T extends Node>(node: T): T` is called with many
+  // concrete TypeScript AST node layouts. Its parameter is already widened to
+  // externref to preserve those identities, but the result used to retain the
+  // first call site's nominal Node struct. Returning a later Identifier then
+  // failed that stale cast and became null. The exact `T -> T` contract must
+  // carry the same representation back out.
+  const results =
+    resolved.results.length === 1 &&
+    identityCarrier !== undefined &&
+    (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
+      ? [identityCarrier]
+      : resolved.results;
   return {
-    ...resolved,
-    params: resolved.params.map((wasmType, index) => {
-      const param = stmt.parameters[index];
-      if (
-        !param ||
-        !stmt.body ||
-        !ts.isIdentifier(param.name) ||
-        noJsHost(ctx) ||
-        !directFunctionTypeParameter(param, stmt) ||
-        !parameterHasAssertedPropertyWrite(ctx, param, stmt) ||
-        nativeTypeOfDeclaration(ctx.checker, param) !== null
-      ) {
-        return wasmType;
-      }
-      const paramType = ctx.checker.getTypeAtLocation(param);
-      return preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
-    }),
+    params,
+    results,
   };
 }
 

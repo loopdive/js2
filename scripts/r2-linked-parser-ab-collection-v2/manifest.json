@@ -1,0 +1,104 @@
+{
+  "schema": "js2-r2-v2-adapter-manifest-v1",
+  "adapter": "r2-linked-parser-ab-collection-v2",
+  "note": "Static validation contract only. Running the 24-child collection requires an approved relock.",
+  "expectedChildCount": 24,
+  "expectedKeyCensus": [
+    "landed-ab|base|decimal|host|direct",
+    "landed-ab|base|decimal|host|prepared",
+    "landed-ab|base|decimal|standalone|direct",
+    "landed-ab|base|decimal|standalone|prepared",
+    "landed-ab|base|octal|host|direct",
+    "landed-ab|base|octal|host|prepared",
+    "landed-ab|base|octal|standalone|direct",
+    "landed-ab|base|octal|standalone|prepared",
+    "landed-ab|candidate|decimal|host|direct",
+    "landed-ab|candidate|decimal|host|prepared",
+    "landed-ab|candidate|decimal|standalone|direct",
+    "landed-ab|candidate|decimal|standalone|prepared",
+    "landed-ab|candidate|octal|host|direct",
+    "landed-ab|candidate|octal|host|prepared",
+    "landed-ab|candidate|octal|standalone|direct",
+    "landed-ab|candidate|octal|standalone|prepared",
+    "live-compat|live|decimal|host|direct",
+    "live-compat|live|decimal|host|prepared",
+    "live-compat|live|decimal|standalone|direct",
+    "live-compat|live|decimal|standalone|prepared",
+    "live-compat|live|octal|host|direct",
+    "live-compat|live|octal|host|prepared",
+    "live-compat|live|octal|standalone|direct",
+    "live-compat|live|octal|standalone|prepared"
+  ],
+  "pins": {
+    "base": "de35a52d978e328d46a9929b5438837385ddea5b",
+    "candidate": "fcede269da81724397dd00bd854e3830446620f5",
+    "live": "frozen-at-relock"
+  },
+  "expectedWatAbi": {
+    "standalone": {
+      "stringToNumber": {
+        "params": [
+          "ref null $AnyString",
+          "i32"
+        ],
+        "results": [
+          "f64"
+        ]
+      },
+      "readNumber": {
+        "params": [
+          "ref null $__fnctor_Parser"
+        ],
+        "results": [
+          "f64"
+        ]
+      },
+      "run": {
+        "params": [],
+        "results": [
+          "f64"
+        ]
+      }
+    },
+    "host": {
+      "stringToNumber": {
+        "params": [
+          "externref",
+          "i32"
+        ],
+        "results": [
+          "f64"
+        ]
+      },
+      "readNumber": {
+        "params": [
+          "externref"
+        ],
+        "results": [
+          "f64"
+        ]
+      },
+      "run": {
+        "params": [],
+        "results": [
+          "f64"
+        ]
+      }
+    }
+  },
+  "sources": {
+    "contract.mjs": "49b5e0bc4900a294fe86b148f02e853f4c8ccfd0b9113ad8c0c269b2823c87c8",
+    "fixtures.mjs": "ba58a253902e01deb60ad0708693571e04cd10a9afb36f0a48ed9c211a15173f",
+    "baseline-naive.mjs": "821c47d5b46d130112e0df1348dc3a2a715bd0a965ab646dbbf2ec686c760c77",
+    "selftest.mjs": "e8816bba728d3904824cdd89076b3fdb8349c2578668a971665e4d4720a0a9b8",
+    "relock.mjs": "e166bf6c78f6fe3e6322ea06607539a18c367e61f567b58f437c2704239a1be3"
+  },
+  "bundleEqual": {
+    "contract.mjs": "EQUAL",
+    "fixtures.mjs": "EQUAL",
+    "baseline-naive.mjs": "EQUAL",
+    "selftest.mjs": "EQUAL",
+    "relock.mjs": "EQUAL"
+  },
+  "rootHash": "7a0bf9be4def60b047144c7282e0bdd38f1bacb2fa956e046f34178785045eca"
+}

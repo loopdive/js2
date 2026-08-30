@@ -584,8 +584,12 @@ describe("#1058 interface array callback coercion", () => {
     const multiTag = generated.module.types.find(
       (type): type is StructTypeDef => type.kind === "struct" && type.name === "MultiTag",
     );
+    const baseIdx = generated.module.types.findIndex((type) => type.kind === "struct" && type.name === "Base");
+    expect(baseIdx).toBeGreaterThanOrEqual(0);
     expect(multiTag).toBeDefined();
-    expect(multiTag!.superTypeIdx).toBeUndefined();
+    // Multiple TypeScript heritage clauses are still flattened physically, but
+    // the one compatible declared prefix remains a useful nominal Wasm parent.
+    expect(multiTag!.superTypeIdx).toBe(baseIdx);
     expect(multiTag!.fields.map((field) => field.name)).toEqual(["kind", "flags", "code", "name"]);
 
     const result = await compile(STRUCTURAL_FALLBACK_SOURCE, {

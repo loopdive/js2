@@ -4527,7 +4527,7 @@ export function compileArrowAsCallback(
       // callback snapshots it; this is also required for a capture-free
       // declaration that is referenced only from inside the callback.
       // The materializer is a no-op for ordinary captured locals.
-      materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+      materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
       if (cap.mutable && !cap.alreadyBoxed) {
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
         // (#2128) Reuse the literal's shared cell when a sibling callback
