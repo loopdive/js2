@@ -875,3 +875,29 @@ compile errors, timeouts, skips, or standalone host-import leak:
 budget gates all passed; this source/tracker delta was committed with normal
 hooks in the Terra delivery worktree and awaits root cherry-pick/current-main
 replay, with no push, PR mutation, or GitHub issue created here.
+
+### Final latest-main replay after the TS7 repair (2026-08-30)
+
+Root cherry-picked the exact validated Terra delivery and merged current
+upstream main `275216c74c7299ea07a72c8d5479f7e1a477000c` without force or
+conflicts. The resulting integrated head is
+`0aa95ac3a498099c552d5130cb07dcd986a3ee2f`. TS7 typecheck passed with no
+diagnostics. The exact pinned-artifact one-fork focused suite passed **2/2**
+again: host 1918 ms and standalone 1824 ms, 25.86 s total, including the
+standalone `imports === []` assertion.
+
+The issue-owned rows also passed **4/4** on that integrated head, with no
+compile errors, timeouts, skips, or host-import leak:
+
+| Row | Target | Total | Compile | Instantiate | Execute | wasm SHA |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `spread-sngl-empty.js` | host | 4343.68 ms | 4110.68 ms | 66.31 ms | 20.11 ms | `f41aeebb8d8f` |
+| `spread-mult-empty.js` | host | 7284.24 ms | 7192.34 ms | 40.29 ms | 8.37 ms | `7695ae27ead5` |
+| `spread-sngl-empty.js` | standalone | 11932.92 ms | 11774.46 ms | 37.78 ms | 50.41 ms | `ac2af3ffa2bf` |
+| `spread-mult-empty.js` | standalone | 8321.63 ms | 8243.25 ms | 9.83 ms | 41.98 ms | `54271b4fb43b` |
+
+The behavior, import surface, and Wasm hashes are unchanged from the
+pre-integration Terra evidence. Only the final normal-hook documentation
+commit, complete pre-push gate, exact-head push, and PR shepherd transition
+remain. PR 5272 stays draft until those gates finish. No GitHub issue was
+created.
