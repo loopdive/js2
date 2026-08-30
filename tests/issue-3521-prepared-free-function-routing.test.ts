@@ -5,9 +5,11 @@ import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
 import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
+import { correlateIrSkippedBodyUnitIds } from "../src/codegen/ir-overlay-safety.js";
 import { compile, createIncrementalCompiler, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
+import type { IrUnitId } from "../src/ir/identity.js";
 import { buildImports } from "../src/runtime.js";
 
 // Register the low-level codegen delegates used by generateModule.
@@ -60,6 +62,75 @@ async function compileWithPoisonedDirectFunctionBodies(
 }
 
 describe("#3521 prepare-before-emit free-function routing", () => {
+  it("routes inherited and prepared free functions by exact UnitId with names as audit mirrors", async () => {
+    const { resolvePreparedFunctionBodyRoute } = await import("../src/codegen/declarations.js");
+    const inheritedUnitId = "ir-unit:source:inherited" as IrUnitId;
+    const preparedUnitId = "ir-unit:source:prepared" as IrUnitId;
+    const sameSpelledForeignUnitId = "ir-unit:foreign:prepared" as IrUnitId;
+    const routing = {
+      skipBodyUnitIds: new Set<IrUnitId>([inheritedUnitId, preparedUnitId]),
+      preserveSkippedBodyUnitIds: new Set<IrUnitId>([preparedUnitId]),
+      skippedUnitIds: [],
+    };
+    const skipBodies = new Set(["inherited", "prepared"]);
+    const preserveSkippedBodies = new Set(["prepared"]);
+
+    // The inherited compatibility route remains skip-only, while the prepared
+    // body keeps the IR installation that already owns its callable slot.
+    expect(
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "fixture.ts",
+        functionName: "inherited",
+        unitId: inheritedUnitId,
+        skipBodies,
+        preserveSkippedBodies,
+        routing,
+      }),
+    ).toEqual({ skip: true, preserve: false });
+    expect(
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "fixture.ts",
+        functionName: "prepared",
+        unitId: preparedUnitId,
+        skipBodies,
+        preserveSkippedBodies,
+        routing,
+      }),
+    ).toEqual({ skip: true, preserve: true });
+
+    // A name match cannot suppress a foreign source-qualified body.
+    expect(() =>
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "foreign.ts",
+        functionName: "prepared",
+        unitId: sameSpelledForeignUnitId,
+        skipBodies,
+        preserveSkippedBodies,
+        routing,
+      }),
+    ).toThrow(/routing disagrees/);
+  });
+
+  it("fails closed when exact free-function skip receipts are incomplete or untrusted", () => {
+    const inheritedUnitId = "ir-unit:source:inherited" as IrUnitId;
+    const preparedUnitId = "ir-unit:source:prepared" as IrUnitId;
+    const foreignUnitId = "ir-unit:foreign:prepared" as IrUnitId;
+    const requestedUnitIds = new Set<IrUnitId>([inheritedUnitId, preparedUnitId]);
+
+    expect(correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, preparedUnitId], "function")).toEqual(
+      new Set([inheritedUnitId, preparedUnitId]),
+    );
+    expect(() => correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId], "function")).toThrow(
+      /omitted skipped function UnitIds/,
+    );
+    expect(() =>
+      correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, inheritedUnitId], "function"),
+    ).toThrow(/duplicate skipped function/);
+    expect(() =>
+      correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, preparedUnitId, foreignUnitId], "function"),
+    ).toThrow(/foreign skipped function/);
+  });
+
   it.each([
     ["gc", "prepared-host-string-length.ts"],
     ["standalone", "prepared-native-string-length.ts"],
@@ -369,7 +440,9 @@ describe("#3521 prepare-before-emit free-function routing", () => {
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irFirstSkipped).toContain("add");
-    expect(outcome(result, "add")).toMatchObject({
+    const addOutcome = outcome(result, "add");
+    expect(addOutcome.unitId).toBeDefined();
+    expect(addOutcome).toMatchObject({
       kind: "emitted",
       legacyBodyEmitted: false,
       irBodyEmitted: true,
