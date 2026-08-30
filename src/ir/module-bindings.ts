@@ -225,7 +225,7 @@ export function makeIrIdentityLocalClassExpressionResolver(
         : irPreparedNestedOrdinaryClassBindingName(statement, fieldCallAdmission);
     if (legacyName === undefined) continue;
     const shape = projectedShapes.get(legacyName);
-    if (!shape || shape.classId !== record.id) continue;
+    if (!shape) continue;
     const classId = record.id;
     if (classId === undefined || identityContext.declarationByClassId.get(classId) !== statement) {
       return planningInvariant(
