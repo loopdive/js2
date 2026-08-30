@@ -1465,9 +1465,9 @@ export function emitReflectiveNativeProtoClosureCall(
     if (nativeProtoVariadic && i === 1) {
       // `userArgs[0]` is the receiver/thisValue.  Every remaining expression
       // is a real JavaScript argument and must be packed without padding.
-      // `array.new_fixed` accepts zero elements, so an omitted argument list
-      // still reaches the body as an empty vector.
+      // `$vec_externref` carries its length before the backing array.
       const variadicArgs = userArgs.slice(1);
+      fctx.body.push({ op: "i32.const", value: variadicArgs.length });
       for (const arg of variadicArgs) {
         const aType = compileExpression(ctx, fctx, arg, { kind: "externref" });
         if (aType === null) fctx.body.push({ op: "ref.null.extern" });
