@@ -3945,3 +3945,143 @@ precommit and prepush hooks run without bypass. No baseline, size, LOC,
 function, or hook exception is authorized. A Luna implementation remains draft
 until a separate Sol approves the exact pushed SHA; any later push invalidates
 that approval.
+
+## 2026-08-30 C39 implementation lock — Date carrier export provenance
+
+This Sol-authored checkpoint is stacked only on the independently approved C38
+head `d4a6c363539b885b82a8cccbb7317e4079569ee2` (draft PR #5298). Develop it on
+`codex/3520-c39-date-host-bridge-provenance`; never amend or push C38, C37,
+C36, or a queued parent. Keep the C39 PR draft until every parent is an exact
+ancestor of refreshed `main`, then re-anchor and repeat the complete validation
+and exact-SHA review cycle. The unchanged #4035 size ceiling remains a
+pre-existing control failure, not a C39 regression or an authorized edit.
+
+### Deterministic false-pass
+
+`emitDateHostBridge(...)` unconditionally publishes three JS-host carrier
+helpers whenever `__Date` exists:
+
+- `__\0js2_is_date`;
+- `__\0js2_date_value`; and
+- `__\0js2_date_set_value`.
+
+Both single- and multi-source compilation publish these entries before
+`stripHostBridgeExports(...)`. The policy sink recognizes exact compact bridge
+aliases, ordinary bridge prefixes, and NUL-containing names only when they also
+contain `host_bridge`. None of the three Date names matches. An ordinary Date
+program therefore retains all three compiler-only exports in standalone and
+WASI, where no JavaScript host consumes them, and the exports keep their
+functions and carrier types live through DCE. The #4035 marker census omits the
+three names, so the leak passes the existing size-policy control.
+
+Do not repair this by broadening the generic `js2_` infix or prefix table. That
+would make spelling alone deletion authority for unrelated NUL-labelled
+exports and repeat the user-export ownership defects repaired by C37 and C38.
+
+### Exact ownership and policy contract
+
+Own only:
+
+- this issue record;
+- `src/codegen/date-host-bridge.ts`;
+- `src/codegen/host-bridge-exports.ts`; and
+- new `tests/issue-3520-date-host-bridge-export-provenance.test.ts`.
+
+Retain the current one-shot Date bridge emission, function order, bodies,
+types, public names, and runtime lookup. At publication, record each exact
+`WasmExport` descriptor, its original name, and the exact `WasmFunction`
+allocator that was pushed for it. Freeze one complete three-entry census for
+the context; no name scan, `funcMap` lookup, Program-ABI role, or reconstructed
+index may replace that record.
+
+Export one bounded namespace predicate that accepts exactly the three names
+above. It accepts no suffix, prefix, alternate NUL label, or near spelling.
+Authenticate an entry as compiler-owned when it is one recorded descriptor,
+regardless of later spelling, or when a replacement/copy in that exact
+three-name namespace is a function descriptor resolving to one recorded exact
+allocator. Resolve a live descriptor against the module's current function-
+import prefix. Resolve a stable handle with `definedFuncAt`. An invalid live
+lookup must not fall through to the stable regime; do not repair an index,
+consult `funcMap`, or infer ownership from the function/export name. A
+same-spelled descriptor targeting a different user function and every near
+spelling remain user-owned.
+
+Before the policy decision, validate every recorded Date descriptor exactly
+once. Missing or repeated descriptor identity, renamed entry, non-function
+kind, retargeted or one-past function index, missing allocator object, an
+incomplete/duplicate census, or any target that no longer resolves to its
+recorded allocator is fatal. Validation precedes both the enabled-policy early
+return and every export write in the disabled sink.
+
+In `stripHostBridgeExports(...)`, run the Date, constructor-closure, and vec
+provenance predicates before any shared-name retention predicate. Remove an
+authenticated Date entry when host-bridge publication is disabled, then retain
+unowned entries in the exact Date namespace, and finally preserve C37, C38,
+and the general legacy policy byte-for-byte. This ordering must also remove a
+recorded Date descriptor renamed after finalization into `$v0` or `$ch`, while
+preserving a distinct genuine user entry at that spelling.
+
+Do not change Date allocation, carrier layout, host runtime conversion,
+`Date.prototype` lowering, import order, direct/IR routing, public JS-host
+behavior, Program-ABI roles/ordinals, vec/closure registries, or fallback.
+
+### Required focused matrix
+
+1. With host bridge auto-enabled and with `hostBridge: "always"`, compile a
+   Date-bearing program and prove exactly three compiler Date descriptors,
+   exact names, exact function targets, and unchanged runtime behavior.
+2. In standalone and WASI under auto/off policy, with Program-ABI tracking both
+   disabled and enabled, require all authenticated Date carrier entries absent,
+   exact public export/import censuses, tracked/untracked binary equality, and
+   runtime value `5` for a standalone-safe typed probe using
+   `new Date(5).getTime()`.
+3. In standalone and WASI with `hostBridge: "always"`, require all three exact
+   helpers retained and the same runtime value. A Date-free control publishes
+   no Date census or carrier entry in any target.
+4. Exercise the independent multi-source emitter with a Date constructed in a
+   non-entry provider and an imported typed entry call. In standalone, prove
+   auto/off removes the exact three entries, `hostBridge: "always"` retains
+   them, tracked/untracked binaries remain equal within each policy, exact
+   descriptor targets/censuses hold, and both policies execute to `5`.
+5. Direct provenance cases must prove that a copied exact-name descriptor
+   targeting the recorded allocator is removable; the same exact name
+   targeting a different user allocator survives; a near name targeting the
+   compiler allocator is not reclassified; and a recorded Date descriptor
+   renamed to `$v0` is removed before vec-name retention while a distinct user
+   `$v0` survives.
+6. A fail-closed mutation table must cover missing, duplicate, renamed, kind-
+   changed, retargeted, one-past-defined-function, and allocator-removed
+   recorded entries. Every case must fail before policy publication; no compact
+   count or prefix-only absence is acceptance evidence.
+7. Preserve the complete C37 vec and C38 constructor-closure suites, the #4616
+   Date carrier/ToPrimitive suite, and the #4035 policy suite as controls. Do
+   not edit #4035's size ceiling or call its unchanged failure a regression.
+
+Every target/tracking comparison must assert exact descriptor names and
+targets, public names, imports, runtime values, and binary parity where
+specified. The `any`-typed #4616 host-marshalling fixture remains a host
+control; standalone acceptance uses the typed probe above.
+
+### Dependencies and acceptance
+
+The open-PR, worktree, and claim audit found no C39/Date-export owner. The
+parallel Claude work is confined to callable publication and `from-ast`/
+propagation lanes. C39 intentionally overlaps only its stacked C37/C38
+`host-bridge-exports.ts` parent and must wait for PRs #5294, #5295, and #5298 to
+land before becoming ready.
+
+Acceptance requires the focused Date provenance suite, complete C37 vec and
+C38 closure suites, #4616 Date controls, and the unchanged #4035 control
+result; TypeScript 7 and 5; Prettier/Biome and `git diff --check`; IR fallback,
+issue integrity, IR layering/readiness, and applicable oracle/coercion/dead-
+export ratchets. Run every heavy command only after a finite, non-negative
+one-minute load sample is strictly below `logical cores - 2`. Immediately
+before every signed commit, run both LOC and function regrowth ratchets, then
+let all precommit and prepush hooks run without bypass. No baseline, size, LOC,
+function, or hook exception is authorized.
+
+Luna Max may implement only the authorized surface above. Before the stacked
+PR leaves draft, an independent Sol must review its exact pushed SHA and return
+**APPROVE** for the three-entry census, live/stable target regimes, fail-closed
+mutation boundary, cross-namespace ordering, target matrix, parent ancestry,
+and non-overlap with the Claude lane. Any later push invalidates approval.
