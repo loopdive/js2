@@ -69,7 +69,7 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 2. Add the dependency-free `selfhost.math.cbrt -> Math_cbrt` provider.
 3. Add `cbrt` to `IR_MATH_METHOD_TABLE` and reuse the generic selector,
    call-graph walker, from-AST emitter, manifest, and provider materializer.
-4. Add an independent `JS2WASM_IR_MATH_CBRT=0` rollback.
+4. Initial rollout added an independent per-method rollback.
 5. Widen #3526 exhaustive vocabulary, integration, linear-legality, and
    neutrality evidence from twenty-one to twenty-two source Math intrinsics.
 6. Add focused host/standalone ownership, dependency-free provider closure,
@@ -89,7 +89,8 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
   infinities.
 - A native-Math oracle pins an explicit absolute/relative accuracy envelope
   while separately proving the oracle ran on an IR-only body.
-- The narrow rollback and all excluded shapes decline before claim without
+- The former narrow rollback was validated alongside excluded shapes, which
+  decline before claim without
   invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
 
@@ -101,7 +102,7 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 - The frozen manifest attaches the existing, dependency-free `Math_cbrt`
   callable and requests no host capability. No Math algorithm or
   direct-codegen file changed.
-- `JS2WASM_IR_MATH_CBRT=0` withdraws only this claim. Shadowed, aliased,
+- The per-method rollback withdrew only this claim. Shadowed, aliased,
   computed, optional-invocation, optional-receiver, wrong-arity, spread, and
   non-number forms all decline before claim.
 - Four focused/affected contract suites pass 27/27. They cover host and
@@ -137,5 +138,12 @@ Luna's numerical audit measured large pre-existing relative error at
 values in standalone mode, pins direct/IR identity at both range edges, and
 limits the native oracle to the helper's established moderate-value envelope.
 Changing the eight-step algorithm remains a separate correctness change. The
-method-specific environment flag provides narrow rollback;
+rollout-only per-method withdrawal provided narrow rollback;
 `JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

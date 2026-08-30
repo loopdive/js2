@@ -113,8 +113,8 @@ The provider must:
    catalogues with the existing f64-unary signature. Add one
    `backend.math.clz32` composite provider for all targets and both Wasm
    backends, with no dependencies or host capabilities.
-3. Add a composite-marked `clz32` method plan and narrow
-   `JS2WASM_IR_MATH_CLZ32=0` rollback. Preserve the generic ambient binding,
+3. Initial rollout added a composite-marked `clz32` method plan and narrow
+   per-method rollback. Preserve the generic ambient binding,
    exact arity, non-spread, and primitive-number selector/from-AST path.
 4. Extend the closed composite operation union and lower `math.clz32` by
    reusing `emitWasmInt32Coercion` with the existing lazy i64 scratch pool,
@@ -144,8 +144,8 @@ The provider must:
   both Wasm backends.
 - Missing/malformed providers and unsupported bytecode/Porffor policies fail
   before emission; no saturation or callable fallback is introduced.
-- Coercive and excluded call shapes keep direct ownership, and rollback causes
-  a clean pre-claim decline with no post-claim errors.
+- Coercive and excluded call shapes keep direct ownership; the former rollback
+  caused a clean pre-claim decline with no post-claim errors.
 
 ## Non-goals
 
@@ -160,8 +160,8 @@ The provider must:
 The primary risk is losing unsigned-result evidence at an IR or export
 boundary. Focused result-type/provider assertions and runtime checks at 32-bit
 high-bit inputs guard that seam. The second risk is selector overreach into
-coercive or optional calls; exclusion and rollback tests keep those shapes
-legacy-owned. `JS2WASM_IR_MATH_CLZ32=0` provides narrow rollback, while
+coercive or optional calls; exclusion tests keep those shapes legacy-owned.
+During initial rollout, the per-method control provided narrow rollback, while
 `JS2WASM_IR_FIRST=0` remains the global control.
 
 ## Outcome
@@ -170,10 +170,17 @@ Implemented in PR #5141. Exact ambient one-number `Math.clz32` calls now enter
 semantic IR as `f64 -> f64`, freeze a dependency-free `backend.math.clz32`
 composite, and lower through the shared exact IEEE-754 ToUint32 expansion plus
 `i32.clz`/`f64.convert_i32_s` on both WasmGC and production linear. Bytecode and
-Porffor remain fail-closed, excluded/coercive shapes remain direct, and
-`JS2WASM_IR_MATH_CLZ32=0` withdraws only this claim.
+Porffor remain fail-closed, excluded/coercive shapes remain direct, and the
+per-method control withdrew only this claim during initial rollout.
 
 Validation covers 23 focused ownership/catalogue/provider cases, native and
 direct parity through huge finite values, zero-import standalone, composed
 Number semantics, TypeScript 7, LOC/function/oracle/coercion ratchets, issue
 integrity, and the mechanically refreshed no-growth neutrality baseline.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-25
+updated: 2026-08-30
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -193,6 +193,27 @@ R3 because its ordered plan consumes the class/static-intent census owned by
 parallel deletion opportunities. R9 also requires the explicit dynamic-value,
 control-flow, async, adoption-owner, and broader-corpus coverage closure named
 above.
+
+### 2026-08-30 #4522 Math rollback checkpoint
+
+This is a bounded pre-R9 retirement, not an IR-only policy claim. The temporary
+per-method Math withdrawals used during the initial rollout are removed while
+the exact ambient recognizer and target-capability boundary remain unchanged.
+The production registry remains a 33-method contract, and the shared linear
+legality boundary remains exactly 10/33.
+
+The closed #4522 proof adds a literal 21-row method/arity/provider census with
+42 host/standalone positive cells, 21 shadowed cells, 21 alias cells, 42
+wrong-arity cells, and 21 provider mutations. It joins the independently
+literal retirement population to the production registry and rejects missing,
+duplicate, and synthetic foreign rows. Each positive cell uses the retained
+global `experimentalIR: false` compile of the same source as an observational
+direct oracle for runtime and public Wasm surface parity; it is not a production
+fallback. The current #4522 R9 environment denominator is fifteen readers:
+the four global controls, the separately owned exact mixed-primitive selector
+rollback, nine named Prepared cutovers, and the default-on linear direct-backend
+escape hatch. Diagnostics, self-checks, and codegen-only tuning remain separately
+classified. This full inventory stays owned by #4522 until the R9 policy flip.
 
 ## Program rules
 

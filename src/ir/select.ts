@@ -7351,27 +7351,6 @@ function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpressio
 }
 
 function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
-  if (plan.intrinsic === "math.asin" && process.env.JS2WASM_IR_MATH_ASIN === "0") return false;
-  if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
-  if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
-  if (plan.intrinsic === "math.tan" && process.env.JS2WASM_IR_MATH_TAN === "0") return false;
-  if (plan.intrinsic === "math.log10" && process.env.JS2WASM_IR_MATH_LOG10 === "0") return false;
-  if (plan.intrinsic === "math.log1p" && process.env.JS2WASM_IR_MATH_LOG1P === "0") return false;
-  if (plan.intrinsic === "math.sinh" && process.env.JS2WASM_IR_MATH_SINH === "0") return false;
-  if (plan.intrinsic === "math.cosh" && process.env.JS2WASM_IR_MATH_COSH === "0") return false;
-  if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
-  if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
-  if (plan.intrinsic === "math.fround" && process.env.JS2WASM_IR_MATH_FROUND === "0") return false;
-  if (plan.intrinsic === "math.clz32" && process.env.JS2WASM_IR_MATH_CLZ32 === "0") return false;
-  if (plan.intrinsic === "math.imul" && process.env.JS2WASM_IR_MATH_IMUL === "0") return false;
-  if (plan.intrinsic === "math.max" && process.env.JS2WASM_IR_MATH_MAX === "0") return false;
-  if (plan.intrinsic === "math.min" && process.env.JS2WASM_IR_MATH_MIN === "0") return false;
-  if (plan.intrinsic === "math.round" && process.env.JS2WASM_IR_MATH_ROUND === "0") return false;
-  if (plan.intrinsic === "math.sign" && process.env.JS2WASM_IR_MATH_SIGN === "0") return false;
-  if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
-  if (plan.intrinsic === "math.asinh" && process.env.JS2WASM_IR_MATH_ASINH === "0") return false;
-  if (plan.intrinsic === "math.acosh" && process.env.JS2WASM_IR_MATH_ACOSH === "0") return false;
-  if (plan.intrinsic === "math.atanh" && process.env.JS2WASM_IR_MATH_ATANH === "0") return false;
   return (
     "op" in plan ||
     "sequence" in plan ||

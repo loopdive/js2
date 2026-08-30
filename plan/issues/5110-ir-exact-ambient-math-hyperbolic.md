@@ -76,8 +76,7 @@ remain direct.
 3. Add all three methods to `IR_MATH_METHOD_TABLE` and reuse the generic
    selector, call-graph walker, from-AST emitter, manifest, and provider
    materializer.
-4. Add independent `JS2WASM_IR_MATH_SINH=0`,
-   `JS2WASM_IR_MATH_COSH=0`, and `JS2WASM_IR_MATH_TANH=0` rollbacks.
+4. Initial rollout added independent per-method rollbacks.
 5. Widen #3526 exhaustive vocabulary, dependency, integration,
    linear-legality, and neutrality evidence from eighteen to twenty-one source
    Math intrinsics.
@@ -98,7 +97,8 @@ remain direct.
   NaN, and infinities.
 - Native-Math sanity checks use explicit method-specific bounds that preserve
   the known approximation envelope without pretending to be libm conformance.
-- Each rollback withdraws only its corresponding method, and excluded shapes
+- During initial rollout, each per-method rollback withdrew only its corresponding
+  method, and excluded shapes
   decline before claim without invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
 
@@ -111,8 +111,7 @@ remain direct.
   `Math_tanh` callables, declares `math.exp` as each provider's sole
   dependency, and materializes that dependency once. No Math algorithm or
   direct-codegen file changed.
-- Independent `JS2WASM_IR_MATH_SINH=0`, `JS2WASM_IR_MATH_COSH=0`, and
-  `JS2WASM_IR_MATH_TANH=0` controls withdraw only their corresponding claim.
+- Independent per-method controls withdrew only their corresponding claim.
   Shadowed, aliased, computed, optional-invocation, optional-receiver,
   wrong-arity, spread, and non-number forms all decline before claim.
 - Four focused/affected contract suites pass 45/45. They cover host and
@@ -144,5 +143,13 @@ remain direct.
 The principal risks are dependency deduplication and inherited cancellation or
 overflow behavior. The semantic features must share one `math.exp` provider,
 while direct-path bit identity remains the hard migration invariant and native
-Math only supplies a coarse numerical sanity bound. Independent environment
-flags provide narrow rollback; `JS2WASM_IR_FIRST=0` remains the global control.
+Math only supplies a coarse numerical sanity bound. During initial rollout,
+independent per-method withdrawals provided narrow rollback;
+`JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawals are retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.
