@@ -522,6 +522,7 @@ interface StrictMethodAllocationProvenance {
 }
 
 type StrictMethodProvenanceInstr = Instr & { strictMethodLiteralToken?: number };
+type StrictMethodStructNewInstr = Extract<Instr, { op: "struct.new" }>;
 
 const strictMethodAllocationProvenanceByCtx = new WeakMap<CodegenContext, StrictMethodAllocationProvenance>();
 const strictHostSpreadByCtx = new WeakSet<CodegenContext>();
@@ -706,19 +707,24 @@ function reserveStrictMethodDispatchEntries(
     for (let index = 0; index < fields.length; index++) {
       const field = fields[index]!;
       const registered = registeredFields[index];
-      const sameType =
-        registered !== undefined &&
-        registered.type.kind === field.type.kind &&
-        (registered.type.kind === "ref" || registered.type.kind === "ref_null"
-          ? registered.type.typeIdx === field.type.typeIdx
-          : true);
-      if (
-        registered === undefined ||
-        registered.name !== field.name ||
-        registered.mutable !== field.mutable ||
-        !sameType
-      ) {
-        registeredFields[index] = { name: field.name, type: field.type, mutable: field.mutable };
+      const mutable = field.mutable ?? false;
+      let sameType = false;
+      if (registered !== undefined) {
+        const registeredType = registered.type;
+        const fieldType = field.type;
+        if (registeredType.kind === fieldType.kind) {
+          if (
+            (registeredType.kind === "ref" || registeredType.kind === "ref_null") &&
+            (fieldType.kind === "ref" || fieldType.kind === "ref_null")
+          ) {
+            sameType = registeredType.typeIdx === fieldType.typeIdx;
+          } else {
+            sameType = true;
+          }
+        }
+      }
+      if (registered === undefined || registered.name !== field.name || registered.mutable !== mutable || !sameType) {
+        registeredFields[index] = { name: field.name, type: field.type, mutable };
       }
     }
   };
@@ -824,7 +830,7 @@ function setStrictMethodMarker(
 }
 
 function strictMethodMarkerForAllocation(
-  instr: Instr,
+  instr: StrictMethodStructNewInstr,
   byLiteral: ReadonlyMap<object, StrictMethodLiteral>,
   literalIds: WeakMap<object, number>,
   provenance: StrictMethodAllocationProvenance | undefined,

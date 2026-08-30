@@ -846,3 +846,32 @@ or marker allocation behavior. Acceptance requires TS7 typecheck, the exact
 2/2 host/standalone focused suite, the 4/4 owned Test262 rows, and the complete
 normal pre-push gate on the repaired integrated head. The repair stays in PR
 5272 and this markdown issue; no GitHub issue was created.
+
+### Terra TS7 repair result and handoff (2026-08-30)
+
+On dedicated branch `codex/5131-ts7-type-narrowing-terra` at committed plan
+head `cd9e30330e95025eb38b6dc27bdda11e69c9032a`, the repair changes only
+`src/codegen/iterator-native.ts`: it independently narrows both `ValType`
+operands before reading `typeIdx`, records an absent optional mutability as
+immutable (`false`), and restricts the allocation-marker helper to the
+already-selected `struct.new` instruction variant. It does not alter the
+emitted IR or strict-marker allocation behavior.
+
+The TS7 gate passed with `pnpm run typecheck` (exit 0, 61.6 s, no diagnostics).
+The exact pinned-artifact one-fork focused command then passed **2/2**:
+host 6167 ms and standalone 3424 ms, 79.81 s total. The standalone assertion
+for `imports === []` passed, so this run observed no host-import leak. The
+freshly audited sequential owned-row replay also passed **4/4**, with no
+compile errors, timeouts, skips, or standalone host-import leak:
+
+| Row | Target | Total | Compile | Instantiate | Execute | wasm SHA |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `spread-sngl-empty.js` | host | 4550.57 ms | 4422.25 ms | 78.23 ms | 20.39 ms | `f41aeebb8d8f` |
+| `spread-mult-empty.js` | host | 3855.69 ms | 3756.06 ms | 43.54 ms | 9.69 ms | `7695ae27ead5` |
+| `spread-sngl-empty.js` | standalone | 10229.40 ms | 10134.29 ms | 14.46 ms | 46.02 ms | `ac2af3ffa2bf` |
+| `spread-mult-empty.js` | standalone | 11777.80 ms | 11492.57 ms | 38.67 ms | 88.11 ms | `54271b4fb43b` |
+
+`git diff --check`, targeted Prettier and Biome, and the function and LOC
+budget gates all passed; this source/tracker delta was committed with normal
+hooks in the Terra delivery worktree and awaits root cherry-pick/current-main
+replay, with no push, PR mutation, or GitHub issue created here.
