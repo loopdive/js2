@@ -1,9 +1,9 @@
 ---
 id: 4588
 title: "Prepare the compiler timer shim through exact IR ownership"
-status: done
+status: in-progress
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-30
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -13,8 +13,8 @@ language_feature: compiler-internals
 goal: ir-full-coverage
 sprint: current
 parent: 3518
-depends_on: [4573, 4579, 4583, 4584]
-related: [1501, 3090, 3519, 3520, 3792, 4573, 4579, 4583, 4584]
+depends_on: [1231, 3521, 4522, 4573, 4579, 4583, 4584]
+related: [1501, 3090, 3518, 3519, 3520, 3792, 4522, 4573, 4579, 4583, 4584]
 assignee: ttraenkler/codex
 files:
   - .github/workflows/ci.yml
@@ -170,3 +170,217 @@ user-authored function named `setTimeout` remains an ordinary attempted owner,
 so the exclusion is provenance-bound rather than spelling-bound. The IR-kind
 neutrality verdicts and ratchets are unchanged; its baseline refresh records
 only current evidence-line locations after the timer-cutover source changes.
+
+## 2026-08-30 Sol implementation plan — retire the timer-shim rollback
+
+### Grounded scope and dependency order
+
+The planning provenance for this retirement is `main` at
+`275216c74c7299ea07a72c8d5479f7e1a477000c` (tree
+`88cf9443abbb0172e3fd39526d863c5cdd79212a`); it is not the eventual A/B
+baseline. The exact rollback debt at that provenance is one logical branch in
+`src/codegen/ir-timer-shim-planning.ts`, expressed as two comparisons for the
+two historical disabling spellings. That branch is the only production
+reader. It can suppress the exact compiler-provenanced timer resolver and
+restore the direct wrapper body even though default compilation already
+prepares the same self-owned terminal and emits a byte-identical artifact.
+
+The resolver feeds nine exact consumer callsites in four production files:
+`src/codegen/index.ts` has the resolver, selection option, and four routing
+projections; `src/codegen/ir-imported-call-planning.ts` plans the imported
+timer call; `src/codegen/ir-overlay-preparation.ts` closes a missing-capability
+component; and `src/codegen/ir-prepared-free-functions.ts` certifies the
+outside caller. None of those consumers is removed or generalized by this
+slice. The current focused file expands to 22 tests; its historical 21/21
+completion record above remains an accurate landing snapshot from before the
+later host multi-source control was added.
+
+Publish this retirement only after the active #3521 prepared-publication stack
+has landed and after the already approved retirement order Math → #1231 →
+#4584 has consumed the shared #4522 inventory. That preserves their reviewed
+15 → 14 → 13 denominator. This slice then removes the timer row as 13 → 12.
+Rebase normally at each predecessor boundary; never copy ProgramABI,
+multi-prepared callable, module-init, or parallel Claude work into this branch.
+The plan can land earlier as a documentation checkpoint, but Terra must not
+edit production until those dependencies are authoritative on `main`. After
+the final predecessor lands, freeze and record a fresh exact dependency-tip
+commit and tree. Both the clean baseline root and every grounded A/B comparison
+below must use that dependency-tip, never the planning-provenance commit. If a
+predecessor changes timer route, artifact, evidence, or failure semantics,
+amend this plan and obtain a new Sol review before implementation.
+
+### Exact change contract
+
+1. Remove only the two historical environment comparisons from
+   `timerShimResolver`. Preserve the `ctx.fast` and
+   `resolveModuleBindings === false` exclusions, the checker-backed
+   `isPreparedInjectedTimerShimOwner` certification, and the exact
+   `certifyExactInjectedTimerShim` result. The change makes an existing default
+   route unconditional; it does not admit a user declaration, near miss,
+   multi-source duplicate, fast compile, or disabled binding-resolution lane.
+2. Keep the complete timer ownership pipeline: the self-owned
+   `compiler-unit:timer-shim:set-timeout` terminal, source-qualified UnitId,
+   imported-call plan, exact Program ABI slot, late capability preparation,
+   component isolation, dynamic ToNumber support, body patch, route audit, and
+   terminal outcome. Do not turn the timer into a name-based special case or
+   inline its logic into the direct backend.
+3. Replace focused rollback assertions with permanent-route assertions.
+   Candidate compilation with the former key absent or externally set to
+   either historical disabling value must be byte- and evidence-identical.
+   Keep a separate public `experimentalIR: false` direct oracle for the same
+   exact source; it is observational only and may never become a fallback from
+   failed Prepared publication.
+4. Draw the ownership boundary explicitly. Fast compilation, disabled binding
+   resolution, user or near-miss declarations, and WASI are true exclusions:
+   they retain their current direct-owned or typed-safe-reject behavior and
+   publish no compiler-timer claim, imported-call plan, or provenance outcome.
+   A checker-recognized timer whose component is non-isolated or whose exact
+   capability is missing is instead recognized-but-ineligible. Preserve its
+   exact typed Unsupported outcome and any internal preflight/imported-call-plan
+   evidence needed to diagnose the rejection, while publishing no timer body,
+   ABI/import capability, patch, or receipt. Once exact isolation and capability
+   admission succeeds, ownership is permanent. A lower, seal/currentness, or
+   publication failure after that boundary is a compiler failure or
+   invariant—not `late-preparation-unsupported` and not a direct retry—and must
+   leave `legacyBodyEmitted=false`, zero physical timer entries, and zero timer
+   body/ABI publication prefix.
+5. Preserve every stronger negative and failure-isolation control in
+   `tests/issue-4588-standalone-timer-shim-cutover.test.ts`: ordinary and
+   near-miss declarations, nested shadows, first-class escape, multiple users,
+   multi-source same names, callback-aware host multi-source behavior,
+   missing-capability closure, timer-connected component rejection, injected
+   seal/lower failure isolation, full-path source identity, Node Timeout
+   coercion, and numeric handle behavior.
+6. Update this issue and the post-Math #4522 inventory. Remove the timer row,
+   decrement the exact live route/representation denominator 13 → 12, and
+   leave global IR-first, string-builder, async, mixed-conditional,
+   object/class predecessors already consumed, remaining multi-prepared,
+   module-init, and linear readers classified accurately. Do not claim R9 or
+   direct-frontend retirement complete.
+7. The exact retired identifier must have zero tracked occurrences in source,
+   tests, scripts, plans, and package/workflow files. Do not hide a reader
+   behind string concatenation or an alias. The external A/B launcher may set
+   the old key without checking that spelling into the repository.
+
+### Baseline/candidate route and artifact matrix
+
+Use separate clean roots for the final dependency-tip baseline and candidate
+bytes, separate archive-backed temporary directories, and a fresh process for
+every cell. For each target (`gc`, `standalone`), optimization setting
+(`optimize:false`, `optimize:true`), and exact source key (basename `async.ts`,
+full path `website/playground/examples/js/async.ts`), collect these four arms:
+
+1. grounded baseline with the key unset: exact Prepared timer route;
+2. grounded baseline with the old rollback set to `"0"`: exact direct timer
+   route and two physical entries;
+3. candidate with the key unset: permanent Prepared timer route; and
+4. candidate with the old rollback externally set to `"0"`: the same permanent
+   Prepared timer route.
+
+These four arms form 32 primary cells. Candidate arms 3 and 4 must be identical
+in binary, normalized WAT, imports, exports, function/type/global/table/memory
+counts,
+runtime result, source/unit census, terminal disposition, outcome projection,
+and route audit. Baseline arm 1 must equal both candidate arms. Baseline arm 2
+must also be binary/WAT/public-surface/runtime identical, but its evidence must
+remain deliberately different: one exact self-owned terminal is
+`legacy-ast-entry`, with exactly one `compileFunctionBody` and one
+`compileStatement` entry. No aggregate hash may substitute for these row-level
+joins.
+
+Repeat candidate arm 4 with the second former disabling spelling for both
+targets, both optimization settings, and both source keys: eight more cells,
+for 40. Add eight explicit `experimentalIR:false` direct-oracle cells over the
+same target/optimization/source-key product: 48. Add the eight standalone
+basename ToNumber cells specified below: 56. Finally, add two basename WASI
+candidate cells, one per optimization setting, that prove the timer remains a
+pre-admission exclusion: the closed compile matrix is exactly 58 cells. Do not
+silently add or drop a cell; publish the expected and observed key census.
+
+The two source keys remain distinct throughout and may not be normalized into
+one another. The timer UnitId must remain exactly
+`ir-unit:v1:derived:ir-source%3Av1%3A0000000000000000%3Aentry%3Aasync.ts:`
+`compiler-unit%3Atimer-shim%3Aset-timeout:0000000000000000` where the basename
+fixture applies.
+
+### Exact evidence and mutations
+
+- In every candidate timer-positive cell, require one and only one matching
+  terminal outcome: `kind=emitted`, `unitKind=function`,
+  `displayName=setTimeout`, `legacyBodyEmitted=false`,
+  `irBodyEmitted=true`, and no post-claim error. Its disposition must be
+  `terminal-ir`, terminal/self-owned by the same exact UnitId, and the physical
+  timer-entry census must be zero.
+- Require the exact imported capability `env::__timer_set_timeout` with the
+  established two-externref-to-externref ABI. Wrong module/name/type, missing
+  import, duplicate preparation result, wrong declaration mapping, unsafe
+  UnitId, non-self terminal owner, wrong synthetic role, or a second source
+  must fail closed before any body patch is published.
+- Preserve the four ToNumber configurations (`FUSED_TONUMBER` ×
+  `SMI_FASTPATH`) under both optimization settings in standalone. Each of the
+  eight candidate cells must match its grounded default-route artifact and
+  retain exact dynamic timer-handle coercion. A provider returning `73` must
+  schedule the requested delay once and return 73; a real Node Timeout object
+  must coerce to a finite positive number.
+- Explicitly mutate the retained `ctx.fast` and
+  `resolveModuleBindings === false` gates. Neither may acquire a timer claim,
+  imported-call plan, terminal patch, or compiler-provenance outcome merely
+  because the rollback branch disappeared.
+- Preserve exact typed Unsupported evidence for recognized-but-ineligible
+  connected-component (`timer-component-not-isolated`) and missing-capability
+  cases, including their internal preflight evidence, while requiring zero
+  timer body/ABI/import capability, patch, or receipt publication. For injected
+  `lower`, `seal`, currentness, and publication failures after permanent
+  admission, require a fatal compilation failure or invariant,
+  `legacyBodyEmitted=false`, zero physical timer entries, and zero timer
+  body/ABI/import publication prefix; the timer may not be reclassified as
+  `late-preparation-unsupported` or retried by the direct backend. Preserve
+  exact non-timer evidence outside the failed component. Missing/duplicate/
+  foreign timer outcomes, physical entries, terminal dispositions, or import
+  rows are failures; sorted summaries alone are not acceptance evidence.
+- Run a fresh process with the retired key externally set and poison the
+  direct timer body entry. Successful compilation/runtime proves the stale key
+  cannot resurrect the direct path; the poison is a test seam, not a production
+  branch.
+
+### Ownership and parallel-work lock
+
+Initial production ownership is limited to
+`src/codegen/ir-timer-shim-planning.ts`. After the final dependency rebase,
+first verify whether #3521 already enforces the permanent post-admission
+failure rule. If it does not, stop before production edits, record the exact
+remaining mismatch here, and obtain a fresh Sol review that may widen ownership
+only to the timer-specific classification seam in
+`src/ir/compiler-timer-shim-preparation.ts` and the smallest necessary hunk in
+`src/ir/integration.ts`. No generic fallback or publication behavior may be
+changed for this retirement. Focused test ownership is limited to
+`tests/issue-4588-standalone-timer-shim-cutover.test.ts`; record ownership is
+limited to this issue and `plan/issues/4522-ir-kill-switch-inventory-r9.md`.
+An A/B evidence helper may be added under `scripts/` only if it is pure,
+stdout-only, accepts explicit baseline/candidate roots, and never edits the
+high-water mark, compiler options, manifests, or source. Do not edit the four
+consumer files, ProgramABI, prepared component publication/sealing, #3525
+orchestration, module-init, class cutover, object-shape inference, or Math
+selection files. If a predecessor changed the exact seam, stop and amend this
+plan before widening ownership.
+
+### Validation and landing
+
+Run the full current #4588 focused suite plus its new retirement cells and the
+named #3519/#3520 identity/planning, #4573 Promise-delay, #4577 calendar/DOM,
+standalone cutover corpus, IR-only, and linear timer-exclusion controls already
+recorded above. Report exact files/tests passed over total; keep the current
+five-source 47-unit/38-terminal/9-owned-support/0-unowned-support/19-derived
+census and digest unless a separately reviewed predecessor intentionally
+relocks it. Run TS7 and TS5 typechecks, targeted and repository lint/Prettier,
+diff check, IR layering/fallback/kind-neutrality/IR-only, host-import policy,
+Wasm validity, and the relevant optimization/equivalence gates.
+
+Every heavy command must sample a finite, non-negative one-minute load
+strictly below logical cores minus two immediately before launch and use an
+archive-backed `TMPDIR`. Immediately before committing, run both LOC and
+function-growth ratchets. Keep every precommit and prepush hook enabled, sign
+the Thomas Tränkler-authored commit, and push normally. Terra implements only
+after the dependency lock above; a fresh independent Sol reviewer must approve
+the exact pushed SHA before the regular PR is marked ready or enqueued. Use the
+protected merge queue with no admin or direct-merge bypass.
