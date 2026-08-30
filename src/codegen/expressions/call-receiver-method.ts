@@ -44,7 +44,7 @@ import {
 } from "../closed-method-dispatch.js";
 import { compileArrowAsClosure, computeClosureWrapperSig } from "../closures.js";
 import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-call devirtualization
-import { undefinedExternInstrs } from "../any-helpers.js"; // (#3683 S3b) arity-padding sentinel
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "../any-helpers.js"; // (#2864) semantic undefined producer
 import { pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -873,11 +873,10 @@ export function compileReceiverMethodCall(
         // strict equality). Statement position keeps the zero-cost
         // VOID_RESULT.
         if (!ts.isExpressionStatement(expr.parent)) {
-          // Standalone lowers `undefined` to the null externref (undefined ≡
-          // null-extern; `x === undefined` is `ref.is_null` — see
-          // `__extern_is_undefined`, object-runtime.ts), so this IS the
-          // canonical undefined here.
-          fctx.body.push({ op: "ref.null.extern" });
+          // Setters return semantic `undefined`; the result is carried as an
+          // externref in expression position, so preserve the distinction
+          // between standalone's canonical tag-1 singleton and `null`.
+          fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
           return { kind: "externref" };
         }
         return VOID_RESULT;
