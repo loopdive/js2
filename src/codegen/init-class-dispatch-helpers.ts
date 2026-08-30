@@ -90,8 +90,43 @@ export const CLASS_DISPATCH_EXPORT_PREFIXES: readonly string[] = [
   "__call_get_",
 ];
 
+/**
+ * (#5203) The CLOSURE-dispatch family — the third facet of the same window.
+ *
+ * #5202 closed instance-method dispatch, which resolves a method by EXPORT
+ * NAME. A STATIC method never goes through that surface: the compiler hands
+ * the host the raw closure struct via `__register_class_static_method`, and
+ * the host turns it into a callable in `_wrapWasmClosureUnknownArity` — which
+ * bails on `if (!exports) return null`, because it needs the `__call_fn_*`
+ * dispatchers to actually invoke the closure. So `c.clz()` on a class VALUE
+ * threw "clz is not a function" at init while the identical call after init
+ * returned. jsbi's `JSBI.__clz30(t)` is exactly this shape.
+ *
+ * Registering the closure dispatchers on the same start-export channel is the
+ * "route init-window closure wrapping through the registered funcrefs" arm of
+ * the issue, and it deliberately does NOT widen what `_wrapForHost` is given:
+ * its `exports` argument feeds a large amount of unrelated behaviour, so only
+ * the closure-bridge's own export source moves.
+ *
+ * Prefix-matched so a new arity is covered automatically:
+ *   `__call_fn_<N>`, `__call_fn_method_<N>`, and the NUL-named
+ *   `__\0js2_call_fn_method_argc_<N>` argc wrappers.
+ */
+const CLOSURE_DISPATCH_EXPORT_PREFIXES: readonly string[] = ["__call_fn_", "__\0js2_call_fn_method_argc_"];
+
+/** Exact closure-bridge names the host wrapper probes (arity / discriminators). */
+const CLOSURE_DISPATCH_EXPORT_NAMES: ReadonlySet<string> = new Set([
+  "__closure_arity",
+  "__is_closure",
+  "__closure_has_rest",
+  "__is_ctor_closure",
+]);
+
 function isClassDispatchExport(name: string | undefined): name is string {
-  return name !== undefined && CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix));
+  if (name === undefined) return false;
+  if (CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (CLOSURE_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  return CLOSURE_DISPATCH_EXPORT_NAMES.has(name);
 }
 
 /**
