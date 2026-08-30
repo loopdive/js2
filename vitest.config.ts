@@ -1,5 +1,6 @@
 import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
+import { resolveVitestMaxConcurrency } from "./scripts/test262-concurrency.mjs";
 
 const forkMaxOldSpaceSize = process.env.VITEST_FORK_MAX_OLD_SPACE_SIZE || "512";
 
@@ -67,11 +68,11 @@ export default defineConfig({
         execArgv: [`--max-old-space-size=${forkMaxOldSpaceSize}`, "--expose-gc"],
       },
     },
-    // Lets describe.concurrent tests run up to 32 at once — CompilerPool limits
-    // actual concurrent compilations to POOL_SIZE (availableParallelism - 1).
-    // Without this, vitest runs it() blocks within a describe() sequentially,
-    // leaving pool workers idle and stretching test262 runs to 150+ minutes.
-    maxConcurrency: 32,
+    // Unit tests retain the 32-callback default. Test262 callbacks are bounded
+    // by the same COMPILER_POOL_SIZE used by tests/test262-shared.ts; queueing
+    // 32 Vitest timeout clocks behind a one- or two-worker pool can abandon the
+    // tail of a shard before it records its verdict.
+    maxConcurrency: isTest262Run ? resolveVitestMaxConcurrency(process.env) : 32,
     // 35s — must sit above the compiler's internal 30s timeout so that
     // `compile_timeout` status can be recorded before vitest force-kills the
     // test. With describe.concurrent (see PR #14), a 10s ceiling flipped

@@ -22,17 +22,18 @@ import {
 } from "fs";
 import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
-import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
+import { resolveTest262PoolSize } from "../scripts/test262-concurrency.mjs";
+import { getTest262ShardCompletionPath } from "../scripts/validate-test262-completeness.mjs";
 import { discoverFixtureGraph, hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-runner.ts.
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
-import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { isRecordedVerdictSentinel } from "../scripts/verdict-once.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
-import { ORACLE_VERSION, ORACLE_FAST_REV } from "./test262-oracle-version.js";
+import { ORACLE_FAST_REV, ORACLE_VERSION } from "./test262-oracle-version.js";
 import {
   classifyError,
   classifyTestScope,
@@ -200,7 +201,7 @@ function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: str
 
 // ── Pool setup ─────────────────────────────────────────────────────
 
-const POOL_SIZE = parseInt(process.env.COMPILER_POOL_SIZE || String(Math.max(1, availableParallelism() - 1)), 10);
+const POOL_SIZE = resolveTest262PoolSize(process.env);
 
 // (#2928 E6) Per-test vitest timeout. The 90s default measures POOL-QUEUE WAIT
 // as well as the test's own run: when a slow cluster occupies every pool worker
@@ -248,13 +249,6 @@ const RUN_TIMESTAMP =
   process.env.RUN_TIMESTAMP || new Date().toISOString().replace(/[-:T]/g, "").replace(/\..+/, "").slice(0, 15);
 const RESULT_PREFIX = process.env.TEST262_RESULT_PREFIX || (TEST262_TARGET ? `test262-${TEST262_TARGET}` : "test262");
 const JSONL_PATH = join(RESULTS_DIR, `${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl`);
-// A JSONL can exist even when the Vitest fork dies halfway through a shard.
-// The workflow accepts exit code 1 because baseline conformance failures are
-// ordinary test results, so process death cannot be inferred from the exit
-// code alone. Write this marker only from afterAll, once Vitest has settled
-// every registered test and the result fd has been closed. Shard jobs require
-// the marker before accepting/uploading their evidence.
-const SHARD_COMPLETION_PATH = `${JSONL_PATH}.complete.json`;
 
 // Open results JSONL — each chunk appends independently
 const jsonlFd = openSync(JSONL_PATH, "a");
@@ -268,6 +262,11 @@ const summary = {
   compile_timeout: 0,
   skip: 0,
 };
+// Keep a per-identity count in addition to the headline counters. The latter
+// are useful for logging, but a Vitest parent may host several local shard
+// entry files; filtering this map by one shard's registered paths makes that
+// shard's manifest independent of another shard's summary state.
+const canonicalRowCounts = new Map<string, number>();
 type StatusCounts = {
   pass: number;
   fail: number;
@@ -425,6 +424,7 @@ function recordResult(
     retry_count: retryInfo?.retryCount || undefined,
   });
   fdWrite(jsonlFd, entry + "\n");
+  canonicalRowCounts.set(file, (canonicalRowCounts.get(file) ?? 0) + 1);
   summary.total++;
   (summary as any)[status]++;
   if (!catCounts[category]) catCounts[category] = createEmptyCounts();
@@ -522,17 +522,17 @@ function assignBalancedChunk(tests: Test262ChunkTest[], chunkIndex: number, tota
  * the test in one process. No separate Phase 1 needed.
  */
 export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
-  // Build full test list, filtering out proposals unless explicitly included.
-  // This avoids registering ~5,200 proposal tests that would be skipped anyway,
-  // saving ~10% of run time and keeping the statusline total accurate.
+  // Build the exact selected test list. Proposal callbacks remain registered
+  // when the official-only scope is active so their early return is explicit in
+  // the shard manifest instead of being indistinguishable from a lost callback.
   const includeProposals = process.env.TEST262_INCLUDE_PROPOSALS === "1";
   const allTests: Test262ChunkTest[] = [];
   for (const category of TEST_CATEGORIES) {
     for (const filePath of findTestFiles(category)) {
-      // Skip staging/ proposal tests at the file level.
+      // Discover all candidates; official-scope exclusion is recorded by the
+      // callback after metadata classification below.
       const relPath = relative(TEST262_ROOT, filePath);
       if (!matchesPathFilter(relPath)) continue;
-      if (!includeProposals && (relPath.startsWith("test/staging/") || relPath.startsWith("staging/"))) continue;
       allTests.push({
         category,
         durationMs: durationOf(relPath),
@@ -546,6 +546,24 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
   const chunk = assignBalancedChunk(allTests, chunkIndex, totalChunks);
   const myTests = chunk.tests;
 
+  // These counters belong to this shard invocation. Vitest can load several
+  // local shard entry files in one parent process, so completion evidence must
+  // not infer one shard's settlement from another shard's counters.
+  const registeredPaths = myTests.map((test) => test.relPath);
+  const proposalExclusionPaths: string[] = [];
+  const officialExclusionPaths: string[] = [];
+  let callbacksStarted = 0;
+  let callbacksSettled = 0;
+  const shardCompletionPath = getTest262ShardCompletionPath(JSONL_PATH, chunkIndex, totalChunks);
+
+  const trackCallback = (callback: () => Promise<void>) => async () => {
+    callbacksStarted++;
+    try {
+      return await callback();
+    } finally {
+      callbacksSettled++;
+    }
+  };
   // Sort within the shard by descending known duration (slow tests first).
   // Tests absent from `slowTestDurationMs` keep their natural order behind the
   // timed ones (Array.prototype.sort is stable on Node ≥ 12).
@@ -582,6 +600,11 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
   }, 30_000);
 
   afterAll(() => {
+    // Snapshot this before pool shutdown: a shutdown can make queued work
+    // disappear without ever entering its callback, and that must remain an
+    // incomplete shard rather than looking settled after teardown.
+    const allCallbacksSettledBeforePoolShutdown =
+      callbacksStarted === registeredPaths.length && callbacksSettled === registeredPaths.length;
     try {
       pool?.shutdown();
       pool = null;
@@ -616,20 +639,36 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
       console.log(`Poison-error retries (#1862): ${poisonRetriesUsed} used`);
     }
 
-    writeFileSync(
-      SHARD_COMPLETION_PATH,
-      JSON.stringify(
-        {
-          chunkIndex,
-          chunkTotal: totalChunks,
-          registeredTests: myTests.length,
-          recordedRows: summary.total,
-          target: TEST262_TARGET ?? "gc",
-        },
-        null,
-        2,
-      ) + "\n",
-    );
+    const canonicalVerdicts = registeredPaths.reduce((count, path) => count + (canonicalRowCounts.get(path) ?? 0), 0);
+    const completion = {
+      schema: "test262-shard-completion-v2",
+      runTimestamp: RUN_TIMESTAMP,
+      chunkIndex,
+      chunkTotal: totalChunks,
+      target: TEST262_TARGET ?? "gc",
+      registeredTests: registeredPaths.length,
+      registeredPaths,
+      // Keep recordedRows for the existing artifact readers while naming the
+      // invariant explicitly for new validators.
+      recordedRows: canonicalVerdicts,
+      canonicalVerdicts,
+      exclusions: {
+        proposal: { count: proposalExclusionPaths.length, paths: [...proposalExclusionPaths].sort() },
+        official: { count: officialExclusionPaths.length, paths: [...officialExclusionPaths].sort() },
+      },
+      callbacksStarted,
+      callbacksSettled,
+      allCallbacksSettled: allCallbacksSettledBeforePoolShutdown,
+    };
+    try {
+      // A duplicate RUN_TIMESTAMP must never replace evidence from an earlier
+      // attempt. The shell runner supplies a fresh timestamp; a collision is
+      // an infrastructure error that should remain visible to the validator.
+      writeFileSync(shardCompletionPath, JSON.stringify(completion, null, 2) + "\n", { flag: "wx" });
+    } catch (error) {
+      console.error(`Test262 shard completion manifest was not created: ${shardCompletionPath}: ${String(error)}`);
+      throw error;
+    }
   });
 
   for (const [category, files] of byCategory) {
@@ -643,7 +682,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
 
         it(
           relPath,
-          async () => {
+          trackCallback(async () => {
             // #1521 — Path-scoped filter. Applied BEFORE source read / parse /
             // cache lookup so narrowly-scoped PRs skip ~40k tests entirely
             // (no compile, no record, no execution). Empty / unset filter
@@ -655,8 +694,14 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             const meta = parseMeta(source);
             const scopeInfo = classifyTestScope(source, meta, filePath);
 
-            // Don't record proposal tests at all — they inflate JSONL without adding value
-            if (!includeProposals && scopeInfo.scope === "proposal") return;
+            // Don't record non-official tests in the official-only scope;
+            // retain the scope-specific identity so the manifest proves why
+            // the callback has no JSONL verdict.
+            if (!includeProposals && !scopeInfo.official) {
+              if (scopeInfo.scope === "proposal") proposalExclusionPaths.push(relPath);
+              else officialExclusionPaths.push(relPath);
+              return;
+            }
 
             if (!meta.negative) {
               const filter = shouldSkip(source, meta, filePath);
@@ -1342,7 +1387,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               undefined,
               metadataFromWorkerResult(r, false),
             );
-          },
+          }),
           IT_TIMEOUT_MS,
         );
       }
