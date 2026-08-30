@@ -951,9 +951,14 @@ needs that provider-startup lifecycle first and is deliberately deferred.
   `issue-4616-process-and-class-expr-name`. **#5194 and #5197 OOM the vitest
   worker on this box — confirmed to OOM identically on the BASE sources**, so
   environmental, not this change; they were not otherwise measurable here.
+- `npm run test:equivalence:gate` — **24 failing / 1,718 passing / 24
+  known-failures in baseline → "No new equivalence regressions."**
 - Ratchet gates, all exit 0: `check-loc-budget`, `check-func-budget`,
-  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`.
-  `npm run typecheck` clean.
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+  `check:host-import-policy`. `npm run typecheck` and `npm run lint` clean.
+  The host-import policy needed its `runtimeTsLines` / `resolveImportLines`
+  maxima raised to the measured 18,995 / 7,754 — most of that growth is the
+  #5211 stack this branch carries, not this change (+34 lines in `runtime.ts`).
 - `node --import tsx tests/dogfood/temporal-polyfill-harness.mjs --no-umd` —
   the gate re-verification quoted at the top.
 
