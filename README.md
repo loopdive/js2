@@ -13,7 +13,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 34,547 / 43,621 (79.2 %)
+**test262 conformance**: 34,936 / 48,232 (72.4 %)
 
 <!-- AUTO:conformance-end -->
 
