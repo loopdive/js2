@@ -13,6 +13,7 @@ area: codegen
 es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
+pr: 5292
 ---
 
 # #5197 — promise r2: cluster and fix the residual promise-bucket failures
@@ -167,9 +168,10 @@ avoids the `builtin-static-globals -> builtin-ctor-own-props ->
 builtin-static-gopd -> property-access -> builtin-static-globals` ESM cycle.
 
 Validation was run after integrating the exact fetched
-`upstream/main` head `c243892c7f3a757bdecf6215626b08586ce72c58` in this
-worktree. The worktree currently has no publication commit; root owns
-transplanting this diff onto a fresh c243-based branch.
+`upstream/main` head `c243892c7f3a757bdecf6215626b08586ce72c58` in the
+implementation worktree. Root transplanted the planning and implementation
+commits onto a fresh publication branch and then integrated current upstream
+head `3e89b5f95318b45fd69c9cf8209da84a7a06351a` without conflict.
 
 Focused exact matrix (one Vitest fork; 8/8):
 
@@ -224,12 +226,29 @@ IR-kind-neutrality, IR-layering, and issue-integrity/ID checks passed. The
 issue checker reports only its existing ready-issue probe warnings and no
 changed done-status violation.
 
-Remaining Slice-A handoff: the three owned rows are green in both lanes, with
-no standalone regression in the 152-row comparison. Root should transplant
-the changed files onto a fresh c243-based publication branch, retain the host
-runner limitation and the unrelated #2984 known-gap failure as explicit
-follow-up notes, and perform final review/history/publication. No commit,
-push, GitHub issue, or PR was created by this worker.
+Slice-A completion: the three owned rows are green in both lanes, with no
+standalone regression in the 152-row comparison. The host runner limitation
+and unrelated #2984 known-gap failure remain explicit follow-up notes. No
+GitHub issue was created.
+
+#### Slice A publication handoff (2026-08-30)
+
+The single completed-fix PR is
+<https://github.com/loopdive/js2/pull/5292>. It is a non-draft PR from
+`ttraenkler:codex/5197-promise-symbol-object-model-final` to
+`loopdive/js2:main`; no GitHub issue was created. Its description uses the
+repository's exact Description and CLA sections and links this markdown issue.
+A dedicated Luna Max PR shepherd owns exact-head, body, readiness, conflict,
+review, CI, and queue verification.
+
+The publication branch is
+`/private/tmp/js2-promise-symbol-pr-20260830`. Implementation commit
+`fd13172095d3773627433bba0d4c0e2648ab6e93` has the same tree as the fully
+validated implementation worktree. Integration commit
+`d469014322b88d5c01d45d728177086f86fdb498` adds only the newly merged upstream
+history; a post-integration focused rerun passed 8/8 and the complete pre-push
+hook passed without bypasses. This documentation-only handoff does not alter
+the validated Promise behavior.
 
 ## Acceptance criteria
 
