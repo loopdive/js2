@@ -183,10 +183,24 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // Issue acceptance criterion 1 — a Temporal class survives being passed
     // as a value through a function boundary. `temporal-native.ts` resolves
     // kinds SYNTACTICALLY and structurally cannot do this.
-    expect(s.classAsValue.value).toBe("object");
+    // (#5222) "function", not "object". A class read out of `Temporal` used to
+    // be un-marshalled back to its raw closure struct at the consumer's entry
+    // boundary, which is `typeof "object"`; keeping the provider-owned mirror
+    // intact restores the answer JavaScript actually specifies.
+    expect(s.classAsValue.value).toBe("function");
     expect(s.classHasStatics.value).toBe("compare,from,length,name,prototype");
     expect(s.constructAndReadFields.value).toBe("2020/3/4");
-    expect(s.aliasable.value).toBe("object");
+    expect(s.aliasable.value).toBe("function");
+
+    // (#5222) `Temporal.Now` is a namespace object nested one level inside
+    // `Temporal`, so its methods cross the provider seam twice. On base the
+    // second crossing erased them — empty key list, `typeof` "undefined".
+    expect(s.nowKeys.value).toBe(
+      "@@toStringTag,instant,plainDateISO,plainDateTimeISO,plainTimeISO,timeZoneId,zonedDateTimeISO",
+    );
+    expect(s.nowInstantIsFunction.value).toBe("function");
+    expect(s.nowPlainDateISOIsFunction.value).toBe("function");
+    expect(s.nowInstantCallable.value).toBe("object");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the
@@ -196,6 +210,11 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // Known gaps are REPORTED, not asserted away — see the harness for what
     // was measured about each. Asserting only their presence keeps the list
     // honest without pinning today's failure text.
-    expect(Object.keys(report.knownGaps).sort()).toEqual(["instanceToString", "nowInstant", "staticFrom"]);
+    expect(Object.keys(report.knownGaps).sort()).toEqual([
+      "instanceToString",
+      "nowPlainDateISOCall",
+      "nowTimeZoneIdCall",
+      "staticFrom",
+    ]);
   });
 });
