@@ -573,6 +573,8 @@ import {
   emitNewVecF64Export,
   emitDataViewByteExports,
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
+import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
+import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -6316,6 +6318,20 @@ export function generateModule(
     // (before dead-elim/freeze) so the helper funcIdx values are stable.
     ensureDynMemberGet(ctx);
 
+    // (#5193) Hand the JS runtime the module's own marshalling helpers as
+    // `ref.func` values from the top of `__module_init` — the wasm `start`
+    // section runs before `instance.exports` exists, so without this EVERY
+    // compiled→host marshal during module init fails. Placement contract in the
+    // module header. No-op unless a host-construct call site asked for it.
+    emitInitMarshalHelperRegistration(ctx);
+
+    // (#5202) The same window's METHOD-DISPATCH facet: a compiled class's
+    // prototype is bare during module init, and the runtime answers `obj.m()`
+    // from the `__class_call_*` / `__member_kind_*` EXPORTS — unreachable for
+    // the whole of the start section. Register them through the same funcref
+    // channel. No-op unless the module has top-level code AND dispatch exports.
+    emitInitClassDispatchRegistration(ctx);
+
     // (#2800) Allocate + wire the `__in_module_init` flag global now that every
     // import global has settled (final absolute index), patching the recorded
     // delete-aware read `global.get` placeholders and wrapping `__module_init`.
@@ -6650,6 +6666,10 @@ function finalizeMultiPreparedModuleInitStartup(
   owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
 ): void {
   owner?.assertPreparedModuleInitCurrent();
+  // (#5193) Same placement as the single-module pipeline: before the flag wrap.
+  emitInitMarshalHelperRegistration(ctx, owner?.preparedModuleInitUnitId);
+  // (#5202) Method-dispatch facet of the same window, same placement.
+  emitInitClassDispatchRegistration(ctx, owner?.preparedModuleInitUnitId);
   finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
   owner?.finalizePreparedModuleInitStartup();
 }

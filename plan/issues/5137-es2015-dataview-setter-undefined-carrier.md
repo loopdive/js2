@@ -18,7 +18,6 @@ language_feature: dataview-setter-return-undefined
 goal: standalone-mode
 assignee: "ttraenkler/codex-5137-es2015-dataview-setter-undefined"
 branch: codex/5137-es2015-dataview-setter-undefined
-pr: 5152
 files:
   - src/codegen/dataview-native.ts
   - src/codegen/expressions/call-receiver-method.ts

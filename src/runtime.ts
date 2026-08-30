@@ -44,6 +44,12 @@ import {
   _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import {
+  classDispatchExportName,
+  INIT_MARSHAL_HELPER_NAMES,
+  marshalExports,
+  type MarshalExportSource,
+} from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
@@ -554,10 +560,7 @@ const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
   typeof BigUint64Array === "function" ? BigUint64Array : undefined,
 ];
 
-function _compiledTypedArrayMirror(
-  carrier: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): ArrayBufferView | undefined {
+function _compiledTypedArrayMirror(carrier: any, callbackState?: MarshalExportSource): ArrayBufferView | undefined {
   if (!_canBeWeakKey(carrier)) return undefined;
   const kind = _compiledTypedArrayKinds.get(carrier);
   if (kind === undefined) return undefined;
@@ -567,7 +570,7 @@ function _compiledTypedArrayMirror(
     // mirror since the previous sync, preserve those edits until the explicit
     // mirror→Wasm unwrap path replays them.
     if (!vecMirrorElementsChanged(cached)) {
-      const exports = callbackState?.getExports();
+      const exports = marshalExports(callbackState);
       const vecLen = exports?.__vec_len as ((vec: any) => number) | undefined;
       const vecGet = exports?.__vec_get as ((vec: any, index: number) => any) | undefined;
       if (typeof vecLen === "function" && typeof vecGet === "function") {
@@ -695,10 +698,16 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
 function _marshalHostConstructArg(
   a: any,
   exports: Record<string, Function> | undefined,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
+  callbackState?: MarshalExportSource,
   hostCallee?: any,
 ): any {
-  const buf = _compiledAbToHostBuffer(a, exports);
+  // (#5193) During the wasm start section `exports` is undefined for the whole
+  // of module init, so EVERY probe below failed and the loud refusal at the end
+  // fired on a perfectly ordinary `new Float64Array(new ArrayBuffer(8))` written
+  // at module top level (jsbi's `__kBitConversionBuffer`, the Temporal blocker).
+  // Fall back to the helpers the module registered on itself at init entry.
+  const eff = marshalExports(callbackState, exports);
+  const buf = _compiledAbToHostBuffer(a, eff);
   if (buf !== undefined) return buf;
   if (a != null && typeof a === "object" && _isWasmStruct(a)) {
     const mat = _materializeIterable(a, callbackState);
@@ -709,7 +718,7 @@ function _marshalHostConstructArg(
     // fine; preserve its length/index properties instead of treating the
     // opaque backing struct as an unmarshalable value.
     if (_isHostTypedArrayCtor(hostCallee)) {
-      const mirror = _wrapForHost(a, exports);
+      const mirror = _wrapForHost(a, eff);
       if (mirror !== a && typeof mirror.length === "number") return mirror;
     }
     // (#3335) Refuse loudly: the arg is a compiled struct NONE of the
@@ -3056,10 +3065,7 @@ function _arrayFromNonIterableSource(
   }
 }
 
-function _materializeIterable(
-  iter: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): any {
+function _materializeIterable(iter: any, callbackState?: MarshalExportSource): any {
   if (iter == null) return iter;
   if (_nativeIsArray(iter)) return iter;
   if (typeof iter !== "object") return iter;
@@ -3068,7 +3074,10 @@ function _materializeIterable(
   // objects are opaque", aborting the host call. `_isWasmStruct`
   // handles the throw internally and returns true for opaque structs.
   if (_isWasmStruct(iter)) {
-    const exports = callbackState?.getExports();
+    // (#5193) Start-section fallback: during module init `getExports()` is
+    // still undefined, so this returned the raw struct and every host callee
+    // saw a non-array-like.
+    const exports = marshalExports(callbackState);
     if (!exports) return iter;
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
@@ -13900,7 +13909,14 @@ assert._isSameValue = isSameValue;
             const resolvedClassMethod = _invokeClassMethod(
               _unwrapForHost(obj),
               method,
-              exports,
+              // (#5202) During module init `exports` is undefined for the whole
+              // start section, so the resolver bailed on its first line and a
+              // top-level `inst.m()` threw "m is not a function" while the
+              // identical call after init returned. Fall back to the funcrefs
+              // the module registered on itself — the same channel #5193 uses
+              // for marshalling probes, and the same function objects the
+              // export view yields later.
+              marshalExports(callbackState, exports),
               wrappedObj,
               wrappedArgs,
             );
@@ -14701,6 +14717,37 @@ assert._isSameValue = isSameValue;
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
       }
+      // (#5193) __register_init_export(id, fn) — the module hands the host its
+      // own marshalling helpers as `ref.func` values from the top of
+      // `__module_init`, i.e. from INSIDE the wasm `start` section, where
+      // `instance.exports` does not exist yet. A funcref crossing into JS
+      // materializes as the identical function object the export later yields,
+      // so this is a pure timing shim, not a second ABI. Unknown ids are
+      // ignored so an older runtime tolerates a newer module.
+      if (name === "__register_init_export")
+        return (id: number, fn: any): void => {
+          const helperName = INIT_MARSHAL_HELPER_NAMES[id];
+          if (helperName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(helperName, fn);
+        };
+      // (#5202) __register_init_class_export(namesCsv, index, fn) — the method-
+      // dispatch facet of the same window. The class-method dispatch surface is
+      // one export per (class, method, arity), so unlike the six fixed #5193
+      // helpers it cannot use a positional id ABI. The module registers ONE
+      // pooled CSV of names and indexes into it, which keeps the added
+      // `string_constants` imports at one per module rather than one per name.
+      // An out-of-range index is ignored so an older runtime tolerates a newer
+      // module.
+      if (name === "__register_init_class_export")
+        return (namesCsv: any, index: number, fn: any): void => {
+          const exportName = classDispatchExportName(namesCsv, index);
+          if (exportName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(exportName, fn);
+        };
       // (#1732 S1) __construct(callee, argsArray) — runtime [[Construct]] for a
       // `new f(...)` whose callee value cannot be proven constructable at
       // compile time (e.g. `var f = String.prototype.indexOf; new f`). Per
