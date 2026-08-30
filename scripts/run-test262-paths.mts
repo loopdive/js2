@@ -2,7 +2,7 @@
  * Run an explicit list of test262 paths through the runner's own
  * `runTest262File` and print the per-row verdict.
  *
- *   npx tsx scripts/run-test262-paths.mts .tmp/es2016-paths.txt
+ *   npx tsx scripts/run-test262-paths.mts .tmp/es2016-paths.txt --standalone
  *
  * Scoped measurement lane for one slice — an ES edition, a directory, a
  * suspected regression set. Requires the test262 submodule
@@ -36,11 +36,18 @@ import { runTest262File } from "../tests/test262-runner.js";
 
 // Child mode for --isolate: measure exactly one row and print a parseable line.
 const oneRow = process.env.JS2WASM_ROW_ONE;
+const target =
+  process.argv.includes("--standalone") || process.env.JS2WASM_ROW_TARGET === "standalone" ? "standalone" : undefined;
 if (oneRow) {
   let st = "error";
   let rs = "";
   try {
-    const r = await runTest262File(resolve("test262/test", oneRow), oneRow.split("/").slice(0, 2).join("/"));
+    const r = await runTest262File(
+      resolve("test262/test", oneRow),
+      oneRow.split("/").slice(0, 2).join("/"),
+      undefined,
+      target,
+    );
     st = r.status;
     rs = (r as { reason?: string; error?: string }).reason ?? (r as { error?: string }).error ?? "";
   } catch (e) {
@@ -85,7 +92,7 @@ for (let pi = 0; pi < paths.length; pi++) {
         input: rel,
         encoding: "utf-8",
         timeout: 120_000,
-        env: { ...process.env, JS2WASM_ROW_ONE: rel },
+        env: { ...process.env, JS2WASM_ROW_ONE: rel, ...(target ? { JS2WASM_ROW_TARGET: target } : {}) },
       });
       const m = /^ROW (\S+) (.*)$/m.exec(out);
       status = m?.[1] ?? "error";
@@ -94,11 +101,12 @@ for (let pi = 0; pi < paths.length; pi++) {
       reason = String((e as Error)?.message ?? e).split("\n")[0] ?? "";
     }
     counts[status] = (counts[status] ?? 0) + 1;
-    if (status !== "pass" && status !== "skip") __nonPass.push(`${status.padEnd(14)} ${rel}\n                 ${reason.slice(0, 160)}`);
+    if (status !== "pass" && status !== "skip")
+      __nonPass.push(`${status.padEnd(14)} ${rel}\n                 ${reason.slice(0, 160)}`);
     continue;
   }
   try {
-    const r = await runTest262File(abs, category);
+    const r = await runTest262File(abs, category, undefined, target);
     status = r.status;
     reason = (r as { reason?: string; error?: string }).reason ?? (r as { error?: string }).error ?? "";
   } catch (e) {
