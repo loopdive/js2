@@ -119,6 +119,10 @@ oracle-ratchet-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/property-access.ts
   - src/codegen/generic-struct-factory.ts
+  # 2026-08-30: distinguishing a compiled Scanner implementation from an
+  # ambient object requires checker-backed declaration and initializer
+  # provenance. This is deliberately local to callback classification.
+  - src/codegen/closures/callback-classification.ts
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
 
@@ -518,29 +522,31 @@ does not claim it is resolved.
 ## Runtime parser handoff (2026-08-30)
 
 Branch: `codex/1058-typescript5-runtime`, synchronized to `origin/main` at
-`3e89b5f95318b45fd69c9cf8209da84a7a06351a`.
+`275216c74c7299ea07a72c8d5479f7e1a477000c`.
 
-The canonical consumer-driven TypeScript 5.9.3 scanner/parser graph now
-**compiles and validates**. The latest authoritative run produced an
-**83,543,849-byte** Wasm module from 30 input files / 34 program files and 4,284
-functions. It completed in 361,235 ms worker time / 362,442 ms wall time, used
-359,130 ms CPU, and peaked at **3,719.4 MiB RSS**, below the 4 GiB gate.
-`compileSuccess` and `WebAssembly.validate` are both true.
+The canonical consumer-driven TypeScript 5.9.3 scanner/parser graph **compiles
+and validates** after the sync. The authoritative diagnostic run on this tree
+finished in 467,608 ms worker time / 468,686 ms wall time and produced an
+**84,817,448-byte** Wasm module from 30 input/source files, 34 program files,
+and 4,284 functions. Peak RSS was **3,848.6 MiB**, below the 4 GiB gate, and the
+result contained 16 non-fatal IR/projection warnings. `compileSuccess` and
+`WebAssembly.validate` are both true.
 
-Tier 3 runtime equivalence remains open. All three real-source invocations now
-pass compilation, instantiation, constructor dispatch, literal materialization,
-and Wasm null-cast execution, then stop at the same later host-boundary error:
-
-```text
-TypeError: Cannot access property on null or undefined
-```
-
-The probe currently has no Wasm offset or source-map location for that host
-exception. The required values are still:
+Runtime parser equivalence remains open. The same fresh build invoked all three
+canonical inputs; none returned its required fingerprint:
 
 - `builderStatePublic.ts = 13386537220945`
 - `corePublic.ts = 40098163538143`
 - `performanceCore.ts = 49645738923599`
+
+`builderStatePublic.ts` and `performanceCore.ts` both reach semicolon recovery
+with a missing Identifier whose `escapedText` is `undefined`, then fail in
+`unescapeLeadingUnderscores` / `utilitiesPublic.ts:851`. `corePublic.ts` reaches
+an `illegal cast` in `__call_fn_method_2` from
+`parseBinaryExpressionRest`. The diagnostic Wasm and source map were preserved
+at `/private/tmp/ts2wasm-typescript-parser-latest.wasm{,.map}` for the next
+investigation; they match this exact source tree and must not be confused with
+the earlier 83.6 MB artifact used for the size audit.
 
 ### Compiler fixes in this follow-up
 
@@ -565,32 +571,91 @@ exception. The required values are still:
   rejection, prepared multi-module factories, concrete nullable `Symbol`
   fields, sibling loop layouts, and the exact four-module literal/parser
   diamond that previously trapped.
+- Callable-property invocation now bridges erased generic reference ABIs in
+  both directions. In particular, a generic `(externref) -> externref`
+  identity stored as `Rules.apply(Box): Box` no longer freezes or miscasts its
+  argument/result carrier. The focused regressions in
+  `issue-1058-generic-identity-return.test.ts` and
+  `issue-1058-generic-base-node-factory.test.ts` compile, validate, and return
+  their expected values.
+- Callback ownership and registration now span the whole prepared source
+  graph. Later-source named callbacks are discovered before an earlier generic
+  dispatcher is compiled, while an inline arrow passed to a method declared by
+  a compiled interface stays on the Wasm-closure path instead of being wrapped
+  as a host callback. This is the exact TypeScript parser shape
+  `scanner.tryScan(() => scanner.reScanInvalidIdentifier() === Identifier)`;
+  before the fix `speculationHelper<T>` cast the host wrapper to a null Wasm
+  closure root. All five focused cases in
+  `issue-1058-multifile-generic-callback-registration.test.ts` now pass,
+  including the inline-arrow case returning `42` and the later-source
+  boolean/node/enum callback case returning `14243`.
+- Cross-source callback discovery is cached graph-wide. Registration still
+  runs per source so a later exact ABI can replace a conservative entry, but
+  the compiler no longer walks the roughly 10 MB TypeScript graph once for
+  every source.
+- Body-proven generic identity helpers can recover the concrete input carrier
+  after an erased `externref -> externref` call. The proof fails closed: every
+  outer value return must name the same generic parameter symbol and the
+  binding may not be assigned, updated, rebound, or used as a loop write
+  target. Property writes remain valid for TypeScript's `finishNode<T>`.
+  Negative regressions cover returning a fresh asserted value and rebinding
+  the parameter before return.
 
-Post-sync validation on `3e89b5f95318b45fd69c9cf8209da84a7a06351a`
-is green: all **52** `tests/issue-1058-*.test.ts` files pass (**175 tests**),
-TS5 and TS7 typechecks pass, repository Biome lint checks 4,994 files with a
-zero exit status, and `check:ir-fallbacks` reports no gated increase.
+Current-main validation is green for all **53** `tests/issue-1058-*.test.ts`
+files (**183/183 tests**), including all **6/6** multi-file callback cases and
+the new generic-identity safety controls. TS5 and TS7 typechecks, repository
+lint/format, the IR fallback ratchet, the oracle ratchet, and
+`git diff --check` pass. The strict upstream callback suite is intentionally
+not claimed: its prerequisite parser fingerprints still fail as documented
+above.
 
 ### Artifact size note
 
-The 83.5 MB output is not a 100 KB hand-written parser translated directly.
-It contains the selected TypeScript compiler runtime graph: scanner, parser,
-node factories, utilities, diagnostics, module initialization, 4,284 compiled
-functions, WasmGC type/layout metadata, and generated property/call adapters.
-One erased generic memoized-closure dispatch alone renders to roughly 4.9
-million WAT characters. QuickJS's often-quoted parser size excludes much of
-that shared runtime and is compiled by a mature native optimizer; size work is
-a separate follow-up from this correctness-first compile milestone.
+The roughly **84 MB** output is not an intrinsic cost of TypeScript's parser;
+it exposes a js2wasm code-generation pathology. A measured 83,585,611-byte
+diagnostic artifact has an **81,488,148-byte code section (97.49%)** and no
+embedded source/data payload. Of that code, 1,176 generated `__closure_*`
+bodies occupy 76,499,060 bytes. TypeScript's 88 KB `visitorPublic.ts` accounts
+for **75,571,430 bytes** of closure code because its visitor callback cohort is
+emitted during discovery and then twice during the final two-pass compile. The
+two final cohorts include an exact byte-for-byte duplicated
+**36,791,280-byte** block.
+
+This is why comparison with an approximately 100 KB QuickJS parser is only
+partly apples-to-apples: this gate links about 6.82 MB across 28 TypeScript
+frontend modules, factories, utilities, diagnostics, and initialization, and
+emits raw unoptimized WasmGC. Even so, the current size is not acceptable as a
+normal parser baseline. Binaryen's `--remove-unused-module-elements` alone
+reduces the measured artifact from 83,585,611 to **41,141,284 bytes**, proving
+that almost half is removable duplicate/dead module code rather than required
+runtime behavior.
+
+Size follow-up priorities, in order, are:
+
+1. Make callback discovery transactional/analyze-only, or prune the functions
+   it emits, so the final pass does not retain the discovery cohort.
+2. Reuse the final two-pass closure bodies instead of minting a second identical
+   function for the same AST node and capture ABI.
+3. Replace per-call expansion over roughly 1,034 closure candidates with shared
+   or ABI-narrowed dispatch helpers.
+4. Reduce exports and run unused-module elimination/optimization before
+   delivery; pool the 12,057 imported string globals separately.
 
 ### Exact remaining work
 
-1. Add a host-boundary diagnostic around `runCase` traversal to locate the
-   common null property read now reached by all three sources.
-2. Make all three invocations return the expected fingerprints above.
-3. After the runtime fix, rerun the canonical fingerprints, the strict
-   11-callback upstream suite, and the oracle ratchet before claiming runtime
-   parser equivalence. The focused suite, typechecks, lint, and IR ratchet are
-   already green at this handoff.
+1. Add the missing focused Identifier witness: a multi-file, two-activation
+   `createNodeFactory` graph with typed ObjectAllocator constructors, generic
+   `countNode<T>`, the five BaseNodeFactory arrows, destructured
+   `factoryCreateIdentifier`, and `factoryCreateIdentifier("")`. Individual
+   allocator and structural-extension shapes already pass; their combined
+   per-activation/candidate shape is the narrow untested frontier.
+2. Use that witness to determine whether the callable BaseNodeFactory resolves
+   to the wrong carrier or whether Node-to-Identifier structural extension is
+   skipped. Make it fail before changing compiler code.
+3. Reduce the `corePublic.ts` two-argument method-cast separately; do not fold
+   it into the Identifier fix without a shared root-cause proof.
+4. Make all three invocations return the expected fingerprints above, then run
+   the strict 3-file / 11-callback upstream suite.
 
 This is a real-package compile/validation milestone, not a claim that the
 three AST fingerprints or the whole TypeScript unit suite pass yet.

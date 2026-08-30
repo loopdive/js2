@@ -4621,9 +4621,9 @@ function planIrFirstBodyRouting(
 
   // Free-function components outside the bounded R2 population retain the
   // established post-direct overlay order and its compile-once allowlist.
-  // This keeps fast numeric, structured ABI, cross-policy call components,
-  // and late support discovery byte-compatible until their state moves into
-  // preparation.
+  // This keeps unproven fast scalar ABI, structured ABI, cross-policy call
+  // components, and late support discovery byte-compatible until their state
+  // moves into preparation.
   const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
   const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
     requestedSkipUnitIds,
