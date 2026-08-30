@@ -13146,6 +13146,33 @@ export function hoistLetConstWithTdz(
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | ts.Statement[],
 ): void {
+  // (#5221) TWO passes, outermost-first. `walkStmtForLetConst` claims a slot per
+  // NAME (`if (fctx.localMap.has(name)) continue`) and recurses into nested
+  // blocks, so whichever declaration it reaches first fixes that name's slot AND
+  // ITS WASM TYPE for the whole function. Source order put a nested block's
+  // declaration first in the Temporal polyfill's `ToTemporalDate`:
+  //
+  //   function rn(e, t) {
+  //     if (isObject(e)) {
+  //       if (isZonedDateTime(e)) { const n = …; }   // (ref null $Anon{isoDate,time})
+  //       …
+  //     }
+  //     let { year: n, … } = parseISO(String(e));    // a NUMBER
+  //   }
+  //
+  // so the function-level `n` inherited the inner block's struct slot and its
+  // binding lowered to `ref.null $Anon; ref.as_non_null` — an unconditional trap
+  // ("dereferencing a null pointer") on every string-argument call.
+  //
+  // The function body's OWN declarations are the ones that genuinely live for
+  // the whole function, so they claim their slots first; a nested block's
+  // same-named binding then finds the name occupied and gets a fresh local from
+  // `saveBlockScopedShadows` at block entry, which is what block scoping means.
+  // Pass 2 is the original walk verbatim — it re-visits the top-level
+  // declarations, but they are already in `localMap` and skip.
+  for (const stmt of stmts) {
+    if (ts.isVariableStatement(stmt)) walkStmtForLetConst(ctx, fctx, stmt);
+  }
   for (const stmt of stmts) {
     walkStmtForLetConst(ctx, fctx, stmt);
   }

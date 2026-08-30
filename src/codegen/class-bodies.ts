@@ -8,7 +8,7 @@ import { ts } from "../ts-api.js";
 import { findConstructorImplementation, hasStaticModifier } from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
-import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 // (#3522) nested implicit-ctor family
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
@@ -1529,6 +1529,12 @@ export function collectClassDeclaration(
         }
         // (#3673) explicit native annotation pins the parameter type
         let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
+        // (#5221) `m(item, options = void 0)` — an undefined-only parameter type
+        // is an absence of information, not a scalar contract. Must match the
+        // fctx-build phase below exactly. See `isUndefinedDefaultOnlyParam`.
+        if (isUndefinedDefaultOnlyParam(param, paramType)) {
+          wasmType = { kind: "externref" };
+        }
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -2909,6 +2915,12 @@ function compileClassBodiesInner(
           wasmType = { kind: "ref_null", typeIdx: vecTypeIdx };
         } else {
           wasmType = bindingPatternNeedsWiden ? ({ kind: "externref" } as ValType) : resolveWasmType(ctx, paramType);
+          // (#5221) Mirror of the collection phase's undefined-default widening.
+          // These two lists MUST agree — a mismatch is invalid Wasm, not a wrong
+          // value. See `isUndefinedDefaultOnlyParam`.
+          if (isUndefinedDefaultOnlyParam(param, paramType)) {
+            wasmType = { kind: "externref" };
+          }
         }
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
