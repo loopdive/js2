@@ -4,9 +4,9 @@ title: "IR-only R5: whole-program single- and multi-source Prepared ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-28
+updated: 2026-08-30
 assignee: ttraenkler/codex
-branch: codex/3525-unit-keyed-body-skips
+branch: codex/3525-m1a3-same-spelling-callables
 priority: critical
 horizon: xl
 complexity: XL
@@ -980,6 +980,616 @@ include `issue-3525-multi-prepared-program-census`,
 missing body-route audits treated as failures. Assertions must join actual
 legacy body rows and Prepared component membership by `IrUnitId`; the owner's
 post-route `irOutcomes` projection is not sufficient by itself.
+
+## M1A.3 implementation lock — retire the same-spelling component exclusion (2026-08-30)
+
+This is a Sol-authored bounded continuation of M1A.2, grounded on the
+2026-08-30 protected-main tip
+`b6adee3156e9642ed221174a69e6f6f1a381484f` and the branch sync checkpoint
+`d281f8445f84bfaf5c6bbe5ee1fb54b5dcda898e`. It removes the
+remaining name-based *admission* vetoes for the already-structural callable
+component route. It does not change the callable graph, add a new alias
+resolver, widen route eligibility, compose with a dedicated Prepared owner, or
+move any direct fallback body.
+
+### Current authority trace
+
+The first residual is in
+`src/codegen/multi-prepared-callable-orchestration.ts`:
+`collectMultiIrFunctionNameCollisions(...)` builds a program-wide set and
+`collidingFunctionNames.has(claim.legacyName)` rejects an otherwise exact
+candidate. A second, earlier name gate remains in
+`makeMultiIrSafeSelection(...)`: a colliding source-local provider is exempt
+only when `hasMultiIrProgramCallableBoundary(...)` sees that exact unit on a
+cross-source use. In the required graph, `run` calls the imported `call`
+functions, while each `call` reaches its same-source `same` provider. The
+providers therefore fail that early name/occupied-slot gate and source-local
+weak closure withdraws their callers before aggregate candidate construction.
+Adding artificial entry-to-provider calls would merely bypass this gate and is
+forbidden; it does not prove the required route.
+
+A third legacy-name veto remains in
+`src/ir/ast-lowering-plans.ts`: after the resolver has already joined a direct
+call to its exact retained `targetUnitId`, source, declaration, binding, and
+signature, `collectIrDirectCallLoweringPlansByIdentity(...)` still rejects
+solely because `resolved.legacyProjection !== "unambiguous"`. The exact joins
+that follow that check are the structural authority; the global projection
+remains ambiguous by design for untouched legacy consumers. The attempted
+component census is also currently written too late, inside aggregate lowering
+after validation and alias planning. A declined member can therefore disappear
+before the route records the whole structural component, and the later overlay
+filter cannot prove that it withdrew every sibling. Those vetoes and that late
+census are no longer authorities on this route:
+
+- after this checkpoint, `makeMultiIrSafeSelection(...)` treats only exact
+  membership in the authenticated preflight component census as the
+  cross-source certificate; the current local-use-owner shortcut is not
+  authority;
+- the identity imported-function resolver publishes `targetUnitId` even when
+  its legacy flat projection is ambiguous, while only untouched direct/legacy
+  consumers discard the ambiguous projection;
+- selector and imported-call planning consume the frozen structural graph and
+  retain exact owner/target `IrUnitId`s;
+- `prepareMultiPreparedCallableGroup` gives every component unit a unique
+  synthetic integration name derived from the deterministic group/unit order,
+  rewrites local and imported call references from their exact unit targets,
+  and reconciles artifact/terminal evidence back to the unit-keyed maps; and
+- post-publication currentness joins `irUnitFuncMap` and
+  `ProgramAbiSourceCallableRegistry` by unit. `WasmFunction.name` remains only
+  a compatibility/currentness assertion on the exact object, never a lookup.
+
+### Preflight component and attempted-census authority
+
+Run `planExistingRoutes(...)` and Prepared module-init planning first, with
+their existing callbacks and bytes unchanged. Only when module init is absent,
+and only when `owner.existingRouteUnitIds` is empty, derive immutable aggregate
+callable components from the already-frozen program binding graph and planning
+identity. Any established dedicated reservation suppresses the entire aggregate
+attempted census, including disjoint callable candidates; M1A.3 does not compose
+the two owner families. Publish
+their complete attempted census immediately before the callable route invokes
+its first `safeSelection(...)`; the census is not visible to any earlier
+dedicated planner. An explicitly disabled, host, fast, WASI, single-source,
+module-init-bearing, or dedicated-route-bearing lane publishes no attempted
+callable census and retains its current routing:
+
+1. authenticate every endpoint as an exact external-module top-level function
+   with matching source, declaration, binding use, self-owned terminal, and
+   target unit;
+2. treat exact cross-source graph-use endpoints as anchors, expand them through
+   the same per-source undirected local-call closure used by the blocked-owner
+   fixed point, then union across the authenticated cross-source edges;
+3. retain only components containing an exact cross-source edge and at least
+   two sources; do not pull in an unrelated local same-spelled component or an
+   unrelated third declaration; and
+4. sort components and members by the frozen terminal-inventory order, publish
+   the complete union immediately as
+   `ctx.irProgramCallableAttemptedUnitIds`, and never add to it later.
+
+`hasMultiIrProgramCallableBoundary(...)` then means exact membership in this
+preflight census, with the same external-module/terminal/source joins. Its old
+`use.ownerUnitId === unitId` shortcut is not sufficient because source-local
+uses also appear in the graph. `isMultiIrProgramCallableCall(...)` must retain
+its exact AST-site/import-plan proof and additionally require both resolved
+owner and target in the same preflight component. These are the two existing
+predicates consumed by `makeMultiIrSafeSelection(...)`, so `src/codegen/index.ts`
+remains byte-for-byte read-only while the flat collision/occupied-name/funcMap
+bundle is bypassed only for the exact aggregate population.
+
+Aggregate planning consumes those precomputed components; it may not regroup a
+filtered candidate subset. A component prepares only when every structural
+member survives safe selection and `ownerIsEligible(...)`. Existing-route,
+validation, signature, alias-planning, or integration decline leaves the
+component's prepared set empty while its complete attempted set remains
+published. Assert `prepared ⊆ attempted` before owner registration.
+`removeMultiIrAttemptedCallableUnits(...)` removes every attempted identity
+from the later ordinary overlay, re-runs source-local blocked-component closure,
+and throws an Invariant if closure finds a non-attempted neighbor—the preflight
+census then under-approximated the component. Direct legacy bodies remain
+authoritative for a declined component; no late partial IR patch is permitted.
+
+### Late-sealed alias, body, and owner publication
+
+The existing aggregate route has a separate failure-atomicity defect that this
+promotion makes reachable and therefore must repair in the same checkpoint.
+`planAggregateModuleCallableAliases(...)` currently calls the live
+`planProgramAbiModuleCallableAlias(...)` before integration. Even if those
+aliases are moved into the ordinary Prepared descriptor batch, the current
+scope seals and publishes that batch before resolver construction, lowering,
+type-index parity withdrawal, terminal-census mutation, and pending-patch
+validation. A post-seal failure can therefore retain live module aliases while
+every component body falls back. The later
+`MultiPreparedProgramOwner.registerCallableComponents(...)` validation is a
+second fallible publication boundary and can likewise strand installed bodies
+without their exact owner reservation. Neither state satisfies the signed M1A
+atomic contract.
+
+Use one late-sealed, one-shot aggregate transaction instead:
+
+1. Replace live module-alias planning with an opaque
+   `PreparedModuleCallableAliasDescriptor`. It is derived from the exact frozen
+   graph and ordered terminal denominator. It authenticates each canonical live
+   source root with `ProgramAbiSession.currentCallableSignature(rootBindingId)`
+   and the root allocator's current `FuncTypeDef`; a missing or mismatched root
+   contract rejects, and frozen `draft.intent.signature` is never currentness
+   evidence. It then builds source -> export -> import chains target-first in a
+   descriptor-local provisional overlay: every later hop reads the preceding
+   root/provisional callable contract from that overlay and must equal the
+   canonical root. Initial scope staging exposes the same chain through the
+   claimed overlay lookup, and final `prepareSeal()` repeats it against the
+   freshly rebased composite overlay. It produces provisional alias drafts,
+   structural-reference keys, and callable contracts, with no allocator locator
+   or registry write. Its foreign/forged/replay-resistant lifecycle is exactly
+   `fresh -> claimed-by-one-exact-scope -> consumed`: initial stage claims but
+   does not consume it; abort, failed final prepare/seal, or successful commit
+   consumes it exactly once. User-visible re-stage/replay is fatal.
+2. Add `module-callable-aliases` to the existing Prepared Program-ABI batch.
+   Its exact alias binding set participates in staged binding closure; an
+   otherwise empty structural-request set is legal for this alias-only case.
+   The live immediate module-alias planner is deleted so aggregate code has no
+   bypass around the descriptor. Initial staging retains the claimed descriptor
+   and provisional request rather than consuming either.
+3. For the exact `atomicComponent` aggregate lane, derive one complete
+   dependency component and begin/stage its Program-ABI scope, but leave the
+   scope open. Expose its deterministic component ID and overlay ABI to the
+   lower resolver without publishing the batch. Timer/module-init splitting or
+   a dependency that cannot be represented and resolved against the open
+   overlay declines the whole callable component before any live write. Other
+   Prepared lanes retain their present immediate/deferred sealing lifecycle.
+   Extend `PreparedProgramAbiScopeLookup` with the exact locator/current-index/
+   current-callable-contract operations already required by
+   `src/ir/prepared-callable-resolution.ts`, and thread that lookup into
+   `makeResolver(...)`. Unit refs keep their exact allocator-slot resolver;
+   support/global/type/import refs resolve against the claimed overlay, never
+   by querying only the live session. The lookup must reject a locator or
+   structural key outside its overlay and must not publish while resolving. A
+   provisional module alias authenticates with its own in-overlay structural
+   key before canonical-target resolution; the alias ID/key and canonical root
+   ID/key must resolve the same current function index, while a crossed or
+   foreign key remains fatal.
+4. Lower every exact top-level terminal into detached pending patches while
+   the scope remains open. Before commit, prove one patch per expected terminal
+   and no foreign, duplicate, derived, or missing artifact; exact allocator
+   object/type/name/export currentness; exact callable and alias closure;
+   complete counted receipts, compiled-artifact rows, terminal evidence, and
+   final report census; and all aggregate test mutations, including dropped
+   terminal evidence. Resolver, lowering, parity, census, or currentness
+   failure aborts the open scope and consumes its descriptor. It leaves bodies,
+   aliases, reservations, requested skips, telemetry, and terminal outcomes
+   unchanged.
+5. Add an aggregate-only
+   `compilePreparedProgramComponent(...)` entry in
+   `src/ir/prepared-component-publication.ts` whose explicit result is
+   `{ report: IrIntegrationReport; pendingReceipt?: PendingPreparedProgramComponentReceipt }`.
+   The ordinary `compileIrPathFunctions(...): IrIntegrationReport` API and
+   `src/ir/integration-report.ts` remain unchanged. A successful aggregate
+   result carries the pending receipt rather than installing live bodies; the
+   opaque receipt owns the open scope, detached and prevalidated patches,
+   component ID/population, exact report/evidence, and one-shot currentness/
+   abort hooks. An Unsupported or failed aggregate returns no receipt, aborts
+   its claimed scope/descriptor immediately, and remains direct-owned.
+6. After every group has been attempted,
+   `MultiPreparedProgramOwner.stageCallableComponents(...)` validates all
+   successful receipts against a shadow state and returns one opaque staged
+   publication handle. It performs every currently fallible
+   `registerCallableComponents(...)` and callable portion of
+   `sealBodyBoundary()` check—source/unit/declaration/component identity,
+   existing-route/module-init/duplicate exclusion, reservation rows,
+   per-source skip names and unit IDs, body plan, prepared-unit set, telemetry,
+   and terminal-outcome prefixes—without mutating the owner or `ctx`.
+7. `sealBodyBoundary()` may expose the handle's private staged skip projection
+   only to the owner's body consumer; it does not publish callable components,
+   prepared IDs, reservation rows, telemetry, terminal outcomes, or IR bodies.
+   Each source-body visit records its exact skipped unit receipt in that same
+   handle. Failed groups were never staged and therefore direct-emit normally.
+8. At the end of the final expected body-source visit, preflight the complete
+   body-visit/skip census, allocator/type currentness, report evidence,
+   unchanged telemetry/outcome target arrays and prefixes, alias descriptors,
+   and every open scope. All test mutations run before this point. A mismatch
+   is fatal because a direct body may already have been intentionally skipped,
+   but still aborts every open token and publishes zero aliases, patches,
+   owner rows, committed skip receipts, telemetry, or outcomes.
+9. Split the session seal internally into a side-effect-free `prepareSeal()`
+   and a session-owned `commitPreparedScopes(...)`. The latter accepts every
+   pending successful scope, validates cross-scope terminal/unit/class
+   ownership plus exclusive/provisional binding and session/registry write-key
+   disjointness and currentness before the first write, then consumes and
+   publishes the batches/scopes together. Identical immutable committed entry,
+   runtime, support, or import dependencies remain shareable under the existing
+   canonical/currentness rules. The ordinary `seal()` path delegates
+   through the same primitive with one pending scope; there is no parallel ABI
+   model or rollback path. Because initial batch staging snapshots committed
+   maps, final `prepareSeal()` must replay the *claimed descriptor parts* over a
+   fresh committed/composite planning overlay in canonical scope/part order,
+   rebuild all provisional session/registry writes and current contracts, and
+   discard the stale initial clone. Disjoint intervening planning—including
+   direct-body work—remains legal; an occupied or changed overlapping write key,
+   target, locator, or contract rejects before consumption/publication. A
+   compilation-global no-intervening-write revision is forbidden.
+10. The final commit sequence publishes all prepared scopes, installs the
+    prebuilt allocator bodies, and applies the staged owner/body-plan/skip/
+    telemetry/outcome writes. After the first live write it performs only
+    precomputed object/Map/Set/array assignments: no lookup, validation,
+    report-shape assertion, callback that can decline,
+    `settlePreparedDerivedCallable(...)`, or recoverable catch is allowed. A
+    fault after the first write is a fatal `PreparedProgramAbiCommitError`,
+    never component-local continuation or rollback. Overlay planning begins
+    only after this final-source commit.
+11. Each weak component still owns a separate descriptor/open scope/pending
+    receipt. A known precommit failure for A may coexist with a successful B;
+    A remains direct and B enters the staged batch. If any staged receipt turns
+    stale after its body was intentionally skipped, the whole pending-success
+    batch fails fatally and none of its scopes publishes. Once the batch starts
+    its first live write, any fault is compilation-fatal rather than permitting
+    another component to observe a prefix.
+
+This checkpoint explicitly supersedes the earlier M1A/M1A.1
+`preparedBeforeDirectBodies: true` promise **only** for
+`routeKind: "cross-source-callable"`. Advance the public body-plan schema to
+`multi-prepared-program-body-plan-v2` and make reservations a discriminated
+union: existing scalar/array/string/function-value/Fibonacci/module-init routes
+retain `preparedBeforeDirectBodies: true` and
+`publicationPhase: "before-direct-bodies"`; callable rows instead carry
+`stagedBeforeDirectBodies: true`, `committedAfterExactBodySkips: true`, and
+`publicationPhase: "after-exact-body-skips"`, with no
+`preparedBeforeDirectBodies` field. Before the final-source commit the owner
+holds only a private staged boundary/skip plan; it is not returned as the
+public body plan and does not appear in audit/context state. If there are no
+pending callable receipts, existing routes may finalize the v2 public plan at
+the ordinary boundary with their behavior unchanged. The global no-composition
+gate above means one program can never require an early public dedicated-route
+snapshot plus a later augmented callable snapshot. Update the census,
+module-init, and callable tests to prove both discriminants and reject a row
+that claims the wrong publication phase.
+
+The detached lowering transaction must be extracted from the already-oversized
+integration implementation into a focused
+`src/ir/prepared-component-publication.ts`; owner/body/telemetry staging belongs
+in `src/codegen/multi-prepared-callable-publication.ts` rather than regrowing
+`multi-prepared-program.ts`. `src/codegen/program-abi-session.ts` gains only the
+two-phase validation/commit lifecycle above, not rollback or a parallel session
+model. Do not solve this with alias deletion, post-failure cleanup, body
+rollback, an ABI-first seal, or by turning a post-seal failure into a soft
+direct retry.
+
+Accordingly the production and focused-test surface is:
+
+1. remove the collision-helper import, the computed collision set, and the
+   `collidingFunctionNames.has(...)` candidate condition/comment from
+   `src/codegen/multi-prepared-callable-orchestration.ts`, and make that file
+   the single preflight component/attempted-census authority described above;
+2. change `src/codegen/multi-prepared-callable-components.ts` to consume the
+   immutable precomputed component/census, prepare the module-alias and owner
+   publication descriptors, and pass their opaque tokens to the aggregate
+   integration entry without any live alias or late attempted-set mutation;
+3. remove only the redundant `legacyProjection` ambiguity veto from the exact
+   unit-keyed branch of
+   `collectIrDirectCallLoweringPlansByIdentity(...)`, retaining its
+   target-unit, source, declaration, binding, legacy-name, and signature joins
+   in `src/ir/ast-lowering-plans.ts`;
+4. add `src/codegen/program-abi-module-callable-alias-planning.ts`, remove the
+   live alias planner from `src/codegen/program-abi-planning.ts`, and add the
+   opaque alias part to
+   `src/codegen/program-abi-prepared-transaction.ts`; bounded extraction into
+   `src/codegen/program-abi-prepared-scope-lookup.ts` is authorized when needed
+   to keep the transaction facade below the LOC ratchet; the dependency-free
+   `src/codegen/program-abi-callable-roles.ts` leaf and the corresponding
+   import-only adjustment in `src/codegen/program-abi-provider-planning.ts`
+   are authorized so provider evaluation cannot re-enter the aggregate
+   transaction graph through the compatibility planner export;
+5. add `src/codegen/multi-prepared-callable-publication.ts` and narrow owner
+   adapters in `src/codegen/multi-prepared-program.ts` for staged registration,
+   body-plan/skip collection, last-source preflight, and the no-throw owner/
+   telemetry commit; only opaque transaction interfaces cross into IR through
+   `src/codegen/multi-source-ir-integration.ts`;
+6. refactor `src/codegen/program-abi-session.ts` so ordinary single-scope seal
+   and the aggregate all-scope commit share one side-effect-free prepare phase
+   and one prevalidated Map-set-only publisher; the pure aggregate validation
+   and write-set planner may live in
+   `src/codegen/program-abi-prepared-scope-commit.ts`, leaving the session as a
+   thin adapter over its private state;
+7. thread each open exact-component scope through
+   `src/ir/prepared-component-sealing.ts` and
+   `src/ir/compiler-timer-shim-preparation.ts`, and adapt
+   `src/ir/integration.ts` through the extracted
+   `src/ir/prepared-component-publication.ts` so integration returns detached
+   pending receipts and every fallible post-stage path aborts before final seal;
+   extend `src/ir/prepared-callable-resolution.ts` to consume the authenticated
+   open-scope lookup rather than live-session-only support/global/type state;
+8. add the non-vacuous production and failure-atomic regressions to
+   `tests/issue-3525-multi-prepared-callable-bindings.test.ts`; and
+9. add `tests/issue-3525-prepared-program-abi-aggregate.test.ts` for the new
+   alias descriptor, multi-scope commit, forged/duplicate token cleanup, and
+   intervening-owner currentness controls, and update
+   `tests/issue-3520-lowering-plan-identity.test.ts` so the structural
+   collector proves both sides of the boundary: an ambiguous flat projection
+   with the exact source-local target succeeds, while a foreign same-spelled
+   target still fails on its exact retained-source mismatch; update
+   `tests/issue-3525-multi-prepared-program-census.test.ts` and
+   `tests/issue-3525-multi-prepared-module-init.test.ts` only for the v2
+   publication-phase schema and unchanged existing-route behavior.
+
+The aggregate Program-ABI controls intentionally live in the new #3525 file,
+not as edits to `tests/issue-4260-prepared-provider-transaction.test.ts`.
+Exact pushed-checkpoint replay on `b545341d02373b` confirms that file already
+has two unrelated runtime failures (the GC setter returns `2` instead of `1`,
+and the standalone setter binary fails `WebAssembly.validate`) before this
+M1A.3 implementation. Leaving the existing file byte-exact prevents those
+known baseline defects from hiding or bypassing the changed-root hook while
+the six new aggregate controls remain a fully green, non-vacuous gate. The
+sixth control distinguishes a genuinely overlapping terminal claim from an
+intervening disjoint scope that shares one immutable provider: the former
+rejects with the exact duplicate-session-draft ownership diagnostic, while the
+latter rebases and commits successfully.
+
+The same detached-checkpoint replay attributes the seven broader route-control
+failures to `b545341d02373b`, not to the current M1A.3 bytes: #3214's imported
+HOF has the same `===` operand-type build error; #4589 has the same route hash;
+#4590 has the same two byte lengths and global index; and #4591 has the same
+size ceiling and global index. Current and pushed-checkpoint expected/actual
+values match exactly for all seven rows (0 current-slice regressions). Keep
+them as explicit upstream/baseline diagnostics, do not relock their hashes,
+sizes, or indices in this checkpoint, and rerun after the required main sync.
+
+The first integrated late-publication run exposed one necessary, narrower
+consumer adjustment that this lock now authorizes. Because callable terminal
+outcomes become public at the final body-source commit (before the unchanged
+late overlay audit), `recordObservedIrOutcomes(...)` in
+`src/codegen/index.ts` must exclude those exact
+`ctx.irProgramCallablePreparedUnitIds` from the `existingOutcomes` input passed
+to reconciliation as well as from the already-existing append filter. Without
+that input projection, reconciliation diagnoses the intentionally preexisting
+committed callable rows as duplicates before the output filter can discard its
+redundant rows. The adjustment is limited to that helper and exact unit set;
+it does not change selection, lowering, reporting for any unprepared unit, or
+the rest of `src/codegen/index.ts`.
+
+The detached-lowering audit also found that the shared integration pipeline
+can lazily materialize string/vector/dynamic/exception/runtime helpers,
+imports, types, globals, tags, or callable-provider observations before it
+creates the aggregate receipt. Those live compatibility writes cannot
+participate in M1A.3's rollback-free commit. Until those registries gain
+detached allocation, the exact `atomicComponent &&
+deferPreparedPublication` entry must perform a read-only preflight before the
+first global-preparation helper and admit only allocator-neutral scalar IR:
+primitive scalar types, allocation-free numeric/control operations, and exact
+unit-bound calls. The same preflight must decline when
+`ctx.pendingLateImportShift` is already armed: even a neutral component would
+otherwise let callable-provider preregistration flush that earlier live shift
+inside the aggregate transaction. Any pending shift, helper-, import-, type-,
+global-, tag-, runtime-,
+intrinsic-, string-, vector-, dynamic-, exception-, class-, closure-, or
+allocation-bearing component returns one typed
+`late-preparation-unsupported` failure for every member and remains wholly
+direct-owned. Add a `%`/`__fmod` negative control and prove the aggregate
+publishes no receipt, alias, body, owner row, reservation, skip, telemetry, or
+terminal outcome before that direct fallback.
+
+The allocator-neutral decision must precede AST-to-IR construction, not only
+the later global-preparation phase. The build resolver can register vector
+types and set codegen feature flags while lowering an array expression, so a
+post-build decline is already too late. Add a read-only, default-deny preflight
+over the exact selected declarations before `AllocSiteRegistry`, union/vector
+resolver, or builder setup mutates `ctx`; admit only the scalar syntax/type
+subset the later IR whitelist can lower without helper/type/provider
+allocation. Keep the post-build IR whitelist as an independent assertion.
+An array/non-neutral mutation must prove unchanged module types, vector maps,
+feature flags, imports/providers, and zero prepared publication before direct
+fallback; do not implement this with rollback.
+
+That preflight must classify every `Identifier` by its exact declaration and
+binding identity. Local variables, parameters, and authenticated unit-bound
+call targets may be admitted; a module/global binding may not pass merely
+because its syntax is an identifier, since the builder would lower it to a
+`global.get` only after allocator setup. Exercise this boundary through a
+direct prepared-component harness when the ordinary multi-source route would
+be suppressed by module-init population, and prove typed
+`late-preparation-unsupported` with the complete live-context snapshot and
+publication prefix unchanged.
+
+Likewise, syntax being scalar-looking is not sufficient when lowering needs a
+dynamic carrier. Reject a conditional whose two arm types do not normalize to
+the same admitted primitive before either arm can be boxed, and reject nullish
+coalescing on this lane rather than relying on its post-build non-reference
+demotion. Non-vacuous controls must show both forms decline before allocator
+site or helper/type creation and leave the complete publication prefix empty.
+
+Final callable currentness must cover the full declaration subtree, not only
+the `Block` and top-level `Statement` objects. Snapshot the deterministic
+preorder identity of every descendant node for each exact declaration and
+compare it immediately before final publication. A nested mutation replacing
+a `ReturnStatement.expression` or `BinaryExpression.right` while retaining the
+same block/statement identities must fail fatally with a zero publication
+prefix. Finally, true `IrInvariantError` failures from prepared overlay lookup
+or scope validation remain fatal; only explicit `IrUnsupportedError` may
+decline the component to direct ownership. Never relabel an invariant as
+`late-preparation-unsupported`.
+
+Apart from the exact `recordObservedIrOutcomes(...)` input projection above,
+`src/ir/imported-functions.ts`, the rest of `src/codegen/index.ts`,
+declarations, `from-ast.ts`, lowerers/selectors outside the named identity
+collector, module init, and unrelated Program-ABI registries are read-only for
+this checkpoint.
+If the focused regression demonstrates that any other file must change, stop
+and amend this plan before editing; do not turn the bounded lifecycle repair
+into an opportunistic refactor.
+
+### Positive and negative proof
+
+The positive fixture has three modules and five exact top-level units:
+
+- module A exports `same(value)` and `call(value)`, where `call` invokes A's
+  one-argument `same`;
+- module B exports another `same(value, delta)` and another `call(value)`,
+  where `call` invokes B's two-argument `same`; and
+- the entry imports the two `call` bindings under distinct aliases and exports
+  `run`, which invokes both.
+
+The entry must not import or call either `same` binding. Its graph has exactly
+the two source-local `call -> same` edges and the two cross-source
+`run -> callA/callB` edges; any extra entry-to-provider edge invalidates the
+test because it bypasses the early admission boundary instead of exercising
+the propagated component census.
+
+The deliberately different provider arities make a flat-name or last-wins
+target substitution fail ABI reconciliation or runtime parity instead of
+accidentally returning the same value. With ordinary standalone,
+`nativeStrings: true`, `experimentalIR: true`, and no cutover environment
+override, acceptance requires:
+
+- exactly five distinct source-qualified unit IDs reserved and skipped;
+- one shared non-null `preparedComponentId` and five `terminal-ir` outcomes;
+- two units diagnosed as `same`, two as `call`, and one as `run`, without
+  collapsing their unit or source identities;
+- exact Program-ABI/allocator object currentness for every unit;
+- no matching direct-body audit row; and
+- runtime parity with the direct control, including the expected result that
+  distinguishes both `same` implementations.
+
+Poisoning direct bodies for `same,call,run` must still compile and run in the
+default-on lane. With
+`JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER=0`, the same poison must
+reach the direct route; without poison the disabled lane must retain artifact,
+surface, import, and runtime parity. Reversing caller input-map insertion must
+preserve the unit set, structural call targets, component membership, and
+runtime result; source evaluation order remains the existing ordered-source
+authority and is not re-sorted by this test.
+
+Add or retain fail-closed controls for:
+
+- a same legacy spelling paired with a foreign unit ID at the body-routing
+  boundary;
+- an ambiguous legacy projection whose exact local retained unit/source joins
+  succeeds, paired with a same-spelled foreign retained unit that fails on the
+  later source-identity join rather than on flat-name ambiguity;
+- a cloned/wrong-owner call node or wrong target unit in the structural graph;
+- a provider or caller shaped for an established scalar/array/string/function-
+  value/Fibonacci route, proving that route's unchanged pre-census selection
+  wins and the aggregate attempted census remains wholly absent; pair it with a
+  *disjoint* successful dedicated route plus otherwise valid five-unit callable
+  candidate and prove the global no-composition gate still leaves every
+  callable candidate direct-owned;
+- one wrong-arity same-spelled call/target planning shape (typed Unsupported or
+  pre-admission direct-only decline, with no Prepared prefix), paired with a
+  retained-target or `signaturesByUnitId` mutation that remains a fatal
+  exact-identity Invariant with no prefix; and
+- one member that cannot be planned or lowered, proving no sibling body,
+  reservation, alias, terminal outcome, or skip is committed before the exact
+  component decision.
+
+The wrong-arity/unplannable/integration-failure cases must each prove the
+complete accounting: attempted is exactly five, prepared is zero, all five
+exact unit IDs retain direct legacy entries/dispositions/outcomes, and no
+prepared artifact, alias, reservation, terminal-ir outcome, or body skip
+survives. Add mutations for a dropped attempted member, a foreign attempted
+unit, wrong owner/target, prepared-not-attempted, and an under-covered local
+neighbor; all are fatal before publication. A same-spelling local component
+with no cross-source anchor and an unrelated third same-spelled unit must stay
+outside the attempted census.
+
+The late-publication harness must inject failures at alias staging, scope-seal
+preparation, resolver construction, first/middle/last lowering, type-index
+parity, final report/terminal census, owner registration, body-plan reservation,
+and final source-skip preflight. Mutate a missing, duplicate, or foreign skipped
+unit; a wrong or duplicate owner source/unit; an existing outcome unit/key; a
+changed compiled-function or outcome-array prefix; a stale allocator; and a
+stale second scope in a two-component batch. Every rejection before the first
+live write must compare the full snapshot and prove zero new alias draft,
+patched body, sealed scope, owner component, reservation, committed skip,
+prepared-unit ID, compiled telemetry row, or terminal outcome. Positive proof
+must show that none of those fields is public before the final source visit and
+all appear together immediately after it.
+
+Add two disjoint callable components and exercise A-fail/B-success and
+A-success/B-fail, plus a two-success batch whose second pending scope is made
+stale immediately before commit. Known component-local failures retain direct
+bodies for only the failed component; the healthy component publishes once.
+The stale pending-success batch is fatal after its staged skips, but neither
+scope/body/owner prefix may become live. Reverse component and map insertion
+order without changing canonical IDs, scope order, or evidence.
+
+The #4260 transaction suite separately proves the opaque module-alias
+descriptor and two-phase session primitive: overlay invisibility before
+commit; exact abort snapshot; successful target-first canonical
+source -> export -> import alias closure;
+ordinary one-scope `seal()` equivalence; and forged, foreign, replayed, stale,
+wrong-terminal/order/source/target/signature, cycle, duplicate, dropped, and
+locator-owning mutations. Cross-scope terminal/unit/class ownership,
+terminal-owned or provisional alias binding overlap, and session/registry
+write-key overlap must reject before either scope consumes or publishes;
+identical immutable committed entry/runtime/support/import dependencies are a
+positive shared-dependency control. Apply a type-layout remap after initial
+claim and prove final alias comparison uses
+`currentCallableSignature(...)` plus the live allocator type, while a frozen
+draft signature cannot pass. Add an unrelated ABI/registry plan between stage
+and `prepareSeal()` as a successful rebase control, a colliding plan as a
+zero-write rejection, and explicit second-stage/second-prepare/second-abort/
+post-consumption replay failures. Drop or alter the export hop's provisional
+contract independently of the root and import hops; both mutations must reject
+against the canonical root before publication.
+
+Treat the pending-scope collection itself as untrusted input. Authentication
+must record each recognized scope in caller-owned cleanup state before it
+advances to the next iterator element or array property. If iteration or
+property access throws after yielding one valid scope, the outer failure path
+must abort that scope and make a later commit impossible. Add a throwing
+iterator/array-proxy mutation that yields one valid pending scope before the
+fault; a forged-token-only mutation does not cover this collection boundary.
+No `length` or other caller-controlled collection property may be read before
+that protected one-pass authentication; pair the iterator fault with a proxy
+whose `length` getter throws but whose explicit iterator yields the valid
+scope.
+The public `prepareSeal(scopes)` adapter has the same rule: it may not re-read
+the caller collection to discover what its first pass prepared. A stateful
+iterator that yields and prepares one scope before throwing must still leave
+that exact scope aborted even when a second iterator acquisition would throw
+again.
+
+An unsupported member may make the component ineligible before integration;
+that is acceptable only when every would-be member retains one direct terminal
+outcome and the poison/control pair proves no partial Prepared prefix. An
+Invariant remains fatal and likewise may not publish a prefix.
+
+### Preserved boundaries and validation
+
+Host, fast, WASI, module-init-bearing, class/closure/function-value, mutable,
+async/generator, dedicated-owner, and single-source families remain on their
+current routes. The legacy resolver's ambiguous-name projection stays for
+those direct consumers. Do not delete `collectMultiIrFunctionNameCollisions`
+itself while other callers remain, change synthetic-name compatibility, or
+weaken exact signature/component/currentness assertions.
+
+Run the focused #3525 callable-binding suite with the direct-body poison,
+`issue-3525-multi-prepared-program-census`, #3214 imported HOF, #2138
+multi-module overlay, multi-file equivalence, and the existing dedicated-route
+controls. Run TypeScript 7 and 5, Prettier/Biome, `check:ir-fallbacks`, issue
+integrity, and the ordinary IR layering/dialect/readiness ratchets. Before
+every commit, under a finite non-negative one-minute load strictly below
+`logical cores - 2`, run both LOC and function regrowth ratchets immediately
+before committing. Let the complete precommit and prepush hooks run without
+bypass. No baseline, LOC, function-size, binary-size, or hook exception is
+authorized.
+
+The post-sync quality runs moved the existing `forof.string` neutrality
+evidence in `src/ir/integration.ts` from line 5146 first to line 5929, then to
+its final post-repair line 6001, as a direct consequence of this checkpoint's
+bounded integration growth. Regenerating the neutrality evidence with
+`check:ir-kind-neutrality -- --update-on-decrease` changes only that evidence
+locator and the generated date (2026-08-29 to 2026-08-30) across the two parsed
+JSON updates: all 85 kind verdicts and the 55 neutral / 27 JS / 3 unresolved
+counts remain unchanged, and no verdict grew. This is an exact
+evidence-pointer refresh, not a new neutrality allowance or regression
+baseline.
+
+Luna Max owns only the production/test surface explicitly named above on branch
+`codex/3525-m1a3-same-spelling-callables`; the plan remains root-owned and no
+unlisted file may be edited without a Sol plan amendment. Before the PR leaves
+draft, a separate independent Sol—never the Luna implementer—must review the
+exact pushed head SHA and confirm the positive matrix, negative mutations,
+two-phase zero-prefix proof, unchanged route boundaries, and absence of overlap
+with the parallel Claude IR session. Any subsequent push invalidates approval
+and requires a fresh exact-SHA Sol review. A mergeable, all-green,
+exact-SHA-approved PR is ready; a real blocker keeps it draft.
 
 ## M2 implementation lock — single-contributor multi-source module init (2026-08-27)
 

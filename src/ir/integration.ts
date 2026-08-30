@@ -369,7 +369,16 @@ import {
   type PreparedDerivedCallableSlot,
 } from "./prepared-closure-support.js";
 import type { PreparedClassAccessorWritebackEvidence } from "./prepared-component-dependencies.js";
-import type { PreparedComponentSealFailureHandler } from "./prepared-component-sealing.js";
+import type {
+  PreparedComponentOpenScope,
+  PreparedComponentScopeLookup,
+  PreparedComponentSealFailureHandler,
+} from "./prepared-component-sealing.js";
+import {
+  createPendingPreparedProgramComponentReceipt,
+  type PendingPreparedProgramComponentReceipt,
+  type PreparedComponentDetachedPatch,
+} from "./prepared-component-publication.js";
 import {
   createCompilerTimerShimLoweringBoundary,
   prepareCompilerTimerShimLateSealTransaction,
@@ -555,6 +564,9 @@ interface PreparedClosureTransaction {
   readonly refCells: RefCellRegistry;
   readonly freshSlots: readonly PreparedDerivedCallableSlot[];
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
+  readonly openScopes: readonly PreparedComponentOpenScope[];
+  readonly preparedScopeLookup?: PreparedComponentScopeLookup;
+  readonly abortOpenScopes: () => void;
   sealCompilerTimerShim(): void;
   bindLowerResolver(resolver: IrLowerResolver): void;
 }
@@ -705,6 +717,8 @@ function prepareClosureTransaction(input: {
   readonly atomicTerminalPopulation?: boolean;
   readonly callableImports: ReadonlyMap<string, Import>;
   readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
+  readonly deferPublication?: boolean;
+  readonly preparedModuleCallableAliasDescriptor?: IrIntegrationOptions["preparedModuleCallableAliasDescriptor"];
   readonly onSealFailure: PreparedComponentSealFailureHandler;
 }): PreparedClosureTransaction {
   const refCells = new RefCellRegistry(input.ctx);
@@ -730,14 +744,27 @@ function prepareClosureTransaction(input: {
     ...(input.preparedBindingIdsByTerminalUnitId
       ? { preparedBindingIdsByTerminalUnitId: input.preparedBindingIdsByTerminalUnitId }
       : {}),
+    ...(input.deferPublication ? { deferPublication: true as const } : {}),
+    ...(input.preparedModuleCallableAliasDescriptor
+      ? { preparedModuleCallableAliasDescriptor: input.preparedModuleCallableAliasDescriptor }
+      : {}),
     onSealFailure: input.onSealFailure,
   });
+  let preparedScopeLookup = timerTransaction.openScopes[0]?.lookup;
   return {
     registry,
     refCells,
     freshSlots,
     componentIds: timerTransaction.componentIds,
-    sealCompilerTimerShim: timerTransaction.sealDeferred,
+    openScopes: timerTransaction.openScopes,
+    get preparedScopeLookup() {
+      return preparedScopeLookup;
+    },
+    abortOpenScopes: timerTransaction.abortOpenScopes,
+    sealCompilerTimerShim: () => {
+      timerTransaction.sealDeferred();
+      preparedScopeLookup ??= timerTransaction.openScopes[0]?.lookup;
+    },
     bindLowerResolver: (resolver) => {
       resolveValType = (type) => lowerIrTypeToValType(type, resolver, "<closure-registry>");
     },
@@ -773,6 +800,506 @@ function prepareBuiltFnRuntimeManifest(
   materializePreparedMathProviders(ctx, runtime);
   materializePreparedAsyncHostAdapters(ctx, runtime.functions);
   return { entries: preparedEntries, runtime };
+}
+
+function atomicDeferredValTypeIsAllocatorNeutral(type: ValType): boolean {
+  return type.kind === "i32" || type.kind === "i64" || type.kind === "f32" || type.kind === "f64";
+}
+
+function atomicDeferredIrTypeIsAllocatorNeutral(type: IrType): boolean {
+  return type.kind === "val" && atomicDeferredValTypeIsAllocatorNeutral(type.val);
+}
+
+/**
+ * M1A.3 publishes no helper/import/type/provider prefix before its receipt.
+ * Until those registries expose detached allocation, admit only the scalar
+ * IR subset whose lowering is allocator-neutral; every other component stays
+ * direct-owned before any lazy preparation helper can run.
+ */
+function atomicDeferredComponentIsAllocatorNeutral(entries: readonly BuiltFn[]): boolean {
+  for (const entry of entries) {
+    const fn = entry.fn;
+    if (
+      entry.derivedUnit !== undefined ||
+      entry.synthesized === true ||
+      entry.classMember === true ||
+      entry.moduleInit === true ||
+      (entry.countedStringAppendPlans?.length ?? 0) !== 0 ||
+      (fn.funcKind !== undefined && fn.funcKind !== "regular") ||
+      fn.closureSubtype !== undefined ||
+      fn.asyncPlan !== undefined ||
+      fn.asyncRuntime !== undefined ||
+      fn.params.some(({ type }) => !atomicDeferredIrTypeIsAllocatorNeutral(type)) ||
+      fn.resultTypes.some((type) => !atomicDeferredIrTypeIsAllocatorNeutral(type)) ||
+      fn.slots?.some(({ type }) => !atomicDeferredValTypeIsAllocatorNeutral(type)) === true ||
+      fn.blocks.some(({ blockArgTypes }) => blockArgTypes.some((type) => !atomicDeferredIrTypeIsAllocatorNeutral(type)))
+    ) {
+      return false;
+    }
+    for (const block of fn.blocks) {
+      for (const root of block.instrs) {
+        let neutral = true;
+        forEachInstrDeep(root, (instr) => {
+          if (!neutral || instr.alloc !== undefined) {
+            neutral = false;
+            return;
+          }
+          if (instr.resultType !== null && !atomicDeferredIrTypeIsAllocatorNeutral(instr.resultType)) {
+            neutral = false;
+            return;
+          }
+          switch (instr.kind) {
+            case "const":
+              neutral =
+                instr.value.kind === "i32" ||
+                instr.value.kind === "i64" ||
+                instr.value.kind === "f32" ||
+                instr.value.kind === "f64" ||
+                instr.value.kind === "bool";
+              break;
+            case "call":
+              neutral = instr.target.binding.kind === "unit";
+              break;
+            case "binary":
+            case "unary":
+            case "select":
+            case "if":
+            case "slot.read":
+            case "slot.write":
+            case "early.return":
+            case "while.loop":
+            case "for.loop":
+            case "br.label":
+            case "if.stmt":
+            case "labeled.block":
+            case "switch":
+              break;
+            default:
+              neutral = false;
+          }
+        });
+        if (!neutral) return false;
+      }
+    }
+  }
+  return true;
+}
+
+const atomicDeferredNeutralBinaryOperators = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+]);
+
+const atomicDeferredNeutralUnaryOperators = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.TildeToken,
+  ts.SyntaxKind.ExclamationToken,
+]);
+
+/**
+ * Check the exact source declarations before any AST-to-IR builder or lazy
+ * registry is created for a deferred aggregate.  This is deliberately a
+ * default-deny syntax gate: the post-build whitelist below remains an
+ * independent defence, while this gate ensures an array/helper lowering
+ * cannot first mutate the shared context and only then decline.
+ */
+function atomicDeferredComponentPreflightFailure(
+  integrationSourceFiles: readonly ts.SourceFile[],
+  selection: IrSelection,
+  loweringPlans: IrIntegrationLoweringPlans | undefined,
+  identityContext: IrPlanningIdentityContext,
+  checker: ts.TypeChecker,
+  pendingLateImportShift: CodegenContext["pendingLateImportShift"],
+): string | undefined {
+  if (pendingLateImportShift !== null) {
+    return "atomic prepared component has a pending late import shift";
+  }
+  if (!loweringPlans) {
+    return "atomic prepared component has no exact lowering plan for neutral preflight";
+  }
+
+  const sourceFiles = new Set(integrationSourceFiles);
+  const componentUnitIds = new Set(loweringPlans.ownerProjection.entries.map(({ unitId }) => unitId));
+  const declarationsByUnitId = new Map<IrUnitId, ts.FunctionDeclaration>();
+  for (const unitId of componentUnitIds) {
+    const declaration = identityContext.declarationByUnitId.get(unitId);
+    if (
+      !declaration ||
+      !ts.isFunctionDeclaration(declaration) ||
+      !declaration.body ||
+      !sourceFiles.has(declaration.getSourceFile()) ||
+      identityContext.unitIdByDeclaration.get(declaration) !== unitId ||
+      declaration.parent !== declaration.getSourceFile()
+    ) {
+      return `atomic prepared component has no exact top-level declaration for ${unitId}`;
+    }
+    declarationsByUnitId.set(unitId, declaration);
+  }
+
+  const localIdentifierIn = (node: ts.Identifier, ownerUnitId: IrUnitId): boolean => {
+    const owner = declarationsByUnitId.get(ownerUnitId);
+    if (!owner) return false;
+    let valueDeclaration: ts.Declaration | undefined;
+    try {
+      const symbol = checker.getSymbolAtLocation(node);
+      valueDeclaration = symbol?.valueDeclaration;
+    } catch {
+      return false;
+    }
+    if (!valueDeclaration) return false;
+    for (let current: ts.Node | undefined = valueDeclaration; current; current = current.parent) {
+      if (current === owner) return true;
+      if (
+        current !== valueDeclaration &&
+        (ts.isFunctionLike(current) || ts.isSourceFile(current) || ts.isModuleBlock(current))
+      ) {
+        return false;
+      }
+    }
+    return false;
+  };
+
+  type AtomicDeferredPrimitiveFamily = "number" | "boolean" | "string";
+  const primitiveFamilyAt = (node: ts.Expression): AtomicDeferredPrimitiveFamily | undefined => {
+    try {
+      const type = checker.getTypeAtLocation(node);
+      if (type.isUnion()) {
+        const families = new Set<AtomicDeferredPrimitiveFamily>();
+        for (const member of type.types) {
+          if ((member.flags & ts.TypeFlags.Never) !== 0) continue;
+          if ((member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0) return undefined;
+          const family =
+            (member.flags & ts.TypeFlags.NumberLike) !== 0
+              ? ("number" as const)
+              : (member.flags & ts.TypeFlags.BooleanLike) !== 0
+                ? ("boolean" as const)
+                : (member.flags & ts.TypeFlags.StringLike) !== 0
+                  ? ("string" as const)
+                  : undefined;
+          if (family === undefined) return undefined;
+          families.add(family);
+        }
+        return families.size === 1 ? families.values().next().value : undefined;
+      }
+      if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "number";
+      if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return "boolean";
+      if ((type.flags & ts.TypeFlags.StringLike) !== 0) return "string";
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const visit = (node: ts.Node, ownerUnitId: IrUnitId): string | undefined => {
+    if (ts.isCallExpression(node)) {
+      const direct = loweringPlans.directCalls.get(node);
+      const imported = loweringPlans.importedCalls.get(node);
+      if (!direct && !imported) {
+        return `owner ${ownerUnitId} contains a call without an exact unit-bound lowering plan`;
+      }
+      const owner = direct?.ownerUnitId ?? imported?.ownerUnitId;
+      const target = direct?.target ?? imported?.target;
+      if (owner !== ownerUnitId || !target || target.binding.kind !== "unit") {
+        return `owner ${ownerUnitId} contains a non-neutral helper or foreign call`;
+      }
+      if (imported && imported.source !== "module-import") {
+        return `owner ${ownerUnitId} contains a non-neutral imported call`;
+      }
+      if (!componentUnitIds.has(target.binding.unitId)) {
+        return `owner ${ownerUnitId} calls unit ${target.binding.unitId} outside its aggregate`;
+      }
+      for (const argument of node.arguments) {
+        if (ts.isSpreadElement(argument)) {
+          return `owner ${ownerUnitId} contains a spread argument in a deferred aggregate`;
+        }
+        const failure = visit(argument, ownerUnitId);
+        if (failure) return failure;
+      }
+      return undefined;
+    }
+    if (ts.isBinaryExpression(node)) {
+      if (!atomicDeferredNeutralBinaryOperators.has(node.operatorToken.kind)) {
+        return `owner ${ownerUnitId} contains non-neutral binary operator ${ts.SyntaxKind[node.operatorToken.kind]}`;
+      }
+      return visit(node.left, ownerUnitId) ?? visit(node.right, ownerUnitId);
+    }
+    if (ts.isPrefixUnaryExpression(node)) {
+      if (!atomicDeferredNeutralUnaryOperators.has(node.operator)) {
+        return `owner ${ownerUnitId} contains non-neutral unary operator ${ts.SyntaxKind[node.operator]}`;
+      }
+      return visit(node.operand, ownerUnitId);
+    }
+    if (ts.isParenthesizedExpression(node)) return visit(node.expression, ownerUnitId);
+    if (ts.isConditionalExpression(node)) {
+      const trueFamily = primitiveFamilyAt(node.whenTrue);
+      const falseFamily = primitiveFamilyAt(node.whenFalse);
+      if (trueFamily === undefined || trueFamily !== falseFamily) {
+        return `owner ${ownerUnitId} contains a mixed or unresolved conditional value`;
+      }
+      return (
+        visit(node.condition, ownerUnitId) ?? visit(node.whenTrue, ownerUnitId) ?? visit(node.whenFalse, ownerUnitId)
+      );
+    }
+    // Labels are control-flow metadata, not value references.  Their
+    // identifiers have no checker valueDeclaration, so do not mistake a
+    // `break label` / `continue label` or the declaration label itself for a
+    // non-local value.  The surrounding statement remains in the same
+    // default-deny syntax walk below.
+    if (ts.isLabeledStatement(node)) return visit(node.statement, ownerUnitId);
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) return undefined;
+    if (ts.isIdentifier(node)) {
+      if (!localIdentifierIn(node, ownerUnitId)) {
+        return `owner ${ownerUnitId} contains non-local identifier ${node.text}`;
+      }
+      return undefined;
+    }
+    if (
+      ts.isNumericLiteral(node) ||
+      node.kind === ts.SyntaxKind.TrueKeyword ||
+      node.kind === ts.SyntaxKind.FalseKeyword ||
+      node.kind === ts.SyntaxKind.NumberKeyword ||
+      node.kind === ts.SyntaxKind.BooleanKeyword
+    ) {
+      return undefined;
+    }
+    if (
+      ts.isBlock(node) ||
+      ts.isReturnStatement(node) ||
+      ts.isExpressionStatement(node) ||
+      ts.isVariableStatement(node) ||
+      ts.isVariableDeclarationList(node) ||
+      ts.isVariableDeclaration(node) ||
+      ts.isIfStatement(node) ||
+      ts.isWhileStatement(node) ||
+      ts.isDoStatement(node) ||
+      ts.isForStatement(node) ||
+      ts.isBreakStatement(node) ||
+      ts.isContinueStatement(node) ||
+      ts.isEmptyStatement(node) ||
+      ts.isLabeledStatement(node) ||
+      ts.isSwitchStatement(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node)
+    ) {
+      let failure: string | undefined;
+      node.forEachChild((child) => {
+        if (!failure) failure = visit(child, ownerUnitId);
+      });
+      return failure;
+    }
+    return `owner ${ownerUnitId} contains non-neutral ${ts.SyntaxKind[node.kind]}`;
+  };
+
+  for (const entry of loweringPlans.ownerProjection.entries) {
+    if (!selection.funcs.has(entry.legacyName)) {
+      return `atomic prepared component did not select exact owner ${entry.unitId}`;
+    }
+    const declaration = declarationsByUnitId.get(entry.unitId);
+    if (!declaration) return `atomic prepared component lost exact declaration ${entry.unitId}`;
+    const signature = loweringPlans.signaturesByUnitId.get(entry.unitId);
+    if (
+      !signature ||
+      signature.params.some((type) => !atomicDeferredIrTypeIsAllocatorNeutral(type)) ||
+      (signature.returnType !== null && !atomicDeferredIrTypeIsAllocatorNeutral(signature.returnType))
+    ) {
+      return `owner ${entry.unitId} has a non-neutral callable signature`;
+    }
+    const failure = visit(declaration.body!, entry.unitId);
+    if (failure) return failure;
+  }
+  return undefined;
+}
+
+interface AtomicDeferredPreflightSnapshot {
+  readonly usesVecValue: boolean;
+  readonly allocRegistry: object | undefined;
+  readonly pendingLateImportShift: CodegenContext["pendingLateImportShift"];
+  readonly numImportFuncs: number;
+  readonly modTypes: readonly unknown[];
+  readonly vecTypeMap: readonly (readonly [string, number])[];
+  readonly vecFromExternMap: readonly (readonly [number, string])[];
+  readonly funcMap: readonly (readonly [string, number])[];
+  readonly imports: readonly unknown[];
+  readonly functions: readonly unknown[];
+  readonly globals: readonly unknown[];
+  readonly tags: readonly unknown[];
+  readonly exports: readonly unknown[];
+  readonly stringPool: readonly string[];
+  readonly irCompiledFuncs: readonly string[];
+  readonly irOutcomes: readonly unknown[];
+  readonly irProgramCallableAttemptedUnitIds: readonly IrUnitId[] | undefined;
+  readonly irProgramCallablePreparedUnitIds: readonly IrUnitId[] | undefined;
+  readonly callableImportCatalog: readonly (readonly [string, unknown])[];
+  readonly callableImportRegistry: readonly (readonly [string, readonly unknown[]])[];
+  readonly callableProviderRegistry: readonly (readonly [string, readonly unknown[]])[];
+}
+
+function snapshotMapEntries<K, V>(map: ReadonlyMap<K, V> | undefined): readonly (readonly [K, V])[] {
+  return map ? [...map.entries()] : [];
+}
+
+function snapshotProgramAbiRegistry(
+  registry: object | undefined,
+  fields: readonly string[],
+): readonly (readonly [string, readonly unknown[]])[] {
+  if (!registry) return [];
+  const state = registry as Record<string, unknown>;
+  return fields.map((field) => {
+    const value = state[field];
+    if (value instanceof Map) {
+      const entries = [...value.entries()].flatMap(([key, entry]) => [
+        key,
+        ...(Array.isArray(entry) ? entry : [entry]),
+      ]);
+      return [field, entries] as const;
+    }
+    if (Array.isArray(value)) return [field, [...value]] as const;
+    return [field, value === undefined ? [] : [value]] as const;
+  });
+}
+
+function snapshotAtomicDeferredPreflightState(ctx: CodegenContext): AtomicDeferredPreflightSnapshot {
+  return {
+    usesVecValue: ctx.usesVecValue,
+    allocRegistry: ctx.allocRegistry,
+    pendingLateImportShift: ctx.pendingLateImportShift,
+    numImportFuncs: ctx.numImportFuncs,
+    modTypes: [...ctx.mod.types],
+    vecTypeMap: [...ctx.vecTypeMap.entries()],
+    vecFromExternMap: [...(ctx.vecFromExternMap?.entries() ?? [])],
+    funcMap: [...ctx.funcMap.entries()],
+    imports: [...ctx.mod.imports],
+    functions: [...ctx.mod.functions],
+    globals: [...ctx.mod.globals],
+    tags: [...ctx.mod.tags],
+    exports: [...ctx.mod.exports],
+    stringPool: [...ctx.mod.stringPool],
+    irCompiledFuncs: [...(ctx.irCompiledFuncs ?? [])],
+    irOutcomes: [...(ctx.irOutcomes ?? [])],
+    irProgramCallableAttemptedUnitIds:
+      ctx.irProgramCallableAttemptedUnitIds === undefined ? undefined : [...ctx.irProgramCallableAttemptedUnitIds],
+    irProgramCallablePreparedUnitIds:
+      ctx.irProgramCallablePreparedUnitIds === undefined ? undefined : [...ctx.irProgramCallablePreparedUnitIds],
+    callableImportCatalog: snapshotMapEntries(ctx.programAbiCallableImports?.catalog()),
+    callableImportRegistry: snapshotProgramAbiRegistry(ctx.programAbiCallableImports, [
+      "preparedPublication",
+      "plannedByImport",
+      "plannedValue",
+    ]),
+    callableProviderRegistry: snapshotProgramAbiRegistry(ctx.programAbiCallableProviders, [
+      "observed",
+      "preparedPublication",
+      "appendedOrder",
+      "plannedByKey",
+      "plannedValue",
+    ]),
+  };
+}
+
+function assertAtomicDeferredPreflightStateUnchanged(
+  ctx: CodegenContext,
+  before: AtomicDeferredPreflightSnapshot,
+): void {
+  const after = snapshotAtomicDeferredPreflightState(ctx);
+  const same =
+    before.usesVecValue === after.usesVecValue &&
+    before.allocRegistry === after.allocRegistry &&
+    before.numImportFuncs === after.numImportFuncs &&
+    before.pendingLateImportShift === after.pendingLateImportShift &&
+    (before.pendingLateImportShift === null ||
+      (after.pendingLateImportShift !== null &&
+        before.pendingLateImportShift.importsBefore === after.pendingLateImportShift.importsBefore)) &&
+    before.modTypes.length === after.modTypes.length &&
+    before.modTypes.every((value, index) => value === after.modTypes[index]) &&
+    before.vecTypeMap.length === after.vecTypeMap.length &&
+    before.vecTypeMap.every(
+      ([key, value], index) => key === after.vecTypeMap[index]?.[0] && value === after.vecTypeMap[index]?.[1],
+    ) &&
+    before.vecFromExternMap.length === after.vecFromExternMap.length &&
+    before.vecFromExternMap.every(
+      ([key, value], index) =>
+        key === after.vecFromExternMap[index]?.[0] && value === after.vecFromExternMap[index]?.[1],
+    ) &&
+    before.funcMap.length === after.funcMap.length &&
+    before.funcMap.every(
+      ([key, value], index) => key === after.funcMap[index]?.[0] && value === after.funcMap[index]?.[1],
+    ) &&
+    before.imports.length === after.imports.length &&
+    before.imports.every((value, index) => value === after.imports[index]) &&
+    before.functions.length === after.functions.length &&
+    before.functions.every((value, index) => value === after.functions[index]) &&
+    before.globals.length === after.globals.length &&
+    before.globals.every((value, index) => value === after.globals[index]) &&
+    before.tags.length === after.tags.length &&
+    before.tags.every((value, index) => value === after.tags[index]) &&
+    before.exports.length === after.exports.length &&
+    before.exports.every((value, index) => value === after.exports[index]) &&
+    before.stringPool.length === after.stringPool.length &&
+    before.stringPool.every((value, index) => value === after.stringPool[index]) &&
+    before.irCompiledFuncs.length === after.irCompiledFuncs.length &&
+    before.irCompiledFuncs.every((value, index) => value === after.irCompiledFuncs[index]) &&
+    before.irOutcomes.length === after.irOutcomes.length &&
+    before.irOutcomes.every((value, index) => value === after.irOutcomes[index]) &&
+    ((before.irProgramCallableAttemptedUnitIds === undefined &&
+      after.irProgramCallableAttemptedUnitIds === undefined) ||
+      (before.irProgramCallableAttemptedUnitIds !== undefined &&
+        after.irProgramCallableAttemptedUnitIds !== undefined &&
+        before.irProgramCallableAttemptedUnitIds.length === after.irProgramCallableAttemptedUnitIds.length &&
+        before.irProgramCallableAttemptedUnitIds.every(
+          (value, index) => value === after.irProgramCallableAttemptedUnitIds![index],
+        ))) &&
+    ((before.irProgramCallablePreparedUnitIds === undefined && after.irProgramCallablePreparedUnitIds === undefined) ||
+      (before.irProgramCallablePreparedUnitIds !== undefined &&
+        after.irProgramCallablePreparedUnitIds !== undefined &&
+        before.irProgramCallablePreparedUnitIds.length === after.irProgramCallablePreparedUnitIds.length &&
+        before.irProgramCallablePreparedUnitIds.every(
+          (value, index) => value === after.irProgramCallablePreparedUnitIds![index],
+        ))) &&
+    before.callableImportCatalog.length === after.callableImportCatalog.length &&
+    before.callableImportCatalog.every(
+      ([key, value], index) =>
+        key === after.callableImportCatalog[index]?.[0] && value === after.callableImportCatalog[index]?.[1],
+    ) &&
+    before.callableImportRegistry.length === after.callableImportRegistry.length &&
+    before.callableImportRegistry.every(
+      ([field, values], index) =>
+        field === after.callableImportRegistry[index]?.[0] &&
+        values.length === after.callableImportRegistry[index]?.[1].length &&
+        values.every((value, valueIndex) => value === after.callableImportRegistry[index]?.[1][valueIndex]),
+    ) &&
+    before.callableProviderRegistry.length === after.callableProviderRegistry.length &&
+    before.callableProviderRegistry.every(
+      ([field, values], index) =>
+        field === after.callableProviderRegistry[index]?.[0] &&
+        values.length === after.callableProviderRegistry[index]?.[1].length &&
+        values.every((value, valueIndex) => value === after.callableProviderRegistry[index]?.[1][valueIndex]),
+    );
+  if (!same) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "atomic prepared component allocator-neutral preflight mutated shared context state",
+    );
+  }
 }
 
 /** Test-only negative control for the required #4113 final gate. */
@@ -1226,6 +1753,25 @@ export function compileIrPathFunctions(
   );
   const failures = new IrIntegrationFailureLog();
   const { errors } = failures;
+  const detachedPreparedPatches: PreparedComponentDetachedPatch<BuiltFn>[] = [];
+  let pendingPreparedReceipt: PendingPreparedProgramComponentReceipt | undefined;
+  let abortDeferredOpenScopes: (() => void) | undefined;
+  let deferredPublicationFinalizing = false;
+  // Test-only state captured immediately before the aggregate neutral
+  // preflight.  It is checked at the final unsupported report boundary so a
+  // mistakenly admitted array/helper cannot mutate registries and then hide
+  // behind the independent post-build whitelist.
+  const atomicPreflightSnapshot: { value?: AtomicDeferredPreflightSnapshot } = {};
+  let atomicPreflightSnapshotChecked = false;
+  const abortDeferredPublication = (): void => {
+    if (!options?.deferPreparedPublication) return;
+    try {
+      abortDeferredOpenScopes?.();
+    } catch {
+      // Preserve the original pre-publication failure. A scope that already
+      // closed itself while rejecting is terminal and cannot be aborted again.
+    }
+  };
   const finishReport = (
     reportCompiled: readonly string[] = compiled,
     reportErrors: readonly IrIntegrationError[] = errors,
@@ -1234,6 +1780,21 @@ export function compileIrPathFunctions(
     reportCompiledArtifactEvidence: readonly IrIntegrationCompiledArtifactEvidence[] = compiledArtifactEvidence,
     reportCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[] = preparedCountedStringAppendReceipts,
   ): IrIntegrationReport => {
+    if (options?.deferPreparedPublication && !deferredPublicationFinalizing && !pendingPreparedReceipt) {
+      abortDeferredPublication();
+    }
+    if (
+      atomicPreflightSnapshot.value &&
+      !atomicPreflightSnapshotChecked &&
+      reportErrors.length > 0 &&
+      reportCompiled.length === 0 &&
+      reportCompiledArtifactEvidence.length === 0 &&
+      reportCountedStringAppendReceipts.length === 0 &&
+      pendingPreparedReceipt === undefined
+    ) {
+      atomicPreflightSnapshotChecked = true;
+      assertAtomicDeferredPreflightStateUnchanged(ctx, atomicPreflightSnapshot.value);
+    }
     const hardenedErrors = [...reportErrors];
     const hardenedTerminalFailures = reportTerminalFailures.map((event) => {
       if (!nonRetryableCountedStringOwnerUnitIds.has(event.unitId)) return event;
@@ -1268,6 +1829,134 @@ export function compileIrPathFunctions(
       reportCompiledArtifactEvidence,
       reportCountedStringAppendReceipts,
     );
+  };
+  const publishPreparedReceipt = (report: IrIntegrationReport): void => {
+    if (!options?.deferPreparedPublication) return;
+    const sink = options.preparedComponentPublicationSink;
+    const openScopes = preparedClosure?.openScopes ?? [];
+    if (!sink || !preparedClosure || openScopes.length !== 1) {
+      preparedClosure?.abortOpenScopes();
+      if (!sink) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          "detached prepared integration requires one aggregate publication sink",
+        );
+      }
+      return;
+    }
+    if (report.errors.length > 0 || detachedPreparedPatches.length === 0) {
+      preparedClosure.abortOpenScopes();
+      return;
+    }
+    const open = openScopes[0]!;
+    const terminalUnitIds = [...open.terminalUnitIds];
+    const preparedComponentIds = new Set(
+      terminalUnitIds.map((unitId) => preparedComponentIdByTerminalUnitId.get(unitId)),
+    );
+    if (preparedComponentIds.size !== 1 || preparedComponentIds.has(undefined)) {
+      preparedClosure.abortOpenScopes();
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        "detached prepared integration produced an incomplete component identity",
+      );
+    }
+    const preparedComponentId = [...preparedComponentIds][0]!;
+    const expectedTerminalIds = new Set(terminalUnitIds);
+    const patchedTerminalIds = new Set<IrUnitId>();
+    const patchedArtifactIds = new Set<IrUnitId>();
+    const patchedFuncIndices = new Set<number>();
+    if (
+      expectedTerminalIds.size !== terminalUnitIds.length ||
+      detachedPreparedPatches.length !== terminalUnitIds.length
+    ) {
+      preparedClosure.abortOpenScopes();
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `detached prepared component ${preparedComponentId} does not have one exact terminal patch per terminal`,
+      );
+    }
+    for (const patch of detachedPreparedPatches) {
+      if (
+        patch.artifactUnitId !== patch.terminalOwnerUnitId ||
+        patch.entry.artifactUnitId !== patch.artifactUnitId ||
+        patch.entry.terminalOwnerUnitId !== patch.terminalOwnerUnitId ||
+        patch.entry.fn.unitId !== patch.artifactUnitId ||
+        patch.entry.derivedUnit !== undefined ||
+        patch.entry.synthesized === true ||
+        patch.entry.classMember === true ||
+        patch.entry.moduleInit === true ||
+        !Number.isSafeInteger(patch.funcIdx) ||
+        patch.funcIdx < 0 ||
+        !expectedTerminalIds.has(patch.terminalOwnerUnitId) ||
+        preparedComponentIdByTerminalUnitId.get(patch.terminalOwnerUnitId) !== preparedComponentId ||
+        patchedTerminalIds.has(patch.terminalOwnerUnitId) ||
+        patchedArtifactIds.has(patch.artifactUnitId) ||
+        patchedFuncIndices.has(patch.funcIdx)
+      ) {
+        preparedClosure.abortOpenScopes();
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `detached prepared component ${preparedComponentId} has a foreign, duplicate, or non-terminal patch`,
+        );
+      }
+      patchedTerminalIds.add(patch.terminalOwnerUnitId);
+      patchedArtifactIds.add(patch.artifactUnitId);
+      patchedFuncIndices.add(patch.funcIdx);
+    }
+    try {
+      const receipt = sink.publish({
+        preparedComponentId,
+        terminalUnitIds,
+        report,
+        patches: detachedPreparedPatches,
+        assertCurrent: () => {
+          for (const patch of detachedPreparedPatches) {
+            const current = definedFuncAt(ctx, patch.funcIdx);
+            if (
+              current !== patch.existing ||
+              ctx.irUnitFuncMap.get(patch.artifactUnitId) !== patch.existing ||
+              ctx.programAbiSourceCallables?.functionForUnit(patch.artifactUnitId) !== patch.existing
+            ) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "patch",
+                `prepared component ${preparedComponentId} lost exact allocator authority ${patch.artifactUnitId}`,
+              );
+            }
+            if (
+              patch.existing.typeIdx !== patch.replacement.typeIdx ||
+              patch.existing.name !== patch.replacement.name ||
+              patch.existing.exported !== patch.replacement.exported
+            ) {
+              throw new IrInvariantError(
+                "abi-type-index-mismatch",
+                "patch",
+                `prepared component ${preparedComponentId} lost callable contract for ${patch.entry.name}`,
+              );
+            }
+            const bindingId = unitCallableSlots.get(patch.artifactUnitId)?.programAbiBindingId;
+            if (bindingId !== undefined && open.lookup.locatorObject(bindingId) !== patch.existing) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "patch",
+                `prepared component ${preparedComponentId} lost ABI locator for ${patch.artifactUnitId}`,
+              );
+            }
+          }
+        },
+        prepareSeal: () => open.scope.prepareSeal(),
+        scopePublicationState: () => open.scope.publicationState,
+        abortScope: () => open.scope.abort(),
+      });
+      pendingPreparedReceipt = receipt;
+    } catch (error) {
+      preparedClosure.abortOpenScopes();
+      throw error;
+    }
   };
   // #1370 Phase B: don't short-circuit when only class members are claimed —
   // a source file may declare a class with IR-eligible methods but no
@@ -1370,6 +2059,67 @@ export function compileIrPathFunctions(
         detail: "host Date snapshots are unavailable for the selected backend target/provider",
       }),
     );
+  }
+
+  // M1A.3: aggregate publication cannot afford to discover a vector, array,
+  // helper, or other allocator-bearing shape after the builder has already
+  // touched shared registries.  Keep this check before AllocSiteRegistry,
+  // UnionStructRegistry, the from-AST resolver, and every AST-to-IR build.
+  // The post-build IR whitelist below remains independent and intentionally
+  // stays in place as a second defence.
+  const pendingLateImportShiftInjection = process.env.JS2WASM_TEST_ARM_MULTI_PREPARED_PENDING_LATE_IMPORT_SHIFT;
+  if (pendingLateImportShiftInjection !== undefined) {
+    if (!options?.atomicComponent || !options.deferPreparedPublication || pendingLateImportShiftInjection !== "1") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `invalid JS2WASM_TEST_ARM_MULTI_PREPARED_PENDING_LATE_IMPORT_SHIFT selector ${JSON.stringify(
+          pendingLateImportShiftInjection,
+        )}`,
+      );
+    }
+    const injectedImport = ensureLateImport(
+      ctx,
+      "__js2wasm_test_prepared_pending_shift",
+      [{ kind: "i32" }],
+      [{ kind: "i32" }],
+    );
+    if (injectedImport === undefined || ctx.pendingLateImportShift === null) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "pending-late-import-shift test seam did not arm a real deferred import batch",
+      );
+    }
+  }
+  atomicPreflightSnapshot.value =
+    options?.atomicComponent &&
+    options.deferPreparedPublication &&
+    process.env.JS2WASM_TEST_ASSERT_MULTI_PREPARED_PREFLIGHT_READ_ONLY === "1"
+      ? snapshotAtomicDeferredPreflightState(ctx)
+      : undefined;
+  if (options?.atomicComponent && options.deferPreparedPublication) {
+    const preflightDetail = atomicDeferredComponentPreflightFailure(
+      integrationSourceFiles,
+      selected,
+      loweringPlans,
+      moduleBindingIdentityContext,
+      ctx.checker,
+      ctx.pendingLateImportShift,
+    );
+    if (preflightDetail) {
+      const preflightFailure: IrPreparationFailure = {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail: `${preflightDetail}; retaining direct bodies`,
+      };
+      for (const owner of loweringPlans?.ownerProjection.entries ?? []) {
+        if (failures.terminalFailureEvents.some((event) => event.unitId === owner.unitId)) continue;
+        failures.record(owner, integrationFailure(owner.legacyName, preflightFailure));
+      }
+      return finishReport();
+    }
   }
 
   // #1586: one allocation-site registry per module compile. Threaded into the
@@ -2656,6 +3406,22 @@ export function compileIrPathFunctions(
       return false;
     }
   };
+  if (
+    options?.atomicComponent &&
+    options.deferPreparedPublication &&
+    (ctx.pendingLateImportShift !== null || !atomicDeferredComponentIsAllocatorNeutral(healthyForLower))
+  ) {
+    failEveryOwner(
+      healthyForLower,
+      new IrUnsupportedError(
+        "late-preparation-unsupported",
+        "resolve",
+        "atomic prepared component has a pending late import shift or requires lazy helper/import/type/provider allocation; retaining direct bodies",
+      ),
+      "resolve",
+    );
+    return finishReport();
+  }
   let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
   if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
   if (
@@ -2787,25 +3553,34 @@ export function compileIrPathFunctions(
   let preparedComponentIdByTerminalUnitId: ReadonlyMap<IrUnitId, string> = new Map();
   let preparedClosure: PreparedClosureTransaction | undefined;
   if (options?.sealPreparedComponents) {
-    runGlobalPreparation(() => {
-      preparedClosure = prepareClosureTransaction({
-        ctx,
-        entries: healthyForLower,
-        originalArtifactUnitIds,
-        inventory: moduleBindingIdentityContext.inventory,
-        ...(options.atomicComponent ? { atomicTerminalPopulation: true } : {}),
-        callableImports: importedCallableCatalog,
-        ...(options.preparedBindingIdsByTerminalUnitId
-          ? { preparedBindingIdsByTerminalUnitId: options.preparedBindingIdsByTerminalUnitId }
-          : {}),
-        onSealFailure: (terminalUnitId, error, diagnosticVisibility) => {
-          const owner = activeOwnerProjection.requireUnit(terminalUnitId);
-          markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve", diagnosticVisibility);
-        },
-      });
-      freshSlots.push(...preparedClosure.freshSlots);
-      preparedComponentIdByTerminalUnitId = preparedClosure.componentIds;
-    });
+    if (
+      !runGlobalPreparation(() => {
+        preparedClosure = prepareClosureTransaction({
+          ctx,
+          entries: healthyForLower,
+          originalArtifactUnitIds,
+          inventory: moduleBindingIdentityContext.inventory,
+          ...(options.atomicComponent ? { atomicTerminalPopulation: true } : {}),
+          callableImports: importedCallableCatalog,
+          ...(options.preparedBindingIdsByTerminalUnitId
+            ? { preparedBindingIdsByTerminalUnitId: options.preparedBindingIdsByTerminalUnitId }
+            : {}),
+          ...(options.deferPreparedPublication ? { deferPublication: true as const } : {}),
+          ...(options.preparedModuleCallableAliasDescriptor
+            ? { preparedModuleCallableAliasDescriptor: options.preparedModuleCallableAliasDescriptor }
+            : {}),
+          onSealFailure: (terminalUnitId, error, diagnosticVisibility) => {
+            const owner = activeOwnerProjection.requireUnit(terminalUnitId);
+            markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve", diagnosticVisibility);
+          },
+        });
+        freshSlots.push(...preparedClosure.freshSlots);
+        preparedComponentIdByTerminalUnitId = preparedClosure.componentIds;
+        abortDeferredOpenScopes = preparedClosure.abortOpenScopes;
+      })
+    ) {
+      return finishReport();
+    }
     if ((healthyForLower = retainHealthyOwners(healthyForLower)).length === 0) return finishReport();
   }
   // Allocate remaining synthetic placeholders and retain every fresh slot for orphan stubbing (#3551).
@@ -3026,7 +3801,7 @@ export function compileIrPathFunctions(
       );
     }
     ctx.irUnitFuncMap.set(ref.binding.unitId, defined);
-    const programAbiBindingId = preparedUnitProgramAbiBinding(ctx, ref, defined);
+    const programAbiBindingId = preparedUnitProgramAbiBinding(ctx, ref, defined, preparedClosure?.preparedScopeLookup);
     unitCallableSlots.set(ref.binding.unitId, {
       funcIdx,
       physicalName,
@@ -3100,6 +3875,13 @@ export function compileIrPathFunctions(
     const deferredClass: DeferredClassResolver = {
       resolve: () => null,
     };
+    if (options?.deferPreparedPublication && !preparedClosure?.preparedScopeLookup) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "detached prepared integration requires one authenticated open ABI overlay before resolver construction",
+      );
+    }
     resolver = makeResolver(
       ctx,
       unionRegistry,
@@ -3114,6 +3896,7 @@ export function compileIrPathFunctions(
       fuseNativeNumberFormatCarriers,
       loweringPlans?.fnctorParameterPreselection,
       loweringPlans?.fnctorParameterPreselectionIsCurrent,
+      preparedClosure?.preparedScopeLookup,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -3441,196 +4224,268 @@ export function compileIrPathFunctions(
     }
   }
 
-  // (#3551) ABI-parity withdrawal CASCADE. A withdrawal above keeps the
-  // callee's LEGACY body and typeIdx — but every IR body was compiled against
-  // `calleeTypes`, the IR's shared view of each claimed function's signature,
-  // which the parity mismatch just proved DIFFERS from that legacy ABI for the
-  // withdrawn unit. Committing a caller while withdrawing its callee therefore
-  // strands the caller on the wrong ABI: the #3503 partial-commit regression
-  // (tests/issue-3471.test.ts) committed `check`'s IR body — which passed raw
-  // f64 args per the IR view of `isSameValue` — while `isSameValue` withdrew
-  // to its legacy `(externref, externref)` signature, producing invalid Wasm
-  // ("call[0] expected type f64, found call of type externref") after the
-  // stack-balance repair mangled the arg coercions. So: withdraw every still-
-  // pending patch whose IR body references a parity-withdrawn name. One level
-  // is a fixpoint — a cascade-withdrawn caller PASSED the guard itself (its
-  // IR typeIdx equals its legacy typeIdx), so keeping its legacy body changes
-  // nothing about the ABI its own callers compiled against.
-  if (abiDivergentUnitIds.size > 0) {
-    for (const patch of pendingPatches) {
-      if (failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
-      const referenced = findReferencedWithdrawnIrUnit(patch.entry.fn, abiDivergentUnitIds);
-      if (referenced === undefined) continue;
-      markOwnerFailure(
-        terminalOwnerOf(patch.entry),
-        patch.entry.artifactUnitId,
-        patch.entry.name,
-        new IrUnsupportedError(
-          "abi-signature-parity",
-          "resolve",
-          `body references ${referenced.name}, whose claim was withdrawn on a typeIdx parity mismatch — the call ABI baked from calleeTypes no longer matches; keeping legacy body`,
-        ),
-        "patch",
-      );
+  // All post-lowering aggregate checks stay inside one aborting guard. Any
+  // invariant here is still before the owner/session commit boundary, so the
+  // open ABI scope must be closed before the error escapes.
+  try {
+    // (#3551) ABI-parity withdrawal CASCADE. A withdrawal above keeps the
+    // callee's LEGACY body and typeIdx — but every IR body was compiled against
+    // `calleeTypes`, the IR's shared view of each claimed function's signature,
+    // which the parity mismatch just proved DIFFERS from that legacy ABI for the
+    // withdrawn unit. Committing a caller while withdrawing its callee therefore
+    // strands the caller on the wrong ABI: the #3503 partial-commit regression
+    // (tests/issue-3471.test.ts) committed `check`'s IR body — which passed raw
+    // f64 args per the IR view of `isSameValue` — while `isSameValue` withdrew
+    // to its legacy `(externref, externref)` signature, producing invalid Wasm
+    // ("call[0] expected type f64, found call of type externref") after the
+    // stack-balance repair mangled the arg coercions. So: withdraw every still-
+    // pending patch whose IR body references a parity-withdrawn name. One level
+    // is a fixpoint — a cascade-withdrawn caller PASSED the guard itself (its
+    // IR typeIdx equals its legacy typeIdx), so keeping its legacy body changes
+    // nothing about the ABI its own callers compiled against.
+    if (abiDivergentUnitIds.size > 0) {
+      for (const patch of pendingPatches) {
+        if (failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
+        const referenced = findReferencedWithdrawnIrUnit(patch.entry.fn, abiDivergentUnitIds);
+        if (referenced === undefined) continue;
+        markOwnerFailure(
+          terminalOwnerOf(patch.entry),
+          patch.entry.artifactUnitId,
+          patch.entry.name,
+          new IrUnsupportedError(
+            "abi-signature-parity",
+            "resolve",
+            `body references ${referenced.name}, whose claim was withdrawn on a typeIdx parity mismatch — the call ABI baked from calleeTypes no longer matches; keeping legacy body`,
+          ),
+          "patch",
+        );
+      }
     }
-  }
 
-  // A cross-source component has one commit boundary. Once any terminal owner
-  // fails after preparation, discard every pending patch from this invocation;
-  // otherwise a healthy sibling could be installed against an ABI whose
-  // component peer retained its legacy body.
-  const atomicAborted = options?.atomicComponent === true && failedOwners.size > 0;
-  const successfulPatches = atomicAborted
-    ? []
-    : pendingPatches.filter((patch) => !failedOwners.has(patch.entry.terminalOwnerUnitId));
-  const authoritativeCountedPlans = [...(loweringPlans?.countedStringAppends?.values() ?? [])];
-  for (const patch of successfulPatches) {
+    // A cross-source component has one commit boundary. Once any terminal owner
+    // fails after preparation, discard every pending patch from this invocation;
+    // otherwise a healthy sibling could be installed against an ABI whose
+    // component peer retained its legacy body.
+    const atomicAborted = options?.atomicComponent === true && failedOwners.size > 0;
+    const successfulPatches = atomicAborted
+      ? []
+      : pendingPatches.filter((patch) => !failedOwners.has(patch.entry.terminalOwnerUnitId));
+    const authoritativeCountedPlans = [...(loweringPlans?.countedStringAppends?.values() ?? [])];
+    for (const patch of successfulPatches) {
+      if (
+        patch.entry.countedStringAppendPlans?.length &&
+        patch.entry.artifactUnitId !== patch.entry.terminalOwnerUnitId
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `counted-string plans cannot attach to synthetic artifact ${patch.entry.artifactUnitId}`,
+        );
+      }
+    }
+    const observedCountedPlans = successfulPatches.flatMap((patch) => patch.entry.countedStringAppendPlans ?? []);
     if (
-      patch.entry.countedStringAppendPlans?.length &&
-      patch.entry.artifactUnitId !== patch.entry.terminalOwnerUnitId
+      observedCountedPlans.length !== authoritativeCountedPlans.length ||
+      authoritativeCountedPlans.some((plan) => !observedCountedPlans.includes(plan)) ||
+      observedCountedPlans.some((plan) => !authoritativeCountedPlans.includes(plan))
     ) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `counted-string plans cannot attach to synthetic artifact ${patch.entry.artifactUnitId}`,
+        "counted-string authoritative retained-plan/final-artifact census drift",
       );
     }
-  }
-  const observedCountedPlans = successfulPatches.flatMap((patch) => patch.entry.countedStringAppendPlans ?? []);
-  if (
-    observedCountedPlans.length !== authoritativeCountedPlans.length ||
-    authoritativeCountedPlans.some((plan) => !observedCountedPlans.includes(plan)) ||
-    observedCountedPlans.some((plan) => !authoritativeCountedPlans.includes(plan))
-  ) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "resolve",
-      "counted-string authoritative retained-plan/final-artifact census drift",
+    const associatedCountedReceipts = associateFinalIrCountedStringAppendSites(
+      authoritativeCountedPlans,
+      successfulPatches.map((patch) => ({
+        artifactUnitId: patch.entry.artifactUnitId,
+        terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
+        instructions: collectFinalIrCountedStringAppendInstructions(patch.entry.fn),
+      })),
     );
-  }
-  const associatedCountedReceipts = associateFinalIrCountedStringAppendSites(
-    authoritativeCountedPlans,
-    successfulPatches.map((patch) => ({
-      artifactUnitId: patch.entry.artifactUnitId,
-      terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
-      instructions: collectFinalIrCountedStringAppendInstructions(patch.entry.fn),
-    })),
-  );
-  // Patch only after every artifact lowered successfully. A lifted/clone
-  // failure invalidates its whole source owner, including an already-lowered
-  // main artifact, so the ledger can never report emitted+fatal for one row.
-  const installedArtifactUnitIds = new Set<IrUnitId>();
-  for (const patch of pendingPatches) {
-    if (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
-    const replacement = {
-      name: patch.existing.name,
-      typeIdx: patch.wasmFunc.typeIdx,
-      locals: patch.wasmFunc.locals,
-      body: patch.finalBody,
-      exported: patch.existing.exported,
-    };
-    const installed = replaceUnitCallableAt(
-      patch.entry.artifactUnitId,
-      patch.entry.terminalOwnerUnitId,
-      patch.funcIdx,
-      patch.existing,
-      replacement,
-    );
-    installedArtifactUnitIds.add(patch.entry.artifactUnitId);
-    settlePreparedDerivedCallable(ctx, patch.entry, installed, unitCallableSlots.get(patch.entry.artifactUnitId));
-    compiled.push(patch.entry.name);
-    compiledArtifactEvidence.push({
-      artifactUnitId: patch.entry.artifactUnitId,
-      terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
-      name: patch.entry.name,
-      ...(preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId) === undefined
-        ? {}
-        : {
-            preparedComponentId: preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId)!,
-          }),
-    });
-    if (patch.entry.artifactUnitId === patch.entry.terminalOwnerUnitId) {
-      compiledOwners.push(patch.entry.ownerName);
-    }
-  }
-  for (const receipt of associatedCountedReceipts) {
-    const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
-    if (!installedArtifactUnitIds.has(identity.ownerUnitId)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `counted-string receipt ${receipt.siteId} has no installed exact terminal artifact`,
-      );
-    }
-  }
-  preparedCountedStringAppendReceipts.push(...associatedCountedReceipts);
-
-  // (#3551) Stub orphaned empty slots. Two slot families can be stranded
-  // BODYLESS when their owner fails after allocation (at lower time or via
-  // the cascade above): fresh slots (mono clones / lifted fns), and
-  // pre-allocated slots whose legacy body was empty (a branch-hoisted nested
-  // declaration — the guard's empty-slot fall-through case, where the IR body
-  // was the only body on offer). An empty body is invalid Wasm for any
-  // signature WITH results, and the slot can be reachable (a HEALTHY owner
-  // may have committed a body that calls it). A lone `unreachable` validates
-  // against every signature, keeps the rest of the module working, and traps
-  // only on a path that actually enters the orphaned artifact. Empty VOID
-  // bodies are already valid Wasm (fall-through) — leave those as-is rather
-  // than converting today's silent no-op into a trap.
-  const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
-    const orphan = definedFuncAt(ctx, funcIdx);
-    if (!orphan || orphan.body.length > 0) return;
-    const typeDef = ctx.mod.types[orphan.typeIdx];
-    if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
-    replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
-      ...orphan,
-      body: [{ op: "unreachable" }],
-    });
-  };
-  for (const slot of freshSlots) {
-    if (atomicAborted || failedOwners.has(slot.terminalOwnerUnitId)) {
-      stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
-    }
-  }
-  for (const patch of pendingPatches) {
-    if (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId)) {
-      stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
-    }
-  }
-
-  const dropTerminal = process.env.JS2WASM_TEST_DROP_IR_TERMINAL;
-  if (dropTerminal) {
-    const owner =
-      dropTerminal === "1"
-        ? healthyForLower[0] && terminalOwnerOf(healthyForLower[0])
-        : loweringPlans?.ownerProjection.getByLegacyName(dropTerminal);
-    if (owner) {
-      const retainedCompiled: string[] = [];
-      const retainedCompiledArtifacts: IrIntegrationCompiledArtifactEvidence[] = [];
-      const retainedCompiledOwners: string[] = [];
-      for (let index = 0; index < compiledArtifactEvidence.length; index++) {
-        const artifact = compiledArtifactEvidence[index]!;
-        if (artifact.terminalOwnerUnitId === owner.unitId) continue;
-        retainedCompiled.push(compiled[index]!);
-        retainedCompiledArtifacts.push(artifact);
-        if (artifact.artifactUnitId === artifact.terminalOwnerUnitId) {
-          retainedCompiledOwners.push(activeOwnerProjection.requireUnit(artifact.terminalOwnerUnitId).legacyName);
+    // Patch only after every artifact lowered successfully. A lifted/clone
+    // failure invalidates its whole source owner, including an already-lowered
+    // main artifact, so the ledger can never report emitted+fatal for one row.
+    const installedArtifactUnitIds = new Set<IrUnitId>();
+    for (const patch of pendingPatches) {
+      if (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
+      const replacement = {
+        name: patch.existing.name,
+        typeIdx: patch.wasmFunc.typeIdx,
+        locals: patch.wasmFunc.locals,
+        body: patch.finalBody,
+        exported: patch.existing.exported,
+      };
+      if (options?.deferPreparedPublication) {
+        if (patch.entry.derivedUnit !== undefined) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "patch",
+            `detached prepared component cannot defer derived artifact ${patch.entry.artifactUnitId}`,
+          );
         }
+        detachedPreparedPatches.push({
+          entry: patch.entry,
+          artifactUnitId: patch.entry.artifactUnitId,
+          terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
+          funcIdx: patch.funcIdx,
+          existing: patch.existing,
+          replacement,
+          finalBody: patch.finalBody,
+        });
+      } else {
+        const installed = replaceUnitCallableAt(
+          patch.entry.artifactUnitId,
+          patch.entry.terminalOwnerUnitId,
+          patch.funcIdx,
+          patch.existing,
+          replacement,
+        );
+        settlePreparedDerivedCallable(ctx, patch.entry, installed, unitCallableSlots.get(patch.entry.artifactUnitId));
       }
-      return finishReport(
-        retainedCompiled,
-        errors.filter((error) => error.func !== owner.legacyName),
-        retainedCompiledOwners,
-        failures.terminalFailureEvents.filter((event) => event.unitId !== owner.unitId),
-        retainedCompiledArtifacts,
-        preparedCountedStringAppendReceipts.filter(
-          (receipt) => requireValidPreparedCountedStringAppendReceipt(receipt).ownerUnitId !== owner.unitId,
-        ),
-      );
+      installedArtifactUnitIds.add(patch.entry.artifactUnitId);
+      compiled.push(patch.entry.name);
+      compiledArtifactEvidence.push({
+        artifactUnitId: patch.entry.artifactUnitId,
+        terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
+        name: patch.entry.name,
+        ...(preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId) === undefined
+          ? {}
+          : {
+              preparedComponentId: preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId)!,
+            }),
+      });
+      if (patch.entry.artifactUnitId === patch.entry.terminalOwnerUnitId) {
+        compiledOwners.push(patch.entry.ownerName);
+      }
     }
-  }
+    for (const receipt of associatedCountedReceipts) {
+      const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+      if (!installedArtifactUnitIds.has(identity.ownerUnitId)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `counted-string receipt ${receipt.siteId} has no installed exact terminal artifact`,
+        );
+      }
+    }
+    preparedCountedStringAppendReceipts.push(...associatedCountedReceipts);
 
-  return finishReport();
+    // (#3551) Stub orphaned empty slots. Two slot families can be stranded
+    // BODYLESS when their owner fails after allocation (at lower time or via
+    // the cascade above): fresh slots (mono clones / lifted fns), and
+    // pre-allocated slots whose legacy body was empty (a branch-hoisted nested
+    // declaration — the guard's empty-slot fall-through case, where the IR body
+    // was the only body on offer). An empty body is invalid Wasm for any
+    // signature WITH results, and the slot can be reachable (a HEALTHY owner
+    // may have committed a body that calls it). A lone `unreachable` validates
+    // against every signature, keeps the rest of the module working, and traps
+    // only on a path that actually enters the orphaned artifact. Empty VOID
+    // bodies are already valid Wasm (fall-through) — leave those as-is rather
+    // than converting today's silent no-op into a trap.
+    const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
+      const orphan = definedFuncAt(ctx, funcIdx);
+      if (!orphan || orphan.body.length > 0) return;
+      const typeDef = ctx.mod.types[orphan.typeIdx];
+      if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
+      replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
+        ...orphan,
+        body: [{ op: "unreachable" }],
+      });
+    };
+    for (const slot of freshSlots) {
+      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(slot.terminalOwnerUnitId))) {
+        stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
+      }
+    }
+    for (const patch of pendingPatches) {
+      if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
+        stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
+      }
+    }
+
+    const dropTerminal = process.env.JS2WASM_TEST_DROP_IR_TERMINAL;
+    if (dropTerminal) {
+      const owner =
+        dropTerminal === "1"
+          ? healthyForLower[0] && terminalOwnerOf(healthyForLower[0])
+          : loweringPlans?.ownerProjection.getByLegacyName(dropTerminal);
+      if (owner) {
+        const retainedCompiled: string[] = [];
+        const retainedCompiledArtifacts: IrIntegrationCompiledArtifactEvidence[] = [];
+        const retainedCompiledOwners: string[] = [];
+        for (let index = 0; index < compiledArtifactEvidence.length; index++) {
+          const artifact = compiledArtifactEvidence[index]!;
+          if (artifact.terminalOwnerUnitId === owner.unitId) continue;
+          retainedCompiled.push(compiled[index]!);
+          retainedCompiledArtifacts.push(artifact);
+          if (artifact.artifactUnitId === artifact.terminalOwnerUnitId) {
+            retainedCompiledOwners.push(activeOwnerProjection.requireUnit(artifact.terminalOwnerUnitId).legacyName);
+          }
+        }
+        return finishReport(
+          retainedCompiled,
+          errors.filter((error) => error.func !== owner.legacyName),
+          retainedCompiledOwners,
+          failures.terminalFailureEvents.filter((event) => event.unitId !== owner.unitId),
+          retainedCompiledArtifacts,
+          preparedCountedStringAppendReceipts.filter(
+            (receipt) => requireValidPreparedCountedStringAppendReceipt(receipt).ownerUnitId !== owner.unitId,
+          ),
+        );
+      }
+    }
+
+    if (options?.deferPreparedPublication) {
+      deferredPublicationFinalizing = true;
+      const report = finishReport();
+      publishPreparedReceipt(report);
+      return report;
+    }
+    return finishReport();
+  } catch (error) {
+    abortDeferredPublication();
+    throw error;
+  }
+}
+
+/** Explicit result for the detached aggregate component integration lane. */
+export interface PreparedProgramComponentCompilationResult {
+  readonly report: IrIntegrationReport;
+  readonly pendingReceipt?: PendingPreparedProgramComponentReceipt;
+}
+
+/**
+ * Lower one exact aggregate callable component without installing its bodies
+ * or publishing its ABI batch.  The owner claims the returned receipt only
+ * after its final source/skip preflight, prepares the ABI scope, commits all
+ * scopes together, and then applies the detached body assignments.
+ */
+export function compilePreparedProgramComponent(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  selection?: IrSelection,
+  overrides?: IrTypeOverrideMap,
+  classShapes?: ReadonlyMap<string, IrClassShape>,
+  loweringPlans?: IrIntegrationLoweringPlans,
+  options?: IrIntegrationOptions,
+): PreparedProgramComponentCompilationResult {
+  let pendingReceipt: PendingPreparedProgramComponentReceipt | undefined;
+  const publicationSink = {
+    publish: (draft: import("./prepared-component-publication.js").PreparedComponentPublicationDraft) => {
+      const receipt = createPendingPreparedProgramComponentReceipt(draft);
+      pendingReceipt = receipt;
+      return receipt;
+    },
+  };
+  const report = compileIrPathFunctions(ctx, sourceFile, selection, overrides, classShapes, loweringPlans, {
+    ...options,
+    sealPreparedComponents: true,
+    atomicComponent: true,
+    deferPreparedPublication: true,
+    preparedComponentPublicationSink: publicationSink,
+  });
+  return pendingReceipt ? { report, pendingReceipt } : { report };
 }
 
 function hasExportModifier(fn: ts.FunctionDeclaration): boolean {
@@ -5215,6 +6070,59 @@ function emitResolvedStringConst(
   return [{ op: "global.get", index: globalIdx }];
 }
 
+function resolvePreparedImportCallable(
+  ctx: CodegenContext,
+  ref: IrFuncRef,
+  importedCallableCatalog: ReadonlyMap<string, Import>,
+  preparedScopeLookup: PreparedComponentScopeLookup | undefined,
+): number {
+  if (ref.binding.kind !== "import" || !ctx.programAbiSession) {
+    throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: non-import callable ${ref.name}`);
+  }
+  const structuralReferenceKey = irCallableBindingKey(ref.binding);
+  if (preparedScopeLookup) {
+    const bindingIds = preparedScopeLookup.bindingIdsForStructuralReference(structuralReferenceKey);
+    if (bindingIds.length !== 1) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "lower",
+        `ir/integration: exact function import ${ref.binding.module}.${ref.binding.field} has ${bindingIds.length} prepared ABI bindings`,
+      );
+    }
+    return preparedScopeLookup.resolveCurrentIndex(bindingIds[0]!, "function", structuralReferenceKey);
+  }
+  const exactImport = importedCallableCatalog.get(structuralReferenceKey);
+  if (!exactImport || exactImport.desc.kind !== "func") {
+    throw new IrInvariantError(
+      "unknown-function-ref",
+      "lower",
+      `ir/integration: unknown exact function import ${ref.binding.module}.${ref.binding.field}`,
+    );
+  }
+  let functionIndex = 0;
+  let resolved = -1;
+  for (const imported of ctx.mod.imports) {
+    if (imported.desc.kind !== "func") continue;
+    if (imported === exactImport) {
+      if (resolved >= 0) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact function import ${ref.binding.module}.${ref.binding.field} has duplicate allocator ownership`,
+        );
+      }
+      resolved = functionIndex;
+    }
+    functionIndex++;
+  }
+  if (resolved >= 0) return resolved;
+  throw new IrInvariantError(
+    "unknown-function-ref",
+    "lower",
+    `ir/integration: exact function import ${ref.binding.module}.${ref.binding.field} lost its allocator object`,
+  );
+}
+
 function makeResolver(
   ctx: CodegenContext,
   unionRegistry: UnionStructRegistry,
@@ -5229,6 +6137,7 @@ function makeResolver(
   fuseNativeNumberFormatCarriers = false,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
+  preparedScopeLookup?: PreparedComponentScopeLookup,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
@@ -5243,43 +6152,17 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "unit") {
-        return resolvePreparedUnitCallable(ctx, ref, unitCallableSlots);
+        return resolvePreparedUnitCallable(ctx, ref, unitCallableSlots, preparedScopeLookup);
       }
-      if (ref.binding.kind === "support" && ctx.programAbiSession?.hasPlan(ref.binding.bindingId)) {
-        return resolvePreparedSupportCallable(ctx, ref);
+      if (
+        ref.binding.kind === "support" &&
+        (ctx.programAbiSession?.hasPlan(ref.binding.bindingId) ||
+          preparedScopeLookup?.get(ref.binding.bindingId) !== undefined)
+      ) {
+        return resolvePreparedSupportCallable(ctx, ref, preparedScopeLookup);
       }
       if (ref.binding.kind === "import" && ctx.programAbiSession) {
-        const structuralReferenceKey = irCallableBindingKey(ref.binding);
-        const exactImport = importedCallableCatalog.get(structuralReferenceKey);
-        if (!exactImport || exactImport.desc.kind !== "func") {
-          throw new IrInvariantError(
-            "unknown-function-ref",
-            "lower",
-            `ir/integration: unknown exact function import ${ref.binding.module}.${ref.binding.field}`,
-          );
-        }
-        let functionIndex = 0;
-        let resolved = -1;
-        for (const imported of ctx.mod.imports) {
-          if (imported.desc.kind !== "func") continue;
-          if (imported === exactImport) {
-            if (resolved >= 0) {
-              throw new IrInvariantError(
-                "selection-preparation-mismatch",
-                "lower",
-                `ir/integration: exact function import ${ref.binding.module}.${ref.binding.field} has duplicate allocator ownership`,
-              );
-            }
-            resolved = functionIndex;
-          }
-          functionIndex++;
-        }
-        if (resolved >= 0) return resolved;
-        throw new IrInvariantError(
-          "unknown-function-ref",
-          "lower",
-          `ir/integration: exact function import ${ref.binding.module}.${ref.binding.field} lost its allocator object`,
-        );
+        return resolvePreparedImportCallable(ctx, ref, importedCallableCatalog, preparedScopeLookup);
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
         return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
@@ -5324,11 +6207,9 @@ function makeResolver(
           `ir/integration: global ref "${ref.name}" has no ProgramAbiSession`,
         );
       }
-      return ctx.programAbiSession.resolveCurrentIndex(
-        ref.binding.bindingId,
-        "global",
-        irGlobalBindingKey(ref.binding),
-      );
+      return preparedScopeLookup
+        ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding))
+        : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
     },
     resolveType(ref: IrTypeRef): number {
       if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "type") {
@@ -5345,7 +6226,9 @@ function makeResolver(
           `ir/integration: type ref "${ref.name}" has no ProgramAbiSession`,
         );
       }
-      return ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding));
+      return preparedScopeLookup
+        ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding))
+        : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding));
     },
     internFuncType(type: FuncTypeDef): number {
       return addFuncType(ctx, type.params, type.results, type.name);
