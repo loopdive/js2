@@ -2,15 +2,31 @@
 
 import type { CodegenContext } from "./context/types.js";
 import { compileDeclarations } from "./audited-declarations.js";
-import type { ModuleInitMode } from "./declarations.js";
-import { correlateIrSkippedFunctionNames } from "./ir-overlay-safety.js";
+import type { ModuleInitBodyCompileRouting, ModuleInitMode } from "./declarations.js";
+import type { IrUnitId } from "../ir/identity.js";
 import type { EarlyMultiPreparedScalarLeafState, MultiPreparedScalarLeafPlan } from "./multi-prepared-scalar-leaf.js";
 
-/** Name-keyed body skips contributed by a whole-program prepared component. */
+/** Exact body skips contributed by a whole-program prepared component. */
 export interface MultiPreparedAdditionalBodySkips {
   readonly skipBodies: ReadonlySet<string>;
   readonly preserveBodies: ReadonlySet<string>;
+  readonly skipBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly preserveBodyUnitIds: ReadonlySet<IrUnitId>;
   readonly onSkippedNames?: (names: readonly string[]) => void;
+  readonly onSkippedUnitIds?: (unitIds: readonly IrUnitId[]) => void;
+  readonly moduleInitBodyRouting?: ModuleInitBodyCompileRouting;
+}
+
+function projectedUnitIds(
+  state: EarlyMultiPreparedScalarLeafState<MultiPreparedScalarLeafPlan> | undefined,
+  names: ReadonlySet<string> | undefined,
+): ReadonlySet<IrUnitId> {
+  if (!state?.route || !names) return new Set();
+  return new Set(
+    state.route.preparedFreeFunctions.requestedSkipProjection.entries
+      .filter(({ legacyName }) => names.has(legacyName))
+      .map(({ unitId }) => unitId),
+  );
 }
 
 export function mergeMultiPreparedBodySkips(
@@ -36,6 +52,11 @@ export function compileMultiPreparedScalarLeafDeclarations<Plan extends MultiPre
     state?.route?.preparedFreeFunctions.preserveBodies,
     additional,
   );
+  const routeSkipBodyUnitIds = projectedUnitIds(state, state?.route?.preparedFreeFunctions.skipBodies);
+  const routePreserveBodyUnitIds = projectedUnitIds(state, state?.route?.preparedFreeFunctions.preserveBodies);
+  const skipBodyUnitIds = new Set([...routeSkipBodyUnitIds, ...(additional?.skipBodyUnitIds ?? [])]);
+  const preserveSkippedBodyUnitIds = new Set([...routePreserveBodyUnitIds, ...(additional?.preserveBodyUnitIds ?? [])]);
+  const skippedUnitIds: IrUnitId[] = [];
   const skippedNames = compileDeclarations(
     ctx,
     sourceFile,
@@ -43,12 +64,18 @@ export function compileMultiPreparedScalarLeafDeclarations<Plan extends MultiPre
     preserveBodies.size > 0 ? preserveBodies : undefined,
     undefined,
     moduleInitMode,
+    additional?.moduleInitBodyRouting,
+    skipBodyUnitIds.size > 0
+      ? {
+          skipBodyUnitIds,
+          preserveSkippedBodyUnitIds,
+          skippedUnitIds,
+        }
+      : undefined,
   );
   additional?.onSkippedNames?.(skippedNames ?? []);
+  additional?.onSkippedUnitIds?.(skippedUnitIds.filter((unitId) => additional.skipBodyUnitIds.has(unitId)));
   if (state?.route) {
-    state.skippedFunctionUnitIds = correlateIrSkippedFunctionNames(
-      state.route.preparedFreeFunctions.requestedSkipProjection,
-      skippedNames ?? [],
-    ).unitIds;
+    state.skippedFunctionUnitIds = new Set(skippedUnitIds.filter((unitId) => routeSkipBodyUnitIds.has(unitId)));
   }
 }

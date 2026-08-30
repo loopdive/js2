@@ -11,5 +11,9 @@ declare module "./context/types.js" {
     irProgramCallableCutoverEnabled?: boolean;
     /** Exact terminal units attempted by the aggregate callable lane. */
     irProgramCallableAttemptedUnitIds?: ReadonlySet<IrUnitId>;
+    /** Exact terminal units accepted by the aggregate callable owner. */
+    irProgramCallablePreparedUnitIds?: ReadonlySet<IrUnitId>;
+    /** Exact M2 module-init unit suppressed from generic overlay reconciliation. */
+    irProgramPreparedModuleInitUnitId?: IrUnitId;
   }
 }

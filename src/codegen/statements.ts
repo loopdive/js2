@@ -22,6 +22,7 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
+import { mintScopedClassIdentity } from "./class-bodies.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -86,8 +87,35 @@ export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
 /**
  * Mark the first instruction emitted for a statement with its source position.
  */
+let traceStmtGlobalSerial = 0;
 function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement, compile: () => void): void {
   const pos = getSourcePos(ctx, stmt);
+  if (process.env.JS2WASM_TRACE_LAST_STMT && pos) {
+    // Debug-only (env-gated): stream every statement boundary into an exported
+    // mutable f64 global so a host harness can read WHERE a standalone module
+    // trapped (file index * 1e6 + line). No imports — global writes don't
+    // shift function indices.
+    const anyCtx = ctx as unknown as { __traceStmtGlobalIdx?: number; __traceStmtFiles?: Map<string, number> };
+    if (anyCtx.__traceStmtGlobalIdx === undefined) {
+      const idx = ctx.numImportGlobals + ctx.mod.globals.length;
+      ctx.mod.globals.push({
+        name: "__trace_last_stmt",
+        type: { kind: "f64" },
+        mutable: true,
+        init: [{ op: "f64.const", value: -1 }],
+      });
+      ctx.mod.exports.push({
+        name: `__trace_last_stmt_${traceStmtGlobalSerial++}`,
+        desc: { kind: "global", index: idx },
+      });
+      anyCtx.__traceStmtGlobalIdx = idx;
+      anyCtx.__traceStmtFiles = new Map();
+    }
+    const files = anyCtx.__traceStmtFiles!;
+    if (!files.has(pos.file)) files.set(pos.file, files.size);
+    fctx.body.push({ op: "f64.const", value: files.get(pos.file)! * 1e6 + pos.line });
+    fctx.body.push({ op: "global.set", index: anyCtx.__traceStmtGlobalIdx });
+  }
   const bodyLenBefore = fctx.body.length;
   compile();
   if (pos && fctx.body.length > bodyLenBefore) {
@@ -644,7 +672,12 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // `const Foo = class {…}` — locals outrank the name-keyed
     // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
     // scope resolve to THIS declaration, not the first same-named one.
-    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    // (#4646) The collection pass mints that identity only for the scopes it
+    // walks — a class in a sibling BLOCK, or in a class/object-literal METHOD
+    // body, is never visited, so its name collision survives to here. Mint on
+    // demand from the same helper: the check is declaration-node identity, so a
+    // class that legitimately owns its name is untouched.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt) ?? mintScopedClassIdentity(ctx, stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
     // Only synthetic nested duplicates need a local singleton binding.  The
     // ordinary class-declaration path intentionally keeps its historical
@@ -684,6 +717,19 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // in the top-level declaration pass, but can reach this statement compiler
   // from a namespace/module block or another nested statement list.
   if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) {
+    return;
+  }
+
+  // A `const enum` is a type-directed compile-time declaration with no runtime
+  // evaluation. Top-level enum declarations are consumed by the declaration
+  // collector, but a function-local const enum reaches this dispatcher (the
+  // TypeScript compiler's Debug.formatControlFlowGraph declares two). Its
+  // member reads are folded through the checker in property-access dispatch;
+  // the declaration itself must disappear just as it does in TypeScript emit.
+  if (
+    ts.isEnumDeclaration(stmt) &&
+    stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ConstKeyword) === true
+  ) {
     return;
   }
 

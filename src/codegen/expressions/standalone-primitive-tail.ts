@@ -129,6 +129,48 @@ export function tryCompileStandaloneDeletedStringToString(
 }
 
 /**
+ * After deleting `Boolean.prototype.toString`, Boolean prototypes and wrapper
+ * instances inherit `Object.prototype.toString`. Re-emit that borrowed call
+ * before the Boolean-wrapper fast path recovers the internal boolean slot.
+ */
+export function tryCompileStandaloneDeletedBooleanToString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  receiverType: ts.Type,
+  expectedType: ValType | undefined,
+  compileCallExpression: (
+    ctx: CodegenContext,
+    fctx: FunctionContext,
+    expr: ts.CallExpression,
+    expectedType?: ValType,
+  ) => InnerResult,
+): InnerResult | undefined {
+  if (
+    !ctx.standalone ||
+    propAccess.name.text !== "toString" ||
+    receiverType.getSymbol()?.name !== "Boolean" ||
+    !ctx.deletedBuiltinPrototypeMembers?.has("Boolean.prototype.toString")
+  ) {
+    return undefined;
+  }
+
+  const objectProto = ts.factory.createPropertyAccessExpression(
+    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "prototype"),
+    "toString",
+  );
+  const borrowed = ts.factory.createPropertyAccessExpression(objectProto, "call");
+  const borrowedCall = ts.factory.createCallExpression(borrowed, undefined, [
+    propAccess.expression,
+    ...Array.from(callExpr.arguments),
+  ]);
+  ts.setTextRange(borrowedCall, callExpr);
+  (borrowedCall as { parent?: ts.Node }).parent = callExpr.parent;
+  return compileCallExpression(ctx, fctx, borrowedCall, expectedType);
+}
+
+/**
  * Compile `Boolean.prototype.toString()` and Boolean wrapper `toString()` in
  * standalone mode.  The native prototype has the built-in false slot, while
  * a wrapper's slot is recovered by the shared runtime primitive engine.
@@ -139,10 +181,28 @@ export function tryCompileStandaloneBooleanToString(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
   receiverType: ts.Type,
+  expectedType: ValType | undefined,
+  compileCallExpression: (
+    ctx: CodegenContext,
+    fctx: FunctionContext,
+    expr: ts.CallExpression,
+    expectedType?: ValType,
+  ) => InnerResult,
 ): InnerResult | undefined {
   if (!ctx.standalone || receiverType.getSymbol()?.name !== "Boolean" || propAccess.name.text !== "toString") {
     return undefined;
   }
+
+  const deletedBooleanToString = tryCompileStandaloneDeletedBooleanToString(
+    ctx,
+    fctx,
+    propAccess,
+    callExpr,
+    receiverType,
+    expectedType,
+    compileCallExpression,
+  );
+  if (deletedBooleanToString !== undefined) return deletedBooleanToString;
 
   ensureObjectRuntime(ctx);
   const receiverLocal = allocLocal(fctx, `__bool_toString_recv_${fctx.locals.length}`, { kind: "externref" });

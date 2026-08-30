@@ -9,20 +9,77 @@ import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identi
 import type { IrFunction } from "./nodes.js";
 import type { IrIntegrationDiagnosticVisibility } from "./integration-report.js";
 import { IrInvariantError, IrUnsupportedError, PreparedProgramAbiCommitError } from "./outcomes.js";
+import type { PreparedComponentModuleCallableAliasDescriptor } from "./prepared-component-publication.js";
 import {
   derivePreparedComponentDependencies,
+  type PreparedComponentAbiEntry,
   type PreparedComponentDependencyEvidence,
   type PreparedComponentDependencyFailure,
   type PreparedComponentDependencyReport,
   type PreparedInstructionSupportSidecars,
 } from "./prepared-component-dependencies.js";
-import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
+import { ProgramAbiInvariantError } from "./program-abi.js";
+import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
 import type { Import, WasmFunction } from "./types.js";
 
 type PreparedProgramAbiScopeTransaction = ReturnType<
   NonNullable<CodegenContext["programAbiSession"]>["beginPreparedComponentScope"]
 >;
-type PreparedProgramAbiScopeLookup = PreparedProgramAbiScopeTransaction["abi"];
+
+/**
+ * Exact operations required by detached IR lowering.  Keep this adapter in
+ * the sealing boundary so a Program-ABI lookup rename has one integration
+ * point.  The aggregate lane validates all members at runtime before giving
+ * the lookup to a resolver; it never falls back to the live session.
+ */
+export interface PreparedComponentScopeLookup {
+  get(id: IrBindingId): PreparedComponentAbiEntry | undefined;
+  bindingIdsForStructuralReference(key: string): readonly IrBindingId[];
+  getLocator(id: IrBindingId): object | undefined;
+  resolveCurrentIndex(id: IrBindingId, expectedSpace: ProgramAbiSlotSpace, structuralReferenceKey: string): number;
+  currentCallableSignature(id: IrBindingId): PreparedComponentCallableContract | undefined;
+  currentCallableContract(id: IrBindingId): PreparedComponentCallableContract | undefined;
+  locatorObject(id: IrBindingId): object | undefined;
+  locatorObjectForBinding(id: IrBindingId): object | undefined;
+}
+
+/** Opaque structural callable contract exposed only for validation seams. */
+export interface PreparedComponentCallableContract {
+  readonly params: readonly unknown[];
+  readonly results: readonly unknown[];
+}
+
+export interface PreparedComponentOpenScope {
+  readonly componentId: string;
+  readonly terminalUnitIds: readonly IrUnitId[];
+  readonly scope: PreparedProgramAbiScopeTransaction;
+  readonly lookup: PreparedComponentScopeLookup;
+}
+
+export interface PreparedComponentSealingResult {
+  readonly componentIds: ReadonlyMap<IrUnitId, string>;
+  readonly openScopes: readonly PreparedComponentOpenScope[];
+  readonly abortOpenScopes: () => void;
+}
+
+function assertPreparedComponentScopeLookup(lookup: PreparedComponentScopeLookup, componentId: string): void {
+  for (const operation of [
+    "get",
+    "bindingIdsForStructuralReference",
+    "getLocator",
+    "resolveCurrentIndex",
+    "currentCallableSignature",
+    "locatorObject",
+  ] as const) {
+    if (typeof lookup[operation] !== "function") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared component ${componentId} ABI overlay is missing exact ${operation} lookup support`,
+      );
+    }
+  }
+}
 
 export interface PreparedComponentArtifactEntry {
   readonly artifactUnitId: IrUnitId;
@@ -57,6 +114,8 @@ interface PreparedComponentBatchDescription {
   >;
   readonly classLayouts?: ReturnType<NonNullable<CodegenContext["programAbiTypes"]>["describePreparedClassLayouts"]>;
   readonly exportAliases?: ReturnType<NonNullable<CodegenContext["programAbiExports"]>["describePrepared"]>;
+  /** Opaque module-callable-alias descriptor staged with the same scope. */
+  readonly moduleCallableAliases?: PreparedComponentModuleCallableAliasDescriptor;
 }
 
 class InjectedPreparedComponentSealFailure extends Error {
@@ -72,7 +131,10 @@ export type PreparedComponentSealFailureHandler = (
   diagnosticVisibility?: IrIntegrationDiagnosticVisibility,
 ) => void;
 
-function parsePreparedSealFailureSelector(value: string | undefined): PreparedSealFailureSelector {
+function parsePreparedSealFailureSelector(
+  value: string | undefined,
+  envName = "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE",
+): PreparedSealFailureSelector {
   if (value === undefined) return Object.freeze({ kind: "none" });
   if (value === "1") return Object.freeze({ kind: "all" });
   const separator = value.indexOf(":");
@@ -85,7 +147,7 @@ function parsePreparedSealFailureSelector(value: string | undefined): PreparedSe
   throw new IrInvariantError(
     "selection-preparation-mismatch",
     "resolve",
-    `invalid JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE selector ${JSON.stringify(value)}`,
+    `invalid ${envName} selector ${JSON.stringify(value)}`,
   );
 }
 
@@ -419,14 +481,42 @@ export function sealDependencyCompletePreparedComponents(
     readonly ctx: CodegenContext;
     readonly entries: readonly PreparedComponentArtifactEntry[];
     readonly inventory: IrUnitInventory;
+    readonly atomicTerminalPopulation?: boolean;
     readonly callableImports: ReadonlyMap<string, Import>;
     readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
+    readonly deferPublication?: boolean;
+    readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
     readonly onSealFailure: PreparedComponentSealFailureHandler;
   },
 ): ReadonlyMap<IrUnitId, string> {
+  return prepareDependencyCompletePreparedComponents(input).componentIds;
+}
+
+/**
+ * Prepare dependency-complete scopes.  Ordinary callers use the map-only
+ * wrapper above; aggregate callers request `deferPublication` and retain the
+ * authenticated open scope for detached body publication.
+ */
+export function prepareDependencyCompletePreparedComponents(
+  input: PreparedInstructionSupportSidecars & {
+    readonly ctx: CodegenContext;
+    readonly entries: readonly PreparedComponentArtifactEntry[];
+    readonly inventory: IrUnitInventory;
+    readonly atomicTerminalPopulation?: boolean;
+    readonly callableImports: ReadonlyMap<string, Import>;
+    readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
+    readonly deferPublication?: boolean;
+    readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
+    readonly onSealFailure: PreparedComponentSealFailureHandler;
+  },
+): PreparedComponentSealingResult {
   const { ctx, entries, inventory } = input;
   const session = ctx.programAbiSession;
   const failureSelector = parsePreparedSealFailureSelector(process.env.JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE);
+  const internalErrorSelector = parsePreparedSealFailureSelector(
+    process.env.JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_INTERNAL_ERROR,
+    "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_INTERNAL_ERROR",
+  );
   if (!session) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -473,17 +563,18 @@ export function sealDependencyCompletePreparedComponents(
       entries.flatMap((entry) => (entry.derivedUnit ? ([[entry.derivedUnit.id, entry.derivedUnit]] as const) : [])),
     ).values(),
   ];
-  const committedAbi: PreparedProgramAbiScopeLookup = Object.freeze({
+  const committedAbi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = Object.freeze({
     get: (id: IrBindingId) => session.getDraft(id),
     bindingIdsForStructuralReference: (key: string) => session.bindingIdsForStructuralReference(key),
   });
   const derive = (
     candidateTerminalUnitIds: ReadonlySet<IrUnitId>,
-    abi: PreparedProgramAbiScopeLookup = committedAbi,
+    abi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = committedAbi,
   ): PreparedComponentDependencyReport =>
     derivePreparedComponentDependencies({
       module: { functions: entries.map((entry) => entry.fn) },
       terminalUnitIds: candidateTerminalUnitIds,
+      ...(input.atomicTerminalPopulation ? { atomicTerminalPopulation: true } : {}),
       inventory,
       derivedUnits,
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
@@ -498,7 +589,9 @@ export function sealDependencyCompletePreparedComponents(
   );
   let report = derive(candidateTerminalUnitIds);
   const injectedComponentIds = resolvePreparedSealFailureTargets(failureSelector, report);
+  const injectedInternalErrorComponentIds = resolvePreparedSealFailureTargets(internalErrorSelector, report);
   const componentIdByTerminalUnitId = new Map<IrUnitId, string>();
+  const openScopes: PreparedComponentOpenScope[] = [];
   while (candidateTerminalUnitIds.size > 0) {
     const component = report.components[0];
     if (!component) {
@@ -508,7 +601,7 @@ export function sealDependencyCompletePreparedComponents(
         "prepared dependency report omitted remaining candidate terminals",
       );
     }
-    const batch = describePreparedComponentBatch(
+    const describedBatch = describePreparedComponentBatch(
       ctx,
       component,
       entries,
@@ -516,6 +609,13 @@ export function sealDependencyCompletePreparedComponents(
       input.callableImports,
       classIdByBindingId,
     );
+    const batch =
+      input.preparedModuleCallableAliasDescriptor !== undefined
+        ? {
+            ...(describedBatch ?? { requestedStructuralReferenceKeys: Object.freeze([]) }),
+            moduleCallableAliases: input.preparedModuleCallableAliasDescriptor,
+          }
+        : describedBatch;
     let failure: IrUnsupportedError | undefined;
     let diagnosticVisibility: IrIntegrationDiagnosticVisibility = "report";
     try {
@@ -532,6 +632,7 @@ export function sealDependencyCompletePreparedComponents(
             ...(batch.callableProviders ? { callableProviders: batch.callableProviders } : {}),
             ...(batch.classLayouts ? { classLayouts: batch.classLayouts } : {}),
             ...(batch.exportAliases ? { exportAliases: batch.exportAliases } : {}),
+            ...(batch.moduleCallableAliases ? { moduleCallableAliases: batch.moduleCallableAliases } : {}),
           });
           sealedComponent = assertOverlaidComponent(
             component,
@@ -557,11 +658,25 @@ export function sealDependencyCompletePreparedComponents(
             ...(input.preparedBindingIdsByTerminalUnitId?.get(terminalUnitId) ?? []),
           ]),
         );
+        if (injectedInternalErrorComponentIds.has(component.id)) {
+          throw new Error(`injected internal prepared ABI seal error for ${component.id}`);
+        }
         if (injectedComponentIds.has(component.id)) {
           throw new InjectedPreparedComponentSealFailure(component.id);
         }
-        sealStarted = true;
-        scope.seal();
+        if (input.deferPublication) {
+          const lookup = scope.abi as PreparedComponentScopeLookup;
+          assertPreparedComponentScopeLookup(lookup, component.id);
+          openScopes.push({
+            componentId: component.id,
+            terminalUnitIds: Object.freeze([...component.terminalUnitIds]),
+            scope,
+            lookup,
+          });
+        } else {
+          sealStarted = true;
+          scope.seal();
+        }
       } catch (error) {
         if (!sealStarted) scope.abort();
         throw error;
@@ -570,19 +685,26 @@ export function sealDependencyCompletePreparedComponents(
         componentIdByTerminalUnitId.set(terminalUnitId, component.id);
       }
     } catch (error) {
-      if (error instanceof PreparedProgramAbiCommitError) throw error;
-      if (error instanceof InjectedPreparedComponentSealFailure) diagnosticVisibility = "outcome-only";
-      failure =
-        error instanceof IrUnsupportedError
-          ? error
-          : new IrUnsupportedError(
-              "late-preparation-unsupported",
-              "resolve",
-              `dependency-complete component ${component.id} failed ABI sealing: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-              error,
-            );
+      if (
+        error instanceof PreparedProgramAbiCommitError ||
+        error instanceof IrInvariantError ||
+        error instanceof ProgramAbiInvariantError
+      ) {
+        throw error;
+      }
+      if (error instanceof InjectedPreparedComponentSealFailure) {
+        diagnosticVisibility = "outcome-only";
+        failure = new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `dependency-complete component ${component.id} failed ABI sealing`,
+          error,
+        );
+      } else if (error instanceof IrUnsupportedError) {
+        failure = error;
+      } else {
+        throw error;
+      }
     }
     if (failure) {
       for (const terminalUnitId of component.terminalUnitIds) {
@@ -594,5 +716,11 @@ export function sealDependencyCompletePreparedComponents(
     }
     report = derive(candidateTerminalUnitIds);
   }
-  return componentIdByTerminalUnitId;
+  return {
+    componentIds: componentIdByTerminalUnitId,
+    openScopes: Object.freeze(openScopes),
+    abortOpenScopes: () => {
+      for (const open of openScopes) open.scope.abort();
+    },
+  };
 }

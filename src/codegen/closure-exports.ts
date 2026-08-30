@@ -8,11 +8,11 @@
 // (generateModule), which imports these back.
 
 import { ts } from "../ts-api.js";
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
-import { flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { ensureHostCallFallbackImports, planHostCallFallback } from "./expressions/host-call-fallback.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
@@ -22,7 +22,8 @@ import {
   resolveClosureBaseWrapperTypeIdx,
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
-import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
+import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "./any-helpers.js";
+import { ensureObjVecBuilders } from "./object-runtime.js";
 import { buildVecFromExternMaterializer } from "./type-coercion.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
@@ -511,6 +512,139 @@ function closureHostArity(info: {
   return info.hasRestParam === true ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
 }
 
+type ClosureDispatchRestInfo =
+  | {
+      kind: "vec";
+      matchTypeIdx: number;
+      vecTypeIdx: number;
+      arrTypeIdx: number;
+      elemType: ValType;
+    }
+  | {
+      kind: "empty-struct";
+      matchTypeIdx: number;
+      vecTypeIdx: number;
+    }
+  | {
+      kind: "externref";
+      matchTypeIdx: number;
+    };
+
+interface ClosureDispatchEntry {
+  funcTypeIdx: number;
+  returnType: ValType | null;
+  selfTypeIdx: number;
+  closureArity: number;
+  rest?: ClosureDispatchRestInfo;
+}
+
+/**
+ * Recover the concrete carrier needed for a source rest parameter.
+ *
+ * Most rest parameters lower to the canonical `{ length, data }` vec. A
+ * generic rest (`...args: T`, where `T extends unknown[]`) instead resolves to
+ * `externref`: the lifted function still has one Wasm rest formal, but the
+ * host dispatcher must build the array value that formal represents. Treating
+ * that signature as an ordinary arity-0 closure omitted the formal entirely
+ * and made every `__call_fn_N`/`__call_fn_method_N` containing it invalid.
+ */
+function classifyClosureDispatchRest(
+  ctx: CodegenContext,
+  matchTypeIdx: number,
+  info: ClosureInfo,
+  funcTypeDef: FuncTypeDef | undefined,
+  hostArity: number,
+): ClosureDispatchRestInfo | undefined {
+  if (info.hasRestParam !== true || funcTypeDef === undefined) return undefined;
+  const restParam = funcTypeDef.params[hostArity + 1]; // +1 for closure self
+  if (!restParam) return undefined;
+
+  if (restParam.kind === "externref" || restParam.kind === "ref_extern") {
+    return { kind: "externref", matchTypeIdx };
+  }
+  if (restParam.kind !== "ref" && restParam.kind !== "ref_null") return undefined;
+
+  const vecTypeIdx = restParam.typeIdx;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  if (arrDef?.kind === "array") {
+    return { kind: "vec", matchTypeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element };
+  }
+  const vecDef = ctx.mod.types[vecTypeIdx];
+  if (vecDef?.kind === "struct" && vecDef.fields.length === 0) {
+    return { kind: "empty-struct", matchTypeIdx, vecTypeIdx };
+  }
+  return undefined;
+}
+
+/** Build the single hidden Wasm argument that implements a source rest array. */
+function materializeClosureDispatchRest(
+  rest: ClosureDispatchRestInfo,
+  dispatcherArity: number,
+  fixedArity: number,
+  externVecTypeIdx: number,
+  externArrTypeIdx: number,
+  emitElement: (argumentIndex: number, elemType: ValType) => Instr[],
+): Instr[] {
+  if (rest.kind === "empty-struct") return [{ op: "struct.new", typeIdx: rest.vecTypeIdx }];
+
+  const restCount = Math.max(0, dispatcherArity - fixedArity);
+  const elemType: ValType = rest.kind === "externref" ? { kind: "externref" } : rest.elemType;
+  const arrTypeIdx = rest.kind === "externref" ? externArrTypeIdx : rest.arrTypeIdx;
+  const vecTypeIdx = rest.kind === "externref" ? externVecTypeIdx : rest.vecTypeIdx;
+  const instrs: Instr[] = [{ op: "i32.const", value: restCount }];
+  for (let i = fixedArity; i < dispatcherArity; i++) {
+    instrs.push(...emitElement(i, elemType));
+  }
+  instrs.push(
+    { op: "array.new_fixed", typeIdx: arrTypeIdx, length: restCount },
+    { op: "struct.new", typeIdx: vecTypeIdx },
+  );
+  if (rest.kind === "externref") instrs.push({ op: "extern.convert_any" });
+  return instrs;
+}
+
+/**
+ * Build the terminal fallback for a callable owned by the linked standalone
+ * realm. Local closure shapes are tested first; only a dispatch miss crosses
+ * this ABI. The argument vector is an externref on the link boundary so the
+ * provider can consume the structurally canonical `$ObjVec` with its own
+ * object runtime.
+ */
+function buildLinkedGlobalCallFallback(
+  ctx: CodegenContext,
+  arity: number,
+  callableLocal: number,
+  receiver: Instr[],
+  firstArgLocal: number,
+  argsLocal: number,
+): Instr[] {
+  const linkedGlobal = ctx.standaloneGlobalThisImport;
+  const callName = linkedGlobal?.call;
+  if (linkedGlobal === undefined || callName === undefined) return [{ op: "ref.null.extern" }];
+  const callIdx = ctx.funcMap.get(callName);
+  if (callIdx === undefined) return [{ op: "ref.null.extern" }];
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const body: Instr[] = [
+    { op: "call", funcIdx: newIdx },
+    { op: "local.set", index: argsLocal },
+  ];
+  for (let i = 0; i < arity; i++) {
+    body.push(
+      { op: "local.get", index: argsLocal },
+      { op: "local.get", index: firstArgLocal + i },
+      { op: "call", funcIdx: pushIdx },
+    );
+  }
+  body.push(
+    { op: "local.get", index: callableLocal },
+    ...receiver,
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: callIdx },
+  );
+  return body;
+}
+
 /**
  * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
  * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
@@ -557,20 +691,8 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // `arity` user args; when a closure declared fewer, the dispatch arm
   // drops the extra args. Matches JS spec's "extra args ignored at call
   // time" semantics.
-  const entries: {
-    funcTypeIdx: number;
-    returnType: ValType | null;
-    selfTypeIdx: number;
-    closureArity: number;
-    rest?: {
-      matchTypeIdx: number;
-      vecTypeIdx: number;
-      arrTypeIdx: number;
-      elemType: ValType;
-      emptyStruct?: boolean;
-    };
-  }[] = [];
-  const restEntries: (typeof entries)[number][] = [];
+  const entries: ClosureDispatchEntry[] = [];
+  const restEntries: ClosureDispatchEntry[] = [];
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     // A one-shot host callback is invoked only through __call_fn_0 by the
@@ -595,40 +717,22 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         ? (selfParam as { typeIdx: number }).typeIdx
         : typeIdx;
 
-    if (info.hasRestParam === true && funcTypeDef?.kind === "func") {
-      const restParam = funcTypeDef.params[hostArity + 1];
-      if (restParam && (restParam.kind === "ref" || restParam.kind === "ref_null")) {
-        const vecTypeIdx = restParam.typeIdx;
-        const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-        const arrDef = mod.types[arrTypeIdx];
-        if (arrDef?.kind === "array") {
-          restEntries.push({
-            funcTypeIdx: info.funcTypeIdx,
-            returnType: info.returnType,
-            selfTypeIdx,
-            closureArity: hostArity,
-            rest: { matchTypeIdx: typeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element },
-          });
-          continue;
-        }
-        const vecDef = mod.types[vecTypeIdx];
-        if (vecDef?.kind === "struct" && vecDef.fields.length === 0) {
-          restEntries.push({
-            funcTypeIdx: info.funcTypeIdx,
-            returnType: info.returnType,
-            selfTypeIdx,
-            closureArity: hostArity,
-            rest: {
-              matchTypeIdx: typeIdx,
-              vecTypeIdx,
-              arrTypeIdx: -1,
-              elemType: { kind: "externref" },
-              emptyStruct: true,
-            },
-          });
-          continue;
-        }
-      }
+    const rest = classifyClosureDispatchRest(
+      ctx,
+      typeIdx,
+      info,
+      funcTypeDef?.kind === "func" ? funcTypeDef : undefined,
+      hostArity,
+    );
+    if (rest) {
+      restEntries.push({
+        funcTypeIdx: info.funcTypeIdx,
+        returnType: info.returnType,
+        selfTypeIdx,
+        closureArity: hostArity,
+        rest,
+      });
+      continue;
     }
 
     if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
@@ -654,9 +758,31 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
 
+  // A callback may receive a compiled GC value through a host-side facade.
+  // Keep the generic closure bridge on the open externref carrier until the
+  // last responsible moment: recovering the original Wasm value before a
+  // concrete reference cast preserves identity across dynamic callback
+  // results (for example a reducer state read back from a combined object).
+  // Host-free targets have no facade and must not acquire a host import.
+  const needsHostFacadeUnwrap =
+    !ctx.standalone &&
+    !ctx.wasi &&
+    entries.some((entry) => {
+      const funcTypeDef = mod.types[entry.funcTypeIdx];
+      return (
+        funcTypeDef?.kind === "func" &&
+        funcTypeDef.params.slice(1).some((param) => param.kind === "ref" || param.kind === "ref_null")
+      );
+    });
+  if (needsHostFacadeUnwrap) {
+    ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
+  }
+
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const unwrapForWasmIdx = needsHostFacadeUnwrap ? ctx.funcMap.get("__unwrap_for_wasm") : undefined;
 
   // #820l — globals for argc + extras-argv plumbing into the callee's
   // `arguments` object. Both globals are mode-agnostic; ensureExtrasArgvGlobal
@@ -677,7 +803,18 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
 
-  let funcrefDispatch: Instr[] = directHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }];
+  const linkedArgsLocal = funcLocal + 1;
+  let funcrefDispatch: Instr[] =
+    ctx.standaloneGlobalThisImport?.call !== undefined
+      ? buildLinkedGlobalCallFallback(
+          ctx,
+          arity,
+          0,
+          undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+          1,
+          linkedArgsLocal,
+        )
+      : (directHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }]);
 
   // `funcrefDispatch` is built by prepending each arm, so reverse the
   // priority order returned by `orderClosureDispatchEntries` to keep the
@@ -714,6 +851,23 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
           // ref domain so the subsequent `call_ref` typechecks. In
           // `wasm:js-string` (gc) mode string params ARE externref, so this
           // branch is skipped and the arg passes raw.
+          if (paramType.kind === "ref_null" && isUndefinedIdx !== undefined) {
+            return [
+              { op: "local.get", index: argLocalIdx },
+              { op: "call", funcIdx: isUndefinedIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: paramType },
+                then: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
+                else: [
+                  { op: "local.get", index: argLocalIdx },
+                  ...(unwrapForWasmIdx === undefined ? [] : [{ op: "call", funcIdx: unwrapForWasmIdx } as Instr]),
+                  ...externToClosureParamRef(ctx, paramType),
+                ],
+              },
+            ];
+          }
+          if (unwrapForWasmIdx !== undefined) ops.push({ op: "call", funcIdx: unwrapForWasmIdx });
           ops.push(...externToClosureParamRef(ctx, paramType));
         }
         // externref param: no conversion
@@ -729,16 +883,17 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
       argInstrs.push(...buildArgConversion(i + 1, paramType));
     }
-    if (entry.rest?.emptyStruct) {
-      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
-    } else if (entry.rest) {
-      const restCount = arity - entry.closureArity;
-      argInstrs.push({ op: "i32.const", value: restCount });
-      for (let i = entry.closureArity; i < arity; i++) {
-        argInstrs.push(...buildArgConversion(i + 1, entry.rest.elemType));
-      }
-      argInstrs.push({ op: "array.new_fixed", typeIdx: entry.rest.arrTypeIdx, length: restCount });
-      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
+    if (entry.rest) {
+      argInstrs.push(
+        ...materializeClosureDispatchRest(
+          entry.rest,
+          arity,
+          entry.closureArity,
+          extrasVecTypeIdx,
+          extrasArrTypeIdx,
+          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 1, elemType),
+        ),
+      );
     }
 
     // #820l — argc/extras-argv plumbing so the callee's `arguments` object
@@ -852,7 +1007,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         { name: "__any", type: { kind: "anyref" } },
         { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
         { name: "__funcref", type: { kind: "funcref" } },
-        { name: "__host_args", type: { kind: "externref" } },
+        { name: "__fallback_args", type: { kind: "externref" } },
       ],
       body,
       exported: true,
@@ -1103,20 +1258,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
 
   let baseWrapperIdx: number | undefined;
   const seenFuncTypeIdx = new Set<number>();
-  const entries: {
-    funcTypeIdx: number;
-    returnType: ValType | null;
-    selfTypeIdx: number;
-    closureArity: number;
-    rest?: {
-      matchTypeIdx: number;
-      vecTypeIdx: number;
-      arrTypeIdx: number;
-      elemType: ValType;
-      emptyStruct?: boolean;
-    };
-  }[] = [];
-  const restEntries: (typeof entries)[number][] = [];
+  const entries: ClosureDispatchEntry[] = [];
+  const restEntries: ClosureDispatchEntry[] = [];
   // (#3992) Every native-proto METHOD closure of this arity — see the collector.
   const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
@@ -1137,40 +1280,22 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         ? (selfParam as { typeIdx: number }).typeIdx
         : typeIdx;
 
-    if (info.hasRestParam === true && funcTypeDef?.kind === "func") {
-      const restParam = funcTypeDef.params[hostArity + 1];
-      if (restParam && (restParam.kind === "ref" || restParam.kind === "ref_null")) {
-        const vecTypeIdx = restParam.typeIdx;
-        const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-        const arrDef = mod.types[arrTypeIdx];
-        if (arrDef?.kind === "array") {
-          restEntries.push({
-            funcTypeIdx: info.funcTypeIdx,
-            returnType: info.returnType,
-            selfTypeIdx,
-            closureArity: hostArity,
-            rest: { matchTypeIdx: typeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element },
-          });
-          continue;
-        }
-        const vecDef = mod.types[vecTypeIdx];
-        if (vecDef?.kind === "struct" && vecDef.fields.length === 0) {
-          restEntries.push({
-            funcTypeIdx: info.funcTypeIdx,
-            returnType: info.returnType,
-            selfTypeIdx,
-            closureArity: hostArity,
-            rest: {
-              matchTypeIdx: typeIdx,
-              vecTypeIdx,
-              arrTypeIdx: -1,
-              elemType: { kind: "externref" },
-              emptyStruct: true,
-            },
-          });
-          continue;
-        }
-      }
+    const rest = classifyClosureDispatchRest(
+      ctx,
+      typeIdx,
+      info,
+      funcTypeDef?.kind === "func" ? funcTypeDef : undefined,
+      hostArity,
+    );
+    if (rest) {
+      restEntries.push({
+        funcTypeIdx: info.funcTypeIdx,
+        returnType: info.returnType,
+        selfTypeIdx,
+        closureArity: hostArity,
+        rest,
+      });
+      continue;
     }
 
     if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
@@ -1225,7 +1350,11 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   };
   body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));
 
-  let funcrefDispatch: Instr[] = methodHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }];
+  const linkedArgsLocal = prevThisLocal + 3;
+  let funcrefDispatch: Instr[] =
+    ctx.standaloneGlobalThisImport?.call !== undefined
+      ? buildLinkedGlobalCallFallback(ctx, arity, 1, [{ op: "local.get", index: 0 }], 2, linkedArgsLocal)
+      : (methodHostCallableFallback(ctx, arity) ?? [{ op: "ref.null.extern" }]);
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed
   // dispatch built after the loop.
   const callBodyByEntry: { entry: (typeof entries)[number]; callBody: Instr[] }[] = [];
@@ -1296,16 +1425,17 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
       argInstrs.push(...buildArgConversion(i + 2, i, paramType));
     }
-    if (entry.rest?.emptyStruct) {
-      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
-    } else if (entry.rest) {
-      const restCount = arity - entry.closureArity;
-      argInstrs.push({ op: "i32.const", value: restCount });
-      for (let i = entry.closureArity; i < arity; i++) {
-        argInstrs.push(...buildArgConversion(i + 2, i, entry.rest.elemType));
-      }
-      argInstrs.push({ op: "array.new_fixed", typeIdx: entry.rest.arrTypeIdx, length: restCount });
-      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
+    if (entry.rest) {
+      argInstrs.push(
+        ...materializeClosureDispatchRest(
+          entry.rest,
+          arity,
+          entry.closureArity,
+          extrasVecTypeIdx,
+          extrasArrTypeIdx,
+          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 2, argumentIndex, elemType),
+        ),
+      );
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see
@@ -1528,7 +1658,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         // (#3673 round 10) declared arity read off the root wrapper for the
         // arity-bucketed signature dispatch (-1 = not root-readable).
         { name: "__declared_arity", type: { kind: "i32" } },
-        { name: "__host_args", type: { kind: "externref" } },
+        { name: "__fallback_args", type: { kind: "externref" } },
       ],
       body,
       exported: true,

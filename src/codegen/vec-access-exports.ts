@@ -8,7 +8,8 @@
 // finalize passes and re-exports `reserveVecMethodHelper` for its compile-time
 // callers (calls.ts, property-access.ts, closed-method-dispatch.ts).
 
-import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
+import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
+import type { FuncHandle, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3315)
 import { ensureHoleType } from "./array-holes.js";
@@ -40,6 +41,12 @@ interface VecHostBridgeDefinition {
 interface VecHostBridgeAllocation {
   readonly definition: VecHostBridgeDefinition;
   readonly func: WasmFunction;
+}
+
+interface VecHostBridgePublishedExport {
+  readonly allocation: VecHostBridgeAllocation;
+  readonly entry: WasmExport;
+  readonly name: string;
 }
 
 const VEC_HOST_BRIDGE_DEFINITIONS: readonly VecHostBridgeDefinition[] = Object.freeze([
@@ -118,6 +125,18 @@ export function vecHostBridgeMaterializerOrdinal(kind: VecHostBridgeMaterializer
 }
 
 const vecHostBridgeAllocations = new WeakMap<CodegenContext, ReadonlyMap<VecHostBridgeKind, VecHostBridgeAllocation>>();
+const vecHostBridgePublishedExports = new WeakMap<CodegenContext, readonly VecHostBridgePublishedExport[]>();
+
+/**
+ * Authenticate one export descriptor as a compiler-published core vec bridge.
+ *
+ * Standalone/WASI stripping must use descriptor identity rather than widening
+ * the reserved-name matcher: collision publication can append `$` suffixes,
+ * and those same suffixes remain a valid user-export namespace.
+ */
+export function isCompilerOwnedVecHostBridgeExport(ctx: CodegenContext, entry: WasmExport): boolean {
+  return vecHostBridgePublishedExports.get(ctx)?.some((published) => published.entry === entry) ?? false;
+}
 
 function vecHostBridgeDefinition(kind: VecHostBridgeKind): VecHostBridgeDefinition {
   const definition = VEC_HOST_BRIDGE_DEFINITIONS.find((candidate) => candidate.kind === kind);
@@ -195,6 +214,15 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
  */
 function publishVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = ensureVecHostBridgeAllocations(ctx);
+  if (vecHostBridgePublishedExports.has(ctx)) {
+    throw new Error("vec host bridge exports were published more than once");
+  }
+  const published: VecHostBridgePublishedExport[] = [];
+  const publishOwnedExport = (name: string, funcIdx: FuncHandle, allocation: VecHostBridgeAllocation): void => {
+    const entry: WasmExport = { name, desc: { kind: "func", index: funcIdx } };
+    ctx.mod.exports.push(entry);
+    published.push(Object.freeze({ allocation, entry, name }));
+  };
   const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
   for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
     const allocation = allocations.get(definition.kind);
@@ -211,7 +239,7 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
     }
     const logicalNameOccupied = occupied.has(definition.name);
     if (!logicalNameOccupied) {
-      exportFunc(ctx.mod, definition.name, funcIdx);
+      publishOwnedExport(definition.name, funcIdx, allocation);
       occupied.add(definition.name);
     }
     if (logicalNameOccupied || maxOccupiedSuffix >= 0) {
@@ -222,47 +250,81 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
       for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
         const physicalName = `${physicalBase}${"$".repeat(suffixLength)}`;
         if (occupied.has(physicalName)) continue;
-        exportFunc(ctx.mod, physicalName, funcIdx);
+        publishOwnedExport(physicalName, funcIdx, allocation);
         occupied.add(physicalName);
       }
     }
     allocation.func.exported = true;
   }
+  vecHostBridgePublishedExports.set(ctx, Object.freeze(published));
 }
 
 /**
- * Rebase the public vec bridge exports after dead-layout elimination and the
- * final import batch. The bridge functions are allocated early with live
- * indices, while later compatibility imports can move the defined-function
- * suffix. Most emitters are repaired by the late-import shifter, but exports
- * published before the last batch have no function-body traversal to repair
- * them. Resolve by the allocator-owned function object at the freeze point.
+ * Authenticate and freeze the compiler-owned vec bridge exports after
+ * dead-layout elimination and the final import batch. The bridge functions
+ * are published initially with stable handles, while a previously finalized
+ * descriptor can carry its already-rebased live index. Later compatibility
+ * imports can move the live defined-function suffix. Most emitters are
+ * repaired by the late-import shifter, but exports published before the last
+ * batch have no function-body traversal to repair them. Resolve both regimes
+ * by the captured allocator-owned function object at this boundary.
  */
 export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = vecHostBridgeAllocations.get(ctx);
   if (!allocations) return;
-  // Dead-import elimination can remove speculative imports without updating
-  // the context's cached `numImportFuncs`. Public export descriptors are raw
-  // Wasm indices at this point, so derive the live prefix from the module.
-  const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
-  const occupied = new Map<string, VecHostBridgeDefinition>();
-  for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
-    occupied.set(definition.name, definition);
-    const physicalBase = vecHostBridgePhysicalExportBase(definition.kind);
-    for (const entry of ctx.mod.exports) {
-      if (entry.name.startsWith(physicalBase) && /^\$*$/.test(entry.name.slice(physicalBase.length))) {
-        occupied.set(entry.name, definition);
-      }
-    }
+  const published = vecHostBridgePublishedExports.get(ctx);
+  if (!published || published.length === 0) {
+    throw new Error("vec host bridge allocations have no compiler-owned export descriptors");
   }
-  for (const entry of ctx.mod.exports) {
-    if (entry.desc.kind !== "func") continue;
-    const definition = occupied.get(entry.name);
-    if (!definition) continue;
-    const allocation = allocations.get(definition.kind);
-    if (!allocation) continue;
+  // Standalone/WASI deliberately remove the complete JS-host bridge surface
+  // before DCE. Authenticate that policy as an all-or-nothing removal of the
+  // exact compiler-owned entries; a partial survivor is a policy/finalization
+  // invariant, while a complete removal needs no public-slot rebase.
+  if (!ctx.emitHostBridge) {
+    const surviving = published.find(({ entry }) => ctx.mod.exports.includes(entry));
+    if (surviving) {
+      throw new Error(`vec host bridge export descriptor ${surviving.name} survived disabled host-bridge policy`);
+    }
+    return;
+  }
+  // Dead-import elimination can remove speculative imports without updating
+  // the context's cached `numImportFuncs`. Derive the current prefix used to
+  // interpret any live-regime public descriptor directly from the module.
+  const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
+  const seen = new Set<WasmExport>();
+  for (const { allocation, entry, name } of published) {
+    if (seen.has(entry)) {
+      throw new Error(`vec host bridge export descriptor ${name} is recorded more than once`);
+    }
+    seen.add(entry);
+    if (allocations.get(allocation.definition.kind) !== allocation) {
+      throw new Error(`vec host bridge export descriptor ${name} changed allocator ownership`);
+    }
+    if (entry.name !== name) {
+      throw new Error(`vec host bridge export descriptor ${name} changed its published name to ${entry.name}`);
+    }
+    if (entry.desc.kind !== "func") {
+      throw new Error(`vec host bridge export descriptor ${name} changed kind to ${entry.desc.kind}`);
+    }
+    if (ctx.mod.exports.indexOf(entry) < 0) {
+      throw new Error(`vec host bridge export descriptor ${name} disappeared before finalization`);
+    }
+    if (ctx.mod.exports.indexOf(entry) !== ctx.mod.exports.lastIndexOf(entry)) {
+      throw new Error(`vec host bridge export descriptor ${name} appears more than once in the module`);
+    }
     const position = ctx.mod.functions.indexOf(allocation.func);
-    if (position < 0) continue;
+    if (position < 0) {
+      throw new Error(`vec host bridge export descriptor ${name} lost its allocator function`);
+    }
+    const currentPosition = entry.desc.index - numImportFuncs;
+    if (currentPosition < 0) {
+      throw new Error(`vec host bridge export descriptor ${name} resolves to a function import`);
+    }
+    const currentAllocation =
+      entry.desc.index < STABLE_FUNC_BASE ? ctx.mod.functions[currentPosition] : definedFuncAt(ctx, entry.desc.index);
+    if (currentAllocation !== allocation.func) {
+      throw new Error(`vec host bridge export descriptor ${name} resolves to a different allocator function`);
+    }
     entry.desc.index = numImportFuncs + position;
   }
 }
@@ -517,6 +579,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ];
     // Pre-check if __box_number is available (don't add late imports)
     const boxNumIdx = ctx.funcMap.get("__box_number");
+    // (#3481) Same pre-check for the symbol box — only a module that already
+    // registered `__box_symbol` can have a `symbol[]` vec here.
+    const boxSymIdx = ctx.funcMap.get("__box_symbol");
     // (#2001 S1 regress) `__vec_get` is the chokepoint the HOST reads a vec
     // element through (`__make_iterable`'s convertToJS, `__array_entries`,
     // `wrapExports`, etc.). An externref slot may hold the `$Hole` sentinel for an
@@ -656,6 +721,14 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         } else {
           boxInstrs = [{ op: "call", funcIdx: boxNumIdx }];
         }
+      } else if (elemKey === "i32_symbol" && boxSymIdx !== undefined) {
+        // (#3481) A `symbol[]` element is a symbol ID, not a number. Boxing it
+        // with `__box_number` would hand the host the integer `101` where a
+        // dynamic read of `(syms as any)[0]` must yield the Symbol itself.
+        // `__box_symbol` resolves the id through the per-instance symbol cache,
+        // which is the same cache `__unbox_symbol` filled on the way in, so the
+        // round trip is identity.
+        boxInstrs = [{ op: "call", funcIdx: boxSymIdx }];
       } else if (elemKey === "i32" && boxNumIdx !== undefined) {
         boxInstrs = [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];
       } else if (

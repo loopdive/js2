@@ -2218,3 +2218,124 @@ compiled as a project graph. The gap is in final-context preparation
 (`reconcileIrOverlayOutcomes`' `late-preparation-unsupported` arm), not in
 selection, so it is #3520's bookkeeping territory rather than this issue's. It
 is unchanged by this slice — measured identically before and after.
+
+## Census correction — the residuals are not singletons, they are CHAINS (2026-08-27)
+
+**No code shipped from this slice.** It set out to flip two of the residual
+body-shape rejections with selector arms and instead established that the census
+model those targets were picked from is wrong in two ways. Both corrections are
+measured, and both change what the next slice should do.
+
+### Correction 1 — the recorded 31/42 baseline no longer holds; main is at 26/43
+
+The 2026-08-21 record above ends at **31/42 emitted**. Re-running the same
+reconstructed driver (npm-compat `--only acorn --lane standalone-dynamic`,
+inline non-linked form: acorn 8.16.0 dist + the runtime-dynamic benchmark driver
+compiled as ONE standalone unit, `optimize: 4`, `deferTopLevelInit`,
+`trackIrOutcomes`) on `7e0b03ebb7` measures:
+
+| | 2026-08-21 record | `7e0b03ebb7` (2026-08-27) |
+| --- | --- | --- |
+| emitted | 31/42 | **26/43** |
+| post-claim withdrawals | 1 (`tokenizer` abi-signature-parity) | **0** |
+| `body-shape-rejected` | 8 | 10 |
+| `param-type-not-resolvable` | 0 | 1 |
+| `call-graph-closure` | 0 | 2 |
+| `return-type-not-resolvable` | 0 | 3 |
+| `logical-value-unsupported` | 1 | 1 |
+| `constructor-resolution-unsupported` | 1 | 0 |
+| `abi-signature-parity` | 1 | 0 |
+
+Five claims regressed under main drift. **That regression is #4773's, not this
+record's — see #4773 for the affected units, the chain between them, and the
+bisect result.** It is mid-bisect at the time of writing and its numbers
+supersede anything inferable from the table above; the table is here only so the
+next slice on this issue measures its own base instead of inheriting 31/42.
+
+**The good news in the same measurement:** the `tokenizer`
+`abi-signature-parity` withdrawal is gone — the driver now has ZERO post-claim
+withdrawals, so the "zero withdrawals" bar is met by main again.
+
+### Correction 2 — every residual is a CHAIN, and they bottom out in two substrates
+
+The 2026-08-21 record says "each rejects on its own arm, so there is no longer a
+body-shape *family*, only singletons". The arms are singletons; the **causes**
+are not. `JS2WASM_IR_SHAPE_DIAG` reports only the FIRST reject arm, so a unit
+whose named arm is cheap can still be blocked by something expensive behind it.
+Probing each unit with its named arm neutralised (body rewritten so that arm
+cannot fire) gives the real chain:
+
+| unit | 1st blocker (the reported arm) | 2nd blocker | 3rd | bottoms out in |
+| --- | --- | --- | --- | --- |
+| `getLineInfo` | `tail-unhandled:ForStatement` | `constructor-resolution-unsupported` (`new Position(…)`) | — | ES5 constructor functions |
+| `buildUnicodeData` | `expr-binary-op-=` | `nontail-elemstore-recv` (`data[v] = {…}`) | `call-graph-closure` over `wordsRegexp` | open-object |
+| `finishNodeAt` | `nontail-if-cond:PropertyAccess` (`this.options.locations`) | `body-elemstore-recv` (`node.range[1] = pos`) | `param-type-not-resolvable` (`node`) | open-object |
+| `pushComment` | `closure-return-type:FunctionExpression` | object literal + `new SourceLocation(…)` | — | open-object + ES5 ctor |
+| `wordsRegexp` | `logical-value-unsupported` | `new RegExp(…)` + open-object cache | — | open-object |
+| `getOptions` | `objectlit-empty` | — | — | open-object |
+| `stringToBigInt` | `expr-ident-not-in-scope` (`BigInt`) | — | — | BigInt global |
+
+Every row is a `JS2WASM_IR_SHAPE_DIAG` reading taken on `7e0b03ebb7`, not carried
+over from the 2026-08-21 record. That distinction caught one error while this
+table was being written: `kw` is listed above as `objectlit-empty` in the
+2026-08-21 census, but measures `return-type-not-resolvable` here. It is
+therefore NOT in this table — `kw`, `binop` and `tokenizer` all sit in
+`return-type-not-resolvable` on current main, a bucket that was empty on
+2026-08-21, which puts them in the drift #4773 is bisecting. They were not
+chain-probed, because probing a unit whose current bucket is about to move
+measures the drift, not the residual.
+
+**So there are not eight independent cheap flips available. There are two
+substrates and a BigInt global.** `new Position` / `new SourceLocation` are
+`var F = function F(){ this.x = … }` + `F.prototype.m = …`, which the selector
+cannot see at all: `localClasses` is populated only from real
+`ts.ClassDeclaration | ts.ClassExpression` (`collectLocalClassDeclarations`), so
+every such site lands on `expr-new-ctor-unknown`. That projection is **#3521
+fnctor territory** (nominal fnctor ABI / source-qualified fnctor constructor
+sites), not this issue's — do not build a competing one in `select.ts`.
+
+The practical rule this yields for anyone picking targets off a census here:
+**a `JS2WASM_IR_SHAPE_DIAG` arm names the first blocker, never the cost.** Before
+committing to a unit, neutralise its named arm in a probe and re-read the
+rejection. Two of the three units this slice was scoped to would have consumed
+the slice and flipped nothing.
+
+### The tail-`for` arm: implemented, measured +0 everywhere, deliberately NOT shipped
+
+`getLineInfo`'s named arm is a genuine gap, so it was implemented in full to see
+whether it paid for itself independently: an `isPhase1Tail` arm for a function
+ending in a `for`, mirroring the `tail-switch` arm (#2952 6a) — `isPhase1For
+Statement` for the shape, plus, for a non-void function, a `forLoopNeverCompletes`
+proof that the loop has no normal exit (condition absent or literal `true`, and
+no `break` binding to it under the §14.9 rules); void functions need no proof and
+fall out into the implicit empty return. Lowering was the same `for.loop` instr
+the non-tail form emits, with `unreachable` / `return []` after it.
+
+It works — synthetic fixtures claim, run correctly on gc and standalone, and the
+falls-through shapes keep a clean pre-claim rejection. It also flips **nothing
+that exists**:
+
+| corpus | candidates (function body ends in `for`) | delta |
+| --- | --- | --- |
+| test262 `language` + `built-ins`, FULL scan (47,832 files) | 155 | **0** — per-file output byte-identical |
+| `examples/`, playground examples, `benchmarks/suites`, `benchmarks/tokenizer` | 2 | **0** — byte-identical |
+| acorn runtime-dynamic driver | 1 (`getLineInfo`) | **0** — 26/43 before and after |
+| `check:ir-fallbacks` (playground) | — | 0 (that corpus is already saturated: only `string-builder-candidate=2` remains) |
+
+On the driver the arm does exactly what the chain predicts: `getLineInfo` moves
+from `body-shape-rejected` to `constructor-resolution-unsupported` and the
+emitted count does not move. Two mechanisms explain the corpus zero: test262 is
+unannotated JS, where a function with no `return` is not classified `void` (the
+void arm never fires), and the annotated-`void` case that DOES flip — measured,
+`function f(out: number[], n: number): void { for (…) { out[i] = i } }` goes
+`tail-unhandled:ForStatement` → emitted — has no instances in any in-repo TS
+corpus.
+
+Per the Slice-4 rule already recorded in this file, an arm with a measured
+corpus delta of zero is not shipped: it would be dead codegen carrying a
+load-bearing scan↔builder 1:1 lockstep obligation (drift = a
+`JS2WASM_IR_FIRST` skipped-slot hard error) for no payoff. The arm is **the
+right fix waiting for a second one** — it becomes worth landing bundled with the
+#3521 fnctor projection, at which point `getLineInfo` flips for real. Whoever
+lands that should re-derive it rather than hunt for this note; it is ~90 lines
+across `isPhase1Tail` and `lowerTail`.

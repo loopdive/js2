@@ -76,7 +76,14 @@ import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
-import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
+import {
+  closureSignatureEquals,
+  type IrClassShape,
+  type IrClosureSignature,
+  type IrIntrinsicBackendComposite,
+  type IrIntrinsicBackendSequence,
+  type IrType,
+} from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
 import { isAffineThreeDeepElementAccess, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -277,26 +284,58 @@ export type IrMathMethodPlan =
       readonly intrinsic: IntrinsicId;
       readonly op: "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
     }
+  | {
+      readonly arity: 1;
+      readonly intrinsic: IntrinsicId;
+      readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
+      readonly arity: 1 | 2;
+      readonly intrinsic: IntrinsicId;
+      readonly composite: IrIntrinsicBackendComposite;
+    }
   | { readonly arity: 1 | 2; readonly intrinsic: IntrinsicId };
 
 /**
  * Exact-arity Math surface shared by selection, call-graph closure, and the
  * AST→IR builder. Every accepted method becomes a versioned semantic
- * intrinsic. `op` remains only as a selector compatibility signal for the
- * five methods that never require a callable provider; provider selection is
- * performed after middle-end transforms. Keeping arity here prevents
- * selector/builder drift and preserves ambient-Math identity checks.
+ * intrinsic. `op` remains the selector compatibility signal for the five
+ * single-op methods, while `sequence` and `composite` mark closed native
+ * multi-op paths; provider selection is performed after middle-end transforms.
+ * Keeping arity here prevents selector/builder drift and preserves ambient-
+ * Math identity checks.
  */
 export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = {
   abs: { arity: 1, intrinsic: "math.abs", op: "f64.abs" },
   sqrt: { arity: 1, intrinsic: "math.sqrt", op: "f64.sqrt" },
   floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
+  fround: { arity: 1, intrinsic: "math.fround", sequence: "f64.fround" },
   ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
+  clz32: { arity: 1, intrinsic: "math.clz32", composite: "math.clz32" },
+  imul: { arity: 2, intrinsic: "math.imul", composite: "math.imul" },
+  max: { arity: 2, intrinsic: "math.max", composite: "math.max" },
+  min: { arity: 2, intrinsic: "math.min", composite: "math.min" },
   trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
+  asin: { arity: 1, intrinsic: "math.asin" },
+  acos: { arity: 1, intrinsic: "math.acos" },
+  asinh: { arity: 1, intrinsic: "math.asinh" },
+  acosh: { arity: 1, intrinsic: "math.acosh" },
+  atan: { arity: 1, intrinsic: "math.atan" },
+  atanh: { arity: 1, intrinsic: "math.atanh" },
+  cbrt: { arity: 1, intrinsic: "math.cbrt" },
+  round: { arity: 1, intrinsic: "math.round" },
+  sign: { arity: 1, intrinsic: "math.sign" },
   sin: { arity: 1, intrinsic: "math.sin" },
   cos: { arity: 1, intrinsic: "math.cos" },
+  tan: { arity: 1, intrinsic: "math.tan" },
+  sinh: { arity: 1, intrinsic: "math.sinh" },
+  cosh: { arity: 1, intrinsic: "math.cosh" },
+  tanh: { arity: 1, intrinsic: "math.tanh" },
   exp: { arity: 1, intrinsic: "math.exp" },
+  expm1: { arity: 1, intrinsic: "math.expm1" },
   log: { arity: 1, intrinsic: "math.log" },
+  log10: { arity: 1, intrinsic: "math.log10" },
+  log1p: { arity: 1, intrinsic: "math.log1p" },
   log2: { arity: 1, intrinsic: "math.log2" },
   pow: { arity: 2, intrinsic: "math.pow" },
   atan2: { arity: 2, intrinsic: "math.atan2" },
@@ -1295,6 +1334,7 @@ export function assessIrImplicitConstructorSubject(
   owner: ts.ClassDeclaration | ts.ClassExpression,
   localClasses: ReadonlySet<string>,
 ): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
+  currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set<string>();
@@ -1349,12 +1389,15 @@ export function assessIrImplicitConstructorSubject(
  * Module-level for the same isPhase1* threading reason as
  * `currentHostGlobalResolver`. The `ReturnStatement` arm of
  * `isPhase1BodyStatement` accepts an early return only when
- *   - `earlyReturnLoopDepth > 0` — we are inside a C-style `while`/`for`/
- *     `do` body (the Wasm `return` op is exactly JS's early exit there), AND
+ *   - `earlyReturnLoopDepth > 0` — we are inside a return-ADMITTING body
+ *     buffer: a C-style `while`/`for`/`do` body, a switch clause, or
+ *     (#5165 S2) a finally-LESS try/catch region. The Wasm `return` op is
+ *     exactly JS's early exit in all three — it unwinds enclosing blocks,
+ *     loops and exception handlers natively, AND
  *   - `earlyReturnBarrierDepth === 0` — NO enclosing for-of body (iterator
- *     `return()` cleanup would be skipped), try/catch/finally body (inlined
- *     finally would be skipped), or constructor body (returns route through
- *     the implicit `return this` synthesis), AND
+ *     `return()` cleanup would be skipped), finally-BEARING try region
+ *     (the inlined finally would be skipped — #5165 S4), or constructor
+ *     body (returns route through the implicit `return this` synthesis), AND
  *   - the function is not a generator (`currentFnIsGenerator` — generator
  *     returns route through the buffer epilogue).
  * Mirrored by from-ast's `cx.noEarlyReturn` / `funcKind` guards so accepted
@@ -1382,6 +1425,10 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
+// #4787's exact exponentiation checkpoint is limited to an already-prepared
+// top-level function body. Retain the subject identity so a nested closure or
+// class member cannot inherit the outer function's checker proof.
+let currentSelectionSubject: IrClaimableSubject | null = null;
 let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression> = new Map();
 let currentClaimClassName: string | null = null;
 // #2949 Acorn follow-up — the current top-level function's return expressions
@@ -1560,6 +1607,7 @@ export function configureIrStructuralSelectorPredicates(
   asyncDeclarationNames: ReadonlySet<string>,
 ): void {
   currentSelectionOptions = options;
+  currentSelectionSubject = null;
   currentLocalClassDeclarations = localClassDeclarations;
   configureDynamicScanSource(sourceFile, functionDeclarations);
   currentAsyncDeclNames = asyncDeclarationNames;
@@ -1643,6 +1691,7 @@ function directOnlyDynMemberEqualityFunctions(): ReadonlySet<ts.FunctionDeclarat
 }
 
 function prepareDynamicEqualitySubject(fn: IrClaimableSubject, isMethod: boolean): void {
+  currentSelectionSubject = fn;
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
   currentDynEqualityBoxableParamNames = new Set<string>();
@@ -2926,6 +2975,16 @@ function dynamicUsesAreMoveOnly(
       }
       if (expectDyn) return false; // operator results are concrete-shaped
 
+      // (#5164 S3) `<key> in <dynamic receiver>`. This scan decides only whether
+      // a dynamic VALUE may reach the operator; `selectorDynamicLaneIn` stays
+      // the authority on which receivers the slice claims. No representation
+      // changes here — the receiver reaches `__extern_has` as the dynamic
+      // carrier it already is (the same move the for-in arm below makes) and the
+      // boolean result is concrete, hence below the `expectDyn` bail.
+      if (op === ts.SyntaxKind.InKeyword && rightIsDyn) {
+        return scanExpr(e.left, leftIsDyn) && scanExpr(e.right, true);
+      }
+
       if (
         op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
         op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
@@ -3208,6 +3267,240 @@ function thenArmTerminates(stmt: ts.Statement): boolean {
   return false;
 }
 
+/**
+ * (#5163 S3) Peel a chained assignment `a = b = c = e` into its targets
+ * (OUTERMOST first: `[a, b, c]`) and the single innermost RHS `e`.
+ *
+ * Returns `null` when `expr` is not a chain — i.e. its RHS is not itself a
+ * plain `=` assignment — so a caller can fall through to the ordinary
+ * single-target arms. Exported because the selector and the builder must agree
+ * on the peel EXACTLY: a chain admitted with one target list and lowered with
+ * another is a selector⇄builder divergence.
+ */
+export function peelAssignmentChain(
+  expr: ts.BinaryExpression,
+): { readonly targets: readonly ts.Expression[]; readonly rhs: ts.Expression } | null {
+  const targets: ts.Expression[] = [];
+  let current = expr;
+  for (;;) {
+    targets.push(current.left);
+    const right = unwrapPhase1Parens(current.right);
+    if (ts.isBinaryExpression(right) && right.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      current = right;
+      continue;
+    }
+    return targets.length > 1 ? { targets, rhs: current.right } : null;
+  }
+}
+
+/**
+ * (#5163) The compound-assignment operators the IR desugars to an f64 binop.
+ * Kept in lockstep with `compoundF64Binop` in from-ast.ts — an operator
+ * admitted here but absent there demotes at build stage instead of being
+ * refused cleanly at selection.
+ */
+function isPhase1CompoundAssignOperator(op: ts.SyntaxKind): boolean {
+  return (
+    op === ts.SyntaxKind.PlusEqualsToken ||
+    op === ts.SyntaxKind.MinusEqualsToken ||
+    op === ts.SyntaxKind.AsteriskEqualsToken ||
+    op === ts.SyntaxKind.SlashEqualsToken
+  );
+}
+
+/**
+ * (#5163 S1/S2) Shape gate for the TARGET of a mutating member statement
+ * (`o.x += e`, `a[i]++`). Deliberately the intersection of the plain-`=`
+ * property and element store arms: the same receiver/index restrictions, so a
+ * target admitted here is one both walkers' `=` arms would already admit.
+ *
+ * TYPE restrictions (f64 field/element only, plain field not accessor, non-
+ * extern receiver) are NOT checked here — the selector has no types. They live
+ * in `lowerPropertyCompound` / `lowerElementCompound`, which demote TYPED so
+ * the function falls back to the legacy body rather than being approximated.
+ */
+function isPhase1MutableMemberTarget(
+  target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (target.questionDotToken !== undefined) return false;
+  if (ts.isPropertyAccessExpression(target)) {
+    if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
+    // A DOM/extern member write is a CALL pair, whose re-entrancy the
+    // read-modify-write desugaring does not model. Refuse at selection.
+    if (standaloneDomOperation(target) !== undefined) return false;
+    if (expressionIsModuleExternAccessChain(target.expression)) return false;
+    if (!preflightClassPropertyWrite(target, scope)) return false;
+    return isPhase1Expr(target.expression, scope, localClasses);
+  }
+  if (
+    (!ts.isIdentifier(target.expression) || !scope.has(target.expression.text)) &&
+    !stableDynamicStoreReceiverHasAdmittedRoot(target.expression)
+  ) {
+    return false;
+  }
+  return isPhase1Expr(target.argumentExpression, scope, localClasses);
+}
+
+/**
+ * (#5163 S3) Shape gate for a chained assignment STATEMENT `a = b = e;`.
+ *
+ * Admits chains whose every target is either a plain in-scope local (not a
+ * module binding — those carry TDZ and representation checks this desugaring
+ * does not perform) or a plain-field property access, and whose innermost RHS
+ * is Phase-1. Element targets stay out of this slice.
+ */
+function isPhase1ChainedAssignmentStatement(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const chain = peelAssignmentChain(expr);
+  if (chain === null) return false;
+  for (const target of chain.targets) {
+    if (ts.isIdentifier(target)) {
+      if (isUnrepresentableModuleBinding(target)) return false;
+      if (currentModuleBindingResolver?.(target)) return false;
+      if (!scope.has(target.text)) return false;
+      if (projectionBindingMutationIsUnsupported(target.text, expr)) return false;
+      continue;
+    }
+    if (ts.isPropertyAccessExpression(target)) {
+      if (!isPhase1MutableMemberTarget(target, scope, localClasses)) return false;
+      continue;
+    }
+    return false;
+  }
+  if (!isPhase1Expr(chain.rhs, scope, localClasses)) return false;
+  // Every target is written; none of them keeps a projection binding.
+  for (const target of chain.targets) {
+    if (ts.isIdentifier(target)) clearProjectionBinding(target.text);
+  }
+  return true;
+}
+
+/**
+ * Label for a top-level ExpressionStatement no arm admitted, keyed by the
+ * offending expression kind + operator so the histogram keeps distinguishing
+ * assignment from inc-dec.
+ */
+function nontailExpressionStatementArm(es: ts.Expression): string {
+  if (ts.isBinaryExpression(es)) {
+    return es.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? "nontail-assign-nonprop-lhs"
+      : "nontail-compound-or-binary-stmt";
+  }
+  if (ts.isPrefixUnaryExpression(es) || ts.isPostfixUnaryExpression(es)) return "nontail-incdec-stmt";
+  return "nontail-exprstmt-other";
+}
+
+/**
+ * (#5163) Verdict of the shared mutating-statement gate. `ok` admits the
+ * statement; otherwise `arm` names the rejection, WITHOUT the walker's
+ * position prefix — each caller prepends its own (`nontail-` / `body-`) so the
+ * histogram keeps distinguishing the two positions.
+ */
+type Phase1MutatingVerdict =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly arm: string; readonly node: ts.Node };
+
+/**
+ * (#5163) The one shape gate for every mutating expression statement this
+ * issue adopted: chained assignment, member compound assignment, `++`/`--` on
+ * any target, and (top level only) plain local assignment.
+ *
+ * `null` means "no arm here" — the caller falls through to its own remaining
+ * arms. Shared by BOTH statement walkers so the two positions cannot drift;
+ * `lowerAdoptedMutatingStatement` in from-ast.ts is its exact builder twin,
+ * consulted at the same point in each dispatcher's order.
+ *
+ * `topLevel` enables the two S0 arms that only the top-level walker lacked
+ * (`isPhase1BodyStatement` has admitted plain local assignment and local
+ * `++`/`--` since slice 12; adding them here too would shadow those with
+ * subtly different bookkeeping for no gain).
+ */
+function phase1MutatingStatementVerdict(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  topLevel: boolean,
+): Phase1MutatingVerdict | null {
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    // S3 — `a = b = e;`.
+    if (op === ts.SyntaxKind.EqualsToken && peelAssignmentChain(expr) !== null) {
+      return isPhase1ChainedAssignmentStatement(expr, scope, localClasses)
+        ? { ok: true }
+        : { ok: false, arm: "chained-assign", node: expr };
+    }
+    // S1/S2 — `o.x += e;` / `a[i] *= e;`. The receiver/index restrictions
+    // mirror the plain-`=` arms; the LOWERING differs (it reads the old value
+    // before the RHS), which is why this is a separate arm and not a widening
+    // of the `=` ones.
+    if (
+      isPhase1CompoundAssignOperator(op) &&
+      (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
+    ) {
+      if (!isPhase1MutableMemberTarget(expr.left, scope, localClasses)) {
+        return { ok: false, arm: "member-compound-target", node: expr.left };
+      }
+      return isPhase1Expr(expr.right, scope, localClasses)
+        ? { ok: true }
+        : { ok: false, arm: "member-compound-rhs", node: expr.right };
+    }
+    // S0 — plain assign to an in-scope local, top level only. Module bindings
+    // and directly-mutated params keep their own dedicated arms above.
+    if (
+      topLevel &&
+      op === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(expr.left) &&
+      scope.has(expr.left.text) &&
+      !currentMutableSlotNames.has(expr.left.text) &&
+      currentModuleBindingResolver?.(expr.left) === undefined
+    ) {
+      if (isUnrepresentableModuleBinding(expr.left)) {
+        return { ok: false, arm: "module-storage-unrepresentable", node: expr };
+      }
+      if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) {
+        return { ok: false, arm: "local-assign-projection", node: expr };
+      }
+      if (!isPhase1Expr(expr.right, scope, localClasses)) {
+        return { ok: false, arm: "local-assign-rhs", node: expr.right };
+      }
+      clearProjectionBinding(expr.left.text);
+      const className = localClassNameForExpression(expr.right, scope);
+      if (className !== null) currentClassBindings.set(expr.left.text, className);
+      return { ok: true };
+    }
+    return null;
+  }
+  if (!ts.isPostfixUnaryExpression(expr) && !ts.isPrefixUnaryExpression(expr)) return null;
+  if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return null;
+  const operand = expr.operand;
+  // S1/S2 — `o.x++;` / `--a[i];`. Same target restrictions as the member
+  // compound arm; the result is discarded, so prefix and postfix are identical.
+  if (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) {
+    return isPhase1MutableMemberTarget(operand, scope, localClasses)
+      ? { ok: true }
+      : { ok: false, arm: "member-incdec-target", node: operand };
+  }
+  // S0 — local `x++;`, top level only.
+  if (!topLevel || !ts.isIdentifier(operand)) return null;
+  if (isUnrepresentableModuleBinding(operand)) {
+    return { ok: false, arm: "module-storage-unrepresentable", node: expr };
+  }
+  if (currentModuleBindingResolver?.(operand) && !currentSubjectIsModuleInit) {
+    return { ok: false, arm: "module-update", node: expr };
+  }
+  if (!scope.has(operand.text)) return { ok: false, arm: "incdec-scope", node: operand };
+  if (projectionBindingMutationIsUnsupported(operand.text, expr)) {
+    return { ok: false, arm: "incdec-projection", node: expr };
+  }
+  clearProjectionBinding(operand.text);
+  return { ok: true };
+}
+
 function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boolean {
   let candidate = unwrapPhase1Parens(receiver);
   while (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) {
@@ -3432,6 +3725,15 @@ function isPhase1StatementListInScope(
         }
         continue;
       }
+      // (#5163) The mutating shapes this issue adopted. MUST precede the
+      // single-target `=` arms below: a chain's outer LHS matches those arms
+      // while its RHS is itself an assignment, which `isPhase1Expr` refuses —
+      // so without this the whole statement rejects.
+      const mutating = phase1MutatingStatementVerdict(s.expression, scope, localClasses, /* topLevel */ true);
+      if (mutating !== null) {
+        if (!mutating.ok) return shapeNo(`nontail-${mutating.arm}`, mutating.node);
+        continue;
+      }
       // Capability C: a plain write to the exact checker-owned mutable
       // module declaration. Local assignments remain outside this top-level
       // statement-list arm; body buffers already own them.
@@ -3554,16 +3856,7 @@ function isPhase1StatementListInScope(
       // binding bookkeeping; the two labels below survive for expressions
       // the Phase-1 walker still cannot admit.
       if (expressionStatementIsPhase1Discardable(es, scope, localClasses)) continue;
-      let arm = "nontail-exprstmt-other";
-      if (ts.isBinaryExpression(es)) {
-        arm =
-          es.operatorToken.kind === ts.SyntaxKind.EqualsToken
-            ? "nontail-assign-nonprop-lhs"
-            : "nontail-compound-or-binary-stmt";
-      } else if (ts.isPrefixUnaryExpression(es) || ts.isPostfixUnaryExpression(es)) {
-        arm = "nontail-incdec-stmt";
-      }
-      return shapeNo(arm, es);
+      return shapeNo(nontailExpressionStatementArm(es), es);
     }
     // Phase 2 extension: an `if (cond)` with NO else, split by whether the
     // then-arm unconditionally terminates — mirroring `lowerStatementList`'s
@@ -3775,16 +4068,14 @@ function isPhase1ThrowStatement(
  *   try { <body> } catch (id) { <handler> } finally { <cleanup> }
  *
  * Where `<body>`, `<handler>`, and `<cleanup>` are each Phase-1 body
- * statement lists (no early return / break / continue out of the try
- * region — slice 9 doesn't yet thread the finally-stack inlining for
- * abrupt completions).
+ * statement lists. (#5165 S2) An early `return` out of a finally-LESS
+ * try/catch is now admitted — see the barrier comment below.
  *
  * Rejected (deferred to slice 9.5):
  *   - destructuring catch param (`catch ({message})`).
  *   - `throw` with no expression (handled in `isPhase1ThrowStatement`).
  *   - `try` with neither catch nor finally (TS already rejects this).
- *   - early-return / break / continue inside try / catch / finally bodies
- *     (the body-statement recogniser doesn't allow them anyway).
+ *   - early return crossing a `finally` (#5165 S4).
  */
 function isPhase1TryStatement(
   stmt: ts.TryStatement,
@@ -3812,11 +4103,21 @@ function isPhase1TryStatementInScope(
 ): boolean {
   if (!stmt.catchClause && !stmt.finallyBlock) return shapeNo("try-missing-handler", stmt);
 
-  // (#2856 C1) try/catch/finally bodies are early-return BARRIERS: a Wasm
-  // `return` inside them would skip the inlined finally blocks. (#2952 s2's
-  // break/continue is different — its `br.label` lowering inlines crossed
-  // finallys, so `inLoop` propagates while the early-return arm stays barred.)
-  earlyReturnBarrierDepth++;
+  // (#2856 C1 / #5165 S2) A try region is an early-return barrier ONLY when it
+  // has a `finally`: a Wasm `return` is not intercepted by an exception
+  // handler, so from a finally-LESS try/catch it leaves the function exactly
+  // as JS does — the sole thing it could skip is an inlined finally. With no
+  // finally the region is instead an ordinary return-ADMITTING body buffer,
+  // the same role switch clauses take (see the `earlyReturnLoopDepth` bump in
+  // `isPhase1SwitchStatement`): the return lowers to `early.return`, not to a
+  // block terminator. Depth semantics do the rest — a finally-less try nested
+  // inside a finally-bearing try, a for-of body, or a constructor/module-init
+  // context still sees `earlyReturnBarrierDepth > 0` and stays barred.
+  // (#2952 s2's break/continue is different — its `br.label` lowering inlines
+  // crossed finallys, so `inLoop` propagates independently of both counters.)
+  const isBarrier = stmt.finallyBlock !== undefined;
+  if (isBarrier) earlyReturnBarrierDepth++;
+  else earlyReturnLoopDepth++;
   try {
     // Try body: must be a Phase-1 body statement list.
     const tryAccepted = withProjectionEvidenceScope(() =>
@@ -3872,7 +4173,8 @@ function isPhase1TryStatementInScope(
 
     return true;
   } finally {
-    earlyReturnBarrierDepth--;
+    if (isBarrier) earlyReturnBarrierDepth--;
+    else earlyReturnLoopDepth--;
   }
 }
 
@@ -4365,6 +4667,22 @@ function isPhase1ForUpdateExpr(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  // #5164 S2 — a comma incrementor (`i++, j++`) is N update clauses run left to
+  // right, so each side re-enters THIS function rather than the value walker.
+  // That matters: only the update arm carries the mutation bookkeeping
+  // (`clearProjectionBinding`, the module-slot write rules,
+  // `projectionBindingMutationIsUnsupported`), which is what makes the
+  // MUTATING `i++` idiom admissible here while #4459's pure discard gate still
+  // refuses it in value position. `lowerForUpdateExpr` mirrors this arm.
+  //
+  // Every counted-loop plan that keys on the incrementor's SHAPE (the
+  // dense-fill and reduction matchers, `isIncreasingStep`) requires a
+  // prefix/postfix unary or `i += <positive literal>`, so a comma incrementor
+  // fails each of them closed and the loop takes the general update path.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    if (!isPhase1ForUpdateExpr(expr.left, scope, localClasses)) return false;
+    return isPhase1ForUpdateExpr(expr.right, scope, localClasses);
+  }
   if (ts.isPostfixUnaryExpression(expr)) {
     const op = expr.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
@@ -4681,6 +4999,14 @@ function isPhase1BodyStatement(
       }
       if (stmt.expression.asteriskToken) return false;
       return true; // bare `yield;`
+    }
+    // (#5163) The adopted mutating shapes — the SAME gate the top-level walker
+    // uses, consulted at the same point in the order (before the single-target
+    // `=` arms, whose RHS check refuses a nested assignment).
+    const mutating = phase1MutatingStatementVerdict(stmt.expression, scope, localClasses, /* topLevel */ false);
+    if (mutating !== null) {
+      if (!mutating.ok) return shapeNo(`body-${mutating.arm}`, mutating.node);
+      return true;
     }
     if (ts.isBinaryExpression(stmt.expression)) {
       const op = stmt.expression.operatorToken.kind;
@@ -5051,7 +5377,148 @@ function isPhase1Tail(
     if (!switchAllPathsTerminate(stmt)) return shapeNo("tail-switch-falls-through", stmt);
     return true;
   }
+  // #5165 S1 — a function ENDING in a C-style `for` / `while` / `do`. The
+  // loop lowers through the SAME `{while,for,do}.loop` IR instr as the
+  // non-tail form; body-position early returns already claim and lower
+  // (`early.return` → Wasm `return`, which unwinds the loop blocks
+  // natively), so the only new obligation is the after-loop completion.
+  if (ts.isForStatement(stmt) || ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
+    // Generators are OUT. Their IR lowering is EAGER — the body runs to
+    // completion into a yield buffer — so a tail loop with no normal
+    // completion (exactly what this arm proves) never terminates and blows the
+    // buffer, where the legacy lazy generator suspends per `next()`. Measured
+    // 2026-08-29: `function* g(n) { let i = n; while (true) { yield i; i++; } }`
+    // returns 5,6,7 on legacy and throws "Eager generator buffer exceeded
+    // 1000000 yields" if claimed here.
+    if (isGenerator) return shapeNo("tail-loop-generator", stmt);
+    const shapeOk = ts.isForStatement(stmt)
+      ? isPhase1ForStatement(stmt, scope, localClasses)
+      : ts.isWhileStatement(stmt)
+        ? isPhase1WhileStatement(stmt, scope, localClasses)
+        : isPhase1DoStatement(stmt, scope, localClasses);
+    if (!shapeOk) return shapeNo("tail-loop-shape", stmt);
+    // A void function may fall out of the loop into its implicit empty
+    // return, exactly like the `tail-if-noelse` / `tail-switch` void arms.
+    if (isVoidReturn) return true;
+    if (!loopNeverFallsThrough(stmt)) return shapeNo("tail-loop-falls-through", stmt);
+    return true;
+  }
+  // #5165 S3 — a function ENDING in a `try`. Same `IrInstrTry` lowering as
+  // the non-tail form; only the block terminator differs.
+  if (ts.isTryStatement(stmt)) {
+    // Generators are OUT for the same reason the loop arm excludes them: the
+    // eager buffer model does not carry a tail try's abrupt completion the way
+    // the legacy lazy generator does (measured 2026-08-29: a tail
+    // `try { throw "a" } catch (e) { throw "b" }` surfaces the raw
+    // `WebAssembly.Exception` instead of the thrown string).
+    if (isGenerator) return shapeNo("tail-try-generator", stmt);
+    if (!isPhase1TryStatement(stmt, scope, localClasses)) return shapeNo("tail-try-shape", stmt);
+    if (isVoidReturn) return true;
+    if (!tryAllPathsTerminate(stmt)) return shapeNo("tail-try-falls-through", stmt);
+    return true;
+  }
   return shapeNo("tail-unhandled", stmt);
+}
+
+/**
+ * #5165 S1 — can control reach the statement AFTER this loop?
+ *
+ * A non-void function ending in a loop has no implicit return to fall into,
+ * so the builder terminates the block with `unreachable`. That is sound only
+ * when the loop provably never completes normally. Two independent exits
+ * have to be ruled out:
+ *
+ *   1. **The condition** — `for (;;)` (absent condition, #3583) and a literal
+ *      `while (true)` / `do … while (true)` never test false. Anything else
+ *      may.
+ *   2. **`break`** — and THE BREAK SCAN MUST RESPECT NESTING. In
+ *      `while (true) { if (x) return 1; break; }` the `break` binds this
+ *      loop, so control DOES reach the fall-out; a condition-only check
+ *      would emit `unreachable` on a reachable path, i.e. a Wasm trap where
+ *      JS returns `undefined` — a silent runtime miscompile, not a
+ *      validation error. An unlabeled `break` binds the innermost enclosing
+ *      loop OR switch (§14.9), so one nested inside an inner loop/switch is
+ *      NOT this loop's exit; a LABELED `break` is this loop's exit unless
+ *      its label is bound strictly inside the body (any other label targets
+ *      this loop or something outside it — either way control leaves).
+ *
+ * `continue` never exits a loop, and function-like bodies are not descended
+ * into (a break may not cross a function boundary).
+ */
+function loopNeverFallsThrough(stmt: ts.ForStatement | ts.WhileStatement | ts.DoStatement): boolean {
+  const condition = ts.isForStatement(stmt) ? stmt.condition : stmt.expression;
+  if (condition !== undefined && condition.kind !== ts.SyntaxKind.TrueKeyword) return false;
+  return !bodyHasEscapingBreak(stmt.statement, new Set());
+}
+
+/** #5165 S1 — does `node` contain a `break` that leaves the loop being scanned? */
+function bodyHasEscapingBreak(node: ts.Node, boundLabels: ReadonlySet<string>): boolean {
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+  if (ts.isBreakStatement(node)) {
+    // Unlabeled here means no inner loop/switch captured it (those subtrees
+    // are handled by the `isBreakCapturingStatement` branch below).
+    return node.label === undefined || !boundLabels.has(node.label.text);
+  }
+  if (ts.isLabeledStatement(node)) {
+    const inner = new Set(boundLabels);
+    inner.add(node.label.text);
+    return bodyHasEscapingBreak(node.statement, inner);
+  }
+  if (isBreakCapturingStatement(node)) {
+    // A nested loop/switch swallows unlabeled breaks; only a labeled break
+    // whose label is not bound inside it can still escape.
+    return ts.forEachChild(node, (child) => bodyHasEscapingLabeledBreak(child, boundLabels)) === true;
+  }
+  return ts.forEachChild(node, (child) => (bodyHasEscapingBreak(child, boundLabels) ? true : undefined)) === true;
+}
+
+/** #5165 S1 — the nested-breakable variant: unlabeled breaks are captured. */
+function bodyHasEscapingLabeledBreak(node: ts.Node, boundLabels: ReadonlySet<string>): true | undefined {
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return undefined;
+  if (ts.isBreakStatement(node)) {
+    if (node.label === undefined) return undefined; // bound by the nested breakable
+    return boundLabels.has(node.label.text) ? undefined : true;
+  }
+  if (ts.isLabeledStatement(node)) {
+    const inner = new Set(boundLabels);
+    inner.add(node.label.text);
+    return bodyHasEscapingLabeledBreak(node.statement, inner);
+  }
+  return ts.forEachChild(node, (child) => bodyHasEscapingLabeledBreak(child, boundLabels));
+}
+
+/** #5165 S1 — statements that bind an UNLABELED `break` (§14.9). */
+function isBreakCapturingStatement(node: ts.Node): boolean {
+  return (
+    ts.isForStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isWhileStatement(node) ||
+    ts.isDoStatement(node) ||
+    ts.isSwitchStatement(node)
+  );
+}
+
+/**
+ * #5165 S3 — does EVERY path through this `try` leave the function?
+ *
+ * Same obligation as `switchAllPathsTerminate`, and the same reused
+ * `thenArmTerminates` model: the try block's last statement terminates, and
+ * so does the catch block's when one is present. A `finally` needs no arm of
+ * its own — a normally-completing finally passes the try/catch completion
+ * through unchanged, and the selector's own barrier means a return can never
+ * be the completion that crosses one (that is #5165 S4). A try with neither
+ * catch nor finally is already refused by `isPhase1TryStatement`.
+ */
+function tryAllPathsTerminate(stmt: ts.TryStatement): boolean {
+  if (!blockLastStatementTerminates(stmt.tryBlock)) return false;
+  if (stmt.catchClause && !blockLastStatementTerminates(stmt.catchClause.block)) return false;
+  return true;
+}
+
+function blockLastStatementTerminates(block: ts.Block): boolean {
+  const last = block.statements[block.statements.length - 1];
+  return last !== undefined && thenArmTerminates(last);
 }
 
 /**
@@ -6378,7 +6845,7 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
       recv.text === "Math" &&
       selectorSeesAmbientBinding(recv) &&
       plan !== undefined &&
-      selectorSupportsMathPlan(plan) &&
+      selectorSupportsMathPlan(plan, candidate) &&
       candidate.arguments.length === plan.arity &&
       candidate.arguments.every((arg) => !ts.isSpreadElement(arg) && expressionIsProvenNumber(arg, seen))
     );
@@ -6387,6 +6854,255 @@ function expressionIsProvenNumber(expr: ts.Expression, seen = new Set<ts.Variabl
     currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "f64" ||
     currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "number"
   );
+}
+
+/**
+ * #4787 — exact admission for the bounded `**` retirement checkpoint.
+ *
+ * This is intentionally narrower than {@link expressionIsProvenNumber}:
+ * that older helper also consumes propagated numeric facts and module scalar
+ * families for coercion-sensitive builtins. Exponentiation is the first
+ * checkpoint whose claim must prove the complete operand contract, so it
+ * requires checker evidence, rejects declared unions, and follows only
+ * source forms whose evaluation/lowering is already owned by this function's
+ * Phase-1 walk. The non-null module resolver is the existing prepared
+ * single-source marker; multi-source overlays deliberately omit it.
+ */
+function exactNumericExponentiationContextReady(): boolean {
+  return (
+    !currentSubjectIsModuleInit &&
+    currentSelectionSubject !== null &&
+    ts.isFunctionDeclaration(currentSelectionSubject) &&
+    currentSelectionSubject.body !== undefined &&
+    currentModuleBindingResolver !== null &&
+    currentSelectionOptions?.classifyPrimitiveExpression !== undefined &&
+    selectorMathPlanEnabled(IR_MATH_METHOD_TABLE.pow)
+  );
+}
+
+/**
+ * #5092 — exact primitive expression grammar shared by selection and build.
+ *
+ * The checker callbacks establish runtime-value provenance (assertions cannot
+ * forge it); this walk then keeps the first mixed-conditional checkpoint free
+ * of calls, property reads, allocation, mutation, nullish values, and nested
+ * executable owners. Ordinary Phase-1 validation still runs afterwards and
+ * remains authoritative for scope/capability details.
+ */
+export function boundedMixedConditionalPrimitiveFamily(
+  expression: ts.Expression,
+  classifyPrimitiveExpression: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined,
+  classifyDeclaredPrimitiveExpression: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined,
+): IrPrimitiveExpressionFamily | undefined {
+  const visit = (node: ts.Expression): IrPrimitiveExpressionFamily | undefined => {
+    const family = classifyPrimitiveExpression(node);
+    if (family === undefined || classifyDeclaredPrimitiveExpression(node) !== family) return undefined;
+
+    const candidate = unwrapProjectionExpression(node);
+    if (candidate !== node) return visit(candidate) === family ? family : undefined;
+    if (
+      ts.isNumericLiteral(candidate) ||
+      ts.isStringLiteral(candidate) ||
+      ts.isNoSubstitutionTemplateLiteral(candidate) ||
+      candidate.kind === ts.SyntaxKind.TrueKeyword ||
+      candidate.kind === ts.SyntaxKind.FalseKeyword ||
+      ts.isIdentifier(candidate)
+    ) {
+      return family;
+    }
+    if (ts.isTypeOfExpression(candidate)) {
+      return family === "string" && visit(candidate.expression) !== undefined ? family : undefined;
+    }
+    if (ts.isPrefixUnaryExpression(candidate)) {
+      const operand = visit(candidate.operand);
+      if (candidate.operator === ts.SyntaxKind.ExclamationToken) {
+        return family === "boolean" && operand !== undefined ? family : undefined;
+      }
+      if (
+        candidate.operator === ts.SyntaxKind.PlusToken ||
+        candidate.operator === ts.SyntaxKind.MinusToken ||
+        candidate.operator === ts.SyntaxKind.TildeToken
+      ) {
+        return family === "number" && operand === "number" ? family : undefined;
+      }
+      return undefined;
+    }
+    if (ts.isBinaryExpression(candidate)) {
+      const left = visit(candidate.left);
+      const right = visit(candidate.right);
+      switch (candidate.operatorToken.kind) {
+        case ts.SyntaxKind.PlusToken:
+          return (family === "number" || family === "string") && left === family && right === family
+            ? family
+            : undefined;
+        case ts.SyntaxKind.MinusToken:
+        case ts.SyntaxKind.AsteriskToken:
+        case ts.SyntaxKind.SlashToken:
+        case ts.SyntaxKind.PercentToken:
+        case ts.SyntaxKind.AsteriskAsteriskToken:
+          return family === "number" && left === "number" && right === "number" ? family : undefined;
+        case ts.SyntaxKind.LessThanToken:
+        case ts.SyntaxKind.LessThanEqualsToken:
+        case ts.SyntaxKind.GreaterThanToken:
+        case ts.SyntaxKind.GreaterThanEqualsToken:
+        case ts.SyntaxKind.EqualsEqualsToken:
+        case ts.SyntaxKind.ExclamationEqualsToken:
+        case ts.SyntaxKind.EqualsEqualsEqualsToken:
+        case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+          return family === "boolean" && left !== undefined && left === right ? family : undefined;
+        case ts.SyntaxKind.AmpersandAmpersandToken:
+        case ts.SyntaxKind.BarBarToken:
+          return family === "boolean" && left === "boolean" && right === "boolean" ? family : undefined;
+        default:
+          return undefined;
+      }
+    }
+    if (ts.isConditionalExpression(candidate)) {
+      const condition = visit(candidate.condition);
+      const whenTrue = visit(candidate.whenTrue);
+      const whenFalse = visit(candidate.whenFalse);
+      return condition !== undefined && whenTrue === family && whenFalse === family ? family : undefined;
+    }
+    return undefined;
+  };
+
+  return visit(expression);
+}
+
+function exactMixedPrimitiveConditionalContextReady(node: ts.Node): boolean {
+  if (process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0") return false;
+  if (
+    currentSubjectIsModuleInit ||
+    currentSelectionSubject === null ||
+    !ts.isFunctionDeclaration(currentSelectionSubject) ||
+    currentSelectionSubject.body === undefined ||
+    currentModuleBindingResolver === null ||
+    currentSelectionOptions?.classifyPrimitiveExpression === undefined ||
+    currentSelectionOptions.classifyDeclaredPrimitiveExpression === undefined
+  ) {
+    return false;
+  }
+  let owner: ts.Node | undefined = node;
+  while (owner) {
+    if (
+      ts.isFunctionDeclaration(owner) ||
+      ts.isFunctionExpression(owner) ||
+      ts.isArrowFunction(owner) ||
+      ts.isMethodDeclaration(owner) ||
+      ts.isConstructorDeclaration(owner) ||
+      ts.isGetAccessorDeclaration(owner) ||
+      ts.isSetAccessorDeclaration(owner)
+    ) {
+      return owner === currentSelectionSubject;
+    }
+    owner = owner.parent;
+  }
+  return false;
+}
+
+function exactNumericExponentiationOwner(node: ts.Node): boolean {
+  let parent = node.parent;
+  while (parent) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)
+    ) {
+      return parent === currentSelectionSubject;
+    }
+    parent = parent.parent;
+  }
+  return false;
+}
+
+function exactNumericExponentiationOperand(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+  seen = new Set<ts.VariableDeclaration>(),
+): boolean {
+  if (!exactNumericExponentiationContextReady() || !exactNumericExponentiationOwner(expression)) return false;
+  const candidate = unwrapProjectionExpression(expression);
+  if (currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) !== "number") return false;
+  // The declared classifier intentionally preserves a useful distinction for
+  // mixed/nullable primitives. Keep the checkpoint fail-closed for every
+  // declared union, including an all-number union.
+  if (currentSelectionOptions?.classifyDeclaredPrimitiveExpression?.(candidate) === "primitive-union") return false;
+
+  if (ts.isNumericLiteral(candidate)) return true;
+  if (ts.isIdentifier(candidate)) {
+    const binding = currentModuleBindingResolver?.(candidate);
+    if (binding && binding.valueKind.kind !== "f64") return false;
+    if (!binding && !scope.has(candidate.text)) return false;
+    const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
+    if (!declaration) return true; // checker-proven parameter / non-local scalar
+    if (declaration.type !== undefined && !typeNodeIsStrictNumberOnly(declaration.type)) return false;
+    if (!declaration.initializer || seen.has(declaration)) return false;
+    const nextSeen = new Set(seen);
+    nextSeen.add(declaration);
+    return exactNumericExponentiationOperand(declaration.initializer, scope, localClasses, nextSeen);
+  }
+  if (ts.isPrefixUnaryExpression(candidate)) {
+    if (
+      candidate.operator !== ts.SyntaxKind.PlusToken &&
+      candidate.operator !== ts.SyntaxKind.MinusToken &&
+      candidate.operator !== ts.SyntaxKind.TildeToken
+    ) {
+      return false;
+    }
+    return exactNumericExponentiationOperand(candidate.operand, scope, localClasses, seen);
+  }
+  if (ts.isBinaryExpression(candidate)) {
+    switch (candidate.operatorToken.kind) {
+      case ts.SyntaxKind.PlusToken:
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken:
+      case ts.SyntaxKind.PercentToken:
+      case ts.SyntaxKind.AsteriskAsteriskToken:
+        return (
+          exactNumericExponentiationOperand(candidate.left, scope, localClasses, seen) &&
+          exactNumericExponentiationOperand(candidate.right, scope, localClasses, seen)
+        );
+      default:
+        return false;
+    }
+  }
+  if (ts.isCallExpression(candidate)) {
+    if (ts.isPropertyAccessExpression(candidate.expression)) {
+      const receiver = candidate.expression.expression;
+      const plan = IR_MATH_METHOD_TABLE[candidate.expression.name.text];
+      if (
+        !ts.isIdentifier(receiver) ||
+        receiver.text !== "Math" ||
+        scope.has("Math") ||
+        !selectorSeesAmbientBinding(receiver) ||
+        plan === undefined ||
+        !selectorSupportsMathPlan(plan, candidate) ||
+        candidate.arguments.length !== plan.arity
+      ) {
+        return false;
+      }
+      return candidate.arguments.every(
+        (argument) =>
+          !ts.isSpreadElement(argument) && exactNumericExponentiationOperand(argument, scope, localClasses, seen),
+      );
+    }
+    // Direct-call plans are prepared after selection. Without an exact
+    // AST-site plan and its f64 return ABI, a checker-number result is not
+    // enough to admit this operand: lowering may otherwise demote it after the
+    // enclosing exponentiation claim. Generic call selection remains unchanged
+    // outside this exact checkpoint.
+    return false;
+  }
+  // Conditional/property/element/object/closure expressions deliberately stay
+  // outside the first checkpoint. In particular, a property with a declared
+  // number type is still a property shape, not a primitive local/parameter.
+  return false;
 }
 
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
@@ -6406,6 +7122,51 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
 function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
   if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
   return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
+}
+
+interface ExactMixedPrimitiveWrapperCall {
+  readonly kind: "Number" | "String";
+  readonly conditional: ts.ConditionalExpression;
+}
+
+/**
+ * #5092 — the first coercive consumer checkpoint stays deliberately smaller
+ * than ambient `String` / `Number` in general. It accepts only a direct mixed
+ * primitive conditional argument, so build can convert each concrete arm
+ * inside the already-lazy `if` instead of inventing a general dynamic
+ * ToString operation. Checker identity keeps same-text source bindings out.
+ */
+function exactMixedPrimitiveWrapperCall(
+  expr: ts.CallExpression,
+  requireCurrentSubject = true,
+): ExactMixedPrimitiveWrapperCall | null {
+  if (
+    process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0" ||
+    !ts.isIdentifier(expr.expression) ||
+    (expr.expression.text !== "String" && expr.expression.text !== "Number") ||
+    !selectorSeesAmbientWrapperConstructor(expr.expression) ||
+    expr.arguments.length !== 1 ||
+    ts.isSpreadElement(expr.arguments[0]!) ||
+    (requireCurrentSubject && !exactMixedPrimitiveConditionalContextReady(expr))
+  ) {
+    return null;
+  }
+  const argument = unwrapProjectionExpression(expr.arguments[0]!);
+  if (!ts.isConditionalExpression(argument)) return null;
+  const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
+  const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
+  if (!classifyPrimitive || !classifyDeclared) return null;
+  const whenTrue = boundedMixedConditionalPrimitiveFamily(argument.whenTrue, classifyPrimitive, classifyDeclared);
+  const whenFalse = boundedMixedConditionalPrimitiveFamily(argument.whenFalse, classifyPrimitive, classifyDeclared);
+  if (
+    whenTrue === undefined ||
+    whenFalse === undefined ||
+    whenTrue === whenFalse ||
+    boundedMixedConditionalPrimitiveFamily(argument.condition, classifyPrimitive, classifyDeclared) === undefined
+  ) {
+    return null;
+  }
+  return { kind: expr.expression.text, conditional: argument };
 }
 
 function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boolean {
@@ -6443,6 +7204,95 @@ function selectorPrimitiveWrapperConstruction(
   return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
 }
 
+/**
+ * (#5164 S1) `<left> , <right>` in VALUE position (`const c = (a, b)`).
+ *
+ * §13.16.1 is "evaluate left, DISCARD its value, evaluate right and take THAT"
+ * — two halves the IR already owns separately, so the accept test is exactly
+ * `left is discardable ∧ right is a Phase-1 value`, and `lowerBinary`'s comma
+ * arm is the same two calls in the same order.
+ *
+ * Recursing the left through #4459's `isPhase1DiscardedExpr` inherits its
+ * `discard-mutating-operand` line verbatim, so a MUTATING left operand
+ * (`(a = 1, b)`, `(i++, j)`) stays legacy-owned: those need the statement-arm
+ * assignment bookkeeping in value position, which is this issue's documented
+ * follow-up. Nested commas need no extra arm — the left half re-enters the
+ * discard walker's own comma arm and the right half re-enters this one.
+ *
+ * The whole test is PROBED so a decline restores the pre-#5164 reject label
+ * byte-for-byte and cannot move a corpus function into a different
+ * `check:ir-fallbacks` bucket; only the accept path is new behaviour.
+ */
+function selectorValuePositionComma(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return probeShape(
+    () => isPhase1DiscardedExpr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses),
+  );
+}
+
+/** (#5164 S3) Does this `in` key go through legacy's comma-key static fold? */
+function inKeyIsCommaExpression(key: ts.Expression): boolean {
+  const inner = unwrapPhase1Parens(key);
+  return (
+    ts.isCommaListExpression(inner) ||
+    (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken)
+  );
+}
+
+/**
+ * (#5164 S3) `<key> in <receiver>` — the bounded DYNAMIC-LANE slice.
+ *
+ * `in` is §13.10.1 HasProperty, a full prototype-chain walk. The IR does not
+ * model prototype chains, so this slice claims exactly the one lane where the
+ * answer needs no static analysis at all: a receiver the resolver certifies as
+ * the non-fast DYNAMIC externref carrier, probed at runtime by `__extern_has`
+ * — the same dual-mode helper legacy's own `in` calls for that receiver, so
+ * inherited properties answer identically by construction.
+ *
+ * Everything else is rejected BEFORE the claim, which is what keeps the slice
+ * honest rather than claim-then-demote:
+ *
+ *   - the receiver certificate is a CARRIER question (`!fast` ∧ an oracle
+ *     any/unknown type fact), so a provably-primitive receiver (§13.10.1's
+ *     TypeError arm), a struct/vec/class instance, a typed object literal, and
+ *     the fast `$AnyValue` carrier all fail it. It is checker-backed at the
+ *     production call site and ABSENT for bare selector callers, so those
+ *     never claim `in` at all;
+ *   - a COMMA key (`(x, "k") in o`) is legacy's static-key fold (it folds the
+ *     last element and may answer from the type), not a runtime probe — out of
+ *     the accept set so the two paths cannot disagree;
+ *   - `#x in o` is a private-brand check, not a property probe.
+ *
+ * A decline is answered by the caller with the pre-#5164 `expr-binary-op-in`
+ * label, unchanged.
+ */
+function selectorDynamicLaneIn(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
+  // The key must reach `__extern_has` AS an externref, and that coercion only
+  // exists while the lane's string carrier IS the host externref (a string key
+  // passes through; a numeric one boxes via the host `__box_number` of the same
+  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
+  // externref host-arg position accepts — measured 2026-08-29: without this
+  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
+  // which is a post-claim demote of the whole lane rather than of a documented
+  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
+  // the same one, not a for-in-specific one, and an absent certificate (bare
+  // selector callers) reads as unproven and rejects.
+  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  if (inKeyIsCommaExpression(expr.left)) return false;
+  if (ts.isPrivateIdentifier(expr.left)) return false;
+  return probeShape(
+    () => isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses),
+  );
+}
+
 /** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
 function selectorPrimitiveWrapperOrGenericBinary(
   expr: ts.BinaryExpression,
@@ -6468,8 +7318,44 @@ function selectorPrimitiveWrapperOrGenericBinary(
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
 }
 
-function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
-  return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
+function selectorSupportsMathPlan(plan: IrMathMethodPlan, call: ts.CallExpression): boolean {
+  if (
+    call.questionDotToken !== undefined ||
+    (ts.isPropertyAccessExpression(call.expression) && call.expression.questionDotToken !== undefined)
+  ) {
+    return false;
+  }
+  return selectorMathPlanEnabled(plan);
+}
+
+function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
+  if (plan.intrinsic === "math.asin" && process.env.JS2WASM_IR_MATH_ASIN === "0") return false;
+  if (plan.intrinsic === "math.acos" && process.env.JS2WASM_IR_MATH_ACOS === "0") return false;
+  if (plan.intrinsic === "math.atan" && process.env.JS2WASM_IR_MATH_ATAN === "0") return false;
+  if (plan.intrinsic === "math.tan" && process.env.JS2WASM_IR_MATH_TAN === "0") return false;
+  if (plan.intrinsic === "math.log10" && process.env.JS2WASM_IR_MATH_LOG10 === "0") return false;
+  if (plan.intrinsic === "math.log1p" && process.env.JS2WASM_IR_MATH_LOG1P === "0") return false;
+  if (plan.intrinsic === "math.sinh" && process.env.JS2WASM_IR_MATH_SINH === "0") return false;
+  if (plan.intrinsic === "math.cosh" && process.env.JS2WASM_IR_MATH_COSH === "0") return false;
+  if (plan.intrinsic === "math.tanh" && process.env.JS2WASM_IR_MATH_TANH === "0") return false;
+  if (plan.intrinsic === "math.cbrt" && process.env.JS2WASM_IR_MATH_CBRT === "0") return false;
+  if (plan.intrinsic === "math.fround" && process.env.JS2WASM_IR_MATH_FROUND === "0") return false;
+  if (plan.intrinsic === "math.clz32" && process.env.JS2WASM_IR_MATH_CLZ32 === "0") return false;
+  if (plan.intrinsic === "math.imul" && process.env.JS2WASM_IR_MATH_IMUL === "0") return false;
+  if (plan.intrinsic === "math.max" && process.env.JS2WASM_IR_MATH_MAX === "0") return false;
+  if (plan.intrinsic === "math.min" && process.env.JS2WASM_IR_MATH_MIN === "0") return false;
+  if (plan.intrinsic === "math.round" && process.env.JS2WASM_IR_MATH_ROUND === "0") return false;
+  if (plan.intrinsic === "math.sign" && process.env.JS2WASM_IR_MATH_SIGN === "0") return false;
+  if (plan.intrinsic === "math.expm1" && process.env.JS2WASM_IR_MATH_EXPM1 === "0") return false;
+  if (plan.intrinsic === "math.asinh" && process.env.JS2WASM_IR_MATH_ASINH === "0") return false;
+  if (plan.intrinsic === "math.acosh" && process.env.JS2WASM_IR_MATH_ACOSH === "0") return false;
+  if (plan.intrinsic === "math.atanh" && process.env.JS2WASM_IR_MATH_ATANH === "0") return false;
+  return (
+    "op" in plan ||
+    "sequence" in plan ||
+    "composite" in plan ||
+    currentSelectionOptions?.supportsSymbolicMathHelpers === true
+  );
 }
 
 function selectorSupportsNumberToString(): boolean {
@@ -6569,6 +7455,22 @@ function typeNodeIsNumberOnly(typeNode: ts.TypeNode): boolean {
     );
   }
   if (ts.isUnionTypeNode(typeNode)) return typeNode.types.every(typeNodeIsNumberOnly);
+  return false;
+}
+
+/** #4787 — unlike the legacy numeric proof, declared unions are not exact. */
+function typeNodeIsStrictNumberOnly(typeNode: ts.TypeNode): boolean {
+  if (typeNode.kind === ts.SyntaxKind.NumberKeyword) return true;
+  if (ts.isParenthesizedTypeNode(typeNode)) return typeNodeIsStrictNumberOnly(typeNode.type);
+  if (ts.isLiteralTypeNode(typeNode)) {
+    return (
+      ts.isNumericLiteral(typeNode.literal) ||
+      (ts.isPrefixUnaryExpression(typeNode.literal) &&
+        (typeNode.literal.operator === ts.SyntaxKind.PlusToken ||
+          typeNode.literal.operator === ts.SyntaxKind.MinusToken) &&
+        ts.isNumericLiteral(typeNode.literal.operand))
+    );
+  }
   return false;
 }
 
@@ -8385,6 +9287,33 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
+    // #4787 — `**` is the first bounded operator retirement checkpoint. Do
+    // not let the shared claim row widen the old shape walk: only a prepared
+    // single-source top-level function with two exact checker-proven numeric
+    // operands may reach the semantic `math.pow` builder arm. Everything else
+    // is a typed pre-claim Unsupported, including provider-unavailable lanes.
+    if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
+      if (!exactNumericExponentiationContextReady()) {
+        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
+      }
+      if (
+        !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
+        !exactNumericExponentiationOperand(expr.right, scope, localClasses) ||
+        !isPhase1Expr(expr.left, scope, localClasses) ||
+        !isPhase1Expr(expr.right, scope, localClasses)
+      ) {
+        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
+      }
+      return true;
+    }
+    // (#5164 S1) VALUE-position comma. Checked here, ahead of the module-value
+    // and module-extern operand rules below, because those model a COMBINING
+    // operator's representation agreement and a comma performs none — see
+    // `selectorValuePositionComma`.
+    if (binOp === ts.SyntaxKind.CommaToken) {
+      if (selectorValuePositionComma(expr, scope, localClasses)) return true;
+      return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
       if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
@@ -8517,9 +9446,83 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return isPhase1Expr(expr.left, scope, localClasses);
     }
+    // (#5164 S3) `<key> in <dynamic receiver>` — last of the special binary
+    // arms, so every module guard above has had its say. TERMINAL like the
+    // comma arm: flipping the `in` capability row off "defer" also opens
+    // `isPhase1BinaryOp`, so falling through to the generic tail would accept
+    // EVERY `in` rather than this lane. See `selectorDynamicLaneIn`.
+    if (binOp === ts.SyntaxKind.InKeyword) {
+      if (selectorDynamicLaneIn(expr, scope, localClasses)) return true;
+      return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
     return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }
   if (ts.isConditionalExpression(expr)) {
+    const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
+    const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
+    const truePrimitive = classifyPrimitive?.(expr.whenTrue);
+    const falsePrimitive = classifyPrimitive?.(expr.whenFalse);
+    const trueDeclared = classifyDeclared?.(expr.whenTrue);
+    const falseDeclared = classifyDeclared?.(expr.whenFalse);
+    const trueObvious = obviousSelectorValueFamily(expr.whenTrue, scope);
+    const falseObvious = obviousSelectorValueFamily(expr.whenFalse, scope);
+    const exactSamePrimitive =
+      truePrimitive !== undefined &&
+      truePrimitive === falsePrimitive &&
+      trueDeclared === truePrimitive &&
+      falseDeclared === falsePrimitive;
+    const hasPrimitiveSignal = [
+      truePrimitive,
+      falsePrimitive,
+      trueDeclared,
+      falseDeclared,
+      trueObvious,
+      falseObvious,
+    ].some((family) => family === "number" || family === "boolean" || family === "string");
+    // (2026-08-28) This route reasons from CHECKER-backed primitive provenance.
+    // Without both classifiers `truePrimitive` is always undefined, so
+    // `exactSamePrimitive` is false for EVERY conditional while
+    // `obviousSelectorValueFamily` still reports "number" for arms like `1 : 0`
+    // — which handed this block authority over `(box && true) ? 1 : 0` and
+    // `value instanceof Bad ? 1 : 0` in checker-free selection, masking
+    // `logical-value-unsupported` / `class-projection-unsupported` with a
+    // generic `operand-coercion-unsupported` (#3529 preclaim parity).
+    const primitiveEvidence = classifyPrimitive !== undefined && classifyDeclared !== undefined;
+
+    // #5092 — mixed primitive values acquire one exact ownership route. An
+    // unresolved/non-primitive opposite arm is still part of this boundary
+    // (nullable, bigint, any/unknown, object/property/call, etc.) and declines
+    // with a typed Unsupported outcome before AST -> IR construction. Exact
+    // same-family conditionals bypass this block, preserving their old path.
+    if (primitiveEvidence && !exactSamePrimitive && hasPrimitiveSignal) {
+      // Ordering: a more specific arm owns any operand this route cannot
+      // classify, so the ordinary Phase-1 walk runs FIRST and records its own
+      // reason. Only shapes no other arm rejects reach the coercion verdicts
+      // below — otherwise a mixed-arm conditional over, say, a local-class
+      // logical operand reported `operand-coercion-unsupported` and the
+      // precise bucket was lost.
+      if (
+        !isPhase1ConditionExpr(expr.condition, scope, localClasses) ||
+        !isPhase1Expr(expr.whenTrue, scope, localClasses) ||
+        !isPhase1Expr(expr.whenFalse, scope, localClasses)
+      ) {
+        return false;
+      }
+      if (!exactMixedPrimitiveConditionalContextReady(expr)) {
+        return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
+      }
+      const trueFamily = boundedMixedConditionalPrimitiveFamily(expr.whenTrue, classifyPrimitive, classifyDeclared);
+      const falseFamily = boundedMixedConditionalPrimitiveFamily(expr.whenFalse, classifyPrimitive, classifyDeclared);
+      const conditionFamily = boundedMixedConditionalPrimitiveFamily(
+        expr.condition,
+        classifyPrimitive,
+        classifyDeclared,
+      );
+      if (trueFamily === undefined || falseFamily === undefined || trueFamily === falseFamily || !conditionFamily) {
+        return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-proof", expr);
+      }
+      return true;
+    }
     if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
       const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
       const whenFalseFamily = obviousModuleValueFamily(expr.whenFalse);
@@ -8698,7 +9701,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         selectorSeesAmbientBinding(expr.expression.expression) &&
         !scope.has(expr.expression.expression.text) &&
         mathPlan !== undefined &&
-        selectorSupportsMathPlan(mathPlan) &&
+        selectorSupportsMathPlan(mathPlan, expr) &&
         expr.arguments.length === mathPlan.arity
       ) {
         return expr.arguments.every(
@@ -8942,6 +9945,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       return true;
     }
     if (!ts.isIdentifier(expr.expression)) return false;
+    const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(expr);
+    if (mixedPrimitiveWrapper) {
+      return isPhase1Expr(mixedPrimitiveWrapper.conditional, scope, localClasses);
+    }
     // Only the await arm admits local async callees; other uses stay direct.
     if (isUnpreparedAsyncCallee(expr, scope, currentAsyncDeclNames, currentSelectionOptions)) {
       return shapeNo("expr-async-callee-not-awaited", expr);
@@ -9756,6 +10763,11 @@ export function buildLocalCallGraph(
           return;
         }
         if (ts.isIdentifier(node.expression)) {
+          const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(node, false);
+          if (mixedPrimitiveWrapper) {
+            visit(mixedPrimitiveWrapper.conditional);
+            return;
+          }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
           if (imported) {
             // Imported direct calls are neither local graph edges nor external
@@ -9829,7 +10841,7 @@ export function buildLocalCallGraph(
             node.expression.expression.text === "Math" &&
             selectorSeesAmbientBinding(node.expression.expression) &&
             mathPlan !== undefined &&
-            selectorSupportsMathPlan(mathPlan) &&
+            selectorSupportsMathPlan(mathPlan, node) &&
             node.arguments.length === mathPlan.arity
           ) {
             for (const a of node.arguments) visit(a);

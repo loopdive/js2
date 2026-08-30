@@ -25,6 +25,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
+import { isFunctionScopeBoundary } from "../../ir/analysis/ast-scope.js";
 import {
   closureArityField,
   closureBagField,
@@ -47,6 +48,7 @@ import {
   buildCaptureFieldDef,
   closureProvablyAfterLetDecl,
   closureNameResolvesToImportBinding,
+  collectBindingPatternNames,
   collectOverBody,
   collectParamDefaultReferences,
   collectReferencedIdentifiers,
@@ -242,6 +244,28 @@ function isEnclosingParameterBinding(fctx: FunctionContext, name: string): boole
   return localIdx !== undefined && localIdx < fctx.params.length;
 }
 
+/**
+ * Whether an inner closure is nested below a function parameter binding with
+ * this spelling.  The checker can temporarily resolve a nested reference to
+ * a same-named module function while the linked multi-source pass is filling
+ * funcMap; the enclosing parameter is still the lexical runtime binding.
+ */
+function hasEnclosingParameterBinding(arrow: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
+  for (let node = arrow.parent; node && !ts.isSourceFile(node); node = node.parent) {
+    if (!isFunctionScopeBoundary(node)) continue;
+    const parameters = (node as ts.SignatureDeclaration).parameters;
+    for (const parameter of parameters ?? []) {
+      if (ts.isIdentifier(parameter.name) && parameter.name.text === name) return true;
+      if (ts.isObjectBindingPattern(parameter.name) || ts.isArrayBindingPattern(parameter.name)) {
+        const names = new Set<string>();
+        collectBindingPatternNames(parameter.name, names);
+        if (names.has(name)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function isCaptureValueReference(id: ts.Identifier): boolean {
   const parent = id.parent;
   if (!parent) return true;
@@ -325,6 +349,26 @@ function referencedBindingDeclaration(
   return ambiguous ? undefined : declaration;
 }
 
+/**
+ * True when a declaration is owned directly by an emitted TypeScript
+ * namespace/module block rather than by a nested function inside it.
+ * Runtime-namespace bindings have dedicated module globals and must remain
+ * live when an arrow created during namespace initialization observes a later
+ * assignment (the TypeScript parser's lazily initialized constructors are the
+ * production witness).
+ */
+function isDirectRuntimeModuleVariableBinding(declaration: ts.Declaration | undefined): boolean {
+  if (declaration === undefined) return false;
+  let sawVariableDeclaration = false;
+  for (let current: ts.Node | undefined = declaration; current?.parent; current = current.parent) {
+    if (ts.isVariableDeclaration(current)) sawVariableDeclaration = true;
+    if (ts.isModuleBlock(current.parent)) return sawVariableDeclaration;
+    if (current !== declaration && (ts.isFunctionLike(current) || ts.isClassLike(current))) return false;
+    if (ts.isSourceFile(current.parent)) return false;
+  }
+  return false;
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -345,6 +389,36 @@ function collectClosureParameterReferences(
 ): void {
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
   for (const parameter of arrow.parameters) collectReferencedIdentifiers(parameter, referencedNames, ownLocals);
+}
+
+/**
+ * True when evaluating `closure` is part of evaluating the initializer that
+ * will later store the captured binding's first value.
+ *
+ * `var scanner = { self: () => scanner }` is observably a live binding, even
+ * when no later assignment exists: the closure is constructed while
+ * `scanner` still contains its hoisted `undefined`/null value, and the
+ * declarator store happens only after the whole object literal completes.
+ * Such a capture therefore needs the same ref-cell treatment as an explicit
+ * outer assignment. Declaration identity comes from the checker; ancestry is
+ * used only to establish the evaluation ordering within that declaration.
+ */
+function closurePrecedesBindingInitializerStore(
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  declaration: ts.Declaration | undefined,
+): boolean {
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) {
+    return false;
+  }
+  for (let current: ts.Node | undefined = closure; current && current !== declaration; current = current.parent) {
+    if (current === declaration.initializer) return true;
+    // A nested closure in another function's body is constructed only when
+    // that outer function runs, not while the declarator evaluates. The outer
+    // function value itself will independently capture this binding at the
+    // actual initializer site.
+    if (current !== closure && ts.isFunctionLike(current)) return false;
+  }
+  return false;
 }
 
 /**
@@ -626,6 +700,21 @@ export function planClosureCaptures(
     }
     if (localIdx === undefined) continue;
     const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
+    // A runtime namespace initializer is compiled in the shared module-init
+    // frame, whose staging locals can have the same spelling as both the
+    // namespace slot and an unrelated top-level binding. Capturing that local
+    // snapshots the hoisted null value. The exact namespace projection in
+    // `ctx.moduleGlobals` is active for this whole closure compilation, so
+    // leave the name uncaptured and let the lifted body read that live global.
+    if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
+    // A lexical capture can share its spelling with a function declaration
+    // already registered in funcMap (for example `{ dispatch }` beside a
+    // module-local `dispatch`).  The old spelling-only guard dropped every
+    // non-variable declaration here, including binding elements that resolve
+    // to an enclosing parameter.  Keep the fast path only when checker
+    // identity proves that this reference is the mapped function itself.
+    const mappedFunctionDeclaration = ctx.funcMapOwnerDecl.get(name) ?? ctx.topLevelFunctionDeclarations.get(name);
+    const hasEnclosingParam = hasEnclosingParameterBinding(arrow, name);
     // #2669: skip names bound to a *user* function (a function reference, not a
     // captured variable) — but NOT a wasm:js-string builtin import
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
@@ -636,7 +725,8 @@ export function planClosureCaptures(
       localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
-      (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
+      !hasEnclosingParam &&
+      (bindingDeclaration === undefined || bindingDeclaration === mappedFunctionDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) || !closureObservesBindingValue(arrow, name))
     ) {
@@ -678,7 +768,9 @@ export function planClosureCaptures(
     // so all closures see the final value of the loop variable.
     const tdzFlagPresent = !!fctx.tdzFlagLocals?.has(name) || tdzFlagIdxFromScan !== undefined;
     const hasTdzFlag = tdzFlagPresent && !closureProvablyAfterLetDecl(ctx, arrow, name);
-    const isMutable = writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag;
+    const initializerStoreFollowsCapture = closurePrecedesBindingInitializerStore(arrow, bindingDeclaration);
+    const isMutable =
+      writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag || initializerStoreFollowsCapture;
     // Check if the variable is already boxed from a previous closure capture.
     // If so, the local already holds a ref cell — don't wrap it again.
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
@@ -779,7 +871,16 @@ export function mintClosureStructTypes(
   // `FunctionExpression` for the closure compile). `fnMetaSlot` declines those —
   // §10.2.9 for an accessor is `"get p"` / `"set p"`, which comes from the
   // property KEY, not from a function name. The member walk answers it.
-  const metaSlot = fnMetaSlot(ctx, opts.decl) ?? fnMetaSlotForMemberDecl(ctx, opts.decl);
+  //
+  // (#5149 cluster B) The member walk runs FIRST for a member declaration.
+  // `fnInstanceMetaOf` accepts a `MethodDeclaration` and answers `""` for it —
+  // §10.2.9 for a method comes from the property KEY, which only the member
+  // walk reads — so the old `fnMetaSlot ?? member` order published that empty
+  // name and never consulted the member walk at all. Measured on
+  // `{ id() {} }` reached through the open-object literal path: the descriptor
+  // `Object.getOwnPropertyDescriptor(o.id, "name").value` read `""` while the
+  // static `.name` fold answered `"id"` — one function, two answers.
+  const metaSlot = fnMetaSlotForMemberDecl(ctx, opts.decl) ?? fnMetaSlot(ctx, opts.decl);
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
   let liftedSelfTypeIdx: number;

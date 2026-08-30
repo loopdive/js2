@@ -155,6 +155,11 @@ export interface DerivePreparedComponentDependenciesInput {
   readonly module: IrModule;
   /** Exact R2 candidate denominator. Local calls close components within it. */
   readonly terminalUnitIds: ReadonlySet<IrUnitId>;
+  /**
+   * Keep the caller-certified terminal denominator in one component even when
+   * post-pass IR no longer contains the edge that originally connected it.
+   */
+  readonly atomicTerminalPopulation?: boolean;
   readonly inventory: IrUnitInventory;
   readonly derivedUnits?: readonly ProgramAbiDerivedUnitRecord[];
   readonly closureSupport?: PreparedComponentClosureSupportEvidence;
@@ -1731,6 +1736,13 @@ export function derivePreparedComponentDependencies(
       ) {
         union.connect(item.terminalOwnerUnitId, dependency.terminalOwnerUnitId);
       }
+    }
+  }
+  if (input.atomicTerminalPopulation) {
+    const terminalUnitIds = [...input.terminalUnitIds].sort(compareText);
+    const first = terminalUnitIds[0];
+    if (first !== undefined) {
+      for (const terminalUnitId of terminalUnitIds.slice(1)) union.connect(first, terminalUnitId);
     }
   }
   const terminalsByRoot = new Map<IrUnitId, IrUnitId[]>();

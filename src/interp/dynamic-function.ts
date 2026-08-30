@@ -260,7 +260,12 @@ export function createDynamicFunction(
  * as Script and entered through the same global EnvRec used by dynamic
  * Function, so it cannot capture caller locals.
  */
-export function executeIndirectEval(parse: DynamicParser, source: JSValue, globalObject: JSValue): JSValue {
+export function executeIndirectEval(
+  parse: DynamicParser,
+  source: JSValue,
+  globalObject: JSValue,
+  referrer?: string,
+): JSValue {
   if (typeof source !== "string") return source;
 
   ensureRuntimeEvalRealm(parse, globalObject);
@@ -268,6 +273,10 @@ export function executeIndirectEval(parse: DynamicParser, source: JSValue, globa
   const options: JSValue = {};
   options.ecmaVersion = 2025;
   options.sourceType = "script";
+  if (referrer !== undefined) {
+    options.locations = true;
+    options.sourceFile = referrer;
+  }
   const ast = parse(source, options);
   const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
   registerVariableEnvironment(globalEnv, globalEnv);

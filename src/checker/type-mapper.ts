@@ -248,7 +248,13 @@ export function resolveBindingElementType(
   resolve: (t: ts.Type) => ValType,
 ): ValType {
   const resolved = resolve(tsType);
-  if (element.initializer && isVoidType(tsType)) {
+  // (#5154 cluster A) The `void`/`undefined` sentinel means the checker had no
+  // evidence about this slot — NOT that the slot is a native scalar. `let [x] =
+  // []` types `x` as `undefined`, which `resolveWasmType` maps to `i32`, so the
+  // binding (and its module global) held the number `0` where §8.5.2 step 5
+  // requires `undefined`. The default-bearing form already widened here; the
+  // no-default form needs it just as much.
+  if (isVoidType(tsType)) {
     return { kind: "externref" };
   }
   // (#3315/#3423) A scalar destructuring binding WITHOUT a default can always

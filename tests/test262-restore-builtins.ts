@@ -48,15 +48,33 @@ const PROTOS: ReadonlyArray<[string, object]> = [
   // StringIteratorPrototype[@@toStringTag]; restore it before the strict
   // rerun in this in-process realm, matching scripts/test262-worker.mjs.
   ["%StringIteratorPrototype%", Object.getPrototypeOf(""[Symbol.iterator]())],
+  // (#4777) Map/Set iterator @@toStringTag descriptors are likewise
+  // configurable and verifyProperty() deletes them during the sloppy variant.
+  // Keep both intrinsic prototypes in the in-process snapshot so the strict
+  // rerun sees the fresh-realm initial values instead of inherited "Iterator".
+  ["%MapIteratorPrototype%", Object.getPrototypeOf(new Map()[Symbol.iterator]())],
+  ["%SetIteratorPrototype%", Object.getPrototypeOf(new Set()[Symbol.iterator]())],
   ["Number.prototype", Number.prototype],
   ["Boolean.prototype", Boolean.prototype],
   ["Function.prototype", Function.prototype],
+  // (#5107) Symbol.prototype[Symbol.toPrimitive] is configurable and the
+  // descriptor helper deletes it during the host lane's sloppy pass. Restore
+  // the intrinsic before the authoritative strict rerun.
+  ["Symbol.prototype", Symbol.prototype],
   ["RegExp.prototype", RegExp.prototype],
   ["Map.prototype", Map.prototype],
   ["Set.prototype", Set.prototype],
   ["WeakMap.prototype", WeakMap.prototype],
   ["WeakSet.prototype", WeakSet.prototype],
   ["Promise.prototype", Promise.prototype],
+  // (#5197) Promise/Symbol.species/prop-desc.js deletes this configurable
+  // static accessor during verifyConfigurable(). Snapshot the constructor so
+  // the following exact Promise species row starts from the fresh host realm.
+  ["Promise", Promise],
+  // (#5129) The ArrayBuffer @@toStringTag Test262 descriptor probe deletes
+  // this configurable own property during its sloppy pass. Snapshot the
+  // prototype so the in-process strict rerun sees the fresh-realm value.
+  ["ArrayBuffer.prototype", ArrayBuffer.prototype],
   // (#3470) Date/TypedArray/DataView were entirely absent — their prototype
   // methods (including annexB ones like Date.prototype.getYear, which don't
   // even appear in the sharded worker's curated method lists) never got
@@ -132,6 +150,19 @@ function sameDataDescriptor(
   if (!expected) return true;
   return (
     actual.writable === expected.writable &&
+    actual.enumerable === expected.enumerable &&
+    actual.configurable === expected.configurable
+  );
+}
+
+function sameAccessorDescriptor(
+  actual: PropertyDescriptor | undefined,
+  expected: PropertyDescriptor | undefined,
+): boolean {
+  if (!actual || !expected || "value" in actual || "value" in expected) return false;
+  return (
+    actual.get === expected.get &&
+    actual.set === expected.set &&
     actual.enumerable === expected.enumerable &&
     actual.configurable === expected.configurable
   );
@@ -269,6 +300,21 @@ export function restoreHostBuiltins(): boolean {
         const final = Object.getOwnPropertyDescriptor(proto, key);
         if (!sameDataDescriptor(final, originalDesc, orig)) clean = false;
       }
+    }
+    // (#5197) Accessor properties have no `value` entry, so the data-value
+    // restore above cannot recreate one after verifyProperty() deletes it.
+    // Restore deleted/replaced accessors from the original descriptor as well
+    // (notably Promise[Symbol.species]) before the next in-process row.
+    for (const [key, originalDesc] of descs) {
+      if (values.has(key) || "value" in originalDesc) continue;
+      const cur = Object.getOwnPropertyDescriptor(proto, key);
+      if (sameAccessorDescriptor(cur, originalDesc)) continue;
+      try {
+        Object.defineProperty(proto, key, originalDesc);
+      } catch {
+        /* residual check below */
+      }
+      if (!sameAccessorDescriptor(Object.getOwnPropertyDescriptor(proto, key), originalDesc)) clean = false;
     }
   }
   // (#3470) Restore function .name/.length sub-properties poisoned by

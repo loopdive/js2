@@ -190,16 +190,18 @@ describe("#3520 identity-keyed IR-first local-call edges", () => {
 
     expect(targets(edges, moduleInitId)).toEqual([targetId]);
     expect(targets(edges, constructorId)).toEqual([targetId]);
-    expect(targets(edges, outerId)).toEqual([targetId]);
+    expect(targets(edges, outerId)).toEqual([]);
+    expect(targets(edges, unsupportedConstructorId)).toEqual([targetId]);
     expect(context.unitByUnitId.get(unsupportedConstructorId)).toMatchObject({
-      terminal: false,
-      terminalOwnerId: outerId,
+      terminal: true,
+      terminalOwnerId: unsupportedConstructorId,
+      containingTerminalOwnerId: outerId,
     });
     expect(context.unitByUnitId.get(unitId(context, unsupportedField))).toMatchObject({
       terminal: false,
-      terminalOwnerId: outerId,
+      terminalOwnerId: unsupportedConstructorId,
     });
-    expect(edges.callees.has(unsupportedConstructorId)).toBe(false);
+    expect(edges.callees.has(unsupportedConstructorId)).toBe(true);
     expect([...edges.calleesFromUnownedCallers]).toEqual([]);
   });
 

@@ -1,16 +1,26 @@
 ---
 id: 4770
-title: "Compiled functions have no own `name` or `length` property (ES2015, ~85 rows)"
-status: ready
+title: "Compiled class constructors lose dynamic own `name` descriptors (ES2015, 1 row)"
+status: in-progress
 sprint: current
 created: 2026-08-27
 updated: 2026-08-27
+assignee: ttraenkler/codex-4770-function-name-length
 priority: high
 horizon: l
 feasibility: hard
 reasoning_effort: high
 task_type: bug
 area: codegen
+loc-budget-allow:
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 es_edition: es6
 language_feature: function-properties, descriptors
 goal: core-semantics
@@ -19,6 +29,124 @@ origin: "ES2015 failure bucketing against the merged baseline, 2026-08-27"
 ---
 
 # #4770 — compiled functions have no own `name` / `length`
+
+## Historical checkpoint plan (superseded by the reduced scope below)
+
+The claimed cohort is the measured 85-row floor in the official ES2015
+standalone population (11,704 rows): 66 `name` descriptor/value rows and 19
+`length` descriptor/value rows. The implementation is split into two
+independently testable seams so a host-lane metadata change cannot alter the
+already-passing standalone closure carrier:
+
+1. Port the existing per-function `$fnmeta` carrier and resolver from the
+   standalone-only gate to the host lane, then make descriptor, own-key,
+   `hasOwn`, dynamic-read, and delete paths agree on the same metadata while
+   preserving sidecar overrides and tombstones.
+2. Repair the compile-time literal-key descriptor fold for class constructors
+   (`name`, `length`, and `prototype`) so `Object.getOwnPropertyDescriptor`
+   converges with the already-correct `Reflect` mirror path.
+3. Pin each seam with exact Test262-shaped probes and both-lane controls;
+   retain the existing standalone function metadata as a non-regression lane.
+
+The first pushed checkpoint records this plan and the exact baseline command
+before any production source change. The PR remains draft until both seams,
+full focused controls, and current-main/CI gates are complete.
+
+## Reduced scope and measured handoff (Codex, 2026-08-27)
+
+The original function `name`/`length` hypothesis is not the shipped scope. The
+claimed-base edition map had `ES2015` at index 2; upstream's metadata
+refresh moves that label to index 3 without changing the population. Its 11,778
+labels include 74 `intl402/` rows excluded by the maintained official runner,
+leaving the exact 11,704-row denominator. Filtering that cohort leaves exactly
+one row for this defect: `test/language/statements/class/name.js`.
+The nearby class-expression row is untagged and is not counted in this cohort.
+
+The maintained `harness-flip-probe.ts` was run with the pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`, LLVM18, and a maximum of
+two local workers. The exact local A/B outputs are
+`/private/tmp/4770-exact-base-host.jsonl`,
+`/private/tmp/4770-final2-host.jsonl`,
+`/private/tmp/4770-exact-base-standalone.jsonl`, and
+`/private/tmp/4770-final2-standalone.jsonl`. The two final lanes were run in
+parallel with one worker each, preserving the two-worker cap.
+
+- Host lane: baseline `fail: 1`; after `fail: 1`; partition `unchanged: 1`,
+  `fail -> pass: 0`, `pass -> fail: 0`.
+- Standalone lane: baseline `fail: 1`; after `pass: 1`; partition
+  `fail -> pass: 1`, `pass -> fail: 0`. The flipped row is exactly
+  `test/language/statements/class/name.js`.
+- The standalone function/class/redefinition controls (`4770-fn.js`,
+  `4770-class.js`, and `4770-debug-redef.js`) are `pass: 3` after the reduced
+  implementation. The class control retains literal `name`, `length`, and
+  `prototype` descriptor coverage.
+- The cumulative reduced checkpoint is five files: three source files,
+  this issue record, and one focused regression test (450 additions and four
+  deletions against the claimed base).
+
+The implementation is deliberately standalone-only. `fillClassObjectNameArms`
+adds identity-guarded native MOP arms for a compiled class-object singleton's
+dynamic `name` key, including descriptor flags, read, own checks,
+enumerability, setter refusal, and the existing instance tombstone screen.
+The compact literal-key fold in `compileBuiltinStaticCall` remains only to keep
+the already passing class control for `name`, `length`, and `prototype`; it does
+not widen the claimed dynamic cohort or alter host behavior. The broad
+closure/function metadata prototype was discarded from the final source diff.
+
+Focused regression coverage is in
+`tests/issue-4770-class-name-descriptor.test.ts`; it uses parameterized dynamic
+keys and checks the descriptor, read, write, enumerable, and delete behavior.
+The focused Vitest test passes. A full TypeScript check still reports the
+repository's pre-existing missing `@types/node` diagnostics; no diagnostics
+were introduced in the changed helper or call-site code after filtering those
+known errors.
+
+Handoff: keep PR #5056 draft with `hold` and `mergeQueueEntry: null`. Do not
+mark ready or enqueue until the reduced checkpoint is pushed, rebased onto
+current `main`, and its CI is green/mergeable.
+
+Post-#5065 current-main verification merged upstream tip
+`2a7548ca819248df332986cde2cff81e65042bff` without rewriting history at
+`36b3e1b99c1d2f8446eb0f1cc15acb73d46d9917`. The exact rerun remains host
+**0/1 pass** (`fail: 1`, unchanged) and standalone **1/1 pass**; focused
+#4770 coverage remains green. Final artifacts are
+`.tmp/4770-final-post5065-host.jsonl` (SHA-256
+`5f6d8001e8ace1428424c0416a48c7180d3f7b104e660abdbbc0e675ede79757`)
+and `.tmp/4770-final-post5065-standalone.jsonl` (SHA-256
+`2ea832f2b69f6d78c260bed65fde618b406c49728217e470c65254cc5d791f68`).
+The remaining landing gates are the evidence commit's normal hooks and
+refreshed upstream CI/CLEAN verification.
+
+## Post-merge revalidation (Codex, 2026-08-27)
+
+The branch was updated without rebasing by fetching `upstream/main` at
+`03ebf325013a241d5609a457fbdfea78bdf48ee2` and merging it as
+`726995d0df1937f097ce46aa99bc94586e4cdf4a`. The reduced PR delta against
+that current main remains five files (three source files plus this issue record
+and the focused test), 450 additions and four deletions.
+
+The exact one-row probes were rerun after that merge with the maintained
+runner, LLVM18, and the pinned artifact directory
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`. Its reproducibility hashes
+are `qjs-abi.json`
+`0aab187dade1dfc988d5054bc54b4b04f2ad14dae0fb897b4b660b5d8bb028a9` and
+`libquickjs.wasm`
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+The final host and standalone JSONL outputs are
+`/private/tmp/4770-merge-host.jsonl` and
+`/private/tmp/4770-merge-standalone.jsonl`.
+
+- Host: `fail: 1`, with exact transition `fail -> fail: 1`; the existing
+  descriptor-attribute failure remains host-only.
+- Standalone: `pass: 1`, with exact transition `fail -> pass: 1` against the
+  claimed baseline. The row is exactly
+  `test/language/statements/class/name.js`.
+- The three standalone function/class/redefinition controls remain `pass: 3`
+  in `/private/tmp/4770-merge-controls.jsonl`.
+- `tests/issue-4770-class-name-descriptor.test.ts` passes under Vitest with one
+  worker. PR #5056 remains draft with `hold` and `mergeQueueEntry: null`; the
+  normal push is still pending because the environment refused source egress
+  to the unverified private `fork` remote.
 
 ## What is confirmed
 

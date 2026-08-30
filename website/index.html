@@ -1365,6 +1365,18 @@
         height: 100%;
         background: linear-gradient(90deg, rgba(63, 185, 80, 0.82), rgba(63, 185, 80, 1));
       }
+      /* The ≤ES3 / Core header has no edition population behind it, so its bar
+         shows the count without a rate. Muted, and the track is left empty
+         rather than filled to a number that would be read as conformance. */
+      .feat-edition-passbar[data-not-an-edition] .feat-edition-passbar-count,
+      .feat-edition-passbar[data-not-an-edition] .feat-edition-passbar-text {
+        color: var(--fg-faint);
+        opacity: 0.8;
+        font-style: italic;
+      }
+      .feat-edition-passbar[data-not-an-edition] .feat-edition-passbar-track {
+        opacity: 0.35;
+      }
       .feat-edition-passbar-text {
         font-size: 11px;
         letter-spacing: 0.08em;
@@ -1401,6 +1413,21 @@
       }
       .feat-row-counts[data-tone="fail"] {
         color: var(--err, #f87171);
+      }
+
+      /* Per-edition breakdown of the tests scoring this row. A row's
+         SECTION is its feature's origin edition; its NUMBER comes from the
+         tests that match its paths, which are not confined to that section.
+         Shown only when they actually disagree, so it reads as an explanation
+         rather than noise. */
+      .feat-edition-spread {
+        grid-column: 2;
+        margin-top: 2px;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--fg-faint);
+        opacity: 0.85;
       }
 
       /* #1327 — "View test results →" link inside expanded feat-row body. */
@@ -1802,14 +1829,21 @@
           <p class="feat-tables-note">
             Each edition's
             <span class="feat-tables-note-mono">pass / total</span>
-            covers every Test262 test in that edition; each row below is a
-            <strong>subset</strong>
-            of it, sliced by the tests'
+            covers every Test262 test in that edition. A row is scored one of two ways: by the tests'
             <span class="feat-tables-note-mono">features:</span>
-            tags — so a section at 100% has every row at 100%. Rows
+            tags, which makes it a
+            <strong>subset</strong>
+            of its section (rows then
             <em>overlap</em>
-            (a test can carry several tags), and the ≤ES3 / ES5 sections predate those tags, so they show the edition
-            headline only. ES2016+ membership syncs from TC39's finished-proposals record on every build.
+            — a test can carry several tags); or, where the feature predates those tags, by the test paths the row
+            links to, which are
+            <strong>not</strong>
+            confined to the section it is displayed under. So a row can sit below a header and still disagree with it —
+            the two count different populations. The
+            <span class="feat-tables-note-mono">≤ES3 / Core</span>
+            section shows no rate at all: editions come from test frontmatter, ES1–ES3 predate every marker Test262
+            has, and the files with no marker are unclassified residue rather than "the ES3 tests". ES2016+ membership
+            syncs from TC39's finished-proposals record on every build.
           </p>
           <div class="compatibility-report-actions">
             <span class="compatibility-report-label">Compatibility Test Report:</span>
@@ -2498,7 +2532,7 @@ const greet = () =&gt; "hello";</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/destructuring">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Destructuring</span>
                 <span class="feat-desc">Extract values from arrays and objects</span>
                 <details>
@@ -2539,7 +2573,7 @@ function sum(...args) { }</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/function/default-parameter">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Default parameters</span>
                 <span class="feat-desc">Fallback values for function parameters</span>
                 <details>
@@ -3100,7 +3134,7 @@ export { data };</pre
             <div class="feat-section expanded">
               <div class="feat-edition">ES2016</div>
               <div class="feat-row" data-t262-paths="built-ins/Array/prototype/includes">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Array.prototype.includes</span>
                 <span class="feat-desc">Check if array contains a value</span>
 
@@ -3461,7 +3495,7 @@ counts.getOrInsert("a", 0);</pre
             <div class="feat-section expanded" data-sloppy>
               <div class="feat-edition">Legacy / Deprecated</div>
               <div class="feat-row" data-t262-paths="language/statements/variable,language/statements/var" data-sloppy>
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">var hoisting</span>
                 <span class="feat-desc">Function-scoped variable declarations hoisted to top</span>
                 <details>
@@ -6066,6 +6100,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             const pct = total > 0 ? Math.round((score / total) * 100) : 0;
             const fill = bar.querySelector(".feat-edition-passbar-fill");
             const text = bar.querySelector(".feat-edition-passbar-text");
+            // This fallback scores the ROWS' badges, not an edition bucket, so
+            // the "no edition population" marking a previous successful render
+            // may have left on the ≤ES3 / Core bar does not apply to it.
+            bar.removeAttribute("data-not-an-edition");
             if (fill) fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
             if (text) text.textContent = `${pct}%`;
           });
@@ -6193,13 +6231,32 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               const count = bar.querySelector(".feat-edition-passbar-count");
               const pct = Math.max(0, Math.min(100, Number(bucket.pct ?? 0)));
               const title = `${bucket.pass.toLocaleString()} pass, ${bucket.fail.toLocaleString()} fail, ${bucket.ce.toLocaleString()} CE, ${bucket.skip.toLocaleString()} skip (${bucket.total.toLocaleString()} total)`;
+
+              // The ≤ES3 / Core section has no edition population to measure.
+              // Editions come from test frontmatter, and ES1–ES3 predate every
+              // marker test262 has (`es5id` is the OLDEST — Sputnik files carry
+              // it to name the ES5.1 section that defines a feature, not the
+              // edition that introduced it). So this section falls back to
+              // `Unclassified (legacy)`: tests whose frontmatter carries no
+              // edition marker at all. That is metadata residue, not "the ES3
+              // tests", and rendering its ratio as a percentage stated an ES3
+              // conformance figure the data cannot support — 273/273 read as
+              // "ES3 is 100%" directly above rows sitting at 83%, 87%, 66%.
+              // Show the population, withhold the rate.
+              const isLegacyResidue = bucket === legacyBucket && label === "ES3 / Core";
+              const residueTitle =
+                `${bucket.total.toLocaleString()} test262 files carry no edition marker in their frontmatter, ` +
+                `so they cannot be attributed to ES1–ES3 or to any other edition. They are shown here because ` +
+                `this section collects the core language, but their pass ratio is NOT an ES3 conformance rate. ` +
+                `Each row below carries its own measured population instead. (${title}.)`;
+              bar.toggleAttribute("data-not-an-edition", isLegacyResidue);
               if (fill instanceof HTMLElement) {
-                fill.style.width = `${pct}%`;
-                fill.title = title;
+                fill.style.width = isLegacyResidue ? "0%" : `${pct}%`;
+                fill.title = isLegacyResidue ? residueTitle : title;
               }
               if (text instanceof HTMLElement) {
-                text.textContent = `${pct}%`;
-                text.title = title;
+                text.textContent = isLegacyResidue ? "unclassified" : `${pct}%`;
+                text.title = isLegacyResidue ? residueTitle : title;
               }
               // Edition-card headline: the edition-wide population the header %
               // is measured over — ALL test262 tests classified into this
@@ -6207,10 +6264,12 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               // sliced by `features:` tag (#2910), so each is a SUBSET of this
               // population; they overlap and so still don't SUM to the headline.
               if (count instanceof HTMLElement) {
-                count.textContent = `${bucket.pass.toLocaleString()} / ${bucket.total.toLocaleString()}`;
-                count.title = title;
+                count.textContent = isLegacyResidue
+                  ? `${bucket.total.toLocaleString()} unmarked files`
+                  : `${bucket.pass.toLocaleString()} / ${bucket.total.toLocaleString()}`;
+                count.title = isLegacyResidue ? residueTitle : title;
               }
-              bar.title = title;
+              bar.title = isLegacyResidue ? residueTitle : title;
             });
           } catch {
             renderHeuristicEditionPassBars();
@@ -6399,6 +6458,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 }
                 badge.title = "No isolated test262 subset scores this feature individually.";
               }
+              row.querySelector(".feat-edition-spread")?.remove();
               // (#4362) Drop any chip/percentage left by the other lane — a row
               // that is unmeasured here must not keep showing the other lane's
               // "N / M".
@@ -6441,6 +6501,36 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               }
               span.textContent = `${pass} / ${total}`;
               span.dataset.tone = tone;
+
+              // Edition spread. The row sits under the section its
+              // FEATURE belongs to, but it is scored by the tests its paths
+              // match, and those carry their own edition markers — the six
+              // `language/expressions/comma` tests are five ES5 (Sputnik files
+              // whose `es5id` names the ES5.1 section defining the operator)
+              // plus one ES2015 (`tco-final.js`, tail-call). Without this the
+              // row reads "ES3 / Core … 5 / 6" and blames ES3 for an ES2015
+              // failure. Rendered only when the spread reaches outside the
+              // row's own section — otherwise it says nothing new.
+              const sectionLabel = row.closest(".feat-section")?.querySelector(".feat-edition")?.textContent?.trim();
+              const spread = Array.isArray(feature.editionSpread) ? feature.editionSpread : [];
+              const straysOutside = spread.some((s) => s.edition !== sectionLabel);
+              let spreadEl = row.querySelector(".feat-edition-spread");
+              if (spread.length > 0 && straysOutside) {
+                if (!spreadEl) {
+                  spreadEl = document.createElement("div");
+                  spreadEl.className = "feat-edition-spread";
+                  row.appendChild(spreadEl);
+                }
+                spreadEl.textContent = `by edition: ${spread
+                  .map((s) => `${s.edition} ${s.pass}/${s.total}`)
+                  .join(" · ")}`;
+                spreadEl.title =
+                  `This row is placed under "${sectionLabel ?? "its section"}" because that is when the feature ` +
+                  `entered the language. Its ${total} test262 test(s) carry their own edition markers, shown here — ` +
+                  `so the row's rate is not a statement about ${sectionLabel ?? "that edition"}.`;
+              } else if (spreadEl) {
+                spreadEl.remove();
+              }
 
               // Explicit `NN%` under the badge glyph when below 95% — gives an
               // at-a-glance "not everything passes yet" signal even on green rows.

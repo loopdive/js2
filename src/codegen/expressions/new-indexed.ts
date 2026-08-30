@@ -20,6 +20,7 @@ import { getOrRegisterHoleyArrayType } from "../registry/types.js";
 import { ensureHoleyArrayNew } from "../vec-elem-set.js";
 import { sparseArrayNewSplitInstrs } from "../vec-sparse-index.js";
 import { compileExpression } from "../shared.js";
+import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js";
 import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -169,6 +170,14 @@ export function tryCompileIndexedBuiltinNew(
     }
 
     if (args.length >= 1) {
+      // (#3481) §25.1.3.1 step 2 is `? ToIndex(length)`, whose ToNumber throws
+      // on a Symbol (§7.1.4 step 5) BEFORE the RangeError bounds check below.
+      // Without this guard a symbol's `i32` id converts straight to `f64` and
+      // `new ArrayBuffer(Symbol())` quietly allocates a buffer of `id` bytes
+      // (built-ins/ArrayBuffer/return-abrupt-from-length-symbol.js).
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, args[0]!, "number")) {
+        return { kind: "ref_null", typeIdx: vecTypeIdx };
+      }
       // new ArrayBuffer(byteLength) → create vec with byteLength elements, all 0
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
 
@@ -244,6 +253,13 @@ export function tryCompileIndexedBuiltinNew(
         // Previous code threw for any non-integer (1.5 → RangeError) and treated NaN
         // as invalid; spec wants 1.5 → 1 and NaN → 0. Both incorrect behaviors
         // failed `toindex-byteoffset.js` test262 cases.
+        // (#3481) ToIndex → ToNumber throws on a Symbol before ANY of the
+        // NaN-folding / truncation / RangeError steps below can observe it.
+        // The buffer operand is already evaluated (it is in `bufLocal`), so
+        // §13.3.6.1 argument order is preserved by guarding here.
+        if (emitSymbolOperandCoercionThrow(ctx, fctx, args[1]!, "number")) {
+          return { kind: "ref_null", typeIdx: vecTypeIdx };
+        }
         compileExpression(ctx, fctx, args[1]!, { kind: "f64" });
         fctx.body.push({ op: "local.set", index: offsetF64 });
         // If NaN, replace with 0 (NaN != NaN is the only condition where v != v).
@@ -304,6 +320,10 @@ export function tryCompileIndexedBuiltinNew(
 
       if (args.length >= 3) {
         // #1515 ToIndex(byteLength) — same ToIndex semantics as byteOffset above.
+        // (#3481) …including the §7.1.4 Symbol TypeError.
+        if (emitSymbolOperandCoercionThrow(ctx, fctx, args[2]!, "number")) {
+          return { kind: "ref_null", typeIdx: vecTypeIdx };
+        }
         compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
         fctx.body.push({ op: "local.set", index: lenF64 });
         // NaN → 0

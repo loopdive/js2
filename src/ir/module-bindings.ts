@@ -9,13 +9,17 @@ import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
-import {
-  boundedPreparedNestedOrdinaryClassBindingName,
-  isBoundedPreparedAccessorClass,
-  isBoundedPreparedNestedOrdinaryClass,
-} from "./class-accessor-safety.js";
+import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
-import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
+import {
+  irPreparedNestedOrdinaryClass,
+  irPreparedNestedOrdinaryClassBindingName,
+  type IrBindingId,
+  type IrClassId,
+  type IrNestedClassFieldCallAdmission,
+  type IrSourceId,
+  type IrUnitId,
+} from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
@@ -65,15 +69,23 @@ export function makeIrLocalClassExpressionResolver(
   sourceFile: ts.SourceFile,
   projectedShapes: ReadonlyMap<string, IrClassShape>,
   identityContext: IrPlanningIdentityContext,
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrLocalClassExpressionResolver;
 export function makeIrLocalClassExpressionResolver(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
   projectedShapes: ReadonlyMap<string, IrClassShape>,
   identityContext?: IrPlanningIdentityContext,
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrLegacyLocalClassExpressionResolver | IrLocalClassExpressionResolver {
   if (identityContext) {
-    return makeIrIdentityLocalClassExpressionResolver(checker, sourceFile, projectedShapes, identityContext);
+    return makeIrIdentityLocalClassExpressionResolver(
+      checker,
+      sourceFile,
+      projectedShapes,
+      identityContext,
+      fieldCallAdmission,
+    );
   }
   return makeIrLegacyLocalClassExpressionResolver(checker, sourceFile, projectedShapes);
 }
@@ -178,6 +190,8 @@ export function makeIrIdentityLocalClassExpressionResolver(
   sourceFile: ts.SourceFile,
   projectedShapes: ReadonlyMap<string, IrClassShape>,
   identityContext: IrPlanningIdentityContext,
+  /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed here. */
+  fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrLocalClassExpressionResolver {
   const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
   if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
@@ -204,14 +218,14 @@ export function makeIrIdentityLocalClassExpressionResolver(
     // function on the direct path. Only the bounded ordinary-class family owns
     // the constructor/method/caller graph atomically, so only that family may
     // widen local-class expression resolution beyond source-file declarations.
-    if (statement.parent !== sourceFile && !isBoundedPreparedNestedOrdinaryClass(statement)) continue;
+    if (statement.parent !== sourceFile && !irPreparedNestedOrdinaryClass(statement, fieldCallAdmission)) continue;
     const legacyName =
       statement.parent === sourceFile && ts.isClassDeclaration(statement)
         ? statement.name?.text
-        : boundedPreparedNestedOrdinaryClassBindingName(statement);
+        : irPreparedNestedOrdinaryClassBindingName(statement, fieldCallAdmission);
     if (legacyName === undefined) continue;
     const shape = projectedShapes.get(legacyName);
-    if (!shape || shape.classId !== record.id) continue;
+    if (!shape) continue;
     const classId = record.id;
     if (classId === undefined || identityContext.declarationByClassId.get(classId) !== statement) {
       return planningInvariant(

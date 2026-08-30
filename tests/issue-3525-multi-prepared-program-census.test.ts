@@ -8,10 +8,12 @@ import { analyzeMultiSource, type MultiTypedAST } from "../src/checker/index.js"
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { generateMultiModule, type GeneratedCodegenModule } from "../src/codegen/index.js";
 import {
+  createMultiPreparedProgramOwner,
   MultiPreparedProgramOwner,
   type MultiPreparedProgramInvariantCode,
 } from "../src/codegen/multi-prepared-program.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
+import { compileMulti } from "../src/index.js";
 import {
   buildIrUnitInventory,
   type IrSourceId,
@@ -28,12 +30,19 @@ import type {
   EarlyMultiPreparedScalarLeafState,
   MultiPreparedScalarLeafPlan,
 } from "../src/codegen/multi-prepared-scalar-leaf.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 // Register the low-level codegen delegates used by generateMultiModule.
 import "../src/codegen/expressions.js";
 
 const OPTIONS: CodegenOptions = {
   experimentalIR: true,
+  target: "standalone",
+  trackIrOutcomes: true,
+};
+
+const TRACK_ONLY_OPTIONS: CodegenOptions = {
+  experimentalIR: false,
   target: "standalone",
   trackIrOutcomes: true,
 };
@@ -52,6 +61,16 @@ const SAME_NAME_FILES = {
   `,
 } as const;
 
+const NON_CANDIDATE_FILES = {
+  "./dep.ts": `export function depOnly(): number { return 1; }`,
+  "./entry.ts": `export function entryOnly(): number { return 2; }`,
+} as const;
+
+const TRACK_ONLY_FILES = {
+  "dep.ts": `export function inc(value: number): number { return value + 1; }`,
+  "entry.ts": `import { inc } from "./dep"; export function run(): number { return inc(41); }`,
+} as const;
+
 interface OwnerFixture {
   readonly ast: MultiTypedAST;
   readonly inventory: IrUnitInventory;
@@ -61,7 +80,7 @@ interface OwnerFixture {
   readonly ctx: CodegenContext;
 }
 
-function ownerFixture(files: Record<string, string> = EMPTY_FILES): OwnerFixture {
+function ownerFixture(files: Record<string, string> = EMPTY_FILES, options: CodegenOptions = OPTIONS): OwnerFixture {
   const ast = analyzeMultiSource(files, "./entry.ts");
   const inventory = buildIrUnitInventory(ast.sourceFiles, {
     checker: ast.checker,
@@ -70,7 +89,7 @@ function ownerFixture(files: Record<string, string> = EMPTY_FILES): OwnerFixture
   const identity = buildIrPlanningIdentityContext(inventory);
   const module = createEmptyModule();
   const session = new ProgramAbiSession(inventory, module);
-  const ctx = createCodegenContext(module, ast.checker, OPTIONS, session, identity);
+  const ctx = createCodegenContext(module, ast.checker, options, session, identity);
   return { ast, inventory, identity, module, session, ctx };
 }
 
@@ -180,7 +199,14 @@ function generatedRoute(
   expect(new Set(audit?.bodyPlan.reservations.map((reservation) => reservation.routeKind))).toEqual(
     new Set([routeKind]),
   );
-  expect(audit?.bodyPlan.reservations.every((reservation) => reservation.preparedBeforeDirectBodies)).toBe(true);
+  expect(
+    audit?.bodyPlan.reservations.every(
+      (reservation) =>
+        reservation.routeKind !== "cross-source-callable" &&
+        reservation.preparedBeforeDirectBodies &&
+        reservation.publicationPhase === "before-direct-bodies",
+    ),
+  ).toBe(true);
   expect(audit?.bodySourceIds).toEqual(audit?.bodyPlan.semanticSourceIds);
   expect(audit?.overlaySourceIds).toEqual(audit?.bodyPlan.semanticSourceIds);
   expect(Object.isFrozen(audit)).toBe(true);
@@ -197,13 +223,212 @@ afterEach(() => {
 });
 
 describe("#3525 whole-program Prepared ownership census", () => {
+  it("seals the telemetry-only no-route owner and publishes its exact direct-body census", () => {
+    const ast = analyzeMultiSource(TRACK_ONLY_FILES, "entry.ts");
+    const generated = generateMultiModule(ast, TRACK_ONLY_OPTIONS);
+    const audit = generated.multiPreparedProgramAudit;
+
+    expect(generated.errors).toEqual([]);
+    expect(audit).toBeDefined();
+    expect(audit?.bodyPlan.expectedBodySourceIds).toEqual(audit?.bodyPlan.semanticSourceIds);
+    expect(audit?.bodySourceIds).toEqual(audit?.bodyPlan.semanticSourceIds);
+    expect(audit?.bodyPlan.expectedOverlaySourceIds).toEqual([]);
+    expect(audit?.overlaySourceIds).toEqual([]);
+    expect(audit?.bodyPlan.reservations).toEqual([]);
+    expect(audit?.bodyPlan.unreservedTerminalUnitIds).toEqual(audit?.bodyPlan.terminalUnitIds);
+    expect(audit?.bodyPlan.terminalUnitIds).toHaveLength(2);
+    expect(audit?.abiSessionBound).toBe(true);
+    expect(generated.irCompiledFuncs).toBeUndefined();
+    expect(generated.irOutcomes).toEqual([]);
+    expect(Object.isFrozen(audit)).toBe(true);
+    expect(Object.isFrozen(audit?.bodyPlan)).toBe(true);
+  });
+
+  it("keeps telemetry observational across artifacts, imports, surface, and runtime", async () => {
+    const telemetry = await compileMulti(TRACK_ONLY_FILES, "entry.ts", TRACK_ONLY_OPTIONS);
+    const direct = await compileMulti(TRACK_ONLY_FILES, "entry.ts", {
+      ...TRACK_ONLY_OPTIONS,
+      trackIrOutcomes: false,
+    });
+
+    expect(telemetry.errors).toEqual([]);
+    expect(direct.errors).toEqual([]);
+    expect(telemetry.binary).toEqual(direct.binary);
+    expect(telemetry.wat).toBe(direct.wat);
+    expect(telemetry.dts).toBe(direct.dts);
+    expect(telemetry.importsHelper).toBe(direct.importsHelper);
+    expect(telemetry.imports).toEqual(direct.imports);
+    expect(telemetry.stringPool).toEqual(direct.stringPool);
+    expect(telemetry.irBodyRouteAudit).toMatchObject({
+      route: "compileMulti",
+      target: "standalone",
+      graph: "multi",
+      generator: "generateMultiModule",
+      sourceCount: 2,
+      terminalUnitCount: 2,
+      violations: [],
+      structurallyComplete: true,
+      unattributedLegacyEntryCount: 0,
+    });
+    const directBodyRows = telemetry.irBodyRouteAudit?.legacyEntries
+      .filter((entry) => entry.unitId !== undefined)
+      .map((entry) => ({
+        entryPoint: entry.entryPoint,
+        bodyName: entry.bodyName,
+        file: entry.file,
+        unitKind: entry.unitKind,
+        count: entry.count,
+        ownsItself: entry.unitId === entry.terminalOwnerId,
+      }));
+    expect(directBodyRows).toEqual([
+      {
+        entryPoint: "compileFunctionBody",
+        bodyName: "inc",
+        file: "dep.ts",
+        unitKind: "top-level-function",
+        count: 1,
+        ownsItself: true,
+      },
+      {
+        entryPoint: "compileStatement",
+        bodyName: "inc",
+        file: "dep.ts",
+        unitKind: "top-level-function",
+        count: 1,
+        ownsItself: true,
+      },
+      {
+        entryPoint: "compileFunctionBody",
+        bodyName: "run",
+        file: "entry.ts",
+        unitKind: "top-level-function",
+        count: 1,
+        ownsItself: true,
+      },
+      {
+        entryPoint: "compileStatement",
+        bodyName: "run",
+        file: "entry.ts",
+        unitKind: "top-level-function",
+        count: 1,
+        ownsItself: true,
+      },
+    ]);
+    expect(telemetry.irBodyRouteAudit?.dispositions).toHaveLength(2);
+    expect(
+      telemetry.irBodyRouteAudit?.dispositions.every(
+        (entry) =>
+          entry.disposition === "legacy-ast-entry" && entry.terminal === true && entry.unitId === entry.terminalOwnerId,
+      ),
+    ).toBe(true);
+    expect(direct.irBodyRouteAudit).toBeUndefined();
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(telemetry.binary))).toEqual(
+      WebAssembly.Module.imports(new WebAssembly.Module(direct.binary)),
+    );
+    expect(WebAssembly.Module.exports(new WebAssembly.Module(telemetry.binary))).toEqual(
+      WebAssembly.Module.exports(new WebAssembly.Module(direct.binary)),
+    );
+    const telemetryInstance = await instantiateWithRuntime(telemetry);
+    const directInstance = await instantiateWithRuntime(direct);
+    expect((telemetryInstance.exports.run as () => number)()).toBe(42);
+    expect((directInstance.exports.run as () => number)()).toBe(42);
+  });
+
+  it("reaches the exact direct body under telemetry instead of failing owner lifecycle first", async () => {
+    vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY", "run");
+    const result = await compileMulti(TRACK_ONLY_FILES, "entry.ts", TRACK_ONLY_OPTIONS);
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        message: "Internal error compiling function 'run': injected direct function-body poison: run",
+        file: "entry.ts",
+        severity: "error",
+      }),
+    ]);
+    expect(result.errors[0]?.message).not.toContain("multi-prepared-program:completion-order");
+    expect(
+      result.irBodyRouteAudit?.legacyEntries
+        .filter((entry) => entry.bodyName === "run")
+        .map((entry) => ({ entryPoint: entry.entryPoint, file: entry.file, count: entry.count })),
+    ).toEqual([{ entryPoint: "compileFunctionBody", file: "entry.ts", count: 1 }]);
+  });
+
+  it("pre-seals only telemetry-only mode and preserves the normal IR planner lifecycle", () => {
+    const telemetry = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
+    const telemetryOwner = createMultiPreparedProgramOwner(telemetry.ast, TRACK_ONLY_OPTIONS, telemetry.ctx);
+    expect(telemetryOwner?.state).toBe("body-boundary-sealed");
+    expect(telemetryOwner?.bodyPlan?.reservations).toEqual([]);
+    expect(telemetryOwner?.bodyPlan?.unreservedTerminalUnitIds).toEqual(
+      telemetry.inventory.terminalUnits.map((unit) => unit.id),
+    );
+
+    const ir = ownerFixture();
+    const irOwner = createMultiPreparedProgramOwner(ir.ast, OPTIONS, ir.ctx);
+    expect(irOwner?.state).toBe("collecting");
+    expect(irOwner?.bodyPlan).toBeUndefined();
+
+    const direct = generateMultiModule(analyzeMultiSource(TRACK_ONLY_FILES, "entry.ts"), {
+      experimentalIR: false,
+      target: "standalone",
+      trackIrOutcomes: false,
+    });
+    expect(direct.multiPreparedProgramAudit).toBeUndefined();
+  });
+
+  it("fails closed on pre-seal visits and late telemetry-only planning or publication", () => {
+    const unsealedFixture = ownerFixture();
+    const unsealed = ownerFor(unsealedFixture);
+    expectInvariant(
+      () => unsealed.compileBodySource(unsealedFixture.ast.sourceFiles[0]!, "discover"),
+      "completion-order",
+    );
+
+    const repeatedFixture = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
+    const repeated = createMultiPreparedProgramOwner(repeatedFixture.ast, TRACK_ONLY_OPTIONS, repeatedFixture.ctx)!;
+    repeated.compileBodySource(repeatedFixture.ast.sourceFiles[0]!, "discover");
+    expectInvariant(
+      () => repeated.compileBodySource(repeatedFixture.ast.sourceFiles[0]!, "discover"),
+      "body-phase-order",
+    );
+
+    const lateRouteFixture = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
+    const lateRoute = createMultiPreparedProgramOwner(lateRouteFixture.ast, TRACK_ONLY_OPTIONS, lateRouteFixture.ctx)!;
+    expectInvariant(() => lateRoute.planEarlyRoutes(routeMaps([])), "completion-order");
+
+    const lateComponentFixture = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
+    const lateComponent = createMultiPreparedProgramOwner(
+      lateComponentFixture.ast,
+      TRACK_ONLY_OPTIONS,
+      lateComponentFixture.ctx,
+    )!;
+    expectInvariant(() => lateComponent.stageCallableComponents([]), "completion-order");
+
+    const lateModuleInitFixture = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
+    const lateModuleInit = createMultiPreparedProgramOwner(
+      lateModuleInitFixture.ast,
+      TRACK_ONLY_OPTIONS,
+      lateModuleInitFixture.ctx,
+    )!;
+    expectInvariant(() => lateModuleInit.registerPreparedModuleInit({} as never), "completion-order");
+
+    const earlyPublicationFixture = ownerFixture(EMPTY_FILES, TRACK_ONLY_OPTIONS);
+    const earlyPublication = createMultiPreparedProgramOwner(
+      earlyPublicationFixture.ast,
+      TRACK_ONLY_OPTIONS,
+      earlyPublicationFixture.ctx,
+    )!;
+    const publication = earlyPublicationFixture.session.publish(earlyPublicationFixture.module);
+    expectInvariant(() => earlyPublication.complete(publication), "completion-order");
+  });
+
   it("freezes the exact denominator and separates canonical from semantic order", () => {
     const fixture = ownerFixture();
     const owner = ownerFor(fixture);
-    const plan = owner.sealBodyBoundary();
+    const plan = owner.sealBodyBoundary()!;
 
     expect(owner.state).toBe("body-boundary-sealed");
-    expect(plan.schema).toBe("multi-prepared-program-body-plan-v1");
+    expect(plan.schema).toBe("multi-prepared-program-body-plan-v2");
     expect(plan.entrySourceId).toBe(sourceIdFor(fixture, fixture.ast.entryFile));
     expect(plan.canonicalSourceIds).toEqual(fixture.inventory.sources.map((source) => source.id));
     expect(plan.semanticSourceIds).toEqual(fixture.ast.sourceFiles.map((source) => sourceIdFor(fixture, source)));
@@ -229,10 +454,10 @@ describe("#3525 whole-program Prepared ownership census", () => {
     const entries = fixture.ast.sourceFiles.map((sourceFile) => [sourceFile, emptyState(fixture.identity)] as const);
     const forward = ownerFor(fixture);
     forward.planEarlyRoutes(routeMaps(entries));
-    const forwardPlan = forward.sealBodyBoundary();
+    const forwardPlan = forward.sealBodyBoundary()!;
     const reverse = ownerFor(fixture);
     reverse.planEarlyRoutes(routeMaps([...entries].reverse()));
-    const reversePlan = reverse.sealBodyBoundary();
+    const reversePlan = reverse.sealBodyBoundary()!;
     expect(reversePlan.canonicalSourceIds).toEqual(forwardPlan.canonicalSourceIds);
     expect(reversePlan.semanticSourceIds).toEqual(forwardPlan.semanticSourceIds);
     expect(reversePlan.terminalUnitIds).toEqual(forwardPlan.terminalUnitIds);
@@ -562,8 +787,8 @@ describe("#3525 whole-program Prepared ownership census", () => {
   }, 120_000);
 
   it("completes a non-candidate multi-source graph with exact visits and no reservation", () => {
-    const fixture = ownerFixture(SAME_NAME_FILES);
-    const generated = generateMultiModule(analyzeMultiSource(SAME_NAME_FILES, "./entry.ts"), OPTIONS);
+    const fixture = ownerFixture(NON_CANDIDATE_FILES);
+    const generated = generateMultiModule(analyzeMultiSource(NON_CANDIDATE_FILES, "./entry.ts"), OPTIONS);
     expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
     const audit = generated.multiPreparedProgramAudit;
     expect(audit).toBeDefined();

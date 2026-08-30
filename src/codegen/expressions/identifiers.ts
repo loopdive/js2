@@ -77,7 +77,11 @@ import {
   resolvePromiseSubclassIdentifier,
   tryEmitPromiseSubclassValue,
 } from "./promise-subclass.js";
-import { emitLiveIdentifierGlobalRead, tryEmitAmbientRegistryCollisionRead } from "./identifier-module-storage.js";
+import {
+  emitLiveIdentifierGlobalRead,
+  tryEmitAmbientRegistryCollisionRead,
+  tryEmitExplicitHostAmbientValueRead,
+} from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
@@ -238,12 +242,22 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
 export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
   if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
-    const shorthand = (
+    const resolveShorthand = (
       ctx.checker as typeof ctx.checker & {
         getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
       }
-    ).getShorthandAssignmentValueSymbol?.(id.parent);
-    if (shorthand !== undefined) return shorthand;
+    ).getShorthandAssignmentValueSymbol;
+    if (typeof resolveShorthand === "function") {
+      const shorthand = resolveShorthand(id.parent);
+      // (#5149 cluster F) An `undefined` answer means the shorthand's VALUE is
+      // unresolvable: `({ notDefined })` reads a binding that does not exist
+      // and must throw a ReferenceError (§13.2.5.5 step 3 forwards the
+      // IdentifierReference GetValue). The old fall-through to
+      // `getSymbolAtLocation` handed back the shorthand's own PROPERTY symbol,
+      // which is ALWAYS present, so the caller's `!sym` undeclared test never
+      // fired and the literal quietly built `{ notDefined: undefined }`.
+      return shorthand;
+    }
   }
   return ctx.checker.getSymbolAtLocation(id);
 }
@@ -638,7 +652,11 @@ export function computeElidableTopLevelTdzNames(
       if (!isDeclName) {
         // Verify this identifier resolves to OUR top-level declaration
         // (and not a shadowed local with the same name).
-        const symbol = ctx.checker.getSymbolAtLocation(node);
+        // (#5144 cluster S) Use the VALUE symbol — a shorthand assignment
+        // target (`for ({ x } of …)`) resolves through `getSymbolAtLocation`
+        // to the property, so the write was invisible here and the whole TDZ
+        // flag got elided (`obj-id-put-let` threw nothing).
+        const symbol = identifierValueSymbol(ctx, node);
         const decl = symbol?.valueDeclaration;
         if (decl === declByName.get(node.text)) {
           const result = analyzeTdzAccess(ctx, node);
@@ -814,7 +832,7 @@ function compileCapturedGlobalRead(
 ): ValType {
   const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
   if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name);
+    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
   } else if (tdzResult === "throw") {
     emitStaticTdzThrow(ctx, fctx, id.text);
   }
@@ -889,7 +907,7 @@ function compileExactAmbientShadowedModuleBinding(
     if (tdzLocalIdx < 0) return undefined;
     const tdzResult = analyzeTdzAccess(ctx, id);
     if (tdzResult === "check") {
-      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text);
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -908,6 +926,25 @@ function compileIdentifierCore(
   skipRuntimeEvalState = false,
 ): ValType | null {
   const name = id.text;
+
+  const runtimeEvalMayShadow = !skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name);
+  const foldedEvalActivationOwnsBinding =
+    fctx.directEvalActivationBindingNames?.has(name) === true && fctx.localMap.has(name);
+
+  // A typed source-level `declare const/let/var` is a promise that the host
+  // environment owns the value; it does not allocate a Wasm local. Resolve it
+  // by checker identity before the legacy flat local maps. Those maps can carry
+  // an unrelated same-named block binding from elsewhere in the function (the
+  // TypeScript compiler's performanceCore has exactly this shape), which would
+  // otherwise hijack the ambient read and apply that dead block's TDZ flag.
+  // Concrete lexical shadows do not enter this arm because their checker
+  // declarations are not ambient-only. A provider-created binding must select
+  // before this fallback, and a successfully folded sloppy eval can create the
+  // same activation binding statically; both shadows therefore take priority.
+  if (!runtimeEvalMayShadow && !foldedEvalActivationOwnsBinding) {
+    const explicitAmbientType = tryEmitExplicitHostAmbientValueRead(ctx, fctx, id);
+    if (explicitAmbientType !== undefined) return explicitAmbientType;
+  }
 
   // A direct CaseBlock lexical declaration is visible only while evaluating
   // that switch's clauses.  Keep an outside reference from falling through to
@@ -964,7 +1001,7 @@ function compileIdentifierCore(
   // outer capture or ambient/global symbol. Compile the ordinary resolution as
   // the miss arm, then select through the stable caller-owned value cell. A
   // current-function local/lexical binding is excluded by the shared predicate.
-  if (!skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name)) {
+  if (runtimeEvalMayShadow) {
     const savedFallback = pushBody(fctx);
     const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
     if (fallbackType === null) {
@@ -1343,7 +1380,7 @@ function compileIdentifierCore(
   if (capturedBox !== undefined) {
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -1373,7 +1410,7 @@ function compileIdentifierCore(
     // Apply static analysis for module-level globals
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
+      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
     } else if (tdzResult === "throw") {
       emitStaticTdzThrow(ctx, fctx, id.text);
     }
@@ -1507,10 +1544,16 @@ function compileIdentifierCore(
   // extern constructor through globalThis generically; this covers Web/API
   // constructors without extending the TypedArray/ERM name allowlists below.
   // Standalone/WASI deliberately keep their native/no-host behavior.
+  // The registry is graph-wide and name-keyed, so require the identifier's
+  // VALUE declaration to be ambient (or unresolved). TypeScript itself imports
+  // `interface Node` and also declares a local constructible `function Node`;
+  // that function must reach the compiled funcref path below rather than read
+  // the unrelated DOM `globalThis.Node` constructor.
   if (
     !ctx.standalone &&
     !ctx.wasi &&
     ctx.externClasses.has(name) &&
+    (resolvedValueDeclaration === undefined || readsAmbientDeclaration) &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -2060,6 +2103,35 @@ function compileIdentifierCore(
     // module's top-level binding, not a candidate runtime global — the
     // runtime-eval binding pool is graph-wide and would hand that foreign
     // binding back. Skip the dynamic read and throw.
+    // A context-linked standalone module shares its GlobalEnvironmentRecord's
+    // object half with the owning realm. Static source cannot see names that a
+    // prior classic Script introduced (for example Deno tests commonly install
+    // a global `assert` before evaluating an ES module), so resolve otherwise
+    // unbound identifiers through that linked global object at runtime.
+    // (#5148 checkpoint) `moduleGoalIdentifierIsUndeclared` answers true for
+    // BOTH a foreign module's top-level binding (sym defined, declared in
+    // another module-goal file — the #3505 leak this gate exists for) and a
+    // name with NO symbol at all. Only the former must skip the linked read: a
+    // symbol-less name has no foreign binding to leak, and it is exactly the
+    // script-installed-global shape the linked realm serves (`dynamicAnswer`
+    // written by the owning realm before this module evaluates).
+    if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const globalType = emitNativeGlobalThisObject(ctx, fctx);
+      if (getIdx !== undefined && globalType !== null) {
+        addStringConstantGlobal(ctx, name);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
+      if (globalType !== null) fctx.body.push({ op: "drop" });
+    }
     if (!unresolvedInModuleGoal && (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
         ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)
@@ -2349,7 +2421,7 @@ function identifierHasSourceDeclaration(ctx: CodegenContext, id: ts.Identifier):
  * is not an object, is not callable with no `@@hasInstance`, has a non-callable
  * `@@hasInstance`, or (OrdinaryHasInstance §7.3.20) has a non-object prototype.
  */
-function emitInstanceofThrowGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitInstanceofThrowGuard(ctx: CodegenContext, fctx: FunctionContext): void {
   // stack in: [i32 code]
   const codeLocal = allocLocal(fctx, `__instanceof_code_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.tee", index: codeLocal });

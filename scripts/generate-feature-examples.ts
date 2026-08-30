@@ -814,12 +814,16 @@ const union = a.union(b);`,
   },
 
   // ── ES2026 ──────────────────────────────────────────────────────────────
-  // The 7 proposals published in the 17th edition (June 2026). Status below is
-  // MEASURED, not assumed: all 7 compile, but only Error.isError and Upsert
-  // also produce the right answer at runtime — the other five reach codegen and
-  // then hit a missing runtime helper (`X is not a function`) or return an empty
-  // result. Those are marked `none` + `noCompile` so the page does not show
-  // plausible WAT for a feature that throws when you run it.
+  // The proposals published in the 17th edition (June 2026). Status below is
+  // MEASURED, not assumed: all 7 of the original cohort compile, but only
+  // Error.isError and Upsert also produce the right answer at runtime — the
+  // other five reach codegen and then hit a missing runtime helper (`X is not a
+  // function`) or return an empty result. Those are marked `none` + `noCompile`
+  // so the page does not show plausible WAT for a feature that throws when you
+  // run it.
+  // (#5173) Temporal is the 8th ES2026 row — reclassified out of "Proposals"
+  // because ES2026 shipped it. It does not compile at all (no global
+  // `Temporal`), which is why the ES2026 section's numbers drop when it lands.
   {
     name: "Error.isError",
     edition: "ES2026",
@@ -882,6 +886,19 @@ counts.getOrInsert("a", 0);`,
     js: `const big = JSON.rawJSON("12345678901234567890"); // not yet`,
     explain: "Compiles, but JSON.stringify of a rawJSON box returns undefined.",
     noCompile: true,
+  },
+  {
+    // (#5173) Moved out of the "Proposals" section: Temporal is ES2026, not a
+    // proposal. The row's `testCategories` scores it against the ~4.6k
+    // `built-ins/Temporal` tests that now sit in the ES2026 edition bucket.
+    name: "Temporal",
+    edition: "ES2026",
+    badge: "none",
+    description: "Modern date and time API",
+    js: `const now = Temporal.Now.plainDateTimeISO(); // not supported`,
+    explain: "The global `Temporal` namespace object does not exist at runtime (see #4628).",
+    noCompile: true,
+    testCategories: ["built-ins/Temporal"],
   },
 
   // ── Legacy / Deprecated ─────────────────────────────────────────────────
@@ -1020,14 +1037,9 @@ console.log(app.dispatch("/api/users")); // Users: Alice, Bob
 console.log(app.dispatch("/404"));       // 404 Not Found`,
     testCategories: [],
   },
-  {
-    name: "Temporal",
-    edition: "Proposals",
-    badge: "none",
-    description: "Modern date and time API",
-    js: `const now = Temporal.Now.plainDateTimeISO(); // not supported`,
-    noCompile: true,
-  },
+  // (#5173) The Temporal row used to live here. It moved to the ES2026 section
+  // above — Temporal shipped in ECMA-262 17th edition, so listing it as a
+  // proposal understated the published-edition gap.
   {
     name: "Decorators",
     edition: "Proposals",

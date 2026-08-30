@@ -17,6 +17,7 @@ import {
   isWrapperObjectType,
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { ensureAnyFromExternHelper, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -28,6 +29,7 @@ import {
   isCompoundAssignment,
 } from "./expressions/operator-assignment.js";
 import {
+  buildThrowJsErrorInstrs,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
   resolveDeclaringClassForPrivateName,
@@ -248,6 +250,28 @@ const SYMBOL_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.GreaterThanToken,
   ts.SyntaxKind.LessThanEqualsToken,
   ts.SyntaxKind.GreaterThanEqualsToken,
+]);
+
+/**
+ * (#5158) Binary operators whose §13.15.2 runtime semantics are
+ * "evaluate lhs, evaluate rhs, ToNumeric(lhs), ToNumeric(rhs)". When either
+ * operand is an anonymous object type the coercion must be deferred until both
+ * operand expressions have run; otherwise the numeric hint calls `valueOf` on
+ * the left while the right expression has not been evaluated yet. `+` is
+ * excluded — its object arm is ToPrimitive with the string-concat fallback.
+ */
+const DEFERRED_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
 ]);
 
 /**
@@ -777,6 +801,11 @@ export function compileBinaryExpression(
       const nonNullIsUndefinedType =
         (nonNullTsType.flags & ts.TypeFlags.Undefined) !== 0 || (nonNullTsType.flags & ts.TypeFlags.Void) !== 0;
       const nonNullIsNullType = (nonNullTsType.flags & ts.TypeFlags.Null) !== 0;
+      const nonNullUnionHasUndefined =
+        nonNullTsType.isUnion() &&
+        nonNullTsType.types.some((part) => (part.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0);
+      const nonNullUnionHasNull =
+        nonNullTsType.isUnion() && nonNullTsType.types.some((part) => (part.flags & ts.TypeFlags.Null) !== 0);
 
       const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
       if (valType === null) {
@@ -867,11 +896,22 @@ export function compileBinaryExpression(
           (valType.kind === "ref_null" || valType.kind === "ref") &&
           ctx.nativeStrings &&
           valType.typeIdx === ctx.anyStrTypeIdx;
-        if ((isStrictEqOp || isStrictNeqOp) && nullSideIsUndefinedId && !isNullableNativeString) {
-          // struct === undefined → always false; struct !== undefined → always true
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: isStrictNeqOp ? 1 : 0 });
-          return { kind: "i32" };
+        // A concrete GC reference unioned with `undefined` uses ref.null as
+        // that undefined value. TypeScript's generic `append<T>(to: T[] |
+        // undefined, ...)` is the parser witness: treating a null vec as
+        // "never undefined" falls through to `to.push` and dereferences null.
+        // Preserve strict null-vs-undefined when the static union identifies
+        // which nullish value the carrier represents; loose equality accepts
+        // either, as required by JavaScript.
+        if (isStrictEqOp || isStrictNeqOp) {
+          const nullRepresentsUndefined = nonNullUnionHasUndefined || isNullableNativeString;
+          const nullRepresentsNull = nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString);
+          const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
+          if (!comparesRepresentedNullish) {
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "i32.const", value: isStrictNeqOp ? 1 : 0 });
+            return { kind: "i32" };
+          }
         }
         fctx.body.push({ op: "ref.is_null" });
         if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
@@ -944,8 +984,12 @@ export function compileBinaryExpression(
   // Anonymous object types cover object literals and inferred object bindings;
   // named/class/wrapper and BigInt-containing objects remain on their existing
   // dispatches so this narrow ordering repair cannot change those semantics.
+  // (#5158) The same ordering defect applies to every ToNumeric binary
+  // operator, not just `**` — `obj - f()` ran `obj.valueOf()` before `f()`.
+  // `+` is deliberately absent: its object arm is ToPrimitive/string-concat,
+  // owned by the `admitsObjectAdd` dispatch below.
   if (
-    op === ts.SyntaxKind.AsteriskAsteriskToken &&
+    DEFERRED_TONUMERIC_OPS.has(op) &&
     (isDeferredExponentiationObject(expr.left, leftTsType) || isDeferredExponentiationObject(expr.right, rightTsType))
   ) {
     const leftReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.left, leftTsType);
@@ -1218,8 +1262,25 @@ export function compileBinaryExpression(
         op === ts.SyntaxKind.ExclamationEqualsToken ||
         op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
         op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      // (#4774) …but NOT a `+` with a STATICALLY-string operand. §13.15.3 step 7
+      // concatenates whenever either ToPrimitive result is a String, so such a
+      // `+` is unconditionally a concat and its static type is `string` whatever
+      // the other operand holds. `__any_add` returns the `$AnyValue` carrier
+      // instead, while every consumer lowers from that static `string`:
+      // `.length` emits a bare `struct.get $AnyString 0` whose only defence is an
+      // `externref` special case (#1797/#4607), so the module failed validation
+      // — with `success: true` and no diagnostic. Fixed on the PRODUCER because
+      // `charCodeAt`, `__str_concat` and `===` read the same static type (that
+      // one trapped `illegal cast` instead). Declining hands the expression to
+      // the string-concat route below, which returns a native string ref. Only
+      // the `unionRepEqInvolved` limb reaches here — an `any` is not a string
+      // type, so a both-`any` `+` is byte-identical. #4414's residual (`true`
+      // stringified as "1" via the union carrier) is a separate VALUE defect on
+      // an already-valid module and is deliberately untouched.
+      const plusIsStaticallyStringConcat =
+        isPlusOp && (isStringType(leftTsType) || (isStringType(rightTsType) && !isBigIntType(leftTsType)));
       // Only dispatch through AnyValue for + (string concat possible) and equality
-      if (isPlusOp || isEqualityOp) {
+      if ((isPlusOp && !plusIsStaticallyStringConcat) || isEqualityOp) {
         // (#3169) Record the ACTIVE any-equality dispatch expr so the #3037
         // read-carrier (`maybeWrapAnyReadEqualityCarrier`) fires ONLY for
         // operands whose enclosing equality really routes through
@@ -3276,6 +3337,19 @@ export function compileI64BinaryOp(
       // Save exponent (top of stack), then base
       fctx.body.push({ op: "local.set", index: expLocal });
       fctx.body.push({ op: "local.set", index: baseLocal });
+      // BigInt exponentiation rejects a negative exponent. The previous loop
+      // terminated on exp <= 0 and therefore returned 1n for both zero and
+      // negative values. Keep zero as the multiplicative identity, but throw
+      // the required RangeError before entering the loop for negatives.
+      const negativeExponentThrow = buildThrowJsErrorInstrs(ctx, "RangeError", "Exponent must be positive", {
+        flush: fctx,
+      });
+      fctx.body.push(
+        { op: "local.get", index: expLocal },
+        { op: "i64.const", value: 0n },
+        { op: "i64.lt_s" },
+        { op: "if", blockType: { kind: "empty" }, then: negativeExponentThrow, else: [] },
+      );
       // result = 1
       fctx.body.push({ op: "i64.const", value: 1n });
       fctx.body.push({ op: "local.set", index: resultLocal });
@@ -3395,84 +3469,73 @@ export function emitToInt32(fctx: FunctionContext): void {
   const e = allocTempLocal(fctx, { kind: "i64" });
   const significand = allocTempLocal(fctx, { kind: "i64" });
   const magnitude = allocTempLocal(fctx, { kind: "i64" });
-
-  fctx.body.push({ op: "i64.reinterpret_f64" });
-  fctx.body.push({ op: "local.set", index: bits });
-
-  fctx.body.push({ op: "local.get", index: bits });
-  fctx.body.push({ op: "i64.const", value: 52n });
-  fctx.body.push({ op: "i64.shr_u" });
-  fctx.body.push({ op: "i64.const", value: 0x7ffn });
-  fctx.body.push({ op: "i64.and" });
-  fctx.body.push({ op: "i64.const", value: 1023n });
-  fctx.body.push({ op: "i64.sub" });
-  fctx.body.push({ op: "local.set", index: e });
-
-  fctx.body.push({ op: "local.get", index: bits });
-  fctx.body.push({ op: "i64.const", value: 0xfffffffffffffn });
-  fctx.body.push({ op: "i64.and" });
-  fctx.body.push({ op: "i64.const", value: 0x10000000000000n });
-  fctx.body.push({ op: "i64.or" });
-  fctx.body.push({ op: "local.set", index: significand });
-
-  const shiftLeft: Instr[] = [
-    { op: "local.get", index: significand },
-    { op: "local.get", index: e },
-    { op: "i64.const", value: 52n },
-    { op: "i64.sub" },
-    { op: "i64.shl" },
-  ];
-  const shiftRight: Instr[] = [
-    { op: "local.get", index: significand },
-    { op: "i64.const", value: 52n },
-    { op: "local.get", index: e },
-    { op: "i64.sub" },
-    { op: "i64.shr_u" },
-  ];
-  fctx.body.push({ op: "local.get", index: e });
-  fctx.body.push({ op: "i64.const", value: 0n });
-  fctx.body.push({ op: "i64.ge_s" });
-  fctx.body.push({ op: "local.get", index: e });
-  fctx.body.push({ op: "i64.const", value: 83n });
-  fctx.body.push({ op: "i64.le_s" });
-  fctx.body.push({ op: "i32.and" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "i64" } as ValType },
-    then: [
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 52n },
-      { op: "i64.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i64" } as ValType },
-        then: shiftLeft,
-        else: shiftRight,
-      },
-    ],
-    else: [{ op: "i64.const", value: 0n }],
-  });
-  fctx.body.push({ op: "local.set", index: magnitude });
-
-  fctx.body.push({ op: "local.get", index: bits });
-  fctx.body.push({ op: "i64.const", value: 0n });
-  fctx.body.push({ op: "i64.lt_s" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "i32" } as ValType },
-    then: [
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: magnitude },
-      { op: "i32.wrap_i64" },
-      { op: "i32.sub" },
-    ],
-    else: [{ op: "local.get", index: magnitude }, { op: "i32.wrap_i64" }],
-  });
+  emitWasmInt32Coercion(fctx.body, { bits, exponent: e, significand, magnitude });
 
   releaseTempLocal(fctx, bits);
   releaseTempLocal(fctx, e);
   releaseTempLocal(fctx, significand);
   releaseTempLocal(fctx, magnitude);
+}
+
+/**
+ * Emit the element conversion for an integer TypedArray whose host/gc backing
+ * array is f64. Packed standalone/WASI arrays get the same conversion from
+ * their i8/i16/i32 `array.set`; the f64 representation must make the width and
+ * signedness explicit before storing. The input is f64 and the result remains
+ * f64 so callers can use it with the ordinary host/gc vec store path.
+ */
+export function emitHostTypedArrayElementCoercion(fctx: FunctionContext, viewName: string): boolean {
+  let width: 8 | 16 | 32 | undefined;
+  let signed = false;
+
+  switch (viewName) {
+    case "Int8Array":
+      width = 8;
+      signed = true;
+      break;
+    case "Uint8Array":
+      width = 8;
+      break;
+    case "Uint8ClampedArray":
+      emitToUint8Clamp(fctx);
+      fctx.body.push({ op: "f64.convert_i32_u" });
+      return true;
+    case "Int16Array":
+      width = 16;
+      signed = true;
+      break;
+    case "Uint16Array":
+      width = 16;
+      break;
+    case "Int32Array":
+      width = 32;
+      signed = true;
+      break;
+    case "Uint32Array":
+      width = 32;
+      break;
+    default:
+      return false;
+  }
+
+  // ToInt32 supplies the ECMAScript NaN/infinity/truncation/modulo-2^32
+  // semantics shared by every non-clamped integer view.
+  emitToInt32(fctx);
+  if (width !== 32) {
+    fctx.body.push({ op: "i32.const", value: width === 8 ? 0xff : 0xffff });
+    fctx.body.push({ op: "i32.and" });
+    if (signed) {
+      // Sign-extend the masked low byte/word without requiring a dedicated
+      // extend8/extend16 instruction in the IR.
+      const shift = width === 8 ? 24 : 16;
+      fctx.body.push({ op: "i32.const", value: shift });
+      fctx.body.push({ op: "i32.shl" });
+      fctx.body.push({ op: "i32.const", value: shift });
+      fctx.body.push({ op: "i32.shr_s" });
+    }
+  }
+  fctx.body.push({ op: signed ? "f64.convert_i32_s" : "f64.convert_i32_u" });
+  return true;
 }
 
 /**

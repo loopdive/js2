@@ -14,6 +14,7 @@ import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { getVecInfo } from "../type-coercion.js";
+import { paramReceivesOnlyProvenanceClosedArrayLiterals } from "./provenance-closed-arrays.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 
@@ -793,11 +794,19 @@ export function inferParamTypeFromCallSites(
   // anyway) and costs identity, so the withdrawal is free where it applies and
   // byte-identical everywhere else. Withdrawing leaves the parameter on its
   // resolved `externref`, which passes the ORIGINAL struct by reference.
+  //
+  // (#4773) `overlayRouteActive` is MODULE-WIDE, so one accessor descriptor
+  // anywhere disabled every vec-param narrowing in the file — acorn's cost five
+  // IR claims. The trigger is now a whitelist: a provenance-closed module-level
+  // array literal no descriptor can reach keeps its narrowing, everything else
+  // withdraws exactly as before. Proof obligation and the failing-closed
+  // clauses live in `provenance-closed-arrays.ts`.
   if (
     type !== null &&
     (type.kind === "ref" || type.kind === "ref_null") &&
     overlayRouteActive(ctx) &&
-    getVecInfo(ctx, (type as { typeIdx: number }).typeIdx) !== null
+    getVecInfo(ctx, (type as { typeIdx: number }).typeIdx) !== null &&
+    !paramReceivesOnlyProvenanceClosedArrayLiterals(funcName, paramIndex, sourceFile)
   ) {
     type = null;
   }

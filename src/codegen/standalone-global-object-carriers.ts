@@ -34,7 +34,13 @@ export function appendStandaloneGlobalNamespaceSeeds(
   }
 }
 
-/** ES5 global constructors not already covered by the namespace seed below. */
+/**
+ * Global constructors not already covered by the namespace seed below.
+ *
+ * (#5151) The four ES2015 keyed collections are seeded here too: without an own
+ * property on the realm object, `verifyProperty(this, 'Map')` reports no own
+ * property at all (`built-ins/Map/map.js` and its three siblings).
+ */
 const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
   "Function",
   "String",
@@ -49,6 +55,10 @@ const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
   "SyntaxError",
   "TypeError",
   "URIError",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
 ] as const;
 
 export function appendStandaloneGlobalConstructorSeeds(

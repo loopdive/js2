@@ -11,7 +11,8 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitEagerAsyncPromiseWrap } from "../async-eager-promise.js"; // (#4630)
-import { emitToNumber } from "../coercion-engine.js";
+import { emitToBoolean, emitToNumber } from "../coercion-engine.js";
+import { retUnboxAbiEnabled } from "../ret-unbox-abi.js"; // (#4406) JS2WASM_RET_UNBOX_ABI
 import { emitThrowTypeError } from "../expressions/helpers.js";
 import {
   addStringImports,
@@ -161,6 +162,20 @@ function normalizeReturnExpression(
   exprType: ValType | null,
 ): void {
   if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
+    // (#4406) A BOOLEAN-branded i32 return target wants ToBoolean, and
+    // `coerceType(externref → i32)` is ToNumber + `i32.trunc_sat_f64_s`. On the
+    // proven domain the two agree — ToNumber(true) is 1, ToNumber(false) is 0 —
+    // but they diverge the moment the whole-program verdict is imprecise: a
+    // return expression that lowered to a boxed `"abc"` truncates to 0 where
+    // ToBoolean says 1. This is the one place #3754's "the refined type is
+    // IMPOSED, not asserted" argument does NOT transfer from f64 to i32, so
+    // close it rather than inherit it. Gated on the return-ABI flag purely to
+    // keep the OFF build byte-identical: a DECLARED `boolean` return reaches
+    // this same coercion today.
+    if (fctx.returnType.kind === "i32" && fctx.returnType.boolean === true && retUnboxAbiEnabled()) {
+      emitToBoolean(ctx, exprType, fctx.body);
+      return;
+    }
     coerceType(ctx, fctx, exprType, fctx.returnType);
   }
   if (!exprType || (fctx.returnType?.kind !== "ref" && fctx.returnType?.kind !== "ref_null")) return;

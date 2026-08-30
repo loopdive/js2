@@ -28,6 +28,26 @@ const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
   "Error",
 ]);
 
+/**
+ * Constructors `C` for which `Object.getPrototypeOf(C.prototype)` is exactly
+ * `%Object.prototype%`.
+ *
+ * `Function.prototype` (§20.2.3) is the original member: a built-in function
+ * object whose [[Prototype]] is `%Object.prototype%`, carrying no `$proto` link
+ * the native `__getPrototypeOf` walk can follow — so that walk answered `null`.
+ * `Promise.prototype` (§27.2.3.1, #5143) has the same shape: it lowers to a
+ * `$NativeProto` struct whose `$parent` field is left null ("chain walk
+ * deferred", `native-proto.ts`), so the query silently answered `null` too.
+ *
+ * Membership is per-constructor and deliberate: most builtin prototypes do NOT
+ * root directly at `%Object.prototype%` (see the call site's comment).
+ */
+// (#5151) The four keyed-collection prototypes DO uniformly inherit directly
+// from %Object.prototype% (§24.1.3/§24.2.3/§24.3.3/§24.4.3), so they join the
+// rooted set (getPrototypeOf(Map.prototype) must answer %Object.prototype%,
+// not the receiver's own brand page).
+const OBJECT_ROOTED_PROTOTYPE_CTORS = new Set(["Function", "Promise", "Map", "Set", "WeakMap", "WeakSet"]);
+
 const ES5_NATIVE_ERROR_CTORS = new Set([
   "EvalError",
   "RangeError",
@@ -46,12 +66,15 @@ const ES5_OBJECT_PROTOTYPES = new Map([
   ["Date", "Date"],
   ["RegExp", "RegExp"],
   ["Error", "Error"],
-  ["EvalError", "Error"],
-  ["RangeError", "Error"],
-  ["ReferenceError", "Error"],
-  ["SyntaxError", "Error"],
-  ["TypeError", "Error"],
-  ["URIError", "Error"],
+  // (§20.5.6.4) Each NativeError has its OWN prototype object; collapsing them
+  // onto `Error` made `Object.getPrototypeOf(new EvalError) === Error.prototype`
+  // (test262 `NativeErrors/*/instance-proto.js`, `prototype.js`).
+  ["EvalError", "EvalError"],
+  ["RangeError", "RangeError"],
+  ["ReferenceError", "ReferenceError"],
+  ["SyntaxError", "SyntaxError"],
+  ["TypeError", "TypeError"],
+  ["URIError", "URIError"],
   ["IArguments", "Object"],
 ]);
 
@@ -180,6 +203,14 @@ export function tryCompileEs5GetPrototypeOfEarly(
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
+    // (#4781/#5151) The ES2015 keyed-collection constructors are themselves
+    // built-in function objects, so their [[Prototype]] is %Function.prototype%.
+    // Keep these queries on the intrinsic path in both lanes; the native
+    // collection path below models INSTANCES and must not answer for the
+    // constructor object.
+    if (NATIVE_COLLECTION_NAMES.has(arg0.text)) {
+      return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
+    }
     if (ES5_NATIVE_ERROR_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicConstructor(ctx, fctx, expr, "Error");
     }
@@ -197,16 +228,17 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // identity-stable singleton this file emits for `Math`/`JSON`, so routing here
   // gives real `ref.eq` identity (test262 `Function/prototype/S15.3.4_A3_T1.js`).
   //
-  // Deliberately narrow: ONLY `Function.prototype`. The other builtin prototypes
-  // do NOT uniformly inherit from %Object.prototype% (`Int8Array.prototype` →
-  // %TypedArray%.prototype, `TypeError.prototype` → `Error.prototype`), and this
-  // hook runs BEFORE the typed-array / generator / class getPrototypeOf arms —
-  // a blanket branch here would preempt them with a wrong answer.
+  // Deliberately narrow — see `OBJECT_ROOTED_PROTOTYPE_CTORS`. The other builtin
+  // prototypes do NOT uniformly inherit from %Object.prototype%
+  // (`Int8Array.prototype` → %TypedArray%.prototype, `TypeError.prototype` →
+  // `Error.prototype`), and this hook runs BEFORE the typed-array / generator /
+  // class getPrototypeOf arms — a blanket branch here would preempt them with a
+  // wrong answer.
   if (
     ts.isPropertyAccessExpression(arg0) &&
     arg0.name.text === "prototype" &&
     ts.isIdentifier(arg0.expression) &&
-    arg0.expression.text === "Function" &&
+    OBJECT_ROOTED_PROTOTYPE_CTORS.has(arg0.expression.text) &&
     isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
   ) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
@@ -231,6 +263,21 @@ export function tryCompileEs5GetPrototypeOfValue(
     if (parsedType) fctx.body.push({ op: "drop" });
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
+  // (§20.5.6.4) `<NativeError>.prototype`'s own [[Prototype]] IS `Error.prototype`.
+  // The declared-name map below sees the type name `EvalError` for BOTH an
+  // EvalError instance and `EvalError.prototype`, so without this arm the
+  // per-NativeError rows would answer the receiver itself
+  // (`NativeErrors/*/prototype/proto.js`).
+  if (
+    ts.isPropertyAccessExpression(arg0) &&
+    arg0.name.text === "prototype" &&
+    ts.isIdentifier(arg0.expression) &&
+    ES5_NATIVE_ERROR_CTORS.has(arg0.expression.text) &&
+    isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+  ) {
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Error");
+  }
+
   const staticType = ctx.oracle.staticJsTypeOf(arg0);
   if (staticType === "boolean") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Boolean");
   if (staticType === "string") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "String");

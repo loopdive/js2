@@ -520,6 +520,24 @@ export interface CompileOptions {
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
   /**
+   * Import the canonical realm-global object for a linked standalone runtime.
+   *
+   * Standalone modules normally allocate a private native `globalThis`
+   * singleton. Embedders that instantiate several independently compiled
+   * modules in one realm can instead provide a zero-argument getter returning
+   * the shared object. The provider namespace must also be listed in `link` so
+   * the import is treated as an intentional Wasm-to-Wasm edge.
+   *
+   * An optional `call` import provides `(callable, receiver, args) -> result`
+   * for values owned by that realm. Module-local closure shapes still use the
+   * normal direct dispatcher; only its terminal miss crosses this bridge.
+   *
+   * This option is valid only with `target: "standalone"`. It is deliberately
+   * explicit and has no default, preserving host-free standalone output for
+   * all existing callers.
+   */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *
    * `"legacy"` (default) preserves the historical `(source, isDirect)` host

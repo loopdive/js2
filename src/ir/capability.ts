@@ -62,11 +62,12 @@ export type IrOpCapability = "claim" | "claim-partial" | "defer";
 //     operand pairs demote to legacy's dynamic `+`;
 //   - `??` is claim-partial: `lowerNullish` handles a reference-shaped lhs
 //     with same-typed arms; other operand types demote (#1131);
-//   - `%`, `**`, `in`, `instanceof` were claimed shape-only with NO lowering
-//     ("slice 11 shape-only acceptance") — the exact selector↔builder drift
-//     #2135 retires. They are now DEFERRED: the selector rejects them
-//     up-front. Implementing a lowering (e.g. #2945 for `%`) flips the row
-//     to "claim" in the same PR as the lowering.
+//   - `%` was the old slice-11 shape-only over-claim and is now claimed by its
+//     #2945 lowering; `in` and `instanceof` remain deferred because their
+//     property/prototype semantics have no IR producer. `**` is the bounded
+//     #4787 exception: its exact numeric, prepared-body selector gate and
+//     `math.pow` lowering are complete, so its row is claimed while unsupported
+//     operand/provider shapes stay typed Unsupported before claim.
 const BINARY_OP_CAPABILITY: ReadonlyMap<ts.SyntaxKind, IrOpCapability> = new Map<ts.SyntaxKind, IrOpCapability>([
   // Numeric arithmetic (f64; i32 via propagation rules).
   [ts.SyntaxKind.MinusToken, "claim"],
@@ -107,9 +108,28 @@ const BINARY_OP_CAPABILITY: ReadonlyMap<ts.SyntaxKind, IrOpCapability> = new Map
   // only; i32-typed / string operands demote via the type-resolution lane
   // (legacy's i32 fast mode keeps `emitSafeI32Rem`). Claimed via #2945.
   [ts.SyntaxKind.PercentToken, "claim"],
-  // Deferred — no IR lowering exists. Selector rejects; builder asserts.
-  [ts.SyntaxKind.AsteriskAsteriskToken, "defer"], // needs Math.pow-equivalent lowering
-  [ts.SyntaxKind.InKeyword, "defer"], // needs property/prototype-chain probe
+  // #4787 — exact checker-proven numeric exponentiation lowers through the
+  // semantic `math.pow` intrinsic. The selector owns the bounded shape and
+  // provider gates; non-exact forms remain pre-claim Unsupported.
+  [ts.SyntaxKind.AsteriskAsteriskToken, "claim"],
+  // #5164 S1 — the comma operator is `evaluate left, discard, evaluate right`
+  // (§13.16.1), which is exactly `lowerDiscardedExpression(left)` followed by
+  // `lowerExpr(right)` — no new producer. It is claim-PARTIAL, not claim,
+  // because the selector inherits #4459's discard purity line: a MUTATING left
+  // operand (`(a = 1, b)`, `(i++, j)`) still needs the statement-arm assignment
+  // bookkeeping in value position and stays legacy-owned.
+  [ts.SyntaxKind.CommaToken, "claim-partial"],
+  // #5164 S3 — `in` owns ONE bounded lane: a receiver the resolver certifies
+  // as the non-fast DYNAMIC externref carrier, probed at runtime through the
+  // dual-mode `__extern_has` (host import / standalone object-runtime native)
+  // that legacy's own `in` calls, so the prototype-chain answer is literally
+  // the same helper's. Every static-fold route legacy owns — checker property
+  // folds, #3920 presence bits, the #4222/#4491 overlay+hole index routes,
+  // #4765 escaped receivers, #2617 Proxy slot overrides, and the `#x in o`
+  // private brand — has no IR producer and keeps the function on the legacy
+  // path (rejected pre-claim, never claimed-then-demoted). That residual is
+  // this issue's deferred S4.
+  [ts.SyntaxKind.InKeyword, "claim-partial"],
   [ts.SyntaxKind.InstanceOfKeyword, "defer"], // needs class-shape / brand check
 ]);
 
@@ -338,17 +358,39 @@ export function collectStringLiteralLens(
 
 /**
  * (#2972) Is this string element read LOWERABLE by the IR's
- * proven-in-bounds charAt arm? True iff the receiver is an identifier with a
- * literal-known length in `lens` AND the index proof holds. The from-ast arm
- * and gate 5 both route through this — one predicate, two consumers.
+ * proven-in-bounds charAt arm? The receiver must be an identifier, and the
+ * index must be proven in `[0, s.length)` by EITHER of two independent
+ * proofs — from-ast's `lowerElementAccess` arm and the tests route through
+ * this one predicate:
+ *
+ *   - LITERAL-LENGTH proof (#2972): the receiver has a statically known
+ *     length in `lens` and the index is provably below it
+ *     (`stringIndexProvenBelow`) — e.g. `hex[(n >> 4) & 0xf]` on a 16-char
+ *     literal.
+ *   - COUNTED-LOOP proof (#5167): `countedLoopProven` is the caller's
+ *     witness that `detectCountedLoopSafeIndex` recorded this exact
+ *     `receiver:index` pair for the enclosing `for` — i.e.
+ *     `for (let i = <k ≥ 0>; i < s.length; i += <step ≥ 1>)` with a body that
+ *     neither reassigns `i`/`s` nor calls a method on `s`. That pins
+ *     `0 ≤ i < s.length` at every body point, which is what makes typing the
+ *     result `string` sound. This proof needs NO literal length, so it
+ *     covers a string PARAM, which `lens` never can. The witness only counts
+ *     for an identifier index — the induction variable itself — since that
+ *     is the only thing the loop proof ranges over.
+ *
+ * Neither proof holding → false, and the caller demotes to legacy (sound
+ * default: an UNPROVEN index could be out of bounds, where JS `s[i]` is
+ * `undefined` but charAt is `""`).
  */
 export function stringElementReadLowerable(
   expr: ts.ElementAccessExpression,
-  lens: ReadonlyMap<string, number>,
+  lens: ReadonlyMap<string, number> | undefined,
+  countedLoopProven = false,
 ): boolean {
   if (expr.questionDotToken) return false;
   if (!ts.isIdentifier(expr.expression)) return false;
-  const len = lens.get(expr.expression.text);
+  if (countedLoopProven && ts.isIdentifier(expr.argumentExpression)) return true;
+  const len = lens?.get(expr.expression.text);
   if (len === undefined) return false;
   return stringIndexProvenBelow(expr.argumentExpression, len);
 }

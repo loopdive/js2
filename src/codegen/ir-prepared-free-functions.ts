@@ -1,8 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import {
+  irDirectCallLoweringPlanEquals,
+  type IrDirectCallLoweringPlan,
+  type IrHostVoidCallbackLoweringPlan,
+  type IrIntegrationLoweringPlans,
+} from "../ir/ast-lowering-plans.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
-import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
+import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
+import { irPreparedNestedOrdinaryClass } from "../ir/identity.js";
 import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
@@ -210,7 +216,7 @@ export function selectPreparedClassMemberUnitIds(
       terminal?.containingTerminalOwnerId !== undefined &&
       owner !== undefined &&
       (ts.isClassDeclaration(owner) || ts.isClassExpression(owner)) &&
-      isBoundedPreparedNestedOrdinaryClass(owner);
+      irPreparedNestedOrdinaryClass(owner, identityPlan.nestedClassFieldCallAdmission);
     const selectedTopLevelStaticAccessorBody = staticAccessorBody && terminal?.containingTerminalOwnerId === undefined;
     if (
       (selectedUnitIds ? selectedUnitIds.has(claim.unitId) : selectedNames.has(claim.legacyMatchName)) &&
@@ -1189,7 +1195,13 @@ export function selectR2PreparedOwnerComponents(input: {
       input.ctx.fast ||
       isAsync ||
       (isGenerator && !generatorsPreparable(input.ctx)) ||
-      containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
+      containsUnplannedNestedExecutableSyntax(
+        claim.declaration,
+        unitId,
+        claim.legacyName,
+        input.hostVoidCallbacks,
+        input.identityPlan.nestedClassFieldCallAdmission,
+      ) ||
       containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
       directCallerActivationTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
@@ -1283,6 +1295,24 @@ export function selectR2PreparedOwnerComponents(input: {
       if (!crossesOwnership) continue;
       candidates.delete(unitId);
       changed = true;
+    }
+    // (#3522 F4) An admitted field-call class is ONE atom. The preselection
+    // marker is evidence, never a bypass around this final reconciliation: the
+    // constructor, every promoted body member, the containing terminal owner
+    // and every proved callee survive together, or the whole class withdraws.
+    for (const admitted of input.identityPlan.nestedClassFieldCallAdmission?.classes ?? []) {
+      if (admitted.sourceFile !== input.sourceFile) continue;
+      const atom = [
+        ...admitted.candidate.terminalMembers.map(({ record }) => record.id),
+        admitted.containingTerminalUnitId,
+        ...admitted.fields.map((field) => field.calleeUnitId),
+      ];
+      if (atom.every((unitId) => candidates.has(unitId)) || atom.every((unitId) => !candidates.has(unitId))) {
+        continue;
+      }
+      for (const unitId of atom) {
+        if (candidates.delete(unitId)) changed = true;
+      }
     }
   }
 
@@ -1816,10 +1846,10 @@ export function completePreparedIrIntegration(input: {
         // A deferred caller can still target a dependency whose sealed body
         // was settled by the early report. Retain those exact AST-site plans
         // without re-adding the prepared owner to the emission population.
-        directCalls: new Map([
-          ...input.projectLoweringPlans(input.selection).directCalls,
-          ...remainingLoweringPlans.directCalls,
-        ]),
+        directCalls: mergePreparedIrDirectCallLoweringPlans(
+          input.projectLoweringPlans(input.selection).directCalls,
+          remainingLoweringPlans.directCalls,
+        ),
       }
     : remainingLoweringPlans;
   const remainingReport = compileIrPathFunctions(
@@ -1831,4 +1861,24 @@ export function completePreparedIrIntegration(input: {
     loweringPlans,
   );
   return input.preparedReport ? mergeIrIntegrationReports(input.preparedReport, remainingReport) : remainingReport;
+}
+
+/** Merge two authenticated projections without allowing later authority to replace an exact AST-site row. */
+export function mergePreparedIrDirectCallLoweringPlans(
+  full: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+  remaining: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+): Map<ts.CallExpression, IrDirectCallLoweringPlan> {
+  const merged = new Map(full);
+  for (const [call, plan] of remaining) {
+    const prior = merged.get(call);
+    if (prior && !irDirectCallLoweringPlanEquals(prior, plan)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared IR direct-call projections disagree for ${call.expression.getText(call.getSourceFile())}`,
+      );
+    }
+    if (!prior) merged.set(call, plan);
+  }
+  return merged;
 }

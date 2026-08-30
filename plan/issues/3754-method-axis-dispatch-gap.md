@@ -258,3 +258,25 @@ That is the recommended slice: strengthen the admission for write-once
 - **#3755** (per-call `__str_flatten`) — measured, worth 0, closed wont-fix.
 - **#3765** (numeric locals stay boxed) — the tokenizer's real remaining lever,
   filed from the same profiling round.
+
+## 2026-08-27 — this issue's test file is 9/10 RED on main
+
+`tests/issue-3754-numeric-return-twin.test.ts`, shipped by this issue's impl PR,
+now fails 9 of its 10 tests on `origin/main` @ `7e0b03ebb7`. Every failure is
+`expected '' to be '<type>'` from `trampolineResultType("__dc_P_inc_0_g")` — the
+helper's "no such function" answer, i.e. the direct-call trampoline the file was
+written to observe is no longer emitted for its `methodAxis` shape. The one
+passing test is the value-level one, which does not read the WAT.
+
+Found — and verified pre-existing, by reverting an in-flight PR's source files
+to `HEAD` and re-running — during
+[#4406](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4406-return-type-unboxing-abi)
+Phase 0+1 (PR #5061). The file is in no required check, which is why it stayed
+red unnoticed.
+
+Not reopening this issue: the mechanism it shipped is alive at scale
+(`sites=3976 trampolines=545 twinFills=516 genericFills=29 legacyFills=0` on the
+acorn lane today, measured the same day). Tracked as
+[#4775](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4775-numeric-return-twin-suite-red-on-main),
+which has to decide first whether the test's shape stopped qualifying for
+devirtualization or the devirtualization itself regressed.

@@ -10,7 +10,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, ExternClassInfo, FunctionContext, RestParamInfo } from "../context/types.js";
 import { compileCollectionGetOrInsert } from "../collections-es2025.js";
-import { addUnionImports, getArrTypeIdxFromVec } from "../index.js";
+import { addUnionImports, getArrTypeIdxFromVec, hostMapCarrierClassName } from "../index.js";
 import { tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { tryCompileNativeDisposableStackMethodCall } from "../disposable-runtime.js";
 import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
@@ -36,6 +36,7 @@ import {
 } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
+import { tupleStructFields } from "./spread-arguments-call.js";
 
 export function findExternInfoForMember(
   ctx: CodegenContext,
@@ -64,7 +65,7 @@ function compileExternMethodCall(
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
   const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  const className = receiverType.getSymbol()?.name;
+  const className = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
   const methodName = propAccess.name.text;
 
   // (#1103a) Native Map method dispatch in standalone / nativeStrings mode.
@@ -355,8 +356,35 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
  * `C === C`.
  *
  * Returns `true` if a class-object global was emitted, `false` if no global
- * was registered for this class (e.g. externref-backed builtin subclasses
- * from #1366a).
+ * was registered for this class, or if the class has no `$ClassName` struct
+ * layout to build the singleton from.
+ *
+ * (#5191) Externref-backed builtin subclasses (`class C extends Array/Error/
+ * Map`) DO reach this path now. class-bodies.ts skipped registering their
+ * class-object global from #1366a until 2026-08-29, on the stated ground that
+ * "those don't have a `$ClassName` WasmGC struct". That premise was false —
+ * `ctx.structMap.set(className, …)` runs unconditionally, long before any
+ * builtin-parent branch. What such a subclass lacks is struct *instances*
+ * (its objects are host-created externrefs), and that is precisely what makes
+ * the otherwise-unused `$ClassName` struct a SAFE carrier for the class
+ * object: no instance can ever be confused with the singleton.
+ *
+ * With no global, the identifier read in expressions/identifiers.ts fell
+ * through every registry to `ref.null.extern`, so the class evaluated to
+ * `null` as a VALUE — `C == null` true, `Boolean(C)` false, and any property
+ * read on it threw "Cannot access property on null or undefined". `typeof C`,
+ * `C.name` and `new C()` masked it: those are served by statically resolved
+ * arms that never materialize the constructor object. That null is what
+ * killed the compiled `@js-temporal/polyfill` bundle at its second top-level
+ * statement (`class JSBI extends Array` plus a comma sequence of static-table
+ * writes) — #4628 Option A.
+ *
+ * The carrier choice was deliberate: reuse this one rather than add a second,
+ * `__new_plain_object`-backed shape for the builtin-derived lane. The
+ * static-method / `.name` / gOPD / `__register_class_ctor` registrations below
+ * already depend on the class object's closed-struct identity, and the two
+ * `undefined` bails immediately above remain the real guard — a class with no
+ * struct layout still returns `false` here.
  */
 export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContext, className: string): boolean {
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
@@ -865,7 +893,7 @@ function compileSpreadCallArgs(
     let argIdx = 0;
     for (let i = 0; i < restInfo.restIndex; i++) {
       if (argIdx < expr.arguments.length) {
-        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[i]);
+        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[paramOffset + i]);
         argIdx++;
       }
     }
@@ -937,7 +965,10 @@ function compileSpreadCallArgs(
         ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         const getIdx = ctx.funcMap.get("__extern_get_idx");
-        if (getIdx === undefined) continue;
+        if (getIdx === undefined) {
+          fctx.body.push({ op: "drop" });
+          continue;
+        }
         const vecLocal = allocLocal(fctx, `__spread_extern_${fctx.locals.length}`, { kind: "externref" });
         fctx.body.push({ op: "local.set", index: vecLocal });
         const reservedForTrailing = trailingPositionalAfter[argPos] ?? 0;
@@ -955,10 +986,45 @@ function compileSpreadCallArgs(
         continue;
       }
 
-      if (vecType.kind !== "ref" && vecType.kind !== "ref_null") continue;
+      // A bail-out from here on must not strand the compiled source on the
+      // stack: an unconsumed operand under the call is invalid Wasm (#5093).
+      if (vecType.kind !== "ref" && vecType.kind !== "ref_null") {
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
 
       const vecTypeDef = ctx.mod.types[vecType.typeIdx];
-      if (!vecTypeDef || vecTypeDef.kind !== "struct") continue;
+      if (!vecTypeDef || vecTypeDef.kind !== "struct") {
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+
+      // (#5093) An inline array literal with statically-known elements lowers
+      // to a TUPLE struct (`_0`, `_1`, …), not a `__vec_`: `getArrTypeIdxFromVec`
+      // fails on it, so `...[7, 8]` used to contribute NO argument at all —
+      // silently mis-binding the formals (`method(a, b)` took its `b` from the
+      // NEXT spread) and, when nothing else filled the slot, emitting a call
+      // with too few operands. Its arity is static, so expand it by field.
+      // `emitSetExtrasArgv` recognises the same carrier for the extras list.
+      const tupleFields = tupleStructFields(ctx, vecType.typeIdx);
+      if (tupleFields) {
+        const tupleLocal = allocLocal(fctx, `__spread_tuple_${fctx.locals.length}`, vecType);
+        fctx.body.push({ op: "local.set", index: tupleLocal });
+        const reservedAfterTuple = trailingPositionalAfter[argPos] ?? 0;
+        const tupleSlots = Math.min(tupleFields.length, Math.max(0, paramTypes.length - paramIdx - reservedAfterTuple));
+        for (let fi = 0; fi < tupleSlots; fi++) {
+          fctx.body.push({ op: "local.get", index: tupleLocal });
+          if (vecType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+          fctx.body.push({ op: "struct.get", typeIdx: vecType.typeIdx, fieldIdx: fi });
+          const fieldType = tupleFields[fi]!.type;
+          const expectedParamType = paramTypes[paramIdx];
+          if (expectedParamType && !valTypesMatch(fieldType, expectedParamType)) {
+            coerceType(ctx, fctx, fieldType, expectedParamType);
+          }
+          paramIdx++;
+        }
+        continue;
+      }
 
       // Extract data array from vec struct
       const vecLocal = allocLocal(fctx, `__spread_vec_${fctx.locals.length}`, vecType);
@@ -1001,6 +1067,17 @@ function compileSpreadCallArgs(
       compileExpression(ctx, fctx, arg, paramTypes[paramIdx]);
       paramIdx++;
     }
+  }
+
+  // (#5093) The loop fills parameter slots opportunistically — a spread source
+  // the vec/tuple readers cannot expand, or one whose static arity is shorter
+  // than the formal list, leaves the tail unfilled. A call with fewer operands
+  // than the callee's arity does not VALIDATE, so the module is rejected at
+  // instantiation rather than merely returning a wrong value. Pad the rest the
+  // way every non-spread call site does. Callers of this function never pad
+  // afterwards, so this cannot double-fill.
+  for (; paramIdx < paramTypes.length; paramIdx++) {
+    pushDefaultValue(fctx, paramTypes[paramIdx]!, ctx);
   }
 }
 

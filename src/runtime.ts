@@ -44,6 +44,12 @@ import {
   _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import {
+  classDispatchExportName,
+  INIT_MARSHAL_HELPER_NAMES,
+  marshalExports,
+  type MarshalExportSource,
+} from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
@@ -302,6 +308,14 @@ function _getOrVivifyFnPrototype(
   if (!_isWasmStruct(obj)) return undefined;
   const existing = _sidecarGet(obj, "prototype");
   if (existing !== undefined) return existing;
+  // (#4771) `f.prototype = undefined` writes a REAL slot value that reads back
+  // as `undefined` — indistinguishable from "never written" by value alone.
+  // Vivifying over it silently restored an object prototype, so §7.3.20 step 5
+  // never saw the non-object the program installed. Presence, not value.
+  if (_canBeWeakKey(obj)) {
+    const sidecar = _wasmStructProps.get(obj);
+    if (sidecar && "prototype" in sidecar) return undefined;
+  }
   // Gate on `__is_closure` when exports are reachable. During the module
   // START function (where acorn's `Parser.prototype.m = fn` writes run)
   // `getExports()` is still undefined — WebAssembly.instantiate has not
@@ -546,10 +560,7 @@ const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
   typeof BigUint64Array === "function" ? BigUint64Array : undefined,
 ];
 
-function _compiledTypedArrayMirror(
-  carrier: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): ArrayBufferView | undefined {
+function _compiledTypedArrayMirror(carrier: any, callbackState?: MarshalExportSource): ArrayBufferView | undefined {
   if (!_canBeWeakKey(carrier)) return undefined;
   const kind = _compiledTypedArrayKinds.get(carrier);
   if (kind === undefined) return undefined;
@@ -559,7 +570,7 @@ function _compiledTypedArrayMirror(
     // mirror since the previous sync, preserve those edits until the explicit
     // mirror→Wasm unwrap path replays them.
     if (!vecMirrorElementsChanged(cached)) {
-      const exports = callbackState?.getExports();
+      const exports = marshalExports(callbackState);
       const vecLen = exports?.__vec_len as ((vec: any) => number) | undefined;
       const vecGet = exports?.__vec_get as ((vec: any, index: number) => any) | undefined;
       if (typeof vecLen === "function" && typeof vecGet === "function") {
@@ -687,10 +698,16 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
 function _marshalHostConstructArg(
   a: any,
   exports: Record<string, Function> | undefined,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
+  callbackState?: MarshalExportSource,
   hostCallee?: any,
 ): any {
-  const buf = _compiledAbToHostBuffer(a, exports);
+  // (#5193) During the wasm start section `exports` is undefined for the whole
+  // of module init, so EVERY probe below failed and the loud refusal at the end
+  // fired on a perfectly ordinary `new Float64Array(new ArrayBuffer(8))` written
+  // at module top level (jsbi's `__kBitConversionBuffer`, the Temporal blocker).
+  // Fall back to the helpers the module registered on itself at init entry.
+  const eff = marshalExports(callbackState, exports);
+  const buf = _compiledAbToHostBuffer(a, eff);
   if (buf !== undefined) return buf;
   if (a != null && typeof a === "object" && _isWasmStruct(a)) {
     const mat = _materializeIterable(a, callbackState);
@@ -701,7 +718,7 @@ function _marshalHostConstructArg(
     // fine; preserve its length/index properties instead of treating the
     // opaque backing struct as an unmarshalable value.
     if (_isHostTypedArrayCtor(hostCallee)) {
-      const mirror = _wrapForHost(a, exports);
+      const mirror = _wrapForHost(a, eff);
       if (mirror !== a && typeof mirror.length === "number") return mirror;
     }
     // (#3335) Refuse loudly: the arg is a compiled struct NONE of the
@@ -1668,6 +1685,29 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+/**
+ * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
+ * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a
+ * host-native bound function exposes no `prototype` at all — so without this
+ * edge `x instanceof f.bind()` reads `prototype === undefined` and reports the
+ * §7.3.20 step-5 TypeError instead of forwarding.
+ */
+const _boundFunctionTargets = new WeakMap<Function, unknown>();
+
+/**
+ * (#4771) Remember `bound`'s [[BoundTargetFunction]]. `target` is the ORIGINAL
+ * receiver of `.bind()` — the wasm closure struct when there is one, not the
+ * host bridge that was actually bound, because the bridge carries no prototype
+ * edge back to the compiled function.
+ */
+function _recordBoundTarget(bound: any, target: unknown): any {
+  try {
+    _boundFunctionTargets.set(bound, target);
+  } catch {
+    /* non-extensible / exotic bound value — `instanceof` keeps its old answer */
+  }
+  return bound;
+}
 // Prevent callable-mirror property writes from recursing through their raw closure proxy.
 // Keep internal Set bookkeeping safe from user-mutation of Set.prototype.add.
 const _nativeSetAdd = Set.prototype.add;
@@ -2473,6 +2513,31 @@ function _markAccessorGetterReturn(getterFn: any): any {
  * exception (ReturnIfAbrupt) — it is NOT swallowed.
  */
 const _INSTANCEOF_THROW = 2;
+
+/** (#4771) "this receiver owns no readable `prototype` slot" — distinct from a slot holding `undefined`. */
+const _SLOT_ABSENT: unique symbol = Symbol("js2:prototype-slot-absent");
+
+/**
+ * (#4771) §7.3.20 step 4 `Get(C, "prototype")` when C is a compiled closure.
+ *
+ * The host wrapper `_maybeWrapCallableUnknownArity` mints is an ordinary JS
+ * function with its OWN fresh `.prototype`, so reading `target.prototype`
+ * answers about the BRIDGE, not about the compiled function — `f.prototype =
+ * undefined` stayed invisible and step 5's TypeError never fired. Read the
+ * compiled slot instead, and distinguish "written `undefined`" (a real slot
+ * value, which MUST throw) from "never written" (vivify, as every other reader
+ * of a closure's prototype does).
+ */
+function _compiledFnPrototypeSlot(
+  raw: unknown,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): unknown {
+  if (!_isWasmStruct(raw) || !_canBeWeakKey(raw)) return _SLOT_ABSENT;
+  const sidecar = _wasmStructProps.get(raw as object);
+  if (sidecar && "prototype" in sidecar) return sidecar.prototype;
+  const vivified = _getOrVivifyFnPrototype(raw, callbackState);
+  return vivified === undefined ? _SLOT_ABSENT : vivified;
+}
 function _fnctorInstanceofResult(
   v: any,
   target: Function,
@@ -2573,6 +2638,15 @@ function _instanceofResult(
     return 0;
   }
 
+  // §7.3.20 step 2: if C has a [[BoundTargetFunction]] slot, the answer is
+  // InstanceofOperator(V, BC) — a bound function never consults its OWN
+  // `prototype` (it has none). Placed before the step-3 primitive short-circuit
+  // so a custom `@@hasInstance` on the bound TARGET still gets its chance.
+  const boundTarget = _boundFunctionTargets.get(target as Function);
+  if (boundTarget !== undefined) {
+    return _instanceofResult(v, boundTarget, callbackState, strict);
+  }
+
   // §13.10.2 step 5: Return OrdinaryHasInstance(target, V). (§7.3.20)
   //
   // ORDER MATTERS (#2702): §7.3.20 step 3 ("If Type(O) is not Object, return
@@ -2592,11 +2666,13 @@ function _instanceofResult(
 
   // §7.3.20 step 4/5: P = Get(target, "prototype"); if Type(P) is not Object →
   // TypeError. Reached only for an object V, per the step-3 short-circuit above.
-  let proto: unknown;
-  try {
-    proto = (target as { prototype?: unknown }).prototype;
-  } catch (e) {
-    throw e;
+  let proto = _compiledFnPrototypeSlot(rawTarget, callbackState);
+  if (proto === _SLOT_ABSENT) {
+    try {
+      proto = (target as { prototype?: unknown }).prototype;
+    } catch (e) {
+      throw e;
+    }
   }
   if (proto === null || proto === undefined || (typeof proto !== "object" && typeof proto !== "function")) {
     return _INSTANCEOF_THROW;
@@ -2989,10 +3065,7 @@ function _arrayFromNonIterableSource(
   }
 }
 
-function _materializeIterable(
-  iter: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): any {
+function _materializeIterable(iter: any, callbackState?: MarshalExportSource): any {
   if (iter == null) return iter;
   if (_nativeIsArray(iter)) return iter;
   if (typeof iter !== "object") return iter;
@@ -3001,7 +3074,10 @@ function _materializeIterable(
   // objects are opaque", aborting the host call. `_isWasmStruct`
   // handles the throw internally and returns true for opaque structs.
   if (_isWasmStruct(iter)) {
-    const exports = callbackState?.getExports();
+    // (#5193) Start-section fallback: during module init `getExports()` is
+    // still undefined, so this returned the raw struct and every host callee
+    // saw a non-array-like.
+    const exports = marshalExports(callbackState);
     if (!exports) return iter;
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
@@ -3595,6 +3671,301 @@ function _toPropertyKey(key: any, callbackState?: { getExports: () => Record<str
 }
 
 /**
+ * (#3481) Does `struct` OWN the field `name`, per the compiler's own presence
+ * bits? `__sget_<name>` is a shape-DISPATCHED getter: it answers for any shape
+ * carrying that field, and for a conditionally-initialized slot it happily
+ * returns the untouched default. `__shas_<name>` (#2847) is the query that
+ * distinguishes "explicitly set" from "default slot" — consult it when the
+ * module emitted one, and assume presence otherwise (it is only emitted when
+ * some field is presence-tracked, so its absence means every slot is always
+ * present). Used to keep the exotic-@@toPrimitive probe from reading a default
+ * slot as a user-supplied `Symbol.toPrimitive`.
+ */
+function _hasOwnStructField(struct: any, name: string, exports: Record<string, Function> | undefined): boolean {
+  const shas = exports?.[`__shas_${name}`];
+  if (typeof shas !== "function") return true;
+  try {
+    return Number(shas(struct)) !== 0;
+  } catch (e: any) {
+    if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    return false;
+  }
+}
+
+/**
+ * (#3481) Invoke an exotic `@@toPrimitive` that was read out of a WasmGC struct
+ * FIELD (the object-literal `{ [Symbol.toPrimitive]: … }` shape).
+ *
+ * §7.1.1 step 2 is `Call(exoticToPrim, input, «hint»)` — a METHOD call on the
+ * receiver that is handed the hint — so the receiver-threading
+ * `__call_fn_method_*` dispatchers are tried before the receiver-less ones, and
+ * the 1-arg forms before the 0-arg ones. (The generic dispatchers tolerate an
+ * arity mismatch, so a `function () { … }` that ignores the hint still runs on
+ * the 1-arg arm; the cascade is the belt-and-braces order the sibling sidecar
+ * branch in `_toPrimitive` already uses.)
+ *
+ * Returns the produced primitive, or `_PRIM_ABSENT` when the module exports no
+ * dispatcher that could run the closure — the caller then continues with
+ * OrdinaryToPrimitive, i.e. keeps the pre-#3481 behaviour rather than inventing
+ * a failure. Both spec violations throw a real TypeError: a non-callable slot
+ * (step 2d) and a method that returns an object (step 5).
+ */
+function _callExoticToPrimitiveSlot(
+  receiver: any,
+  slot: any,
+  hint: "number" | "string" | "default",
+  exports: Record<string, Function> | undefined,
+): any {
+  // A host-bridged JS function (proxy-wrapped closure or a real binding).
+  if (typeof slot === "function") {
+    const prim = slot.call(receiver, hint);
+    if (prim == null || typeof prim !== "object") return prim;
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  // §7.1.1 step 2d — the slot holds a non-callable (a number, a string, a
+  // plain object, …). IsCallable is false, so this is a TypeError, not a
+  // fall-through to valueOf/toString.
+  if (typeof slot !== "object" || !_isWasmStruct(slot)) {
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  const isClosure = exports?.["__is_closure"];
+  if (typeof isClosure === "function") {
+    let callable = 1;
+    try {
+      callable = Number(isClosure(slot));
+    } catch (e: any) {
+      if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    }
+    if (!callable) throw new TypeError("Cannot convert object to primitive value");
+  }
+  const attempts: [string, (dispatch: Function) => any][] = [
+    ["__call_fn_method_1", (dispatch) => dispatch(receiver, slot, hint)],
+    ["__call_fn_1", (dispatch) => dispatch(slot, hint)],
+    ["__call_fn_method_0", (dispatch) => dispatch(receiver, slot)],
+    ["__call_fn_0", (dispatch) => dispatch(slot)],
+  ];
+  for (const [name, invoke] of attempts) {
+    const dispatch = exports?.[name];
+    if (typeof dispatch !== "function") continue;
+    try {
+      const prim = invoke(dispatch);
+      if (prim == null || typeof prim !== "object") return prim;
+      // §7.1.1 step 5 — exotic @@toPrimitive returned an object.
+      throw new TypeError("Cannot convert object to primitive value");
+    } catch (e: any) {
+      // Only a wasm type-mismatch trap falls through to the next dispatcher;
+      // a user throw and the step-5 TypeError above propagate.
+      if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+    }
+  }
+  return _PRIM_ABSENT;
+}
+
+/**
+ * (#3481 cause 2) `ToString` of the primitive a ToPrimitive walk produced.
+ *
+ * The re-validation family B of this issue is named for: §7.1.17 step 3 makes
+ * ToString(Symbol) a TypeError, and `String(sym)` does NOT throw — §22.1.1.1
+ * short-circuits it to SymbolDescriptiveString. So a `@@toPrimitive` that
+ * returns a Symbol has to be caught HERE; letting it reach `String()` silently
+ * produced the message `"Symbol()"`.
+ * (Measured: without this, `built-ins/AggregateError/message-tostring-abrupt-symbol.js`
+ * regressed from pass to fail.)
+ */
+function _errorPrimitiveToString(prim: any): string | undefined {
+  if (typeof prim === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+  // BOTH walkers report "this struct bottomed out" by returning the literal
+  // "[object Object]" sentinel rather than by throwing (see the slice-1 and
+  // slice-3 records). Accepting it as a real answer is what stopped
+  // `{toString: undefined, valueOf: undefined}` from throwing and regressed
+  // `built-ins/Error/error-message-tostring-toprimitive.js` plus its
+  // NativeErrors twin, both of which assert that TypeError.
+  //
+  // The cost is that a method genuinely RETURNING "[object Object]" is refused
+  // and falls back to the pre-existing throw — the same conservative trade as
+  // the number case below, and again identical to base rather than worse.
+  if (prim === "[object Object]") return undefined;
+  if (typeof prim === "string") return prim;
+  if (typeof prim === "boolean" || typeof prim === "bigint") return String(prim);
+  // A NUMBER is deliberately refused, and this is the one non-obvious rule
+  // here. A native Symbol is represented as a bare i32 id, so a `@@toPrimitive`
+  // that returns `Symbol()` arrives at this boundary as the NUMBER `100` —
+  // measured — and is indistinguishable from a method that genuinely returned
+  // `100`. ToString(Symbol) must throw (§7.1.17 step 3), and the existing
+  // re-checks elsewhere in this file test `typeof prim === "symbol"`, which
+  // cannot see an id either.
+  //
+  // Refusing means the caller falls back to the pre-existing TypeError, i.e.
+  // EXACTLY the base behaviour, for both the symbol case and the rarer
+  // `{toString(){ return 5 }}`. Accepting instead regressed
+  // `built-ins/AggregateError/message-tostring-abrupt-symbol.js` from pass to
+  // fail, because that row asserts the TypeError. Given the two are
+  // indistinguishable and only one has a test, the throw wins — this slice
+  // claims only the shapes it can answer without guessing.
+  return undefined;
+}
+
+/**
+ * (#3481 cause 2) §20.5.1.1 step 3 / §20.5.7.1 step 5a / §20.5.10.1 step 6a —
+ * `ToString(message)` for the Error family, tolerant of a WasmGC-struct message.
+ */
+function _errorMessageToString(
+  message: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): string {
+  // (#3481 cause 2) §20.5.1.1 step 3 / §20.5.7.1 step 5a / §20.5.10.1 step 6a
+  // are all `? ToString(message)`. A WasmGC struct message is OPAQUE to V8, so
+  // the plain `String(message)` below raised
+  // "Cannot convert object to primitive value" — an OVER-throw where the spec
+  // asks for ordinary coercion (`{toString(){return "m"}}` → `"m"`, `{}` →
+  // `"[object Object]"`). Reduce such a struct through the #1319
+  // OrdinaryToPrimitive walker first so the user's own `@@toPrimitive` /
+  // `toString` / `valueOf` actually runs — and so an ABRUPT completion from it
+  // propagates unchanged, which is what the `message-tostring-abrupt.js`
+  // family asserts.
+  //
+  // Guarded on `_isWasmStruct`, so a string, number, boolean or genuine host
+  // object reaches `String()` on exactly the path it always did.
+  if (message !== null && typeof message === "object" && _isWasmStruct(message)) {
+    // (#5161) A native-string MESSAGE is a primitive, not an object — decode it
+    // before either walker runs.
+    //
+    // In the `nativeStrings` / `fast` lanes a string literal is a WasmGC
+    // `array i16` carrier, not a host string, so `new Error("m")` handed this
+    // helper a struct that holds a STRING. Both walkers look for coercion
+    // methods, find none on a string carrier, and bottom out — so the whole
+    // construction threw "Cannot convert object to primitive value" on the
+    // plain option-less `new Error("m")`, and every `{cause}` construction
+    // died with it before `__error_install_cause` could run (#5161's filed
+    // symptom was that downstream collateral, measured 2026-08-28).
+    //
+    // This does not touch the walker contract in #3481 cause 2: §7.1.1 step 1
+    // returns a String argument unchanged, so a value the module itself
+    // certifies as a string never reaches ToPrimitive at all. The "found
+    // nothing" sentinels and the refused-NUMBER rule below are unreached on
+    // this path and unmodified. `__str_is_native` is the module's own
+    // discriminator — in the default host lane it is not exported, so
+    // `_nativeStringToHost` misses and that lane keeps byte- and
+    // behaviour-identical behaviour.
+    const nativeMessage = _nativeStringToHost(message, callbackState?.getExports());
+    if (nativeMessage !== _MISS) return String(nativeMessage);
+    // TWO walkers, and the order is load-bearing.
+    //
+    // `_hostToPrimitive` is the only one that implements §7.1.1 step 2 in full
+    // — it dispatches an `@@toPrimitive` METHOD as well as the FIELD shape
+    // slice 1 taught it. `_toPrimitive` still has that blind spot (recorded at
+    // the end of this issue's slice-1 notes), so running it first answers
+    // `{[Symbol.toPrimitive](){throw …}, toString(){throw "toString called"}}`
+    // with the WRONG method.
+    //
+    // But `_hostToPrimitive` is not a superset: it rejects
+    // `{[Symbol.toPrimitive]: undefined, toString(){…}}`, where the explicitly
+    // undefined slot must be SKIPPED (§7.1.1 step 2b), not read as a
+    // non-callable method. So the host walker leads and the module walker is
+    // the fallback, entered ONLY on the host walker's own "no conversion"
+    // verdict.
+    //
+    // A throw from the USER's coercion method is never a verdict: it passes
+    // straight out of here, which is what `message-tostring-abrupt.js` asserts.
+    // A walker that RETURNS has performed the whole of ToPrimitive; its answer
+    // is final. The second walker runs only when the first one THREW its own
+    // "no conversion" verdict, i.e. found no method at all.
+    //
+    // Committing like this is not tidiness, it is correctness. An earlier cut
+    // fell through to `_toPrimitive` whenever the host walker's answer was one
+    // this helper could not stringify — and because the two walkers dispatch
+    // DIFFERENT methods, that ran user code the spec never calls. For
+    // `{[Symbol.toPrimitive](){return Symbol()}, toString(){throw …}}` the
+    // §7.1.1 result is a Symbol and ToString must throw TypeError; instead
+    // `toString` ran and its error escaped, which
+    // `built-ins/AggregateError/message-tostring-abrupt-symbol.js` reported as
+    // "Expected a TypeError but got a undefined".
+    // The flag, rather than a throw, is what separates the two outcomes: a
+    // "cannot stringify this answer" throw would be indistinguishable from the
+    // walker's own verdict in the catch below, and would fall through to the
+    // second walker — the exact bug described above.
+    let hostAnswered = false;
+    try {
+      const prim = _hostToPrimitive(message, "string", callbackState);
+      // The "[object Object]" sentinel is how a walker reports that it found no
+      // coercion method — it is a BOTTOM-OUT, not a ToPrimitive result, so it
+      // must not stop the fallback below. (Measured: treating it as an answer
+      // made `built-ins/AggregateError/message-tostring-abrupt.js` case 2 raise
+      // the ToString TypeError instead of letting the object's own `toString`
+      // throw its `Test262Error`.) A refused REAL answer — a bare number that
+      // may be a symbol id — still sets the flag, because there a method did
+      // run and re-running a different one would violate §7.1.1.
+      //
+      // `null` / `undefined` are excluded for a second, different reason, and
+      // it is the one that decides the target row. They ARE valid ToPrimitive
+      // results (§7.1.1 step 4), but `_hostToPrimitive` also returns `null`
+      // when the `@@toPrimitive` slot merely HOLDS `undefined` — a slot §7.1.1
+      // step 2b says to SKIP, after which OrdinaryToPrimitive must run
+      // `toString`. Measured on
+      // `built-ins/AggregateError/message-tostring-abrupt.js` case 2
+      // (`{[Symbol.toPrimitive]: undefined, toString(){throw new Test262Error()}}`):
+      // the host walker answered `null`, so treating that as a result raised
+      // the ToString TypeError instead of letting `toString` throw.
+      //
+      // Treating a null/undefined host answer as "no answer" hands those shapes
+      // to `_toPrimitive`, which skips the slot correctly. The cost is that a
+      // method GENUINELY returning `null` yields the `toString` result rather
+      // than "null" — an untested shape that THREW on base either way, so no
+      // row can regress on it.
+      hostAnswered = prim !== "[object Object]" && prim !== null && prim !== undefined;
+      // May throw the Symbol TypeError, whose message differs from the verdict
+      // and so propagates rather than being absorbed.
+      const answered = _errorPrimitiveToString(prim);
+      if (answered !== undefined) return answered;
+    } catch (e) {
+      // A throw from the USER's coercion method is never a verdict — it passes
+      // straight out of here, which is what `message-tostring-abrupt.js`
+      // asserts.
+      if (!(e instanceof TypeError && e.message === "Cannot convert object to primitive value")) throw e;
+    }
+    if (hostAnswered) {
+      // ToPrimitive completed; the result is simply one this boundary cannot
+      // safely stringify (see `_errorPrimitiveToString`). Fall back to the
+      // pre-existing TypeError — NOT to another walker, which would re-run
+      // different user methods.
+      throw new TypeError("Cannot convert object to primitive value");
+    }
+    // The host walker found nothing. `_hostToPrimitive` is the only one that
+    // implements §7.1.1 step 2 in full (it dispatches an `@@toPrimitive` METHOD
+    // as well as the FIELD shape slice 1 taught it), but it is not a superset:
+    // it rejects `{[Symbol.toPrimitive]: undefined, toString(){…}}`, where the
+    // explicitly undefined slot must be SKIPPED (§7.1.1 step 2b) rather than
+    // read as a non-callable method. `_toPrimitive` answers exactly that shape,
+    // so it is the fallback — reached only here, where no method has run yet.
+    // `undefined` is its "found nothing" report.
+    const prim = _toPrimitive(message, "string", callbackState);
+    if (prim !== undefined) {
+      const answered = _errorPrimitiveToString(prim);
+      if (answered !== undefined) return answered;
+    }
+    // NEITHER walker found a callable coercion method, so §7.1.1.1 step 6 is a
+    // TypeError and this helper must NOT invent an answer.
+    //
+    // An earlier cut returned "[object Object]" here, reasoning that a real
+    // object inherits `Object.prototype.toString`. Measured against the base
+    // run, that REGRESSED two rows —
+    // `built-ins/Error/error-message-tostring-toprimitive.js` and
+    // `built-ins/NativeErrors/nativeerror-tostring-message-throws-toprimitive.js`
+    // both construct `{toString: undefined, valueOf: undefined}` and assert the
+    // TypeError. That shape is indistinguishable from `{a: 1}` once both
+    // walkers have failed, and only one of the two has a test, so the throw
+    // wins.
+    //
+    // Consequence, stated plainly: `new Error({a: 1})` still throws where the
+    // spec wants "[object Object]". That is UNCHANGED from base, not a new
+    // defect, and it keeps this slice to shapes that genuinely have a coercion
+    // method.
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  return typeof message === "string" ? message : String(message);
+}
+
+/**
  * Full ToPrimitive for proxied WasmGC structs and plain JS objects (#1090).
  * Unlike _toPrimitive (which only checks sidecar + Wasm exports), this function
  * also checks real JS properties on the object/proxy. This handles the case where
@@ -3698,6 +4069,36 @@ function _hostToPrimitive(
         // we can fall through to valueOf/toString; user throws + the TypeError
         // above propagate.
         if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+      }
+    }
+    // (#3481) An object LITERAL with a computed `[Symbol.toPrimitive]` key —
+    // `{ [Symbol.toPrimitive]: function () { … } }` — is a THIRD shape, and it
+    // was reaching none of the three probes above. Codegen stores the closure
+    // in a struct FIELD whose wasm name is `@@toPrimitive` and emits only the
+    // field accessor `__sget_@@toPrimitive`: there is no sidecar slot (the key
+    // is physical, not dynamic), no host proxy (the struct arrives raw), and no
+    // `__call_@@toPrimitive` wrapper (that export is produced for a *method*
+    // body, #1716). So the walker fell through to the `"[object Object]"`
+    // fallback at the end, which is why `{[Symbol.toPrimitive]: () => 2n} * 2n`
+    // reported "Cannot mix BigInt and other types" — the host binop multiplied
+    // a STRING by a BigInt. Probe the field accessor here, still at §7.1.1
+    // step 2 (before OrdinaryToPrimitive), mirroring the `__sget_${mName}`
+    // fallback the valueOf/toString loop below already relies on.
+    const sgetTP = exports?.["__sget_@@toPrimitive"];
+    if (typeof sgetTP === "function" && _hasOwnStructField(raw, "@@toPrimitive", exports)) {
+      let slot: any = null;
+      try {
+        slot = sgetTP(raw);
+      } catch (e: any) {
+        // Shape-dispatch miss on an unrelated struct — not our field.
+        if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+      }
+      // §7.1.1 step 2a: an undefined/null exotic means OrdinaryToPrimitive.
+      // `__sget_*` also answers null for "this shape has no such field", so the
+      // two collapse onto the same (correct) fall-through.
+      if (slot != null) {
+        const prim = _callExoticToPrimitiveSlot(raw, slot, hint, exports);
+        if (prim !== _PRIM_ABSENT) return prim;
       }
     }
   }
@@ -5466,8 +5867,7 @@ function _safeSet(
     // Proxy's `set` trap may also throw (abrupt completion) or the host engine
     // may raise the §10.5.9 strict-write invariant TypeError. Propagate both
     // instead of silently diverting to the sidecar. The gate is strictly
-    // `_isUserProxy(obj)`, so the sloppy-mode struct / frozen-builtin cases
-    // below (Math.E=1, Number.NaN=1) are byte-for-byte unchanged (#2017).
+    // `_isUserProxy(obj)`; native descriptor failures are handled below.
     _rethrowIfProxyOrRevoked(e, obj);
     // (#3374) The runtime module itself executes in strict mode, so the native
     // assignment above throws when [[Set]] returns false. The compiler now
@@ -5483,6 +5883,7 @@ function _safeSet(
     if (typeof key === "string" || typeof key === "symbol") {
       const desc = _lookupDescriptorNoProxy(obj, key as PropertyKey);
       if (desc && desc.set) throw e;
+      if (wsh.failedSloppyNativeSetIsNoOp(obj, desc)) return;
     }
     // The sloppy helper retains the legacy silent fallback because this runtime
     // module is itself strict: the native assignment can throw even when the
@@ -5536,6 +5937,18 @@ const _fnctorInstanceofHooks: FnctorIoHooks = {
   expectedPrototype: (target, exports) => _getOrVivifyFnPrototype(target, { getExports: () => exports }),
   instancePrototype: _fnctorCtorProto,
   parentPrototype: _structUserProto,
+  recordedPrototype: (instance, exports) => {
+    if (_isWasmStruct(instance) && _canBeWeakKey(instance)) {
+      if (_wasmStructProto.has(instance)) return _wasmStructProto.get(instance);
+      return _fnctorCtorProto(instance, exports);
+    }
+    // A HOST object — `Object.create(new f())` hands back a real JS object whose
+    // [[Prototype]] is the WasmGC struct. §7.3.20 step 7a is literally
+    // `O.[[GetPrototypeOf]]()`, so performing it here is the spec's own step,
+    // and a Proxy trap that throws must propagate (ReturnIfAbrupt) rather than
+    // be swallowed.
+    return Reflect.getPrototypeOf(instance);
+  },
 };
 /** JS-owned objects explicitly admitted through a native dynamic export. */
 const _nativeBoundaryHostObjects = new WeakMap<object, WeakSet<object>>();
@@ -10053,6 +10466,24 @@ function resolveImport(
           intent.className === "Number";
         const argCoercionHint: "number" | "string" | "default" =
           intent.className === "Number" ? "number" : intent.className === "Date" ? "default" : "string";
+        // (#3481 cause 2) The Error family belongs to the same #1716 class as
+        // the four above — `new Error(struct)` makes V8 run ToString on an
+        // opaque WasmGC value and throw "Cannot convert object to primitive
+        // value" — but it CANNOT join `coercesArgsToPrimitive`, because that
+        // loop coerces EVERY argument. §20.5.1.1 runs ToString on the message
+        // ONLY; argument 1 is the `options` bag whose `cause` must survive as
+        // an object (reducing it to a primitive would destroy `e.cause`). So
+        // this is a single-INDEX coercion rather than a whole-argument-list one.
+        const errorMessageArgIndex =
+          intent.className === "Error" ||
+          intent.className === "TypeError" ||
+          intent.className === "RangeError" ||
+          intent.className === "SyntaxError" ||
+          intent.className === "URIError" ||
+          intent.className === "EvalError" ||
+          intent.className === "ReferenceError"
+            ? 0
+            : -1;
         // (#2637 B1) The Promise constructor consumes its first argument as an
         // executor callback (`new Promise((resolve, reject) => …)`). For a
         // `class Sub extends Promise { constructor(a) { super(a); … } }`, the
@@ -10093,6 +10524,20 @@ function resolveImport(
             _isWasmStruct(args[webInitArgIndex])
           ) {
             args[webInitArgIndex] = _wrapForHost(args[webInitArgIndex], callbackState?.getExports());
+          }
+          if (
+            errorMessageArgIndex >= 0 &&
+            args.length > errorMessageArgIndex &&
+            args[errorMessageArgIndex] != null &&
+            typeof args[errorMessageArgIndex] === "object" &&
+            _isWasmStruct(args[errorMessageArgIndex])
+          ) {
+            // Shared with the AggregateError / SuppressedError message steps —
+            // one ToString spelling for all three, so the three constructors
+            // cannot drift. An abrupt completion from the user's coercion
+            // method propagates from here unchanged, which is what
+            // `message-tostring-abrupt.js` asserts.
+            args[errorMessageArgIndex] = _errorMessageToString(args[errorMessageArgIndex], callbackState);
           }
           if (coercesArgsToPrimitive && args.length > 0) {
             for (let i = 0; i < args.length; i++) {
@@ -13464,7 +13909,14 @@ assert._isSameValue = isSameValue;
             const resolvedClassMethod = _invokeClassMethod(
               _unwrapForHost(obj),
               method,
-              exports,
+              // (#5202) During module init `exports` is undefined for the whole
+              // start section, so the resolver bailed on its first line and a
+              // top-level `inst.m()` threw "m is not a function" while the
+              // identical call after init returned. Fall back to the funcrefs
+              // the module registered on itself — the same channel #5193 uses
+              // for marshalling probes, and the same function objects the
+              // export view yields later.
+              marshalExports(callbackState, exports),
               wrappedObj,
               wrappedArgs,
             );
@@ -14221,7 +14673,7 @@ assert._isSameValue = isSameValue;
             throw new TypeError("Function.prototype.bind called on non-callable");
           }
           const partial: any[] = _nativeIsArray(argsArray) ? argsArray : [];
-          return Function.prototype.bind.apply(callable, [thisArg, ...partial]);
+          return _recordBoundTarget(Function.prototype.bind.apply(callable, [thisArg, ...partial]), target);
         };
       // (#1337) Invoke an arbitrary callable externref with an arguments array.
       // Used to call values that the codegen knows are JS-functional externrefs
@@ -14265,6 +14717,37 @@ assert._isSameValue = isSameValue;
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
       }
+      // (#5193) __register_init_export(id, fn) — the module hands the host its
+      // own marshalling helpers as `ref.func` values from the top of
+      // `__module_init`, i.e. from INSIDE the wasm `start` section, where
+      // `instance.exports` does not exist yet. A funcref crossing into JS
+      // materializes as the identical function object the export later yields,
+      // so this is a pure timing shim, not a second ABI. Unknown ids are
+      // ignored so an older runtime tolerates a newer module.
+      if (name === "__register_init_export")
+        return (id: number, fn: any): void => {
+          const helperName = INIT_MARSHAL_HELPER_NAMES[id];
+          if (helperName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(helperName, fn);
+        };
+      // (#5202) __register_init_class_export(namesCsv, index, fn) — the method-
+      // dispatch facet of the same window. The class-method dispatch surface is
+      // one export per (class, method, arity), so unlike the six fixed #5193
+      // helpers it cannot use a positional id ABI. The module registers ONE
+      // pooled CSV of names and indexes into it, which keeps the added
+      // `string_constants` imports at one per module rather than one per name.
+      // An out-of-range index is ignored so an older runtime tolerates a newer
+      // module.
+      if (name === "__register_init_class_export")
+        return (namesCsv: any, index: number, fn: any): void => {
+          const exportName = classDispatchExportName(namesCsv, index);
+          if (exportName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(exportName, fn);
+        };
       // (#1732 S1) __construct(callee, argsArray) — runtime [[Construct]] for a
       // `new f(...)` whose callee value cannot be proven constructable at
       // compile time (e.g. `var f = String.prototype.indexOf; new f`). Per
@@ -14516,6 +14999,24 @@ assert._isSameValue = isSameValue;
           return Object(sym);
         };
       }
+      // (#5159) InstallErrorCause for `new Error(msg, options)` and its six
+      // siblings (TypeError / RangeError / SyntaxError / URIError / EvalError /
+      // ReferenceError). Codegen calls this immediately after `__new_<Name>`,
+      // and ONLY when the call site actually passed an options argument.
+      //
+      // The Error family had no options plumbing at all until now: the lowering
+      // evaluated the bag and dropped its value, so `e.cause` was always absent
+      // even though `new Error("m", { cause: c })` is §20.5.1.1 step 4. Reusing
+      // `_installErrorCause` keeps one spelling of HasProperty-not-truthiness
+      // (`{ cause: undefined }` still installs) and of the reference-identity
+      // read, so Error / AggregateError / SuppressedError cannot drift apart.
+      //
+      // Returns the error so the value stays on the Wasm stack for the caller.
+      if (name === "__error_install_cause")
+        return (inst: any, options: any): any => {
+          _installErrorCause(inst, options, callbackState?.getExports());
+          return inst;
+        };
       if (name === "__new_AggregateError")
         return (errors: any, message: any, options: any): any => {
           // Spec step 4: IterableToList(errors). `undefined`/`null` are NOT
@@ -14593,7 +15094,7 @@ assert._isSameValue = isSameValue;
           // `properties-of-error-objects.js`).
           const inst = new AggregateError([]);
           if (message !== undefined && message !== null) {
-            const msgStr = typeof message === "string" ? message : String(message);
+            const msgStr = _errorMessageToString(message, callbackState);
             Object.defineProperty(inst, "message", {
               value: msgStr,
               writable: true,
@@ -14655,7 +15156,7 @@ assert._isSameValue = isSameValue;
           // (#1339-residuals) Codegen passes `ref.null.extern` for absent
           // optional args (JS `null` here); treat null as absent.
           if (message !== undefined && message !== null) {
-            const msgStr = typeof message === "string" ? message : String(message);
+            const msgStr = _errorMessageToString(message, callbackState);
             Object.defineProperty(inst, "message", {
               value: msgStr,
               writable: true,

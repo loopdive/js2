@@ -282,7 +282,7 @@ const FEATURE_EDITION: Record<string, number> = {
   "promise-try": 2025,
   "RegExp.escape": 2025,
 
-  // ES2026 — the 7 proposals published in the 17th edition (June 2026).
+  // ES2026 — the proposals published in the 17th edition (June 2026).
   // Source of truth for the year is the "Expected Publication Year" column of
   // tc39/proposals `finished-proposals.md`, NOT the date test262 moved the tag
   // from its "Proposed" to its "Standard language features" section: that move
@@ -296,13 +296,19 @@ const FEATURE_EDITION: Record<string, number> = {
   "Math.sumPrecise": 2026,
   "uint8array-base64": 2026,
   upsert: 2026,
+  // (#5173) Temporal moved 2027 → 2026. It reached Stage 4 at the March 2026
+  // TC39 meeting — BEFORE the ES2026 cut-off — and the Ecma General Assembly
+  // ratified ECMA-262 17th edition (ES2026) with Temporal in it on 2026-06-30.
+  // The comment above still holds: the features.txt move is corroboration, not
+  // the source of truth; the publication-year column is what puts it in 2026,
+  // alongside `upsert` from the same cohort.
+  Temporal: 2026,
 
   // ES2027 — stage 4, ratified after the ES2026 cut-off, so still the DRAFT
   // edition (see CURRENT_DRAFT_EDITION). Not a published-edition claim.
   "Atomics.pause": 2027,
   "explicit-resource-management": 2027,
   "joint-iteration": 2027,
-  Temporal: 2027,
 
   // Still stage-3 proposals. Records whose runner scope is `proposal` are
   // bucketed to -1 before edition classification ever runs; these entries only
@@ -593,17 +599,21 @@ function stripTestPrefix(file: string): string {
 /**
  * (#2871 follow-up) The runner's proposal-scope rules, for files the walk below
  * adds. A record carries the runner's own verdict (`scope_official === false`);
- * a file the lane never reported does not, so without this a Temporal or
- * staging test would be indexed as the draft edition and appear inside the
+ * a file the lane never reported does not, so without this a staging or
+ * import-defer test would be indexed as the draft edition and appear inside the
  * published range. Mirrors `classifyTestScope` / `PROPOSAL_FEATURES` in
  * tests/test262-runner.ts — that module is not importable here (it pulls in the
  * compiler), so keep the two in sync if the runner's list changes.
  */
-const PROPOSAL_FEATURE_TAGS = new Set(["Temporal", "import-defer", "source-phase-imports"]);
+// (#5173) `Temporal` removed from both this set and the path rule below, in
+// lockstep with the runner: Temporal is ES2026, so a Temporal file the walk
+// adds must be classified by FEATURE_EDITION (→ 2026), not parked in Proposals.
+// `staging/Temporal/**` is still a proposal — the staging prefix check catches
+// it, exactly as `classifyTestScope`'s staging rule does.
+const PROPOSAL_FEATURE_TAGS = new Set(["import-defer", "source-phase-imports"]);
 
 function isProposalScopeByPath(relPath: string, features: string[] | undefined): boolean {
   if (relPath.startsWith("staging/")) return true;
-  if (relPath.includes("built-ins/Temporal/")) return true;
   return (features ?? []).some((feature) => PROPOSAL_FEATURE_TAGS.has(feature));
 }
 
@@ -639,6 +649,33 @@ export interface ClassifiedTest {
   edition: number;
   features: string[];
   status: StatusKey;
+}
+
+/**
+ * Per-edition breakdown of the tests that score ONE landing-page row.
+ *
+ * A row's SECTION is hand-authored per feature ("Comma operator" sits under
+ * ES3 / Core because the operator is ES3), while its NUMBER is computed from
+ * the tests that match it. Those answer different questions and routinely
+ * disagree: all six `language/expressions/comma` tests classify as ES5
+ * (Sputnik files carry `es5id`, which names the ES5.1 section defining the
+ * operator, not the edition that introduced it) except `tco-final.js`, which
+ * carries `features: [tail-call-optimization]` and classifies as ES2015 — the
+ * one that fails in the standalone lane. Presented as a bare "5 / 6" under an
+ * "ES3 / Core" heading whose own 100% is computed from an entirely different
+ * 273-test bucket, that reads as "ES3 is broken". The spread makes the row's
+ * real population visible instead.
+ */
+export interface FeatureEditionSlice {
+  edition: string;
+  pass: number;
+  total: number;
+}
+
+/** Order a spread by EDITION_ORDER — the same sequence the edition table uses. */
+function editionSortKey(label: string): number {
+  const idx = EDITION_ORDER.findIndex((e) => EDITION_NAMES[e] === label);
+  return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
 }
 
 export interface FeatureRowCount {
@@ -928,9 +965,19 @@ async function main() {
     processed++;
 
     if (record.scope_official === false || record.scope === "proposal") {
+      const proposalKey = resolveStatusKey(record, hostFree);
       const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
-      proposalBucket[resolveStatusKey(record, hostFree)]++;
+      proposalBucket[proposalKey]++;
       fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
+      // Proposal tests are excluded from every EDITION bucket by design, but a
+      // landing-page row for a proposal feature (import-defer, source-phase
+      // imports; Temporal until #5173 reclassified it as ES2026) is scored by
+      // its `testCategories` paths, not by an edition. Withholding these records
+      // left such a row at 0/0 — rendered "not individually measured" — while
+      // thousands of its tests were in the baseline. `pathTests` feeds only
+      // patchFeatureExamples' path scorer, so this does not move any edition
+      // headline.
+      pathTests.push({ file, status: proposalKey });
       unclassified++;
       continue;
     }
@@ -1175,7 +1222,7 @@ async function main() {
     !args.includes("--no-feature-examples") &&
     (outputPath === OUTPUT_PATH || getArg(args, "--feature-examples") != null || featureExamplesOut != null);
   if (wantFeatureExamples) {
-    patchFeatureExamples(featureExamplesPath, taggedTests, pathTests, featureExamplesOut);
+    patchFeatureExamples(featureExamplesPath, taggedTests, pathTests, featureExamplesOut, fileEditions);
   }
 }
 
@@ -1194,6 +1241,7 @@ export function patchFeatureExamples(
   taggedTests: ClassifiedTest[],
   pathTests: Array<{ file: string; status: StatusKey }>,
   outPath?: string,
+  fileEditions: Record<string, string> = {},
 ): void {
   if (!existsSync(examplesPath)) {
     console.warn(`[#2910] feature-examples not found at ${examplesPath} — skipping row reconciliation.`);
@@ -1222,7 +1270,11 @@ export function patchFeatureExamples(
   const featureTags: Record<string, string[]> = {};
   for (const [name, tags] of Object.entries(rawMap)) {
     if (name.startsWith("_")) continue;
-    if (Array.isArray(tags)) featureTags[name] = tags.map(String);
+    // An EMPTY tag array means "this row's tests predate `features:`" — it is
+    // not a request for a zeroed row. Such a row falls through to the path
+    // scorer below (like an unmapped row) so its `testCategories` still yield a
+    // real number; mapping it to [] here would force 0/0 and hide the count.
+    if (Array.isArray(tags) && tags.length > 0) featureTags[name] = tags.map(String);
   }
 
   // Landing feature name → the edition YEAR it is displayed under (from the
@@ -1243,13 +1295,26 @@ export function patchFeatureExamples(
     f: t.file.startsWith("test/") ? t.file.slice(5) : t.file,
     s: t.status,
   }));
-  const countByPaths = (prefixes: string[]): FeatureRowCount => {
+  const countByPaths = (prefixes: string[]): FeatureRowCount & { spread: FeatureEditionSlice[] } => {
     const acc: Record<StatusKey, number> = { pass: 0, fail: 0, ce: 0, skip: 0 };
+    const byEdition = new Map<string, { pass: number; total: number }>();
     for (const t of normTests) {
-      if (prefixes.some((p) => t.f === p || t.f.startsWith(p + "/"))) acc[t.s]++;
+      if (!prefixes.some((p) => t.f === p || t.f.startsWith(p + "/"))) continue;
+      acc[t.s]++;
+      // A path-scored row is NOT confined to the section it is displayed under,
+      // so record which edition each matched test actually belongs to.
+      const label = fileEditions[t.f];
+      if (!label) continue;
+      const slot = byEdition.get(label) ?? { pass: 0, total: 0 };
+      slot.total++;
+      if (t.s === "pass") slot.pass++;
+      byEdition.set(label, slot);
     }
     const total = acc.pass + acc.fail + acc.ce + acc.skip;
-    return { ...acc, total, pct: total > 0 ? Math.round((acc.pass / total) * 100) : 0 };
+    const spread = [...byEdition.entries()]
+      .map(([edition, c]) => ({ edition, pass: c.pass, total: c.total }))
+      .sort((a, b) => editionSortKey(a.edition) - editionSortKey(b.edition));
+    return { ...acc, total, pct: total > 0 ? Math.round((acc.pass / total) * 100) : 0, spread };
   };
 
   let reconciled = 0;
@@ -1262,6 +1327,9 @@ export function patchFeatureExamples(
       const c = rowCounts[nm]!;
       f.passCount = c.pass;
       f.totalCount = c.total;
+      // A tag-sliced row is matched WITHIN its own edition year, so its spread
+      // is that one edition by construction — nothing to disclose.
+      f.editionSpread = undefined;
       reconciled++;
     } else {
       // Not in the tag map. If the row carries `testCategories` paths, score it
@@ -1274,15 +1342,20 @@ export function patchFeatureExamples(
         const c = countByPaths(paths);
         f.passCount = c.pass;
         f.totalCount = c.total;
+        if (c.spread.length > 0) f.editionSpread = c.spread;
+        else f.editionSpread = undefined;
         if (c.total > 0) pathScored++;
         else headlineOnly++;
       } else {
         f.passCount = 0;
         f.totalCount = 0;
+        f.editionSpread = undefined;
         headlineOnly++;
       }
+      // Only warn about a row that ended up with NO number at all. A row the
+      // path scorer resolved needs no tag mapping to be reported honestly.
       const yr = editionStringToYear(typeof f.edition === "string" ? f.edition : "");
-      if (yr !== undefined && yr >= 2015 && nm) unmapped.push(nm);
+      if (yr !== undefined && yr >= 2015 && nm && Number(f.totalCount) === 0) unmapped.push(nm);
     }
   }
 
@@ -1305,6 +1378,11 @@ export function patchFeatureExamples(
           testCategories: f.testCategories,
           passCount: f.passCount,
           totalCount: f.totalCount,
+          // Lane-dependent: the same tests, but a different pass column, so the
+          // twin needs its own copy or the toggle would show host per-edition
+          // numbers under standalone totals. Bounded — one entry per edition a
+          // row actually touches, a few dozen bytes.
+          ...(f.editionSpread ? { editionSpread: f.editionSpread } : {}),
         })),
       }
     : examples;

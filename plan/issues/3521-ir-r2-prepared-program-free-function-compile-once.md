@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-27
+updated: 2026-08-29
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -2563,13 +2563,15 @@ layering, dialect/fallback/oracle/coercion/optimization checks, the LOC and
 function ratchets, all normal commit hooks, and all normal pre-push hooks.
 
 After the compiler PR merges, relock the R2 validation bundle in a separate
-checkpoint and obtain an independent read-only static audit. Preserve both
-prior load-failure envelopes untouched. The full 16-pair/32-child collector is
-then run exactly once at a new output root; every child and raw stream is
-retained before semantic assertions. Its strict gate remains finite,
-non-negative one-minute load strictly below `logical cores - 2` (10 cores means
-`< 8`). C36/C37 stay scheduled for the final aggregate rerun, and the unchanged
-#4035 size ceiling is not reported as a new regression.
+checkpoint and obtain an independent read-only static audit. This historical
+replay instruction is superseded by the 2026-08-27 R2-v2 plan below: preserve
+all three recorded R2-v1 failure envelopes and their raw streams, of which only
+attempt 2 is a strict-load abort. Do not schedule the old 16-pair/32-child
+collector; R2-v2's 16+8/**24-child** collection is the only scheduled runtime.
+Its strict gate remains finite, non-negative one-minute load strictly below
+`logical cores - 2` (10 cores means `< 8`). C36/C37 stay scheduled for the
+final aggregate rerun, and the unchanged #4035 size ceiling is not reported as
+a new regression.
 
 ## 2026-08-27 dispatch update — execute the linked-Parser L3 edge
 
@@ -2604,3 +2606,270 @@ The dead-export check is a stop condition, not a ratchet to widen: the eight
 planner helpers must become survivor-reachable through production consumption.
 The implementation worker owns only the bounded L3 source/tests listed in the
 preceding sections and must leave the adjacent #1719 and #4260 plans untouched.
+
+## 2026-08-27 R2-v2 validation plan — replace the stale switch oracle
+
+The post-merge relock audit stopped before runtime. The approved R2-v1
+collector cannot be relocked onto current production without changing its
+meaning:
+
+- `JS2WASM_TEST_DISABLE_LINKED_STRING_PARSER_ABI` was never present in a
+  committed compiler ancestor. It exists only in the staged stage06/d0ae
+  delta used by the historical bundle. PR #5000 landed the independently
+  reviewed L3 implementation without that test seam, so an enabled/disabled
+  dimension on any committed revision is inert.
+- R2-v1 also records one graph-global, unitless `compileModuleInitBody`
+  `__module_init` row against `entry.mjs` with
+  `structurallyComplete:false`. Current production still has that exact bounded
+  multi-source exception: inventory owns the local module-init population in
+  `empty.mjs`, while the accumulated graph-global init compiles against the
+  last/entry source, which has no module-init unit. #5067 deliberately refuses
+  callable cutover when a graph has module-init population; #3525 M2 still owns
+  replacing this progressively rebuilt direct path. V2 must retain the exact
+  exception rather than pretending later R4/R5 ownership work closed it.
+
+This is a validation-contract migration, not a production regression and not
+permission to edit the accepted v1 evidence in place.
+
+### Preserve R2-v1 as immutable historical evidence
+
+Keep all three recorded R2-v1 failure envelopes, their raw streams, and the
+approved collector bytes unchanged. Only attempt 2 is a strict-load abort;
+the other two retain their original failure classifications. The authoritative
+source adapter remains
+`.tmp/ab-drafts/r2-linked-parser` with:
+
+- README `b8fd4aabf2fa2178d1cba2e0fd39461de931a8b3be394875aa1a4c6b0bc2f0d3`;
+- inner manifest `337b6b28239ed9ac046ec171434cb78ffc71f1846d3af81b5373e077215f4531`;
+- driver `bb9108e9d63b2f1f1649719c8ec389d4ec1c72cc16e207e2b1136ed4a06a150d`;
+  and
+- worker `d26cbfe63a59cf107e2a44a3eba5579ed3dfa4e086749040477280407524245a`.
+
+The historical outer runner
+`8e7d9b074a8a1d5c30ec07176c7c021f078df33452cb539167ce59b676c9a6cf`,
+inventory
+`fac9333a306ff66f75bf35691bb62a79aaca7bacdb21ec92db9a86b9d2ca68fa`, and
+root `a3b3cd2ffe123f7685c125c6edb9eaa6c1e8235be9720163e92b842929c2b51b`
+hashes remain ledger facts; the deleted outer bundle is not reconstructed and
+those hashes are not reasserted from new bytes. The immutable v1 README keeps
+its original `FAILED-DIAGNOSTIC-NOT-ACCEPTANCE`/`needs-runtime-replay` label as
+historical text. The active v2 inventory records v1 as
+`superseded-historical-diagnostic` and schedules only v2; no new replay runs
+against the v1 schema.
+
+### Versioned R2-v2 collection
+
+Create a new `r2-linked-parser-ab-collection-v2` adapter and output root. Do
+not copy and loosen the v1 oracle. The v2 wrapper runs two named phases in one
+exactly-once collection so landed L3 causality and current-main compatibility
+remain distinct:
+
+1. **Landed-L3 A/B.** Compare exact pre-merge main
+   `de35a52d978e328d46a9929b5438837385ddea5b` with landed PR #5000 merge
+   `fcede269da81724397dd00bd854e3830446620f5`. Schedule decimal and octal
+   fixtures across host/standalone and direct/prepared routes with the reviewed
+   late-overlay option set. Pin host to `target=gc` with native strings disabled
+   and standalone to `target=standalone` with native strings enabled. That is
+   eight canonical tuples, two sides, and exactly **16 children**. There is no
+   parser-switch field.
+2. **Current-main compatibility.** Freeze the live-main commit at relock time
+   and run the same eight canonical tuples once as side `live`, exactly **8
+   children**. This phase validates that later R3/R4/R5 ownership changes did
+   not regress the landed linked-Parser behavior; it is not another compiler
+   side and may not be folded into the historical A/B digest.
+
+The one wrapper therefore schedules exactly **24 children**. Its expected
+matrix, keys, counts, and canonical sort include `phase` and reject any
+missing, duplicate, unknown, or extra tuple. Supplying the nonexistent switch
+environment variable or a `parserSwitch` field is a schema error, not a third
+control lane.
+
+The L3 oracle remains asymmetric and exact. Historical base
+standalone/prepared rows must retain the reviewed parser parity withdrawal:
+one exact parser post-claim row and its matching compile warning are both
+mandatory; the caller post-claim row and matching compile warning are optional
+only together as the exact paired cascade; and parser plus caller `irOutcomes`
+are both mandatory with their exact source/unit/signature joins.
+The landed candidate standalone/prepared rows must contain the reviewed clean
+L3 route movement and exact `direct=1, IR=1` parser/caller accounting, with
+`run` retained by legacy. Host and direct controls remain exact, and decimal
+versus octal must retain the same route projection. Binary drift is
+observational only.
+
+The live phase applies those landed route expectations to the current
+compiler, then validates every extra terminal against the current identity,
+Program-ABI-derived-unit, disposition, physical-unit, and outcome records
+exposed by the collection. Every
+`base`, `candidate`, and `live` side derives all inventory-owned module-init
+terminals from that side's frozen inventory and requires their exact source,
+file, observed kind, self-owner, and disposition joins. Prepared routes require
+the exact terminal outcome for each such inventory unit. Direct or typed
+Unsupported routes require their exact physical evidence; they need not invent
+a public outcome, but any outcome that is present must join the same exact
+inventory unit and disposition.
+
+Separately, each side must retain exactly one copy of the immutable v1
+graph-global exception: the unitless `compileModuleInitBody` physical row
+against `entry.mjs`, with the exact accepted v1 record projection and
+`structurallyComplete:false`. It is the only permitted structural exception.
+A missing or duplicate exception, an attached/wrong unit, source/file/kind
+drift, another unowned physical row, or any other structural violation fails
+closed. The validator does not manufacture a Program-ABI join or change the
+fixture to conceal this production boundary. The focused #3523 module-init and
+#3525 unit-keyed body-routing tests are static controls; #3525 M2 remains the
+owner of removing the exception in production.
+
+Retain the v1 fail-closed transport design: stdout is one framed JSON document;
+progress is stderr-only; each spawned child retains raw stdout/stderr bytes,
+SHA-256, base64, decoded UTF-8, parsed record, fallback telemetry, tuple,
+ordinal, exit/signal/timeout, and pre/post-child load samples. Semantic failure
+after collection publishes every valid child plus all oracle failures. A
+safety abort publishes the complete prior census plus the failing transport or
+load evidence. Record scheduled, preflight-checked, attempted, spawned,
+completed, parsed, valid, and invalid counts separately, and compute phase-local
+plus aggregate canonical evidence digests. Every report carries status `PASS`
+or `FAILED-DIAGNOSTIC-NOT-ACCEPTANCE` plus the complete expected and observed
+canonical key census.
+
+Static selftests must cover phase/key drop, duplicate, reorder, wrong side,
+forbidden switch dimension, malformed/empty transport, raw-byte round trip,
+fallback telemetry validation, missing/extra diagnostics, missing or wrong
+parser/caller outcome, per-side inventory-owned module-init
+source/owner/kind/route drift, missing/duplicate/mutated graph-global exception,
+and multiple accumulated oracle failures. Canonical input reorder must not
+change the digest.
+
+### Relock, run, and interpretation gates
+
+Before the one runtime collection, require an independent read-only audit of
+the exact v2 source/bundle equality, manifests, pins, static mutations,
+detached worktree trees/diffs, dependency links, expected 16+8 census, and
+current module-init derivation. Use fresh output roots only. The wrapper and
+every child require a finite, non-negative one-minute load strictly below
+`logical cores - 2`; with 10 logical cores the limit remains `< 8`. A failed
+gate is retained as diagnostic evidence and is never retried in the same
+attempt.
+
+A passing v2 collection accepts only the linked-Parser L3 route on its landed
+and current-main revisions. It does not satisfy R2 compile-once: `direct=1,
+IR=1` is still transitional, the fixed-point prepare-before-emit transaction
+and `directBodyEmissions:0` gates remain open, and this tracker stays
+`in-progress`. C36/C37 remain scheduled for the final aggregate rerun. The
+unchanged #4035 size ceiling remains a control and is not reported as a new
+regression.
+
+## 2026-08-29 R2-v2 static collector repair record
+
+The 2026-08-28 independent-audit HOLD and its 119-line collector repair plan
+were **authored but never committed** — that section does not exist on `main`
+or on any remote branch. What survived into this session is the enumeration of
+the four FALSE PASSES the audit proved against the collector plus one census
+defect. This record replaces the lost plan.
+
+### Correction to the starting premise: the collector itself was never committed
+
+The repair was dispatched as "repair the existing R2-v2 collector". There is no
+such collector in this repository. Verified before any code was written:
+
+- `scripts/` contains no R2-v2 collector, contract, or manifest file;
+- the strings `r2-linked-parser`, `parserSwitch`, `FAILED-DIAGNOSTIC-NOT-ACCEPTANCE`
+  and `JS2WASM_TEST_DISABLE_LINKED_STRING_PARSER_ABI` occur **only** in this
+  issue file and `plan/agent-context/ir-migration-handover-2026-08-27.md`;
+- the merged R2-v2 branch `codex/3521-r2-v2-validation-plan` (PR #5086) is the
+  **plan** checkpoint and adds no collector source;
+- the v1 adapter root `.tmp/ab-drafts/r2-linked-parser` is under a gitignored
+  path and was never committed either.
+
+So the collector, like the repair plan, existed only in an uncommitted working
+tree on the codex host. **There is no pre-repair code path to run a mutation
+against**, and no evidence in this session is an observation of the original
+collector.
+
+The work delivered is therefore the R2-v2 static contract **implemented
+fail-closed from the start** on all five defect classes, plus a committed
+`baseline-naive.mjs` that RECONSTRUCTS the five pre-repair check shapes the
+audit described. The reconstruction reuses every unrelated check from
+`contract.mjs` and replaces only the five audited strategies, so each
+mutation's PASS/FAIL split isolates exactly one defect and cannot be explained
+by any other divergence. That makes every mutation demonstrably non-vacuous —
+but it is evidence about the reconstruction, not about the lost original.
+
+### Delivered adapter
+
+`scripts/r2-linked-parser-ab-collection-v2/` — `contract.mjs` (fail-closed
+oracle), `fixtures.mjs` (canonical 24-child report + mutation operators),
+`baseline-naive.mjs` (reconstructed pre-repair baseline), `selftest.mjs`,
+`relock.mjs`, `manifest.json`, and a byte-for-byte `bundle/` mirror. Wired as
+`npm run -s check:r2-v2-collector`.
+
+**No collection was run.** The contract validates report objects only; it never
+spawns a child, never invokes the compiler, and never touches a runtime. Per
+"Relock, run, and interpretation gates", only an approved relock may run the
+24-child collection.
+
+### Five defects repaired, with per-mutation former-false-pass evidence
+
+Each row is two-sided and runnable via
+`node scripts/r2-linked-parser-ab-collection-v2/selftest.mjs`:
+
+| # | audited false pass | mutation | reconstructed pre-repair | repaired | fail-closed code |
+| --- | --- | --- | --- | --- | --- |
+| D1 | arbitrary extra unitless `compileDeclarations` call not detected | append an unowned unitless `compileDeclarations` row to one candidate/standalone/prepared child | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `declaration/unsanctioned-unitless-row` |
+| D2 | wrong-file prepared module-init outcome not detected | rewrite that child's module-init outcome `file` to `other.mjs` | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `outcome/join-mismatch` |
+| D3 | duplicate outcome key not detected | append a second outcome under the same key carrying `direct-legacy` | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `outcome/duplicate-key` |
+| D4 | parser's second WAT parameter `i32`→`f32` with hashes recomputed | flip `params[1]`, recompute the carrier SHA-256 **and** the report manifest entry | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `wat/abi-mismatch` |
+| D5 | attempted/spawned/completed collapse when spawn throws | mark one child `spawnOutcome:"threw"` while the census still reports all three states at full count | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `census/state-collapse` |
+
+The repairs, in the same order: the physical-row census is **closed** (every row
+joins an inventory unit or is the one sanctioned unitless exception); outcomes
+join their inventory unit on **every field**, not by key presence; the outcome
+index **detects duplicates** instead of `map.set` overwriting; the expected WAT
+ABI is carried **structurally** (`EXPECTED_WAT_ABI`), so self-consistent hash
+recomputation cannot hide a parameter-type change; and attempted / spawned /
+completed are **derived separately per child** and cross-checked against the
+reported counters, so a throwing spawn cannot collapse them.
+
+Non-vacuity is anchored by the unmutated canonical report passing **both**
+validators. Denominators: 24 scheduled children (16 landed-A/B + 8 live), 38
+static assertions — 3 canonical-fixture, 10 defect (5 mutations × 2 sides), 16
+structural, 5 accumulated-failure, 4 digest/reorder — all green, plus the relock
+check.
+
+### Also enforced (not in scope of the five defects)
+
+Expected 16+8 key census with missing/duplicate/extra/unknown-phase/wrong-side
+rejection; base and candidate pin equality with a single frozen live revision;
+`parserSwitch` field and the switch environment variable as schema errors;
+missing/duplicate/mutated graph-global exception; the reviewed base
+standalone/prepared parser-parity withdrawal and its paired caller cascade;
+`direct=1, IR=1` candidate accounting; malformed and empty transport; and
+reorder-stable phase-local plus aggregate digests.
+
+`relock.mjs` recomputes every source digest, requires the `bundle/` mirror to be
+byte-for-byte, and derives a root hash over the sorted per-file digests together
+with the pins, expected census, and expected ABI. Every manifest field is compared on its
+own — deliberately not through a `JSON.stringify` replacer array, which filters
+object properties at every level and would let a hand-edit inside a nested field
+read as equal. Three tamper paths were proven to fail closed: a one-line edit to
+a mirrored file reports `bundle/contract.mjs is DIFFERS`; editing the contract's
+expected ABI reports `expectedWatAbi` / `sources` / `rootHash` drift; and a
+hand-edit to `manifest.json`'s `pins.base` alone reports `pins` drift. Adapter root hash at this
+checkpoint: `d9e2327de0f2a57e3cc612b218f7fa77d940133a8da8a041f14c1312a240958d`.
+
+### Open items the independent auditor must close before any relock
+
+1. **`EXPECTED_WAT_ABI` values are pinned placeholders.** The repair is that the
+   ABI is carried exactly rather than by hash; the specific parameter and result
+   types must be confirmed against the landed L3 production ABI and re-pinned
+   under the approved relock.
+2. **The sole exception is enforced per child.** "Each side must retain exactly
+   one copy" is implemented as exactly one sanctioned unitless row per child
+   record, since each child is a separate compilation of the graph. Confirm this
+   reading.
+3. **The fixture is synthetic.** `fixtures.mjs` hand-builds a canonical report;
+   the inventory shape (one owned module-init unit in `empty.mjs`) follows this
+   issue's description of the bounded multi-source exception and needs
+   confirming against a real frozen inventory.
+
+This tracker stays `in-progress`. Nothing here satisfies R2 compile-once, and no
+runtime replay was performed.

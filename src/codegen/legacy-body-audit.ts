@@ -186,6 +186,13 @@ export class IrBodyRouteAuditSession {
     this.#record(entryPoint, bodyName, node);
   }
 
+  /** Physical direct-body roots recorded for one entry point. */
+  countRoots(entryPoint: IrLegacyBodyEntryPoint): number {
+    return [...this.#entries.values()]
+      .filter((entry) => entry.entryPoint === entryPoint)
+      .reduce((total, entry) => total + entry.count, 0);
+  }
+
   /** Record the generic expression dispatcher without growing its budget-constrained driver. */
   enterExpression(fctx: FunctionContext, node: Node, currentDepth: number): number {
     this.recordFrame("compileExpression", fctx, node);

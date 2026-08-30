@@ -98,6 +98,11 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 // expressions.ts / index.ts.
 import { VOID_RESULT, coerceType, compileExpression, flushLateImportShifts, valTypesMatch } from "./shared.js";
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+// (#4406) The return-type unboxing ABI's flag family — opt-in, default OFF, so
+// every decision below reads exactly as it did before the flag existed.
+import { isBrandedBoolean, retUnboxAbiEnabled, retUnboxAbiPoisoned } from "./ret-unbox-abi.js";
+import { paramSlotRefinableOn, paramUnboxAbiEnabled, paramUnboxAbiPoisoned } from "./param-unbox-abi.js"; // (#4406 P3)
+import { emitToBoolean } from "./coercion-engine.js"; // (#4406 Phase 3) ToBoolean ≠ coerceType's ToNumber
 
 /**
  * Property names whose reads/writes have dedicated lowerings (array length,
@@ -1105,8 +1110,83 @@ export function refinedTwinReturnType(
   const key = writeOnceMethodKeyOf(ctx, fn);
   if (key === undefined) return undefined;
   const methodName = key.slice(key.indexOf("/") + 1);
+  // (#4406) BOOLEAN BEFORE NUMERIC, and the order is not cosmetic. `isNumeric`
+  // deliberately answers true for booleans (`fact.kind === "boolean"`, the
+  // `true`/`false` keywords, `!x`, every BOOLEAN_BINARY operator) and the
+  // `numericFunctions` loop — unlike the property and grounded-slot loops —
+  // carries no `isBooleanish` filter. So `booleanFunctionNames` is a SUBSET of
+  // `numericFunctionNames`, and a numeric-first test would claim every
+  // predicate as `f64` and leave this arm dead.
+  //
+  // The generic body's shim has to box the refined result back up, so decline
+  // before the twin is minted when `__box_boolean` is unresolvable — the same
+  // discipline the `__box_number` guard above applies to the numeric arm.
+  if (retUnboxAbiEnabled() && ctx.booleanFunctionNames?.has(methodName) === true) {
+    if (ctx.funcMap.get("__box_boolean") === undefined) return undefined;
+    return { kind: "i32", boolean: true };
+  }
   if (ctx.numericFunctionNames?.has(methodName) !== true) return undefined;
   return { kind: "f64" };
+}
+
+/**
+ * (#4406 Phase 3) The PARAMETER counterpart of {@link refinedTwinReturnType},
+ * and — for the same reason — the SINGLE decision point. The twin's minting
+ * (`closures.ts`) and the trampoline's reservation (below) both ask this, so
+ * they cannot disagree; if they ever did, `fillDirectCallTrampolines` compares
+ * the two param lists and degrades to the legacy dispatcher rather than
+ * emitting a module that fails validation.
+ *
+ * Returns the FULL parameter list with every proven slot replaced by a
+ * boolean-branded `i32`, or `undefined` when nothing is refined (which is also
+ * what keeps the flag-off build byte-identical: the caller then uses the
+ * declared list object it already had).
+ *
+ * ## Why the soundness argument is not the return half's
+ *
+ * A refined RESULT is imposed on the callee and coerced there, so an imprecise
+ * verdict costs only performance. A refined PARAMETER is imposed on the
+ * CALLERS: an unproven caller does not coerce, it just hands the body a value
+ * it will read as a boolean. Three things carry the weight:
+ *
+ * 1. `booleanParamSlots` is conjunctive over EVERY syntactic call site of the
+ *    name, with a widened receiver rule (see `param-unbox-abi.ts`).
+ * 2. The declaration side is re-checked here on the exact function being
+ *    minted, so an unindexed same-named declaration cannot slip through.
+ * 3. Callers that are not syntactically enumerable — `arr.map(o.m)`,
+ *    `o.m.call(…)`, `o["m"](…)` — never reach the twin at all, because
+ *    `closures.ts` suppresses the generic body's forwarding shim whenever a
+ *    parameter is refined. The generic body keeps its `externref` parameters
+ *    and stays the only entry for a dynamic caller.
+ *
+ * The slot must be `externref` today: that is both where the box to be removed
+ * lives and the only carrier whose local the body reads dynamically, so
+ * imposing `i32` on it changes nothing the body was already prepared for.
+ */
+export function refinedTwinParamTypes(
+  ctx: CodegenContext,
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+  declared: readonly ValType[],
+): ValType[] | undefined {
+  if (!paramUnboxAbiEnabled()) return undefined;
+  if (!ctx.standalone || !directCallLoweringEnabled()) return undefined;
+  // The trampoline's legacy arm re-boxes every native parameter on the way to
+  // the dynamic dispatcher (`boxToExternref`), so decline before anything is
+  // minted when the helper is unresolvable — the same discipline the return
+  // arm applies to `__box_number` / `__box_boolean`.
+  if (ctx.funcMap.get("__box_boolean") === undefined) return undefined;
+  const key = writeOnceMethodKeyOf(ctx, fn);
+  if (key === undefined) return undefined;
+  const slots = ctx.booleanParamSlots?.get(key.slice(key.indexOf("/") + 1));
+  if (slots === undefined || slots.size === 0) return undefined;
+  let refined: ValType[] | undefined;
+  for (const slot of slots) {
+    if (declared[slot]?.kind !== "externref") continue;
+    if (!paramSlotRefinableOn(fn, slot)) continue;
+    refined ??= [...declared];
+    refined[slot] = { kind: "i32", boolean: true };
+  }
+  return refined;
 }
 
 /**
@@ -1692,21 +1772,31 @@ export function tryEmitDirectTwinCall(
   const sig = deps.computeSig(fn);
   if (sig.params.length !== formals.length) return declineDirect("sig-arity-skew");
 
+  // (#4406 Phase 3) The PARAMETER half. Proven-boolean slots become
+  // boolean-branded `i32` on both the trampoline and the twin, so the argument
+  // arrives unboxed. `sigParams` is the declared list object itself when
+  // nothing is refined, which is what keeps the flag-off build byte-identical.
+  // A refined slot is always SUPPLIED — the verdict's width is the minimum
+  // argument count over every call site — so it can never land in the pad; if
+  // that invariant ever broke, `buildPadValue` declines an `i32` slot with no
+  // initializer rather than inventing `false` for a missing argument.
+  const sigParams = refinedTwinParamTypes(ctx, fn, sig.params) ?? sig.params;
+
   // No `ref`/`ref_null` in the trampoline's own signature — see the ABI note on
   // `DirectCallTrampoline`. A struct-typed formal is rare (acorn has none) and
   // declining costs only a missed devirtualization. The check covers the PADDED
   // slots too: they are the twin's parameters, not the trampoline's, but a
   // `ref`-typed pad would be a `ref.null $T` the fixup walk could still land on.
-  if (sig.params.some((p) => p.kind === "ref" || p.kind === "ref_null")) {
+  if (sigParams.some((p) => p.kind === "ref" || p.kind === "ref_null")) {
     return declineDirect("ref-typed-param");
   }
 
   // Build the pad BEFORE reserving: a slot we cannot express must decline
   // without leaving an orphan trampoline behind.
-  const padTypes = sig.params.slice(argc);
+  const padTypes = sigParams.slice(argc);
   const padInstrs: Instr[][] = [];
   for (let k = argc; k < formals.length; k++) {
-    const pad = buildPadValue(sig.params[k]!, formals[k]!, deps);
+    const pad = buildPadValue(sigParams[k]!, formals[k]!, deps);
     if (pad === undefined) return declineDirect("pad-native-param");
     padInstrs.push(pad);
   }
@@ -1725,7 +1815,7 @@ export function tryEmitDirectTwinCall(
     fnctorStructTypeIdx: structTypeIdx,
     // Only the SUPPLIED arguments are trampoline parameters; the rest are
     // synthesized inside it, so N call sites share one copy of the pad.
-    params: [{ kind: "externref" }, ...sig.params.slice(0, argc)],
+    params: [{ kind: "externref" }, ...sigParams.slice(0, argc)],
     padInstrs,
     padTypes,
     // Void callee ⇒ no wasm result. The legacy degradation target always yields
@@ -1769,8 +1859,20 @@ export function tryEmitDirectTwinCall(
       fctx.body.push({ op: "ref.null.extern" });
       coerceType(ctx, fctx, { kind: "externref" }, want);
     } else if (!valTypesMatch(got, want)) {
-      coerceType(ctx, fctx, got, want);
+      // (#4406 Phase 3) A boolean-branded target takes ToBoolean, not
+      // `coerceType`'s ToNumber-and-truncate. On a genuine boolean the two
+      // agree (`ToNumber(true) === 1`), so this is not what makes the slot
+      // correct — the whole-program verdict is. It is the same divergence
+      // Phase 1 closed on the return edge (§3.3(c)): where they differ, an
+      // argument that lowered to a boxed `"abc"` truncates to `0` under
+      // ToNumber and answers `1` under ToBoolean, and the second is the one
+      // JavaScript would give a value used as a boolean.
+      if (isBrandedBoolean(want)) emitToBoolean(ctx, got, fctx.body);
+      else coerceType(ctx, fctx, got, want);
     }
+    // (#4406 Phase 3, §8.2) POISON. Statement-only and gated on BOTH env vars,
+    // so an ordinary build never reaches it.
+    if (isBrandedBoolean(want) && paramUnboxAbiPoisoned()) fctx.body.push({ op: "i32.eqz" });
   }
   fctx.body.push({ op: "call", funcIdx: tramp.funcIdx });
   directCallStats.sites++;
@@ -1816,7 +1918,25 @@ function unboxFromExternref(ctx: CodegenContext, type: ValType, out: Instr[]): b
     out.push({ op: "ref.cast", typeIdx: type.typeIdx });
     return true;
   }
-  if (type.kind === "i32" && type.boolean) {
+  // (#4406) The `__unbox_boolean` arm is a TRAP once the refined boolean ABI is
+  // on, so the flag routes past it into the generic `i32` arm below.
+  //
+  // `__unbox_boolean` recognises ONLY a boxed-boolean carrier; a boolean that
+  // arrives as the engine's i31 numeric carrier makes it answer false, and that
+  // exact bug once "turned true conditions into false across the closure
+  // bridge" (`closure-exports.ts`, the `paramType.kind === "i32"` arm, which
+  // took the same defence for the same reason). The arm is effectively dead
+  // today — `__unbox_boolean` executes 2× per acorn self-parse — and goes live
+  // the moment a refined boolean trampoline degrades to its legacy arm, which
+  // the acorn lane cannot see because that arm is reached only on a `ref.test`
+  // miss.
+  //
+  // The generic arm's `__unbox_number` + `i32.trunc_sat_f64_s` recognises i31,
+  // boxed-number AND boxed-boolean, and ToNumber is exactly {0,1} on a boolean,
+  // so it is total over every carrier the dispatcher can hand back. Gated on
+  // the flag purely to keep the OFF build byte-identical: a DECLARED `boolean`
+  // return already reaches this arm today.
+  if (type.kind === "i32" && type.boolean && !retUnboxAbiEnabled()) {
     const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
     if (unboxBoolIdx === undefined) return false;
     out.push({ op: "call", funcIdx: unboxBoolIdx });
@@ -1932,16 +2052,29 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
       }
       return ok ? legacy : undefined;
     };
+    // (#4406 Phase 3) A refined boolean PARAMETER belongs to typed twins, the
+    // same way a refined result does: a generic closure body keeps its declared
+    // `externref` parameter. Accept that shape and box it back at the
+    // trampoline edge (below) instead of degrading the whole site to the legacy
+    // dispatcher — which is what made `legacyFills` leave 0 for two acorn sites
+    // whose method never gets a twin at all.
+    const genericParamAgrees = (declared: ValType, want: ValType): boolean =>
+      valTypesMatch(declared, want) || (declared.kind === "externref" && isBrandedBoolean(want));
     const genericSignatureAgrees =
       generic !== undefined &&
       generic.params.length === t.formals + 1 &&
-      generic.params.slice(1, 1 + t.arity).every((p, i) => valTypesMatch(p, t.params[i + 1]!)) &&
+      generic.params.slice(1, 1 + t.arity).every((p, i) => genericParamAgrees(p, t.params[i + 1]!)) &&
       t.padTypes.length === t.formals - t.arity &&
       generic.params.slice(1 + t.arity).every((p, i) => valTypesMatch(p, t.padTypes[i]!));
     const buildGenericArm = (): Instr[] | undefined => {
       if (generic === undefined || genericIdx === undefined || !genericSignatureAgrees) return undefined;
       const direct: Instr[] = [{ op: "global.get", index: generic.selfGlobalIdx }, { op: "ref.as_non_null" }];
-      for (let i = 1; i < paramCount; i++) direct.push({ op: "local.get", index: i });
+      for (let i = 1; i < paramCount; i++) {
+        direct.push({ op: "local.get", index: i });
+        if (!valTypesMatch(generic.params[i]!, t.params[i]!) && !boxToExternref(ctx, t.params[i]!, direct)) {
+          return undefined;
+        }
+      }
       for (const pad of t.padInstrs) direct.push(...pad.map((i) => ({ ...i })));
       direct.push({ op: "call", funcIdx: genericIdx });
 
@@ -2078,6 +2211,14 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
         directCallStats.legacyReasons.set(key, (directCallStats.legacyReasons.get(key) ?? 0) + 1);
       }
     }
+
+    // (#4406) POISON. Statement-only and gated on BOTH env vars, so an ordinary
+    // build never reaches it. Every arm above (twin / generic / legacy, guarded
+    // or not) has already merged to `resultType`, so one `i32.eqz` here inverts
+    // exactly the refined boolean results and nothing else. #4157 entry 22's
+    // lesson: a green workload under poison proves the path is DEAD, not that
+    // the change is safe.
+    if (isBrandedBoolean(resultType) && retUnboxAbiPoisoned()) arm.push({ op: "i32.eqz" });
 
     // A twin now represents every use of `this` (including bare/non-field
     // expressions) with its typed receiver parameter. An unguarded,
