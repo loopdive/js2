@@ -8,6 +8,7 @@
 // finalize passes and re-exports `reserveVecMethodHelper` for its compile-time
 // callers (calls.ts, property-access.ts, closed-method-dispatch.ts).
 
+import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
 import type { FuncHandle, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3315)
@@ -259,12 +260,14 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
 }
 
 /**
- * Rebase the public vec bridge exports after dead-layout elimination and the
- * final import batch. The bridge functions are allocated early with live
- * indices, while later compatibility imports can move the defined-function
- * suffix. Most emitters are repaired by the late-import shifter, but exports
- * published before the last batch have no function-body traversal to repair
- * them. Resolve by the allocator-owned function object at the freeze point.
+ * Authenticate and freeze the compiler-owned vec bridge exports after
+ * dead-layout elimination and the final import batch. The bridge functions
+ * are published initially with stable handles, while a previously finalized
+ * descriptor can carry its already-rebased live index. Later compatibility
+ * imports can move the live defined-function suffix. Most emitters are
+ * repaired by the late-import shifter, but exports published before the last
+ * batch have no function-body traversal to repair them. Resolve both regimes
+ * by the captured allocator-owned function object at this boundary.
  */
 export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = vecHostBridgeAllocations.get(ctx);
@@ -285,8 +288,8 @@ export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
     return;
   }
   // Dead-import elimination can remove speculative imports without updating
-  // the context's cached `numImportFuncs`. Public export descriptors are raw
-  // Wasm indices at this point, so derive the live prefix from the module.
+  // the context's cached `numImportFuncs`. Derive the current prefix used to
+  // interpret any live-regime public descriptor directly from the module.
   const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
   const seen = new Set<WasmExport>();
   for (const { allocation, entry, name } of published) {
@@ -317,8 +320,9 @@ export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
     if (currentPosition < 0) {
       throw new Error(`vec host bridge export descriptor ${name} resolves to a function import`);
     }
-    const currentAllocation = ctx.mod.functions[currentPosition];
-    if (currentAllocation && currentAllocation !== allocation.func) {
+    const currentAllocation =
+      entry.desc.index < STABLE_FUNC_BASE ? ctx.mod.functions[currentPosition] : definedFuncAt(ctx, entry.desc.index);
+    if (currentAllocation !== allocation.func) {
       throw new Error(`vec host bridge export descriptor ${name} resolves to a different allocator function`);
     }
     entry.desc.index = numImportFuncs + position;
