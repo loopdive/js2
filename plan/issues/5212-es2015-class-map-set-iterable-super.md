@@ -1,10 +1,11 @@
 ---
 id: 5212
 title: "ES2015 standalone class Map/Set subclasses preserve iterable constructor state"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-30
 updated: 2026-08-30
+completed: 2026-08-30
 priority: high
 horizon: s
 feasibility: medium
@@ -12,6 +13,7 @@ task_type: conformance
 area: codegen
 es_edition: ES2015
 goal: standalone-mode
+pr: 5286
 assignee: ttraenkler/codex-luna-class-collections
 requested_by: codex/es2015-closeout
 loc-budget-allow:
@@ -206,9 +208,26 @@ compiler/test process was involved:
 - Verdict-oracle bump check passed; no oracle bump was required.
 - Final focused rerun passed: 1 file / 6 tests.
 
-The complete Git hooks were not invoked: this checkpoint must not create a
-commit, and the pre-push hook contains a conformance synchronizer that may
-auto-commit as well as parallel typecheck/lint and a push-ref stdin protocol.
-Their non-mutating gates were run individually above. The all-issues coverage
-audit remains red only for the repository's pre-existing missing references;
-#5212 has its permanent test reference and is not among those failures.
+The complete commit hook was subsequently invoked without a skip and passed:
+lint-staged formatting/lint, LOC and function budgets, the changed-root focused
+suite (6/6), and the oracle ratchet all completed before implementation commit
+`08ca50d78fffc359204afe57e7ead75ec3ff58b6` was created. The complete pre-push
+hook was also invoked without a skip and passed typecheck plus lint, repository
+Prettier, oracle and coercion ratchets, numeric-local parity (18/18), conformance
+synchronization, and committed/working-tree issue integrity. The published
+`ttraenkler/js2` ref was read back and matched that exact implementation head.
+
+The all-issues coverage audit remains red only for the repository's pre-existing
+missing references; #5212 has its permanent test reference and is not among
+those failures.
+
+## Publication handoff (2026-08-30)
+
+The single completed-fix PR is
+<https://github.com/loopdive/js2/pull/5286>. It is a non-draft PR from
+`ttraenkler:codex/5212-class-collection-super` to `loopdive/js2:main`; no GitHub
+issue was created. Its description uses the repository's exact Description and
+CLA sections and links this markdown issue. A dedicated Luna Max PR shepherd
+owns exact-head, body, readiness, conflict, review, CI, and queue verification.
+Any later documentation-only handoff commit does not change the validated code
+at implementation head `08ca50d78fffc359204afe57e7ead75ec3ff58b6`.
