@@ -50,13 +50,19 @@ import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-
 import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { ensureImportMetaObject } from "./import-meta.js";
-import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
+import {
+  canStructurallyProjectRef,
+  coerceType as coerceTypeImpl,
+  emitAssertedStructExtension,
+  pushDefaultValue,
+} from "./type-coercion.js";
+import { assertedStructFactoryExpression } from "./generic-struct-factory.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
 
-import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid } from "./expressions/helpers.js";
+import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid, widenLocalToNullable } from "./expressions/helpers.js";
 
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
@@ -904,6 +910,11 @@ function compileExpressionBody(
   }
   if (result !== null) {
     if (expectedType && result.kind !== expectedType.kind) {
+      const nullableBindingTarget = nullableErasedLocalBindingProjectionTarget(ctx, fctx, expr, result, expectedType);
+      if (nullableBindingTarget) {
+        coerceType(ctx, fctx, result, nullableBindingTarget);
+        return nullableBindingTarget;
+      }
       if (result.kind === "i32" && isAnyValue(expectedType, ctx)) {
         const tsType = ctx.checker.getTypeAtLocation(expr);
         if (tsType.flags & ts.TypeFlags.BooleanLike) {
@@ -973,6 +984,71 @@ function compileExpressionBody(
   }
   pushDefaultValue(fctx, wasmType, ctx);
   return wasmType;
+}
+
+/**
+ * #1058: TypeScript overloads can promise a non-null structural return while
+ * their body-bearing implementation legitimately returns `undefined` (the
+ * parser's `parseOptionalToken` is exactly this shape). The physical call ABI
+ * is nullable, but a variable's checker-derived slot and assignment hint are
+ * non-null refs of the overload's more-specific struct. Asserting that hint
+ * before the source-level truthiness check turns ordinary `undefined` into a
+ * Wasm null-dereference.
+ *
+ * Local type annotations are erased at runtime. For a direct local initializer
+ * or simple assignment, preserve the physical nullability while structurally
+ * projecting to the expected layout, and widen that local in lockstep. Other
+ * boundaries (parameters, returns, fields, captured cells) retain their normal
+ * ref_null -> ref assertion.
+ */
+function nullableErasedLocalBindingProjectionTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+  result: ValType,
+  expectedType: ValType,
+): ValType | undefined {
+  if (result.kind !== "ref_null" || expectedType.kind !== "ref") return undefined;
+
+  let valueExpr = expr;
+  let parent = valueExpr.parent;
+  while (
+    parent &&
+    (ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)) &&
+    parent.expression === valueExpr
+  ) {
+    valueExpr = parent;
+    parent = parent.parent;
+  }
+
+  let binding: ts.Identifier | undefined;
+  if (parent && ts.isVariableDeclaration(parent) && parent.initializer === valueExpr && ts.isIdentifier(parent.name)) {
+    binding = parent.name;
+  } else if (
+    parent &&
+    ts.isBinaryExpression(parent) &&
+    parent.right === valueExpr &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    let left = parent.left;
+    while (ts.isParenthesizedExpression(left)) left = left.expression;
+    if (ts.isIdentifier(left)) binding = left;
+  }
+  if (!binding || fctx.boxedCaptures?.has(binding.text)) return undefined;
+
+  const localIdx = fctx.localMap.get(binding.text);
+  if (localIdx === undefined || localIdx < fctx.params.length) return undefined;
+  const localType = getLocalType(fctx, localIdx);
+  if (localType?.kind !== "ref" || localType.typeIdx !== expectedType.typeIdx) return undefined;
+
+  const nullableExpected: ValType = { kind: "ref_null", typeIdx: expectedType.typeIdx };
+  if (!canStructurallyProjectRef(ctx, result, nullableExpected)) return undefined;
+  widenLocalToNullable(fctx, localIdx);
+  return nullableExpected;
 }
 
 /** Coerce a value on the stack from one type to another */
@@ -1404,6 +1480,23 @@ function compileExpressionInner(
   // silently compiled to 0 rather than erroring. IR unwraps all three (#3583),
   // so only bodies the IR selector rejects were affected.
   if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isSatisfiesExpression(expr)) {
+    // #1058: a declaration-proven BaseNodeFactory assertion denotes a fresh
+    // structural refinement, not a nominal downcast of the same object. Compile
+    // the property call to its natural Node carrier, then copy that prefix into
+    // the asserted destination before the initializer is stored. The detector
+    // fails closed for all other assertions, which remain type-erased below.
+    if (expectedType && assertedStructFactoryExpression(ctx, expr)) {
+      const sourceType = compileExpressionInner(ctx, fctx, expr.expression);
+      if (
+        sourceType !== null &&
+        sourceType !== VOID_RESULT &&
+        (expectedType.kind === "ref" || expectedType.kind === "ref_null") &&
+        emitAssertedStructExtension(ctx, fctx, sourceType, expectedType)
+      ) {
+        return expectedType;
+      }
+      return sourceType;
+    }
     return compileExpressionInner(ctx, fctx, expr.expression, expectedType);
   }
 
