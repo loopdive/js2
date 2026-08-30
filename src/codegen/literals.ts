@@ -4,13 +4,8 @@
  *
  * Extracted from expressions.ts (issue #688, step 7).
  *
- * Functions in this file:
- *   - ensureComputedPropertyFields, compileObjectLiteral
- *   - resolveConstantExpression, resolvePropertyNameText
- *   - resolveWellKnownSymbol, getWellKnownSymbolId, ensureSymbolCounter, compileSymbolCall
- *   - resolveComputedKeyExpression, resolveAccessorPropName
- *   - compileWidenedEmptyObject, compileObjectLiteralForStruct
- *   - compileTupleLiteral, compileArrayLiteral, compileArrayConstructorCall
+ * Owns object/array/tuple/symbol literal registration and emission, including
+ * widened and closed-struct object carriers.
  */
 
 import ts from "typescript";
@@ -107,6 +102,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
+import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3028,7 +3024,7 @@ export function compileObjectLiteralForStruct(
   expr: ts.ObjectLiteralExpression,
   typeName: string,
 ): ValType | null {
-  const structTypeIdx = ctx.structMap.get(typeName);
+  const structTypeIdx = resolveObjectLiteralCarrier(ctx, expr, typeName);
   const fields = ctx.structFields.get(typeName);
   if (structTypeIdx === undefined || !fields) {
     reportError(ctx, expr, `Unknown struct type: ${typeName}`);
