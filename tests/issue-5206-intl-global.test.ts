@@ -83,13 +83,12 @@ describe("#5206 — the host `Intl` global", () => {
   });
 
   it("survives an ABSENT member through `?.` and `??` at init", async () => {
-    // `const { format, formatToParts } = Intl.DurationFormat?.prototype ??
-    // Object.create(null)` — top level in the bundle, and `DurationFormat` is
-    // absent on this host. A missing member must read as `undefined`, not
-    // throw, and must not resurrect the whole-namespace null.
+    // Model the bundle's optional `Intl.DurationFormat?.prototype` lookup
+    // with a deliberately nonexistent member. DurationFormat itself is no
+    // longer a stable absence probe now that newer hosts implement it.
     expect(
       await run(`
-        const df: any = (Intl as any).DurationFormat;
+        const df: any = (Intl as any).__js2_absent_intl_member__;
         const proto: any = df ? df.prototype : null;
         export function atInit(): string { return typeof df + "|" + String(proto === null); }
         export function test(): string {
