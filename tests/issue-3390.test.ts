@@ -16,6 +16,7 @@ interface Ex {
 }
 
 const COMBINATORS = ["all", "allSettled", "race", "any"] as const;
+const SETTLERS = ["resolve", "reject"] as const;
 
 /** Compile standalone; assert host-free; run `test()` which returns 2 iff a
  *  TypeError was thrown by the combinator `.call`. */
@@ -128,5 +129,18 @@ describe("#3390 slices 1–2 — combinator .call receiver admission", () => {
       undefined,
     );
     expect(globalPromiseImports).toContain("env.Promise_all");
+  });
+});
+
+describe("#3390 slice 3 — resolve/reject .call receiver admission", () => {
+  it("throws TypeError for every statically known non-constructor receiver", async () => {
+    for (const method of SETTLERS) {
+      expect(await throwsTypeError(`Promise.${method}.call(undefined, []);`)).toBe(2);
+      expect(await throwsTypeError(`Promise.${method}.call(null, []);`)).toBe(2);
+      expect(await throwsTypeError(`Promise.${method}.call(86, []);`)).toBe(2);
+      expect(await throwsTypeError(`Promise.${method}.call('string', []);`)).toBe(2);
+      expect(await throwsTypeError(`Promise.${method}.call(true, []);`)).toBe(2);
+      expect(await throwsTypeError(`Promise.${method}.call(Symbol(), []);`)).toBe(2);
+    }
   });
 });
