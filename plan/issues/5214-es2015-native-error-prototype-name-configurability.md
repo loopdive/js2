@@ -1,9 +1,10 @@
 ---
 id: 5214
 title: "ES2015 standalone: NativeError prototype name configurability (6 rows)"
-status: in-progress
+status: done
 created: 2026-08-30
 updated: 2026-08-30
+completed: 2026-08-30
 priority: high
 horizon: s
 feasibility: medium
@@ -14,6 +15,7 @@ area: codegen
 language_feature: native-errors
 es_edition: ES2015
 goal: standalone-mode
+pr: 5287
 assignee: ttraenkler/codex-es6-native-error-name
 related: [4444, 5156, 4248]
 ---
@@ -112,9 +114,9 @@ own-absence across `hasOwnProperty`, `Object.hasOwn`, gOPD, and
 `propertyIsEnumerable`, preserves the inherited `in` result, checks assignment
 revival, and includes unaffected Date-method and ordinary-expando controls.
 
-Validation is complete on tested commit
-`a62aacba5ccc154f6fc378235aaaeeb4a7204231` (the requested upstream base), with
-`TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, and one canonical worker:
+Validation is complete on the implementation tree based on upstream commit
+`a62aacba5ccc154f6fc378235aaaeeb4a7204231`, with `TEST262_WORKERS=1`,
+`COMPILER_POOL_SIZE=1`, and one canonical worker:
 
 ```text
 focused Vitest regression: 1 file, 1 test passed
@@ -134,9 +136,14 @@ authoritative host evidence.
 Proportionate static gates also pass: targeted Prettier, Biome lint, both
 TypeScript no-emit configurations, LOC and function budgets, oracle/coercion
 ratchets, stack balance, codegen fallback checks, and issue-index integrity.
-The compiler bundle was rebuilt before the final matrix. No commit, remote, or
-PR state has been changed; commit hooks and delivery remain with the parent
-agent after review authorization.
+The compiler bundle was rebuilt before the final matrix. The complete commit
+hook then passed without a skip, including lint-staged formatting/lint, budgets,
+the changed-root focused regression (1/1), and the oracle ratchet. The complete
+pre-push hook passed typecheck plus lint, repository Prettier, oracle/coercion
+ratchets, numeric-local parity (18/18), conformance synchronization, and issue
+integrity. Implementation commit
+`ceb7399ab603343a12c91b2563b7c6b52299f034` was published to the fork and read
+back at that exact SHA without rewriting history.
 
 Commands recorded for this checkpoint (all from the isolated worktree):
 
@@ -189,3 +196,11 @@ This task owns only the six NativeError prototype-`name` rows and their shared
 mutable-companion presence seam. It must not absorb #5156's remaining Symbol,
 Function, Error-stack, realm, or NewTarget clusters. No GitHub issue is to be
 created; this markdown file is the issue of record.
+
+The single completed-fix PR is
+<https://github.com/loopdive/js2/pull/5287>. It is a non-draft PR from
+`ttraenkler:codex/5214-native-error-prototype-name` to `loopdive/js2:main` with
+the exact repository Description/CLA format. A dedicated Luna Max PR shepherd
+owns exact-head, body, readiness, conflict, review, CI, and queue verification.
+Any later documentation-only handoff commit does not change the validated code
+at implementation head `ceb7399ab603343a12c91b2563b7c6b52299f034`.
