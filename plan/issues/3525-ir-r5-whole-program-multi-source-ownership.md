@@ -1591,6 +1591,373 @@ with the parallel Claude IR session. Any subsequent push invalidates approval
 and requires a fresh exact-SHA Sol review. A mergeable, all-green,
 exact-SHA-approved PR is ready; a real blocker keeps it draft.
 
+## M1A.4 implementation lock — anonymous-default alias matrix (2026-08-30)
+
+This Sol-authored continuation is grounded on the independently approved and
+queued M1A.3 head `b5ac306abe11bec01195416dec14e14cdbfbd1fa`
+(PR #5275) and protected `origin/main`
+`c243892c7f3a757bdecf6215626b08586ce72c58`. Develop it only on the separate
+stacked branch `codex/3525-m1a4-callable-alias-matrix`; never push or rewrite
+the queued parent. After #5275 lands, rebase or merge refreshed main into this
+branch under the normal signed workflow and repeat the exact-file collision,
+focused, ratchet, hook, and Sol-review evidence before publication.
+
+The parallel Claude lane owns the dirty #3521/#4617 checkout. Open PR #5218
+owns `src/codegen/index.ts`, `src/ir/from-ast.ts`, `src/ir/select.ts`, and its
+vector/type-planning surface; #5238/#5269 own #3523 files. This checkpoint may
+not edit those paths and introduces no second issue or alias resolver.
+
+### Current structural authority and exact missing root
+
+`buildIrProgramCallableBindingGraph(...)` already freezes source,
+`import-alias`, and `export-alias` records and resolves the complete checked
+fixture in `ALIAS_FILES`: renamed imports, an anonymous default export/default
+import, namespace property calls, a chained re-export, `export *`, and a local
+same-named shadow. The graph unit test proves exact target `IrUnitId`s and
+order independence, but the production callable route is tested only with
+named declarations.
+
+The remaining exclusion is not the alias graph. It is the legacy function-name
+projection before aggregate selection:
+
+- `planIrCompilationByIdentity(...)` records every unnamed declaration as
+  `unnamed`, even when the exact terminal is an anonymous
+  `export default function` whose inventory label is the direct compiler's
+  canonical `"default"`;
+- `planIrOverlayByIdentity(...)` and
+  `buildIrExactFunctionClaimIndex(...)` require
+  `declaration.name?.text === legacyName`;
+- `ownerIsEligible(...)`, callable preflight/currentness, and
+  `MultiPreparedProgramOwner.stageCallableComponents(...)` repeat the same
+  named-only predicate; and
+- preflight currently builds components from already-projected source plans,
+  so the missing default root disappears before the immutable attempted census
+  can prove its whole alias-connected population.
+
+The direct declaration compiler already registers and compiles an anonymous
+default function under `"default"`, and its body-routing seam also carries the
+exact declaration `IrUnitId`. Therefore M1A.4 is an authority transfer for one
+existing body, not new syntax support and not permission to treat arbitrary
+anonymous functions as top-level callables.
+
+### One exact declaration identity
+
+Add one frontend-neutral helper in
+`src/ir/top-level-function-identity.ts` that returns the compatibility name for
+an exact top-level body-bearing `FunctionDeclaration`:
+
+1. a named declaration returns its identifier text;
+2. an unnamed declaration returns `"default"` only when it has both `export`
+   and `default` modifiers and its parent is the exact `SourceFile`; and
+3. every other anonymous, ambient, nested, bodyless, copied, or malformed node
+   returns `undefined`.
+
+Use that helper everywhere this checkpoint crosses the body-skip compatibility
+projection: `src/ir/select-identity.ts`,
+`src/codegen/ir-overlay-identity.ts`,
+`src/codegen/ir-overlay-safety.ts`,
+`src/codegen/multi-prepared-callable-orchestration.ts`, and the callable
+component validation in `src/codegen/multi-prepared-program.ts`. Do not infer a
+default root from display text, export table contents, checker symbol names, or
+array position. A named declaration's behavior remains byte-for-byte the same.
+
+Anonymous-default admission is callable-component scoped. Extend the identity
+selector with one exact optional predicate supplied by
+`programCallableSelectionOptions(...)`; it may admit the default unit only when
+`hasMultiIrProgramCallableBoundary(...)` authenticates that unit in the frozen
+attempted census and the declaration helper returns `"default"`. With no
+census, on single-source/host/fast/WASI/disabled/dedicated lanes, or for an
+unanchored anonymous default, the existing `unnamed` outcome remains unchanged.
+Do not enable anonymous defaults globally in the ordinary per-source overlay.
+
+### Graph-first attempted census and fresh callable plans
+
+Break the current projection cycle without introducing a second graph:
+
+1. Derive preliminary components from the frozen callable graph's exact source
+   records and uses plus the identity inventory, not from
+   `functionClaimsByUnitId`. Source-local and cross-source edges both come from
+   the same graph. Authenticate source/declaration/unit/terminal/reverse joins,
+   require at least one cross-source edge and two sources, retain unanchored
+   units outside the component, and preserve terminal-inventory ordering.
+2. Publish the complete immutable attempted/component census before planning
+   any callable source. Existing dedicated-route planning still runs first;
+   if it owns any unit, retain M1A.3's global no-composition return and publish
+   no callable census.
+3. Re-plan only the component's sources after census publication through a
+   callable-specific cache refresh. Earlier exploratory plans used by the
+   dedicated-route probe are not authority and may not be reused. Sources
+   outside the attempted census keep their existing cached plan. No change to
+   `src/codegen/index.ts` is needed: its existing spread of
+   `programCallableSelectionOptions(...)` carries the new exact predicate.
+4. Require every graph member to appear in the refreshed plan's exact claim and
+   safe selection before aggregate preparation. Any missing default, named
+   sibling, signature, source, declaration, or call plan declines the whole
+   component while the complete attempted census remains visible and the later
+   ordinary overlay restores direct ownership for every member.
+
+The compatibility name `"default"` is permitted only after the exact UnitId
+and declaration checks above. Body skipping, receipts, currentness snapshots,
+Program-ABI roots, outcomes, and route audit continue to join by UnitId. A bare
+name set is the final direct-compiler projection, never aggregate ownership.
+
+### Alias publication and positive proof
+
+Promote the existing `ALIAS_FILES` graph fixture unchanged to the production
+standalone route. Its exact Prepared component is five units across three
+sources:
+
+- `a.ts`: `same` and the anonymous default function;
+- `b.ts`: its distinct `same` plus `invoke`; and
+- `entry.ts`: `entry`.
+
+The unused `a.ts` function `only` and every alias rooted at it remain outside
+the attempted/prepared terminal set. For the five selected roots, derive the
+expected alias denominator directly from the frozen graph: every non-source
+record whose `targetUnitId` is selected, in target-first source -> export ->
+import order. The opaque descriptor and committed Program ABI must contain
+exactly those binding IDs, alias kinds, sources, structural keys, targets, and
+canonical roots; no alias owns a locator or slot, and every alias resolves the
+same final function object/index as its canonical source root.
+
+With the direct-body poison covering `default`, `same`, `invoke`, and `entry`,
+the candidate must still compile, publish five terminal-IR outcomes in one
+component, leave no direct route-audit entry for those units, exclude `only`,
+and execute `entry(5) === 132`, equal to the cutover-disabled direct control.
+Reversing source insertion order must preserve graph records/uses, component
+ID, reservation order, alias IDs/order, runtime value, and canonical evidence.
+Binary equality remains observational rather than an acceptance requirement.
+
+### Fail-closed matrix and preserved boundaries
+
+Extend focused mutations so each of the following produces zero live alias,
+body, reservation, committed skip, telemetry, or terminal-outcome prefix:
+
+- attempted census drops/repeats the anonymous default or assigns it to a
+  foreign component;
+- the default declaration loses `export`, loses `default`, gains a name after
+  preflight, is replaced/copied, or changes any nested body node before final
+  publication;
+- a selected alias is missing, duplicated, points to `only`, crosses source or
+  kind, changes structural key/signature/canonical root, or owns a locator;
+- refreshed planning omits the default claim or returns a stale pre-census
+  plan; and
+- the direct body reports a skipped `"default"` name with the wrong/missing
+  UnitId.
+
+Reuse the existing census, declaration-currentness, descriptor, aggregate
+scope, and body-routing seams where they can prove these mutations
+non-vacuously. Add only a narrow named seam when no existing mutation can reach
+the production check; unknown seam values fail closed. Do not weaken the
+existing mutable/value-escaped/optional/dynamic/overloaded declines.
+
+Named-only M1A.3, two disjoint callable components, helper-bearing controls,
+and the dedicated-route no-composition control must remain exact. Host, fast,
+WASI, module-init-bearing, single-source, class/closure/function-value,
+async/generator, mutable, and unanchored/default-only programs publish no new
+attempted census and retain their current route/outcome counts. Do not compose
+with an existing Prepared owner, widen arbitrary function expressions, delete
+legacy alias copying, or change public export semantics in this slice.
+
+### Authorized surface and validation
+
+The authorized implementation surface is:
+
+- new `src/ir/top-level-function-identity.ts`;
+- `src/ir/select-identity.ts`;
+- `src/codegen/ir-overlay-identity.ts`;
+- `src/codegen/ir-overlay-safety.ts`;
+- `src/codegen/multi-prepared-callable-orchestration.ts`;
+- the callable-component validation only in
+  `src/codegen/multi-prepared-program.ts`; and
+- `tests/issue-3525-multi-prepared-callable-bindings.test.ts`.
+
+The plan file remains root-owned. Any need to edit `src/codegen/index.ts`,
+`src/ir/from-ast.ts`, `src/ir/select.ts`, Program-ABI transaction modules, or a
+new production path is a stop-and-amend condition for Sol, not implied scope.
+
+Run the focused #3525 callable-binding and prepared Program-ABI aggregate
+suites, M1A.3's route controls, #3214 imported HOF, #2138 multi-module overlay,
+and multi-file equivalence. Run TypeScript 7 and 5, Prettier/Biome,
+`check:ir-fallbacks`, issue integrity, IR layering/dialect/readiness, and the
+ordinary oracle/dead-export/coercion ratchets. Immediately before every commit,
+under a finite non-negative one-minute load strictly below
+`logical cores - 2`, run both LOC and function regrowth ratchets. Let complete
+precommit and prepush hooks run without bypass; no baseline, LOC, function,
+binary-size, or hook exception is authorized.
+
+Luna Max may implement only this surface. Before the stacked PR leaves draft,
+a separate independent Sol must review the exact pushed SHA and return
+**APPROVE** for the graph-first denominator, anonymous-default scoping, exact
+alias closure, zero-prefix mutation matrix, parent ancestry, and non-overlap
+with the parallel Claude lane. Any later push invalidates approval. A mergeable,
+all-green, exact-SHA-approved PR is ready; a real dependency or failed gate
+keeps it draft.
+
+### M1A.4a landing correction — named-default alias census first
+
+Static implementation review found two prerequisites that the M1A.4 lock had
+incorrectly treated as already available. The structural propagation and
+selector paths still require a name-bearing declaration, while the aggregate
+lowerer dispatches a namespace property call before consulting its certified
+imported-call plan. A temporary rename of the checker-owned AST, a detached
+hybrid declaration whose children retain another parent, or a temporary
+rewrite of a property-access call is not an authorized identity adapter.
+Deleting a cached source plan and rebuilding it after census publication is
+also not safe: exploratory planning may already have appended public
+post-claim diagnostics, so cache invalidation does not roll back every
+observable effect.
+
+The pure propagation seam belongs to `src/ir/propagate.ts`, which the parallel
+#3521/Claude lane has reserved for its linked-parser pre-claim repair. The pure
+namespace-call seam belongs to `src/ir/from-ast.ts`, currently owned by open PR
+#5218. Do not edit either file, coordinate around its owner with a second
+implementation, or land any live-AST projection. Full anonymous-default and
+namespace-call M1A.4 remains required after those owners land and Sol refreshes
+the plan against their exact main ancestors.
+
+The immediately dispatchable checkpoint is therefore M1A.4a: transfer the
+attempted callable denominator from source-plan projection to the frozen
+binding graph for a completely named alias matrix. Use a new focused fixture,
+leaving `ALIAS_FILES` unchanged as the graph-only anonymous-default/namespace
+oracle:
+
+- `a.ts` exports `same`, unanchored `only`, a **named**
+  `export default function defaultFn`, and `same as renamed`;
+- `b.ts` default-imports `defaultFn`, imports `same as localSame` and
+  `renamed as reexported`, re-exports `renamed as chained`, performs
+  `export *`, declares its distinct `same`, and declares `invoke` whose body is
+  `localSame(value) + defaultFn(value) + reexported(value)`;
+- `entry.ts` imports `invoke as call`, `chained`, and `same as entrySame`, then
+  returns `call(value) + chained(value) + entrySame(value)`.
+
+For input `5`, both direct and candidate builds return exactly `127`. The exact
+Prepared component remains five units across three sources: `a.same`,
+`a.defaultFn`, `b.same`, `b.invoke`, and `entry.entry`. `a.only` remains outside
+the attempted, reserved, skipped, and outcome populations. Reverse source
+insertion order must preserve the graph records/uses, component ID, terminal
+order, alias descriptor order, route audit, and runtime value.
+
+Derive preliminary connected components only from the frozen graph's exact
+source records and call uses, authenticated against source/declaration/unit/
+terminal/reverse joins. Use the same graph for source-local and cross-source
+edges, require at least one cross-source edge and two sources, discard groups
+without an exact cross-source anchor, exclude unanchored units, and sort the
+surviving group by terminal-inventory order. Dedicated-route planning retains
+M1A.3 precedence: any existing Prepared route publishes no callable census and
+cannot compose with this checkpoint.
+
+Publish the immutable attempted/component census before accepting any callable
+candidate. Because every M1A.4a declaration is named, reuse the existing
+name-invariant cached overlay plans; do not delete or rebuild a source plan and
+do not add a post-census propagation/selector exception. Reconcile every graph
+member against its exact cached claim, safe selection, declaration, terminal,
+source, and call plan. A missing or unsafe member declines the whole original
+component; it never regroups the surviving subset or shrinks the attempted
+denominator.
+
+For the selected five roots, freeze the exact non-source alias records already
+represented by the graph, in target-first source -> export -> import order.
+Prove binding ID, kind, source, structural key, target UnitId, canonical root,
+and final function identity/index equality. No alias owns a locator or slot.
+This checkpoint covers the named default import, renamed import, chained
+re-export, `export *`, and same-name shadow. It deliberately contains no
+namespace property invocation; namespace records/uses remain asserted in the
+unchanged graph-only `ALIAS_FILES` tests until the pure lowerer seam lands.
+
+The direct-body poison names `defaultFn`, `same`, `invoke`, and `entry`. The
+candidate must publish one five-terminal component, five terminal IR outcomes,
+zero direct route-audit entries for those units, and no `only` evidence.
+Mutations must fail with zero live alias, body, reservation, committed-skip,
+telemetry, or terminal-outcome prefix when the graph-first census drops,
+duplicates, or foreign-assigns a selected unit; includes `only`; loses a
+source/cross-source edge; or when a selected alias is missing, duplicated,
+retargeted, changes kind/source/structural key/canonical root, or owns a
+locator. Preserve the named-only M1A.3, disjoint-component, helper-bearing,
+dedicated-route, host/fast/WASI/disabled/single-source, and unanchored controls.
+
+M1A.4a implementation ownership is reduced to:
+
+- this issue record;
+- `src/codegen/multi-prepared-callable-orchestration.ts`; and
+- `tests/issue-3525-multi-prepared-callable-bindings.test.ts`.
+
+Remove every current exploratory change from
+`src/ir/top-level-function-identity.ts`, `src/ir/select-identity.ts`,
+`src/codegen/ir-overlay-identity.ts`, `src/codegen/ir-overlay-safety.ts`, and
+the callable validator in `src/codegen/multi-prepared-program.ts`. The new
+identity helper must not exist in the M1A.4a diff. No source-plan cache refresh,
+live/detached AST projection, selector widening, propagation widening, or
+namespace-call rewrite is part of this checkpoint.
+
+Run the focused callable-binding and prepared Program-ABI aggregate suites,
+M1A.3 route controls, #3214 imported HOF, #2138 multi-module overlay, and
+multi-file equivalence. Run TypeScript 7 and 5, Prettier/Biome,
+`check:ir-fallbacks`, issue integrity, IR layering/dialect/readiness, and the
+ordinary oracle/dead-export/coercion ratchets. Run LOC and function regrowth
+ratchets immediately before every commit under the strict finite,
+non-negative, one-minute load gate below `logical cores - 2`; keep every
+precommit and prepush hook enabled. The stacked PR remains draft until an
+independent Sol approves its exact pushed SHA; any later push invalidates that
+approval.
+
+#### M1A.4a selector-compatible default-alias fixture amendment
+
+The first focused run established that the current selector rejects the
+modifier form `export default function defaultFn` as `non-export-modifier`
+before the graph-first callable census can consume its cached claim. Do not
+widen the selector for this checkpoint. Express the same named default binding
+through the already-supported declaration-plus-alias form in `a.ts`:
+
+```ts
+function defaultFn(value: number): number { return value + 2; }
+export { defaultFn as default };
+```
+
+Keep every other fixture edge and oracle unchanged. The default import in
+`b.ts` must still resolve through an exact non-source export/import alias chain
+to the `a.defaultFn` source record, and the five-unit component, runtime value
+`127`, alias order, reverse-source stability, zero-prefix mutations, and
+exclusion of `a.only` remain mandatory. This syntax adjustment is not
+permission for selector/propagation changes, AST projection, cache rebuild, or
+additional production-file ownership.
+
+#### M1A.4a Sol review correction — two-way call evidence and mutation boundary
+
+The first independent Sol review found two real completeness gaps. A source
+record may enter the graph-first member set only while its exact declaration
+still has a body; reassert that fact during preflight and final currentness so a
+bodyless/removed body cannot contaminate the attempted denominator. Reconcile
+call evidence in both directions before preparation: every selected graph-local
+use must appear in its owner's exact cached `localCallees`, and every selected
+cross-source use must have an `importedCalls` row at the identical call node
+with the same owner and target unit and the same graph binding/canonical join.
+The existing plan-to-graph scan remains necessary and is not a substitute.
+
+Add non-vacuous zero-prefix mutations for removing a staged body, hiding one
+selected local call plan, hiding one selected imported call plan, and adding
+the exact unanchored `a.only` unit to the public attempted projection. Preserve
+the existing drop, foreign, source-local-neighbor under-coverage, declaration
+subtree, publication, and stale-scope mutations. Reverse-source validation must
+compare the exact ordered reservation/unit/component projections, not Sets.
+For each published alias, prove the final index and allocator object equal the
+canonical root and that its locator lookup aliases the root rather than owning
+an independent locator.
+
+The broader raw graph/alias-corruption list in the preceding lock is corrected
+for this two-file landing surface. `IrProgramCallableBindingGraph` records and
+uses are already frozen by the checker-owned builder, while alias structural
+keys, locator sharing, and opaque descriptor lifecycle are constructed and
+validated inside `program-abi-module-callable-alias-planning.ts`. Injecting
+missing/duplicate/retarget/kind/source/key/canonical-root/locator corruption
+non-vacuously would require editing that Program-ABI owner (or the checker graph
+builder), which is not authorized here and is being exercised by the inherited
+`issue-3525-prepared-program-abi-aggregate` and Program-ABI alias invariant
+tests. Do not add a vacuous orchestration switch that rejects every replacement
+object by identity. Carry those low-level mutation additions to the next
+checkpoint that owns the alias planner. M1A.4a must instead keep those suites as
+controls and land only the body/call-plan/public-census mutations above.
+
 ## M2 implementation lock — single-contributor multi-source module init (2026-08-27)
 
 The first bounded multi-source module-init owner is a single-contributor lane.
