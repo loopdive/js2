@@ -138,6 +138,99 @@ export function isVecOrArrayRefType(ctx: CodegenContext, wt: ValType): boolean {
   return name.startsWith("__vec_") || name.startsWith("__arr_") || name === "__vec_base";
 }
 
+function sourceBelongsToCompiledProgram(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  return (
+    !sourceFile.isDeclarationFile &&
+    ctx.callableSourceFiles?.some(
+      (candidate) => candidate === sourceFile || candidate.fileName === sourceFile.fileName,
+    ) === true
+  );
+}
+
+function unwrapReceiverOriginExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * Prove that an interface-typed receiver was produced by compiled code.
+ *
+ * A source MethodSignature alone is not implementation provenance: a local
+ * interface can describe an ambient/host object. The Scanner case that needs
+ * the Wasm-closure path has a stronger fact: its receiver local is initialized
+ * by the compiled `createScanner()` implementation. Follow only that narrow
+ * initializer/callee chain; parameters and uninitialized/ambient declarations
+ * deliberately remain host boundaries. (TypeScript intentionally declares its
+ * singleton scanner with `var` to avoid a TDZ check, so declaration kind cannot
+ * be used as the provenance proof.)
+ */
+function receiverHasCompiledImplementationOrigin(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  seen = new Set<ts.Node>(),
+): boolean {
+  const current = unwrapReceiverOriginExpression(expression);
+  if (seen.has(current)) return false;
+  seen.add(current);
+
+  if (ts.isObjectLiteralExpression(current) || ts.isClassExpression(current)) return true;
+
+  if (ts.isIdentifier(current)) {
+    let symbol = ctx.checker.getSymbolAtLocation(current);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+      try {
+        symbol = ctx.checker.getAliasedSymbol(symbol);
+      } catch {
+        return false;
+      }
+    }
+    return (
+      symbol?.declarations?.some(
+        (declaration) =>
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer !== undefined &&
+          receiverHasCompiledImplementationOrigin(ctx, declaration.initializer, seen),
+      ) === true
+    );
+  }
+
+  if (ts.isCallExpression(current) || ts.isNewExpression(current)) {
+    let callee: ts.Expression = current.expression;
+    callee = unwrapReceiverOriginExpression(callee);
+    if (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee) || ts.isClassExpression(callee)) return true;
+    const symbolNode = ts.isPropertyAccessExpression(callee) ? callee.name : callee;
+    let symbol = ctx.checker.getSymbolAtLocation(symbolNode);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+      try {
+        symbol = ctx.checker.getAliasedSymbol(symbol);
+      } catch {
+        return false;
+      }
+    }
+    return (
+      symbol?.declarations?.some((declaration) => {
+        if (!sourceBelongsToCompiledProgram(ctx, declaration.getSourceFile())) return false;
+        if (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) {
+          return declaration.body !== undefined;
+        }
+        if (ts.isVariableDeclaration(declaration)) return declaration.initializer !== undefined;
+        if (ts.isClassDeclaration(declaration)) return true;
+        return false;
+      }) === true
+    );
+  }
+
+  return false;
+}
+
 /** Check if an arrow/function expression is used as a callback argument to a call
  *  that targets a HOST import (not a user-defined function). User-defined functions
  *  should receive closures via the GC struct path, not the __make_callback host path. */
@@ -219,6 +312,27 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
       }
       try {
         const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+        // A method declared by one of the source files being compiled is an
+        // in-module callable boundary even when its receiver is described by
+        // an interface rather than a class. TypeScript's Scanner is the
+        // production witness: `scanner.tryScan(() => ...)` resolves through a
+        // source `Scanner.tryScan<T>` signature and the object-literal method
+        // invokes the callback as a Wasm closure. Sending that inline arrow
+        // through `__make_callback` creates a host JS function; the compiled
+        // generic dispatcher then guard-casts it to the closure wrapper root
+        // and dereferences null.
+        //
+        // Keep ambient/library methods on the host path. Requiring the method
+        // declaration itself to belong to `callableSourceFiles` also avoids
+        // reclassifying an imported host API merely because its receiver has a
+        // callable-looking structural type.
+        const methodSymbol = ctx.checker.getSymbolAtLocation(propAccess.name) ?? receiverType.getProperty(methodName);
+        const isCompiledSourceMethod = methodSymbol?.declarations?.some((declaration) => {
+          const sourceFile = declaration.getSourceFile();
+          return sourceBelongsToCompiledProgram(ctx, sourceFile);
+        });
+        if (isCompiledSourceMethod && receiverHasCompiledImplementationOrigin(ctx, propAccess.expression)) return false;
+
         // Search the receiver type's symbol chain for a class name that
         // matches a user-defined method `${ClassName}_${methodName}`. We
         // check both the receiver's own symbol (instance methods) and the
