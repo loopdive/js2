@@ -1,11 +1,10 @@
 {
   "id": "3520",
-  "assignee": "ttraenkler/codex-ir-lead",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
-  "branch": "codex/3520-c36-vec-export-provenance-current",
-  "claimed_at": "2026-08-22T05:01:08Z",
-  "updated_at": "2026-08-30T00:02:25Z",
-  "write_id": "3266-g4rzxbye",
-  "released_at": "2026-08-30T00:02:25Z"
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/3520-c36-vec-export-provenance-fail-closed",
+  "claimed_at": "2026-08-30T06:53:13Z",
+  "updated_at": "2026-08-30T06:53:13Z",
+  "write_id": "74605-8rwa59ud"
 }
