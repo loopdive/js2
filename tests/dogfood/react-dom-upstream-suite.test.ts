@@ -15,6 +15,8 @@ import { loadReactDomUpstreamSuitePin, setupReactDomImplementation } from "./set
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
 import {
+  DEFAULT_PROJECT_BATCH_CHARS,
+  DEFAULT_PROJECT_BATCH_TESTS,
   createNativeRequire,
   buildProjectFiles,
   buildServerProjectFiles,
@@ -185,6 +187,28 @@ describe("react-dom upstream suite", () => {
       ["b.js", ["b.js-0"]],
     ]);
     expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
+  it("keeps default linked-root adapters below the measured watchdog-safe size", () => {
+    const make = (index: number) => ({
+      file: "large.js",
+      id: `large-${index}`,
+      prelude: "p".repeat(210_000),
+      body: "",
+    });
+    const batches = partitionProjectTests([make(0), make(1)]);
+
+    expect(DEFAULT_PROJECT_BATCH_CHARS).toBe(400_000);
+    expect(batches.map(({ tests }) => tests.map(({ id }) => id))).toEqual([["large-0"], ["large-1"]]);
+
+    const many = Array.from({ length: 33 }, (_, index) => ({
+      file: "many.js",
+      id: `many-${index}`,
+      prelude: "",
+      body: "",
+    }));
+    expect(DEFAULT_PROJECT_BATCH_TESTS).toBe(32);
+    expect(partitionProjectTests(many).map(({ tests }) => tests.length)).toEqual([32, 1]);
   });
 
   it("keeps the project compile pool bounded and deterministic", () => {

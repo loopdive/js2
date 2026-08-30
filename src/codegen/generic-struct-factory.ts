@@ -29,6 +29,7 @@ export interface StructFactoryExpression {
 type FactoryMemoEntry = GenericStructFactoryDeclaration | null | "visiting";
 
 const factoryMemo = new WeakMap<CodegenContext, WeakMap<ts.FunctionDeclaration, FactoryMemoEntry>>();
+const identityReturnParamMemo = new WeakMap<CodegenContext, WeakMap<ts.FunctionDeclaration, number | null>>();
 
 function eraseReadonlyView(type: ts.Type): ts.Type {
   return readonlyErasureMappedAliasTarget(type) ?? type;
@@ -371,6 +372,156 @@ export function genericStructFactoryCall(
   }
 
   return { declaration, sourceConstraint: factory.sourceConstraint, target };
+}
+
+/**
+ * Parameter index for a direct generic identity result (`value: T` -> `T`).
+ *
+ * Some identity-preserving structural helpers deliberately use an externref
+ * implementation ABI so one body can carry every concrete object layout.
+ * Their call sites still know the instantiated input carrier. Recovery is
+ * admitted only when every outer value-return names that exact parameter and
+ * its binding is never replaced (writes through its properties are harmless).
+ * This narrow value-flow fact lets identifier-call lowering recover the
+ * carrier after the opaque call instead of immediately casting the result to
+ * an unrelated nominal sibling.
+ */
+export function genericIdentityReturnParamIndex(ctx: CodegenContext, call: ts.CallExpression): number | undefined {
+  const declaration = functionDeclarationForCall(ctx, call);
+  if (!declaration?.typeParameters?.length) return undefined;
+
+  let memo = identityReturnParamMemo.get(ctx);
+  if (!memo) {
+    memo = new WeakMap();
+    identityReturnParamMemo.set(ctx, memo);
+  }
+  const cached = memo.get(declaration);
+  if (cached !== undefined) return cached === null ? undefined : cached;
+
+  const signature = ctx.checker.getSignatureFromDeclaration(declaration);
+  if (!signature || !declaration.body) {
+    memo.set(declaration, null);
+    return undefined;
+  }
+  const result = eraseReadonlyView(ctx.checker.getReturnTypeOfSignature(signature));
+  if (!ownedTypeParameter(ctx, declaration, result)) {
+    memo.set(declaration, null);
+    return undefined;
+  }
+
+  const candidateIndices: number[] = [];
+  declaration.parameters.forEach((parameter, index) => {
+    const parameterType = eraseReadonlyView(ctx.checker.getTypeAtLocation(parameter));
+    if (sameTypeParameter(parameterType, result)) candidateIndices.push(index);
+  });
+
+  const bindingContainsSymbol = (name: ts.BindingName, symbol: ts.Symbol): boolean => {
+    if (ts.isIdentifier(name)) return ctx.checker.getSymbolAtLocation(name) === symbol;
+    return name.elements.some(
+      (element) => !ts.isOmittedExpression(element) && bindingContainsSymbol(element.name, symbol),
+    );
+  };
+
+  const writeTargetContainsSymbol = (target: ts.Node, symbol: ts.Symbol): boolean => {
+    if (ts.isIdentifier(target)) return ctx.checker.getSymbolAtLocation(target) === symbol;
+    // Writing through the parameter is compatible with identity: `node.pos =`
+    // mutates the object but does not replace the parameter binding.
+    if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) return false;
+    if (
+      ts.isParenthesizedExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isTypeAssertionExpression(target)
+    ) {
+      return writeTargetContainsSymbol(target.expression, symbol);
+    }
+    if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return writeTargetContainsSymbol(target.left, symbol);
+    }
+
+    let found = false;
+    ts.forEachChild(target, (child) => {
+      if (!found && writeTargetContainsSymbol(child, symbol)) found = true;
+    });
+    return found;
+  };
+
+  const provesExactIdentityReturn = (parameterIndex: number): boolean => {
+    const parameter = declaration.parameters[parameterIndex];
+    if (!parameter || !ts.isIdentifier(parameter.name)) return false;
+    const parameterSymbol = ctx.checker.getSymbolAtLocation(parameter.name);
+    if (!parameterSymbol) return false;
+
+    let sawValueReturn = false;
+    let valid = true;
+    const visit = (node: ts.Node, checkReturns: boolean): void => {
+      if (!valid) return;
+
+      if (ts.isVariableDeclaration(node) && bindingContainsSymbol(node.name, parameterSymbol)) {
+        valid = false;
+        return;
+      }
+      if (
+        (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) &&
+        node.name &&
+        ctx.checker.getSymbolAtLocation(node.name) === parameterSymbol
+      ) {
+        valid = false;
+        return;
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+        writeTargetContainsSymbol(node.left, parameterSymbol)
+      ) {
+        valid = false;
+        return;
+      }
+      if (
+        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+        writeTargetContainsSymbol(node.operand, parameterSymbol)
+      ) {
+        valid = false;
+        return;
+      }
+      if (
+        (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+        !ts.isVariableDeclarationList(node.initializer) &&
+        writeTargetContainsSymbol(node.initializer, parameterSymbol)
+      ) {
+        valid = false;
+        return;
+      }
+      if (ts.isReturnStatement(node)) {
+        if (checkReturns) {
+          sawValueReturn = true;
+          const returned = node.expression ? unwrapExpression(node.expression) : undefined;
+          if (
+            !returned ||
+            !ts.isIdentifier(returned) ||
+            ctx.checker.getSymbolAtLocation(returned) !== parameterSymbol
+          ) {
+            valid = false;
+          }
+        } else if (node.expression) {
+          visit(node.expression, false);
+        }
+        return;
+      }
+
+      const nestedScope = ts.isFunctionLike(node) || ts.isClassLike(node);
+      ts.forEachChild(node, (child) => visit(child, nestedScope ? false : checkReturns));
+    };
+
+    visit(declaration.body!, true);
+    return valid && sawValueReturn;
+  };
+
+  const index = candidateIndices.find(provesExactIdentityReturn);
+  memo.set(declaration, index ?? null);
+  return index;
 }
 
 /**

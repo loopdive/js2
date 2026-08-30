@@ -4,12 +4,12 @@ title: "ES2015 IR: preserve dynamic default-parameter values and initialize only
 status: ready
 sprint: current
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-30
 priority: high
 horizon: xl
 feasibility: hard
 reasoning_effort: max
-model: gpt-5.6-sol
+model: gpt-5.6-terra
 task_type: bugfix
 area: ir, functions, dynamic-values
 language_feature: default-parameters
@@ -242,3 +242,152 @@ and reference-order contracts are prepared under #2669/#4275.
       decide the default branch.
 - [ ] The exact 1,552-file feature cohort has zero regressions in both lanes,
       and gains are reported by file rather than projected from tags.
+
+## Implementation checkpoint — 2026-08-30 (Codex GPT-5.6 Terra)
+
+### Fresh base and reproduction record
+
+- Fetched `upstream/main` immediately before worktree creation. This branch is
+  based on fresh upstream commit
+  `f0da2c801c3a982581cb36eea849896486ebefbf`
+  (`chore(test262): FORCED baseline refresh by github-actions[bot] —
+  34936/48232 pass [skip ci]`, 2026-08-30T11:38:15Z).
+- Reconstructed the exact eight A0 relative paths and re-hashed their sorted,
+  newline-terminated list: `5f1b3ef8b18f904ef1a610038dbcf8d9b328983bd2100365e08fdc53e13cf1f6`.
+  This matches the recorded A0 population. The provisioned worktree copies
+  Test262 contents without its `.git` directory, so `git -C test262` resolves
+  the parent repository and is **not** Test262 provenance; the path hash is the
+  valid local population check here.
+- Started the exact eight-path GC/host run at 2026-08-30 13:48 CEST with
+  `COMPILER_POOL_SIZE=1`. A global compiler-worker cap was imposed while Vitest
+  was starting, so the run was interrupted cleanly with Ctrl-C. It produced no
+  durable shard-completion manifest or report; the partial JSONL at
+  `benchmarks/results/test262-results-20260830-134842.jsonl` is diagnostic-only.
+  **It establishes no pass/fail rate, no assertion result, and no before/after
+  claim.** No standalone run was started. Reproduction must restart from the
+  exact eight paths in each lane only after the shared worker cap is released.
+- A second exact eight-path GC/host attempt began at 13:58 CEST after a release
+  audit, again with `COMPILER_POOL_SIZE=1`, the exact-path manifest, and
+  `TEST262_PUBLISH_HISTORY=0`. It reached Vitest but was cleanly interrupted
+  with Ctrl-C at the next global-cap enforcement, before a shard completion
+  manifest or report. Its partial JSONL is
+  `benchmarks/results/test262-results-20260830-135859.jsonl`; it is likewise
+  diagnostic-only and establishes **no** verdict, pass rate, or comparison.
+  The initial `pnpm run test:262` wrapper attempt failed earlier during its
+  non-interactive dependency metadata check, before Vitest or any compiler
+  worker started; the direct repository runner was the only actual A0 test
+  process.
+
+### Static A0 checkpoint plan
+
+1. Keep the generic default-parameter rejection in place while mapping each A0
+   function form to its real prepared path: top-level declaration, lifted
+   function/arrow expression, object method, and class method. Do not infer
+   support from one form to another.
+2. Introduce an admission plan only if every admitted initialized identifier
+   parameter has a canonical dynamic incoming ABI, a callee-owned mutable slot,
+   a prepared exact-undefined predicate, and a canonical-undefined padding
+   rule for every direct caller. The plan must be frozen before selection and
+   consumed by selection, signature construction, call lowering, and
+   from-AST lowering.
+3. Lower defaults at callee entry in left-to-right source order: seed each
+   parameter slot from its incoming dynamic carrier, branch only on JavaScript
+   `undefined`, evaluate the initializer in the callee, box its result back to
+   the canonical carrier, and make later defaults/body reads use that slot.
+   The supplied-value arm must be a carrier-preserving move.
+4. Fail closed before claim for generators, rest/optional/binding-pattern
+   parameters, default expressions needing current/later parameter TDZ,
+   `arguments`, unresolved/direct-external callers, unavailable providers, and
+   any form that cannot prove a zero-host-import standalone ABI.
+5. After the cap is released, run the eight A0 paths through one worker in GC
+   and standalone, then add focused tests for supplied
+   `false`, `""`, `NaN`, `0`, `null`, and object identity; omitted and explicit
+   `undefined`; exactly-once/left-to-right initialization; legacy-body
+   exclusion; and standalone import absence. Expand only after those results
+   are durable and repeatable.
+
+### Current static boundary
+
+Current main still rejects initialized identifier parameters in both
+`src/ir/select.ts` and `src/ir/from-ast.ts`, which is an honest fail-closed
+boundary. The lifted-closure lowering contains a separate numeric-`f64`
+default-sentinel path; it cannot satisfy this issue's dynamic-carrier contract
+for falsy values, `NaN`, `null`, or object identity and must not be reused as
+A0 by implication. No `src/` or test source has been edited, no claim gate has
+been loosened, and no result from the interrupted run is being counted.
+
+### A0 admission decision — blocked by shared ABI work
+
+**Do not admit A0 on this base.** Static inspection confirms that a safe A0
+implementation is not a selector/from-AST-local change and cannot be made by
+repurposing the existing closure-default path:
+
+1. The only lifted-closure default implementation accepts annotated numeric
+   `f64` parameters, sends omitted/explicit-`undefined` arguments through a
+   caller-side signalling-NaN sentinel, and lowers the initializer before an
+   IR `select`. That evaluates a side-effecting initializer eagerly. It is
+   therefore incompatible with the required callee-only, exactly-once branch.
+   The untyped arrow/function-expression/object-method A0 sources are rejected
+   even earlier because the closure selector and lowerer require parameter and
+   return annotations.
+2. Direct IR calls require exact formal arity
+   (`expandedArgExprs.length === calleeSig.params.length`), while closure calls
+   only implement the numeric sentinel convention. Neither route has a shared
+   canonical-`undefined` padding plan. An explicit `undefined` cannot be made
+   equivalent to omission without that plan.
+3. A dynamic direct-call parameter cannot carry the A0 population today:
+   `boxConcreteToDynamic` supports strings, proven booleans, and numeric
+   values, but deliberately declines `null` and object/reference values. A
+   caller can thus neither preserve the supplied `null` nor preserve object
+   identity across a new dynamic ABI.
+4. `fromFunctionLike` creates a parameter slot only for a parameter that the
+   body reassigns. A defaulted-but-not-reassigned parameter needs a callee
+   parameter-environment slot before its initializer or body can read it.
+   The existing exact dynamic `undefined` tag test and structured `if` support
+   prove that one prologue primitive is available; they do not supply this
+   slot, its caller ABI, or source-order ownership.
+5. Top-level function declarations, lifted closures/object methods, and class
+   methods use separate signature and registration routes. In particular,
+   unannotated class-member parameters have no propagation entry, and the
+   top-level override map does not constitute a shared method/closure plan.
+   Opening only the declaration gate would create form-dependent claim or
+   post-claim-withdrawal behavior, contrary to A0's all-eight-form contract.
+6. The legacy prologue is not a safe substitute: it chooses scalar/ref
+   representation-specific tests (`__argc`, sNaN, `ref.is_null`, or the host
+   `__extern_is_undefined` import). It is not the canonical dynamic carrier
+   and cannot establish the standalone zero-host-import guarantee.
+
+These facts leave no path that both preserves supplied false/empty-string/
+`NaN`/zero/`null`/object identity and evaluates a dynamic initializer only in
+the callee. Keeping the generic rejection is therefore the correct A0 action
+on `f0da2c801c3a982581cb36eea849896486ebefbf`.
+
+### Smaller executable next slice (handoff)
+
+Implement **S0: a frozen, non-admitting `IrDefaultParameterPlan` contract**;
+it is deliberately a preparation slice, not a partial behavior claim. Its
+plan builder must be the sole authority used by both selection and from-AST
+for an ordinary identifier default list and must record, per parameter: source
+index/order; canonical incoming dynamic carrier; callee-owned slot
+representation; exact-undefined provider; initializer ownership; and every
+direct/closure/method caller route that can pad canonical `undefined`.
+
+S0 may emit only a structured unsupported reason until all routes are
+certified. Add focused unit tests that prove selector/from-AST agreement,
+reject generators/rest/optional/destructuring/TDZ/`arguments` shapes, and
+reject the A0 forms when any required route or standalone provider is absent.
+It must not loosen a production claim gate, add caller-side initializer
+evaluation, or use the numeric sentinel. The following implementation slice
+can then add dynamic transport for `null` and reference identity and certify
+each callable route before turning on one vertically complete source form.
+
+Validation remains paused under the shared compiler-worker cap. No compiler or
+test process is active for this worktree.
+
+### Tracker disposition
+
+This is a **docs-only handoff checkpoint**. The frontmatter intentionally
+remains `status: ready` (not `done`): no source fix was admitted, no Test262
+pass-rate claim was established, and S0 is the next executable prerequisite.
+The `updated: 2026-08-30` and `model: gpt-5.6-terra` metadata identify this
+checkpoint. No GitHub issue or pull request was created from this lane.
