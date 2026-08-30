@@ -138,6 +138,13 @@ export function installNativeHostErrorBoundary(nativeHostErrors) {
 // a separate lever from the validation-failure subdivision below, which exists
 // to bound #3775's blast radius rather than to keep a unit compilable at all.
 const MAX_BATCH_CHARS = 120_000;
+// Linked providers remove the 566 KB implementation floor from each client
+// adapter, but generated test bodies can still be super-linear in codegen and
+// binary emission. Two former ~870 KB entries exceeded the 300 s watchdog even
+// without a bundled retry; 400 KB keeps the largest warm-provider adapter well
+// below that boundary while preserving per-file lifecycle isolation.
+export const DEFAULT_PROJECT_BATCH_CHARS = 400_000;
+export const DEFAULT_PROJECT_BATCH_TESTS = 32;
 
 function decodeVlq(segment) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -655,7 +662,11 @@ export function buildServerProjectFiles({
  * caller records every batch, so a timeout or invalid batch remains visible
  * instead of shrinking the denominator.
  */
-export function partitionProjectTests(tests, maxChars = 800_000) {
+export function partitionProjectTests(
+  tests,
+  maxChars = DEFAULT_PROJECT_BATCH_CHARS,
+  maxTests = DEFAULT_PROJECT_BATCH_TESTS,
+) {
   const batches = [];
   const byFile = new Map();
   for (const test of tests) {
@@ -664,7 +675,7 @@ export function partitionProjectTests(tests, maxChars = 800_000) {
     byFile.set(test.file, fileTests);
   }
   for (const [file, fileTests] of byFile) {
-    for (const chunk of splitBySize(fileTests, maxChars)) batches.push({ file, tests: chunk });
+    for (const chunk of splitBySize(fileTests, maxChars, maxTests)) batches.push({ file, tests: chunk });
   }
   return batches;
 }
@@ -927,6 +938,7 @@ async function runServerHarness({
       compileMs,
       binaryBytes: result.binaryBytes ?? 0,
       imports: result.imports?.map((entry) => `${entry.module}.${entry.name}`) ?? [],
+      linkPlan: result.linkPlan ?? null,
       compileSuccess: result.success ?? false,
       validates,
       firstError,
@@ -1145,9 +1157,17 @@ async function runProjectHarness({
 }) {
   const configuredTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300_000;
-  const configuredBatchChars = Number(process.env.DOGFOOD_REACT_DOM_PROJECT_BATCH_CHARS ?? 800_000);
-  const batchChars = Number.isFinite(configuredBatchChars) && configuredBatchChars > 0 ? configuredBatchChars : 800_000;
-  const projectBatches = partitionProjectTests(selectedTests, batchChars);
+  const configuredBatchChars = Number(process.env.DOGFOOD_REACT_DOM_PROJECT_BATCH_CHARS ?? DEFAULT_PROJECT_BATCH_CHARS);
+  const batchChars =
+    Number.isFinite(configuredBatchChars) && configuredBatchChars > 0
+      ? configuredBatchChars
+      : DEFAULT_PROJECT_BATCH_CHARS;
+  const configuredBatchTests = Number(process.env.DOGFOOD_REACT_DOM_PROJECT_BATCH_TESTS ?? DEFAULT_PROJECT_BATCH_TESTS);
+  const batchTests =
+    Number.isFinite(configuredBatchTests) && configuredBatchTests > 0
+      ? Math.floor(configuredBatchTests)
+      : DEFAULT_PROJECT_BATCH_TESTS;
+  const projectBatches = partitionProjectTests(selectedTests, batchChars, batchTests);
   const nativeHostErrors = [];
   const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
   const batchReports = [];
@@ -1256,6 +1276,7 @@ async function runProjectHarness({
           compileMs: compile.durationMs ?? 0,
           binaryBytes: compile.binaryBytes ?? 0,
           imports: compile.imports ?? [],
+          linkPlan: compile.linkPlan ?? null,
           compileSuccess: compile.success === true,
           validates,
           firstError: compileError,
@@ -1366,13 +1387,13 @@ async function runProjectHarness({
   return report;
 }
 
-function splitBySize(tests, maxChars = MAX_BATCH_CHARS) {
+function splitBySize(tests, maxChars = MAX_BATCH_CHARS, maxTests = Number.POSITIVE_INFINITY) {
   const chunks = [];
   let current = [];
   let size = 0;
   for (const test of tests) {
     const cost = test.prelude.length + test.body.length + 200;
-    if (current.length > 0 && size + cost > maxChars) {
+    if (current.length > 0 && (size + cost > maxChars || current.length >= maxTests)) {
       chunks.push(current);
       current = [];
       size = 0;

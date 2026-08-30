@@ -1,6 +1,6 @@
 ---
 id: 4444
-title: "UMBRELLA: ES6 (ES2015) standalone edition close-out — 8,681/11,704 (74%) → 100%"
+title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out → 100%"
 status: in-progress
 sprint: current
 created: 2026-08-15
@@ -214,3 +214,61 @@ PR from `ttraenkler/js2` to `loopdive/js2`; only an incomplete or genuinely
 non-mergeable checkpoint may remain draft. A separate shepherd agent verifies
 the required PR body, mergeability, reviews, CI, exact tested head, and
 ready/queue state before landing.
+
+## 2026-08-30 current integrated-head census implementation plan
+
+The numeric title no longer repeats the stale 2026-08-28 snapshot. Historical
+measurements above remain useful dispatch evidence, but none is the acceptance
+numerator. The next headline will be written only from a complete maintained-
+runner census on one exact integrated upstream commit.
+
+At this checkpoint, freshly fetched `loopdive/js2` main is
+`01fb67624e2f645b7e92dd9f8e47478e3face9ba`. RegExp Slice A PR #5296 is merged
+there. TypedArray `set` Slice A PR #5300 is non-draft at exact tested head
+`a6bd6301007e37d289e9378a97891a44846e33f9` and is already in the upstream
+merge queue; the census must not start until that exact change lands and this
+worktree is fast-forwarded or merged to the resulting current main. The
+documentation-only ES2018 tracker PR #5304 does not affect the ES2015
+denominator. #5131's two fixed empty-spread rows are unclassified, and #5216's
+object-spread rows classify as ES2018, so neither may be added to the ES2015
+numerator.
+
+The selection authority is the frozen 11,704-path artifact
+`/private/tmp/js2-es2015-11704-pr5008.txt`, whose LF-normalized SHA-256 is
+`45de809c6bfce7371cee1d20e327758246b0524ecd75481a08b8c03344fced8a`.
+Every entry has a leading `test/`; removing only that prefix produces 11,704
+unique `test262/test`-relative paths with SHA-256
+`90d5e85a13e3721c8e53734e21c01ec894f736412048cf4d8b15ca7ecc47c2cd`.
+Before execution, regenerate that normalized file in this worktree's temporary
+area, require exact set equality and 11,704 existing files, and record the
+Test262 gitlink/checkout `b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+Execution uses the maintained `scripts/run-test262-vitest.sh` path, not a
+hand-written verdict approximation: `TEST262_TARGET=standalone`,
+`TEST262_PATH_FILTER_FILE=<normalized exact map>`, official scope only,
+`TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, `VITEST_MAX_FORKS=1`, and the
+pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`. Keep one compiler/test
+worker for this lane and at most two globally. Disable history publication for
+the scoped run. Preserve the timestamped JSONL, report, per-shard completion
+manifests, source commit, filter hashes, command, and elapsed time in this
+tracker before making any claim.
+
+Completeness is a hard gate, not an inference from Vitest's console summary.
+The final report must reconcile exactly 11,704 registered tests, 11,704 started
+callbacks, 11,704 settled callbacks, 11,704 physical canonical rows, and
+11,704 unique selected paths, with no duplicate, malformed, outside-filter, or
+missing row. The acceptance result is exactly **11,704 pass / 11,704 total, 0
+fail, 0 compile_error, 0 compile_timeout, 0 skip**, with every passing module
+host-import free. Any other result keeps this umbrella in progress.
+
+If non-pass rows remain, cluster only this fresh integrated-head artifact by
+stable error signature and provider boundary. Root first updates or allocates
+one repository-local `plan/issues/*.md` tracker per bounded cluster (new IDs
+only through `node scripts/claim-issue.mjs --allocate`), records its exact path
+set and implementation plan, and only then fans implementation to Luna Max
+agents in separate provisioned worktrees. Each completed fix gets one
+mergeable non-draft upstream PR from `ttraenkler/js2`; a genuinely incomplete
+or non-mergeable checkpoint alone may remain draft. The dedicated PR shepherd
+owns exact head/body/repository/readiness/check/conflict/queue verification.
+No GitHub issue is created.
