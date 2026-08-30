@@ -13,6 +13,7 @@ area: codegen
 es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
+pr: 5296
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/native-regex.ts
@@ -252,15 +253,22 @@ The existing focused controls also passed in one worker: `tests/issue-1525.test.
 `tests/issue-3481-step3-toprimitive-field-number-hint.test.ts`, and
 `tests/issue-3481-toprimitive-wrapper-unwrap.test.ts` — `5 files, 82 tests`.
 
-Publication handoff: the implementation checkpoint is the branch tip on
-`/private/tmp/js2-es2015-regexp-lastindex-slice-a-20260830`, branch
-`codex/5198-regexp-lastindex-slice-a`; this owner does not push or open a PR.
-Upstream/main advanced to `c882d1b110` (including merged #5290 at
-`4b715bada1`) while this dirty checkpoint was being validated. Root must
-transplant the implementation and issue/test evidence onto a clean current-main
-worktree, rerun the focused rows and controls there, then publish the single
-completed Slice A change upstream. Do not mark the umbrella issue done until
-Slices B-H close.
+Publication handoff: root replayed the planning and Luna implementation
+checkpoints onto exact upstream `main` `c882d1b110`, producing planning commit
+`a0f86cbaceda6e5e723f737cfc8447e88248394b` and implementation commit
+`44c610a1016b1c1e413a93f14237d774e4f6d245`. The clean integrated worktree
+repassed the focused matrix at `20/20`, the identity/coercion controls at
+`82/82`, standalone at `24/165 pass, 137/165 fail, 4/165 compile_error`, and
+host at `126/165 pass, 39/165 fail`; both 165-row sweeps had zero status drift
+from the Luna checkpoint. TS5/TS7, lint, Prettier, budgets, ratchets, numeric
+parity, issue integrity, and the normal pre-push hook were green.
+
+The exact checkpoint was pushed without force to
+`ttraenkler:codex/5198-regexp-lastindex-slice-a-final` and published as ready
+upstream PR <https://github.com/loopdive/js2/pull/5296>. No GitHub issue was
+created. The dedicated PR shepherd owns CI and merge-queue monitoring; do not
+push after the PR receives a non-null queue entry. The umbrella remains
+`in-progress` until Slices B-H close.
 
 The implementation owner must use a separately provisioned worktree, update
 this markdown issue with exact before/after evidence and remaining rows, push
