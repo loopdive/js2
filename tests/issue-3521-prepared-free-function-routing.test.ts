@@ -44,6 +44,21 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+async function compileWithPoisonedDirectFunctionBodies(
+  source: string,
+  names: string,
+  options: Parameters<typeof compile>[1],
+): Promise<CompileResult> {
+  const previous = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+  try {
+    process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = names;
+    return await compile(source, options);
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+    else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previous;
+  }
+}
+
 describe("#3521 prepare-before-emit free-function routing", () => {
   it.each([
     ["gc", "prepared-host-string-length.ts"],
@@ -290,9 +305,11 @@ describe("#3521 prepare-before-emit free-function routing", () => {
   });
 
   it("direct-emits a selector-unsupported free function once", async () => {
-    const result = await compile(`export function withDefault(value: number = 41): number { return value + 1; }`, {
+    const source = `export function withDefault(value: number = 41): number { return value + 1; }`;
+    const result = await compile(source, {
       fileName: "prepared-direct.ts",
       experimentalIR: true,
+      fast: true,
       trackIrOutcomes: true,
     });
 
@@ -304,6 +321,20 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
+
+    // A default parameter is intentionally outside the fast scalar proof. The
+    // poison control proves that this is a live direct route rather than a
+    // vacuous outcome assertion.
+    const poisoned = await compileWithPoisonedDirectFunctionBodies(source, "withDefault", {
+      fileName: "prepared-direct-poisoned.ts",
+      experimentalIR: true,
+      fast: true,
+      trackIrOutcomes: true,
+    });
+    expect(poisoned.success).toBe(false);
+    expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: withDefault",
+    );
   });
 
   it("preserves the existing fast-mode boolean compile-once population", async () => {
@@ -324,16 +355,12 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).flag!(0)).toBe(1);
   });
 
-  // (#3907) There is no longer a fast-mode numeric ABI drift to keep off the
-  // overlay. The drift WAS the #3907 bug: legacy fast mode grounded every
-  // `number` to i32 while IR's semantic `number` is f64, so the two signatures
-  // disagreed and the IR patch was refused. Fast mode now carries the same f64
-  // representation, the signatures match, and the IR body legitimately patches
-  // over the direct one. This test therefore pins the OPPOSITE outcome to the
-  // one it was written for — the old expectation was recording a consequence of
-  // an unsound representation, not a property worth preserving.
-  it("fast-mode numeric bodies reach the IR patch now that the ABI no longer drifts", async () => {
-    const result = await compile(`export function add(left: number, right: number): number { return left + right; }`, {
+  // #3907 gives `number` the same f64 ABI in both fast-mode front ends. This
+  // tests the narrower consequence: the exact scalar signature can now seal
+  // before a direct function body is emitted.
+  it("prepares fast-mode numeric bodies before direct emission once the ABI no longer drifts", async () => {
+    const source = `export function add(left: number, right: number): number { return left + right; }`;
+    const result = await compileWithPoisonedDirectFunctionBodies(source, "add", {
       fileName: "prepared-fast-number.ts",
       experimentalIR: true,
       fast: true,
@@ -341,28 +368,40 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     });
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("add");
+    expect(result.irFirstSkipped).toContain("add");
     expect(outcome(result, "add")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).add!(20, 22)).toBe(42);
     // The point of the fix: the same body is correct past 2^31, which the i32
     // ABI it used to be grounded to could not represent.
     expect((await instantiate(result)).add!(4_000_000_000, 4_000_000_000)).toBe(8_000_000_000);
+
+    const routeOff = await compileWithPoisonedDirectFunctionBodies(source, "add", {
+      fileName: "prepared-fast-number-route-off.ts",
+      experimentalIR: false,
+      fast: true,
+    });
+    expect(routeOff.success).toBe(false);
+    expect(routeOff.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: add",
+    );
   });
 
-  // (#3907) Same reversal as above, one call edge deeper: the callee no longer
-  // drifts, so neither it nor its boolean caller is held off the IR patch.
-  it("fast boolean callers with a numeric callee also reach the IR patch", async () => {
-    const result = await compile(
+  // The same scalar proof must close a mixed f64/i32 component before the
+  // direct loop; poisoning both bodies catches a hidden patch-after-direct.
+  it("prepares fast boolean callers with a numeric callee before direct emission", async () => {
+    const result = await compileWithPoisonedDirectFunctionBodies(
       `
       function numeric(value: number): number { return value + 1; }
       export function positive(value: boolean): boolean {
         return numeric(value ? 1 : 0) > 0;
       }
       `,
+      "numeric,positive",
       {
         fileName: "prepared-fast-mixed-component.ts",
         experimentalIR: true,
@@ -372,15 +411,19 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("numeric");
-    expect(result.irFirstSkipped ?? []).not.toContain("positive");
+    expect(result.irFirstSkipped).toContain("numeric");
+    expect(result.irFirstSkipped).toContain("positive");
     expect(outcome(result, "numeric")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect(outcome(result, "positive")).toMatchObject({
-      legacyBodyEmitted: true,
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).positive!(1)).toBe(1);
   });
