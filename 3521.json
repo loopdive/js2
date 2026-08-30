@@ -1,11 +1,10 @@
 {
   "id": "3521",
   "assignee": "ttraenkler/codex",
-  "requested_by": "noreply@anthropic.com",
-  "status": "released",
-  "branch": "codex/3521-r2-v2-validation-plan",
-  "claimed_at": "2026-08-27T19:32:33Z",
-  "updated_at": "2026-08-28T22:02:56Z",
-  "write_id": "23835-evuc0h4d",
-  "released_at": "2026-08-28T22:02:56Z"
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/3521-r2-continue",
+  "claimed_at": "2026-08-30T11:46:33Z",
+  "updated_at": "2026-08-30T11:46:33Z",
+  "write_id": "41982-d0u2qed5"
 }
