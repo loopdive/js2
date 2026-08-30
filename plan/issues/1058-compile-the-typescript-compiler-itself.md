@@ -518,74 +518,86 @@ does not claim it is resolved.
 ## Runtime parser handoff (2026-08-30)
 
 Branch: `codex/1058-typescript5-runtime`, synchronized to `origin/main` at
-`c914ccb19727c28b09d2cb7f132f6586a833960f`.
+`3e89b5f95318b45fd69c9cf8209da84a7a06351a`.
 
-The canonical consumer-driven TypeScript 5.9.3 parser graph still compiles and
-validates. The latest authoritative artifact is
-`/private/tmp/ts2wasm-typescript-parser-latest.wasm`: **82,028,926 bytes**, with
-284,224 ms worker time / 285,061 ms wall time and **3,492.6 MiB peak RSS**.
-Compilation succeeds and `WebAssembly.validate` returns true. Tier 3 remains
-open because none of the three runtime fingerprints has returned yet; the
-current shared frontier is TypeScript's generic base-node factory chain.
+The canonical consumer-driven TypeScript 5.9.3 scanner/parser graph now
+**compiles and validates**. The latest authoritative run produced an
+**83,543,849-byte** Wasm module from 30 input files / 34 program files and 4,284
+functions. It completed in 361,235 ms worker time / 362,442 ms wall time, used
+359,130 ms CPU, and peaked at **3,719.4 MiB RSS**, below the 4 GiB gate.
+`compileSuccess` and `WebAssembly.validate` are both true.
 
-### Focused fixes implemented in the working branch
+Tier 3 runtime equivalence remains open. All three real-source invocations now
+pass compilation, instantiation, constructor dispatch, literal materialization,
+and Wasm null-cast execution, then stop at the same later host-boundary error:
 
-- Module-scale measurement now walks shared type/instruction graphs as a DAG,
-  preventing repeated traversal and `Set` growth on the parser-sized module.
-- Native constructors erase an explicit TypeScript `this` pseudo-parameter
-  from source arity while still receiving the runtime receiver through the
-  dispatcher channel; focused `Identifier` and `SourceFile` constructor
-  factories exercise this ABI.
-- Exact generic identity returns (`T -> T`) preserve their externref carrier,
-  including the `finishNode<T extends Node>` shape.
-- Proven asserted structural extensions can default missing erased
-  `_...Brand` / `__...Brand` fields without weakening ordinary coercion.
-- Nullable generic call results are projected into widened local and assignment
-  targets, covering optional-token initialization and loop reassignment.
-- Dynamic `new` recognizes the exact lazy constructor-cache idiom
-  `new (C || (C = getter()))(...)` (and `??`) only for an existing
-  uninitialized construct-signature-only binding.
-- A narrow fresh generic-factory path now materializes admitted structural
-  extensions, with focused coverage for direct `Node -> Identifier`, chained
-  `Node -> Declaration -> NumericLiteral`, generic identity, asserted nested
-  identity, nullable results, and module-scale behavior.
+```text
+TypeError: Cannot access property on null or undefined
+```
 
-The focused generic base-node regression is not green yet. Direct Identifier
-and chained Declaration/NumericLiteral materialization work, but
-`createExpressionStatement` still reaches `node.expression = expression` with
-an unmaterialized base-node layout. Separately, an object-literal method whose
-result is a constructor/callable can currently drop that result and substitute
-null. Both defects meet in TypeScript's lazy `getNodeConstructor` / base-node
-factory path, so the branch does not claim runtime parser correctness yet.
+The probe currently has no Wasm offset or source-map location for that host
+exception. The required values are still:
 
-### Exact remaining validation
+- `builderStatePublic.ts = 13386537220945`
+- `corePublic.ts = 40098163538143`
+- `performanceCore.ts = 49645738923599`
 
-1. Make the fresh-factory layout proof admit the valid
-   `Node -> ExpressionStatement` extension without becoming a general
-   structural-coercion fallback, and preserve callable constructor results from
-   object-literal methods.
-2. Run every `tests/issue-1058-*.test.ts` regression and require all files and
-   tests to pass.
-3. Rerun the canonical source probe with consumer-driven barrels and require
-   all three runtime results: `builderStatePublic.ts=13386537220945`,
-   `corePublic.ts=40098163538143`, and
-   `performanceCore.ts=49645738923599`.
-4. Run `pnpm run dogfood:typescript-upstream-suite` (the strict 11-callback
-   suite), TypeScript 5 and TypeScript 7 typechecks, repository lint/Prettier,
-   `pnpm run check:ir-fallbacks`, and the oracle-ratchet gate.
+### Compiler fixes in this follow-up
 
-Until step 3 returns all three expected values, the valid 82 MB module is a
-compile/validation milestone, not a parser-pass claim.
+- Generic calls returning callable values (TypeScript's `memoize` family) keep
+  a callable closure carrier instead of freezing to the first apparent result.
+- Fresh generic node factories use the exact checker declaration and explicit
+  result type argument, recover a concrete binding destination during prepared
+  program replay, and remain on the legacy materializing frontend when the IR
+  overlay cannot preserve that proof.
+- `Node -> Declaration -> StringLiteral/NumericLiteral/BinaryExpression` now
+  materializes fresh structural extensions rather than performing a nominal
+  guard-cast that can only yield null.
+- Missing non-null reference fields are widened to nullable carriers across the
+  highest owning nominal ancestor and its complete descendant subtree. This
+  keeps mutable WasmGC prefixes exact for TypeScript's
+  `IterationStatement -> Do/While/For*Statement` hierarchy.
+- Interface layout stability now treats its set as an active recursion stack.
+  Legal diamonds may revisit an already-completed `Node` branch, while genuine
+  active cycles remain rejected. This preserves `StringLiteral`'s nominal
+  `LiteralExpression` identity across `parseLiteralLikeNode`.
+- Focused coverage includes cross-module memoizers, cached-getter freshness
+  rejection, prepared multi-module factories, concrete nullable `Symbol`
+  fields, sibling loop layouts, and the exact four-module literal/parser
+  diamond that previously trapped.
+
+### Artifact size note
+
+The 83.5 MB output is not a 100 KB hand-written parser translated directly.
+It contains the selected TypeScript compiler runtime graph: scanner, parser,
+node factories, utilities, diagnostics, module initialization, 4,284 compiled
+functions, WasmGC type/layout metadata, and generated property/call adapters.
+One erased generic memoized-closure dispatch alone renders to roughly 4.9
+million WAT characters. QuickJS's often-quoted parser size excludes much of
+that shared runtime and is compiled by a mature native optimizer; size work is
+a separate follow-up from this correctness-first compile milestone.
+
+### Exact remaining work
+
+1. Add a host-boundary diagnostic around `runCase` traversal to locate the
+   common null property read now reached by all three sources.
+2. Make all three invocations return the expected fingerprints above.
+3. Rerun every `tests/issue-1058-*.test.ts` regression, the strict 11-callback
+   upstream suite, TS5/TS7 typechecks, lint/Prettier, `check:ir-fallbacks`, and
+   the oracle ratchet before claiming runtime parser equivalence.
+
+This is a real-package compile/validation milestone, not a claim that the
+three AST fingerprints or the whole TypeScript unit suite pass yet.
 
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
 - [ ] Tier 2 (leaf modules: `core.ts`, `path.ts`) compiles cleanly
-- [ ] Tier 3 attempted — even a partial compile produces valuable error data
+- [x] Tier 3 attempted — even a partial compile produces valuable error data
 - [x] Consumer-driven source resolution narrows the parser graph with default
       resolution unchanged and focused static/dynamic-demand tests
 - [ ] ≥ 5 follow-up issues filed for concrete gap patterns
-- [ ] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
+- [x] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
 - [ ] **Stretch 1 (Tier 3):** compiled scanner+parser produces AST shape-equivalent to native ts for ≥ 3 real `.ts` files
 - [ ] **Stretch 2 (Tier 4):** compiled checker subset detects `1 + "str"` as a type error
 - [ ] **Moonshot (Tier 7):** js2wasm-compiled tsc can compile js2wasm's own source, and the second-stage output passes test262 at the same rate

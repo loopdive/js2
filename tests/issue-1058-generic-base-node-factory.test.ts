@@ -20,9 +20,73 @@ async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
 }
 
 describe("#1058 generic base-node factories", () => {
-  it("materializes TypeScript's multiply inherited ExpressionStatement from createBaseNode<T>", async () => {
+  it("dispatches a captured callable returned by a cross-module generic memoizer", async () => {
+    const result = await compileMulti(
+      {
+        "./core.ts": `
+          export function memoize<T>(callback: () => T): () => T {
+            let value: T | undefined;
+            return () => value || (value = callback());
+          }
+        `,
+        "./factory.ts": `
+          import { memoize } from "./core.js";
+
+          interface Rules { value: number; }
+
+          export function createFactory() {
+            const rules = memoize((): Rules => ({ value: 41 }));
+            function create(): number {
+              return rules().value + 1;
+            }
+            return { create };
+          }
+        `,
+        "./entry.ts": `
+          import { createFactory } from "./factory.js";
+          const factory = createFactory();
+          export function test(): number { return factory.create(); }
+        `,
+      },
+      "./entry.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(42);
+  });
+
+  it("does not materialize an arbitrary cached getter as a fresh generic factory", async () => {
     const result = await compile(
       `
+        interface Node { kind: number; }
+        interface DerivedNode extends Node { extra: number; }
+
+        const cached: DerivedNode = { kind: 7, extra: 9 };
+
+        function getCachedNode(): Node {
+          return cached;
+        }
+
+        function getAs<T extends Node>(): T {
+          return getCachedNode() as T;
+        }
+
+        export function test(): number {
+          const first = getAs<DerivedNode>();
+          const second = getAs<DerivedNode>();
+          return first === second ? 1 : 0;
+        }
+      `,
+      { fileName: "issue-1058-cached-generic-getter.ts", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(1);
+  });
+
+  it("keeps prepared multi-module generic node factories on the materializing frontend", async () => {
+    const result = await compileMulti(
+      {
+        "./entry.ts": `
         type Mutable<T> = { -readonly [P in keyof T]: T[P] };
 
         interface Node {
@@ -49,10 +113,14 @@ describe("#1058 generic base-node factories", () => {
           _expressionBrand: any;
         }
 
+        interface SymbolInfo {
+          id: number;
+        }
+
         interface Declaration extends Node {
           _declarationBrand: any;
-          symbol: unknown;
-          localSymbol?: unknown;
+          symbol: SymbolInfo;
+          localSymbol?: SymbolInfo;
         }
 
         interface Statement extends Node, JSDocContainer {
@@ -60,6 +128,18 @@ describe("#1058 generic base-node factories", () => {
         }
 
         interface ExpressionStatement extends Statement, FlowContainer {
+          readonly expression: Expression;
+        }
+
+        interface IterationStatement extends Statement {
+          readonly statement: Statement;
+        }
+
+        interface DoStatement extends IterationStatement, FlowContainer {
+          readonly expression: Expression;
+        }
+
+        interface WhileStatement extends IterationStatement, FlowContainer {
           readonly expression: Expression;
         }
 
@@ -131,7 +211,25 @@ describe("#1058 generic base-node factories", () => {
             return node;
           }
 
-          return { createExpressionStatement, createBinaryExpression };
+          function createDoStatement(statement: Statement, expression: Expression): DoStatement {
+            const node = createBaseNode<DoStatement>(229);
+            node.statement = statement;
+            node.expression = expression;
+            node.jsDoc = undefined;
+            node.flowNode = undefined;
+            return node;
+          }
+
+          function createWhileStatement(expression: Expression, statement: Statement): WhileStatement {
+            const node = createBaseNode<WhileStatement>(230);
+            node.expression = expression;
+            node.statement = statement;
+            node.jsDoc = undefined;
+            node.flowNode = undefined;
+            return node;
+          }
+
+          return { createExpressionStatement, createBinaryExpression, createDoStatement, createWhileStatement };
         }
 
         const factory = createNodeFactory(createBaseNodeFactory());
@@ -158,6 +256,8 @@ describe("#1058 generic base-node factories", () => {
           };
           const statement = factory.createExpressionStatement(expression);
           const binary = factory.createBinaryExpression(expression, operatorToken, expression);
+          const doStatement = factory.createDoStatement(statement, expression);
+          const whileStatement = factory.createWhileStatement(expression, statement);
           return statement.kind
             + statement.expression.kind
             + statement.transformFlags
@@ -165,13 +265,21 @@ describe("#1058 generic base-node factories", () => {
             + binary.left.kind
             + binary.operatorToken.kind
             + binary.right.kind
-            + binary.transformFlags;
+            + binary.transformFlags
+            + doStatement.kind
+            + doStatement.statement.kind
+            + doStatement.expression.kind
+            + whileStatement.kind
+            + whileStatement.statement.kind
+            + whileStatement.expression.kind;
         }
-      `,
+        `,
+      },
+      "./entry.ts",
       { fileName: "issue-1058-expression-statement-base-node.ts", skipSemanticDiagnostics: true },
     );
 
-    expect((await instantiate(result)).test()).toBe(770);
+    expect((await instantiate(result)).test()).toBe(1877);
   });
 
   it("materializes TypeScript's Node-constrained generic token factory as Token<TKind>", async () => {
@@ -528,5 +636,115 @@ describe("#1058 generic base-node factories", () => {
     );
 
     expect((await instantiate(result)).test()).toBe(517);
+  });
+
+  it("preserves a literal's nominal identity across a diamond interface return", async () => {
+    const result = await compileMulti(
+      {
+        "./types.ts": `
+          export type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+          export interface Node {
+            kind: number;
+            pos: number;
+            end: number;
+            flags: number;
+            modifierFlagsCache: number;
+            transformFlags: number;
+            parent: Node;
+          }
+          export interface SymbolInfo { id: number; }
+          export interface Declaration extends Node { symbol: SymbolInfo; localSymbol?: SymbolInfo; }
+          export interface MemberExpression extends Node { _memberBrand: any; }
+          export interface PrimaryExpression extends MemberExpression { _primaryBrand: any; }
+          export interface LiteralLikeNode extends Node {
+            text: string;
+            isUnterminated?: boolean;
+            hasExtendedUnicodeEscape?: boolean;
+          }
+          export interface LiteralExpression extends LiteralLikeNode, PrimaryExpression { _literalBrand: any; }
+          export interface StringLiteral extends LiteralExpression, Declaration { singleQuote?: boolean; }
+          export interface BaseNodeFactory { createBaseNode(kind: number): Node; }
+        `,
+        "./base.ts": `
+          import type { BaseNodeFactory, Mutable, Node } from "./types.js";
+
+          function RuntimeNode(this: Mutable<Node>, kind: number, pos: number, end: number): void {
+            this.kind = kind;
+            this.pos = pos;
+            this.end = end;
+            this.flags = 0;
+            this.modifierFlagsCache = 0;
+            this.transformFlags = 0;
+            this.parent = undefined!;
+          }
+
+          const objectAllocator = { getNodeConstructor: () => RuntimeNode as any };
+
+          export function createBaseNodeFactory(): BaseNodeFactory {
+            let NodeConstructor: new (kind: number, pos: number, end: number) => Node;
+            return { createBaseNode };
+
+            function createBaseNode(kind: number): Node {
+              return new (NodeConstructor || (NodeConstructor = objectAllocator.getNodeConstructor()))(kind, -1, -1);
+            }
+          }
+        `,
+        "./factory.ts": `
+          import type { BaseNodeFactory, Declaration, Mutable, Node, StringLiteral } from "./types.js";
+
+          export function createNodeFactory(baseFactory: BaseNodeFactory) {
+            function createBaseNode<T extends Node>(kind: T["kind"]) {
+              return baseFactory.createBaseNode(kind) as Mutable<T>;
+            }
+            function createBaseDeclaration<T extends Declaration>(kind: T["kind"]) {
+              const node = createBaseNode(kind);
+              node.symbol = undefined!;
+              node.localSymbol = undefined;
+              return node;
+            }
+            function createBaseStringLiteral(text: string, isSingleQuote?: boolean) {
+              const node = createBaseDeclaration<StringLiteral>(11);
+              node.text = text;
+              node.singleQuote = isSingleQuote;
+              return node;
+            }
+            function createStringLiteral(
+              text: string,
+              isSingleQuote?: boolean,
+              hasExtendedUnicodeEscape?: boolean,
+            ): StringLiteral {
+              const node = createBaseStringLiteral(text, isSingleQuote);
+              node.hasExtendedUnicodeEscape = hasExtendedUnicodeEscape;
+              if (hasExtendedUnicodeEscape) node.transformFlags |= 4;
+              return node;
+            }
+            return { createStringLiteral };
+          }
+        `,
+        "./parser.ts": `
+          import type { LiteralExpression, LiteralLikeNode } from "./types.js";
+          import { createBaseNodeFactory } from "./base.js";
+          import { createNodeFactory } from "./factory.js";
+
+          const factory = createNodeFactory(createBaseNodeFactory());
+          function parseLiteralLikeNode(): LiteralLikeNode {
+            const node = factory.createStringLiteral("5.9", undefined, false);
+            if (false) node.isUnterminated = true;
+            return node;
+          }
+          function parseLiteralNode(): LiteralExpression {
+            return parseLiteralLikeNode() as LiteralExpression;
+          }
+          export function test(): number {
+            const node = parseLiteralNode();
+            return node.text.length * 100 + node.kind;
+          }
+        `,
+      },
+      "./parser.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(311);
   });
 });

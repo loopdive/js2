@@ -3597,6 +3597,7 @@ function makeMultiIrSafeSelection(
           (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary)))) ||
       functionBodyHasUnsupportedImportUse(declaration, plan) ||
       functionBodyContainsNestedRuntimeDeclaration(declaration, plan) ||
+      functionTreeRequiresLegacyStructMaterialization(ctx, declaration) ||
       (declaration.typeParameters?.length ?? 0) > 0
     ) {
       blocked.add(unitId);
@@ -3622,6 +3623,31 @@ function makeMultiIrSafeSelection(
     classMembers: new Set<string>(),
     moduleInit: undefined,
   };
+}
+
+/**
+ * IR direct-call plans do not yet represent the result bridge required when a
+ * proven generic factory returns its constraint struct and the instantiated
+ * call site needs a fresh concrete extension. Detect that syntax before the
+ * prepared-program route can skip legacy bodies, and keep the selected owner
+ * on the direct frontend until IR carries the same materialization plan.
+ */
+function functionTreeRequiresLegacyStructMaterialization(ctx: CodegenContext, root: ts.Node): boolean {
+  let required = false;
+  const visit = (node: ts.Node): void => {
+    if (required) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer !== undefined &&
+      genericStructFactoryExpression(ctx, node.initializer) !== null
+    ) {
+      required = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return required;
 }
 
 function importedMissingArgNeedsUndefined(type: IrType): boolean {

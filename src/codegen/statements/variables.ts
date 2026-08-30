@@ -42,7 +42,8 @@ import {
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
 import { genericStructFactoryExpression } from "../generic-struct-factory.js";
-import { emitGuardedRefCast } from "../type-coercion.js";
+import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-type.js";
+import { canEmitAssertedStructExtension, emitAssertedStructExtension, emitGuardedRefCast } from "../type-coercion.js";
 import {
   inferNativeTaViewCallResultType,
   inferNativeTaViewConstructType,
@@ -1908,7 +1909,31 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const taViewType = inferTaViewType(ctx, decl.initializer);
     const taViewCallResultType = inferNativeTaViewCallResultType(ctx, decl.initializer);
     const genericFactory = decl.initializer ? genericStructFactoryExpression(ctx, decl.initializer) : null;
-    const genericFactoryTarget = genericFactory ? resolveWasmType(ctx, genericFactory.target) : null;
+    const genericFactorySource = genericFactory ? resolveWasmType(ctx, genericFactory.sourceConstraint) : null;
+    const genericFactorySignatureTarget = genericFactory ? resolveWasmType(ctx, genericFactory.target) : null;
+    const genericFactoryBindingTarget = genericFactory
+      ? resolveWasmType(ctx, readonlyErasureMappedAliasTarget(varType) ?? varType)
+      : null;
+    // Program-ABI replay can retain the concrete binding type while collapsing
+    // the call's instantiated return back to its generic constraint. Recover
+    // the binding destination only for an already-proven fresh factory and
+    // only when it is a physically compatible strict extension of that source.
+    const genericFactoryTarget =
+      genericFactorySource &&
+      genericFactorySignatureTarget &&
+      genericFactoryBindingTarget &&
+      (genericFactorySource.kind === "ref" || genericFactorySource.kind === "ref_null") &&
+      (genericFactorySignatureTarget.kind === "ref" || genericFactorySignatureTarget.kind === "ref_null") &&
+      (genericFactoryBindingTarget.kind === "ref" || genericFactoryBindingTarget.kind === "ref_null") &&
+      genericFactorySignatureTarget.typeIdx === genericFactorySource.typeIdx &&
+      genericFactoryBindingTarget.typeIdx !== genericFactorySource.typeIdx &&
+      canEmitAssertedStructExtension(
+        ctx,
+        { kind: "ref_null", typeIdx: genericFactorySource.typeIdx },
+        { kind: "ref_null", typeIdx: genericFactoryBindingTarget.typeIdx },
+      )
+        ? genericFactoryBindingTarget
+        : genericFactorySignatureTarget;
     const genericFactoryInitializerType: ValType | null =
       genericFactoryTarget?.kind === "ref" || genericFactoryTarget?.kind === "ref_null"
         ? { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx }
@@ -2458,7 +2483,40 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           ? boxedForInit.valType
           : (getLocalType(fctx, localIdx) ?? wasmType);
         try {
-          resultType = compileExpression(ctx, fctx, decl.initializer, initializerExpectedType);
+          const canMaterializeGenericFactory =
+            genericFactorySource !== null &&
+            genericFactoryTarget !== null &&
+            (genericFactorySource.kind === "ref" || genericFactorySource.kind === "ref_null") &&
+            (genericFactoryTarget.kind === "ref" || genericFactoryTarget.kind === "ref_null") &&
+            genericFactorySource.typeIdx !== genericFactoryTarget.typeIdx &&
+            canEmitAssertedStructExtension(
+              ctx,
+              { kind: "ref_null", typeIdx: genericFactorySource.typeIdx },
+              { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx },
+            );
+          if (canMaterializeGenericFactory) {
+            // Compile the proven factory call into its physical constraint
+            // first. Passing the concrete destination as the ordinary hint
+            // would perform a nominal guard-cast, which necessarily nulls:
+            // WasmGC cannot grow the fresh Declaration into BinaryExpression
+            // in place. Materialize the destination only after the base value
+            // is live on the stack.
+            const sourceCarrier: ValType = { kind: "ref_null", typeIdx: genericFactorySource.typeIdx };
+            resultType = compileExpression(ctx, fctx, decl.initializer, sourceCarrier);
+            if (
+              resultType !== null &&
+              (resultType.kind === "ref" || resultType.kind === "ref_null") &&
+              resultType.typeIdx === sourceCarrier.typeIdx &&
+              emitAssertedStructExtension(ctx, fctx, resultType, {
+                kind: "ref_null",
+                typeIdx: genericFactoryTarget.typeIdx,
+              })
+            ) {
+              resultType = { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx };
+            }
+          } else {
+            resultType = compileExpression(ctx, fctx, decl.initializer, initializerExpectedType);
+          }
         } finally {
           ctxAny._i32ElemArrayOverride = prevElemOverride;
         }

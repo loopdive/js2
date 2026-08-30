@@ -210,6 +210,39 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
 }
 
 /**
+ * Does this binding hold the callable returned by an instantiated generic
+ * factory such as TypeScript's `memoize<T>(() => T): () => T`?
+ *
+ * The shared generic implementation necessarily carries its returned closure
+ * as externref, while the binding's apparent type is the instantiated callable
+ * (`() => ParenthesizerRules`).  Treating that value as the apparent wrapper
+ * directly guard-casts the real generic wrapper to an unrelated nominal
+ * closure struct and turns the subsequent `struct.get` into a null dereference.
+ * The multi-signature callable dispatch below can instead inspect the live
+ * funcref and project its externref result to the instantiated return carrier.
+ */
+function bindingIsGenericCallableFactoryResult(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declaration =
+    ctx.checker.getSymbolAtLocation(identifier)?.valueDeclaration ?? ctx.oracle.valueDeclarationOf(identifier);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+
+  let initializer = declaration.initializer;
+  while (
+    ts.isParenthesizedExpression(initializer) ||
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer) ||
+    ts.isNonNullExpression(initializer)
+  ) {
+    initializer = initializer.expression;
+  }
+  if (!ts.isCallExpression(initializer)) return false;
+
+  const implementation = ctx.checker.getResolvedSignature(initializer)?.declaration;
+  if (!implementation?.typeParameters?.length) return false;
+  return ctx.checker.getTypeAtLocation(identifier).getCallSignatures().length > 0;
+}
+
+/**
  * True when this local callable is populated from a runtime element read in
  * its own function, for example Hono's `handler = middleware[i][0][0]` or
  * Redux's `const reducer = reducers[key]`.
@@ -1558,6 +1591,7 @@ export function compileIdentifierCall(
       calleeBindingDecl !== undefined &&
       ts.isVariableDeclaration(calleeBindingDecl) &&
       bindingMayReceiveHostCallable(ctx, calleeBindingDecl);
+    const calleeIsGenericCallableFactoryResult = bindingIsGenericCallableFactoryResult(ctx, expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
     // A redeclared `var` binding has multiple initializer-specific closure
@@ -1622,7 +1656,7 @@ export function compileIdentifierCall(
     // value instead. Immutable captures and ordinary locals retain the typed
     // call_ref path.
     const heterogeneousCallableCapture = fctx.boxedCaptures?.get(funcName)?.valType.kind === "externref";
-    if (closureInfo && !heterogeneousCallableCapture) {
+    if (closureInfo && !heterogeneousCallableCapture && !calleeIsGenericCallableFactoryResult) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
 
@@ -2007,7 +2041,7 @@ export function compileIdentifierCall(
             if (
               isHostExtern(from) &&
               (to.kind === "ref" || to.kind === "ref_null") &&
-              isErasedGenericRefCarrier(to.typeIdx)
+              (isErasedGenericRefCarrier(to.typeIdx) || sigParamWasmTypes.length === 0)
             ) {
               return [
                 { op: "any.convert_extern" },

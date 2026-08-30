@@ -2180,6 +2180,10 @@ interface AssertedStructExtensionInfo {
   dstFields: { name: string; type: ValType }[];
 }
 
+function nullableRefFieldWidening(from: ValType, to: ValType): number | undefined {
+  return from.kind === "ref_null" && to.kind === "ref" && from.typeIdx === to.typeIdx ? from.typeIdx : undefined;
+}
+
 function assertedStructExtensionInfo(
   ctx: CodegenContext,
   from: ValType,
@@ -2194,13 +2198,15 @@ function assertedStructExtensionInfo(
   if (!fromDef || fromDef.kind !== "struct" || !toDef || toDef.kind !== "struct") return undefined;
   if (toDef.fields.length < fromDef.fields.length) return undefined;
 
-  const destinationFields = new Map(toDef.fields.map((field) => [field.name, field]));
+  const destinationFields = new Map(toDef.fields.map((field, fieldIdx) => [field.name, { field, fieldIdx }]));
   for (const sourceField of fromDef.fields) {
-    const destinationField = destinationFields.get(sourceField.name);
+    const destinationEntry = destinationFields.get(sourceField.name);
+    const destinationField = destinationEntry?.field;
     if (
       !destinationField ||
       destinationField.mutable !== sourceField.mutable ||
-      !samePhysicalValType(destinationField.type, sourceField.type)
+      (!samePhysicalValType(destinationField.type, sourceField.type) &&
+        nullableRefFieldWidening(sourceField.type, destinationField.type) === undefined)
     ) {
       return undefined;
     }
@@ -2241,6 +2247,30 @@ function widenAssertedExtensionFieldThroughNominalDescendants(
   fieldTypeIdx: number,
 ): ValType {
   const nullable: ValType = { kind: "ref_null", typeIdx: fieldTypeIdx };
+  // The asserted destination may inherit this field from a nominal parent.
+  // Widening only the child would invalidate WasmGC's exact mutable prefix, so
+  // first climb to the highest ancestor that owns the same physical slot and
+  // then update its complete descendant subtree. TypeScript's
+  // `createBaseNode<DoStatement>` is the witness: `statement` is introduced by
+  // IterationStatement and shared by every loop-node sibling.
+  let hierarchyRootIdx = ancestorTypeIdx;
+  for (let currentIdx = ancestorTypeIdx, depth = 0; depth < ctx.mod.types.length; depth++) {
+    const current = ctx.mod.types[currentIdx];
+    if (!current || current.kind !== "struct" || current.superTypeIdx === undefined || current.superTypeIdx < 0) break;
+    const parent = ctx.mod.types[current.superTypeIdx];
+    if (!parent || parent.kind !== "struct") break;
+    const parentField = parent.fields[fieldIdx];
+    if (
+      parentField?.name !== fieldName ||
+      (parentField.type.kind !== "ref" && parentField.type.kind !== "ref_null") ||
+      parentField.type.typeIdx !== fieldTypeIdx
+    ) {
+      break;
+    }
+    hierarchyRootIdx = current.superTypeIdx;
+    currentIdx = current.superTypeIdx;
+  }
+
   const children = new Map<number, number[]>();
   for (let typeIdx = 0; typeIdx < ctx.mod.types.length; typeIdx++) {
     const candidate = ctx.mod.types[typeIdx];
@@ -2250,7 +2280,7 @@ function widenAssertedExtensionFieldThroughNominalDescendants(
     children.set(candidate.superTypeIdx, siblings);
   }
 
-  const pending = [ancestorTypeIdx];
+  const pending = [hierarchyRootIdx];
   const visited = new Set<number>();
   while (pending.length > 0) {
     const typeIdx = pending.pop()!;
@@ -2294,8 +2324,23 @@ export function emitAssertedStructExtension(
   const destination = ctx.mod.types[info.toTypeIdx];
   if (!destination || destination.kind !== "struct") return false;
   for (let fieldIdx = 0; fieldIdx < info.dstFields.length; fieldIdx++) {
+    const sourceField = info.srcFields[fieldIdx];
+    const destinationField = destination.fields[fieldIdx];
+    if (sourceField && destinationField) {
+      const widenedTypeIdx = nullableRefFieldWidening(sourceField.type, destinationField.type);
+      if (widenedTypeIdx !== undefined) {
+        const nullable = widenAssertedExtensionFieldThroughNominalDescendants(
+          ctx,
+          info.toTypeIdx,
+          fieldIdx,
+          destinationField.name,
+          widenedTypeIdx,
+        );
+        info.dstFields[fieldIdx]!.type = nullable;
+      }
+    }
     if (info.srcFields[fieldIdx] !== undefined) continue;
-    const field = destination.fields[fieldIdx];
+    const field = destinationField;
     if (!field || field.type.kind !== "ref") continue;
     const nullable = widenAssertedExtensionFieldThroughNominalDescendants(
       ctx,

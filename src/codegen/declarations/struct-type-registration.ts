@@ -163,16 +163,26 @@ function interfaceBaseTypes(ctx: CodegenContext, type: ts.Type): readonly ts.Bas
  * chain to consist of one unmerged declaration containing property signatures
  * only before admitting nominal linkage.
  */
-function interfaceHasStablePhysicalLayout(ctx: CodegenContext, type: ts.Type, seen = new Set<ts.Type>()): boolean {
-  if (seen.has(type)) return false;
-  seen.add(type);
-  const declarations = type
-    .getSymbol()
-    ?.getDeclarations()
-    ?.filter((declaration): declaration is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(declaration));
-  if (declarations?.length !== 1) return false;
-  if (!declarations[0]!.members.every((member) => ts.isPropertySignature(member))) return false;
-  return interfaceBaseTypes(ctx, type).every((base) => interfaceHasStablePhysicalLayout(ctx, base, seen));
+function interfaceHasStablePhysicalLayout(ctx: CodegenContext, type: ts.Type, visiting = new Set<ts.Type>()): boolean {
+  // `visiting` is the active recursion stack, not a global visited set. A
+  // diamond such as LiteralExpression -> LiteralLikeNode/PrimaryExpression ->
+  // Node legitimately reaches Node twice; only reaching a type that is still
+  // active denotes a cycle. Treating the completed first branch as a cycle
+  // flattened TypeScript's StringLiteral and lost its LiteralExpression
+  // runtime identity at the parser's generic return boundary.
+  if (visiting.has(type)) return false;
+  visiting.add(type);
+  try {
+    const declarations = type
+      .getSymbol()
+      ?.getDeclarations()
+      ?.filter((declaration): declaration is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(declaration));
+    if (declarations?.length !== 1) return false;
+    if (!declarations[0]!.members.every((member) => ts.isPropertySignature(member))) return false;
+    return interfaceBaseTypes(ctx, type).every((base) => interfaceHasStablePhysicalLayout(ctx, base, visiting));
+  } finally {
+    visiting.delete(type);
+  }
 }
 
 /**

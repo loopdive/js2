@@ -69,12 +69,19 @@ function unwrapExpression(expression: ts.Expression): ts.Expression {
 function functionDeclarationForCall(ctx: CodegenContext, call: ts.CallExpression): ts.FunctionDeclaration | undefined {
   const callee = unwrapExpression(call.expression);
   if (!ts.isIdentifier(callee)) return undefined;
-  const declaration = ctx.oracle.valueDeclarationOf(callee);
-  if (declaration && ts.isFunctionDeclaration(declaration)) return declaration;
-  return ctx.checker
+  // Prefer the checker symbol at this exact call site. Program-ABI replay can
+  // compile nested same-named factories from different source components; the
+  // lightweight binder's value declaration may then point at a sibling replay
+  // declaration even though the checker still retains the source-qualified
+  // identity (`baseNodeFactory.createBaseNode` vs nodeFactory's generic helper).
+  const checkerDeclaration = ctx.checker
     .getSymbolAtLocation(callee)
     ?.getDeclarations()
     ?.find((candidate): candidate is ts.FunctionDeclaration => ts.isFunctionDeclaration(candidate) && !!candidate.body);
+  if (checkerDeclaration) return checkerDeclaration;
+  const declaration = ctx.oracle.valueDeclarationOf(callee);
+  if (declaration && ts.isFunctionDeclaration(declaration)) return declaration;
+  return undefined;
 }
 
 /** Calls whose contract proves that each evaluation produces a fresh structural carrier. */
@@ -341,7 +348,22 @@ export function genericStructFactoryCall(
 
   const signature = ctx.checker.getResolvedSignature(call);
   if (!signature) return null;
-  let target = eraseReadonlyView(ctx.checker.getReturnTypeOfSignature(signature));
+  // An explicit type argument is the authoritative destination for the
+  // declaration-proven `T`-returning factory. Program-ABI replay retains the
+  // original call syntax but can expose the declaration's constrained return
+  // (`Declaration`) through getResolvedSignature instead of the explicit
+  // refinement (`createBaseDeclaration<BinaryExpression>`). The syntax is
+  // unambiguous here because the factory proof has already tied its result to
+  // one owned type parameter.
+  let target: ts.Type | undefined;
+  if (factory.resultTypeParameter && call.typeArguments?.length && declaration.typeParameters?.length) {
+    const resultParameterIndex = declaration.typeParameters.findIndex((parameter) =>
+      sameTypeParameter(ctx.checker.getTypeAtLocation(parameter.name), factory.resultTypeParameter!),
+    );
+    const explicitTypeArgument = resultParameterIndex >= 0 ? call.typeArguments[resultParameterIndex] : undefined;
+    if (explicitTypeArgument) target = eraseReadonlyView(ctx.checker.getTypeFromTypeNode(explicitTypeArgument));
+  }
+  target ??= eraseReadonlyView(ctx.checker.getReturnTypeOfSignature(signature));
   if (target.flags & ts.TypeFlags.TypeParameter) {
     const constraint = ctx.checker.getBaseConstraintOfType(target);
     if (!constraint) return null;
