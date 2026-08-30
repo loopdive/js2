@@ -300,7 +300,9 @@ class Parser {
 
   /** Lower a single code point atom in u/v mode. Case-insensitive atoms are
    *  enumerated through the host (spec Canonicalize — Kelvin sign and friends);
-   *  otherwise BMP → CHAR, astral → lead+trail concat. */
+   *  otherwise BMP → CHAR, except surrogate code units use CPCLASS so the VM's
+   *  code-point guard does not match the trail half of a valid pair; astral
+   *  scalars remain lead+trail sequences. */
   private uChar(cp: number): ReNode {
     if (this.iState) {
       return this.cpClass(enumerateClassRanges(codePointSource(cp), this.enumFlags()));
@@ -315,6 +317,9 @@ class Parser {
           { kind: "char", code: trail },
         ],
       };
+    }
+    if (cp >= 0xd800 && cp <= 0xdfff) {
+      return this.cpClass([[cp, cp]]);
     }
     return { kind: "char", code: cp };
   }

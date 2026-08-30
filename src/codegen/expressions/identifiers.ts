@@ -1544,10 +1544,16 @@ function compileIdentifierCore(
   // extern constructor through globalThis generically; this covers Web/API
   // constructors without extending the TypedArray/ERM name allowlists below.
   // Standalone/WASI deliberately keep their native/no-host behavior.
+  // The registry is graph-wide and name-keyed, so require the identifier's
+  // VALUE declaration to be ambient (or unresolved). TypeScript itself imports
+  // `interface Node` and also declares a local constructible `function Node`;
+  // that function must reach the compiled funcref path below rather than read
+  // the unrelated DOM `globalThis.Node` constructor.
   if (
     !ctx.standalone &&
     !ctx.wasi &&
     ctx.externClasses.has(name) &&
+    (resolvedValueDeclaration === undefined || readsAmbientDeclaration) &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)

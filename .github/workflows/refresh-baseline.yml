@@ -350,11 +350,15 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
-          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
-          if [ ! -s "$completion_marker" ]; then
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
             echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
             exit 2
           fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
 
       - name: Upload shard artifacts
         id: upload_shard
@@ -371,7 +375,7 @@ jobs:
           name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
-            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once. Idempotent +
@@ -388,6 +392,7 @@ jobs:
           overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
   merge-and-promote:
@@ -448,6 +453,30 @@ jobs:
           mkdir -p merged-reports
           find shard-artifacts/emergency-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
+
+      - name: Validate merged JS-host Test262 verdict completeness (#5215)
+        env:
+          EXPECTED_SHARDS: "57"
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/emergency-js-host-shard-* -type f -name 'test262-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
+
+      - name: Validate merged standalone Test262 verdict completeness (#5215)
+        env:
+          EXPECTED_SHARDS: "57"
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/emergency-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-standalone-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
 
       - name: Build merged test262 report
         run: |

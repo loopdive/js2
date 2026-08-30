@@ -3,7 +3,7 @@ id: 4398
 title: "Target-neutral explicit platform capabilities with swappable providers"
 status: done
 created: 2026-08-13
-updated: 2026-08-18
+updated: 2026-08-30
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -97,3 +97,91 @@ This issue is about platform authority, not ECMAScript semantic fallback.
 
 Follow-up: source-site provenance and rewrite hints remain broader #4382
 explanation work; they do not change the completed capability/provider ABI.
+
+## 2026-08-30 follow-up lock — duplicate import authentication
+
+This Sol-authored repair is based on refreshed exact `main`
+`01fb67624e2f645b7e92dd9f8e47478e3face9ba` and belongs to #4398 rather than
+the #3520 C36–C39 export-provenance stack. Implement it on
+`codex/4398-capability-duplicate-auth`. The open-PR/worktree audit found no
+owner for `src/capability-registry.ts` or the focused #4398 test; do not touch
+the callable/publication, Program-ABI, `from-ast`, propagation, selection,
+host-bridge, or C36–C39 files being changed by parallel sessions.
+
+### Deterministic false-pass
+
+The emit-time standalone/WASI leak backstop intentionally collapses duplicate
+imports to one `(module,name)` diagnostic. Its timer, DOM, and DOM-interaction
+exemptions then search the module for *any* same-named entry for which
+`isValidatedPlatformCapabilityImport(...)` returns true. A finished module
+containing one exact `env.__timer_set_timeout` import beside a malformed import
+with the same module and name therefore produces one leak row, but the exact
+sibling authenticates the row and removes it. The malformed duplicate reaches
+the binary without a leak diagnostic. Direct mutation is in scope for this
+backstop: it exists specifically to catch imports that bypass normal registry
+insertion or retain stale bookkeeping.
+
+Clock already closes this boundary by requiring exactly one `env.__date_now`
+entry. Timer, DOM, and DOM-interaction imports must have the same exact
+cardinality property without changing leak diagnostic deduplication.
+
+### Authorized implementation
+
+Own only:
+
+- this issue record;
+- `src/capability-registry.ts`; and
+- `tests/issue-4398-capability-registry.test.ts`.
+
+Strengthen `isValidatedPlatformCapabilityImport(...)` itself. Before accepting
+the candidate import contract, require the module to contain exactly one import
+whose module and name equal the selected entry, and require that sole occurrence
+to be the entry at `importIndex`. Count every descriptor kind and signature in
+that same-name census: one exact function plus one malformed function, global,
+or other descriptor is ambiguous and must reject. Keep the existing provider,
+environment, namespace, kind, parameter, and result validation byte-for-byte
+after the uniqueness guard.
+
+Do not scan only registry-matching entries, choose a preferred occurrence,
+deduplicate before validation, repair or remove imports, add provenance, change
+`scanForLeakedHostImports(...)`, or edit the `.some(...)` callers in
+`src/codegen/index.ts`. Their existing search becomes safe because every
+same-name candidate returns false when the census is not exactly one. Imports
+with a different module or different name remain independent.
+
+### Required focused matrix
+
+Use real `WasmModule` import/type descriptors and the exported registry
+validator. For the timer, one base DOM contract, and one DOM-interaction
+contract, prove:
+
+1. one exact import authenticates;
+2. exact plus malformed same-name import authenticates neither occurrence;
+3. two exact same-name imports authenticate neither occurrence; and
+4. a malformed-only import remains rejected.
+
+For at least the timer mutation, combine the existing leak scanner with the
+same `.some(...)` predicate used by the production exemption: require the
+deduplicated leak row to remain present because no occurrence authenticates.
+Add a different-name sibling control proving uniqueness is scoped to the exact
+`(module,name)` pair. Keep the #4577 unique/duplicate clock controls unchanged,
+and preserve the existing compiled timer/provider/runtime tests in this file.
+No synthetic success based only on counts is acceptance evidence: assert the
+candidate indices, exact names, signatures, per-occurrence validator results,
+and final leak row.
+
+### Acceptance and workflow
+
+Run the focused #4398 and #4577 suites, TypeScript 7 and 5, targeted
+Prettier/Biome, `git diff --check`, host-import policy, issue integrity, and
+applicable layering/oracle ratchets. Before every heavy command, require a
+finite, non-negative one-minute load strictly below `logical cores - 2`.
+Immediately before the signed commit run both LOC and function regrowth
+ratchets, then run complete precommit and prepush hooks without bypass. No
+baseline or hook exception is authorized.
+
+A bounded implementation may be delegated only after this lock. Before the PR
+is marked ready, a fresh independent Sol must review the exact pushed SHA for
+the three capability families, the exact-cardinality boundary, non-vacuous leak
+retention, different-name control, unchanged clock behavior, and non-overlap
+with active migration lanes. Any later push invalidates that approval.

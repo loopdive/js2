@@ -68,11 +68,14 @@ import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
+import { genericStructFactoryCall } from "../generic-struct-factory.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import {
+  canEmitAssertedStructExtension,
   canStructurallyProjectRef,
   coercionInstrs,
   defaultValueInstrs,
+  emitAssertedStructExtension,
   emitGuardedFuncRefCast,
   emitGuardedRefCast,
   getVecInfo,
@@ -131,6 +134,48 @@ import {
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
 
+function tryEmitGenericStructFactoryResult(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  call: ts.CallExpression,
+  actualReturn: ValType,
+): ValType | null {
+  const factory = genericStructFactoryCall(ctx, call);
+  if (!factory) return null;
+
+  const source = resolveWasmType(ctx, factory.sourceConstraint);
+  const target = resolveWasmType(ctx, factory.target);
+  if ((source.kind !== "ref" && source.kind !== "ref_null") || (target.kind !== "ref" && target.kind !== "ref_null")) {
+    return null;
+  }
+
+  const sourceCarrier: ValType = { kind: "ref_null", typeIdx: source.typeIdx };
+  const sameStruct = source.typeIdx === target.typeIdx;
+  if (!sameStruct && !canEmitAssertedStructExtension(ctx, sourceCarrier, target)) return null;
+
+  let carried: ValType;
+  if (actualReturn.kind === "externref" || actualReturn.kind === "ref_extern") {
+    // Nested generic functions retain an externref ABI, but this detector has
+    // proved that the value was freshly allocated as the constraint struct.
+    coerceType(ctx, fctx, { kind: "externref" }, sourceCarrier);
+    carried = sourceCarrier;
+  } else if (
+    (actualReturn.kind === "ref" || actualReturn.kind === "ref_null") &&
+    actualReturn.typeIdx === source.typeIdx
+  ) {
+    carried = actualReturn;
+  } else {
+    return null;
+  }
+
+  if (sameStruct) {
+    if (!valTypesMatch(carried, target)) coerceType(ctx, fctx, carried, target);
+    return target;
+  }
+
+  return emitAssertedStructExtension(ctx, fctx, carried, target) ? target : null;
+}
+
 /**
  * (#3912) Report the representation of `String(<number>)`'s result truthfully.
  *
@@ -162,6 +207,39 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
     ctx.runtimeEvalGlobalFunctionBindings ||
     (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);
   return hasModuleBinding && ctx.liveFuncBindingGlobals?.has(name) === true;
+}
+
+/**
+ * Does this binding hold the callable returned by an instantiated generic
+ * factory such as TypeScript's `memoize<T>(() => T): () => T`?
+ *
+ * The shared generic implementation necessarily carries its returned closure
+ * as externref, while the binding's apparent type is the instantiated callable
+ * (`() => ParenthesizerRules`).  Treating that value as the apparent wrapper
+ * directly guard-casts the real generic wrapper to an unrelated nominal
+ * closure struct and turns the subsequent `struct.get` into a null dereference.
+ * The multi-signature callable dispatch below can instead inspect the live
+ * funcref and project its externref result to the instantiated return carrier.
+ */
+function bindingIsGenericCallableFactoryResult(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declaration =
+    ctx.checker.getSymbolAtLocation(identifier)?.valueDeclaration ?? ctx.oracle.valueDeclarationOf(identifier);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+
+  let initializer = declaration.initializer;
+  while (
+    ts.isParenthesizedExpression(initializer) ||
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer) ||
+    ts.isNonNullExpression(initializer)
+  ) {
+    initializer = initializer.expression;
+  }
+  if (!ts.isCallExpression(initializer)) return false;
+
+  const implementation = ctx.checker.getResolvedSignature(initializer)?.declaration;
+  if (!implementation?.typeParameters?.length) return false;
+  return ctx.checker.getTypeAtLocation(identifier).getCallSignatures().length > 0;
 }
 
 /**
@@ -1513,6 +1591,7 @@ export function compileIdentifierCall(
       calleeBindingDecl !== undefined &&
       ts.isVariableDeclaration(calleeBindingDecl) &&
       bindingMayReceiveHostCallable(ctx, calleeBindingDecl);
+    const calleeIsGenericCallableFactoryResult = bindingIsGenericCallableFactoryResult(ctx, expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
     // A redeclared `var` binding has multiple initializer-specific closure
@@ -1577,7 +1656,7 @@ export function compileIdentifierCall(
     // value instead. Immutable captures and ordinary locals retain the typed
     // call_ref path.
     const heterogeneousCallableCapture = fctx.boxedCaptures?.get(funcName)?.valType.kind === "externref";
-    if (closureInfo && !heterogeneousCallableCapture) {
+    if (closureInfo && !heterogeneousCallableCapture && !calleeIsGenericCallableFactoryResult) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
 
@@ -1962,7 +2041,7 @@ export function compileIdentifierCall(
             if (
               isHostExtern(from) &&
               (to.kind === "ref" || to.kind === "ref_null") &&
-              isErasedGenericRefCarrier(to.typeIdx)
+              (isErasedGenericRefCarrier(to.typeIdx) || sigParamWasmTypes.length === 0)
             ) {
               return [
                 { op: "any.convert_extern" },
@@ -3653,11 +3732,10 @@ export function compileIdentifierCall(
       // functions with Promise<void>), the TS type may be misleading
       if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
       // Use actual Wasm return type to avoid TS 'any' → externref mismatch
-      return brandExternMethodResult(
-        ctx,
-        retType,
-        getWasmFuncReturnType(ctx, finalFuncIdx) ?? resolveWasmType(ctx, retType),
-      );
+      const actualReturn = getWasmFuncReturnType(ctx, finalFuncIdx) ?? resolveWasmType(ctx, retType);
+      const factoryResult = tryEmitGenericStructFactoryResult(ctx, fctx, expr, actualReturn);
+      if (factoryResult !== null) return factoryResult;
+      return brandExternMethodResult(ctx, retType, actualReturn);
     }
     return getWasmFuncReturnType(ctx, finalFuncIdx) ?? { kind: "f64" };
   }
