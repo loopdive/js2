@@ -1,10 +1,11 @@
 {
   "id": "3521",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3521-r2-continue",
   "claimed_at": "2026-08-30T11:46:33Z",
-  "updated_at": "2026-08-30T11:46:33Z",
-  "write_id": "41982-d0u2qed5"
+  "updated_at": "2026-08-30T22:46:51Z",
+  "write_id": "3285-q8ct8s4d",
+  "released_at": "2026-08-30T22:46:51Z"
 }
