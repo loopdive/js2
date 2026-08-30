@@ -2904,3 +2904,11 @@ bodies, `irFirstSkipped`, and a prepared component identity while preserving
 the `8_000_000_000` result above the i32 range. A route-off poison control proves
 the direct path is still live, and a fast default-parameter negative remains
 direct and fails under the same poison.
+
+The changed-root CI gate also exposed three assertions already stale on
+current `main`. Their coverage is retained rather than suppressed: function
+value identity now pins the exact GC/standalone binary deltas (`0` / `119`
+bytes), the independent `directOnly` scalar owner proves compile-once beside a
+blocked function-value component, and the module-init boundary poisons the
+scalar callee's direct body while proving that the module initializer itself
+remains direct.

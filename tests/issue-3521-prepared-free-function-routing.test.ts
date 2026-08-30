@@ -684,7 +684,10 @@ describe("#3521 prepare-before-emit free-function routing", () => {
         irBodyEmitted: true,
         preparedComponentId: expect.stringMatching(/^prepared-component:/),
       });
-      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+      // Native standalone function-value support is one canonical 119-byte
+      // wrapper larger than the direct module; GC reuses the same-sized slot.
+      // Pin the exact current deltas instead of the stale no-growth assumption.
+      expect(prepared.binary.byteLength - direct.binary.byteLength).toBe(target === "standalone" ? 119 : 0);
     },
   );
 
@@ -865,9 +868,12 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
+    // The current-function read closes only gNonStrict's function-value
+    // component. The independent scalar owner still prepares exactly once.
     expect(outcome(result, "directOnly")).toMatchObject({
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
   });
 
@@ -949,25 +955,30 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).run!(41)).toBe(42);
   });
 
-  it("keeps a free function called by a direct module initializer in the direct component", async () => {
-    const result = await compile(
-      `
+  it("prepares a fixed-scalar free function called by a direct module initializer", async () => {
+    const source = `
       function increment(value: number): number { return value + 1; }
       let seeded = increment(41);
       export function run(): number { return seeded; }
-      `,
-      {
-        fileName: "prepared-module-init-call-boundary.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      },
-    );
+      `;
+    const result = await compileWithPoisonedDirectFunctionBodies(source, "increment", {
+      fileName: "prepared-module-init-call-boundary.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("increment");
+    expect(result.irFirstSkipped).toContain("increment");
     expect(outcome(result, "increment")).toMatchObject({
-      legacyBodyEmitted: true,
+      kind: "emitted",
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(result.irOutcomes?.find((candidate) => candidate.unitKind === "module-init")).toMatchObject({
+      kind: "unsupported",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
     });
     expect((await instantiate(result)).run!()).toBe(42);
   });
