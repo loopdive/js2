@@ -2,10 +2,11 @@
   "id": "3520",
   "slice": "r1b",
   "assignee": "ttraenkler/opus-3520-r1",
-  "requested_by": "ttraenkler/opus-3520-r1",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3520-r1-structural-authority",
   "claimed_at": "2026-08-29T02:15:51Z",
-  "updated_at": "2026-08-29T02:15:51Z",
-  "write_id": "7860-lp6rrgsm"
+  "updated_at": "2026-08-30T00:01:40Z",
+  "write_id": "1741-q8uxmd80",
+  "released_at": "2026-08-30T00:01:40Z"
 }
