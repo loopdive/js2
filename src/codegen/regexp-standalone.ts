@@ -79,7 +79,7 @@ import {
 import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
-import { noJsHost, emitThrowTypeError } from "./js-errors.js"; // (#4439) pairs the poison with its guard
+import { buildThrowJsErrorInstrs, noJsHost, emitThrowTypeError } from "./js-errors.js"; // (#4439) pairs the poison with its guard
 import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
@@ -93,6 +93,7 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
+import { integrityVarKey } from "./widened-var-key.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,
@@ -2915,6 +2916,34 @@ function standaloneRegExpLastIndexAsF64(
 }
 
 /**
+ * Guard an ordinary `lastIndex` Set against a statically recorded non-writable
+ * descriptor. `Object.defineProperty` records explicit `writable: false`
+ * entries in `ctx.nonWritableExternKeys`, the same compile-time companion
+ * consulted by ordinary property assignment. The exact Slice-A call sites all
+ * carry a static RegExp identifier, so this narrow proof is sufficient without
+ * inventing a second runtime descriptor table for closed RegExp carriers.
+ *
+ * The throw sequence is built after the call-site body has evaluated its RHS;
+ * this preserves the strict Set evaluation order while allowing the shared
+ * error builder to flush any late TypeError dependency it registers.
+ */
+function standaloneRegExpLastIndexSetGuardInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpExpr?: ts.Expression,
+): Instr[] {
+  if (regexpExpr === undefined) return [];
+  const receiver = stripStaticWrapper(regexpExpr);
+  if (!ts.isIdentifier(receiver)) return [];
+  const key = `${integrityVarKey(ctx, receiver)}:lastIndex`;
+  if (!ctx.nonWritableExternKeys.has(key)) return [];
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+    flush: fctx,
+  });
+  return throwInstrs;
+}
+
+/**
  * (#2175 S1) Brand-recovery prologue for a *dynamic* (externref) RegExp `this`.
  *
  * The reflective forms — `RegExp.prototype.test.call(re, s)`,
@@ -2981,11 +3010,14 @@ export function emitRegexSearchCall(
      * (#1913): start the scan at ToLength(lastIndex) (i32.trunc_sat maps
      * NaN→0 and the search loop rejects starts past the subject, matching
      * the lastIndex>length null result), then on return set lastIndex to
-     * the match end (or 0 on failure). Only passed when the flags are
-     * STATICALLY known to include g or y — non-g/y exec neither reads nor
-     * writes lastIndex.
+     * the match end (or 0 on failure). The separate `readLastIndex` switch
+     * models RegExpBuiltinExec's unconditional Get/ToLength step: non-g/y
+     * exec/test still reads and coerces lastIndex, but always starts at zero
+     * and never writes it back.
      */
     gyLastIndex?: boolean | "runtime";
+    /** Read/ToLength `lastIndex` even when the operation is non-g/non-y. */
+    readLastIndex?: boolean;
     /** Pre-evaluated native-string receiver supplied by guarded dispatch. */
     inputOverride?: () => ValType | null;
     /** (#4016) Pre-materialised `$NativeRegExp` — see `string-search-value.ts`. */
@@ -3049,6 +3081,23 @@ export function emitRegexSearchCall(
   });
   fctx.body.push({ op: "local.set", index: inputLocal });
 
+  // RegExpBuiltinExec performs Get(R, "lastIndex") + ToLength after the
+  // subject has been coerced, regardless of the g/y flags. Keep one execution-
+  // time f64 result so the g/y start path does not invoke a deferred raw value
+  // twice; non-g/y callers deliberately leave the value unused.
+  let lastIndexLocal: number | undefined;
+  if (options?.readLastIndex) {
+    lastIndexLocal = allocLocal(fctx, `__re_lastindex_read_${fctx.locals.length}`, { kind: "f64" });
+    fctx.body.push(...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), {
+      op: "local.set",
+      index: lastIndexLocal,
+    });
+  }
+  const lastIndexInstrs = (): Instr[] =>
+    lastIndexLocal === undefined
+      ? standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx)
+      : [{ op: "local.get", index: lastIndexLocal }];
+
   // caps = array.new_default(2 * nGroups + nScratch) — scratch slots back the
   // PROGRESS empty-loop guards (#1959); they ride along in the caps array.
   const capsLocal = allocLocal(fctx, `__re_caps_${fctx.locals.length}`, { kind: "ref", typeIdx: i32Arr });
@@ -3090,12 +3139,12 @@ export function emitRegexSearchCall(
     fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), { op: "i32.trunc_sat_f64_s" }],
+      then: [...lastIndexInstrs(), { op: "i32.trunc_sat_f64_s" }],
       else: [{ op: "i32.const", value: 0 }],
     });
   } else if (options?.gyLastIndex) {
     fctx.body.push(
-      ...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx),
+      ...lastIndexInstrs(),
       // trunc_sat: NaN→0 (= ToLength(NaN)); huge values saturate and the search
       // loop's `start > slen` check yields the spec's no-match result. Negative
       // values clamp to 0 inside __regex_search, matching ToLength.
@@ -3113,6 +3162,7 @@ export function emitRegexSearchCall(
     const matchedTmp = allocLocal(fctx, `__re_matched_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.set", index: matchedTmp });
     const updateLastIndex: Instr[] = [
+      ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, regexpExpr ?? undefined),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedTmp },
       {
@@ -3313,6 +3363,7 @@ export function tryCompileStandaloneRegExpTest(
     const testFlags0 = staticRegExpFlags(ctx, propAccess.expression);
     const emitted0 = emitRegexSearchCall(ctx, fctx, propAccess.expression, propAccess.expression, {
       gyLastIndex: testFlags0 === null ? "runtime" : flagsHaveGlobalOrSticky(testFlags0),
+      readLastIndex: true,
       inputOverride: () => undefinedSubjectOverride(ctx, fctx),
     });
     if (emitted0 === null) return null;
@@ -3341,6 +3392,7 @@ export function tryCompileStandaloneRegExpTest(
   const testFlags = staticRegExpFlags(ctx, propAccess.expression);
   const emitted = emitRegexSearchCall(ctx, fctx, propAccess.expression, expr.arguments[0]!, {
     gyLastIndex: testFlags === null ? "runtime" : flagsHaveGlobalOrSticky(testFlags),
+    readLastIndex: true,
   });
   if (emitted === null) return null;
   return { kind: "i32" };
@@ -3606,6 +3658,7 @@ export function emitRegexExecArrayCall(
   inputExpr: ts.Expression | null,
   options?: {
     gyLastIndex?: boolean | "runtime";
+    readLastIndex?: boolean;
     inputOverride?: () => ValType | null;
     regexpOverride?: { regexpLocal: number; structTypeIdx: number };
   },
@@ -3744,6 +3797,7 @@ export function tryCompileStandaloneRegExpExec(
     const flags0 = staticRegExpFlags(ctx, propAccess.expression);
     return emitRegexExecArrayCall(ctx, fctx, propAccess.expression, propAccess.expression, {
       gyLastIndex: flags0 === null ? "runtime" : flagsHaveGlobalOrSticky(flags0),
+      readLastIndex: true,
       inputOverride: () => undefinedSubjectOverride(ctx, fctx),
     });
   }
@@ -3763,9 +3817,11 @@ export function tryCompileStandaloneRegExpExec(
   const flags = staticRegExpFlags(ctx, propAccess.expression);
 
   // §22.2.7.2 — g/y exec starts at [[LastIndex]] and writes back the match
-  // end (or 0 on failure); non-g/y exec ignores lastIndex entirely (#1913).
+  // end (or 0 on failure). All exec calls have already performed the
+  // observable Get/ToLength step above; non-g/y exec simply ignores its value.
   return emitRegexExecArrayCall(ctx, fctx, propAccess.expression, expr.arguments[0]!, {
     gyLastIndex: flags === null ? "runtime" : flagsHaveGlobalOrSticky(flags),
+    readLastIndex: true,
   });
 }
 
@@ -4716,7 +4772,8 @@ export const STANDALONE_REGEXP_REFLECTION_PROPS: ReadonlySet<string> = new Set([
  *   from the bitfield (§22.2.6.4).
  * - flag booleans (`.global`, `.ignoreCase`, …) → `(flags & bit) != 0`
  *   (§22.2.6.5–.12 RegExpHasFlag).
- * - `.lastIndex` → struct field 5 (f64).
+ * - `.lastIndex` → the deferred raw value when present, otherwise a boxed
+ *   numeric fast-slot value (externref at the ordinary property boundary).
  *
  * Returns `undefined` when the receiver/property is not a standalone RegExp
  * reflection read (caller falls through), `null` after reporting a narrowed
@@ -4926,8 +4983,30 @@ export function emitRegExpReflectionFieldRead(
     return nativeStringType(ctx);
   }
   if (propName === "lastIndex") {
-    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
-    return { kind: "f64" };
+    // A deferred object/string assignment must retain identity on an ordinary
+    // read (`r.lastIndex === counter`). Box only the numeric fast-slot value
+    // when no raw assignment is pending; callers already consume this result
+    // through the externref property boundary.
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT });
+    const savedBody = fctx.body;
+    const boxedNumber: Instr[] = [];
+    fctx.body = boxedNumber;
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+    );
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+    fctx.body = savedBody;
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: regexpLocal },
+        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW },
+      ],
+      else: boxedNumber,
+    });
+    return { kind: "externref" };
   }
   // Flag boolean getter: (flags & bit) != 0.
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS });
@@ -4991,6 +5070,15 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({ op: "i32.ne" });
   fctx.body.push({ op: "local.set", index: gyLocal });
 
+  // RegExpBuiltinExec reads and ToLength-coerces `lastIndex` even for a
+  // non-global/non-sticky receiver. The recovered closure path has no static
+  // flag spelling, so retain one execution-time value for both branches.
+  const lastIndexLocal = allocLocal(fctx, `__re_tlastindex_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push(...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), {
+    op: "local.set",
+    index: lastIndexLocal,
+  });
+
   // __regex_search(prog, classTable, nSlots, inData, inOff, inLen, start=0, sticky, caps)
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
@@ -5007,7 +5095,7 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "i32" } },
-    then: [...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), { op: "i32.trunc_sat_f64_s" }],
+    then: [{ op: "local.get", index: lastIndexLocal }, { op: "i32.trunc_sat_f64_s" }],
     else: [{ op: "i32.const", value: 0 }],
   });
   fctx.body.push({ op: "local.get", index: stickyLocal });
@@ -5023,6 +5111,7 @@ export function emitRegExpTestFromLocals(
     op: "if",
     blockType: { kind: "empty" },
     then: [
+      ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedLocal },
       {
@@ -5320,8 +5409,7 @@ function emitRegExpProtoMemberBody(
     // externref so the closure-call ABI and the descriptor `.get` both see one
     // type: native-string refs (`.flags`/`.source`) box via `extern.convert_any`,
     // i32 flag booleans via `__box_boolean` (a JS boolean, not the number 0/1),
-    // and the defensive f64 (lastIndex is a method-kind member, never a getter)
-    // via `__box_number`.
+    // and any numeric field result via `__box_number`.
     const fieldType = emitRegExpReflectionFieldRead(ctx, fctx, member, regexpLocal, structTypeIdx);
     if (fieldType.kind === "ref" || fieldType.kind === "ref_null") {
       fctx.body.push({ op: "extern.convert_any" });
@@ -5369,6 +5457,7 @@ function emitRegExpProtoMemberBody(
     const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
     const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
       gyLastIndex: "runtime",
+      readLastIndex: true,
       inputOverride: () => {
         fctx.body.push({ op: "local.get", index: subjLocal });
         return nativeStringType(ctx);
@@ -5605,6 +5694,10 @@ export function tryCompileStandaloneRegExpLastIndexWrite(
   // observable `valueOf` during assignment, before a surrounding try/catch.
   const valType = compileExpression(ctx, fctx, value);
   if (!valType) return null;
+  // OrdinarySet evaluates the RHS first, then rejects a non-writable
+  // descriptor before touching the carrier storage. Keep this guard outside
+  // the numeric/raw branches so both assignment representations agree.
+  fctx.body.push(...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, target.expression));
   if (valType.kind === "i32" || valType.kind === "f64") {
     if (valType.kind === "i32") {
       fctx.body.push({ op: "f64.convert_i32_s" });
@@ -5625,7 +5718,28 @@ export function tryCompileStandaloneRegExpLastIndexWrite(
   // Preserve object/string/BigInt/null/undefined values opaquely. `externref`
   // is the common boundary representation; this conversion does not perform
   // ToPrimitive and therefore keeps user code deferred until exec.
-  if (valType.kind !== "externref") {
+  //
+  // A typed object carrying valueOf/toString is normally reified by
+  // `coerceType(ref → externref)` so a later dynamic ToPrimitive can inspect
+  // it. That is the wrong representation for this raw property slot: the
+  // assignment must retain the exact RHS object (`r.lastIndex === value`),
+  // while ToLength is deliberately deferred until the next g/y operation.
+  // Convert the GC reference directly at this identity-preserving boundary.
+  // Keep the native-string undefined sentinel arm in `coerceType`, where the
+  // nullable `$AnyString` → externref mapping is canonicalized to `undefined`.
+  const isNullableNativeString =
+    ctx.nativeStrings && valType.kind === "ref_null" && ctx.anyStrTypeIdx >= 0 && valType.typeIdx === ctx.anyStrTypeIdx;
+  if (valType.kind === "ref" || valType.kind === "ref_null") {
+    // The same nominal object can be observed later by an untyped assertion
+    // helper.  Remember this concrete shape before it crosses the raw slot so
+    // that the generic ref→externref coercion keeps the original GC reference
+    // instead of making a value-semantics `$Object` copy.
+    (fctx.regexpLastIndexIdentityStructTypes ??= new Set()).add(valType.typeIdx);
+  }
+  if (valType.kind === "ref" || valType.kind === "ref_null" || valType.kind === "anyref" || valType.kind === "eqref") {
+    if (isNullableNativeString) coerceType(ctx, fctx, valType, { kind: "externref" });
+    else fctx.body.push({ op: "extern.convert_any" });
+  } else if (valType.kind !== "externref" && valType.kind !== "ref_extern") {
     coerceType(ctx, fctx, valType, { kind: "externref" });
   }
   const rawTmp = allocLocal(fctx, `__re_lastindex_raw_${fctx.locals.length}`, { kind: "externref" });
